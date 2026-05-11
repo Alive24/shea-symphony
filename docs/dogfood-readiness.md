@@ -19,7 +19,7 @@ unattended live GitHub Project v2 execution yet.
 | Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, and safe cleanup helpers exist. Runtime reconciliation cleanup is not wired yet. |
 | Agent backends | Dry-run backend and a conservative Codex subprocess backend exist. Claude Code remains a trait-preserving stub. Full Codex app-server protocol parity is not implemented yet. |
 | Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, and workpad/status evidence helpers exist. Persistent review worker reconciliation is not implemented yet. |
-| Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events. No web/API surface yet. |
+| Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events. Runtime state file helpers exist under `logs_root/runtime`, but loop wiring is still pending. No web/API surface yet. |
 | Tests | Unit tests cover the dry-run skeleton. No credential-gated integration tests yet. |
 
 ## Before Executing GitHub Project Issues
@@ -85,7 +85,8 @@ Project v2 issues:
 7. Long-running orchestration.
    - Continuous poll loop beyond bounded `run-loop` iterations.
    - claimed/running/retry state ownership.
-   - runtime state persistence and resume.
+   - Wire runtime state reads/writes into each claim, backend run, transition,
+     and resume point.
    - continuation retry after normal active-state exits.
    - exponential backoff for failures.
    - stall detection.
@@ -153,8 +154,8 @@ Acceptance:
   the existing workpad/state adapter operations.
 - keeps terminal status snapshots linked to the active event log and integration
   gaps.
-- persists active issue, workspace, backend session, attempt count, and last
-  transition for resume.
+- uses the runtime state file model to resume active issue, workspace, branch,
+  backend session, attempt count, last event, and last transition.
 
 ### 4. Implement Full Codex App-Server Backend
 

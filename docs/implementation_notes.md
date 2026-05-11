@@ -161,6 +161,9 @@ Initial observability:
 - JSONL event log.
 - runtime snapshot model with running, retrying, skipped, polling, token,
   event-log path, and integration-gap fields.
+- runtime state file model under `logs_root/runtime` for active issue,
+  workspace, branch, backend session, attempt count, last event, and last
+  transition.
 - terminal/status renderer for operator-readable snapshots.
 - run summary data model.
 
@@ -218,6 +221,7 @@ duplication, and tracker-write repair flows without changing orchestrator shape.
 | Workspace lifecycle hooks with timeout/remote SSH parity | `SPEC.md`, `elixir/lib/symphony_elixir/workspace.ex`, `SPEC.md Appendix A` | Partial | Local hooks now support timeout handling, stdout/stderr capture, `before_remove`, and safe cleanup; remote workers are deferred. | Add SSH worker trait and runtime reconciliation cleanup wiring. |
 | Runtime workflow reload with last-known-good config | `SPEC.md`, `elixir/lib/symphony_elixir/workflow_store.ex` | Delayed | CLI dry-run starts from a single load. | Add file watcher/polling store and reload tests. |
 | Retry timers, stall detection, and worker supervision | `SPEC.md`, `elixir/lib/symphony_elixir/orchestrator.ex` | Partial | Initial orchestrator creates deterministic dispatch plans and retry metadata only. | Add async runtime worker lifecycle, timers, continuation retry, and stall restart tests. |
+| Runtime state persistence and resume wiring | `SPEC.md`, `elixir/lib/symphony_elixir/orchestrator.ex` | Partial | Tracker-neutral state model and file helpers exist, but the run loop does not yet write each transition or resume from it. | Wire runtime state into claim, workspace preparation, backend session start, event logging, handoff, and interruption recovery. |
 | Token/rate-limit accounting | `elixir/docs/token_accounting.md`, `elixir/lib/symphony_elixir/orchestrator.ex` | Data model only | Needs live backend event stream. | Integrate after Codex app-server client, preserving absolute-total accounting. |
 | `linear_graphql` dynamic tool | `elixir/lib/symphony_elixir/codex/dynamic_tool.ex` | Delayed | Linear adapter is not first concrete tracker. | Add backend dynamic-tool registry and Linear client implementation. |
 | Operator runtime status surface | `SPEC.md`, `elixir/lib/symphony_elixir/status_dashboard.ex` | Partial | Terminal rendering now exposes polling, running/retrying/skipped categories, gate details, token counters, event-log path, and integration gaps; it is still fed by the dispatch-plan snapshot rather than a live worker runtime. | Wire the same snapshot model into the future polling runtime and reconciliation loop. |

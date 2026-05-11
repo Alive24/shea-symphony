@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use clap::{error::ErrorKind, Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use jade_symphony::agent::backend_from_config;
 use jade_symphony::config::RuntimeConfig;
 use jade_symphony::event_log::{EventLog, EventRecord};
@@ -839,47 +840,357 @@ impl RunLoopOptions {
 
 impl Command {
     fn parse(args: Vec<String>) -> Result<Self, String> {
-        if args.is_empty() {
-            return Ok(Self::Plan {
-                workflow_path: PathBuf::from("WORKFLOW.md"),
-            });
+        if matches!(args.first().map(String::as_str), Some("help")) {
+            return Ok(Self::Help);
         }
 
-        match args[0].as_str() {
-            "-h" | "--help" | "help" => Ok(Self::Help),
-            "plan" | "plan-dispatch" | "dry-run" | "status" => Ok(Self::Plan {
-                workflow_path: workflow_arg(&args[1..]),
+        let argv = std::iter::once("jade-symphony".to_string())
+            .chain(args)
+            .collect::<Vec<_>>();
+        match Cli::try_parse_from(argv) {
+            Ok(cli) => Command::try_from(cli),
+            Err(error) if error.kind() == ErrorKind::DisplayHelp => Ok(Self::Help),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    name = "jade-symphony",
+    about = "OpenAI Symphony-style orchestration harness with Jade extensions",
+    disable_help_subcommand = true,
+    arg_required_else_help = false
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<CliCommand>,
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Subcommand)]
+enum CliCommand {
+    #[command(alias = "plan-dispatch", alias = "dry-run", alias = "status")]
+    Plan(WorkflowPathArgs),
+    #[command(alias = "validate-workflow")]
+    Validate(WorkflowPathArgs),
+    Inspect(WorkflowPathArgs),
+    #[command(name = "run-once")]
+    RunOnce(WorkflowPathArgs),
+    #[command(name = "run-loop")]
+    RunLoop(RunLoopArgs),
+    #[command(name = "set-state")]
+    SetState(SetStateArgs),
+    Workpad(WorkpadArgs),
+    #[command(name = "create-follow-up")]
+    CreateFollowUp(CreateFollowUpArgs),
+    #[command(name = "add-to-project")]
+    AddToProject(AddToProjectArgs),
+    #[command(name = "review-fake")]
+    ReviewFake(ReviewFakeArgs),
+    #[command(name = "review-once")]
+    ReviewOnce(ReviewOnceArgs),
+    Gate(GateArgs),
+    #[command(name = "gate-apply")]
+    GateApply(GateArgs),
+    #[command(name = "forge-discover")]
+    ForgeDiscover(ForgeDiscoverArgs),
+    #[command(name = "forge-discuss")]
+    ForgeDiscuss(ForgeMarkdownArgs),
+    #[command(name = "forge-draft")]
+    ForgeDraft(ForgeDraftArgs),
+    #[command(name = "forge-validate")]
+    ForgeValidate(ForgeMarkdownArgs),
+    #[command(name = "forge-repair")]
+    ForgeRepair(ForgeMarkdownArgs),
+    #[command(name = "forge-create")]
+    ForgeCreate(ForgeCreateArgs),
+}
+
+#[derive(Debug, Args)]
+struct WorkflowPathArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+    #[arg(long = "write")]
+    _write: bool,
+}
+
+#[derive(Debug, Args)]
+struct RunLoopArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long)]
+    max_iterations: Option<usize>,
+    #[arg(long)]
+    once: bool,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct GateArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    issue_ref: String,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct SetStateArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    issue_ref: String,
+    state: String,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct WorkpadArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    issue_ref: String,
+    markdown_path: PathBuf,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct CreateFollowUpArgs {
+    #[arg(long)]
+    workflow: PathBuf,
+    #[arg(long)]
+    title: String,
+    #[arg(long = "body-file")]
+    body_file: PathBuf,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct AddToProjectArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    issue_id: String,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct ReviewFakeArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    issue_ref: String,
+    #[arg(long, value_enum, default_value = "pass")]
+    outcome: CliFakeReviewOutcome,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct ReviewOnceArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    issue_ref: String,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliFakeReviewOutcome {
+    Pass,
+    Confirmed,
+    Failed,
+}
+
+impl From<CliFakeReviewOutcome> for FakeReviewOutcome {
+    fn from(value: CliFakeReviewOutcome) -> Self {
+        match value {
+            CliFakeReviewOutcome::Pass => FakeReviewOutcome::Pass,
+            CliFakeReviewOutcome::Confirmed => FakeReviewOutcome::ConfirmedFinding,
+            CliFakeReviewOutcome::Failed => FakeReviewOutcome::Failed,
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+struct ForgeDraftArgs {
+    #[arg(long)]
+    title: String,
+    #[arg(long)]
+    goal: String,
+}
+
+#[derive(Debug, Args)]
+struct ForgeDiscoverArgs {
+    #[arg(long)]
+    intent: Option<String>,
+    #[arg(long)]
+    file: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct ForgeMarkdownArgs {
+    #[arg(long)]
+    title: String,
+    #[arg(long)]
+    file: Option<PathBuf>,
+    #[arg(long)]
+    body: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct ForgeCreateArgs {
+    #[arg(long)]
+    workflow: PathBuf,
+    #[arg(long)]
+    title: String,
+    #[arg(long)]
+    file: Option<PathBuf>,
+    #[arg(long)]
+    body: Option<String>,
+    #[arg(long = "add-to-project")]
+    add_to_project: bool,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+impl TryFrom<Cli> for Command {
+    type Error = String;
+
+    fn try_from(cli: Cli) -> Result<Self, Self::Error> {
+        let default_workflow = || PathBuf::from("WORKFLOW.md");
+        match cli.command {
+            None => Ok(Self::Plan {
+                workflow_path: cli.workflow_path.unwrap_or_else(default_workflow),
             }),
-            "validate" | "validate-workflow" => Ok(Self::Validate {
-                workflow_path: workflow_arg(&args[1..]),
-            }),
-            "inspect" => Ok(Self::Inspect {
-                workflow_path: workflow_arg(&args[1..]),
-            }),
-            "run-once" => Ok(Self::RunOnce {
-                workflow_path: workflow_arg(&args[1..]),
-            }),
-            "run-loop" => parse_run_loop(&args[1..]),
-            "set-state" => parse_set_state(&args[1..]),
-            "workpad" => parse_workpad(&args[1..]),
-            "create-follow-up" => parse_create_follow_up(&args[1..]),
-            "add-to-project" => parse_add_to_project(&args[1..]),
-            "review-fake" => parse_review_fake(&args[1..]),
-            "review-once" => parse_review_once(&args[1..]),
-            "gate" => parse_gate(&args[1..], false),
-            "gate-apply" => parse_gate(&args[1..], true),
-            "forge-discover" => parse_forge_discover(&args[1..]),
-            "forge-discuss" => parse_forge_markdown_command(&args[1..], ForgeCommandKind::Discuss),
-            "forge-draft" => parse_forge_draft(&args[1..]),
-            "forge-validate" => {
-                parse_forge_markdown_command(&args[1..], ForgeCommandKind::Validate)
+            Some(command) => {
+                if cli.workflow_path.is_some() {
+                    return Err(usage());
+                }
+
+                match command {
+                    CliCommand::Plan(args) => Ok(Self::Plan {
+                        workflow_path: args.workflow_path,
+                    }),
+                    CliCommand::Validate(args) => Ok(Self::Validate {
+                        workflow_path: args.workflow_path,
+                    }),
+                    CliCommand::Inspect(args) => Ok(Self::Inspect {
+                        workflow_path: args.workflow_path,
+                    }),
+                    CliCommand::RunOnce(args) => Ok(Self::RunOnce {
+                        workflow_path: args.workflow_path,
+                    }),
+                    CliCommand::RunLoop(args) => {
+                        if args.max_iterations == Some(0) {
+                            return Err(usage());
+                        }
+                        Ok(Self::RunLoop {
+                            options: RunLoopOptions {
+                                workflow_path: args.workflow_path,
+                                max_iterations: args.max_iterations,
+                                once: args.once,
+                                write: args.write,
+                            },
+                        })
+                    }
+                    CliCommand::SetState(args) => Ok(Self::SetState {
+                        workflow_path: args.workflow_path,
+                        issue_ref: args.issue_ref,
+                        state: args.state,
+                        write: args.write,
+                    }),
+                    CliCommand::Workpad(args) => Ok(Self::Workpad {
+                        workflow_path: args.workflow_path,
+                        issue_ref: args.issue_ref,
+                        markdown_path: args.markdown_path,
+                        write: args.write,
+                    }),
+                    CliCommand::CreateFollowUp(args) => Ok(Self::CreateFollowUp {
+                        workflow_path: args.workflow,
+                        title: args.title,
+                        body_path: args.body_file,
+                        write: args.write,
+                    }),
+                    CliCommand::AddToProject(args) => Ok(Self::AddToProject {
+                        workflow_path: args.workflow_path,
+                        issue_id: args.issue_id,
+                        write: args.write,
+                    }),
+                    CliCommand::ReviewFake(args) => Ok(Self::ReviewFake {
+                        workflow_path: args.workflow_path,
+                        issue_ref: args.issue_ref,
+                        outcome: args.outcome.into(),
+                        write: args.write,
+                    }),
+                    CliCommand::ReviewOnce(args) => Ok(Self::ReviewOnce {
+                        workflow_path: args.workflow_path,
+                        issue_ref: args.issue_ref,
+                        write: args.write,
+                    }),
+                    CliCommand::Gate(args) => Ok(Self::Gate {
+                        workflow_path: args.workflow_path,
+                        issue_ref: args.issue_ref,
+                        apply: false,
+                        write: args.write,
+                    }),
+                    CliCommand::GateApply(args) => Ok(Self::Gate {
+                        workflow_path: args.workflow_path,
+                        issue_ref: args.issue_ref,
+                        apply: true,
+                        write: args.write,
+                    }),
+                    CliCommand::ForgeDiscover(args) => Ok(Self::ForgeDiscover {
+                        source: read_source_arg(args.intent, args.file)?,
+                    }),
+                    CliCommand::ForgeDiscuss(args) => Ok(Self::ForgeDiscuss {
+                        title: args.title,
+                        markdown: read_source_arg(args.body, args.file)?,
+                    }),
+                    CliCommand::ForgeDraft(args) => Ok(Self::ForgeDraft {
+                        title: args.title,
+                        goal: args.goal,
+                    }),
+                    CliCommand::ForgeValidate(args) => Ok(Self::ForgeValidate {
+                        title: args.title,
+                        markdown: read_source_arg(args.body, args.file)?,
+                    }),
+                    CliCommand::ForgeRepair(args) => Ok(Self::ForgeRepair {
+                        title: args.title,
+                        markdown: read_source_arg(args.body, args.file)?,
+                    }),
+                    CliCommand::ForgeCreate(args) => Ok(Self::ForgeCreate {
+                        workflow_path: args.workflow,
+                        title: args.title,
+                        markdown: read_source_arg(args.body, args.file)?,
+                        add_to_project: args.add_to_project,
+                        write: args.write,
+                    }),
+                }
             }
-            "forge-repair" => parse_forge_markdown_command(&args[1..], ForgeCommandKind::Repair),
-            "forge-create" => parse_forge_create(&args[1..]),
-            command if command.starts_with('-') => Err(usage()),
-            workflow_path => Ok(Self::Plan {
-                workflow_path: PathBuf::from(workflow_path),
-            }),
         }
     }
 }
@@ -935,359 +1246,6 @@ fn gate_target_state(decision: &GateDecision) -> &'static str {
     }
 }
 
-fn parse_gate(args: &[String], apply: bool) -> Result<Command, String> {
-    let (args, write) = strip_mode_flags(args);
-    if args.len() != 2 {
-        return Err(usage());
-    }
-    Ok(Command::Gate {
-        workflow_path: PathBuf::from(&args[0]),
-        issue_ref: args[1].clone(),
-        apply,
-        write,
-    })
-}
-
-fn parse_run_loop(args: &[String]) -> Result<Command, String> {
-    let mut workflow_path = None;
-    let mut max_iterations = None;
-    let mut once = false;
-    let mut write = false;
-    let mut index = 0;
-
-    while index < args.len() {
-        match args[index].as_str() {
-            "--write" => {
-                write = true;
-                index += 1;
-            }
-            "--dry-run" => {
-                index += 1;
-            }
-            "--once" => {
-                once = true;
-                index += 1;
-            }
-            "--max-iterations" if index + 1 < args.len() => {
-                let value = args[index + 1].parse::<usize>().map_err(|_| usage())?;
-                if value == 0 {
-                    return Err(usage());
-                }
-                max_iterations = Some(value);
-                index += 2;
-            }
-            value if value.starts_with('-') => return Err(usage()),
-            value => {
-                if workflow_path.is_some() {
-                    return Err(usage());
-                }
-                workflow_path = Some(PathBuf::from(value));
-                index += 1;
-            }
-        }
-    }
-
-    Ok(Command::RunLoop {
-        options: RunLoopOptions {
-            workflow_path: workflow_path.unwrap_or_else(|| PathBuf::from("WORKFLOW.md")),
-            max_iterations,
-            once,
-            write,
-        },
-    })
-}
-
-fn parse_set_state(args: &[String]) -> Result<Command, String> {
-    let (args, write) = strip_mode_flags(args);
-    if args.len() != 3 {
-        return Err(usage());
-    }
-    Ok(Command::SetState {
-        workflow_path: PathBuf::from(&args[0]),
-        issue_ref: args[1].clone(),
-        state: args[2].clone(),
-        write,
-    })
-}
-
-fn parse_workpad(args: &[String]) -> Result<Command, String> {
-    let (args, write) = strip_mode_flags(args);
-    if args.len() != 3 {
-        return Err(usage());
-    }
-    Ok(Command::Workpad {
-        workflow_path: PathBuf::from(&args[0]),
-        issue_ref: args[1].clone(),
-        markdown_path: PathBuf::from(&args[2]),
-        write,
-    })
-}
-
-fn parse_create_follow_up(args: &[String]) -> Result<Command, String> {
-    let mut title = None;
-    let mut body_path = None;
-    let mut workflow_path = None;
-    let mut write = false;
-    let mut index = 0;
-
-    while index < args.len() {
-        match args[index].as_str() {
-            "--write" => {
-                write = true;
-                index += 1;
-            }
-            "--dry-run" => {
-                index += 1;
-            }
-            "--workflow" if index + 1 < args.len() => {
-                workflow_path = Some(PathBuf::from(&args[index + 1]));
-                index += 2;
-            }
-            "--title" if index + 1 < args.len() => {
-                title = Some(args[index + 1].clone());
-                index += 2;
-            }
-            "--body-file" if index + 1 < args.len() => {
-                body_path = Some(PathBuf::from(&args[index + 1]));
-                index += 2;
-            }
-            _ => return Err(usage()),
-        }
-    }
-
-    Ok(Command::CreateFollowUp {
-        workflow_path: workflow_path.ok_or_else(usage)?,
-        title: title.ok_or_else(usage)?,
-        body_path: body_path.ok_or_else(usage)?,
-        write,
-    })
-}
-
-fn parse_add_to_project(args: &[String]) -> Result<Command, String> {
-    let (args, write) = strip_mode_flags(args);
-    if args.len() != 2 {
-        return Err(usage());
-    }
-    Ok(Command::AddToProject {
-        workflow_path: PathBuf::from(&args[0]),
-        issue_id: args[1].clone(),
-        write,
-    })
-}
-
-fn parse_forge_create(args: &[String]) -> Result<Command, String> {
-    let mut workflow_path = None;
-    let mut title = None;
-    let mut body = None;
-    let mut file = None;
-    let mut add_to_project = false;
-    let mut write = false;
-    let mut index = 0;
-
-    while index < args.len() {
-        match args[index].as_str() {
-            "--write" => {
-                write = true;
-                index += 1;
-            }
-            "--dry-run" => {
-                index += 1;
-            }
-            "--add-to-project" => {
-                add_to_project = true;
-                index += 1;
-            }
-            "--workflow" if index + 1 < args.len() => {
-                workflow_path = Some(PathBuf::from(&args[index + 1]));
-                index += 2;
-            }
-            "--title" if index + 1 < args.len() => {
-                title = Some(args[index + 1].clone());
-                index += 2;
-            }
-            "--body" if index + 1 < args.len() => {
-                body = Some(args[index + 1].clone());
-                index += 2;
-            }
-            "--file" if index + 1 < args.len() => {
-                file = Some(PathBuf::from(&args[index + 1]));
-                index += 2;
-            }
-            _ => return Err(usage()),
-        }
-    }
-
-    Ok(Command::ForgeCreate {
-        workflow_path: workflow_path.ok_or_else(usage)?,
-        title: title.ok_or_else(usage)?,
-        markdown: read_source_arg(body, file)?,
-        add_to_project,
-        write,
-    })
-}
-
-fn parse_review_fake(args: &[String]) -> Result<Command, String> {
-    let (args, write) = strip_mode_flags(args);
-    if args.len() != 2 && args.len() != 4 {
-        return Err(usage());
-    }
-    let outcome = if args.len() == 4 {
-        if args[2] != "--outcome" {
-            return Err(usage());
-        }
-        parse_fake_review_outcome(&args[3])?
-    } else {
-        FakeReviewOutcome::Pass
-    };
-
-    Ok(Command::ReviewFake {
-        workflow_path: PathBuf::from(&args[0]),
-        issue_ref: args[1].clone(),
-        outcome,
-        write,
-    })
-}
-
-fn parse_review_once(args: &[String]) -> Result<Command, String> {
-    let (args, write) = strip_mode_flags(args);
-    if args.len() != 2 {
-        return Err(usage());
-    }
-    Ok(Command::ReviewOnce {
-        workflow_path: PathBuf::from(&args[0]),
-        issue_ref: args[1].clone(),
-        write,
-    })
-}
-
-fn parse_fake_review_outcome(value: &str) -> Result<FakeReviewOutcome, String> {
-    match value {
-        "pass" => Ok(FakeReviewOutcome::Pass),
-        "confirmed" => Ok(FakeReviewOutcome::ConfirmedFinding),
-        "failed" => Ok(FakeReviewOutcome::Failed),
-        _ => Err(usage()),
-    }
-}
-
-fn strip_mode_flags(args: &[String]) -> (Vec<String>, bool) {
-    let mut write = false;
-    let filtered = args
-        .iter()
-        .filter_map(|arg| match arg.as_str() {
-            "--write" => {
-                write = true;
-                None
-            }
-            "--dry-run" => None,
-            _ => Some(arg.clone()),
-        })
-        .collect();
-    (filtered, write)
-}
-
-fn workflow_arg(args: &[String]) -> PathBuf {
-    let args = args
-        .iter()
-        .filter(|arg| arg.as_str() != "--dry-run" && arg.as_str() != "--write")
-        .cloned()
-        .collect::<Vec<_>>();
-    args.first()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("WORKFLOW.md"))
-}
-
-fn parse_forge_draft(args: &[String]) -> Result<Command, String> {
-    let mut title = None;
-    let mut goal = None;
-    let mut index = 0;
-
-    while index < args.len() {
-        match args[index].as_str() {
-            "--title" if index + 1 < args.len() => {
-                title = Some(args[index + 1].clone());
-                index += 2;
-            }
-            "--goal" if index + 1 < args.len() => {
-                goal = Some(args[index + 1].clone());
-                index += 2;
-            }
-            _ => return Err(usage()),
-        }
-    }
-
-    Ok(Command::ForgeDraft {
-        title: title.ok_or_else(usage)?,
-        goal: goal.ok_or_else(usage)?,
-    })
-}
-
-#[derive(Debug, Clone, Copy)]
-enum ForgeCommandKind {
-    Discuss,
-    Validate,
-    Repair,
-}
-
-fn parse_forge_discover(args: &[String]) -> Result<Command, String> {
-    let mut intent = None;
-    let mut file = None;
-    let mut index = 0;
-
-    while index < args.len() {
-        match args[index].as_str() {
-            "--intent" if index + 1 < args.len() => {
-                intent = Some(args[index + 1].clone());
-                index += 2;
-            }
-            "--file" if index + 1 < args.len() => {
-                file = Some(PathBuf::from(&args[index + 1]));
-                index += 2;
-            }
-            _ => return Err(usage()),
-        }
-    }
-
-    Ok(Command::ForgeDiscover {
-        source: read_source_arg(intent, file)?,
-    })
-}
-
-fn parse_forge_markdown_command(
-    args: &[String],
-    kind: ForgeCommandKind,
-) -> Result<Command, String> {
-    let mut title = None;
-    let mut file = None;
-    let mut body = None;
-    let mut index = 0;
-
-    while index < args.len() {
-        match args[index].as_str() {
-            "--title" if index + 1 < args.len() => {
-                title = Some(args[index + 1].clone());
-                index += 2;
-            }
-            "--file" if index + 1 < args.len() => {
-                file = Some(PathBuf::from(&args[index + 1]));
-                index += 2;
-            }
-            "--body" if index + 1 < args.len() => {
-                body = Some(args[index + 1].clone());
-                index += 2;
-            }
-            _ => return Err(usage()),
-        }
-    }
-
-    let title = title.ok_or_else(usage)?;
-    let markdown = read_source_arg(body, file)?;
-    Ok(match kind {
-        ForgeCommandKind::Discuss => Command::ForgeDiscuss { title, markdown },
-        ForgeCommandKind::Validate => Command::ForgeValidate { title, markdown },
-        ForgeCommandKind::Repair => Command::ForgeRepair { title, markdown },
-    })
-}
-
 fn read_source_arg(inline: Option<String>, file: Option<PathBuf>) -> Result<String, String> {
     match (inline, file) {
         (Some(value), None) => Ok(value),
@@ -1314,35 +1272,8 @@ fn print_forge_validation(report: &jade_symphony::issue_forge::ForgeValidationRe
 }
 
 fn usage() -> String {
-    [
-        "Usage:",
-        "  jade-symphony plan [path-to-WORKFLOW.md]",
-        "  jade-symphony plan-dispatch [path-to-WORKFLOW.md]",
-        "  jade-symphony dry-run [path-to-WORKFLOW.md]",
-        "  jade-symphony status [path-to-WORKFLOW.md]",
-        "  jade-symphony validate [path-to-WORKFLOW.md]",
-        "  jade-symphony validate-workflow [path-to-WORKFLOW.md]",
-        "  jade-symphony inspect [path-to-WORKFLOW.md]",
-        "  jade-symphony run-once [path-to-WORKFLOW.md]",
-        "  jade-symphony run-loop [path-to-WORKFLOW.md] [--max-iterations <n> | --once] [--dry-run | --write]",
-        "  jade-symphony set-state <path-to-WORKFLOW.md> <issue-ref> <normalized-state> --write",
-        "  jade-symphony workpad <path-to-WORKFLOW.md> <issue-ref> <markdown-file> --write",
-        "  jade-symphony create-follow-up --workflow <path-to-WORKFLOW.md> --title <title> --body-file <markdown-file> --write",
-        "  jade-symphony add-to-project <path-to-WORKFLOW.md> <issue-node-id> --write",
-        "  jade-symphony review-once <path-to-WORKFLOW.md> <issue-ref> --write",
-        "  jade-symphony review-fake <path-to-WORKFLOW.md> <issue-ref> [--outcome pass|confirmed|failed] --write",
-        "  jade-symphony gate <path-to-WORKFLOW.md> <issue-ref>",
-        "  jade-symphony gate-apply <path-to-WORKFLOW.md> <issue-ref> --write",
-        "  jade-symphony forge-discover --intent <intent> | --file <markdown-file>",
-        "  jade-symphony forge-discuss --title <title> (--file <markdown-file> | --body <markdown>)",
-        "  jade-symphony forge-draft --title <title> --goal <goal>",
-        "  jade-symphony forge-validate --title <title> (--file <markdown-file> | --body <markdown>)",
-        "  jade-symphony forge-repair --title <title> (--file <markdown-file> | --body <markdown>)",
-        "  jade-symphony forge-create --workflow <path-to-WORKFLOW.md> --title <title> (--file <markdown-file> | --body <markdown>) [--add-to-project] --write",
-        "",
-        "Compatibility: `jade-symphony <path-to-WORKFLOW.md>` is treated as `plan`.",
-    ]
-    .join("\n")
+    let mut command = Cli::command();
+    command.render_long_help().to_string()
 }
 
 #[cfg(test)]
@@ -1369,6 +1300,87 @@ mod tests {
             "- Pass.",
         ]
         .join("\n")
+    }
+
+    fn parse(args: &[&str]) -> Command {
+        Command::parse(args.iter().map(|arg| arg.to_string()).collect()).unwrap()
+    }
+
+    #[test]
+    fn clap_parser_preserves_default_plan_compatibility() {
+        assert_eq!(
+            parse(&[]),
+            Command::Plan {
+                workflow_path: PathBuf::from("WORKFLOW.md")
+            }
+        );
+        assert_eq!(
+            parse(&["examples/dry-run-workflow.md"]),
+            Command::Plan {
+                workflow_path: PathBuf::from("examples/dry-run-workflow.md")
+            }
+        );
+    }
+
+    #[test]
+    fn clap_parser_keeps_operator_command_aliases() {
+        assert_eq!(
+            parse(&["status", "examples/dry-run-workflow.md"]),
+            Command::Plan {
+                workflow_path: PathBuf::from("examples/dry-run-workflow.md")
+            }
+        );
+        assert_eq!(
+            parse(&["validate-workflow", "examples/dry-run-workflow.md"]),
+            Command::Validate {
+                workflow_path: PathBuf::from("examples/dry-run-workflow.md")
+            }
+        );
+    }
+
+    #[test]
+    fn clap_parser_treats_help_flags_as_successful_help() {
+        assert_eq!(parse(&["--help"]), Command::Help);
+        assert_eq!(parse(&["-h"]), Command::Help);
+    }
+
+    #[test]
+    fn clap_parser_preserves_write_intent_for_mutating_commands() {
+        assert_eq!(
+            parse(&[
+                "set-state",
+                "examples/github-project-workflow.md",
+                "#4",
+                "agent_review",
+                "--write"
+            ]),
+            Command::SetState {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                issue_ref: "#4".into(),
+                state: "agent_review".into(),
+                write: true
+            }
+        );
+    }
+
+    #[test]
+    fn clap_parser_preserves_review_outcome_mapping() {
+        assert_eq!(
+            parse(&[
+                "review-fake",
+                "examples/github-project-workflow.md",
+                "#4",
+                "--outcome",
+                "confirmed",
+                "--write"
+            ]),
+            Command::ReviewFake {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                issue_ref: "#4".into(),
+                outcome: FakeReviewOutcome::ConfirmedFinding,
+                write: true
+            }
+        );
     }
 
     #[test]

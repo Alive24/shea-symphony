@@ -21,6 +21,8 @@ future work.
 ## What Works Now
 
 - Rust crate builds and tests locally.
+- operator CLI parsing is backed by `clap` while preserving the existing safe
+  command aliases.
 - `WORKFLOW.md` style files load from an explicit path or default CLI path.
 - YAML front matter is parsed into typed runtime config.
 - normalized `TrackerIssue` records can be loaded from JSON fixtures.

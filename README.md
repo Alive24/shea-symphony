@@ -48,6 +48,9 @@ future work.
 - workspace identifiers are sanitized; local workspace paths stay under the
   configured root; hooks support timeouts, stdout/stderr capture,
   `before_remove`, and safe cleanup helpers.
+- workspace/branch/PR handoff planning can derive a deterministic issue
+  workspace key, branch name, and PR handoff body, and can detect an existing
+  branch that appears to belong to a different issue.
 - terminal status output reports polling state, planned running/skipped/retrying
   issues, token counters, event-log path, gate details, and integration gaps.
 - JSONL event-log primitives exist.
@@ -139,6 +142,7 @@ claim reconciliation, resume state, and PR automation exist.
 ## Stubbed
 
 - linked PR attachment/linking as a first-class relationship.
+- live git worktree creation and `gh pr create` from the runtime loop.
 - Linear live adapter credential-gated smoke coverage.
 - Codex app-server transport.
 - Claude Code full protocol transport beyond the subprocess fixture path.
@@ -151,7 +155,8 @@ claim reconciliation, resume state, and PR automation exist.
 - continuous live polling loop beyond bounded `run-loop` iterations.
 - real issue claiming, state transitions, and reconciliation.
 - wiring runtime-state persistence into the run loop and resume flow.
-- workspace-per-issue branch and PR automation.
+- workspace-per-issue branch and PR automation beyond the current planning
+  primitive.
 - polling-runtime wiring for the existing claim/reconciliation helpers.
 - retry timers, continuation retries, and stall restart.
 - terminal workspace cleanup tied to tracker state.

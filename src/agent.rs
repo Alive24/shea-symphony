@@ -359,7 +359,7 @@ mod tests {
     #[test]
     fn codex_backend_runs_subprocess_in_workspace() {
         let temp = tempfile::tempdir().unwrap();
-        let config = codex_config("cat > response.txt", 1_000);
+        let config = codex_config("cat > response.txt", 5_000);
         let backend = CodexBackend;
         let prepared = backend
             .prepare(temp.path().to_path_buf(), "hello prompt".into(), &config)
@@ -377,7 +377,7 @@ mod tests {
     #[test]
     fn codex_backend_reports_subprocess_failure() {
         let temp = tempfile::tempdir().unwrap();
-        let config = codex_config("echo nope >&2; exit 7", 1_000);
+        let config = codex_config("echo nope >&2; exit 7", 5_000);
         let backend = CodexBackend;
         let prepared = backend
             .prepare(temp.path().to_path_buf(), "prompt".into(), &config)

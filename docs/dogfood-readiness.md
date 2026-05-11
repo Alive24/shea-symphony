@@ -1,8 +1,8 @@
 # Dogfood Readiness
 
 Status: dry-run dogfood baseline with read-only GitHub Project v2 loading through
-the `gh` CLI. Jade Symphony is not ready to execute live GitHub Project v2 issues
-yet.
+the `gh` CLI and a bounded `run-loop` skeleton. Jade Symphony is not ready for
+unattended live GitHub Project v2 execution yet.
 
 ## Current Capability Status
 
@@ -11,11 +11,11 @@ yet.
 | Workflow loader | Implemented for explicit workflow path and optional YAML front matter. Runtime reload is not implemented. |
 | Typed config | Implemented for the current skeleton, including GitHub Project v2-shaped settings. |
 | Normalized issue model | Implemented as `TrackerIssue`, including ProjectV2 item ID, labels, assignees, blockers, linked PRs, and project fields. |
-| GitHub Project v2 tracker | Fixture-backed mode plus live loading and explicit write operations through `gh api graphql`. No autonomous orchestration loop yet. |
+| GitHub Project v2 tracker | Fixture-backed mode plus live loading and explicit write operations through `gh api graphql`. Bounded `run-loop` can coordinate existing primitives, but full claim reconciliation is not implemented yet. |
 | Linear tracker | Implemented behind the same trait for fixture-backed planning plus live GraphQL reads, state updates, marker workpad comments, follow-up issue creation, and project assignment. Credential-gated smoke coverage is still missing. |
 | Issue Quality Gate | Implemented as a first-pass Markdown contract check. It is useful for dry-run classification, not yet a full source-alignment gate. |
 | Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, and repair against Markdown/input. Live tracker issue creation is not implemented yet. |
-| Orchestrator | Deterministic dispatch planning exists. No long-running poll loop, worker supervision, retry timers, or state reconciliation yet. |
+| Orchestrator | Deterministic dispatch planning and a bounded CLI `run-loop` skeleton exist. No long-running worker supervision, retry timers, runtime resume, or full state reconciliation yet. |
 | Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, and safe cleanup helpers exist. Runtime reconciliation cleanup is not wired yet. |
 | Agent backends | Dry-run backend and a conservative Codex subprocess backend exist. Claude Code remains a trait-preserving stub. Full Codex app-server protocol parity is not implemented yet. |
 | Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, and workpad/status evidence helpers exist. Persistent review worker reconciliation is not implemented yet. |
@@ -83,8 +83,9 @@ Project v2 issues:
      workspace.
 
 7. Long-running orchestration.
-   - Poll loop.
+   - Continuous poll loop beyond bounded `run-loop` iterations.
    - claimed/running/retry state ownership.
+   - runtime state persistence and resume.
    - continuation retry after normal active-state exits.
    - exponential backoff for failures.
    - stall detection.
@@ -138,8 +139,8 @@ Acceptance:
 
 ### 3. Turn Dispatch Plan Into Polling Runtime
 
-Goal: evolve `Orchestrator::plan_dispatch` into a long-running runtime while
-preserving deterministic planning tests.
+Goal: evolve the bounded `run-loop` skeleton and `Orchestrator::plan_dispatch`
+into a long-running runtime while preserving deterministic planning tests.
 
 Acceptance:
 
@@ -152,6 +153,8 @@ Acceptance:
   the existing workpad/state adapter operations.
 - keeps terminal status snapshots linked to the active event log and integration
   gaps.
+- persists active issue, workspace, backend session, attempt count, and last
+  transition for resume.
 
 ### 4. Implement Full Codex App-Server Backend
 
@@ -213,14 +216,17 @@ Acceptance:
 
 ```bash
 cargo run -- examples/dry-run-workflow.md
+cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
 ```
 
-This command should remain credential-free and deterministic. It is the local
-smoke test for dispatch planning until live GitHub Project v2 integration exists.
+These commands should remain credential-free and deterministic. They are the
+local smoke tests for dispatch planning and bounded loop behavior until live
+GitHub Project v2 execution is hardened.
 
 ## Live Project Template
 
 `examples/github-project-workflow.md` is a non-fixture workflow template for
 manual live Project v2 reads and explicit tracker writes through `gh`. It still
-uses the `dry-run` backend by default and should not be treated as autonomous
-agent execution.
+uses the `dry-run` backend by default. `run-loop --write` is available only as a
+bounded skeleton and should not be treated as full autonomous agent execution
+until claim reconciliation, runtime resume, and PR automation exist.

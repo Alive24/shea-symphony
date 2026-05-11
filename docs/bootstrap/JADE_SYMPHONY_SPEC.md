@@ -80,6 +80,34 @@ Jade Symphony adds these workflow capabilities on top of the official baseline:
 - independent agent review before human review.
 - Claude Code support through the same backend abstraction as Codex.
 
+## Runtime Autonomy
+
+Jade Symphony should operate as a continuing tracker loop, not a one-issue
+command runner. A human "continue" instruction means:
+
+1. refresh tracker and worktree state.
+2. finish active unblocked `In Progress` work.
+3. otherwise select the next executable `Todo` or `Rework` item.
+4. run the Issue Quality Gate.
+5. execute the issue contract.
+6. move main-agent completed work to `Agent Review`.
+7. repeat until a defined stop condition is reached.
+
+Stop conditions are limited to:
+
+- no executable work remains.
+- issue contract requires `Need to Clarify`.
+- implementation requires `Need Human Input`.
+- required external credentials, services, sample data, or tools are missing and
+  no safe fallback exists.
+- verification fails and cannot be locally repaired.
+- continuing requires destructive action or out-of-contract scope change.
+- the human explicitly asks to stop after a specific issue.
+
+Dependency wording such as "do not continue to issue X until issue Y is done"
+is not a permanent stop condition. After issue Y reaches its correct handoff or
+blocked state, the runtime should resume selection.
+
 ## Product Boundary
 
 Jade Symphony is orchestration infrastructure. It should not contain downstream
@@ -160,9 +188,10 @@ Jade Symphony should normalize tracker states to:
 - `Need to Clarify`: issue contract is not executable yet.
 - `In Progress`: implementation is actively underway.
 - `Need Human Input`: work started but cannot continue without human input.
-- `Agent Review`: implementation is locally complete and awaiting independent
-  agent review.
-- `Human Review`: PR is attached and validated; waiting on human approval.
+- `Agent Review`: main-agent implementation is locally complete and awaiting
+  independent Review Agent execution.
+- `Human Review`: independent Review Agent has passed the work with recorded
+  evidence; waiting on human approval.
 - `Rework`: reviewer requested changes.
 - `Merging`: approved by human; land flow should run.
 - `Done`: terminal success.
@@ -271,8 +300,19 @@ as a peer backend, not as a special case inside the orchestrator.
 
 `Agent Review` is a first-class state between implementation and human review.
 
-The reviewer may be Gemini, Codex, Claude, or another configured reviewer. The
-orchestrator should treat reviewer output as advisory evidence, not as final
+Jade Symphony must distinguish the main implementation agent from the
+independent Review Agent.
+
+The main implementation agent may move locally complete work to `Agent Review`.
+It must never move an issue to `Human Review`.
+
+The Review Agent may be Gemini, Codex, Claude, or another configured reviewer.
+The first concrete Review Agent backend should use local Gemini CLI when
+available. Review execution must be asynchronous: launching review must not
+block the main orchestrator loop, and review jobs must be externally observable
+while queued, running, completed, failed, timed out, or cancelled.
+
+The orchestrator should treat reviewer output as advisory evidence, not as final
 truth.
 
 Review findings should be classified as:
@@ -281,6 +321,14 @@ Review findings should be classified as:
 - `Plausible`
 - `Rejected`
 - `Needs Context`
+
+Review Agent state transitions:
+
+- passed review with recorded evidence: move from `Agent Review` to
+  `Human Review`.
+- confirmed findings: move to `Rework`.
+- failed, timed out, inconclusive, or unavailable review backend: keep in
+  `Agent Review` or move to `Need Human Input`.
 
 Confirmed findings should be fixed before `Human Review`. Rejected or deferred
 findings should be recorded in the workpad.

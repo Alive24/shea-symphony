@@ -132,8 +132,11 @@ GitHub Project v2 adapter:
 Linear adapter:
 
 - remains a required adapter behind the same trait.
-- maps issue state, description, comments, assignee, project, and blockers into
-  `TrackerIssue`.
+- maps issue state, description, assignee, project, blocker relations, labels,
+  branch names, timestamps, and priority into `TrackerIssue`.
+- supports live GraphQL reads, mapped workflow-state updates, marker workpad
+  comment upsert, follow-up issue creation, and adding an issue to the
+  configured project when Linear credentials are available.
 - raw Linear GraphQL dynamic-tool parity is tracked separately from basic adapter
   reads/writes.
 
@@ -156,8 +159,9 @@ start, message, token usage, rate-limit, review, completion, and error records.
 Initial observability:
 
 - JSONL event log.
-- runtime snapshot model.
-- terminal/status renderer.
+- runtime snapshot model with running, retrying, skipped, polling, token,
+  event-log path, and integration-gap fields.
+- terminal/status renderer for operator-readable snapshots.
 - run summary data model.
 
 Planned parity:
@@ -207,13 +211,14 @@ duplication, and tracker-write repair flows without changing orchestrator shape.
 
 | Capability | Source | Status | Reason For Delay | Planned Path |
 | --- | --- | --- | --- | --- |
-| Full Codex app-server stdio protocol | `SPEC.md`, `elixir/lib/symphony_elixir/codex/app_server.ex` | Delayed | Requires protocol-specific implementation and live Codex validation. | Implement `agent::codex` transport, then add protocol fixtures and live smoke profile. |
+| Full Codex app-server stdio protocol | `SPEC.md`, `elixir/lib/symphony_elixir/codex/app_server.ex` | Partial | A conservative workspace-bound Codex subprocess backend exists; full app-server protocol framing still requires protocol-specific implementation and live Codex validation. | Replace or extend the subprocess path with `agent::codex` app-server transport, then add protocol fixtures and live smoke profile. |
 | Full Liquid-compatible prompt engine | `SPEC.md`, `elixir/lib/symphony_elixir/prompt_builder.ex` | Partial | Initial slice uses a strict Liquid subset for common variables and `if` blocks. | Replace with a vetted Liquid crate or complete parser behind `agent::PromptRenderer`. |
 | GitHub Project v2 live GraphQL adapter | `TRACKER_GITHUB_PROJECT_V2.md` | Partial | Initial adapter is dry-run/fixture capable to proceed without credentials. | Add GraphQL client, field/option cache, mutations, and credential-gated integration tests. |
-| Linear live adapter | `SPEC.md`, `elixir/lib/symphony_elixir/linear/*` | Stubbed | GitHub Project v2 is first concrete tracker. | Implement Linear adapter through the same `TrackerAdapter` trait. |
-| Workspace lifecycle hooks with timeout/remote SSH parity | `SPEC.md`, `elixir/lib/symphony_elixir/workspace.ex`, `SPEC.md Appendix A` | Partial | Local hook shell execution exists first; remote workers are deferred. | Add timeout controls, hook result logging, before-remove cleanup, and SSH worker trait. |
+| Linear live adapter | `SPEC.md`, `elixir/lib/symphony_elixir/linear/*` | Partial | Linear now has a live GraphQL adapter and fixture mode, but credential-gated smoke tests have not run in this environment and schema-sensitive mutations still need live confirmation. | Add skipped-by-default live smoke tests for reads, state update, workpad upsert, follow-up creation, and project assignment. |
+| Workspace lifecycle hooks with timeout/remote SSH parity | `SPEC.md`, `elixir/lib/symphony_elixir/workspace.ex`, `SPEC.md Appendix A` | Partial | Local hooks now support timeout handling, stdout/stderr capture, `before_remove`, and safe cleanup; remote workers are deferred. | Add SSH worker trait and runtime reconciliation cleanup wiring. |
 | Runtime workflow reload with last-known-good config | `SPEC.md`, `elixir/lib/symphony_elixir/workflow_store.ex` | Delayed | CLI dry-run starts from a single load. | Add file watcher/polling store and reload tests. |
 | Retry timers, stall detection, and worker supervision | `SPEC.md`, `elixir/lib/symphony_elixir/orchestrator.ex` | Partial | Initial orchestrator creates deterministic dispatch plans and retry metadata only. | Add async runtime worker lifecycle, timers, continuation retry, and stall restart tests. |
 | Token/rate-limit accounting | `elixir/docs/token_accounting.md`, `elixir/lib/symphony_elixir/orchestrator.ex` | Data model only | Needs live backend event stream. | Integrate after Codex app-server client, preserving absolute-total accounting. |
 | `linear_graphql` dynamic tool | `elixir/lib/symphony_elixir/codex/dynamic_tool.ex` | Delayed | Linear adapter is not first concrete tracker. | Add backend dynamic-tool registry and Linear client implementation. |
+| Operator runtime status surface | `SPEC.md`, `elixir/lib/symphony_elixir/status_dashboard.ex` | Partial | Terminal rendering now exposes polling, running/retrying/skipped categories, gate details, token counters, event-log path, and integration gaps; it is still fed by the dispatch-plan snapshot rather than a live worker runtime. | Wire the same snapshot model into the future polling runtime and reconciliation loop. |
 | Optional web/API observability | `SPEC.md`, `elixir/lib/symphony_elixir_web/*` | Delayed | Terminal/status and JSONL come first. | Add HTTP layer over the runtime snapshot without coupling to orchestrator decisions. |

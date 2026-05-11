@@ -31,6 +31,40 @@ Jade-specific additions are:
 - independent `Agent Review` before `Human Review`.
 - Codex and Claude Code as peer agent backends.
 
+## Autonomous Operating Loop
+
+When asked to continue work, Jade Symphony should keep advancing the tracker
+until it reaches a stop condition. It should not stop after completing one issue
+merely because the current prompt named that issue.
+
+Loop:
+
+1. Refresh tracker state and worktree state.
+2. Finish any active `In Progress` issue that is not blocked.
+3. If no issue is active, pick the next executable `Todo` issue by priority and
+   tracker ordering.
+4. Run the Issue Quality Gate before implementation.
+5. Execute the Issue Work Cycle.
+6. Move main-agent completed work to `Agent Review`.
+7. Return to step 1 and continue.
+
+Stop only when one of these is true:
+
+- no executable `Todo`, `Rework`, or active `In Progress` issue remains.
+- the current issue must move to `Need to Clarify`.
+- the current issue must move to `Need Human Input`.
+- required credentials, local tools, sample data, or external services are
+  missing and no safe fallback exists.
+- verification fails and the failure cannot be repaired locally after diagnosis.
+- continuing would require destructive action or a scope change not authorized
+  by the issue contract.
+- the human explicitly tells the agent to stop after a specific issue.
+
+If a prompt says "do not continue to issue X until issue Y is complete", treat
+that as a dependency constraint, not a permanent stop instruction. Once issue Y
+is complete or handed off to the correct review state, resume the loop and
+select the next executable issue.
+
 ## Status Map
 
 - `Backlog`: out of scope; do not modify.
@@ -41,10 +75,10 @@ Jade-specific additions are:
 - `Need Human Input`: implementation started but continuation needs product
   decision, missing external information, credentials, sample data, or
   confirmation.
-- `Agent Review`: implementation is complete enough for an independent agent
-  review.
-- `Human Review`: PR is attached, local validation passed, and agent review is
-  resolved.
+- `Agent Review`: main-agent implementation is locally complete and awaiting
+  independent Review Agent execution.
+- `Human Review`: independent Review Agent has passed the work with recorded
+  evidence; waiting on human approval.
 - `Rework`: review requested changes.
 - `Merging`: approved by human; run land flow.
 - `Done`: terminal state.
@@ -60,8 +94,11 @@ Every executable issue should move through these stages:
    validation.
 4. `Build`: implement only the accepted scope in the isolated workspace.
 5. `Verify and repair`: run required validation, repair gaps, and rerun.
-6. `Agent review`: request independent review and resolve or reject findings.
-7. `Handoff`: create PR, update workpad, transition to `Human Review`.
+6. `Agent review handoff`: main implementation agent updates the workpad and
+   moves the issue to `Agent Review`.
+7. `Independent review`: Review Agent runs asynchronously, records evidence,
+   and either moves the issue to `Human Review`, moves it to `Rework`, or keeps
+   it blocked in `Agent Review` / `Need Human Input`.
 
 ## Issue Forge Cycle
 
@@ -122,11 +159,21 @@ Before `Human Review`, route completed implementation to `Agent Review`.
 
 Minimum behavior:
 
-1. Run an independent reviewer backend or reviewer prompt.
-2. Classify findings as `Confirmed`, `Plausible`, `Rejected`, or `Needs Context`.
-3. Fix confirmed issues before human handoff.
-4. Record rejected or deferred findings in the workpad.
-5. Move to `Human Review` only after validation and review are resolved.
+1. Main implementation agent validates local completion and moves the issue to
+   `Agent Review`.
+2. Main implementation agent must never set `Human Review`.
+3. Independent Review Agent starts an asynchronous review job using the
+   configured backend.
+4. Review Agent records queued, running, completed, failed, timed out, and
+   cancelled job state in the workpad or status surface.
+5. Review Agent classifies findings as `Confirmed`, `Plausible`, `Rejected`, or
+   `Needs Context`.
+6. Review Agent moves confirmed findings to `Rework`.
+7. Review Agent moves failed, timed out, inconclusive, or backend-unavailable
+   reviews to `Need Human Input` or keeps them in `Agent Review` with explicit
+   evidence.
+8. Review Agent moves to `Human Review` only after review passes and evidence
+   is recorded.
 
 ## Workpad Outline
 

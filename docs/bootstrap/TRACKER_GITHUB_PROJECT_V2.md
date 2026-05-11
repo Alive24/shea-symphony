@@ -73,6 +73,22 @@ The adapter should:
 4. Map normalized states to configured option names.
 5. Use the option ID when updating status.
 
+## Status Write Authority
+
+Status mutation must respect actor authority:
+
+- Main implementation agent may set `In Progress`, `Need to Clarify`,
+  `Need Human Input`, `Agent Review`, and `Rework` when those transitions follow
+  the workflow.
+- Main implementation agent must never set `Human Review`.
+- Independent Review Agent may set `Human Review` only after an asynchronous
+  review passes and evidence is recorded.
+- Independent Review Agent must set `Rework` when confirmed findings require
+  changes.
+- Failed, timed out, inconclusive, or backend-unavailable review must not set
+  `Human Review`; it should remain in `Agent Review` or move to
+  `Need Human Input`.
+
 ## Dispatch Eligibility
 
 v0 should dispatch only real GitHub Issues that are already in the configured
@@ -112,4 +128,3 @@ Every GitHub-specific field must map cleanly to a future Linear adapter:
 - GitHub Issue comment workpad -> Linear comment workpad.
 - GitHub Issue assignees -> Linear assignee.
 - GitHub Project -> Linear project.
-

@@ -131,6 +131,9 @@ pub struct RuntimeSnapshot {
     pub polling: PollingSnapshot,
     #[serde(default)]
     pub skipped: Vec<SkippedIssue>,
+    #[serde(default)]
+    pub integration_gaps: Vec<String>,
+    pub event_log_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

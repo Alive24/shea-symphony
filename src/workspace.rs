@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
@@ -21,12 +23,36 @@ pub enum WorkspaceError {
     EqualsRoot(PathBuf),
     #[error("workspace io error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("workspace hook {hook} failed with status {status}: {output}")]
+    #[error("workspace hook {hook} failed with status {status}: stdout={stdout} stderr={stderr}")]
     HookFailed {
         hook: String,
         status: i32,
-        output: String,
+        stdout: String,
+        stderr: String,
     },
+    #[error("workspace hook {hook} timed out after {timeout_ms}ms")]
+    HookTimedOut { hook: String, timeout_ms: u64 },
+    #[error("workspace path is not valid unicode for hook cwd: {0}")]
+    InvalidHookCwd(PathBuf),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HookResult {
+    pub hook: String,
+    pub status: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+impl HookResult {
+    fn success(hook: &str, stdout: String, stderr: String) -> Self {
+        Self {
+            hook: hook.into(),
+            status: 0,
+            stdout,
+            stderr,
+        }
+    }
 }
 
 pub fn safe_identifier(identifier: &str) -> String {
@@ -64,7 +90,7 @@ pub fn prepare_workspace(
 
     if created_now {
         if let Some(command) = hooks.after_create.as_deref() {
-            run_hook("after_create", command, &path)?;
+            run_hook("after_create", command, &path, hooks.timeout_ms)?;
         }
     }
 
@@ -77,15 +103,60 @@ pub fn prepare_workspace(
 
 pub fn run_before_run(path: &Path, hooks: &HooksConfig) -> Result<(), WorkspaceError> {
     if let Some(command) = hooks.before_run.as_deref() {
-        run_hook("before_run", command, path)?;
+        run_hook("before_run", command, path, hooks.timeout_ms)?;
     }
     Ok(())
 }
 
 pub fn run_after_run(path: &Path, hooks: &HooksConfig) {
     if let Some(command) = hooks.after_run.as_deref() {
-        let _ = run_hook("after_run", command, path);
+        let _ = run_hook("after_run", command, path, hooks.timeout_ms);
     }
+}
+
+pub fn remove_issue_workspace(
+    root: &Path,
+    identifier: &str,
+    hooks: &HooksConfig,
+) -> Result<(), WorkspaceError> {
+    let root = canonical_or_create(root)?;
+    let workspace = root.join(safe_identifier(identifier));
+    remove_workspace_path(&root, &workspace, hooks)
+}
+
+pub fn remove_workspace_path(
+    root: &Path,
+    workspace: &Path,
+    hooks: &HooksConfig,
+) -> Result<(), WorkspaceError> {
+    let root = canonical_or_create(root)?;
+
+    if !workspace.exists() {
+        validate_inside_root(&root, workspace)?;
+        return Ok(());
+    }
+
+    let canonical_workspace = workspace.canonicalize()?;
+    validate_inside_root(&root, &canonical_workspace)?;
+
+    if workspace == root || canonical_workspace == root {
+        return Err(WorkspaceError::EqualsRoot(root));
+    }
+
+    if workspace.is_dir() {
+        if let Some(command) = hooks.before_remove.as_deref() {
+            let _ = run_hook("before_remove", command, workspace, hooks.timeout_ms);
+        }
+    }
+
+    let metadata = fs::symlink_metadata(workspace)?;
+    if metadata.file_type().is_symlink() || metadata.is_file() {
+        fs::remove_file(workspace)?;
+    } else if metadata.is_dir() {
+        fs::remove_dir_all(workspace)?;
+    }
+
+    Ok(())
 }
 
 fn canonical_or_create(root: &Path) -> Result<PathBuf, WorkspaceError> {
@@ -106,21 +177,49 @@ fn validate_inside_root(root: &Path, workspace: &Path) -> Result<(), WorkspaceEr
     Ok(())
 }
 
-fn run_hook(hook: &str, command: &str, cwd: &Path) -> Result<(), WorkspaceError> {
-    let output = Command::new("sh")
+fn run_hook(
+    hook: &str,
+    command: &str,
+    cwd: &Path,
+    timeout_ms: u64,
+) -> Result<HookResult, WorkspaceError> {
+    let mut child = Command::new("sh")
         .arg("-lc")
         .arg(command)
         .current_dir(cwd)
-        .output()?;
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
 
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(WorkspaceError::HookFailed {
-            hook: hook.into(),
-            status: output.status.code().unwrap_or(-1),
-            output: String::from_utf8_lossy(&output.stdout).to_string(),
-        })
+    let started = Instant::now();
+    let timeout = Duration::from_millis(timeout_ms);
+    loop {
+        if child.try_wait()?.is_some() {
+            let output = child.wait_with_output()?;
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            if output.status.success() {
+                return Ok(HookResult::success(hook, stdout, stderr));
+            }
+
+            return Err(WorkspaceError::HookFailed {
+                hook: hook.into(),
+                status: output.status.code().unwrap_or(-1),
+                stdout,
+                stderr,
+            });
+        }
+
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(WorkspaceError::HookTimedOut {
+                hook: hook.into(),
+                timeout_ms,
+            });
+        }
+
+        thread::sleep(Duration::from_millis(10));
     }
 }
 
@@ -147,5 +246,116 @@ mod tests {
         .unwrap();
         assert!(workspace.path.is_dir());
         assert_eq!(workspace.workspace_key, "_1");
+    }
+
+    #[test]
+    fn before_run_hook_timeout_is_fatal() {
+        let temp = tempfile::tempdir().unwrap();
+        let result = run_before_run(
+            temp.path(),
+            &HooksConfig {
+                before_run: Some("sleep 1".into()),
+                timeout_ms: 10,
+                ..Default::default()
+            },
+        );
+
+        assert!(matches!(result, Err(WorkspaceError::HookTimedOut { .. })));
+    }
+
+    #[test]
+    fn hook_failure_captures_stdout_and_stderr() {
+        let temp = tempfile::tempdir().unwrap();
+        let result = run_before_run(
+            temp.path(),
+            &HooksConfig {
+                before_run: Some("echo out; echo err >&2; exit 2".into()),
+                timeout_ms: 1_000,
+                ..Default::default()
+            },
+        );
+
+        match result {
+            Err(WorkspaceError::HookFailed {
+                status,
+                stdout,
+                stderr,
+                ..
+            }) => {
+                assert_eq!(status, 2);
+                assert!(stdout.contains("out"));
+                assert!(stderr.contains("err"));
+            }
+            other => panic!("expected hook failure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn before_remove_hook_runs_before_cleanup() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = prepare_workspace(
+            temp.path(),
+            "#cleanup",
+            &HooksConfig {
+                timeout_ms: 1_000,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        remove_issue_workspace(
+            temp.path(),
+            "#cleanup",
+            &HooksConfig {
+                before_remove: Some("printf removed > ../removed.txt".into()),
+                timeout_ms: 1_000,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert!(!workspace.path.exists());
+        assert_eq!(
+            fs::read_to_string(temp.path().join("removed.txt")).unwrap(),
+            "removed"
+        );
+    }
+
+    #[test]
+    fn refuses_to_remove_workspace_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let result = remove_workspace_path(
+            temp.path(),
+            temp.path(),
+            &HooksConfig {
+                timeout_ms: 1_000,
+                ..Default::default()
+            },
+        );
+
+        assert!(matches!(result, Err(WorkspaceError::EqualsRoot(_))));
+        assert!(temp.path().exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_symlink_escape_cleanup() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let link = temp.path().join("escape");
+        symlink(outside.path(), &link).unwrap();
+
+        let result = remove_workspace_path(
+            temp.path(),
+            &link,
+            &HooksConfig {
+                timeout_ms: 1_000,
+                ..Default::default()
+            },
+        );
+
+        assert!(matches!(result, Err(WorkspaceError::OutsideRoot { .. })));
+        assert!(outside.path().exists());
     }
 }

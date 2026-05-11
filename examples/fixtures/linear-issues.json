@@ -1,0 +1,51 @@
+[
+  {
+    "tracker_kind": "linear",
+    "id": "LIN_ready_1",
+    "item_id": null,
+    "identifier": "JAD-10",
+    "title": "Exercise Linear fixture adapter",
+    "description": "## Issue Setup\n\n- UAT Required: No\n\n## Issue Goal\n\nExercise the Linear tracker adapter through fixture-backed dry-run planning.\n\n## Why Now\n\nJade Symphony needs a credential-free Linear path that proves the normalized tracker boundary.\n\n## Issue Context\n\nThe live Linear adapter uses GraphQL behind the tracker trait, while local dogfood can run with fixture issues.\n\n## Decisions / Assumptions\n\n### Decisions\n\n- Keep Linear fields normalized before they reach the orchestrator.\n\n### Assumptions\n\n- Fixture-backed planning is enough when Linear credentials are unavailable.\n\n## Non-Negotiable Guardrails\n\n- Do not add Linear-specific paths to the orchestrator.\n\n## Scope\n\n### In Scope\n\n- Fixture-backed Linear planning.\n- Normalized issue fields.\n\n### Out of Scope\n\n- Live Linear mutation.\n\n## Canonical References\n\n### Target Repository / Package\n\n- Alive24/jade-symphony\n\n### Relevant Knowledge Sources\n\n- docs/bootstrap/references/openai-symphony/SPEC.md\n- docs/bootstrap/references/openai-symphony/elixir/lib/symphony_elixir/linear/client.ex\n- docs/bootstrap/references/openai-symphony/elixir/lib/symphony_elixir/linear/adapter.ex\n\n### Relevant Code Paths\n\n- src/tracker.rs\n- src/config.rs\n- src/model.rs\n\n## Current State\n\nLinear fixture adapter path exists.\n\n## Deliverable Shape\n\nFixture and workflow smoke path.\n\n## Risks or Constraints\n\n- Must not imply live Linear credentials are configured.\n\n## Expected Outcome\n\nLinear fixture issues can be planned through the same orchestrator.\n\n## Verification\n\n### Completion Criteria\n\n- cargo run -- plan examples/linear-fixture-workflow.md shows this issue as runnable.\n\n### Functional Verification\n\n- cargo test\n\n### UAT\n\n- Not required.\n\n### Context Verification\n\n- Confirm the orchestrator only sees TrackerIssue.",
+    "url": "https://linear.app/acme/issue/JAD-10/exercise-linear-fixture-adapter",
+    "state": "Todo",
+    "labels": ["dogfood"],
+    "assignees": [],
+    "priority": 1,
+    "branch_name": "feature/jad-10-linear-fixture-adapter",
+    "linked_pull_requests": [],
+    "blocked_by": [],
+    "project_fields": {
+      "State": "Todo",
+      "Priority": 1
+    },
+    "created_at": "2026-05-10T00:00:00Z",
+    "updated_at": "2026-05-10T01:00:00Z"
+  },
+  {
+    "tracker_kind": "linear",
+    "id": "LIN_blocked",
+    "item_id": null,
+    "identifier": "JAD-9",
+    "title": "Blocked Linear fixture issue",
+    "description": "Blocked fixture issue.",
+    "url": "https://linear.app/acme/issue/JAD-9/blocked-linear-fixture-issue",
+    "state": "Todo",
+    "labels": [],
+    "assignees": [],
+    "priority": 2,
+    "branch_name": null,
+    "linked_pull_requests": [],
+    "blocked_by": [
+      {
+        "id": "LIN_done",
+        "identifier": "JAD-8",
+        "state": "In Progress"
+      }
+    ],
+    "project_fields": {
+      "State": "Todo"
+    },
+    "created_at": "2026-05-10T00:00:00Z",
+    "updated_at": "2026-05-10T01:00:00Z"
+  }
+]

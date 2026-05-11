@@ -18,6 +18,7 @@ pub struct RuntimeConfig {
     pub backend: BackendConfig,
     pub codex: CodexConfig,
     pub claude: ClaudeConfig,
+    pub review: ReviewConfig,
     pub observability: ObservabilityConfig,
     pub server: ServerConfig,
     #[serde(default)]
@@ -120,6 +121,13 @@ pub struct ClaudeConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReviewConfig {
+    pub backend: String,
+    pub gemini_command: String,
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObservabilityConfig {
     pub dashboard_enabled: bool,
     pub refresh_ms: u64,
@@ -203,6 +211,13 @@ impl RuntimeConfig {
             command: get_string(root.get("claude"), "command")
                 .unwrap_or_else(|| "claude".to_string()),
         };
+        let review = ReviewConfig {
+            backend: get_string(root.get("review"), "backend")
+                .unwrap_or_else(|| "fake".to_string()),
+            gemini_command: get_string(root.get("review"), "gemini_command")
+                .unwrap_or_else(|| "gemini".to_string()),
+            timeout_ms: get_u64(root.get("review"), "timeout_ms").unwrap_or(600_000),
+        };
         let observability = ObservabilityConfig {
             dashboard_enabled: get_bool(root.get("observability"), "dashboard_enabled")
                 .unwrap_or(true),
@@ -229,6 +244,7 @@ impl RuntimeConfig {
             backend,
             codex,
             claude,
+            review,
             observability,
             server,
             raw: workflow.config.clone(),
@@ -245,6 +261,10 @@ impl RuntimeConfig {
             "dry-run" | "codex" | "claude-code" => {}
             other => return Err(ConfigError::UnsupportedBackend(other.to_string())),
         }
+        match self.review.backend.as_str() {
+            "fake" | "gemini-cli" => {}
+            other => return Err(ConfigError::UnsupportedBackend(other.to_string())),
+        }
 
         require_positive("polling.interval_ms", self.polling.interval_ms)?;
         require_positive("hooks.timeout_ms", self.hooks.timeout_ms)?;
@@ -257,6 +277,7 @@ impl RuntimeConfig {
             "agent.max_retry_backoff_ms",
             self.agent.max_retry_backoff_ms,
         )?;
+        require_positive("review.timeout_ms", self.review.timeout_ms)?;
 
         if self.tracker.kind == "github_project_v2" {
             require_present("tracker.owner", self.tracker.owner.as_deref())?;
@@ -274,6 +295,9 @@ impl RuntimeConfig {
 
         if self.tracker.kind == "linear" {
             require_present("tracker.project_slug", self.tracker.project_slug.as_deref())?;
+            if self.tracker.fixture_path.is_none() {
+                require_present("tracker.api_key", self.tracker.api_key.as_deref())?;
+            }
         }
 
         Ok(())
@@ -299,12 +323,20 @@ impl RuntimeConfig {
 }
 
 fn parse_tracker(value: Option<&Value>, workflow_dir: &Path) -> TrackerConfig {
-    TrackerConfig {
-        kind: get_string(value, "kind").unwrap_or_else(|| "github_project_v2".to_string()),
-        endpoint: get_string(value, "endpoint"),
-        api_key: resolve_secret(get_string(value, "api_key"), "GITHUB_TOKEN")
+    let kind = get_string(value, "kind").unwrap_or_else(|| "github_project_v2".to_string());
+    let endpoint = get_string(value, "endpoint")
+        .or_else(|| (kind == "linear").then(|| "https://api.linear.app/graphql".to_string()));
+    let api_key = if kind == "linear" {
+        resolve_secret(get_string(value, "api_key"), "LINEAR_API_KEY")
+    } else {
+        resolve_secret(get_string(value, "api_key"), "GITHUB_TOKEN")
             .or_else(|| resolve_secret(None, "GH_TOKEN"))
-            .or_else(|| resolve_secret(None, "LINEAR_API_KEY")),
+    };
+
+    TrackerConfig {
+        kind,
+        endpoint,
+        api_key,
         owner: get_string(value, "owner"),
         repo: get_string(value, "repo"),
         project_owner: get_string(value, "project_owner"),
@@ -532,5 +564,23 @@ mod tests {
             .agent
             .max_concurrent_agents_by_state
             .contains_key("bad"));
+    }
+
+    #[test]
+    fn linear_defaults_endpoint_and_allows_fixture_without_token() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: linear\n  project_slug: jade-symphony\n  fixture_path: issues.json\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.tracker.kind, "linear");
+        assert_eq!(
+            config.tracker.endpoint.as_deref(),
+            Some("https://api.linear.app/graphql")
+        );
+        assert!(config.validate().is_ok());
     }
 }

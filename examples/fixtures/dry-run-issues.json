@@ -1,0 +1,113 @@
+[
+  {
+    "tracker_kind": "github_project_v2",
+    "id": "GHI_ready_1",
+    "item_id": "PVTI_ready_1",
+    "identifier": "#1",
+    "title": "Add fixture-backed dry-run dispatch",
+    "description": "## Issue Setup\n\n- UAT Required: No\n\n## Issue Goal\n\nCreate a dry-run path that can plan dispatch from fixture issues.\n\n## Why Now\n\nDogfood readiness needs a deterministic way to inspect orchestration decisions without credentials.\n\n## Issue Context\n\nJade Symphony currently has a dry-run skeleton and must not claim live Project v2 execution.\n\n## Decisions / Assumptions\n\n### Decisions\n\n- Keep GitHub details inside the tracker adapter.\n\n### Assumptions\n\n- Fixture issues are enough for this dogfood baseline.\n\n## Non-Negotiable Guardrails\n\n- Do not implement live GitHub GraphQL in this issue.\n- Do not implement live Codex or Claude execution.\n\n## Scope\n\n### In Scope\n\n- Example workflow.\n- Fixture issues.\n- Dry-run dispatch command.\n\n### Out of Scope\n\n- Live tracker mutation.\n\n## Canonical References\n\n### Target Repository / Package\n\n- Alive24/jade-symphony\n\n### Relevant Knowledge Sources\n\n- docs/bootstrap/JADE_SYMPHONY_SPEC.md\n- docs/bootstrap/TRACKER_GITHUB_PROJECT_V2.md\n\n### Relevant Code Paths\n\n- src/tracker.rs\n- src/orchestrator.rs\n\n## Current State\n\nDry-run skeleton exists.\n\n## Deliverable Shape\n\nDocs and fixture data.\n\n## Risks or Constraints\n\n- Must not overclaim live orchestration.\n\n## Expected Outcome\n\nA developer can run fixture-backed dry-run dispatch locally.\n\n## Verification\n\n### Completion Criteria\n\n- cargo run -- examples/dry-run-workflow.md shows planned issues.\n\n### Functional Verification\n\n- cargo test passes.\n\n### UAT\n\n- Not required.\n\n### Context Verification\n\n- Confirm README and dogfood docs match current implementation.",
+    "url": "https://github.com/Alive24/jade-symphony/issues/1",
+    "state": "Todo",
+    "labels": ["dogfood", "dry-run"],
+    "assignees": ["codex"],
+    "priority": 1,
+    "branch_name": "feature/dry-run-dispatch",
+    "linked_pull_requests": [],
+    "blocked_by": [],
+    "project_fields": {
+      "Status": "Todo"
+    },
+    "created_at": "2026-05-10T01:00:00Z",
+    "updated_at": "2026-05-10T01:10:00Z"
+  },
+  {
+    "tracker_kind": "github_project_v2",
+    "id": "GHI_ready_2",
+    "item_id": "PVTI_ready_2",
+    "identifier": "#2",
+    "title": "Document dogfood readiness baseline",
+    "description": "## Issue Setup\n\n- UAT Required: No\n\n## Issue Goal\n\nDescribe what must exist before Jade Symphony can execute GitHub Project issues.\n\n## Why Now\n\nThe project needs honest operator-facing status before dogfooding.\n\n## Issue Context\n\nThe current crate is a dry-run skeleton with stubs for live integrations.\n\n## Decisions / Assumptions\n\n### Decisions\n\n- Keep the first dogfood target scoped to Project v2 issue execution.\n\n### Assumptions\n\n- The next issues can be created manually from the recommended backlog.\n\n## Non-Negotiable Guardrails\n\n- Do not claim live orchestration works.\n\n## Scope\n\n### In Scope\n\n- Dogfood readiness document.\n- Recommended next issue list.\n\n### Out of Scope\n\n- Live GraphQL implementation.\n\n## Canonical References\n\n### Target Repository / Package\n\n- Alive24/jade-symphony\n\n### Relevant Knowledge Sources\n\n- docs/implementation_notes.md\n\n### Relevant Code Paths\n\n- README.md\n- docs/dogfood-readiness.md\n\n## Current State\n\nInitial notes exist.\n\n## Deliverable Shape\n\nMarkdown docs.\n\n## Risks or Constraints\n\n- Docs must stay synchronized with current code.\n\n## Expected Outcome\n\nA maintainer can see the path from dry-run skeleton to dogfood execution.\n\n## Verification\n\n### Completion Criteria\n\n- docs/dogfood-readiness.md exists and is honest.\n\n### Functional Verification\n\n- cargo clippy passes.\n\n### UAT\n\n- Not required.\n\n### Context Verification\n\n- Confirm no official reference files were edited.",
+    "url": "https://github.com/Alive24/jade-symphony/issues/2",
+    "state": "Todo",
+    "labels": ["docs", "dogfood"],
+    "assignees": ["codex"],
+    "priority": 2,
+    "branch_name": "feature/dogfood-readiness",
+    "linked_pull_requests": [],
+    "blocked_by": [],
+    "project_fields": {
+      "Status": "Todo"
+    },
+    "created_at": "2026-05-10T02:00:00Z",
+    "updated_at": "2026-05-10T02:05:00Z"
+  },
+  {
+    "tracker_kind": "github_project_v2",
+    "id": "GHI_underspecified",
+    "item_id": "PVTI_underspecified",
+    "identifier": "#3",
+    "title": "Make it work live",
+    "description": "Please make the orchestrator work for GitHub.",
+    "url": "https://github.com/Alive24/jade-symphony/issues/3",
+    "state": "Todo",
+    "labels": ["needs-clarification"],
+    "assignees": [],
+    "priority": 3,
+    "branch_name": null,
+    "linked_pull_requests": [],
+    "blocked_by": [],
+    "project_fields": {
+      "Status": "Todo"
+    },
+    "created_at": "2026-05-10T03:00:00Z",
+    "updated_at": "2026-05-10T03:01:00Z"
+  },
+  {
+    "tracker_kind": "github_project_v2",
+    "id": "GHI_blocked",
+    "item_id": "PVTI_blocked",
+    "identifier": "#4",
+    "title": "Execute a blocked Todo issue",
+    "description": "## Issue Goal\n\nThis issue is intentionally blocked.\n\n## Why Now\n\nFixture coverage.\n\n## Issue Context\n\nThe blocker is not terminal.\n\n## Non-Negotiable Guardrails\n\n- Do not dispatch blocked Todo issues.\n\n## Scope\n\n### In Scope\n\n- Fixture only.\n\n## Canonical References\n\n### Target Repository / Package\n\n- Alive24/jade-symphony\n\n## Verification\n\n### Completion Criteria\n\n- It is skipped.",
+    "url": "https://github.com/Alive24/jade-symphony/issues/4",
+    "state": "Todo",
+    "labels": ["blocked"],
+    "assignees": ["codex"],
+    "priority": 1,
+    "branch_name": null,
+    "linked_pull_requests": [],
+    "blocked_by": [
+      {
+        "id": "GHI_blocker",
+        "identifier": "#99",
+        "state": "Todo"
+      }
+    ],
+    "project_fields": {
+      "Status": "Todo"
+    },
+    "created_at": "2026-05-10T00:30:00Z",
+    "updated_at": "2026-05-10T00:40:00Z"
+  },
+  {
+    "tracker_kind": "github_project_v2",
+    "id": "GHI_done",
+    "item_id": "PVTI_done",
+    "identifier": "#5",
+    "title": "Closed issue should not dispatch",
+    "description": "## Issue Goal\n\nFixture terminal-state coverage.",
+    "url": "https://github.com/Alive24/jade-symphony/issues/5",
+    "state": "Done",
+    "labels": ["done"],
+    "assignees": ["codex"],
+    "priority": 1,
+    "branch_name": null,
+    "linked_pull_requests": [],
+    "blocked_by": [],
+    "project_fields": {
+      "Status": "Done"
+    },
+    "created_at": "2026-05-09T00:00:00Z",
+    "updated_at": "2026-05-09T01:00:00Z"
+  }
+]

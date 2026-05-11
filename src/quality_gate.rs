@@ -29,7 +29,7 @@ pub fn evaluate_issue(issue: &TrackerIssue) -> GateDecision {
         }
     }
 
-    if description.to_lowercase().contains("blocked") && missing.is_empty() {
+    if has_explicit_blocked_decision(description) && missing.is_empty() {
         return GateDecision {
             kind: GateDecisionKind::Blocked,
             missing: vec!["blocked dependency must be resolved before dispatch".into()],
@@ -58,6 +58,17 @@ pub fn evaluate_issue(issue: &TrackerIssue) -> GateDecision {
             notes: Vec::new(),
         }
     }
+}
+
+fn has_explicit_blocked_decision(markdown: &str) -> bool {
+    markdown.lines().any(|line| {
+        let normalized = line.trim().trim_start_matches('-').trim().to_lowercase();
+
+        matches!(
+            normalized.as_str(),
+            "gate decision: blocked" | "classification: blocked" | "status: blocked"
+        )
+    })
 }
 
 fn contains_heading(markdown: &str, heading: &str) -> bool {
@@ -150,5 +161,59 @@ mod tests {
         .join("\n");
 
         assert!(evaluate_issue(&issue(Some(body))).is_dispatchable());
+    }
+
+    #[test]
+    fn incidental_blocked_word_does_not_block_ready_issue() {
+        let body = [
+            "## Issue Goal",
+            "Ship a thing.",
+            "## Why Now",
+            "It is needed before blocked downstream work can proceed.",
+            "## Issue Context",
+            "Context.",
+            "## Non-Negotiable Guardrails",
+            "- Guard.",
+            "## Scope",
+            "### In Scope",
+            "- Code.",
+            "## Canonical References",
+            "### Target Repository / Package",
+            "- Alive24/jade-symphony",
+            "## Verification",
+            "### Completion Criteria",
+            "- Tests pass.",
+        ]
+        .join("\n");
+
+        assert!(evaluate_issue(&issue(Some(body))).is_dispatchable());
+    }
+
+    #[test]
+    fn explicit_blocked_decision_blocks_issue() {
+        let body = [
+            "## Issue Goal",
+            "Ship a thing.",
+            "## Why Now",
+            "Now.",
+            "## Issue Context",
+            "Context.",
+            "## Non-Negotiable Guardrails",
+            "- Guard.",
+            "## Scope",
+            "### In Scope",
+            "- Code.",
+            "## Canonical References",
+            "### Target Repository / Package",
+            "- Alive24/jade-symphony",
+            "## Verification",
+            "### Completion Criteria",
+            "- Tests pass.",
+            "- Gate Decision: Blocked",
+        ]
+        .join("\n");
+
+        let decision = evaluate_issue(&issue(Some(body)));
+        assert_eq!(decision.kind, GateDecisionKind::Blocked);
     }
 }

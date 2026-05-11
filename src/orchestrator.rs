@@ -96,6 +96,8 @@ impl Orchestrator {
                 poll_interval_ms: self.config.polling.interval_ms,
             },
             skipped,
+            integration_gaps: Vec::new(),
+            event_log_path: None,
         };
 
         DispatchPlan {
@@ -120,17 +122,16 @@ fn sort_issues_for_dispatch(mut issues: Vec<TrackerIssue>) -> Vec<TrackerIssue> 
     issues.sort_by(|left, right| {
         priority_rank(left.priority)
             .cmp(&priority_rank(right.priority))
-            .then_with(|| created_sort_key(left).cmp(&created_sort_key(right)))
+            .then_with(|| created_sort_key(left).cmp(created_sort_key(right)))
             .then_with(|| left.identifier.cmp(&right.identifier))
     });
     issues
 }
 
 fn priority_rank(priority: Option<i64>) -> i64 {
-    match priority {
-        Some(value @ 1..=4) => value,
-        _ => 5,
-    }
+    priority
+        .filter(|value| (1..=4).contains(value))
+        .unwrap_or(5)
 }
 
 fn created_sort_key(issue: &TrackerIssue) -> &str {

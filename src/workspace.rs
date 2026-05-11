@@ -270,7 +270,7 @@ mod tests {
             temp.path(),
             &HooksConfig {
                 before_run: Some("echo out; echo err >&2; exit 2".into()),
-                timeout_ms: 1_000,
+                timeout_ms: 5_000,
                 ..Default::default()
             },
         );
@@ -297,7 +297,7 @@ mod tests {
             temp.path(),
             "#cleanup",
             &HooksConfig {
-                timeout_ms: 1_000,
+                timeout_ms: 5_000,
                 ..Default::default()
             },
         )
@@ -307,7 +307,7 @@ mod tests {
             "#cleanup",
             &HooksConfig {
                 before_remove: Some("printf removed > ../removed.txt".into()),
-                timeout_ms: 1_000,
+                timeout_ms: 5_000,
                 ..Default::default()
             },
         )

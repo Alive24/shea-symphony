@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use jade_symphony::agent::backend_from_config;
 use jade_symphony::config::RuntimeConfig;
@@ -36,6 +36,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Command::Validate { workflow_path } => validate(workflow_path),
         Command::Inspect { workflow_path } => inspect(workflow_path),
         Command::RunOnce { workflow_path } => run_once(workflow_path),
+        Command::RunLoop { options } => run_loop(options),
         Command::SetState {
             workflow_path,
             issue_ref,
@@ -371,7 +372,7 @@ fn require_write_intent(write: bool) -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-fn load_config(workflow_path: &PathBuf) -> Result<RuntimeConfig, Box<dyn std::error::Error>> {
+fn load_config(workflow_path: &Path) -> Result<RuntimeConfig, Box<dyn std::error::Error>> {
     let workflow = WorkflowDefinition::load(workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, workflow_path)?;
     config.validate()?;
@@ -437,14 +438,46 @@ fn run_once(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     };
 
+    let result = execute_issue_once(&workflow, &config, issue)?;
+
+    println!("run_once=completed");
+    println!("issue={} {}", issue.identifier, issue.title);
+    println!("workspace={}", result.workspace_path.display());
+    println!("backend={}", result.backend);
+    println!("success={}", result.success);
+    println!(
+        "event_log={}",
+        config
+            .observability
+            .logs_root
+            .join("jade-symphony.jsonl")
+            .display()
+    );
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct IssueExecutionResult {
+    workspace_path: PathBuf,
+    backend: String,
+    success: bool,
+    session_id: Option<String>,
+    message: String,
+}
+
+fn execute_issue_once(
+    workflow: &WorkflowDefinition,
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+) -> Result<IssueExecutionResult, Box<dyn std::error::Error>> {
     let workspace = prepare_workspace(&config.workspace.root, &issue.identifier, &config.hooks)?;
     run_before_run(&workspace.path, &config.hooks)?;
 
     let prompt = render_prompt(&workflow.prompt_template, issue, None)?;
     std::fs::write(workspace.path.join("JADE_SYMPHONY_PROMPT.md"), &prompt)?;
 
-    let backend = backend_from_config(&config);
-    let prepared = backend.prepare(workspace.path.clone(), prompt, &config)?;
+    let backend = backend_from_config(config);
+    let prepared = backend.prepare(workspace.path.clone(), prompt, config)?;
     let events = backend.run(prepared)?;
     let summary = backend.summarize(&events);
     run_after_run(&workspace.path, &config.hooks);
@@ -460,20 +493,194 @@ fn run_once(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         })?;
     }
 
-    println!("run_once=completed");
-    println!("issue={} {}", issue.identifier, issue.title);
-    println!("workspace={}", workspace.path.display());
-    println!("backend={}", summary.backend);
-    println!("success={}", summary.success);
-    println!(
-        "event_log={}",
-        config
-            .observability
-            .logs_root
-            .join("jade-symphony.jsonl")
-            .display()
-    );
+    Ok(IssueExecutionResult {
+        workspace_path: workspace.path,
+        backend: summary.backend,
+        success: summary.success,
+        session_id: summary.session_id,
+        message: summary.message,
+    })
+}
+
+fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let limit = options.iteration_limit();
+    let mut iterations = 0usize;
+
+    loop {
+        if let Some(max) = limit {
+            if iterations >= max {
+                println!("run_loop=stopped reason=max_iterations iterations={iterations}");
+                break;
+            }
+        }
+
+        iterations += 1;
+        let workflow = WorkflowDefinition::load(&options.workflow_path)?;
+        let config = RuntimeConfig::from_workflow(&workflow, &options.workflow_path)?;
+        config.validate()?;
+        let adapter = adapter_from_config(&config);
+        let issues = adapter.list_dispatchable_issues()?;
+        let orchestrator = Orchestrator::new(config.clone());
+        let mut plan = orchestrator.plan_dispatch(issues);
+        plan.integration_gaps.extend(adapter.integration_gaps());
+        plan.snapshot.integration_gaps = plan.integration_gaps.clone();
+        plan.snapshot.event_log_path = Some(
+            config
+                .observability
+                .logs_root
+                .join("jade-symphony.jsonl")
+                .display()
+                .to_string(),
+        );
+
+        let Some(issue) = plan.selected.first().cloned() else {
+            println!("{}", render_snapshot(&plan.snapshot));
+            println!("run_loop=stopped reason=no_dispatchable_issue iterations={iterations}");
+            break;
+        };
+
+        let decision = evaluate_issue(&issue);
+        if !decision.is_dispatchable() {
+            handle_run_loop_gate_failure(adapter.as_ref(), &issue, &decision, &options)?;
+            continue;
+        }
+
+        println!(
+            "run_loop_iteration={} issue={} title={:?} mode={}",
+            iterations,
+            issue.identifier,
+            issue.title,
+            if options.write { "write" } else { "dry-run" }
+        );
+
+        if !options.write {
+            print_run_loop_dry_run_actions(&issue);
+            if limit.is_none() {
+                println!(
+                    "run_loop=stopped reason=dry_run_would_repeat_without_mutation iterations={iterations}"
+                );
+                break;
+            }
+            continue;
+        }
+
+        let latest = adapter
+            .get_issue(&issue.identifier)?
+            .ok_or_else(|| format!("issue disappeared before claim: {}", issue.identifier))?;
+        let latest_gate = evaluate_issue(&latest);
+        if !latest_gate.is_dispatchable() {
+            handle_run_loop_gate_failure(adapter.as_ref(), &latest, &latest_gate, &options)?;
+            continue;
+        }
+
+        if normalize_state(&latest.state) != "in progress" {
+            adapter.set_state(&latest.identifier, "in_progress")?;
+            println!(
+                "run_loop_action=claim issue={} target_state=in_progress",
+                latest.identifier
+            );
+        } else {
+            println!("run_loop_action=resume issue={}", latest.identifier);
+        }
+
+        let result = execute_issue_once(&workflow, &config, &latest)?;
+        let workpad = run_loop_handoff_workpad(&latest, &result);
+        adapter.upsert_workpad(&latest.identifier, &workpad)?;
+
+        if result.success {
+            if !transition_allowed_for_main_agent("agent_review") {
+                return Err("main implementation agent cannot set requested review state".into());
+            }
+            adapter.set_state(&latest.identifier, "agent_review")?;
+            println!(
+                "run_loop_action=handoff issue={} target_state=agent_review",
+                latest.identifier
+            );
+        } else {
+            adapter.set_state(&latest.identifier, "need_human_input")?;
+            println!(
+                "run_loop_action=blocked issue={} target_state=need_human_input",
+                latest.identifier
+            );
+        }
+    }
+
     Ok(())
+}
+
+fn handle_run_loop_gate_failure(
+    adapter: &dyn jade_symphony::tracker::TrackerAdapter,
+    issue: &TrackerIssue,
+    decision: &GateDecision,
+    options: &RunLoopOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!(
+        "run_loop_gate=failed issue={} decision={:?}",
+        issue.identifier, decision.kind
+    );
+    if options.write {
+        adapter.upsert_workpad(&issue.identifier, &gate_workpad(issue, decision))?;
+        adapter.set_state(&issue.identifier, gate_target_state(decision))?;
+    } else {
+        println!(
+            "run_loop_dry_run action=workpad issue={} reason=quality_gate_failed",
+            issue.identifier
+        );
+        println!(
+            "run_loop_dry_run action=set_state issue={} target_state={}",
+            issue.identifier,
+            gate_target_state(decision)
+        );
+    }
+    Ok(())
+}
+
+fn print_run_loop_dry_run_actions(issue: &TrackerIssue) {
+    if normalize_state(&issue.state) != "in progress" {
+        println!(
+            "run_loop_dry_run action=claim issue={} target_state=in_progress",
+            issue.identifier
+        );
+    } else {
+        println!("run_loop_dry_run action=resume issue={}", issue.identifier);
+    }
+    println!(
+        "run_loop_dry_run action=run issue={} backend=configured",
+        issue.identifier
+    );
+    println!(
+        "run_loop_dry_run action=workpad issue={} evidence=run_summary",
+        issue.identifier
+    );
+    println!(
+        "run_loop_dry_run action=handoff issue={} target_state=agent_review",
+        issue.identifier
+    );
+}
+
+fn run_loop_handoff_workpad(issue: &TrackerIssue, result: &IssueExecutionResult) -> String {
+    [
+        "## Jade Symphony Workpad".to_string(),
+        String::new(),
+        "### Context".to_string(),
+        format!("- Issue: {} {}", issue.identifier, issue.title),
+        "- Source: `jade-symphony run-loop`".to_string(),
+        String::new(),
+        "### Run Evidence".to_string(),
+        format!("- Workspace: `{}`", result.workspace_path.display()),
+        format!("- Backend: `{}`", result.backend),
+        format!("- Success: `{}`", result.success),
+        format!(
+            "- Session: `{}`",
+            result.session_id.as_deref().unwrap_or("n/a")
+        ),
+        format!("- Message: {}", result.message),
+        String::new(),
+        "### Main-Agent Boundary".to_string(),
+        "- Locally complete main-agent work stops at `Agent Review`.".to_string(),
+        "- `Human Review` is reserved for independent Review Agent pass evidence.".to_string(),
+    ]
+    .join("\n")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -489,6 +696,9 @@ enum Command {
     },
     RunOnce {
         workflow_path: PathBuf,
+    },
+    RunLoop {
+        options: RunLoopOptions,
     },
     SetState {
         workflow_path: PathBuf,
@@ -552,6 +762,24 @@ enum Command {
     Help,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RunLoopOptions {
+    workflow_path: PathBuf,
+    max_iterations: Option<usize>,
+    once: bool,
+    write: bool,
+}
+
+impl RunLoopOptions {
+    fn iteration_limit(&self) -> Option<usize> {
+        if self.once {
+            Some(1)
+        } else {
+            self.max_iterations
+        }
+    }
+}
+
 impl Command {
     fn parse(args: Vec<String>) -> Result<Self, String> {
         if args.is_empty() {
@@ -574,6 +802,7 @@ impl Command {
             "run-once" => Ok(Self::RunOnce {
                 workflow_path: workflow_arg(&args[1..]),
             }),
+            "run-loop" => parse_run_loop(&args[1..]),
             "set-state" => parse_set_state(&args[1..]),
             "workpad" => parse_workpad(&args[1..]),
             "create-follow-up" => parse_create_follow_up(&args[1..]),
@@ -658,6 +887,55 @@ fn parse_gate(args: &[String], apply: bool) -> Result<Command, String> {
         issue_ref: args[1].clone(),
         apply,
         write,
+    })
+}
+
+fn parse_run_loop(args: &[String]) -> Result<Command, String> {
+    let mut workflow_path = None;
+    let mut max_iterations = None;
+    let mut once = false;
+    let mut write = false;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--write" => {
+                write = true;
+                index += 1;
+            }
+            "--dry-run" => {
+                index += 1;
+            }
+            "--once" => {
+                once = true;
+                index += 1;
+            }
+            "--max-iterations" if index + 1 < args.len() => {
+                let value = args[index + 1].parse::<usize>().map_err(|_| usage())?;
+                if value == 0 {
+                    return Err(usage());
+                }
+                max_iterations = Some(value);
+                index += 2;
+            }
+            value if value.starts_with('-') => return Err(usage()),
+            value => {
+                if workflow_path.is_some() {
+                    return Err(usage());
+                }
+                workflow_path = Some(PathBuf::from(value));
+                index += 1;
+            }
+        }
+    }
+
+    Ok(Command::RunLoop {
+        options: RunLoopOptions {
+            workflow_path: workflow_path.unwrap_or_else(|| PathBuf::from("WORKFLOW.md")),
+            max_iterations,
+            once,
+            write,
+        },
     })
 }
 
@@ -937,6 +1215,7 @@ fn usage() -> String {
         "  jade-symphony validate-workflow [path-to-WORKFLOW.md]",
         "  jade-symphony inspect [path-to-WORKFLOW.md]",
         "  jade-symphony run-once [path-to-WORKFLOW.md]",
+        "  jade-symphony run-loop [path-to-WORKFLOW.md] [--max-iterations <n> | --once] [--dry-run | --write]",
         "  jade-symphony set-state <path-to-WORKFLOW.md> <issue-ref> <normalized-state> --write",
         "  jade-symphony workpad <path-to-WORKFLOW.md> <issue-ref> <markdown-file> --write",
         "  jade-symphony create-follow-up --workflow <path-to-WORKFLOW.md> --title <title> --body-file <markdown-file> --write",
@@ -954,4 +1233,66 @@ fn usage() -> String {
         "Compatibility: `jade-symphony <path-to-WORKFLOW.md>` is treated as `plan`.",
     ]
     .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_run_loop_flags() {
+        let command = Command::parse(vec![
+            "run-loop".into(),
+            "examples/dry-run-workflow.md".into(),
+            "--max-iterations".into(),
+            "3".into(),
+            "--dry-run".into(),
+        ])
+        .unwrap();
+
+        let Command::RunLoop { options } = command else {
+            panic!("expected run-loop command");
+        };
+
+        assert_eq!(
+            options.workflow_path,
+            PathBuf::from("examples/dry-run-workflow.md")
+        );
+        assert_eq!(options.max_iterations, Some(3));
+        assert!(!options.once);
+        assert!(!options.write);
+    }
+
+    #[test]
+    fn run_loop_once_overrides_max_iterations() {
+        let command = Command::parse(vec![
+            "run-loop".into(),
+            "WORKFLOW.md".into(),
+            "--max-iterations".into(),
+            "9".into(),
+            "--once".into(),
+            "--write".into(),
+        ])
+        .unwrap();
+
+        let Command::RunLoop { options } = command else {
+            panic!("expected run-loop command");
+        };
+
+        assert_eq!(options.iteration_limit(), Some(1));
+        assert!(options.write);
+    }
+
+    #[test]
+    fn rejects_zero_run_loop_iterations() {
+        let error = Command::parse(vec![
+            "run-loop".into(),
+            "WORKFLOW.md".into(),
+            "--max-iterations".into(),
+            "0".into(),
+        ])
+        .unwrap_err();
+
+        assert!(error.contains("Usage:"));
+    }
 }

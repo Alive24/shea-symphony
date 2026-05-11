@@ -12,10 +12,11 @@ checks, backend abstractions, workspace safety helpers, event-log primitives,
 and an operator-readable status snapshot with event-log and integration-gap
 links.
 
-It does **not** yet autonomously execute GitHub Project v2 issues, run
-Codex/Claude, or supervise long-running workers. Some explicit GitHub tracker
-write commands exist for operator use, but they are not wired into a live
-orchestration loop yet.
+It does **not** yet fully autonomously execute GitHub Project v2 issues,
+run Codex/Claude through the final app-server flow, or supervise long-running
+workers. A bounded `run-loop` skeleton now exists, but full claim
+reconciliation, runtime resume, and one-issue-one-PR automation are still
+future work.
 
 ## What Works Now
 
@@ -48,6 +49,10 @@ orchestration loop yet.
   dry-run backend, and append JSONL events.
 - `run-once` can execute the conservative Codex subprocess backend when a
   workflow explicitly sets `agent.backend: codex`.
+- `run-loop` can re-read tracker state per iteration, select dispatchable work,
+  print dry-run claim/run/workpad/handoff actions, and in explicit `--write`
+  mode run one issue at a time and stop main-agent completion at
+  `Agent Review`.
 
 ## Dry-Run Only
 
@@ -82,6 +87,7 @@ cargo run -- plan-dispatch examples/dry-run-workflow.md
 cargo run -- status examples/dry-run-workflow.md
 cargo run -- run-once examples/dry-run-workflow.md
 cargo run -- run-once examples/codex-subprocess-workflow.md
+cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
 cargo run -- plan examples/linear-fixture-workflow.md
 cargo run -- gate examples/dry-run-workflow.md '#3'
 cargo run -- forge-discover --intent "Add Issue Forge validate and repair commands"
@@ -114,8 +120,9 @@ cargo run -- review-fake path/to/WORKFLOW.md '#123' --outcome pass --write
 `review-once` / `review-fake` are independent Review Agent commands: a passing
 review can move `Agent Review` to `Human Review`, confirmed findings move to
 `Rework`, and failed or inconclusive reviews do not advance to `Human Review`.
-These commands are adapter operations, not autonomous orchestration. Use them
-carefully until the polling runtime and reconciliation loop exists.
+These commands are adapter operations plus the first bounded runtime-loop
+skeleton, not full autonomous orchestration. Use write mode carefully until
+claim reconciliation, resume state, and PR automation exist.
 
 ## Stubbed
 
@@ -129,8 +136,10 @@ carefully until the polling runtime and reconciliation loop exists.
 
 ## Not Implemented Yet
 
-- live polling loop.
+- continuous live polling loop beyond bounded `run-loop` iterations.
 - real issue claiming, state transitions, and reconciliation.
+- runtime state persistence and resume.
+- workspace-per-issue branch and PR automation.
 - retry timers, continuation retries, and stall restart.
 - terminal workspace cleanup tied to tracker state.
 - live token/rate-limit accounting beyond the current snapshot counters.
@@ -170,6 +179,7 @@ Dry-run dispatch:
 ```bash
 cargo run -- plan examples/dry-run-workflow.md
 cargo run -- run-once examples/dry-run-workflow.md
+cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
 ```
 
 The dry-run workflow uses:

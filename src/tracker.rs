@@ -302,14 +302,12 @@ impl TrackerAdapter for GithubProjectV2Adapter {
             );
         }
 
-        if self.config.tracker.fixture_path.is_none() && !gh_available() {
-            gaps.push("GitHub Project v2 live reads require the `gh` CLI on PATH.".into());
-        }
-
-        if self.config.tracker.fixture_path.is_none() && self.config.tracker.api_key.is_none() {
-            gaps.push(
-                "GitHub token not detected in environment; `gh auth login` or GITHUB_TOKEN/GH_TOKEN is required for live reads.".into(),
-            );
+        if let Some(gap) = github_auth_gap(github_auth_mode(
+            &self.config,
+            gh_available(),
+            github_graphql_auth_smoke,
+        )) {
+            gaps.push(gap);
         }
 
         gaps.push("GitHub Project v2 PR linking uses an issue comment/autolink strategy; linked PR discovery currently reads closing PR references.".into());
@@ -705,6 +703,72 @@ fn gh_available() -> bool {
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GithubAuthMode {
+    Fixture,
+    EnvToken,
+    GhCli,
+    MissingGh,
+    Unauthenticated { reason: Option<String> },
+}
+
+fn github_auth_mode<F>(
+    config: &RuntimeConfig,
+    gh_installed: bool,
+    gh_auth_check: F,
+) -> GithubAuthMode
+where
+    F: FnOnce() -> Result<(), String>,
+{
+    if config.tracker.fixture_path.is_some() {
+        return GithubAuthMode::Fixture;
+    }
+
+    if config.tracker.api_key.is_some() {
+        return GithubAuthMode::EnvToken;
+    }
+
+    if !gh_installed {
+        return GithubAuthMode::MissingGh;
+    }
+
+    match gh_auth_check() {
+        Ok(()) => GithubAuthMode::GhCli,
+        Err(error) => GithubAuthMode::Unauthenticated {
+            reason: Some(error),
+        },
+    }
+}
+
+fn github_graphql_auth_smoke() -> Result<(), String> {
+    run_gh_graphql(vec![
+        "api".into(),
+        "graphql".into(),
+        "-f".into(),
+        "query=query { viewer { login } }".into(),
+    ])
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
+fn github_auth_gap(mode: GithubAuthMode) -> Option<String> {
+    match mode {
+        GithubAuthMode::Fixture | GithubAuthMode::EnvToken | GithubAuthMode::GhCli => None,
+        GithubAuthMode::MissingGh => {
+            Some("GitHub Project v2 live reads require the `gh` CLI on PATH.".into())
+        }
+        GithubAuthMode::Unauthenticated { reason } => {
+            let suffix = reason
+                .filter(|message| !message.is_empty())
+                .map(|message| format!(" Last auth check error: {message}"))
+                .unwrap_or_default();
+            Some(format!(
+                "GitHub Project v2 live reads require `gh auth login` or GITHUB_TOKEN/GH_TOKEN; no usable GitHub auth was detected.{suffix}"
+            ))
+        }
+    }
 }
 
 fn run_gh_graphql(args: Vec<String>) -> Result<serde_json::Value, TrackerError> {
@@ -2101,6 +2165,50 @@ mod tests {
         let found = tracker.fetch_issues_by_states(&["todo".into()]).unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].state, "Todo");
+    }
+
+    #[test]
+    fn github_auth_mode_distinguishes_fixture_env_token_and_gh_cli() {
+        let mut config = github_config(
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
+        );
+
+        config.tracker.fixture_path = Some(Path::new("issues.json").to_path_buf());
+        assert_eq!(
+            github_auth_mode(&config, false, || Err("unused".into())),
+            GithubAuthMode::Fixture
+        );
+
+        config.tracker.fixture_path = None;
+        config.tracker.api_key = Some("redacted".into());
+        assert_eq!(
+            github_auth_mode(&config, false, || Err("unused".into())),
+            GithubAuthMode::EnvToken
+        );
+
+        config.tracker.api_key = None;
+        assert_eq!(
+            github_auth_mode(&config, true, || Ok(())),
+            GithubAuthMode::GhCli
+        );
+    }
+
+    #[test]
+    fn github_auth_gap_only_reports_missing_or_invalid_live_auth() {
+        assert_eq!(github_auth_gap(GithubAuthMode::GhCli), None);
+        assert_eq!(github_auth_gap(GithubAuthMode::EnvToken), None);
+        assert_eq!(
+            github_auth_gap(GithubAuthMode::MissingGh).as_deref(),
+            Some("GitHub Project v2 live reads require the `gh` CLI on PATH.")
+        );
+
+        let gap = github_auth_gap(GithubAuthMode::Unauthenticated {
+            reason: Some("invalid token".into()),
+        })
+        .unwrap();
+        assert!(gap.contains("gh auth login"));
+        assert!(gap.contains("GITHUB_TOKEN/GH_TOKEN"));
+        assert!(gap.contains("invalid token"));
     }
 
     #[test]

@@ -11,7 +11,7 @@ unattended live GitHub Project v2 execution yet.
 | Workflow loader | Implemented for explicit workflow path and optional YAML front matter. Runtime reload is not implemented. |
 | Typed config | Implemented for the current skeleton, including GitHub Project v2-shaped settings. |
 | Normalized issue model | Implemented as `TrackerIssue`, including ProjectV2 item ID, labels, assignees, blockers, linked PRs, and project fields. |
-| GitHub Project v2 tracker | Fixture-backed mode plus live loading and explicit write operations through `gh api graphql`. Bounded `run-loop` can coordinate existing primitives, and auth diagnostics distinguish fixture mode, env-token auth, usable `gh api graphql` auth, missing `gh`, and unusable auth. Full claim reconciliation is not implemented yet. |
+| GitHub Project v2 tracker | Fixture-backed mode plus live loading and explicit write operations through `gh api graphql`. Bounded `run-loop` can coordinate existing primitives; auth diagnostics distinguish fixture mode, env-token auth, usable `gh api graphql` auth, missing `gh`, and unusable auth. Same-state status writes are skipped, marker workpad upsert is idempotent for the canonical marker, and claim decision helpers distinguish claimable, active, and externally changed states. Full claim reconciliation is not implemented yet. |
 | Linear tracker | Implemented behind the same trait for fixture-backed planning plus live GraphQL reads, state updates, marker workpad comments, follow-up issue creation, and project assignment. Credential-gated smoke coverage is still missing. |
 | Issue Quality Gate | Implemented as a first-pass Markdown contract check. It is useful for dry-run classification, not yet a full source-alignment gate. |
 | Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, repair, and explicit `forge-create` tracker issue creation from quality-gated Markdown. Project field setup after creation is not implemented yet. |
@@ -42,6 +42,7 @@ Project v2 issues:
      create/update one marker workpad comment, create follow-up issues, and add
      issues to the configured project.
    - Mutating commands require `--write`.
+   - Same-state status updates are treated as no-ops before mutation.
    - PR linking currently uses an issue comment/autolink strategy instead of a
      first-class relationship.
    - Remaining work: idempotency checks around project-item addition and richer
@@ -49,6 +50,8 @@ Project v2 issues:
 
 3. Dispatch safety.
    - Enforce assignee filter from live GitHub issue assignees.
+   - Reuse tracker claim helpers to claim only `Todo` / `Rework`, resume active
+     `In Progress`, and stop/replan on externally changed states.
    - Revalidate issue state immediately before dispatch.
    - Keep GitHub-specific fields out of `orchestrator`.
 - Current explicit `gate-apply` can record quality-gate assumptions or
@@ -138,6 +141,7 @@ operator use and ready for the future orchestrator loop.
 Acceptance:
 
 - updates ProjectV2 Status through option IDs.
+- treats same-state status writes as no-ops.
 - creates/reuses `<!-- jade-symphony-workpad -->` issue comments.
 - records gate assumptions or missing context before dispatch or clarification.
 - keeps write methods inside the GitHub adapter.

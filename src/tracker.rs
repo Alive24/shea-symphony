@@ -48,6 +48,30 @@ pub enum TrackerError {
     NotImplemented(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClaimDecision {
+    AlreadyInProgress,
+    Claimable,
+    StopAndReplan { current_state: String },
+}
+
+pub fn claim_decision(issue: &TrackerIssue, config: &RuntimeConfig) -> ClaimDecision {
+    let state = tracker_state_key(&issue.state);
+    let state_map = &config.tracker.state_map;
+
+    if state == tracker_state_key(&state_map.in_progress) {
+        ClaimDecision::AlreadyInProgress
+    } else if state == tracker_state_key(&state_map.todo)
+        || state == tracker_state_key(&state_map.rework)
+    {
+        ClaimDecision::Claimable
+    } else {
+        ClaimDecision::StopAndReplan {
+            current_state: issue.state.clone(),
+        }
+    }
+}
+
 pub fn adapter_from_config(config: &RuntimeConfig) -> Box<dyn TrackerAdapter> {
     match config.tracker.kind.as_str() {
         "memory" => Box::new(MemoryTracker::from_config(config)),
@@ -192,7 +216,7 @@ fn issue_matches_assignee_filter(issue: &TrackerIssue, filter: &AssigneeFilter) 
 fn status_is_mapped(status: &str, config: &RuntimeConfig) -> bool {
     mapped_status_names(config)
         .iter()
-        .any(|mapped| normalize_state(mapped) == normalize_state(status))
+        .any(|mapped| tracker_state_key(mapped) == tracker_state_key(status))
 }
 
 fn mapped_status_names(config: &RuntimeConfig) -> Vec<&str> {
@@ -372,13 +396,17 @@ impl GithubProjectV2GhClient {
 
     fn set_state(&self, issue_ref: &str, normalized_state: &str) -> Result<(), TrackerError> {
         let issue = self.resolve_issue(issue_ref)?;
+        let option_name = self.state_option_name(normalized_state)?;
+        if !status_update_required(&issue, &option_name) {
+            return Ok(());
+        }
+
         let item_id = issue.item_id.ok_or_else(|| {
             TrackerError::IntegrationUnavailable(format!(
                 "issue {issue_ref} has no ProjectV2 item id"
             ))
         })?;
         let metadata = self.project_metadata()?;
-        let option_name = self.state_option_name(normalized_state)?;
         let option_id = metadata
             .status_options
             .iter()
@@ -1081,6 +1109,18 @@ fn ensure_workpad_marker(markdown: &str, marker: &str) -> String {
     } else {
         format!("{marker}\n{markdown}")
     }
+}
+
+fn status_update_required(issue: &TrackerIssue, target_state: &str) -> bool {
+    tracker_state_key(&issue.state) != tracker_state_key(target_state)
+}
+
+fn tracker_state_key(state: &str) -> String {
+    normalize_state(state)
+        .replace('_', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn duplicate_workpad_body(_marker: &str) -> String {
@@ -2393,6 +2433,54 @@ Prompt
     }
 
     #[test]
+    fn claim_decision_identifies_claimable_active_and_external_states() {
+        let config = github_config(
+            r#"---
+tracker:
+  kind: github_project_v2
+  owner: Alive24
+  repo: jade-symphony
+  project_owner: Alive24
+  project_number: 9
+---
+Prompt
+"#,
+        );
+
+        assert_eq!(
+            claim_decision(&issue("Todo"), &config),
+            ClaimDecision::Claimable
+        );
+        assert_eq!(
+            claim_decision(&issue("Rework"), &config),
+            ClaimDecision::Claimable
+        );
+        assert_eq!(
+            claim_decision(&issue("In Progress"), &config),
+            ClaimDecision::AlreadyInProgress
+        );
+        assert_eq!(
+            claim_decision(&issue("Agent Review"), &config),
+            ClaimDecision::StopAndReplan {
+                current_state: "Agent Review".into()
+            }
+        );
+    }
+
+    #[test]
+    fn status_update_required_skips_same_mapped_state() {
+        assert!(!status_update_required(
+            &issue("In Progress"),
+            "in_progress"
+        ));
+        assert!(!status_update_required(
+            &issue("Agent Review"),
+            "Agent Review"
+        ));
+        assert!(status_update_required(&issue("Todo"), "In Progress"));
+    }
+
+    #[test]
     fn parses_linear_issue_payload_into_normalized_tracker_issue() {
         let response = serde_json::json!({
             "data": {
@@ -2502,12 +2590,12 @@ Prompt
 
     #[test]
     fn prepends_workpad_marker_once() {
-        let body = ensure_workpad_marker("## Workpad", "<!-- jade-symphony-workpad -->");
+        let marker = "<!-- jade-symphony-workpad -->";
+        let body = ensure_workpad_marker("## Workpad", marker);
         assert!(body.starts_with("<!-- jade-symphony-workpad -->"));
-        assert_eq!(
-            ensure_workpad_marker(&body, "<!-- jade-symphony-workpad -->"),
-            body
-        );
+        let body = ensure_workpad_marker(&body, marker);
+        let body = ensure_workpad_marker(&body, marker);
+        assert_eq!(body.matches(marker).count(), 1);
     }
 
     #[test]

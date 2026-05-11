@@ -33,6 +33,9 @@ future work.
 - explicit live GitHub write commands exist for ProjectV2 status updates,
   workpad comments, follow-up issue creation, and adding issues to a project when
   not in fixture mode.
+- GitHub Project v2 status writes skip same-state mutations, and tracker claim
+  helpers distinguish claimable `Todo`/`Rework`, already active
+  `In Progress`, and externally changed states.
 - dry-run dispatch planning sorts by priority and respects global/state
   concurrency limits.
 - Issue Quality Gate classifies executable versus underspecified issue bodies.
@@ -149,6 +152,7 @@ claim reconciliation, resume state, and PR automation exist.
 - real issue claiming, state transitions, and reconciliation.
 - wiring runtime-state persistence into the run loop and resume flow.
 - workspace-per-issue branch and PR automation.
+- polling-runtime wiring for the existing claim/reconciliation helpers.
 - retry timers, continuation retries, and stall restart.
 - terminal workspace cleanup tied to tracker state.
 - live token/rate-limit accounting beyond the current snapshot counters.

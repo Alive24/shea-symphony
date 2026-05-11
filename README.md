@@ -14,9 +14,9 @@ links.
 
 It does **not** yet fully autonomously execute GitHub Project v2 issues,
 run Codex/Claude through the final app-server flow, or supervise long-running
-workers. A bounded `run-loop` skeleton now exists, but full claim
-reconciliation, runtime resume, and one-issue-one-PR automation are still
-future work.
+workers. A `run-loop` skeleton now exists and can idle-poll in unbounded
+write mode, but full claim reconciliation, runtime resume, and
+one-issue-one-PR automation are still future work.
 
 ## What Works Now
 
@@ -65,7 +65,8 @@ future work.
 - `run-loop` can re-read tracker state per iteration, select dispatchable work,
   print dry-run claim/run/workpad/handoff actions, and in explicit `--write`
   mode run one issue at a time and stop main-agent completion at
-  `Agent Review`.
+  `Agent Review`; unbounded write mode sleeps on idle polls using the workflow
+  polling interval.
 
 ## Dry-Run Only
 
@@ -135,7 +136,7 @@ cargo run -- review-fake path/to/WORKFLOW.md '#123' --outcome pass --write
 `review-once` / `review-fake` are independent Review Agent commands: a passing
 review can move `Agent Review` to `Human Review`, confirmed findings move to
 `Rework`, and failed or inconclusive reviews do not advance to `Human Review`.
-These commands are adapter operations plus the first bounded runtime-loop
+These commands are adapter operations plus the first runtime-loop
 skeleton, not full autonomous orchestration. Use write mode carefully until
 claim reconciliation, resume state, and PR automation exist.
 
@@ -152,7 +153,7 @@ claim reconciliation, resume state, and PR automation exist.
 
 ## Not Implemented Yet
 
-- continuous live polling loop beyond bounded `run-loop` iterations.
+- long-running worker supervision beyond idle polling in `run-loop`.
 - real issue claiming, state transitions, and reconciliation.
 - wiring runtime-state persistence into the run loop and resume flow.
 - workspace-per-issue branch and PR automation beyond the current planning
@@ -182,7 +183,8 @@ This path can read ProjectV2 items and normalize GitHub Issue content for
 planning. Explicit `--write` commands can update ProjectV2 status, write workpad
 comments, create follow-up issues, and add issues to the project. PR linking uses
 an issue comment/autolink strategy rather than a first-class relationship. Jade
-Symphony still cannot poll continuously, reconcile state, or run agents.
+Symphony can idle-poll in unbounded write mode, but still cannot fully reconcile
+state or supervise live agents.
 
 ## Development Commands
 

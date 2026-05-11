@@ -49,6 +49,8 @@ future work.
   dry-run backend, and append JSONL events.
 - `run-once` can execute the conservative Codex subprocess backend when a
   workflow explicitly sets `agent.backend: codex`.
+- `run-once` can execute the conservative Claude Code subprocess backend when a
+  workflow explicitly sets `agent.backend: claude-code`.
 - `run-loop` can re-read tracker state per iteration, select dispatchable work,
   print dry-run claim/run/workpad/handoff actions, and in explicit `--write`
   mode run one issue at a time and stop main-agent completion at
@@ -87,6 +89,7 @@ cargo run -- plan-dispatch examples/dry-run-workflow.md
 cargo run -- status examples/dry-run-workflow.md
 cargo run -- run-once examples/dry-run-workflow.md
 cargo run -- run-once examples/codex-subprocess-workflow.md
+cargo run -- run-once examples/claude-subprocess-workflow.md
 cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
 cargo run -- plan examples/linear-fixture-workflow.md
 cargo run -- gate examples/dry-run-workflow.md '#3'
@@ -98,10 +101,10 @@ cargo run -- forge-validate --title "Repaired Forge issue" --file examples/fixtu
 cargo run -- forge-draft --title "Implement read-only Project v2 adapter" --goal "Load Project v2 issues into TrackerIssue records."
 ```
 
-`run-once` defaults to dry-run examples, but the Codex subprocess fixture shows
-the controlled real-backend path without invoking a live Codex service. It
-writes `JADE_SYMPHONY_PROMPT.md` into the prepared workspace and appends JSONL
-events for the selected workflow.
+`run-once` defaults to dry-run examples, but the Codex and Claude subprocess
+fixtures show controlled real-backend paths without invoking live hosted
+services. They write `JADE_SYMPHONY_PROMPT.md` into the prepared workspace and
+append JSONL events for the selected workflow.
 
 Live GitHub write commands are explicit and require a non-fixture workflow plus
 `gh` authentication:
@@ -129,7 +132,7 @@ claim reconciliation, resume state, and PR automation exist.
 - linked PR attachment/linking as a first-class relationship.
 - Linear live adapter credential-gated smoke coverage.
 - Codex app-server transport.
-- Claude Code backend.
+- Claude Code full protocol transport beyond the subprocess fixture path.
 - dynamic tool registry such as `linear_graphql`.
 - runtime workflow reload and long-running worker supervision.
 - web/API observability surface.

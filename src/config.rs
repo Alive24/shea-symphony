@@ -118,6 +118,7 @@ pub struct CodexConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaudeConfig {
     pub command: String,
+    pub turn_timeout_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -210,6 +211,7 @@ impl RuntimeConfig {
         let claude = ClaudeConfig {
             command: get_string(root.get("claude"), "command")
                 .unwrap_or_else(|| "claude".to_string()),
+            turn_timeout_ms: get_u64(root.get("claude"), "turn_timeout_ms").unwrap_or(3_600_000),
         };
         let review = ReviewConfig {
             backend: get_string(root.get("review"), "backend")

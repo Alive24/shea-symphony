@@ -132,7 +132,7 @@ impl AgentBackend for CodexBackend {
     }
 
     fn run(&self, prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError> {
-        run_subprocess_backend(prepared, "codex-subprocess")
+        run_subprocess_backend(prepared, "codex-subprocess", "Codex subprocess")
     }
 
     fn stop(&self, _reason: &str) -> Result<(), AgentError> {
@@ -159,39 +159,33 @@ impl AgentBackend for ClaudeCodeBackend {
         config: &RuntimeConfig,
     ) -> Result<PreparedRun, AgentError> {
         Ok(PreparedRun {
-            backend: format!("claude-code:{}", config.claude.command),
+            backend: self.name().into(),
             workspace,
             prompt: rendered_prompt,
-            command: None,
-            timeout_ms: 0,
+            command: Some(config.claude.command.clone()),
+            timeout_ms: config.claude.turn_timeout_ms,
             approval_policy: None,
             sandbox: None,
         })
     }
 
-    fn run(&self, _prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError> {
-        Err(AgentError::Unavailable(
-            "Claude Code backend is preserved as a peer backend but delayed".into(),
-        ))
+    fn run(&self, prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError> {
+        run_subprocess_backend(prepared, "claude-code-subprocess", "Claude Code subprocess")
     }
 
     fn stop(&self, _reason: &str) -> Result<(), AgentError> {
         Ok(())
     }
 
-    fn summarize(&self, _events: &[AgentEvent]) -> AgentSummary {
-        AgentSummary {
-            backend: self.name().into(),
-            success: false,
-            session_id: None,
-            message: "Claude Code backend not executed".into(),
-        }
+    fn summarize(&self, events: &[AgentEvent]) -> AgentSummary {
+        summarize_events(self.name(), events)
     }
 }
 
 fn run_subprocess_backend(
     prepared: PreparedRun,
     session_id: &str,
+    completion_subject: &str,
 ) -> Result<Vec<AgentEvent>, AgentError> {
     let mut events = vec![AgentEvent::SessionStarted {
         backend: prepared.backend.clone(),
@@ -265,13 +259,13 @@ fn run_subprocess_backend(
                 events.push(AgentEvent::Completed {
                     backend: prepared.backend,
                     session_id: Some(session_id.into()),
-                    summary: "Codex subprocess completed successfully.".into(),
+                    summary: format!("{completion_subject} completed successfully."),
                 });
             } else {
                 events.push(AgentEvent::Failed {
                     backend: prepared.backend,
                     error: format!(
-                        "Codex subprocess exited with status {}",
+                        "{completion_subject} exited with status {}",
                         output.status.code().unwrap_or(-1)
                     ),
                 });
@@ -284,7 +278,10 @@ fn run_subprocess_backend(
             let _ = child.wait();
             events.push(AgentEvent::Failed {
                 backend: prepared.backend,
-                error: format!("Codex subprocess timed out after {}ms", prepared.timeout_ms),
+                error: format!(
+                    "{completion_subject} timed out after {}ms",
+                    prepared.timeout_ms
+                ),
             });
             return Ok(events);
         }
@@ -356,6 +353,17 @@ mod tests {
         RuntimeConfig::from_workflow(&workflow, std::path::Path::new("/tmp/WORKFLOW.md")).unwrap()
     }
 
+    fn claude_config(command: &str, timeout_ms: u64) -> RuntimeConfig {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            &format!(
+                "---\nagent:\n  backend: claude-code\nclaude:\n  command: {command:?}\n  turn_timeout_ms: {timeout_ms}\n---\nPrompt"
+            ),
+        )
+        .unwrap();
+        RuntimeConfig::from_workflow(&workflow, std::path::Path::new("/tmp/WORKFLOW.md")).unwrap()
+    }
+
     #[test]
     fn codex_backend_runs_subprocess_in_workspace() {
         let temp = tempfile::tempdir().unwrap();
@@ -398,6 +406,63 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let config = codex_config("sleep 1", 10);
         let backend = CodexBackend;
+        let prepared = backend
+            .prepare(temp.path().to_path_buf(), "prompt".into(), &config)
+            .unwrap();
+        let events = backend.run(prepared).unwrap();
+        let summary = backend.summarize(&events);
+
+        assert!(!summary.success);
+        assert!(summary.message.contains("timed out"));
+    }
+
+    #[test]
+    fn claude_code_backend_runs_subprocess_in_workspace() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = claude_config("cat > claude-subprocess-output.md", 5_000);
+        let backend = ClaudeCodeBackend;
+        let prepared = backend
+            .prepare(temp.path().to_path_buf(), "hello claude".into(), &config)
+            .unwrap();
+        let events = backend.run(prepared).unwrap();
+        let summary = backend.summarize(&events);
+
+        assert!(summary.success);
+        assert_eq!(summary.backend, "claude-code");
+        assert_eq!(
+            summary.session_id.as_deref(),
+            Some("claude-code-subprocess")
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("claude-subprocess-output.md")).unwrap(),
+            "hello claude"
+        );
+    }
+
+    #[test]
+    fn claude_code_backend_reports_subprocess_failure() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = claude_config("echo claude-nope >&2; exit 9", 5_000);
+        let backend = ClaudeCodeBackend;
+        let prepared = backend
+            .prepare(temp.path().to_path_buf(), "prompt".into(), &config)
+            .unwrap();
+        let events = backend.run(prepared).unwrap();
+        let summary = backend.summarize(&events);
+
+        assert!(!summary.success);
+        assert!(summary.message.contains("status 9"));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AgentEvent::Message { text, .. } if text.contains("claude-nope")
+        )));
+    }
+
+    #[test]
+    fn claude_code_backend_reports_timeout() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = claude_config("sleep 1", 10);
+        let backend = ClaudeCodeBackend;
         let prepared = backend
             .prepare(temp.path().to_path_buf(), "prompt".into(), &config)
             .unwrap();

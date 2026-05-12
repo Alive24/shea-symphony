@@ -456,19 +456,25 @@ pub fn transition_allowed_for_review_agent(
 
 fn parse_finding_line(line: &str) -> Option<ReviewFinding> {
     let trimmed = line.trim();
-    let (class, rest) = if let Some(rest) = trimmed.strip_prefix("[Confirmed]") {
-        (ReviewFindingClass::Confirmed, rest)
-    } else if let Some(rest) = trimmed.strip_prefix("[Plausible]") {
-        (ReviewFindingClass::Plausible, rest)
-    } else if let Some(rest) = trimmed.strip_prefix("[Rejected]") {
-        (ReviewFindingClass::Rejected, rest)
-    } else if let Some(rest) = trimmed.strip_prefix("[Needs Context]") {
-        (ReviewFindingClass::NeedsContext, rest)
-    } else {
+    if !trimmed.starts_with('[') {
         return None;
+    }
+
+    let closing_bracket = trimmed.find(']')?;
+    let label = trimmed[1..closing_bracket]
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    let class = match label.as_str() {
+        "confirmed" => ReviewFindingClass::Confirmed,
+        "plausible" => ReviewFindingClass::Plausible,
+        "rejected" => ReviewFindingClass::Rejected,
+        "needs context" => ReviewFindingClass::NeedsContext,
+        _ => return None,
     };
 
-    let rest = rest.trim();
+    let rest = trimmed[closing_bracket + 1..].trim();
     let (title, body) = rest.split_once(':').unwrap_or((rest, ""));
     Some(ReviewFinding {
         class,
@@ -524,6 +530,19 @@ mod tests {
     fn classifies_bootstrap_finding_categories() {
         let findings = classify_findings(
             "[Confirmed] Bug: broken\n[Plausible] Risk: maybe\n[Rejected] Noise: no\n[Needs Context] Question: unclear",
+        );
+
+        assert_eq!(findings.len(), 4);
+        assert_eq!(findings[0].class, ReviewFindingClass::Confirmed);
+        assert_eq!(findings[1].class, ReviewFindingClass::Plausible);
+        assert_eq!(findings[2].class, ReviewFindingClass::Rejected);
+        assert_eq!(findings[3].class, ReviewFindingClass::NeedsContext);
+    }
+
+    #[test]
+    fn classifies_finding_categories_with_case_and_spacing_variations() {
+        let findings = classify_findings(
+            "[confirmed] Bug: broken\n[ PLAUSIBLE ] Risk: maybe\n[rejected] Noise: no\n[Needs   Context] Question: unclear",
         );
 
         assert_eq!(findings.len(), 4);

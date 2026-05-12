@@ -11,7 +11,7 @@ unattended live GitHub Project v2 execution yet.
 | Workflow loader | Implemented for explicit workflow path and optional YAML front matter. Runtime reload is not implemented. |
 | Typed config | Implemented for the current skeleton, including GitHub Project v2-shaped settings. |
 | Normalized issue model | Implemented as `TrackerIssue`, including ProjectV2 item ID, labels, assignees, blockers, linked PRs, and project fields. |
-| GitHub Project v2 tracker | Fixture-backed mode plus live loading and explicit write operations through `gh api graphql`. Bounded `run-loop` can coordinate existing primitives, but full claim reconciliation is not implemented yet. |
+| GitHub Project v2 tracker | Fixture-backed mode plus live loading and explicit write operations through `gh api graphql`. Bounded `run-loop` can coordinate existing primitives, and auth diagnostics distinguish fixture mode, env-token auth, usable `gh api graphql` auth, missing `gh`, and unusable auth. Full claim reconciliation is not implemented yet. |
 | Linear tracker | Implemented behind the same trait for fixture-backed planning plus live GraphQL reads, state updates, marker workpad comments, follow-up issue creation, and project assignment. Credential-gated smoke coverage is still missing. |
 | Issue Quality Gate | Implemented as a first-pass Markdown contract check. It is useful for dry-run classification, not yet a full source-alignment gate. |
 | Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, and repair against Markdown/input. Live tracker issue creation is not implemented yet. |
@@ -97,7 +97,8 @@ Project v2 issues:
      failure events.
    - Runtime snapshot command exists for dry-run and live-read planning; an API
      endpoint is still needed.
-   - Clear integration-gap reporting when credentials are missing.
+   - Clear integration-gap reporting when credentials are missing or unusable
+     while avoiding false missing-token warnings when `gh api graphql` works.
 
 9. Integration profile.
    - Credential-gated GitHub Project v2 smoke test.

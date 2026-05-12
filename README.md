@@ -26,6 +26,8 @@ future work.
 - normalized `TrackerIssue` records can be loaded from JSON fixtures.
 - GitHub Project v2 read-only issue loading can use the `gh` CLI when no fixture
   path is configured.
+- GitHub Project v2 integration-gap reporting distinguishes fixture mode,
+  env-token auth, usable `gh api graphql` auth, missing `gh`, and unusable auth.
 - Linear tracker reads and explicit write operations are implemented behind the
   same adapter trait; fixture mode remains the credential-free path.
 - explicit live GitHub write commands exist for ProjectV2 status updates,
@@ -104,7 +106,7 @@ writes `JADE_SYMPHONY_PROMPT.md` into the prepared workspace and appends JSONL
 events for the selected workflow.
 
 Live GitHub write commands are explicit and require a non-fixture workflow plus
-`gh` authentication:
+usable GitHub auth through `GITHUB_TOKEN` / `GH_TOKEN` or `gh api graphql`:
 
 ```bash
 cargo run -- set-state path/to/WORKFLOW.md '#123' need_to_clarify --write

@@ -47,6 +47,8 @@ future work.
 - terminal status output reports polling state, planned running/skipped/retrying
   issues, token counters, event-log path, gate details, and integration gaps.
 - JSONL event-log primitives exist.
+- runtime state helpers can write, read, and clear a tracker-neutral
+  `runtime/runtime-state.json` file under the configured logs root.
 - `run-once` can prepare one dry-run workspace, render a prompt file, run the
   dry-run backend, and append JSONL events.
 - `run-once` can execute the conservative Codex subprocess backend when a
@@ -140,7 +142,7 @@ claim reconciliation, resume state, and PR automation exist.
 
 - continuous live polling loop beyond bounded `run-loop` iterations.
 - real issue claiming, state transitions, and reconciliation.
-- runtime state persistence and resume.
+- wiring runtime-state persistence into the run loop and resume flow.
 - workspace-per-issue branch and PR automation.
 - retry timers, continuation retries, and stall restart.
 - terminal workspace cleanup tied to tracker state.

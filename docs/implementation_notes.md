@@ -124,6 +124,9 @@ GitHub Project v2 adapter:
 - supports ProjectV2 status option lookup and update by option ID.
 - supports workpad upsert through issue comments with
   `<!-- jade-symphony-workpad -->`.
+- treats same-state status updates as adapter-local no-ops and exposes
+  tracker-level claim decisions for `Todo`/`Rework`, active `In Progress`, and
+  externally changed states.
 - supports linked PR lookup/linking, follow-up issue creation, and project item
   addition.
 - if GitHub credentials or network access are unavailable, dry-run fixtures remain

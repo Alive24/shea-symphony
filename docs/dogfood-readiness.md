@@ -16,7 +16,7 @@ unattended live GitHub Project v2 execution yet.
 | Issue Quality Gate | Implemented as a first-pass Markdown contract check. It is useful for dry-run classification, not yet a full source-alignment gate. |
 | Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, repair, and explicit `forge-create` tracker issue creation from quality-gated Markdown. Project field setup after creation is not implemented yet. |
 | Orchestrator | Deterministic dispatch planning and a bounded CLI `run-loop` skeleton exist. No long-running worker supervision, retry timers, runtime resume, or full state reconciliation yet. |
-| Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, and safe cleanup helpers exist. Runtime reconciliation cleanup is not wired yet. |
+| Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, and workspace/branch/PR handoff planning exist. Live git worktree creation, PR creation, and runtime reconciliation cleanup are not wired yet. |
 | Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Full Codex app-server and Claude Code protocol parity are not implemented yet. |
 | Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, and workpad/status evidence helpers exist. Persistent review worker reconciliation is not implemented yet. |
 | Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events. Runtime state file helpers exist under `logs_root/runtime`, but loop wiring is still pending. No web/API surface yet. |
@@ -90,6 +90,9 @@ Project v2 issues:
    - claimed/running/retry state ownership.
    - Wire runtime state reads/writes into each claim, backend run, transition,
      and resume point.
+   - workspace/branch/PR handoff planning exists, but the runtime still needs
+     live worktree creation, branch checkout, push, PR creation, and PR link
+     recording.
    - continuation retry after normal active-state exits.
    - exponential backoff for failures.
    - stall detection.
@@ -207,7 +210,21 @@ Acceptance:
 - terminal cleanup is tied to tracker reconciliation.
 - path escape tests cover symlink and non-directory cases.
 
-### 6. Add Agent Review Gate
+### 6. Wire Workspace Branch And PR Handoff Into Run-Loop
+
+Goal: connect the current handoff planning primitive to controlled runtime
+mutation without mixing multiple issue scopes in one branch.
+
+Acceptance:
+
+- creates or reuses one isolated git worktree per issue.
+- checks out the planned issue branch from the configured base branch.
+- refuses branches that appear to belong to a different issue.
+- pushes the issue branch after local completion.
+- creates one PR with a handoff body and records the PR link in the workpad.
+- keeps main implementation completion at `Agent Review`.
+
+### 7. Add Agent Review Gate
 
 Goal: make `Agent Review` a real state before `Human Review`.
 
@@ -224,7 +241,7 @@ Acceptance:
 - failed, timed out, inconclusive, or unavailable reviews must not set
   `Human Review`.
 
-### 7. Add Linear Credential-Gated Smoke Tests
+### 8. Add Linear Credential-Gated Smoke Tests
 
 Goal: prove the Linear adapter against a real workspace without making local
 development depend on credentials.
@@ -254,4 +271,4 @@ GitHub Project v2 execution is hardened.
 manual live Project v2 reads and explicit tracker writes through `gh`. It still
 uses the `dry-run` backend by default. `run-loop --write` is available only as a
 bounded skeleton and should not be treated as full autonomous agent execution
-until claim reconciliation, runtime resume, and PR automation exist.
+until claim reconciliation, runtime resume, and live PR automation wiring exist.

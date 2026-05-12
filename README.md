@@ -58,6 +58,9 @@ one-issue-one-PR automation are still future work.
 - JSONL event-log primitives exist.
 - runtime state helpers can write, read, and clear a tracker-neutral
   `runtime/runtime-state.json` file under the configured logs root.
+- write-mode `run-loop` saves active issue runtime state, updates it with
+  backend result evidence, records final transition intent, and clears it after
+  successful handoff/block transition.
 - `run-once` can prepare one dry-run workspace, render a prompt file, run the
   dry-run backend, and append JSONL events.
 - `run-once` can execute the conservative Codex subprocess backend when a
@@ -157,8 +160,8 @@ claim reconciliation, resume state, and PR automation exist.
 
 - long-running worker supervision beyond idle polling in `run-loop`.
 - richer issue claiming, state transition, and reconciliation safety beyond the
-  current claim helper wiring.
-- wiring runtime-state persistence into the run loop and resume flow.
+  current claim helper and runtime-state wiring.
+- full runtime-state resume reconciliation after interruption.
 - workspace-per-issue branch and PR automation beyond the current planning
   primitive.
 - retry timers, continuation retries, and stall restart.

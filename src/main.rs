@@ -18,6 +18,10 @@ use jade_symphony::review::{
     transition_allowed_for_review_agent, FakeReviewBackend, FakeReviewOutcome,
     GeminiCliReviewBackend, ReviewBackend, ReviewJob, ReviewRequest,
 };
+use jade_symphony::runtime_state::{
+    clear_runtime_state, load_runtime_state, save_runtime_state, RuntimeIssueState, RuntimeState,
+    RuntimeTransition,
+};
 use jade_symphony::status_surface::render_snapshot;
 use jade_symphony::tracker::{
     adapter_from_config, claim_decision, ClaimDecision, FollowUpIssueInput,
@@ -639,16 +643,28 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        match run_loop_claim_action(&latest, &config) {
+        let existing_runtime_state = load_runtime_state(&config)?;
+        if let Some(state) = &existing_runtime_state {
+            if let Some(active_issue) = &state.active_issue {
+                println!(
+                    "run_loop_runtime_state action=loaded active_issue={} attempt={}",
+                    active_issue.identifier, state.attempt_count
+                );
+            }
+        }
+
+        let event = match run_loop_claim_action(&latest, &config) {
             RunLoopClaimAction::Claim => {
                 adapter.set_state(&latest.identifier, "in_progress")?;
                 println!(
                     "run_loop_action=claim issue={} target_state=in_progress",
                     latest.identifier
                 );
+                "Claimed"
             }
             RunLoopClaimAction::Resume => {
                 println!("run_loop_action=resume issue={}", latest.identifier);
+                "Resumed"
             }
             RunLoopClaimAction::StopAndReplan { current_state } => {
                 println!(
@@ -657,9 +673,29 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 );
                 continue;
             }
-        }
+        };
+
+        let mut runtime_state = run_loop_runtime_state_for_issue(
+            existing_runtime_state.as_ref(),
+            &latest,
+            &config.backend.kind,
+            event,
+        );
+        save_runtime_state(&config, &runtime_state)?;
+        println!(
+            "run_loop_runtime_state action=saved issue={} event={event}",
+            latest.identifier
+        );
 
         let result = execute_issue_once(&workflow, &config, &latest)?;
+        runtime_state = run_loop_runtime_state_with_result(runtime_state, &result);
+        save_runtime_state(&config, &runtime_state)?;
+        println!(
+            "run_loop_runtime_state action=updated issue={} event={}",
+            latest.identifier,
+            runtime_state.last_event.as_deref().unwrap_or("unknown")
+        );
+
         let workpad = run_loop_handoff_workpad(&latest, &result);
         adapter.upsert_workpad(&latest.identifier, &workpad)?;
 
@@ -667,13 +703,29 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             if !transition_allowed_for_main_agent("agent_review") {
                 return Err("main implementation agent cannot set requested review state".into());
             }
+            runtime_state = run_loop_runtime_state_with_transition(
+                runtime_state,
+                Some(latest.state.clone()),
+                "agent_review",
+                "main agent completed",
+            );
+            save_runtime_state(&config, &runtime_state)?;
             adapter.set_state(&latest.identifier, "agent_review")?;
+            clear_runtime_state(&config)?;
             println!(
                 "run_loop_action=handoff issue={} target_state=agent_review",
                 latest.identifier
             );
         } else {
+            runtime_state = run_loop_runtime_state_with_transition(
+                runtime_state,
+                Some(latest.state.clone()),
+                "need_human_input",
+                "backend run failed",
+            );
+            save_runtime_state(&config, &runtime_state)?;
             adapter.set_state(&latest.identifier, "need_human_input")?;
+            clear_runtime_state(&config)?;
             println!(
                 "run_loop_action=blocked issue={} target_state=need_human_input",
                 latest.identifier
@@ -721,6 +773,66 @@ fn no_dispatch_action(
     NoDispatchAction::SleepAndContinue {
         delay_ms: poll_interval_ms,
     }
+}
+
+fn run_loop_runtime_state_for_issue(
+    existing: Option<&RuntimeState>,
+    issue: &TrackerIssue,
+    backend: &str,
+    event: &str,
+) -> RuntimeState {
+    let mut state = RuntimeState::active(
+        RuntimeIssueState {
+            id: issue.id.clone(),
+            identifier: issue.identifier.clone(),
+        },
+        backend,
+    );
+    state.attempt_count = next_runtime_attempt_count(existing, &issue.identifier);
+    state.branch_name = issue.branch_name.clone();
+    state.last_event = Some(event.into());
+    state
+}
+
+fn next_runtime_attempt_count(existing: Option<&RuntimeState>, issue_identifier: &str) -> u32 {
+    existing
+        .and_then(|state| {
+            state
+                .active_issue
+                .as_ref()
+                .filter(|issue| issue.identifier == issue_identifier)
+                .map(|_| state.attempt_count.saturating_add(1))
+        })
+        .unwrap_or(1)
+}
+
+fn run_loop_runtime_state_with_result(
+    mut state: RuntimeState,
+    result: &IssueExecutionResult,
+) -> RuntimeState {
+    state.workspace_path = Some(result.workspace_path.clone());
+    state.backend = result.backend.clone();
+    state.backend_session_id = result.session_id.clone();
+    state.last_event = Some(if result.success {
+        "Completed".into()
+    } else {
+        "Failed".into()
+    });
+    state
+}
+
+fn run_loop_runtime_state_with_transition(
+    mut state: RuntimeState,
+    from: Option<String>,
+    to: &str,
+    reason: &str,
+) -> RuntimeState {
+    state.last_transition = Some(RuntimeTransition {
+        from,
+        to: to.into(),
+        reason: reason.into(),
+    });
+    state
 }
 
 fn handle_run_loop_gate_failure(
@@ -1382,17 +1494,17 @@ mod tests {
     fn tracker_issue(state: &str) -> TrackerIssue {
         TrackerIssue {
             tracker_kind: "memory".into(),
-            id: "ISSUE_31".into(),
+            id: "ISSUE_29".into(),
             item_id: None,
-            identifier: "#31".into(),
-            title: "Wire run-loop to tracker claim helpers".into(),
+            identifier: "#29".into(),
+            title: "Wire runtime state persistence into run-loop".into(),
             description: None,
             url: None,
             state: state.into(),
             labels: Vec::new(),
             assignees: Vec::new(),
             priority: None,
-            branch_name: None,
+            branch_name: Some("feature/issue-29-runtime-state-run-loop".into()),
             linked_pull_requests: Vec::new(),
             blocked_by: Vec::new(),
             project_fields: Default::default(),
@@ -1556,6 +1668,58 @@ mod tests {
             RunLoopClaimAction::StopAndReplan {
                 current_state: "Agent Review".into()
             }
+        );
+    }
+
+    #[test]
+    fn run_loop_runtime_state_increments_same_issue_attempts() {
+        let issue = tracker_issue("In Progress");
+        let existing = run_loop_runtime_state_for_issue(None, &issue, "dry-run", "Claimed");
+
+        let state = run_loop_runtime_state_for_issue(Some(&existing), &issue, "dry-run", "Resumed");
+
+        assert_eq!(state.attempt_count, 2);
+        assert_eq!(
+            state
+                .active_issue
+                .as_ref()
+                .map(|issue| issue.identifier.as_str()),
+            Some("#29")
+        );
+        assert_eq!(state.branch_name, issue.branch_name);
+        assert_eq!(state.last_event.as_deref(), Some("Resumed"));
+    }
+
+    #[test]
+    fn run_loop_runtime_state_records_result_and_transition() {
+        let issue = tracker_issue("In Progress");
+        let state = run_loop_runtime_state_for_issue(None, &issue, "dry-run", "Claimed");
+        let result = IssueExecutionResult {
+            workspace_path: PathBuf::from("/tmp/jade/issue-29"),
+            backend: "dry-run".into(),
+            success: true,
+            session_id: Some("session-29".into()),
+            message: "ok".into(),
+        };
+
+        let state = run_loop_runtime_state_with_result(state, &result);
+        assert_eq!(state.workspace_path, Some(result.workspace_path));
+        assert_eq!(state.backend_session_id.as_deref(), Some("session-29"));
+        assert_eq!(state.last_event.as_deref(), Some("Completed"));
+
+        let state = run_loop_runtime_state_with_transition(
+            state,
+            Some("In Progress".into()),
+            "agent_review",
+            "main agent completed",
+        );
+        assert_eq!(
+            state.last_transition,
+            Some(RuntimeTransition {
+                from: Some("In Progress".into()),
+                to: "agent_review".into(),
+                reason: "main agent completed".into(),
+            })
         );
     }
 

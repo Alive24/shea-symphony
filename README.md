@@ -38,7 +38,8 @@ future work.
 - Issue Quality Gate classifies executable versus underspecified issue bodies.
 - Issue Forge can discover local candidates from intent, ask one focused
   clarification question, draft from the quality template, validate Markdown,
-  and repair rough Markdown into an executable issue contract shape.
+  repair rough Markdown into an executable issue contract shape, and create a
+  tracker issue from a quality-gated contract with explicit `--write`.
 - basic strict prompt rendering supports known `issue.*` fields, `attempt`, and
   simple `{% if %}` / `{% else %}` blocks.
 - workspace identifiers are sanitized; local workspace paths stay under the
@@ -100,6 +101,7 @@ cargo run -- forge-discuss --title "Thin Forge issue" --file examples/fixtures/t
 cargo run -- forge-repair --title "Thin Forge issue" --file examples/fixtures/thin-issue.md
 cargo run -- forge-validate --title "Repaired Forge issue" --file examples/fixtures/repaired-issue.md
 cargo run -- forge-draft --title "Implement read-only Project v2 adapter" --goal "Load Project v2 issues into TrackerIssue records."
+cargo run -- forge-create --workflow path/to/WORKFLOW.md --title "Follow-up title" --file path/to/issue.md --add-to-project --write
 ```
 
 `run-once` defaults to dry-run examples, but the Codex subprocess fixture shows
@@ -148,7 +150,7 @@ claim reconciliation, resume state, and PR automation exist.
 - terminal workspace cleanup tied to tracker state.
 - live token/rate-limit accounting beyond the current snapshot counters.
 - persistent Agent Review worker supervision and reconciliation.
-- Issue Forge tracker writes.
+- Issue Forge Project field setup after issue creation.
 - automated Issue Quality Gate application inside the polling runtime.
 - full Liquid-compatible prompt renderer.
 - credential-gated integration tests.

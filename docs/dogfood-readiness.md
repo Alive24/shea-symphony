@@ -14,7 +14,7 @@ unattended live GitHub Project v2 execution yet.
 | GitHub Project v2 tracker | Fixture-backed mode plus live loading and explicit write operations through `gh api graphql`. Bounded `run-loop` can coordinate existing primitives, and auth diagnostics distinguish fixture mode, env-token auth, usable `gh api graphql` auth, missing `gh`, and unusable auth. Full claim reconciliation is not implemented yet. |
 | Linear tracker | Implemented behind the same trait for fixture-backed planning plus live GraphQL reads, state updates, marker workpad comments, follow-up issue creation, and project assignment. Credential-gated smoke coverage is still missing. |
 | Issue Quality Gate | Implemented as a first-pass Markdown contract check. It is useful for dry-run classification, not yet a full source-alignment gate. |
-| Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, and repair against Markdown/input. Live tracker issue creation is not implemented yet. |
+| Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, repair, and explicit `forge-create` tracker issue creation from quality-gated Markdown. Project field setup after creation is not implemented yet. |
 | Orchestrator | Deterministic dispatch planning and a bounded CLI `run-loop` skeleton exist. No long-running worker supervision, retry timers, runtime resume, or full state reconciliation yet. |
 | Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, and safe cleanup helpers exist. Runtime reconciliation cleanup is not wired yet. |
 | Agent backends | Dry-run backend and a conservative Codex subprocess backend exist. Claude Code remains a trait-preserving stub. Full Codex app-server protocol parity is not implemented yet. |
@@ -106,6 +106,12 @@ Project v2 issues:
    - Fixture tests for pagination, status option cache, malformed payloads, and
      permission failures.
    - Dry-run fixtures remain available for local development without credentials.
+
+10. Issue Forge tracker completion.
+   - `forge-create` can create a tracker issue and optionally add it to the
+     configured project through the normalized adapter.
+   - Remaining work: set normalized initial state/capability fields through a
+     tracker-neutral field operation or tracker-specific adapter method.
 
 ## Recommended Next GitHub Issues
 

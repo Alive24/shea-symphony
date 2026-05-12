@@ -116,6 +116,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", report.repaired_markdown);
             Ok(())
         }
+        Command::ForgeCreate {
+            workflow_path,
+            title,
+            markdown,
+            add_to_project,
+            write,
+        } => forge_create(workflow_path, title, markdown, add_to_project, write),
         Command::Help => {
             println!("{}", usage());
             Ok(())
@@ -244,6 +251,49 @@ fn create_follow_up(
     })?;
     println!("create_follow_up=ok issue_id={issue_id}");
     Ok(())
+}
+
+fn forge_create(
+    workflow_path: PathBuf,
+    title: String,
+    markdown: String,
+    add_to_project: bool,
+    write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    require_write_intent(write)?;
+    let report = validate_forge_create_contract(&title, &markdown).inspect_err(|_message| {
+        let report = validate_markdown(&title, &markdown);
+        print_forge_validation(&report);
+    })?;
+
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    let issue_id = adapter.create_follow_up_issue(FollowUpIssueInput {
+        title: report.title,
+        body: markdown,
+        project_id: None,
+        related_issue_ref: None,
+        blocked_by_issue_ref: None,
+    })?;
+
+    if add_to_project {
+        adapter.add_issue_to_project(&issue_id)?;
+    }
+
+    println!("forge_create=ok issue_id={issue_id} added_to_project={add_to_project}");
+    Ok(())
+}
+
+fn validate_forge_create_contract(
+    title: &str,
+    markdown: &str,
+) -> Result<jade_symphony::issue_forge::ForgeValidationReport, String> {
+    let report = validate_markdown(title, markdown);
+    if report.decision.is_dispatchable() {
+        Ok(report)
+    } else {
+        Err("issue forge validation failed; tracker issue was not created".into())
+    }
 }
 
 fn add_to_project(
@@ -759,6 +809,13 @@ enum Command {
         title: String,
         markdown: String,
     },
+    ForgeCreate {
+        workflow_path: PathBuf,
+        title: String,
+        markdown: String,
+        add_to_project: bool,
+        write: bool,
+    },
     Help,
 }
 
@@ -818,6 +875,7 @@ impl Command {
                 parse_forge_markdown_command(&args[1..], ForgeCommandKind::Validate)
             }
             "forge-repair" => parse_forge_markdown_command(&args[1..], ForgeCommandKind::Repair),
+            "forge-create" => parse_forge_create(&args[1..]),
             command if command.starts_with('-') => Err(usage()),
             workflow_path => Ok(Self::Plan {
                 workflow_path: PathBuf::from(workflow_path),
@@ -1013,6 +1071,57 @@ fn parse_add_to_project(args: &[String]) -> Result<Command, String> {
     Ok(Command::AddToProject {
         workflow_path: PathBuf::from(&args[0]),
         issue_id: args[1].clone(),
+        write,
+    })
+}
+
+fn parse_forge_create(args: &[String]) -> Result<Command, String> {
+    let mut workflow_path = None;
+    let mut title = None;
+    let mut body = None;
+    let mut file = None;
+    let mut add_to_project = false;
+    let mut write = false;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--write" => {
+                write = true;
+                index += 1;
+            }
+            "--dry-run" => {
+                index += 1;
+            }
+            "--add-to-project" => {
+                add_to_project = true;
+                index += 1;
+            }
+            "--workflow" if index + 1 < args.len() => {
+                workflow_path = Some(PathBuf::from(&args[index + 1]));
+                index += 2;
+            }
+            "--title" if index + 1 < args.len() => {
+                title = Some(args[index + 1].clone());
+                index += 2;
+            }
+            "--body" if index + 1 < args.len() => {
+                body = Some(args[index + 1].clone());
+                index += 2;
+            }
+            "--file" if index + 1 < args.len() => {
+                file = Some(PathBuf::from(&args[index + 1]));
+                index += 2;
+            }
+            _ => return Err(usage()),
+        }
+    }
+
+    Ok(Command::ForgeCreate {
+        workflow_path: workflow_path.ok_or_else(usage)?,
+        title: title.ok_or_else(usage)?,
+        markdown: read_source_arg(body, file)?,
+        add_to_project,
         write,
     })
 }
@@ -1229,6 +1338,7 @@ fn usage() -> String {
         "  jade-symphony forge-draft --title <title> --goal <goal>",
         "  jade-symphony forge-validate --title <title> (--file <markdown-file> | --body <markdown>)",
         "  jade-symphony forge-repair --title <title> (--file <markdown-file> | --body <markdown>)",
+        "  jade-symphony forge-create --workflow <path-to-WORKFLOW.md> --title <title> (--file <markdown-file> | --body <markdown>) [--add-to-project] --write",
         "",
         "Compatibility: `jade-symphony <path-to-WORKFLOW.md>` is treated as `plan`.",
     ]
@@ -1238,6 +1348,28 @@ fn usage() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn forge_contract() -> String {
+        [
+            "## Issue Goal",
+            "Create a validated tracker issue.",
+            "## Why Now",
+            "Now.",
+            "## Issue Context",
+            "Context.",
+            "## Non-Negotiable Guardrails",
+            "- Guard.",
+            "## Scope",
+            "Scope.",
+            "## Canonical References",
+            "### Target Repository / Package",
+            "- Alive24/jade-symphony",
+            "## Verification",
+            "### Completion Criteria",
+            "- Pass.",
+        ]
+        .join("\n")
+    }
 
     #[test]
     fn parses_run_loop_flags() {
@@ -1294,5 +1426,84 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("Usage:"));
+    }
+
+    #[test]
+    fn parses_forge_create_flags() {
+        let command = Command::parse(vec![
+            "forge-create".into(),
+            "--workflow".into(),
+            "examples/dry-run-workflow.md".into(),
+            "--title".into(),
+            "Create issue".into(),
+            "--body".into(),
+            forge_contract(),
+            "--add-to-project".into(),
+            "--write".into(),
+        ])
+        .unwrap();
+
+        let Command::ForgeCreate {
+            workflow_path,
+            title,
+            markdown,
+            add_to_project,
+            write,
+        } = command
+        else {
+            panic!("expected forge-create command");
+        };
+
+        assert_eq!(workflow_path, PathBuf::from("examples/dry-run-workflow.md"));
+        assert_eq!(title, "Create issue");
+        assert!(markdown.contains("## Issue Goal"));
+        assert!(add_to_project);
+        assert!(write);
+    }
+
+    #[test]
+    fn rejects_forge_create_with_both_body_and_file() {
+        let error = Command::parse(vec![
+            "forge-create".into(),
+            "--workflow".into(),
+            "WORKFLOW.md".into(),
+            "--title".into(),
+            "Create issue".into(),
+            "--body".into(),
+            forge_contract(),
+            "--file".into(),
+            "issue.md".into(),
+        ])
+        .unwrap_err();
+
+        assert!(error.contains("Usage:"));
+    }
+
+    #[test]
+    fn validates_forge_create_contract_before_tracker_write() {
+        assert!(validate_forge_create_contract("Create issue", &forge_contract()).is_ok());
+
+        let error = validate_forge_create_contract("Thin issue", "make it better").unwrap_err();
+        assert!(error.contains("tracker issue was not created"));
+    }
+
+    #[test]
+    fn forge_create_can_use_memory_tracker_adapter() {
+        let temp = tempfile::tempdir().unwrap();
+        let workflow_path = temp.path().join("WORKFLOW.md");
+        std::fs::write(
+            &workflow_path,
+            "---\ntracker:\n  kind: memory\nobservability:\n  logs_root: log\n---\nPrompt",
+        )
+        .unwrap();
+
+        forge_create(
+            workflow_path,
+            "Create issue".into(),
+            forge_contract(),
+            true,
+            true,
+        )
+        .unwrap();
     }
 }

@@ -17,7 +17,7 @@ unattended live GitHub Project v2 execution yet.
 | Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, repair, and explicit `forge-create` tracker issue creation from quality-gated Markdown. Project field setup after creation is not implemented yet. |
 | Orchestrator | Deterministic dispatch planning and a bounded CLI `run-loop` skeleton exist. No long-running worker supervision, retry timers, runtime resume, or full state reconciliation yet. |
 | Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, and safe cleanup helpers exist. Runtime reconciliation cleanup is not wired yet. |
-| Agent backends | Dry-run backend and a conservative Codex subprocess backend exist. Claude Code remains a trait-preserving stub. Full Codex app-server protocol parity is not implemented yet. |
+| Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Full Codex app-server and Claude Code protocol parity are not implemented yet. |
 | Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, and workpad/status evidence helpers exist. Persistent review worker reconciliation is not implemented yet. |
 | Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events. Runtime state file helpers exist under `logs_root/runtime`, but loop wiring is still pending. No web/API surface yet. |
 | Tests | Unit tests cover the dry-run skeleton. No credential-gated integration tests yet. |
@@ -74,9 +74,9 @@ Project v2 issues:
    - Preserve fixture mode for credential-free development.
 
 6. Live agent execution.
-   - Harden the Codex subprocess backend, then implement full app-server
-     protocol transport.
-   - Keep Claude Code as a peer backend path, even if still delayed.
+   - Harden the Codex and Claude Code subprocess backends, then implement full
+     protocol transports.
+   - Keep Claude Code as a peer backend path.
    - Normalize session IDs, completion, failures, token usage, and rate-limit
      events.
    - Ensure external command execution happens only inside the prepared
@@ -174,6 +174,19 @@ Acceptance:
 - launches configured Codex command in workspace cwd.
 - starts session and runs a turn.
 - extracts thread/turn/session IDs.
+- emits normalized backend events.
+- handles failures without stalling the orchestrator.
+- keeps live tests credential/tool gated.
+
+### 4b. Implement Full Claude Code Protocol Backend
+
+Goal: evolve the conservative Claude Code subprocess path into the configured
+Claude Code protocol flow while preserving the normalized backend interface.
+
+Acceptance:
+
+- launches configured Claude Code command in workspace cwd.
+- starts a session or equivalent turn.
 - emits normalized backend events.
 - handles failures without stalling the orchestrator.
 - keeps live tests credential/tool gated.

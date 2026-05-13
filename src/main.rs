@@ -2001,6 +2001,7 @@ fn run_loop_handoff_workpad(
         format!("- Branch: `{}`", handoff.branch_name),
         format!("- PR title: `{}`", handoff.pull_request.title),
         format!("- PR base branch: `{}`", handoff.pull_request.base_branch),
+        rework_continuation_workpad_line(handoff),
         live_handoff_workpad_line(result),
         String::new(),
         "### Main-Agent Boundary".to_string(),
@@ -2008,6 +2009,16 @@ fn run_loop_handoff_workpad(
         "- `Human Review` is reserved for independent Review Agent pass evidence.".to_string(),
     ]
     .join("\n")
+}
+
+fn rework_continuation_workpad_line(handoff: &IssueHandoffPlan) -> String {
+    match &handoff.continuation {
+        Some(continuation) => format!(
+            "- Rework continuation: `{}` from `{}` ({})",
+            continuation.pull_request_url, continuation.source, continuation.pull_request_state
+        ),
+        None => "- Rework continuation: `not-used`".to_string(),
+    }
 }
 
 fn live_handoff_workpad_line(result: &IssueExecutionResult) -> String {

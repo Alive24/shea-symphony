@@ -7,6 +7,7 @@ pub mod handoff;
 pub mod issue_forge;
 pub mod merge_lane;
 pub mod model;
+pub mod observability_api;
 pub mod orchestrator;
 pub mod ownership;
 pub mod profiles;

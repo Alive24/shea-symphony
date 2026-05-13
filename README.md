@@ -10,8 +10,8 @@ parsing, typed config, normalized tracker issues, fixture-backed and `gh`-backed
 read-only GitHub Project v2 issue loading, dispatch planning, quality-gate
 checks, backend abstractions, workspace safety helpers, event-log primitives,
 an operator-readable status snapshot with event-log and integration-gap links,
-machine-readable JSON status output, and a real dogfood workflow prompt for
-GitHub Project v2 runs.
+machine-readable JSON status output, a local one-request observability API
+endpoint, and a real dogfood workflow prompt for GitHub Project v2 runs.
 
 It does **not** yet fully autonomously execute GitHub Project v2 issues,
 run Codex/Claude through the final app-server flow, or supervise long-running
@@ -123,6 +123,8 @@ worker supervision are still future work.
   issues, token counters, event-log path, gate details, and integration gaps.
   `status WORKFLOW --json` prints the same `RuntimeSnapshot` as JSON for
   dogfood scripts.
+- `status-api WORKFLOW --once` serves the current runtime snapshot at local
+  `GET /status.json` or `GET /status` for one request, then exits.
 - `doctor` / `audit-project` can read the configured tracker and report
   workflow invariant violations such as Agent Review without PR evidence, Human
   Review without review pass evidence, dirty Merging PRs, stale-looking In
@@ -200,6 +202,7 @@ cargo run -- plan examples/dry-run-workflow.md
 cargo run -- plan-dispatch examples/dry-run-workflow.md
 cargo run -- status examples/dry-run-workflow.md
 cargo run -- status examples/dry-run-workflow.md --json
+cargo run -- status-api examples/dry-run-workflow.md --bind 127.0.0.1:8787 --once
 cargo run -- run-once examples/dry-run-workflow.md
 cargo run -- run-once examples/git-identity-workflow.md
 cargo run -- run-once examples/codex-subprocess-workflow.md
@@ -317,7 +320,8 @@ Merging role separation.
 - Claude Code full protocol transport beyond the subprocess fixture path.
 - dynamic tool registry such as `linear_graphql`.
 - runtime workflow reload and long-running worker supervision.
-- web/API observability surface.
+- persistent/remote web observability beyond the local one-request
+  `status-api` endpoint.
 
 ## Not Implemented Yet
 

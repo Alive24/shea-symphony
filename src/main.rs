@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::thread;
@@ -30,6 +31,7 @@ use jade_symphony::merge_lane::{
     merge_pull_request, pull_request_status_from_linked, MergeLaneDecisionKind,
 };
 use jade_symphony::model::{normalize_state, GateDecision, GateDecisionKind, TrackerIssue};
+use jade_symphony::observability_api::serve_once;
 use jade_symphony::orchestrator::Orchestrator;
 use jade_symphony::ownership::{
     render_runtime_ownership_marker, runtime_ownership_decision, RuntimeOwnershipDecision,
@@ -85,6 +87,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             workflow_path,
             json,
         } => plan(workflow_path, json),
+        Command::StatusApi {
+            workflow_path,
+            bind,
+            once,
+        } => status_api(workflow_path, bind, once),
         Command::Validate { workflow_path } => validate(workflow_path),
         Command::Inspect { workflow_path } => inspect(workflow_path),
         Command::Doctor { options } => doctor(options),
@@ -218,8 +225,36 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn plan(workflow_path: PathBuf, json: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let workflow = WorkflowDefinition::load(&workflow_path)?;
-    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
+    let snapshot = build_plan_snapshot(&workflow_path)?;
+    println!("{}", render_plan_snapshot(&snapshot, json)?);
+
+    Ok(())
+}
+
+fn status_api(
+    workflow_path: PathBuf,
+    bind: SocketAddr,
+    once: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !once {
+        return Err("status-api currently requires --once".into());
+    }
+    if !bind.ip().is_loopback() {
+        return Err("status-api bind address must be loopback for this first slice".into());
+    }
+
+    let snapshot = build_plan_snapshot(&workflow_path)?;
+    println!("status_api=serving bind={bind} mode=once");
+    let local_addr = serve_once(bind, &snapshot)?;
+    println!("status_api=stopped bind={local_addr} mode=once");
+    Ok(())
+}
+
+fn build_plan_snapshot(
+    workflow_path: &Path,
+) -> Result<jade_symphony::model::RuntimeSnapshot, Box<dyn std::error::Error>> {
+    let workflow = WorkflowDefinition::load(workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, workflow_path)?;
     config.validate()?;
 
     let adapter = adapter_from_config(&config);
@@ -236,10 +271,7 @@ fn plan(workflow_path: PathBuf, json: bool) -> Result<(), Box<dyn std::error::Er
     plan.integration_gaps.extend(integration_gaps);
     plan.snapshot.integration_gaps = plan.integration_gaps.clone();
     plan.snapshot.event_log_path = Some(event_log_path);
-
-    println!("{}", render_plan_snapshot(&plan.snapshot, json)?);
-
-    Ok(())
+    Ok(plan.snapshot)
 }
 
 fn render_plan_snapshot(
@@ -2899,6 +2931,11 @@ enum Command {
         workflow_path: PathBuf,
         json: bool,
     },
+    StatusApi {
+        workflow_path: PathBuf,
+        bind: SocketAddr,
+        once: bool,
+    },
     Validate {
         workflow_path: PathBuf,
     },
@@ -3124,6 +3161,8 @@ struct Cli {
 enum CliCommand {
     #[command(alias = "plan-dispatch", alias = "dry-run", alias = "status")]
     Plan(WorkflowPathArgs),
+    #[command(name = "status-api")]
+    StatusApi(StatusApiArgs),
     #[command(alias = "validate-workflow")]
     Validate(WorkflowPathArgs),
     Inspect(WorkflowPathArgs),
@@ -3214,6 +3253,16 @@ struct DoctorArgs {
     _dry_run: bool,
     #[arg(long = "write")]
     _write: bool,
+}
+
+#[derive(Debug, Args)]
+struct StatusApiArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long, default_value = "127.0.0.1:8787")]
+    bind: SocketAddr,
+    #[arg(long)]
+    once: bool,
 }
 
 #[derive(Debug, Args)]
@@ -3554,6 +3603,11 @@ impl TryFrom<Cli> for Command {
                     CliCommand::Plan(args) => Ok(Self::Plan {
                         workflow_path: args.workflow_path,
                         json: args.json,
+                    }),
+                    CliCommand::StatusApi(args) => Ok(Self::StatusApi {
+                        workflow_path: args.workflow_path,
+                        bind: args.bind,
+                        once: args.once,
                     }),
                     CliCommand::Validate(args) => Ok(Self::Validate {
                         workflow_path: args.workflow_path,
@@ -4209,6 +4263,24 @@ mod tests {
                     json: true,
                     strict: true,
                 }
+            }
+        );
+    }
+
+    #[test]
+    fn parses_status_api_command() {
+        assert_eq!(
+            parse(&[
+                "status-api",
+                "examples/dry-run-workflow.md",
+                "--bind",
+                "127.0.0.1:0",
+                "--once"
+            ]),
+            Command::StatusApi {
+                workflow_path: PathBuf::from("examples/dry-run-workflow.md"),
+                bind: "127.0.0.1:0".parse().unwrap(),
+                once: true,
             }
         );
     }

@@ -24,6 +24,7 @@ yet.
 | Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Prepared runs include selected profile/instance metadata and profile environment context. Full Codex app-server and Claude Code protocol parity are not implemented yet. |
 | Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, evidence-first Rework diagnostics for confirmed findings, review-freshness evidence for Merging conflict repair, bounded `review-loop` selection/reconciliation, and workpad/status evidence helpers exist. Persistent background review worker supervision is not implemented yet. |
 | Merging | `merge-once` can inspect issues already in `Merging`, require one linked PR, check live GitHub PR state/review/check/mergeability data where available, merge clean approved PRs only with explicit `--write`, and route blockers to `Rework` or `Need Human Input` with workpad evidence. Continuous merge polling and issue closing beyond Project `Done` are not implemented yet. |
+| Project doctor | Read-only `doctor` / `audit-project` reports workflow invariant violations from normalized tracker issues, including missing PR handoff evidence, missing review pass evidence, dirty Merging PRs, missing runtime ownership hints, and queued issues with PRs. Repair mode is not implemented yet. |
 | Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events with actor and profile metadata. Runtime state files are written during write-mode `run-loop` issue execution, including actor role/label, git author, and optional profile/instance identity when configured; resume, retry, and stall supervision events are also recorded. No web/API surface yet. |
 | Tests | Unit tests cover the dry-run skeleton. No credential-gated integration tests yet. |
 
@@ -150,6 +151,8 @@ Project v2 issues:
      endpoint is still needed.
    - Clear integration-gap reporting when credentials are missing or unusable
      while avoiding false missing-token warnings when `gh api graphql` works.
+   - `doctor` / `audit-project` is available as a read-only project invariant
+     audit. Explicit-write repair mode remains a follow-up.
 
 9. Integration profile.
    - Credential-gated GitHub Project v2 smoke test.

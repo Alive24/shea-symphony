@@ -102,6 +102,10 @@ worker supervision are still future work.
   branch, and create or reuse one GitHub PR after successful execution.
 - terminal status output reports polling state, planned running/skipped/retrying
   issues, token counters, event-log path, gate details, and integration gaps.
+- `doctor` / `audit-project` can read the configured tracker and report
+  workflow invariant violations such as Agent Review without PR evidence, Human
+  Review without review pass evidence, dirty Merging PRs, stale-looking In
+  Progress work, and queued issues with attached PRs.
 - JSONL event-log primitives exist and can record selected profile identity.
 - runtime state helpers can write, read, and clear a tracker-neutral
   `runtime/runtime-state.json` file under the configured logs root, including
@@ -157,6 +161,7 @@ Expected shape:
 cargo run -- validate examples/dry-run-workflow.md
 cargo run -- validate-workflow examples/dry-run-workflow.md
 cargo run -- inspect examples/dry-run-workflow.md
+cargo run -- doctor examples/dry-run-workflow.md
 cargo run -- plan examples/dry-run-workflow.md
 cargo run -- plan-dispatch examples/dry-run-workflow.md
 cargo run -- status examples/dry-run-workflow.md

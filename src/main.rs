@@ -15,9 +15,10 @@ use jade_symphony::orchestrator::Orchestrator;
 use jade_symphony::prompt::render_prompt;
 use jade_symphony::quality_gate::evaluate_issue;
 use jade_symphony::review::{
-    render_review_workpad, review_gate_decision, transition_allowed_for_main_agent,
-    transition_allowed_for_review_agent, FakeReviewBackend, FakeReviewOutcome,
-    GeminiCliReviewBackend, ReviewBackend, ReviewJob, ReviewRequest,
+    classify_review_freshness, render_review_freshness_workpad, render_review_workpad,
+    review_gate_decision, transition_allowed_for_main_agent, transition_allowed_for_review_agent,
+    FakeReviewBackend, FakeReviewOutcome, GeminiCliReviewBackend, ReviewBackend,
+    ReviewFreshnessInput, ReviewJob, ReviewRequest, ReviewReworkClass, ReviewStaleReason,
 };
 use jade_symphony::runtime_state::{
     clear_runtime_state, load_runtime_state, save_runtime_state, RuntimeIssueState, RuntimeState,
@@ -83,6 +84,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             issue_ref,
             write,
         } => review_once(workflow_path, issue_ref, write),
+        Command::ReviewFreshness { input } => review_freshness(input),
         Command::Gate {
             workflow_path,
             issue_ref,
@@ -404,6 +406,35 @@ fn review_once(
         job.backend, decision.outcome, decision.target_state
     );
     println!("{}", decision.message);
+    Ok(())
+}
+
+fn review_freshness(input: ReviewFreshnessInput) -> Result<(), Box<dyn std::error::Error>> {
+    let report = classify_review_freshness(input);
+    println!("review_freshness={:?}", report.decision.kind);
+    println!(
+        "prior_human_review_valid={}",
+        report.decision.prior_human_review_valid
+    );
+    println!(
+        "human_rereview_required={}",
+        report.decision.human_rereview_required
+    );
+    println!(
+        "main_agent_target_state={}",
+        report.decision.main_agent_target_state
+    );
+    println!(
+        "authorized_next_state={}",
+        report
+            .decision
+            .authorized_next_state
+            .as_deref()
+            .unwrap_or("none")
+    );
+    println!("rationale={}", report.decision.rationale);
+    println!("\n--- workpad evidence ---\n");
+    println!("{}", render_review_freshness_workpad(&report));
     Ok(())
 }
 
@@ -1066,6 +1097,9 @@ enum Command {
         issue_ref: String,
         write: bool,
     },
+    ReviewFreshness {
+        input: ReviewFreshnessInput,
+    },
     Gate {
         workflow_path: PathBuf,
         issue_ref: String,
@@ -1172,6 +1206,8 @@ enum CliCommand {
     ReviewFake(ReviewFakeArgs),
     #[command(name = "review-once")]
     ReviewOnce(ReviewOnceArgs),
+    #[command(name = "review-freshness")]
+    ReviewFreshness(ReviewFreshnessArgs),
     Gate(GateArgs),
     #[command(name = "gate-apply")]
     GateApply(GateArgs),
@@ -1295,6 +1331,68 @@ struct ReviewOnceArgs {
     write: bool,
     #[arg(long = "dry-run")]
     _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct ReviewFreshnessArgs {
+    #[arg(long = "issue")]
+    issue_ref: String,
+    #[arg(long = "prior-head")]
+    prior_head_sha: String,
+    #[arg(long = "current-head")]
+    current_head_sha: String,
+    #[arg(long = "prior-base")]
+    prior_base_sha: String,
+    #[arg(long = "current-base")]
+    current_base_sha: String,
+    #[arg(long = "changed-file")]
+    changed_files: Vec<String>,
+    #[arg(long = "stale-reason", value_enum)]
+    stale_reason: CliReviewStaleReason,
+    #[arg(long = "rework-class", value_enum)]
+    rework_class: CliReviewReworkClass,
+    #[arg(long = "patch-summary")]
+    patch_summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliReviewStaleReason {
+    MergeConflict,
+    BaseBranchUpdated,
+    ReviewOutdated,
+    Unknown,
+}
+
+impl From<CliReviewStaleReason> for ReviewStaleReason {
+    fn from(value: CliReviewStaleReason) -> Self {
+        match value {
+            CliReviewStaleReason::MergeConflict => ReviewStaleReason::MergeConflict,
+            CliReviewStaleReason::BaseBranchUpdated => ReviewStaleReason::BaseBranchUpdated,
+            CliReviewStaleReason::ReviewOutdated => ReviewStaleReason::ReviewOutdated,
+            CliReviewStaleReason::Unknown => ReviewStaleReason::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliReviewReworkClass {
+    MechanicalConflictResolution,
+    BaseRefresh,
+    SemanticChange,
+    Unknown,
+}
+
+impl From<CliReviewReworkClass> for ReviewReworkClass {
+    fn from(value: CliReviewReworkClass) -> Self {
+        match value {
+            CliReviewReworkClass::MechanicalConflictResolution => {
+                ReviewReworkClass::MechanicalConflictResolution
+            }
+            CliReviewReworkClass::BaseRefresh => ReviewReworkClass::BaseRefresh,
+            CliReviewReworkClass::SemanticChange => ReviewReworkClass::SemanticChange,
+            CliReviewReworkClass::Unknown => ReviewReworkClass::Unknown,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -1431,6 +1529,19 @@ impl TryFrom<Cli> for Command {
                         workflow_path: args.workflow_path,
                         issue_ref: args.issue_ref,
                         write: args.write,
+                    }),
+                    CliCommand::ReviewFreshness(args) => Ok(Self::ReviewFreshness {
+                        input: ReviewFreshnessInput {
+                            issue_ref: args.issue_ref,
+                            prior_head_sha: args.prior_head_sha,
+                            current_head_sha: args.current_head_sha,
+                            prior_base_sha: args.prior_base_sha,
+                            current_base_sha: args.current_base_sha,
+                            changed_files: args.changed_files,
+                            stale_reason: args.stale_reason.into(),
+                            rework_class: args.rework_class.into(),
+                            patch_summary: args.patch_summary,
+                        },
                     }),
                     CliCommand::Gate(args) => Ok(Self::Gate {
                         workflow_path: args.workflow_path,
@@ -1693,6 +1804,45 @@ mod tests {
                 write: true
             }
         );
+    }
+
+    #[test]
+    fn parses_review_freshness_command() {
+        let command = Command::parse(vec![
+            "review-freshness".into(),
+            "--issue".into(),
+            "#33".into(),
+            "--prior-head".into(),
+            "old-head".into(),
+            "--current-head".into(),
+            "new-head".into(),
+            "--prior-base".into(),
+            "old-base".into(),
+            "--current-base".into(),
+            "new-base".into(),
+            "--changed-file".into(),
+            "docs/dogfood-readiness.md".into(),
+            "--stale-reason".into(),
+            "merge-conflict".into(),
+            "--rework-class".into(),
+            "mechanical-conflict-resolution".into(),
+            "--patch-summary".into(),
+            "Resolved conflict without semantic changes.".into(),
+        ])
+        .unwrap();
+
+        let Command::ReviewFreshness { input } = command else {
+            panic!("expected review-freshness command");
+        };
+
+        assert_eq!(input.issue_ref, "#33");
+        assert_eq!(input.changed_files, vec!["docs/dogfood-readiness.md"]);
+        assert_eq!(input.stale_reason, ReviewStaleReason::MergeConflict);
+        assert_eq!(
+            input.rework_class,
+            ReviewReworkClass::MechanicalConflictResolution
+        );
+        assert!(input.patch_summary.unwrap().contains("Resolved conflict"));
     }
 
     #[test]

@@ -21,7 +21,7 @@ yet.
 | Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes, idle polling, claim-helper use, runtime-state persistence, resume preflight, retry backoff records, stall detection, and live PR handoff in non-fixture GitHub mode exists. No long-running worker supervision, automated stall restart, full multi-worker runtime resume reconciliation, or full state reconciliation yet. |
 | Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, repository-local git identity application, workspace/branch/PR handoff planning, live git worktree/branch creation, branch push, PR create-or-reuse, and run-loop handoff evidence exist. Runtime reconciliation cleanup is not wired yet. |
 | Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Full Codex app-server and Claude Code protocol parity are not implemented yet. |
-| Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, review-freshness evidence for Merging conflict repair, bounded `review-loop` selection/reconciliation, and workpad/status evidence helpers exist. Persistent background review worker supervision is not implemented yet. |
+| Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, evidence-first Rework diagnostics for confirmed findings, review-freshness evidence for Merging conflict repair, bounded `review-loop` selection/reconciliation, and workpad/status evidence helpers exist. Persistent background review worker supervision is not implemented yet. |
 | Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events with actor metadata. Runtime state files are written during write-mode `run-loop` issue execution, including actor role/label and git author when configured; resume, retry, and stall supervision events are also recorded. No web/API surface yet. |
 | Tests | Unit tests cover the dry-run skeleton. No credential-gated integration tests yet. |
 
@@ -77,6 +77,9 @@ Project v2 issues:
      preserving prior Human Review. Mechanical conflict repair can preserve
      prior Human Review for an authorized merge/handoff flow; semantic or
      unknown rework requires the normal Agent Review and Human Review path.
+   - Rework transitions should remain evidence-first: write compact structured
+     diagnostics to the canonical issue workpad before setting `Rework`; if the
+     diagnostic write fails, stop before changing state.
 
 5. Linear integration hardening.
    - Add credential-gated live smoke tests for reads, state updates, and workpad

@@ -47,6 +47,9 @@ worker supervision are still future work.
 - review freshness helpers can classify Merging-to-Rework repairs as
   mechanical, semantic, or unknown and render workpad evidence for whether prior
   Human Review remains valid.
+- structured Rework diagnostics can render compact, durable issue workpad
+  evidence for confirmed review findings, merge conflicts, dirty PRs,
+  validation failures, and runtime failures before a transition to `Rework`.
 - `review-loop` can discover `Agent Review` issues, avoid duplicate review
   worker markers, run a configured independent review backend in bounded mode,
   and reconcile pass/rework/inconclusive transitions through the Review Agent
@@ -204,6 +207,10 @@ implementation agent to set `Human Review`. Mechanical conflict repair can
 preserve prior Human Review evidence for an authorized merge/handoff flow;
 semantic or unknown rework requires the normal Agent Review and Human Review
 path.
+Confirmed Review Agent findings now route through an evidence-first Rework
+diagnostic path: Jade Symphony writes the structured diagnostic workpad before
+setting `Rework`, and it does not change state if the durable workpad write
+fails.
 These commands are adapter operations plus the first runtime-loop
 skeleton, not full autonomous orchestration. Use write mode carefully until
 claim reconciliation, resume state, and PR automation exist.

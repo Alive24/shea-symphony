@@ -27,6 +27,10 @@ use jade_symphony::review::{
     GeminiCliReviewBackend, ReviewBackend, ReviewFreshnessInput, ReviewJob, ReviewRequest,
     ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
 };
+use jade_symphony::rework::{
+    render_rework_diagnostic_workpad, rework_diagnostic_from_review, rework_transition_expected,
+    ReworkDiagnostic,
+};
 use jade_symphony::runtime_state::{
     clear_runtime_state, detect_runtime_stall, load_runtime_state, mark_runtime_state_updated,
     record_runtime_retry, save_runtime_state, RuntimeIssueState, RuntimeRetryState,
@@ -34,7 +38,7 @@ use jade_symphony::runtime_state::{
 };
 use jade_symphony::status_surface::render_snapshot;
 use jade_symphony::tracker::{
-    adapter_from_config, claim_decision, ClaimDecision, FollowUpIssueInput,
+    adapter_from_config, claim_decision, ClaimDecision, FollowUpIssueInput, TrackerAdapter,
 };
 use jade_symphony::workflow::WorkflowDefinition;
 use jade_symphony::workspace::{
@@ -738,21 +742,39 @@ fn run_review_job(
 }
 
 fn apply_review_result(
-    adapter: &dyn jade_symphony::tracker::TrackerAdapter,
+    adapter: &dyn TrackerAdapter,
     issue_ref: &str,
     issue: &TrackerIssue,
     job: &jade_symphony::review::ReviewJob,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let decision = review_gate_decision(job);
-    let workpad = render_review_workpad(issue, job);
-
-    adapter.upsert_workpad(issue_ref, &workpad)?;
     if let Some(target_state) = decision.target_state {
         if !transition_allowed_for_review_agent(target_state, &decision) {
             return Err("review agent transition is not allowed for this review decision".into());
         }
+        if rework_transition_expected(&decision) {
+            let diagnostic = rework_diagnostic_from_review(issue, job, &decision);
+            transition_issue_to_rework_with_diagnostic(adapter, issue, &diagnostic)?;
+            return Ok(());
+        }
+    }
+
+    let workpad = render_review_workpad(issue, job);
+    adapter.upsert_workpad(issue_ref, &workpad)?;
+    if let Some(target_state) = decision.target_state {
         adapter.set_state(issue_ref, target_state)?;
     }
+    Ok(())
+}
+
+fn transition_issue_to_rework_with_diagnostic(
+    adapter: &dyn TrackerAdapter,
+    issue: &TrackerIssue,
+    diagnostic: &ReworkDiagnostic,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let workpad = render_rework_diagnostic_workpad(issue, diagnostic);
+    adapter.upsert_workpad(&issue.identifier, &workpad)?;
+    adapter.set_state(&issue.identifier, "rework")?;
     Ok(())
 }
 
@@ -2448,6 +2470,7 @@ fn usage() -> String {
 mod tests {
     use super::*;
     use jade_symphony::tracker::MemoryTracker;
+    use std::cell::RefCell;
 
     fn forge_contract() -> String {
         [
@@ -2505,6 +2528,106 @@ mod tests {
             project_fields: Default::default(),
             created_at: None,
             updated_at: None,
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingAdapter {
+        operations: RefCell<Vec<String>>,
+        fail_workpad: bool,
+    }
+
+    impl RecordingAdapter {
+        fn operations(&self) -> Vec<String> {
+            self.operations.borrow().clone()
+        }
+    }
+
+    impl TrackerAdapter for RecordingAdapter {
+        fn kind(&self) -> &'static str {
+            "recording"
+        }
+
+        fn list_dispatchable_issues(
+            &self,
+        ) -> Result<Vec<TrackerIssue>, jade_symphony::tracker::TrackerError> {
+            Ok(Vec::new())
+        }
+
+        fn get_issue(
+            &self,
+            _issue_ref: &str,
+        ) -> Result<Option<TrackerIssue>, jade_symphony::tracker::TrackerError> {
+            Ok(None)
+        }
+
+        fn fetch_issues_by_states(
+            &self,
+            _states: &[String],
+        ) -> Result<Vec<TrackerIssue>, jade_symphony::tracker::TrackerError> {
+            Ok(Vec::new())
+        }
+
+        fn set_state(
+            &self,
+            issue_ref: &str,
+            normalized_state: &str,
+        ) -> Result<(), jade_symphony::tracker::TrackerError> {
+            self.operations
+                .borrow_mut()
+                .push(format!("set_state:{issue_ref}:{normalized_state}"));
+            Ok(())
+        }
+
+        fn upsert_workpad(
+            &self,
+            issue_ref: &str,
+            markdown: &str,
+        ) -> Result<(), jade_symphony::tracker::TrackerError> {
+            if self.fail_workpad {
+                return Err(
+                    jade_symphony::tracker::TrackerError::IntegrationUnavailable(
+                        "workpad failed".into(),
+                    ),
+                );
+            }
+            assert!(markdown.contains("## Rework Diagnostic"));
+            self.operations
+                .borrow_mut()
+                .push(format!("workpad:{issue_ref}"));
+            Ok(())
+        }
+
+        fn create_follow_up_issue(
+            &self,
+            _input: FollowUpIssueInput,
+        ) -> Result<String, jade_symphony::tracker::TrackerError> {
+            Ok("dry-run:follow-up".into())
+        }
+
+        fn add_issue_to_project(
+            &self,
+            _issue_id: &str,
+        ) -> Result<(), jade_symphony::tracker::TrackerError> {
+            Ok(())
+        }
+
+        fn link_pull_request(
+            &self,
+            _issue_ref: &str,
+            _pr_ref: &str,
+        ) -> Result<(), jade_symphony::tracker::TrackerError> {
+            Ok(())
+        }
+
+        fn list_linked_pull_requests(
+            &self,
+            _issue_ref: &str,
+        ) -> Result<
+            Vec<jade_symphony::model::LinkedPullRequest>,
+            jade_symphony::tracker::TrackerError,
+        > {
+            Ok(Vec::new())
         }
     }
 
@@ -3011,6 +3134,44 @@ mod tests {
             .contains("Branch: `feature/issue-29-wire-runtime-state-persistence-into-run-loop`"));
         assert!(workpad.contains("PR title: `#29: Wire runtime state persistence into run-loop`"));
         assert!(workpad.contains("Live PR: `https://github.com/Alive24/jade-symphony/pull/45`"));
+    }
+
+    #[test]
+    fn rework_transition_writes_diagnostic_before_state_change() {
+        let adapter = RecordingAdapter::default();
+        let issue = tracker_issue("Agent Review");
+        let diagnostic = ReworkDiagnostic::validation_failure(
+            issue.identifier.clone(),
+            "cargo test",
+            "failing test output",
+        );
+
+        transition_issue_to_rework_with_diagnostic(&adapter, &issue, &diagnostic).unwrap();
+
+        assert_eq!(
+            adapter.operations(),
+            vec![
+                "workpad:#29".to_string(),
+                "set_state:#29:rework".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn rework_transition_does_not_set_state_when_workpad_write_fails() {
+        let adapter = RecordingAdapter {
+            operations: RefCell::new(Vec::new()),
+            fail_workpad: true,
+        };
+        let issue = tracker_issue("Agent Review");
+        let diagnostic = ReworkDiagnostic::validation_failure(
+            issue.identifier.clone(),
+            "cargo test",
+            "failing test output",
+        );
+
+        assert!(transition_issue_to_rework_with_diagnostic(&adapter, &issue, &diagnostic).is_err());
+        assert!(adapter.operations().is_empty());
     }
 
     #[test]

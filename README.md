@@ -75,7 +75,8 @@ worker supervision are still future work.
   and print the bounded `run-loop --max-iterations 1 --write` next step when the
   smoke is ready.
 - basic strict prompt rendering supports known `issue.*` fields, `attempt`, and
-  simple `{% if %}` / `{% else %}` blocks.
+  simple `{% if %}` / `{% else %}` blocks. The supported subset is documented
+  in `docs/prompt-template-contract.md`.
 - `examples/github-project-workflow.md` now contains an inline Jade execution
   prompt with the operating loop, workpad discipline, review boundary, stop
   conditions, and one issue / one branch / one PR handoff rules.

@@ -65,6 +65,10 @@ worker supervision are still future work.
 - Issue Forge reflective mode can scan a local context file for conservative
   follow-up signals and print quality-gated candidate issue drafts without
   creating tracker issues.
+- `dogfood-smoke` can run a non-mutating preflight for a controlled live
+  dogfood issue, report tracker/auth gaps, runtime state and event log paths,
+  and print the bounded `run-loop --max-iterations 1 --write` next step when the
+  smoke is ready.
 - basic strict prompt rendering supports known `issue.*` fields, `attempt`, and
   simple `{% if %}` / `{% else %}` blocks.
 - `examples/github-project-workflow.md` now contains an inline Jade execution
@@ -314,6 +318,7 @@ Dry-run dispatch:
 cargo run -- plan examples/dry-run-workflow.md
 cargo run -- run-once examples/dry-run-workflow.md
 cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
+cargo run -- dogfood-smoke examples/github-project-workflow.md --dry-run
 ```
 
 The dry-run workflow uses:

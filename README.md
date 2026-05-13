@@ -128,6 +128,9 @@ worker supervision are still future work.
   active runtime state must reconcile with tracker state, retry backoff is
   honored, and stale active work is reported as stalled instead of being
   silently overwritten.
+- write-mode `run-loop` writes a tracker-visible runtime ownership marker before
+  backend execution and skips active `In Progress` work when the marker points
+  at a different profile/workspace/branch.
 - write-mode `run-loop` saves active issue runtime state, updates it with
   backend result evidence, records final transition intent, and clears it after
   successful handoff/block transition.

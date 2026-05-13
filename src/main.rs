@@ -30,6 +30,10 @@ use jade_symphony::merge_lane::{
 };
 use jade_symphony::model::{normalize_state, GateDecision, GateDecisionKind, TrackerIssue};
 use jade_symphony::orchestrator::Orchestrator;
+use jade_symphony::ownership::{
+    render_runtime_ownership_marker, runtime_ownership_decision, RuntimeOwnershipDecision,
+    RuntimeOwnershipMarker,
+};
 use jade_symphony::profiles::{discover_execution_profiles, selected_execution_profile};
 use jade_symphony::prompt::render_prompt;
 use jade_symphony::quality_gate::{
@@ -1773,7 +1777,21 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        let event = match run_loop_claim_action(&latest, &config) {
+        let ownership = run_loop_runtime_ownership(&latest, &config, &handoff)?;
+        let claim_action = run_loop_claim_action(&latest, &config);
+        if matches!(claim_action, RunLoopClaimAction::Resume) {
+            if let RuntimeOwnershipDecision::Mismatched { reason, .. } =
+                runtime_ownership_decision(latest.description.as_deref(), &ownership)
+            {
+                println!(
+                    "run_loop_action=skip issue={} reason=ownership_mismatch detail={reason}",
+                    latest.identifier
+                );
+                continue;
+            }
+        }
+
+        let event = match claim_action {
             RunLoopClaimAction::Claim => {
                 adapter.set_state(&latest.identifier, "in_progress")?;
                 println!(
@@ -1794,6 +1812,14 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
         };
+        let ownership_workpad = run_loop_ownership_workpad(&latest, &ownership, event);
+        adapter.upsert_workpad(&latest.identifier, &ownership_workpad)?;
+        println!(
+            "run_loop_action=ownership issue={} profile={} branch={}",
+            latest.identifier,
+            ownership.profile_id.as_deref().unwrap_or("n/a"),
+            ownership.branch_name
+        );
 
         let mut runtime_state = run_loop_runtime_state_for_issue(
             existing_runtime_state.as_ref(),
@@ -2332,6 +2358,44 @@ fn run_loop_handoff_plan(
         DEFAULT_RUN_LOOP_BASE_BRANCH,
         profile.as_deref(),
     )
+}
+
+fn run_loop_runtime_ownership(
+    issue: &TrackerIssue,
+    config: &RuntimeConfig,
+    handoff: &IssueHandoffPlan,
+) -> Result<RuntimeOwnershipMarker, Box<dyn std::error::Error>> {
+    let profile = selected_execution_profile(&config.profiles)?;
+    Ok(RuntimeOwnershipMarker {
+        issue_ref: issue.identifier.clone(),
+        actor_role: config.identity.actor_role.clone(),
+        actor_label: config.identity.actor_label.clone(),
+        profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
+        instance_name: profile
+            .as_ref()
+            .map(|profile| profile.instance_name.clone()),
+        workspace_key: handoff.workspace_key.clone(),
+        branch_name: handoff.branch_name.clone(),
+    })
+}
+
+fn run_loop_ownership_workpad(
+    issue: &TrackerIssue,
+    ownership: &RuntimeOwnershipMarker,
+    event: &str,
+) -> String {
+    [
+        "## Jade Symphony Workpad".to_string(),
+        String::new(),
+        "### Runtime Ownership".to_string(),
+        format!("- Issue: {} {}", issue.identifier, issue.title),
+        format!("- Event: `{event}`"),
+        "- This marker is advisory tracker-visible ownership for active `In Progress` work.".into(),
+        "- Another run-loop profile should not resume this issue when the marker differs.".into(),
+        String::new(),
+        render_runtime_ownership_marker(ownership),
+    ]
+    .join("\n")
 }
 
 fn run_loop_live_handoff_enabled(config: &RuntimeConfig) -> bool {
@@ -4451,6 +4515,38 @@ mod tests {
                 reason: "active GitHub identity unavailable for assignee ownership check".into(),
             }
         );
+    }
+
+    #[test]
+    fn run_loop_runtime_ownership_workpad_records_matching_marker() {
+        let config = test_config();
+        let issue = tracker_issue("In Progress");
+        let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+        let ownership = run_loop_runtime_ownership(&issue, &config, &handoff).unwrap();
+
+        let workpad = run_loop_ownership_workpad(&issue, &ownership, "Resumed");
+
+        assert!(workpad.contains("jade-symphony-runtime-ownership"));
+        assert_eq!(
+            runtime_ownership_decision(Some(&workpad), &ownership),
+            RuntimeOwnershipDecision::Matches
+        );
+    }
+
+    #[test]
+    fn run_loop_runtime_ownership_detects_different_active_branch() {
+        let config = test_config();
+        let issue = tracker_issue("In Progress");
+        let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+        let expected = run_loop_runtime_ownership(&issue, &config, &handoff).unwrap();
+        let mut existing = expected.clone();
+        existing.branch_name = "feature/issue-100-other-work".into();
+        let workpad = render_runtime_ownership_marker(&existing);
+
+        assert!(matches!(
+            runtime_ownership_decision(Some(&workpad), &expected),
+            RuntimeOwnershipDecision::Mismatched { .. }
+        ));
     }
 
     #[test]

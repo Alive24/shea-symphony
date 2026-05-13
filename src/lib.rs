@@ -8,6 +8,7 @@ pub mod issue_forge;
 pub mod merge_lane;
 pub mod model;
 pub mod orchestrator;
+pub mod ownership;
 pub mod profiles;
 pub mod prompt;
 pub mod quality_gate;

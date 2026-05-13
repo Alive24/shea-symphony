@@ -19,6 +19,7 @@ pub struct RuntimeConfig {
     pub codex: CodexConfig,
     pub claude: ClaudeConfig,
     pub review: ReviewConfig,
+    pub profiles: ProfilesConfig,
     pub observability: ObservabilityConfig,
     pub server: ServerConfig,
     #[serde(default)]
@@ -128,6 +129,32 @@ pub struct ReviewConfig {
     pub timeout_ms: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ProfilesConfig {
+    pub default: Option<String>,
+    pub cockpit_tools: CockpitToolsProfilesConfig,
+    #[serde(default)]
+    pub entries: Vec<ExecutionProfileConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct CockpitToolsProfilesConfig {
+    pub codex_instances_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ExecutionProfileConfig {
+    pub id: String,
+    pub instance_name: Option<String>,
+    pub backend: Option<String>,
+    pub workspace_namespace: Option<String>,
+    pub user_data_dir: Option<PathBuf>,
+    pub working_dir: Option<PathBuf>,
+    pub extra_args: Option<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObservabilityConfig {
     pub dashboard_enabled: bool,
@@ -220,6 +247,7 @@ impl RuntimeConfig {
                 .unwrap_or_else(|| "gemini".to_string()),
             timeout_ms: get_u64(root.get("review"), "timeout_ms").unwrap_or(600_000),
         };
+        let profiles = parse_profiles(root.get("profiles"), workflow_dir);
         let observability = ObservabilityConfig {
             dashboard_enabled: get_bool(root.get("observability"), "dashboard_enabled")
                 .unwrap_or(true),
@@ -247,6 +275,7 @@ impl RuntimeConfig {
             codex,
             claude,
             review,
+            profiles,
             observability,
             server,
             raw: workflow.config.clone(),
@@ -392,6 +421,61 @@ fn parse_workpad(value: Option<&Value>) -> WorkpadConfig {
         source: value_string(value, "source", "issue_comment"),
         marker: value_string(value, "marker", "<!-- jade-symphony-workpad -->"),
     }
+}
+
+fn parse_profiles(value: Option<&Value>, workflow_dir: &Path) -> ProfilesConfig {
+    ProfilesConfig {
+        default: get_string(value, "default"),
+        cockpit_tools: CockpitToolsProfilesConfig {
+            codex_instances_path: get_string(
+                get_value(value, "cockpit_tools"),
+                "codex_instances_path",
+            )
+            .map(|path| resolve_path(Some(&path), workflow_dir, Path::new(""))),
+        },
+        entries: parse_execution_profiles(get_value(value, "entries"), workflow_dir),
+    }
+}
+
+fn parse_execution_profiles(
+    value: Option<&Value>,
+    workflow_dir: &Path,
+) -> Vec<ExecutionProfileConfig> {
+    value
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let id = get_string(Some(item), "id")?;
+                    Some(ExecutionProfileConfig {
+                        id,
+                        instance_name: get_string(Some(item), "instance_name"),
+                        backend: get_string(Some(item), "backend"),
+                        workspace_namespace: get_string(Some(item), "workspace_namespace"),
+                        user_data_dir: get_string(Some(item), "user_data_dir")
+                            .map(|path| resolve_path(Some(&path), workflow_dir, Path::new(""))),
+                        working_dir: get_string(Some(item), "working_dir")
+                            .map(|path| resolve_path(Some(&path), workflow_dir, Path::new(""))),
+                        extra_args: get_string(Some(item), "extra_args"),
+                        env: parse_string_map(get_value(Some(item), "env")),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_string_map(value: Option<&Value>) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
+    if let Some(Value::Object(values)) = value {
+        for (key, value) in values {
+            if let Some(value) = value.as_str() {
+                map.insert(key.clone(), value.to_string());
+            }
+        }
+    }
+    map
 }
 
 fn parse_state_limits(value: Option<&Value>) -> BTreeMap<String, usize> {
@@ -584,5 +668,37 @@ mod tests {
             Some("https://api.linear.app/graphql")
         );
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn parses_execution_profiles_from_workflow_config() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/config/WORKFLOW.md",
+            "---\nprofiles:\n  default: codex-alpha\n  cockpit_tools:\n    codex_instances_path: fixtures/cockpit-tools-codex-instances.json\n  entries:\n    - id: fallback\n      instance_name: Fallback Worker\n      backend: dry-run\n      workspace_namespace: fallback-worker\n      user_data_dir: ./profiles/fallback\n      env:\n        JADE_TEST_PROFILE: fallback\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/config/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.profiles.default.as_deref(), Some("codex-alpha"));
+        assert_eq!(
+            config
+                .profiles
+                .cockpit_tools
+                .codex_instances_path
+                .as_deref(),
+            Some(Path::new(
+                "/tmp/config/fixtures/cockpit-tools-codex-instances.json"
+            ))
+        );
+        assert_eq!(config.profiles.entries.len(), 1);
+        assert_eq!(
+            config.profiles.entries[0].env.get("JADE_TEST_PROFILE"),
+            Some(&"fallback".into())
+        );
+        assert_eq!(
+            config.profiles.entries[0].user_data_dir.as_deref(),
+            Some(Path::new("/tmp/config/profiles/fallback"))
+        );
     }
 }

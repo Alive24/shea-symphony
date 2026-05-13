@@ -86,6 +86,8 @@ impl Orchestrator {
                     backend: self.config.backend.kind.clone(),
                     workspace_path: None,
                     session_id: None,
+                    profile_id: None,
+                    instance_name: None,
                 })
                 .collect(),
             retrying: Vec::new(),

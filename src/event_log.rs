@@ -11,6 +11,10 @@ pub struct EventRecord {
     pub issue_id: Option<String>,
     pub issue_identifier: Option<String>,
     pub session_id: Option<String>,
+    #[serde(default)]
+    pub profile_id: Option<String>,
+    #[serde(default)]
+    pub instance_name: Option<String>,
     pub message: String,
 }
 
@@ -62,11 +66,14 @@ mod tests {
             issue_id: Some("id".into()),
             issue_identifier: Some("#1".into()),
             session_id: None,
+            profile_id: Some("codex-alpha".into()),
+            instance_name: Some("Codex Alpha".into()),
             message: "queued".into(),
         })
         .unwrap();
 
         let content = std::fs::read_to_string(temp.path().join("events.jsonl")).unwrap();
         assert!(content.contains("\"event\":\"dispatch\""));
+        assert!(content.contains("\"profile_id\":\"codex-alpha\""));
     }
 }

@@ -6,12 +6,15 @@ use clap::{error::ErrorKind, Args, CommandFactory, Parser, Subcommand, ValueEnum
 use jade_symphony::agent::backend_from_config;
 use jade_symphony::config::RuntimeConfig;
 use jade_symphony::event_log::{EventLog, EventRecord};
-use jade_symphony::handoff::{plan_issue_handoff, HandoffError, IssueHandoffPlan};
+use jade_symphony::handoff::{plan_issue_handoff_for_profile, HandoffError, IssueHandoffPlan};
 use jade_symphony::issue_forge::{
     discover_candidates, draft_from_template, repair_markdown, validate_markdown,
 };
 use jade_symphony::model::{normalize_state, GateDecision, GateDecisionKind, TrackerIssue};
 use jade_symphony::orchestrator::Orchestrator;
+use jade_symphony::profiles::{
+    discover_execution_profiles, selected_execution_profile, ExecutionProfile,
+};
 use jade_symphony::prompt::render_prompt;
 use jade_symphony::quality_gate::evaluate_issue;
 use jade_symphony::review::{
@@ -28,7 +31,9 @@ use jade_symphony::tracker::{
     adapter_from_config, claim_decision, ClaimDecision, FollowUpIssueInput,
 };
 use jade_symphony::workflow::WorkflowDefinition;
-use jade_symphony::workspace::{prepare_workspace, run_after_run, run_before_run};
+use jade_symphony::workspace::{
+    prepare_workspace, profile_scoped_identifier, run_after_run, run_before_run,
+};
 
 const DEFAULT_RUN_LOOP_BASE_BRANCH: &str = "main";
 
@@ -47,6 +52,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Command::Plan { workflow_path } => plan(workflow_path),
         Command::Validate { workflow_path } => validate(workflow_path),
         Command::Inspect { workflow_path } => inspect(workflow_path),
+        Command::Profiles { workflow_path } => list_profiles(workflow_path),
         Command::RunOnce { workflow_path } => run_once(workflow_path),
         Command::RunLoop { options } => run_loop(options),
         Command::SetState {
@@ -485,6 +491,29 @@ fn inspect(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn list_profiles(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_config(&workflow_path)?;
+    let profiles = discover_execution_profiles(&config.profiles)?;
+    let selected = selected_execution_profile(&config.profiles)?;
+
+    println!("profiles={}", profiles.len());
+    if let Some(profile) = selected {
+        println!("selected_profile={}", profile.profile_id);
+        println!("selected_instance={}", profile.instance_name);
+    }
+    for profile in profiles {
+        println!(
+            "- profile_id={} instance_name={} source={} workspace_namespace={} backend={}",
+            profile.profile_id,
+            profile.instance_name,
+            profile.source,
+            profile.workspace_namespace,
+            profile.backend.as_deref().unwrap_or("configured")
+        );
+    }
+    Ok(())
+}
+
 fn run_once(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
@@ -522,6 +551,8 @@ fn run_once(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 struct IssueExecutionResult {
     workspace_path: PathBuf,
     backend: String,
+    profile_id: Option<String>,
+    instance_name: Option<String>,
     success: bool,
     session_id: Option<String>,
     message: String,
@@ -532,7 +563,14 @@ fn execute_issue_once(
     config: &RuntimeConfig,
     issue: &TrackerIssue,
 ) -> Result<IssueExecutionResult, Box<dyn std::error::Error>> {
-    execute_issue_once_with_workspace_key(workflow, config, issue, &issue.identifier)
+    let profile = selected_execution_profile(&config.profiles)?;
+    let workspace_identifier = profile_scoped_identifier(
+        profile
+            .as_ref()
+            .map(|profile| profile.workspace_namespace.as_str()),
+        &issue.identifier,
+    );
+    execute_issue_once_with_workspace_key(workflow, config, issue, &workspace_identifier)
 }
 
 fn execute_issue_once_with_workspace_key(
@@ -541,6 +579,7 @@ fn execute_issue_once_with_workspace_key(
     issue: &TrackerIssue,
     workspace_key: &str,
 ) -> Result<IssueExecutionResult, Box<dyn std::error::Error>> {
+    let profile = selected_execution_profile(&config.profiles)?;
     let workspace = prepare_workspace(&config.workspace.root, workspace_key, &config.hooks)?;
     run_before_run(&workspace.path, &config.hooks)?;
 
@@ -560,6 +599,10 @@ fn execute_issue_once_with_workspace_key(
             issue_id: Some(issue.id.clone()),
             issue_identifier: Some(issue.identifier.clone()),
             session_id: summary.session_id.clone(),
+            profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
+            instance_name: profile
+                .as_ref()
+                .map(|profile| profile.instance_name.clone()),
             message: summary.message.clone(),
         })?;
     }
@@ -567,6 +610,10 @@ fn execute_issue_once_with_workspace_key(
     Ok(IssueExecutionResult {
         workspace_path: workspace.path,
         backend: summary.backend,
+        profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
+        instance_name: profile
+            .as_ref()
+            .map(|profile| profile.instance_name.clone()),
         success: summary.success,
         session_id: summary.session_id,
         message: summary.message,
@@ -644,7 +691,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         };
 
         if !options.write {
-            print_run_loop_dry_run_actions(&issue, &handoff);
+            print_run_loop_dry_run_actions(&issue, &handoff, &config)?;
             if limit.is_none() {
                 println!(
                     "run_loop=stopped reason=dry_run_would_repeat_without_mutation iterations={iterations}"
@@ -707,6 +754,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             existing_runtime_state.as_ref(),
             &latest,
             &config.backend.kind,
+            selected_execution_profile(&config.profiles)?.as_ref(),
             event,
         );
         save_runtime_state(&config, &runtime_state)?;
@@ -812,6 +860,7 @@ fn run_loop_runtime_state_for_issue(
     existing: Option<&RuntimeState>,
     issue: &TrackerIssue,
     backend: &str,
+    profile: Option<&ExecutionProfile>,
     event: &str,
 ) -> RuntimeState {
     let mut state = RuntimeState::active(
@@ -823,6 +872,8 @@ fn run_loop_runtime_state_for_issue(
     );
     state.attempt_count = next_runtime_attempt_count(existing, &issue.identifier);
     state.branch_name = issue.branch_name.clone();
+    state.profile_id = profile.map(|profile| profile.profile_id.clone());
+    state.instance_name = profile.map(|profile| profile.instance_name.clone());
     state.last_event = Some(event.into());
     state
 }
@@ -846,6 +897,8 @@ fn run_loop_runtime_state_with_result(
     state.workspace_path = Some(result.workspace_path.clone());
     state.backend = result.backend.clone();
     state.backend_session_id = result.session_id.clone();
+    state.profile_id = result.profile_id.clone();
+    state.instance_name = result.instance_name.clone();
     state.last_event = Some(if result.success {
         "Completed".into()
     } else {
@@ -872,7 +925,16 @@ fn run_loop_handoff_plan(
     config: &RuntimeConfig,
     issue: &TrackerIssue,
 ) -> Result<IssueHandoffPlan, HandoffError> {
-    plan_issue_handoff(&config.workspace.root, issue, DEFAULT_RUN_LOOP_BASE_BRANCH)
+    let profile = selected_execution_profile(&config.profiles)
+        .ok()
+        .flatten()
+        .map(|profile| profile.workspace_namespace);
+    plan_issue_handoff_for_profile(
+        &config.workspace.root,
+        issue,
+        DEFAULT_RUN_LOOP_BASE_BRANCH,
+        profile.as_deref(),
+    )
 }
 
 fn handle_run_loop_gate_failure(
@@ -929,7 +991,12 @@ fn handle_run_loop_handoff_failure(
     Ok(())
 }
 
-fn print_run_loop_dry_run_actions(issue: &TrackerIssue, handoff: &IssueHandoffPlan) {
+fn print_run_loop_dry_run_actions(
+    issue: &TrackerIssue,
+    handoff: &IssueHandoffPlan,
+    config: &RuntimeConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let profile = selected_execution_profile(&config.profiles)?;
     if normalize_state(&issue.state) != "in progress" {
         println!(
             "run_loop_dry_run action=claim issue={} target_state=in_progress",
@@ -950,6 +1017,12 @@ fn print_run_loop_dry_run_actions(issue: &TrackerIssue, handoff: &IssueHandoffPl
         "run_loop_dry_run action=run issue={} backend=configured",
         issue.identifier
     );
+    if let Some(profile) = profile {
+        println!(
+            "run_loop_dry_run profile_id={} instance_name={}",
+            profile.profile_id, profile.instance_name
+        );
+    }
     println!(
         "run_loop_dry_run action=workpad issue={} evidence=run_summary",
         issue.identifier
@@ -958,6 +1031,7 @@ fn print_run_loop_dry_run_actions(issue: &TrackerIssue, handoff: &IssueHandoffPl
         "run_loop_dry_run action=handoff issue={} target_state=agent_review",
         issue.identifier
     );
+    Ok(())
 }
 
 fn run_loop_handoff_workpad(
@@ -975,6 +1049,14 @@ fn run_loop_handoff_workpad(
         "### Run Evidence".to_string(),
         format!("- Workspace: `{}`", result.workspace_path.display()),
         format!("- Backend: `{}`", result.backend),
+        format!(
+            "- Profile: `{}`",
+            result.profile_id.as_deref().unwrap_or("n/a")
+        ),
+        format!(
+            "- Instance: `{}`",
+            result.instance_name.as_deref().unwrap_or("n/a")
+        ),
         format!("- Success: `{}`", result.success),
         format!(
             "- Session: `{}`",
@@ -1024,6 +1106,9 @@ enum Command {
         workflow_path: PathBuf,
     },
     Inspect {
+        workflow_path: PathBuf,
+    },
+    Profiles {
         workflow_path: PathBuf,
     },
     RunOnce {
@@ -1157,6 +1242,7 @@ enum CliCommand {
     #[command(alias = "validate-workflow")]
     Validate(WorkflowPathArgs),
     Inspect(WorkflowPathArgs),
+    Profiles(WorkflowPathArgs),
     #[command(name = "run-once")]
     RunOnce(WorkflowPathArgs),
     #[command(name = "run-loop")]
@@ -1380,6 +1466,9 @@ impl TryFrom<Cli> for Command {
                         workflow_path: args.workflow_path,
                     }),
                     CliCommand::Inspect(args) => Ok(Self::Inspect {
+                        workflow_path: args.workflow_path,
+                    }),
+                    CliCommand::Profiles(args) => Ok(Self::Profiles {
                         workflow_path: args.workflow_path,
                     }),
                     CliCommand::RunOnce(args) => Ok(Self::RunOnce {
@@ -1648,6 +1737,12 @@ mod tests {
                 workflow_path: PathBuf::from("examples/dry-run-workflow.md")
             }
         );
+        assert_eq!(
+            parse(&["profiles", "examples/dry-run-workflow.md"]),
+            Command::Profiles {
+                workflow_path: PathBuf::from("examples/dry-run-workflow.md")
+            }
+        );
     }
 
     #[test]
@@ -1779,9 +1874,10 @@ mod tests {
     #[test]
     fn run_loop_runtime_state_increments_same_issue_attempts() {
         let issue = tracker_issue("In Progress");
-        let existing = run_loop_runtime_state_for_issue(None, &issue, "dry-run", "Claimed");
+        let existing = run_loop_runtime_state_for_issue(None, &issue, "dry-run", None, "Claimed");
 
-        let state = run_loop_runtime_state_for_issue(Some(&existing), &issue, "dry-run", "Resumed");
+        let state =
+            run_loop_runtime_state_for_issue(Some(&existing), &issue, "dry-run", None, "Resumed");
 
         assert_eq!(state.attempt_count, 2);
         assert_eq!(
@@ -1798,10 +1894,12 @@ mod tests {
     #[test]
     fn run_loop_runtime_state_records_result_and_transition() {
         let issue = tracker_issue("In Progress");
-        let state = run_loop_runtime_state_for_issue(None, &issue, "dry-run", "Claimed");
+        let state = run_loop_runtime_state_for_issue(None, &issue, "dry-run", None, "Claimed");
         let result = IssueExecutionResult {
             workspace_path: PathBuf::from("/tmp/jade/issue-29"),
             backend: "dry-run".into(),
+            profile_id: Some("codex-alpha".into()),
+            instance_name: Some("Codex Alpha".into()),
             success: true,
             session_id: Some("session-29".into()),
             message: "ok".into(),
@@ -1810,6 +1908,7 @@ mod tests {
         let state = run_loop_runtime_state_with_result(state, &result);
         assert_eq!(state.workspace_path, Some(result.workspace_path));
         assert_eq!(state.backend_session_id.as_deref(), Some("session-29"));
+        assert_eq!(state.profile_id.as_deref(), Some("codex-alpha"));
         assert_eq!(state.last_event.as_deref(), Some("Completed"));
 
         let state = run_loop_runtime_state_with_transition(
@@ -1879,6 +1978,8 @@ mod tests {
         let result = IssueExecutionResult {
             workspace_path: handoff.workspace_path.clone(),
             backend: "dry-run".into(),
+            profile_id: None,
+            instance_name: None,
             success: true,
             session_id: Some("session-33".into()),
             message: "ok".into(),

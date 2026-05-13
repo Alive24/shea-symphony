@@ -68,6 +68,17 @@ pub fn safe_identifier(identifier: &str) -> String {
         .collect()
 }
 
+pub fn profile_scoped_identifier(profile_id: Option<&str>, identifier: &str) -> String {
+    match profile_id.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(profile_id) => format!(
+            "{}--{}",
+            safe_identifier(profile_id),
+            safe_identifier(identifier)
+        ),
+        None => identifier.to_string(),
+    }
+}
+
 pub fn prepare_workspace(
     root: &Path,
     identifier: &str,
@@ -246,6 +257,15 @@ mod tests {
         .unwrap();
         assert!(workspace.path.is_dir());
         assert_eq!(workspace.workspace_key, "_1");
+    }
+
+    #[test]
+    fn scopes_workspace_identifier_by_profile() {
+        assert_eq!(
+            profile_scoped_identifier(Some("codex alpha"), "#39"),
+            "codex_alpha--_39"
+        );
+        assert_eq!(profile_scoped_identifier(None, "#39"), "#39");
     }
 
     #[test]

@@ -15,6 +15,10 @@ pub struct RuntimeState {
     pub branch_name: Option<String>,
     pub backend: String,
     pub backend_session_id: Option<String>,
+    #[serde(default)]
+    pub profile_id: Option<String>,
+    #[serde(default)]
+    pub instance_name: Option<String>,
     pub attempt_count: u32,
     pub last_event: Option<String>,
     pub last_transition: Option<RuntimeTransition>,
@@ -28,6 +32,8 @@ impl RuntimeState {
             branch_name: None,
             backend: backend.into(),
             backend_session_id: None,
+            profile_id: None,
+            instance_name: None,
             attempt_count: 1,
             last_event: None,
             last_transition: None,
@@ -141,6 +147,8 @@ mod tests {
             branch_name: Some("feature-issue-1".into()),
             backend: "dry-run".into(),
             backend_session_id: Some("session".into()),
+            profile_id: Some("codex-alpha".into()),
+            instance_name: Some("Codex Alpha".into()),
             attempt_count: 2,
             last_event: Some("Completed".into()),
             last_transition: Some(RuntimeTransition {
@@ -180,6 +188,31 @@ mod tests {
         let loaded = load_runtime_state_from_path(&path).unwrap();
 
         assert_eq!(loaded, Some(state));
+    }
+
+    #[test]
+    fn reads_runtime_state_without_profile_identity_for_backcompat() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("runtime-state.json");
+        fs::write(
+            &path,
+            r##"{
+  "active_issue": {"id": "GHI_1", "identifier": "#1"},
+  "workspace_path": null,
+  "branch_name": null,
+  "backend": "dry-run",
+  "backend_session_id": null,
+  "attempt_count": 1,
+  "last_event": "Claimed",
+  "last_transition": null
+}"##,
+        )
+        .unwrap();
+
+        let loaded = load_runtime_state_from_path(&path).unwrap().unwrap();
+
+        assert_eq!(loaded.profile_id, None);
+        assert_eq!(loaded.instance_name, None);
     }
 
     #[test]

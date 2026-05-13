@@ -50,12 +50,22 @@ pub fn plan_issue_handoff(
     issue: &TrackerIssue,
     base_branch: &str,
 ) -> Result<IssueHandoffPlan, HandoffError> {
+    plan_issue_handoff_for_profile(workspace_root, issue, base_branch, None)
+}
+
+pub fn plan_issue_handoff_for_profile(
+    workspace_root: &Path,
+    issue: &TrackerIssue,
+    base_branch: &str,
+    profile_id: Option<&str>,
+) -> Result<IssueHandoffPlan, HandoffError> {
     if let Some(existing_branch) = issue.branch_name.as_deref() {
         guard_branch_for_issue(existing_branch, &issue.identifier)?;
     }
 
     let branch_name = branch_name_for_issue(&issue.identifier, &issue.title);
-    let workspace_key = workspace_key_for_issue(&issue.identifier, &issue.title);
+    let workspace_key =
+        profile_workspace_key_for_issue(profile_id, &issue.identifier, &issue.title);
     let workspace_path = workspace_root.join(&workspace_key);
     let pull_request =
         PullRequestHandoffPlan::new(&issue.identifier, &issue.title, &branch_name, base_branch);
@@ -76,6 +86,21 @@ pub fn workspace_key_for_issue(issue_identifier: &str, title: &str) -> String {
         issue_slug(issue_identifier),
         title_slug(title)
     ))
+}
+
+pub fn profile_workspace_key_for_issue(
+    profile_id: Option<&str>,
+    issue_identifier: &str,
+    title: &str,
+) -> String {
+    match profile_id.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(profile_id) => safe_identifier(&format!(
+            "{}--{}",
+            safe_identifier(profile_id),
+            workspace_key_for_issue(issue_identifier, title)
+        )),
+        None => workspace_key_for_issue(issue_identifier, title),
+    }
 }
 
 pub fn branch_name_for_issue(issue_identifier: &str, title: &str) -> String {
@@ -262,6 +287,23 @@ mod tests {
         );
         assert_eq!(plan.pull_request.head_branch, plan.branch_name);
         assert_eq!(plan.pull_request.base_branch, "main");
+    }
+
+    #[test]
+    fn profile_workspace_keys_avoid_worker_collisions() {
+        assert_eq!(
+            profile_workspace_key_for_issue(Some("codex-alpha"), "#39", "Add execution profiles"),
+            "codex-alpha--issue-39-add-execution-profiles"
+        );
+
+        let plan = plan_issue_handoff_for_profile(
+            Path::new("/tmp/jade-workspaces"),
+            &issue(),
+            "main",
+            Some("codex-alpha"),
+        )
+        .unwrap();
+        assert!(plan.workspace_key.starts_with("codex-alpha--issue-21"));
     }
 
     #[test]

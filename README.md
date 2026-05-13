@@ -52,12 +52,18 @@ one-issue-one-PR automation are still future work.
   `before_remove`, and safe cleanup helpers.
 - workspace/branch/PR handoff planning can derive a deterministic issue
   workspace key, branch name, and PR handoff body, and can detect an existing
-  branch that appears to belong to a different issue.
+  branch that appears to belong to a different issue; profile-scoped workspace
+  keys can avoid collisions between parallel worker identities.
+- execution profiles can be listed from workflow config. The first slice can
+  read cockpit-tools Codex instance stores (`codex_instances.json`) and treats
+  each instance name as a Jade worker profile without reading or logging account
+  bindings.
 - terminal status output reports polling state, planned running/skipped/retrying
   issues, token counters, event-log path, gate details, and integration gaps.
-- JSONL event-log primitives exist.
+- JSONL event-log primitives exist and can record selected profile identity.
 - runtime state helpers can write, read, and clear a tracker-neutral
-  `runtime/runtime-state.json` file under the configured logs root.
+  `runtime/runtime-state.json` file under the configured logs root, including
+  optional profile and instance identity.
 - write-mode `run-loop` saves active issue runtime state, updates it with
   backend result evidence, records final transition intent, and clears it after
   successful handoff/block transition.
@@ -110,6 +116,7 @@ cargo run -- run-once examples/dry-run-workflow.md
 cargo run -- run-once examples/codex-subprocess-workflow.md
 cargo run -- run-once examples/claude-subprocess-workflow.md
 cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
+cargo run -- profiles examples/cockpit-profiles-workflow.md
 cargo run -- plan examples/linear-fixture-workflow.md
 cargo run -- gate examples/dry-run-workflow.md '#3'
 cargo run -- forge-discover --intent "Add Issue Forge validate and repair commands"
@@ -125,6 +132,15 @@ cargo run -- forge-create --workflow path/to/WORKFLOW.md --title "Follow-up titl
 fixtures show controlled real-backend paths without invoking live hosted
 services. They write `JADE_SYMPHONY_PROMPT.md` into the prepared workspace and
 append JSONL events for the selected workflow.
+
+`profiles` lists execution profiles discovered from workflow config. For
+cockpit-tools, Jade currently reads the Codex instance store shape inspected in
+`https://github.com/jlcodes99/cockpit-tools`: a local `codex_instances.json` with camelCase
+`instances[]` records such as `name`, `userDataDir`, `workingDir`, and
+`extraArgs`. Jade ignores account binding fields, uses the instance name as the
+worker identity, and falls back to explicit `profiles.entries` when the
+cockpit-tools file is not present. This is a small adapter boundary, not a full
+account manager.
 
 Live GitHub write commands are explicit and require a non-fixture workflow plus
 usable GitHub auth through `GITHUB_TOKEN` / `GH_TOKEN` or `gh api graphql`:
@@ -156,6 +172,8 @@ claim reconciliation, resume state, and PR automation exist.
 
 - linked PR attachment/linking as a first-class relationship.
 - live git worktree creation and `gh pr create` from the runtime loop.
+- full multi-account manager UI or account switching; cockpit-tools integration
+  is currently read-only fixture/path parsing for Codex instance names.
 - Linear live adapter credential-gated smoke coverage.
 - Codex app-server transport.
 - Claude Code full protocol transport beyond the subprocess fixture path.
@@ -173,6 +191,8 @@ claim reconciliation, resume state, and PR automation exist.
   and workpad evidence.
 - retry timers, continuation retries, and stall restart.
 - terminal workspace cleanup tied to tracker state.
+- profile-aware tracker claim ownership beyond namespaced runtime/log/workspace
+  metadata.
 - live token/rate-limit accounting beyond the current snapshot counters.
 - persistent Agent Review worker supervision and reconciliation.
 - Issue Forge Project field setup after issue creation.

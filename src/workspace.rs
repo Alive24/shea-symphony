@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
-use crate::config::HooksConfig;
+use crate::config::{GitIdentityConfig, HooksConfig};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Workspace {
@@ -44,6 +44,33 @@ pub struct HookResult {
     pub stderr: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitIdentityApplyResult {
+    pub status: GitIdentityApplyStatus,
+    pub author: Option<String>,
+    pub applied_keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GitIdentityApplyStatus {
+    Applied,
+    NotConfigured,
+    NotGitRepository,
+}
+
+impl GitIdentityApplyResult {
+    pub fn summary(&self) -> String {
+        match self.status {
+            GitIdentityApplyStatus::Applied => {
+                let author = self.author.as_deref().unwrap_or("configured");
+                format!("applied:{author}")
+            }
+            GitIdentityApplyStatus::NotConfigured => "skipped:not_configured".to_string(),
+            GitIdentityApplyStatus::NotGitRepository => "skipped:not_git_repository".to_string(),
+        }
+    }
+}
+
 impl HookResult {
     fn success(hook: &str, stdout: String, stderr: String) -> Self {
         Self {
@@ -66,6 +93,17 @@ pub fn safe_identifier(identifier: &str) -> String {
             }
         })
         .collect()
+}
+
+pub fn profile_scoped_identifier(profile_id: Option<&str>, identifier: &str) -> String {
+    match profile_id.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(profile_id) => format!(
+            "{}--{}",
+            safe_identifier(profile_id),
+            safe_identifier(identifier)
+        ),
+        None => identifier.to_string(),
+    }
 }
 
 pub fn prepare_workspace(
@@ -106,6 +144,51 @@ pub fn run_before_run(path: &Path, hooks: &HooksConfig) -> Result<(), WorkspaceE
         run_hook("before_run", command, path, hooks.timeout_ms)?;
     }
     Ok(())
+}
+
+pub fn apply_local_git_identity(
+    path: &Path,
+    identity: &GitIdentityConfig,
+) -> Result<GitIdentityApplyResult, WorkspaceError> {
+    if identity.is_empty() {
+        return Ok(GitIdentityApplyResult {
+            status: GitIdentityApplyStatus::NotConfigured,
+            author: None,
+            applied_keys: Vec::new(),
+        });
+    }
+
+    if !path.join(".git").exists() {
+        return Ok(GitIdentityApplyResult {
+            status: GitIdentityApplyStatus::NotGitRepository,
+            author: identity.author(),
+            applied_keys: Vec::new(),
+        });
+    }
+
+    let mut applied_keys = Vec::new();
+    if let Some(name) = identity.name.as_deref() {
+        set_local_git_config(path, "user.name", name)?;
+        applied_keys.push("user.name".to_string());
+    }
+    if let Some(email) = identity.email.as_deref() {
+        set_local_git_config(path, "user.email", email)?;
+        applied_keys.push("user.email".to_string());
+    }
+    if let Some(signing_key) = identity.signing_key.as_deref() {
+        set_local_git_config(path, "user.signingkey", signing_key)?;
+        applied_keys.push("user.signingkey".to_string());
+    }
+    for (key, value) in &identity.extra {
+        set_local_git_config(path, key, value)?;
+        applied_keys.push(key.clone());
+    }
+
+    Ok(GitIdentityApplyResult {
+        status: GitIdentityApplyStatus::Applied,
+        author: identity.author(),
+        applied_keys,
+    })
 }
 
 pub fn run_after_run(path: &Path, hooks: &HooksConfig) {
@@ -223,6 +306,30 @@ fn run_hook(
     }
 }
 
+fn set_local_git_config(path: &Path, key: &str, value: &str) -> Result<(), WorkspaceError> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .arg("config")
+        .arg("--local")
+        .arg(key)
+        .arg(value)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(WorkspaceError::HookFailed {
+            hook: format!("git config --local {key}"),
+            status: output.status.code().unwrap_or(-1),
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,6 +353,15 @@ mod tests {
         .unwrap();
         assert!(workspace.path.is_dir());
         assert_eq!(workspace.workspace_key, "_1");
+    }
+
+    #[test]
+    fn scopes_workspace_identifier_by_profile() {
+        assert_eq!(
+            profile_scoped_identifier(Some("codex alpha"), "#39"),
+            "codex_alpha--_39"
+        );
+        assert_eq!(profile_scoped_identifier(None, "#39"), "#39");
     }
 
     #[test]
@@ -357,5 +473,81 @@ mod tests {
 
         assert!(matches!(result, Err(WorkspaceError::OutsideRoot { .. })));
         assert!(outside.path().exists());
+    }
+
+    #[test]
+    fn skips_git_identity_when_not_configured() {
+        let temp = tempfile::tempdir().unwrap();
+        let result = apply_local_git_identity(temp.path(), &GitIdentityConfig::default()).unwrap();
+
+        assert_eq!(result.status, GitIdentityApplyStatus::NotConfigured);
+        assert_eq!(result.summary(), "skipped:not_configured");
+    }
+
+    #[test]
+    fn skips_git_identity_outside_git_repository() {
+        let temp = tempfile::tempdir().unwrap();
+        let identity = GitIdentityConfig {
+            name: Some("Jade Symphony Agent".into()),
+            email: Some("jade@example.invalid".into()),
+            signing_key: None,
+            extra: Default::default(),
+        };
+
+        let result = apply_local_git_identity(temp.path(), &identity).unwrap();
+
+        assert_eq!(result.status, GitIdentityApplyStatus::NotGitRepository);
+        assert_eq!(
+            result.author.as_deref(),
+            Some("Jade Symphony Agent <jade@example.invalid>")
+        );
+    }
+
+    #[test]
+    fn applies_git_identity_as_local_config_only() {
+        let temp = tempfile::tempdir().unwrap();
+        Command::new("git")
+            .arg("init")
+            .arg(temp.path())
+            .output()
+            .unwrap();
+        let mut extra = std::collections::BTreeMap::new();
+        extra.insert("jade.actorRole".into(), "implementation_agent".into());
+        let identity = GitIdentityConfig {
+            name: Some("Jade Symphony Agent".into()),
+            email: Some("jade@example.invalid".into()),
+            signing_key: None,
+            extra,
+        };
+
+        let result = apply_local_git_identity(temp.path(), &identity).unwrap();
+
+        assert_eq!(result.status, GitIdentityApplyStatus::Applied);
+        assert!(result.applied_keys.contains(&"user.name".to_string()));
+        assert_eq!(
+            git_local_config(temp.path(), "user.name"),
+            "Jade Symphony Agent"
+        );
+        assert_eq!(
+            git_local_config(temp.path(), "user.email"),
+            "jade@example.invalid"
+        );
+        assert_eq!(
+            git_local_config(temp.path(), "jade.actorRole"),
+            "implementation_agent"
+        );
+    }
+
+    fn git_local_config(path: &Path, key: &str) -> String {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .arg("config")
+            .arg("--local")
+            .arg(key)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 }

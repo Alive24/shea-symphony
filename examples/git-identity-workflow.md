@@ -1,0 +1,43 @@
+---
+tracker:
+  kind: memory
+  fixture_path: fixtures/git-identity-issues.json
+  state_map:
+    todo: Todo
+    in_progress: In Progress
+    agent_review: Agent Review
+    need_human_input: Need Human Input
+  active_states:
+    - Todo
+    - Rework
+  assignee_filter:
+    source: issue_assignees
+    allow_unassigned: true
+workspace:
+  root: /tmp/jade-symphony-git-identity-workspaces
+hooks:
+  after_create: git init
+agent:
+  backend: dry-run
+  max_concurrent_agents: 1
+  max_turns: 3
+  max_retry_backoff_ms: 300000
+identity:
+  actor_role: implementation_agent
+  actor_label: Jade Symphony Dry Run Agent
+  git:
+    name: Jade Symphony Agent
+    email: jade-symphony-agent@example.invalid
+    extra:
+      jade.actorRole: implementation_agent
+observability:
+  logs_root: /tmp/jade-symphony-git-identity-logs
+---
+
+You are working on Jade Symphony issue {{ issue.identifier }}.
+
+Title: {{ issue.title }}
+State: {{ issue.state }}
+
+Use the configured actor identity only for local workspace git metadata and
+runtime evidence. Do not write global git config or log secrets.

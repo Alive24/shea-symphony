@@ -1,37 +1,62 @@
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::{error::ErrorKind, Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use jade_symphony::agent::backend_from_config;
 use jade_symphony::config::RuntimeConfig;
 use jade_symphony::doctor::{audit_project_issues, render_project_audit_report};
 use jade_symphony::event_log::{EventLog, EventRecord};
-use jade_symphony::handoff::{plan_issue_handoff, HandoffError, IssueHandoffPlan};
+use jade_symphony::git_handoff::{
+    prepare_issue_worktree, publish_issue_pull_request, LiveWorktreeResult,
+    ProcessHandoffCommandRunner, PullRequestPublication,
+};
+use jade_symphony::handoff::{
+    evaluate_agent_review_handoff, plan_issue_handoff_for_profile,
+    render_agent_review_handoff_workpad, AgentReviewHandoffEvidence, HandoffError,
+    IssueHandoffPlan,
+};
 use jade_symphony::issue_forge::{
     discover_candidates, draft_from_template, find_issue_skill, interactive_forge,
-    reflective_candidates_from_context, repair_markdown, validate_markdown, InteractiveForgeInput,
+    next_clarification_question, reflective_candidates_from_context, repair_markdown,
+    validate_markdown, InteractiveForgeInput,
+};
+use jade_symphony::merge_lane::{
+    expected_merge_base_branch, fetch_pull_request_status, merge_lane_decision, merge_lane_workpad,
+    merge_pull_request, pull_request_status_from_linked, MergeLaneDecisionKind,
 };
 use jade_symphony::model::{normalize_state, GateDecision, GateDecisionKind, TrackerIssue};
 use jade_symphony::orchestrator::Orchestrator;
+use jade_symphony::profiles::{discover_execution_profiles, selected_execution_profile};
 use jade_symphony::prompt::render_prompt;
-use jade_symphony::quality_gate::evaluate_issue;
+use jade_symphony::quality_gate::{
+    evaluate_issue_with_llm_gate, evaluate_issue_with_source_alignment, LlmGateMode, LlmGateOptions,
+};
 use jade_symphony::review::{
     classify_review_freshness, render_review_freshness_workpad, render_review_workpad,
-    review_gate_decision, transition_allowed_for_main_agent, transition_allowed_for_review_agent,
-    FakeReviewBackend, FakeReviewOutcome, GeminiCliReviewBackend, ReviewBackend,
-    ReviewFreshnessInput, ReviewJob, ReviewRequest, ReviewReworkClass, ReviewStaleReason,
+    review_gate_decision, review_run_eligibility, transition_allowed_for_main_agent,
+    transition_allowed_for_review_agent, FakeReviewBackend, FakeReviewOutcome,
+    GeminiCliReviewBackend, ReviewBackend, ReviewFreshnessInput, ReviewJob, ReviewRequest,
+    ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
+};
+use jade_symphony::rework::{
+    render_rework_diagnostic_workpad, rework_diagnostic_from_review, rework_transition_expected,
+    ReworkDiagnostic,
 };
 use jade_symphony::runtime_state::{
-    clear_runtime_state, load_runtime_state, save_runtime_state, RuntimeIssueState, RuntimeState,
-    RuntimeTransition,
+    clear_runtime_state, detect_runtime_stall, load_runtime_state, mark_runtime_state_updated,
+    record_runtime_retry, runtime_state_path, save_runtime_state, RuntimeIssueState,
+    RuntimeRetryState, RuntimeStallState, RuntimeState, RuntimeTransition,
 };
 use jade_symphony::status_surface::render_snapshot;
 use jade_symphony::tracker::{
-    adapter_from_config, claim_decision, ClaimDecision, FollowUpIssueInput,
+    adapter_from_config, claim_decision, ClaimDecision, FollowUpIssueInput, TrackerAdapter,
 };
 use jade_symphony::workflow::WorkflowDefinition;
-use jade_symphony::workspace::{prepare_workspace, run_after_run, run_before_run};
+use jade_symphony::workspace::{
+    apply_local_git_identity, prepare_workspace, profile_scoped_identifier, run_after_run,
+    run_before_run, GitIdentityApplyResult,
+};
 
 const DEFAULT_RUN_LOOP_BASE_BRANCH: &str = "main";
 
@@ -51,8 +76,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Command::Validate { workflow_path } => validate(workflow_path),
         Command::Inspect { workflow_path } => inspect(workflow_path),
         Command::Doctor { workflow_path } => doctor(workflow_path),
+        Command::Profiles { workflow_path } => list_profiles(workflow_path),
+        Command::DogfoodSmoke {
+            workflow_path,
+            write,
+        } => dogfood_smoke(workflow_path, write),
         Command::RunOnce { workflow_path } => run_once(workflow_path),
         Command::RunLoop { options } => run_loop(options),
+        Command::MergeOnce {
+            workflow_path,
+            write,
+        } => merge_once(workflow_path, write),
         Command::SetState {
             workflow_path,
             issue_ref,
@@ -88,6 +122,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             write,
         } => review_once(workflow_path, issue_ref, write),
         Command::ReviewFreshness { input } => review_freshness(input),
+        Command::ReviewLoop { options } => review_loop(options),
         Command::Gate {
             workflow_path,
             issue_ref,
@@ -189,7 +224,7 @@ fn quality_gate(
     let issue = adapter
         .get_issue(&issue_ref)?
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
-    let decision = evaluate_issue(&issue);
+    let decision = evaluate_issue_for_current_source(&config, &issue)?;
 
     println!(
         "gate={:?} dispatchable={}",
@@ -217,6 +252,33 @@ fn quality_gate(
     }
 
     Ok(())
+}
+
+fn evaluate_issue_for_current_source(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+) -> Result<GateDecision, Box<dyn std::error::Error>> {
+    let repo_root = std::env::current_dir()?;
+    let expected_target = expected_target_repository(config);
+    let deterministic =
+        evaluate_issue_with_source_alignment(issue, &repo_root, expected_target.as_deref());
+    Ok(evaluate_issue_with_llm_gate(
+        issue,
+        deterministic,
+        &LlmGateOptions {
+            mode: LlmGateMode::parse(&config.quality_gate.llm.mode),
+            command: config.quality_gate.llm.command.clone(),
+            timeout_ms: config.quality_gate.llm.timeout_ms,
+        },
+    ))
+}
+
+fn expected_target_repository(config: &RuntimeConfig) -> Option<String> {
+    Some(format!(
+        "{}/{}",
+        config.tracker.owner.as_ref()?,
+        config.tracker.repo.as_ref()?
+    ))
 }
 
 fn set_state(
@@ -284,12 +346,14 @@ fn forge_create(
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     require_write_intent(write)?;
-    let report = validate_forge_create_contract(&title, &markdown).inspect_err(|_message| {
-        let report = validate_markdown(&title, &markdown);
-        print_forge_validation(&report);
-    })?;
-
     let config = load_config(&workflow_path)?;
+    let report =
+        validate_forge_create_contract(&title, &markdown, &config).inspect_err(|_message| {
+            let report = validate_forge_create_report(&title, &markdown, &config)
+                .unwrap_or_else(|_| validate_markdown(&title, &markdown));
+            print_forge_validation(&report);
+        })?;
+
     let adapter = adapter_from_config(&config);
     let issue_id = adapter.create_follow_up_issue(FollowUpIssueInput {
         title: report.title,
@@ -377,13 +441,47 @@ fn forge_reflect(
 fn validate_forge_create_contract(
     title: &str,
     markdown: &str,
+    config: &RuntimeConfig,
 ) -> Result<jade_symphony::issue_forge::ForgeValidationReport, String> {
-    let report = validate_markdown(title, markdown);
+    let report = validate_forge_create_report(title, markdown, config)
+        .map_err(|error| format!("source alignment failed: {error}"))?;
     if report.decision.is_dispatchable() {
         Ok(report)
     } else {
         Err("issue forge validation failed; tracker issue was not created".into())
     }
+}
+
+fn validate_forge_create_report(
+    title: &str,
+    markdown: &str,
+    config: &RuntimeConfig,
+) -> Result<jade_symphony::issue_forge::ForgeValidationReport, Box<dyn std::error::Error>> {
+    let issue = TrackerIssue {
+        tracker_kind: config.tracker.kind.clone(),
+        id: "forge-draft".into(),
+        item_id: None,
+        identifier: "#draft".into(),
+        title: title.into(),
+        description: Some(markdown.into()),
+        url: None,
+        state: config.tracker.state_map.todo.clone(),
+        labels: Vec::new(),
+        assignees: Vec::new(),
+        priority: None,
+        branch_name: None,
+        linked_pull_requests: Vec::new(),
+        blocked_by: Vec::new(),
+        project_fields: Default::default(),
+        created_at: None,
+        updated_at: None,
+    };
+    let decision = evaluate_issue_for_current_source(config, &issue)?;
+    Ok(jade_symphony::issue_forge::ForgeValidationReport {
+        title: title.to_string(),
+        question: next_clarification_question(&decision),
+        decision,
+    })
 }
 
 fn add_to_project(
@@ -514,22 +612,324 @@ fn review_freshness(input: ReviewFreshnessInput) -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let limit = options.iteration_limit();
+    let mut iterations = 0usize;
+
+    loop {
+        if let Some(max) = limit {
+            if iterations >= max {
+                println!("review_loop=stopped reason=max_iterations iterations={iterations}");
+                break;
+            }
+        }
+
+        iterations += 1;
+        let config = load_config(&options.workflow_path)?;
+        let adapter = adapter_from_config(&config);
+        let issues = adapter
+            .fetch_issues_by_states(std::slice::from_ref(&config.tracker.state_map.agent_review))?;
+
+        let Some(issue) = issues.first().cloned() else {
+            println!("review_loop=stopped reason=no_agent_review_issue iterations={iterations}");
+            break;
+        };
+
+        let backend_kind = review_backend_kind(&config, options.fake_outcome.as_ref());
+        match review_run_eligibility(
+            &issue,
+            &config.tracker.state_map.agent_review,
+            &backend_kind,
+        ) {
+            ReviewRunEligibility::Eligible { worker_key } => {
+                println!(
+                    "review_loop_iteration={iterations} issue={} worker_key={worker_key} mode={}",
+                    issue.identifier,
+                    if options.write { "write" } else { "dry-run" }
+                );
+                if !options.write {
+                    println!(
+                        "review_loop_dry_run action=start issue={} backend={backend_kind}",
+                        issue.identifier
+                    );
+                    println!(
+                        "review_loop_dry_run action=workpad issue={} evidence=review_job",
+                        issue.identifier
+                    );
+                    println!(
+                        "review_loop_dry_run action=reconcile issue={} actor=independent_review_agent",
+                        issue.identifier
+                    );
+                    if limit.is_none() {
+                        println!(
+                            "review_loop=stopped reason=dry_run_would_repeat_without_mutation iterations={iterations}"
+                        );
+                        break;
+                    }
+                    continue;
+                }
+
+                let latest = adapter.get_issue(&issue.identifier)?.ok_or_else(|| {
+                    format!("issue disappeared before review: {}", issue.identifier)
+                })?;
+                match review_run_eligibility(
+                    &latest,
+                    &config.tracker.state_map.agent_review,
+                    &backend_kind,
+                ) {
+                    ReviewRunEligibility::Eligible { .. } => {
+                        let job = run_review_job(&config, &latest, options.fake_outcome.clone())?;
+                        apply_review_result(adapter.as_ref(), &latest.identifier, &latest, &job)?;
+                        let decision = review_gate_decision(&job);
+                        println!(
+                            "review_loop_action=reconciled issue={} backend={} outcome={:?} target_state={:?}",
+                            latest.identifier, job.backend, decision.outcome, decision.target_state
+                        );
+                    }
+                    ReviewRunEligibility::AlreadyQueued { worker_key } => {
+                        println!(
+                            "review_loop_action=skip issue={} reason=review_worker_exists worker_key={worker_key}",
+                            latest.identifier
+                        );
+                    }
+                    ReviewRunEligibility::NotInAgentReview { current_state } => {
+                        println!(
+                            "review_loop_action=skip issue={} reason=state_changed current_state={current_state:?}",
+                            latest.identifier
+                        );
+                    }
+                }
+            }
+            ReviewRunEligibility::AlreadyQueued { worker_key } => {
+                println!(
+                    "review_loop_action=skip issue={} reason=review_worker_exists worker_key={worker_key}",
+                    issue.identifier
+                );
+            }
+            ReviewRunEligibility::NotInAgentReview { current_state } => {
+                println!(
+                    "review_loop_action=skip issue={} reason=state_changed current_state={current_state:?}",
+                    issue.identifier
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn merge_once(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let workflow = WorkflowDefinition::load(&workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
+    config.validate()?;
+
+    let adapter = adapter_from_config(&config);
+    let merging_state = config.tracker.state_map.merging.clone();
+    let mut issues = adapter.fetch_issues_by_states(std::slice::from_ref(&merging_state))?;
+    if issues.is_empty() {
+        println!("merge_once=stopped reason=no_merging_issue");
+        return Ok(());
+    }
+
+    issues.sort_by_key(|issue| issue.priority.unwrap_or(i64::MAX));
+    let selected = issues.remove(0);
+    let issue = adapter
+        .get_issue(&selected.identifier)?
+        .unwrap_or(selected.clone());
+    let linked_pull_requests = adapter.list_linked_pull_requests(&issue.identifier)?;
+    let runner = ProcessHandoffCommandRunner;
+    let expected_base = expected_merge_base_branch(&config);
+    let status = merge_preflight_status(&config, &issue, &linked_pull_requests, &runner)?;
+    let decision = merge_lane_decision(
+        &issue,
+        &merging_state,
+        expected_base,
+        &linked_pull_requests,
+        status.as_ref(),
+    );
+
+    println!(
+        "merge_once issue={} decision={:?} target_state={} write={}",
+        issue.identifier,
+        decision.kind,
+        decision.target_state.unwrap_or("none"),
+        write
+    );
+    println!("reason={}", decision.reason);
+    if let Some(pr_url) = decision.pr_url.as_deref() {
+        println!("pull_request={pr_url}");
+    }
+
+    if !write {
+        print_merge_dry_run_actions(&decision);
+        return Ok(());
+    }
+
+    if decision.kind.is_merge_ready() {
+        let pr_ref = decision
+            .pr_url
+            .as_deref()
+            .ok_or("merge-ready decision missing pull request URL")?;
+        let output = merge_pull_request(pr_ref, &runner, &std::env::current_dir()?)?;
+        let workpad = merge_lane_workpad(&issue, &decision, Some(&output));
+        adapter.upsert_workpad(&issue.identifier, &workpad)?;
+        adapter.set_state(&issue.identifier, "done")?;
+        println!(
+            "merge_once_action=merged issue={} target_state=done",
+            issue.identifier
+        );
+        return Ok(());
+    }
+
+    let workpad = merge_lane_workpad(&issue, &decision, None);
+    adapter.upsert_workpad(&issue.identifier, &workpad)?;
+    if let Some(target_state) = decision.target_state {
+        adapter.set_state(&issue.identifier, target_state)?;
+        println!(
+            "merge_once_action=routed issue={} target_state={target_state}",
+            issue.identifier
+        );
+    } else {
+        println!("merge_once_action=skipped issue={}", issue.identifier);
+    }
+
+    Ok(())
+}
+
+fn merge_preflight_status(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    linked_pull_requests: &[jade_symphony::model::LinkedPullRequest],
+    runner: &ProcessHandoffCommandRunner,
+) -> Result<Option<jade_symphony::merge_lane::PullRequestMergeStatus>, Box<dyn std::error::Error>> {
+    if linked_pull_requests.len() != 1 {
+        return Ok(None);
+    }
+
+    let linked = &linked_pull_requests[0];
+    let number_ref = linked.number.map(|number| number.to_string());
+    let Some(pr_ref) = linked.url.as_deref().or(number_ref.as_deref()) else {
+        return Ok(None);
+    };
+
+    if config.tracker.fixture_path.is_some() || issue.tracker_kind == "memory" {
+        return Ok(pull_request_status_from_linked(linked));
+    }
+
+    match fetch_pull_request_status(pr_ref, runner, &std::env::current_dir()?) {
+        Ok(status) => Ok(Some(status)),
+        Err(error) => {
+            eprintln!("merge_preflight_warning={error}");
+            Ok(None)
+        }
+    }
+}
+
+fn print_merge_dry_run_actions(decision: &jade_symphony::merge_lane::MergeLaneDecision) {
+    match decision.kind {
+        MergeLaneDecisionKind::ReadyToMerge => {
+            println!("merge_once_dry_run action=merge");
+            println!("merge_once_dry_run action=workpad evidence=merge_result");
+            println!("merge_once_dry_run action=set_state target_state=done");
+        }
+        MergeLaneDecisionKind::AlreadyMerged => {
+            println!("merge_once_dry_run action=workpad evidence=already_merged");
+            println!("merge_once_dry_run action=set_state target_state=done");
+        }
+        _ => {
+            println!("merge_once_dry_run action=workpad evidence=preflight_blocker");
+            if let Some(target_state) = decision.target_state {
+                println!("merge_once_dry_run action=set_state target_state={target_state}");
+            }
+        }
+    }
+}
+
+fn review_backend_kind(config: &RuntimeConfig, fake_outcome: Option<&FakeReviewOutcome>) -> String {
+    if fake_outcome.is_some() {
+        "fake-reviewer".into()
+    } else if config.review.backend == "gemini-cli" {
+        "gemini-cli".into()
+    } else {
+        "fake-reviewer".into()
+    }
+}
+
+fn run_review_job(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    fake_outcome: Option<FakeReviewOutcome>,
+) -> Result<ReviewJob, Box<dyn std::error::Error>> {
+    let request = ReviewRequest {
+        issue: issue.clone(),
+        prompt: format!(
+            "Review {} {}\n\n{}",
+            issue.identifier,
+            issue.title,
+            issue.description.as_deref().unwrap_or_default()
+        ),
+        workspace: config.workspace.root.clone(),
+        artifact_root: config.observability.logs_root.join("reviews"),
+    };
+
+    if let Some(outcome) = fake_outcome {
+        let backend = FakeReviewBackend::new(outcome);
+        return Ok(backend.poll(backend.start(request)?)?);
+    }
+
+    match config.review.backend.as_str() {
+        "gemini-cli" => {
+            let backend = GeminiCliReviewBackend::new(config.review.gemini_command.clone());
+            match backend.start(request) {
+                Ok(job) => Ok(backend.poll(job)?),
+                Err(error) => Ok(ReviewJob::failed_unavailable(
+                    issue.identifier.clone(),
+                    "gemini-cli",
+                    error.to_string(),
+                )),
+            }
+        }
+        _ => {
+            let backend = FakeReviewBackend::new(FakeReviewOutcome::Pass);
+            Ok(backend.poll(backend.start(request)?)?)
+        }
+    }
+}
+
 fn apply_review_result(
-    adapter: &dyn jade_symphony::tracker::TrackerAdapter,
+    adapter: &dyn TrackerAdapter,
     issue_ref: &str,
     issue: &TrackerIssue,
     job: &jade_symphony::review::ReviewJob,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let decision = review_gate_decision(job);
-    let workpad = render_review_workpad(issue, job);
-
-    adapter.upsert_workpad(issue_ref, &workpad)?;
     if let Some(target_state) = decision.target_state {
         if !transition_allowed_for_review_agent(target_state, &decision) {
             return Err("review agent transition is not allowed for this review decision".into());
         }
+        if rework_transition_expected(&decision) {
+            let diagnostic = rework_diagnostic_from_review(issue, job, &decision);
+            transition_issue_to_rework_with_diagnostic(adapter, issue, &diagnostic)?;
+            return Ok(());
+        }
+    }
+
+    let workpad = render_review_workpad(issue, job);
+    adapter.upsert_workpad(issue_ref, &workpad)?;
+    if let Some(target_state) = decision.target_state {
         adapter.set_state(issue_ref, target_state)?;
     }
+    Ok(())
+}
+
+fn transition_issue_to_rework_with_diagnostic(
+    adapter: &dyn TrackerAdapter,
+    issue: &TrackerIssue,
+    diagnostic: &ReworkDiagnostic,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let workpad = render_rework_diagnostic_workpad(issue, diagnostic);
+    adapter.upsert_workpad(&issue.identifier, &workpad)?;
+    adapter.set_state(&issue.identifier, "rework")?;
     Ok(())
 }
 
@@ -572,7 +972,7 @@ fn inspect(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 
     println!("issues={}", issues.len());
     for issue in issues {
-        let gate = evaluate_issue(&issue);
+        let gate = evaluate_issue_for_current_source(&config, &issue)?;
         println!(
             "- {} {} state={} gate={:?}",
             issue.identifier, issue.title, issue.state, gate.kind
@@ -610,6 +1010,105 @@ fn doctor(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn list_profiles(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_config(&workflow_path)?;
+    let profiles = discover_execution_profiles(&config.profiles)?;
+    let selected = selected_execution_profile(&config.profiles)?;
+
+    println!("profiles={}", profiles.len());
+    if let Some(profile) = selected {
+        println!("selected_profile={}", profile.profile_id);
+        println!("selected_instance={}", profile.instance_name);
+    }
+    for profile in profiles {
+        println!(
+            "- profile_id={} instance_name={} source={} workspace_namespace={} backend={}",
+            profile.profile_id,
+            profile.instance_name,
+            profile.source,
+            profile.workspace_namespace,
+            profile.backend.as_deref().unwrap_or("configured")
+        );
+    }
+    Ok(())
+}
+
+fn dogfood_smoke(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let workflow = WorkflowDefinition::load(&workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
+    config.validate()?;
+
+    let adapter = adapter_from_config(&config);
+    let integration_gaps = adapter.integration_gaps();
+    let issues = adapter.list_dispatchable_issues()?;
+    let controlled_candidates: Vec<_> = issues
+        .iter()
+        .filter(|issue| is_controlled_dogfood_smoke_issue(issue))
+        .collect();
+    let executable_candidates = controlled_candidates
+        .iter()
+        .filter(|issue| {
+            evaluate_issue_for_current_source(&config, issue)
+                .map(|decision| decision.is_dispatchable())
+                .unwrap_or(false)
+        })
+        .count();
+    let fixture_mode = config.tracker.fixture_path.is_some();
+    let write_ready =
+        !fixture_mode && integration_gaps.is_empty() && executable_candidates == 1 && write;
+
+    println!("dogfood_smoke=ok");
+    println!("workflow={}", workflow_path.display());
+    println!("tracker_kind={}", config.tracker.kind);
+    println!("fixture_mode={fixture_mode}");
+    println!("write_requested={write}");
+    println!("controlled_candidates={}", controlled_candidates.len());
+    println!("executable_candidates={executable_candidates}");
+    println!(
+        "runtime_state_path={}",
+        runtime_state_path(&config).display()
+    );
+    println!(
+        "event_log_root={}",
+        config.observability.logs_root.join("events").display()
+    );
+    if integration_gaps.is_empty() {
+        println!("integration_gaps=none");
+    } else {
+        for gap in &integration_gaps {
+            println!("integration_gap={gap}");
+        }
+    }
+    println!("write_ready={write_ready}");
+
+    if !write {
+        println!("dogfood_smoke_dry_run action=inspect_project");
+        println!("dogfood_smoke_dry_run action=quality_gate_controlled_issue");
+        println!("dogfood_smoke_dry_run action=report_run_loop_command");
+        return Ok(());
+    }
+
+    if write_ready {
+        println!(
+            "dogfood_smoke_next_command=cargo run -- run-loop {} --max-iterations 1 --write",
+            workflow_path.display()
+        );
+    } else {
+        println!("dogfood_smoke_blocked=true");
+        println!("dogfood_smoke_blocker=requires exactly one executable controlled smoke issue, non-fixture tracker mode, and no integration gaps");
+    }
+
+    Ok(())
+}
+
+fn is_controlled_dogfood_smoke_issue(issue: &TrackerIssue) -> bool {
+    issue
+        .labels_lowercase()
+        .iter()
+        .any(|label| label == "dogfood-smoke" || label == "smoke")
+        || issue.title.to_ascii_lowercase().contains("[dogfood-smoke]")
+}
+
 fn run_once(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
@@ -631,6 +1130,13 @@ fn run_once(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     println!("issue={} {}", issue.identifier, issue.title);
     println!("workspace={}", result.workspace_path.display());
     println!("backend={}", result.backend);
+    println!("actor_role={}", result.actor_role);
+    println!("actor_label={}", result.actor_label);
+    println!(
+        "git_author={}",
+        result.git_author.as_deref().unwrap_or("n/a")
+    );
+    println!("git_identity={}", result.git_identity.summary());
     println!("success={}", result.success);
     println!(
         "event_log={}",
@@ -647,9 +1153,23 @@ fn run_once(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 struct IssueExecutionResult {
     workspace_path: PathBuf,
     backend: String,
+    profile_id: Option<String>,
+    instance_name: Option<String>,
     success: bool,
     session_id: Option<String>,
     message: String,
+    actor_role: String,
+    actor_label: String,
+    git_author: Option<String>,
+    git_identity: GitIdentityApplyResult,
+    live_handoff: Option<RunLoopLiveHandoff>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RunLoopLiveHandoff {
+    worktree: LiveWorktreeResult,
+    publication: PullRequestPublication,
+    verification: String,
 }
 
 fn execute_issue_once(
@@ -657,7 +1177,14 @@ fn execute_issue_once(
     config: &RuntimeConfig,
     issue: &TrackerIssue,
 ) -> Result<IssueExecutionResult, Box<dyn std::error::Error>> {
-    execute_issue_once_with_workspace_key(workflow, config, issue, &issue.identifier)
+    let profile = selected_execution_profile(&config.profiles)?;
+    let workspace_identifier = profile_scoped_identifier(
+        profile
+            .as_ref()
+            .map(|profile| profile.workspace_namespace.as_str()),
+        &issue.identifier,
+    );
+    execute_issue_once_with_workspace_key(workflow, config, issue, &workspace_identifier)
 }
 
 fn execute_issue_once_with_workspace_key(
@@ -666,7 +1193,9 @@ fn execute_issue_once_with_workspace_key(
     issue: &TrackerIssue,
     workspace_key: &str,
 ) -> Result<IssueExecutionResult, Box<dyn std::error::Error>> {
+    let profile = selected_execution_profile(&config.profiles)?;
     let workspace = prepare_workspace(&config.workspace.root, workspace_key, &config.hooks)?;
+    let git_identity = apply_local_git_identity(&workspace.path, &config.identity.git)?;
     run_before_run(&workspace.path, &config.hooks)?;
 
     let prompt = render_prompt(&workflow.prompt_template, issue, None)?;
@@ -685,6 +1214,13 @@ fn execute_issue_once_with_workspace_key(
             issue_id: Some(issue.id.clone()),
             issue_identifier: Some(issue.identifier.clone()),
             session_id: summary.session_id.clone(),
+            profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
+            instance_name: profile
+                .as_ref()
+                .map(|profile| profile.instance_name.clone()),
+            actor_role: Some(config.identity.actor_role.clone()),
+            actor_label: Some(config.identity.actor_label.clone()),
+            git_author: config.identity.git.author(),
             message: summary.message.clone(),
         })?;
     }
@@ -692,9 +1228,18 @@ fn execute_issue_once_with_workspace_key(
     Ok(IssueExecutionResult {
         workspace_path: workspace.path,
         backend: summary.backend,
+        profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
+        instance_name: profile
+            .as_ref()
+            .map(|profile| profile.instance_name.clone()),
         success: summary.success,
         session_id: summary.session_id,
         message: summary.message,
+        actor_role: config.identity.actor_role.clone(),
+        actor_label: config.identity.actor_label.clone(),
+        git_author: config.identity.git.author(),
+        git_identity,
+        live_handoff: None,
     })
 }
 
@@ -715,6 +1260,73 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         let config = RuntimeConfig::from_workflow(&workflow, &options.workflow_path)?;
         config.validate()?;
         let adapter = adapter_from_config(&config);
+        if options.write {
+            let runtime_state = load_runtime_state(&config)?;
+            match run_loop_resume_preflight(
+                adapter.as_ref(),
+                &config,
+                runtime_state.as_ref(),
+                current_time_ms(),
+            )? {
+                ResumePreflightAction::Continue => {}
+                ResumePreflightAction::ClearCompleted { issue_identifier } => {
+                    clear_runtime_state(&config)?;
+                    println!(
+                        "run_loop_resume_preflight action=clear issue={} reason=tracker_state_terminal",
+                        issue_identifier
+                    );
+                }
+                ResumePreflightAction::RetryLater {
+                    issue_identifier,
+                    retry,
+                    due_in_ms,
+                } => {
+                    append_runtime_supervision_event(
+                        &config,
+                        runtime_state.as_ref(),
+                        "RetryDeferred",
+                        &format!(
+                            "issue={issue_identifier} attempt={} due_in_ms={} error={}",
+                            retry.attempt, due_in_ms, retry.error
+                        ),
+                    )?;
+                    println!(
+                        "run_loop=stopped reason=retry_backoff issue={} due_in_ms={} attempt={}",
+                        issue_identifier, due_in_ms, retry.attempt
+                    );
+                    break;
+                }
+                ResumePreflightAction::Stalled {
+                    issue_identifier,
+                    stall,
+                } => {
+                    append_runtime_supervision_event(
+                        &config,
+                        runtime_state.as_ref(),
+                        "RuntimeStalled",
+                        &format!(
+                            "issue={issue_identifier} stalled_for_ms={} reason={}",
+                            stall.stalled_for_ms, stall.reason
+                        ),
+                    )?;
+                    println!(
+                        "run_loop=stopped reason=runtime_stalled issue={} stalled_for_ms={}",
+                        issue_identifier, stall.stalled_for_ms
+                    );
+                    break;
+                }
+                ResumePreflightAction::Block { reason } => {
+                    append_runtime_supervision_event(
+                        &config,
+                        runtime_state.as_ref(),
+                        "ResumeBlocked",
+                        &reason,
+                    )?;
+                    println!("run_loop=stopped reason=resume_preflight_blocked detail={reason}");
+                    break;
+                }
+            }
+        }
         let issues = adapter.list_dispatchable_issues()?;
         let orchestrator = Orchestrator::new(config.clone());
         let mut plan = orchestrator.plan_dispatch(issues);
@@ -746,7 +1358,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
-        let decision = evaluate_issue(&issue);
+        let decision = evaluate_issue_for_current_source(&config, &issue)?;
         if !decision.is_dispatchable() {
             handle_run_loop_gate_failure(adapter.as_ref(), &issue, &decision, &options)?;
             continue;
@@ -769,7 +1381,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         };
 
         if !options.write {
-            print_run_loop_dry_run_actions(&issue, &handoff);
+            print_run_loop_dry_run_actions(&issue, &handoff, &config)?;
             if limit.is_none() {
                 println!(
                     "run_loop=stopped reason=dry_run_would_repeat_without_mutation iterations={iterations}"
@@ -782,7 +1394,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         let latest = adapter
             .get_issue(&issue.identifier)?
             .ok_or_else(|| format!("issue disappeared before claim: {}", issue.identifier))?;
-        let latest_gate = evaluate_issue(&latest);
+        let latest_gate = evaluate_issue_for_current_source(&config, &latest)?;
         if !latest_gate.is_dispatchable() {
             handle_run_loop_gate_failure(adapter.as_ref(), &latest, &latest_gate, &options)?;
             continue;
@@ -831,22 +1443,62 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         let mut runtime_state = run_loop_runtime_state_for_issue(
             existing_runtime_state.as_ref(),
             &latest,
-            &config.backend.kind,
+            &config,
             event,
         );
+        mark_runtime_state_updated(&mut runtime_state, current_time_ms());
         save_runtime_state(&config, &runtime_state)?;
         println!(
             "run_loop_runtime_state action=saved issue={} event={event}",
             latest.identifier
         );
 
-        let result = execute_issue_once_with_workspace_key(
+        let live_worktree = if run_loop_live_handoff_enabled(&config) {
+            let runner = ProcessHandoffCommandRunner;
+            let repo_root = std::env::current_dir()?;
+            let worktree = prepare_issue_worktree(&repo_root, &handoff, &runner)?;
+            println!(
+                "run_loop_action=worktree issue={} workspace={} branch={} created={}",
+                latest.identifier,
+                worktree.workspace_path.display(),
+                worktree.branch_name,
+                worktree.created
+            );
+            Some(worktree)
+        } else {
+            None
+        };
+
+        let mut result = execute_issue_once_with_workspace_key(
             &workflow,
             &config,
             &latest,
             &handoff.workspace_key,
         )?;
+        if result.success {
+            if let Some(worktree) = live_worktree {
+                let runner = ProcessHandoffCommandRunner;
+                match publish_issue_pull_request(&handoff, &runner) {
+                    Ok(publication) => {
+                        println!(
+                            "run_loop_action=pr issue={} url={} created={}",
+                            latest.identifier, publication.pr_url, publication.pr_created
+                        );
+                        result.live_handoff = Some(RunLoopLiveHandoff {
+                            worktree,
+                            publication,
+                            verification: "skipped:not_configured".into(),
+                        });
+                    }
+                    Err(error) => {
+                        result.success = false;
+                        result.message = format!("handoff publication failed: {error}");
+                    }
+                }
+            }
+        }
         runtime_state = run_loop_runtime_state_with_result(runtime_state, &result);
+        mark_runtime_state_updated(&mut runtime_state, current_time_ms());
         save_runtime_state(&config, &runtime_state)?;
         println!(
             "run_loop_runtime_state action=updated issue={} event={}",
@@ -861,12 +1513,34 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             if !transition_allowed_for_main_agent("agent_review") {
                 return Err("main implementation agent cannot set requested review state".into());
             }
+            let evidence = run_loop_agent_review_handoff_evidence(&latest, &result, &handoff);
+            let handoff_report = evaluate_agent_review_handoff(&evidence);
+            let handoff_workpad =
+                render_agent_review_handoff_workpad(&latest, &evidence, &handoff_report);
+            adapter.upsert_workpad(&latest.identifier, &handoff_workpad)?;
+            if !handoff_report.is_ready() {
+                runtime_state = run_loop_runtime_state_with_transition(
+                    runtime_state,
+                    Some(latest.state.clone()),
+                    "need_human_input",
+                    "agent review handoff invariant failed",
+                );
+                save_runtime_state(&config, &runtime_state)?;
+                adapter.set_state(&latest.identifier, "need_human_input")?;
+                clear_runtime_state(&config)?;
+                println!(
+                    "run_loop_action=blocked issue={} target_state=need_human_input reason=handoff_invariant_failed",
+                    latest.identifier
+                );
+                continue;
+            }
             runtime_state = run_loop_runtime_state_with_transition(
                 runtime_state,
                 Some(latest.state.clone()),
                 "agent_review",
                 "main agent completed",
             );
+            mark_runtime_state_updated(&mut runtime_state, current_time_ms());
             save_runtime_state(&config, &runtime_state)?;
             adapter.set_state(&latest.identifier, "agent_review")?;
             clear_runtime_state(&config)?;
@@ -875,19 +1549,49 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 latest.identifier
             );
         } else {
-            runtime_state = run_loop_runtime_state_with_transition(
-                runtime_state,
-                Some(latest.state.clone()),
-                "need_human_input",
-                "backend run failed",
-            );
-            save_runtime_state(&config, &runtime_state)?;
-            adapter.set_state(&latest.identifier, "need_human_input")?;
-            clear_runtime_state(&config)?;
-            println!(
-                "run_loop_action=blocked issue={} target_state=need_human_input",
-                latest.identifier
-            );
+            let retry_delay_ms = Orchestrator::new(config.clone())
+                .retry_delay_ms(runtime_state.attempt_count, false);
+            if runtime_state.attempt_count < config.agent.max_turns {
+                record_runtime_retry(
+                    &mut runtime_state,
+                    current_time_ms(),
+                    retry_delay_ms,
+                    result.message.clone(),
+                );
+                save_runtime_state(&config, &runtime_state)?;
+                append_runtime_supervision_event(
+                    &config,
+                    Some(&runtime_state),
+                    "RetryScheduled",
+                    &format!(
+                        "issue={} attempt={} due_in_ms={} error={}",
+                        latest.identifier,
+                        runtime_state.attempt_count,
+                        retry_delay_ms,
+                        result.message
+                    ),
+                )?;
+                println!(
+                    "run_loop_action=retry_scheduled issue={} attempt={} due_in_ms={}",
+                    latest.identifier, runtime_state.attempt_count, retry_delay_ms
+                );
+                break;
+            } else {
+                runtime_state = run_loop_runtime_state_with_transition(
+                    runtime_state,
+                    Some(latest.state.clone()),
+                    "need_human_input",
+                    "backend run failed after retry limit",
+                );
+                mark_runtime_state_updated(&mut runtime_state, current_time_ms());
+                save_runtime_state(&config, &runtime_state)?;
+                adapter.set_state(&latest.identifier, "need_human_input")?;
+                clear_runtime_state(&config)?;
+                println!(
+                    "run_loop_action=blocked issue={} target_state=need_human_input",
+                    latest.identifier
+                );
+            }
         }
     }
 
@@ -907,6 +1611,26 @@ enum RunLoopClaimAction {
     StopAndReplan { current_state: String },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ResumePreflightAction {
+    Continue,
+    ClearCompleted {
+        issue_identifier: String,
+    },
+    RetryLater {
+        issue_identifier: String,
+        retry: RuntimeRetryState,
+        due_in_ms: u64,
+    },
+    Stalled {
+        issue_identifier: String,
+        stall: RuntimeStallState,
+    },
+    Block {
+        reason: String,
+    },
+}
+
 fn run_loop_claim_action(issue: &TrackerIssue, config: &RuntimeConfig) -> RunLoopClaimAction {
     match claim_decision(issue, config) {
         ClaimDecision::Claimable => RunLoopClaimAction::Claim,
@@ -915,6 +1639,70 @@ fn run_loop_claim_action(issue: &TrackerIssue, config: &RuntimeConfig) -> RunLoo
             RunLoopClaimAction::StopAndReplan { current_state }
         }
     }
+}
+
+fn run_loop_resume_preflight(
+    adapter: &dyn jade_symphony::tracker::TrackerAdapter,
+    config: &RuntimeConfig,
+    state: Option<&RuntimeState>,
+    now_ms: u64,
+) -> Result<ResumePreflightAction, Box<dyn std::error::Error>> {
+    let Some(state) = state else {
+        return Ok(ResumePreflightAction::Continue);
+    };
+    let Some(active_issue) = state.active_issue.as_ref() else {
+        return Ok(ResumePreflightAction::Continue);
+    };
+
+    let Some(issue) = adapter.get_issue(&active_issue.identifier)? else {
+        return Ok(ResumePreflightAction::Block {
+            reason: format!(
+                "runtime state references missing issue {}",
+                active_issue.identifier
+            ),
+        });
+    };
+    let normalized_state = normalize_state(&issue.state);
+
+    if config
+        .terminal_state_set()
+        .iter()
+        .any(|state| state == &normalized_state)
+        || matches!(normalized_state.as_str(), "agent review" | "human review")
+    {
+        return Ok(ResumePreflightAction::ClearCompleted {
+            issue_identifier: active_issue.identifier.clone(),
+        });
+    }
+
+    if normalized_state != "in progress" {
+        return Ok(ResumePreflightAction::Block {
+            reason: format!(
+                "runtime state references {} but tracker state is {}",
+                active_issue.identifier, issue.state
+            ),
+        });
+    }
+
+    if let Some(retry) = state.retry.clone() {
+        let due_in_ms = retry.due_in_ms(now_ms);
+        if due_in_ms > 0 {
+            return Ok(ResumePreflightAction::RetryLater {
+                issue_identifier: active_issue.identifier.clone(),
+                retry,
+                due_in_ms,
+            });
+        }
+    }
+
+    if let Some(stall) = detect_runtime_stall(state, now_ms, config.codex.stall_timeout_ms) {
+        return Ok(ResumePreflightAction::Stalled {
+            issue_identifier: active_issue.identifier.clone(),
+            stall,
+        });
+    }
+
+    Ok(ResumePreflightAction::Continue)
 }
 
 fn no_dispatch_action(
@@ -933,21 +1721,59 @@ fn no_dispatch_action(
     }
 }
 
+fn current_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn append_runtime_supervision_event(
+    config: &RuntimeConfig,
+    state: Option<&RuntimeState>,
+    event: &str,
+    message: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let log = EventLog::new(config.observability.logs_root.join("jade-symphony.jsonl"));
+    let active_issue = state.and_then(|state| state.active_issue.as_ref());
+    log.append(&EventRecord {
+        event: event.into(),
+        issue_id: active_issue.map(|issue| issue.id.clone()),
+        issue_identifier: active_issue.map(|issue| issue.identifier.clone()),
+        session_id: state.and_then(|state| state.backend_session_id.clone()),
+        profile_id: state.and_then(|state| state.profile_id.clone()),
+        instance_name: state.and_then(|state| state.instance_name.clone()),
+        actor_role: Some(config.identity.actor_role.clone()),
+        actor_label: Some(config.identity.actor_label.clone()),
+        git_author: config.identity.git.author(),
+        message: message.into(),
+    })?;
+    Ok(())
+}
+
 fn run_loop_runtime_state_for_issue(
     existing: Option<&RuntimeState>,
     issue: &TrackerIssue,
-    backend: &str,
+    config: &RuntimeConfig,
     event: &str,
 ) -> RuntimeState {
+    let profile = selected_execution_profile(&config.profiles).ok().flatten();
     let mut state = RuntimeState::active(
         RuntimeIssueState {
             id: issue.id.clone(),
             identifier: issue.identifier.clone(),
         },
-        backend,
+        &config.backend.kind,
     );
     state.attempt_count = next_runtime_attempt_count(existing, &issue.identifier);
     state.branch_name = issue.branch_name.clone();
+    state.profile_id = profile.as_ref().map(|profile| profile.profile_id.clone());
+    state.instance_name = profile
+        .as_ref()
+        .map(|profile| profile.instance_name.clone());
+    state.actor_role = Some(config.identity.actor_role.clone());
+    state.actor_label = Some(config.identity.actor_label.clone());
+    state.git_author = config.identity.git.author();
     state.last_event = Some(event.into());
     state
 }
@@ -971,6 +1797,11 @@ fn run_loop_runtime_state_with_result(
     state.workspace_path = Some(result.workspace_path.clone());
     state.backend = result.backend.clone();
     state.backend_session_id = result.session_id.clone();
+    state.profile_id = result.profile_id.clone();
+    state.instance_name = result.instance_name.clone();
+    state.actor_role = Some(result.actor_role.clone());
+    state.actor_label = Some(result.actor_label.clone());
+    state.git_author = result.git_author.clone();
     state.last_event = Some(if result.success {
         "Completed".into()
     } else {
@@ -997,7 +1828,20 @@ fn run_loop_handoff_plan(
     config: &RuntimeConfig,
     issue: &TrackerIssue,
 ) -> Result<IssueHandoffPlan, HandoffError> {
-    plan_issue_handoff(&config.workspace.root, issue, DEFAULT_RUN_LOOP_BASE_BRANCH)
+    let profile = selected_execution_profile(&config.profiles)
+        .ok()
+        .flatten()
+        .map(|profile| profile.workspace_namespace);
+    plan_issue_handoff_for_profile(
+        &config.workspace.root,
+        issue,
+        DEFAULT_RUN_LOOP_BASE_BRANCH,
+        profile.as_deref(),
+    )
+}
+
+fn run_loop_live_handoff_enabled(config: &RuntimeConfig) -> bool {
+    config.tracker.kind == "github_project_v2" && config.tracker.fixture_path.is_none()
 }
 
 fn handle_run_loop_gate_failure(
@@ -1054,7 +1898,12 @@ fn handle_run_loop_handoff_failure(
     Ok(())
 }
 
-fn print_run_loop_dry_run_actions(issue: &TrackerIssue, handoff: &IssueHandoffPlan) {
+fn print_run_loop_dry_run_actions(
+    issue: &TrackerIssue,
+    handoff: &IssueHandoffPlan,
+    config: &RuntimeConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let profile = selected_execution_profile(&config.profiles)?;
     if normalize_state(&issue.state) != "in progress" {
         println!(
             "run_loop_dry_run action=claim issue={} target_state=in_progress",
@@ -1072,8 +1921,31 @@ fn print_run_loop_dry_run_actions(issue: &TrackerIssue, handoff: &IssueHandoffPl
         handoff.pull_request.title
     );
     println!(
+        "run_loop_dry_run action=identity issue={} actor_role={} actor_label={:?} git_author={:?}",
+        issue.identifier,
+        config.identity.actor_role,
+        config.identity.actor_label,
+        config.identity.git.author()
+    );
+    println!(
         "run_loop_dry_run action=run issue={} backend=configured",
         issue.identifier
+    );
+    if let Some(profile) = profile {
+        println!(
+            "run_loop_dry_run profile_id={} instance_name={}",
+            profile.profile_id, profile.instance_name
+        );
+    }
+    println!(
+        "run_loop_dry_run action=worktree issue={} workspace={} branch={}",
+        issue.identifier,
+        handoff.workspace_path.display(),
+        handoff.branch_name
+    );
+    println!(
+        "run_loop_dry_run action=pr issue={} head={} base={}",
+        issue.identifier, handoff.branch_name, handoff.pull_request.base_branch
     );
     println!(
         "run_loop_dry_run action=workpad issue={} evidence=run_summary",
@@ -1083,6 +1955,7 @@ fn print_run_loop_dry_run_actions(issue: &TrackerIssue, handoff: &IssueHandoffPl
         "run_loop_dry_run action=handoff issue={} target_state=agent_review",
         issue.identifier
     );
+    Ok(())
 }
 
 fn run_loop_handoff_workpad(
@@ -1100,6 +1973,21 @@ fn run_loop_handoff_workpad(
         "### Run Evidence".to_string(),
         format!("- Workspace: `{}`", result.workspace_path.display()),
         format!("- Backend: `{}`", result.backend),
+        format!(
+            "- Profile: `{}`",
+            result.profile_id.as_deref().unwrap_or("n/a")
+        ),
+        format!(
+            "- Instance: `{}`",
+            result.instance_name.as_deref().unwrap_or("n/a")
+        ),
+        format!("- Actor role: `{}`", result.actor_role),
+        format!("- Actor label: `{}`", result.actor_label),
+        format!(
+            "- Git author: `{}`",
+            result.git_author.as_deref().unwrap_or("n/a")
+        ),
+        format!("- Git identity: `{}`", result.git_identity.summary()),
         format!("- Success: `{}`", result.success),
         format!(
             "- Session: `{}`",
@@ -1113,13 +2001,60 @@ fn run_loop_handoff_workpad(
         format!("- Branch: `{}`", handoff.branch_name),
         format!("- PR title: `{}`", handoff.pull_request.title),
         format!("- PR base branch: `{}`", handoff.pull_request.base_branch),
-        "- PR creation is planned evidence only in this slice.".to_string(),
+        live_handoff_workpad_line(result),
         String::new(),
         "### Main-Agent Boundary".to_string(),
         "- Locally complete main-agent work stops at `Agent Review`.".to_string(),
         "- `Human Review` is reserved for independent Review Agent pass evidence.".to_string(),
     ]
     .join("\n")
+}
+
+fn live_handoff_workpad_line(result: &IssueExecutionResult) -> String {
+    match &result.live_handoff {
+        Some(handoff) => format!(
+            "- Live PR: `{}` (created: `{}`, branch pushed: `{}`, verification: `{}`)",
+            handoff.publication.pr_url,
+            handoff.publication.pr_created,
+            handoff.publication.branch_pushed,
+            handoff.verification
+        ),
+        None => "- Live PR: `not-created`".to_string(),
+    }
+}
+
+fn run_loop_agent_review_handoff_evidence(
+    issue: &TrackerIssue,
+    result: &IssueExecutionResult,
+    handoff: &IssueHandoffPlan,
+) -> AgentReviewHandoffEvidence {
+    let mut evidence = AgentReviewHandoffEvidence::from_plan(
+        handoff,
+        format!(
+            "backend={} success={} session={} message={}",
+            result.backend,
+            result.success,
+            result.session_id.as_deref().unwrap_or("n/a"),
+            result.message
+        ),
+        "main agent completed local run",
+    );
+    evidence.pull_request_url = result
+        .live_handoff
+        .as_ref()
+        .map(|handoff| handoff.publication.pr_url.clone())
+        .or_else(|| {
+            issue
+                .linked_pull_requests
+                .iter()
+                .find_map(|pr| pr.url.clone())
+        });
+    if evidence.pull_request_url.is_none() {
+        evidence.no_pr_blocker = Some(
+            "No pull request URL was present in tracker data at handoff time; keeping issue out of Agent Review until PR evidence is durable.".into(),
+        );
+    }
+    evidence
 }
 
 fn run_loop_handoff_failure_workpad(issue: &TrackerIssue, error: &HandoffError) -> String {
@@ -1154,11 +2089,22 @@ enum Command {
     Doctor {
         workflow_path: PathBuf,
     },
+    Profiles {
+        workflow_path: PathBuf,
+    },
+    DogfoodSmoke {
+        workflow_path: PathBuf,
+        write: bool,
+    },
     RunOnce {
         workflow_path: PathBuf,
     },
     RunLoop {
         options: RunLoopOptions,
+    },
+    MergeOnce {
+        workflow_path: PathBuf,
+        write: bool,
     },
     SetState {
         workflow_path: PathBuf,
@@ -1196,6 +2142,9 @@ enum Command {
     },
     ReviewFreshness {
         input: ReviewFreshnessInput,
+    },
+    ReviewLoop {
+        options: ReviewLoopOptions,
     },
     Gate {
         workflow_path: PathBuf,
@@ -1248,6 +2197,25 @@ struct RunLoopOptions {
     write: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReviewLoopOptions {
+    workflow_path: PathBuf,
+    max_iterations: Option<usize>,
+    once: bool,
+    write: bool,
+    fake_outcome: Option<FakeReviewOutcome>,
+}
+
+impl ReviewLoopOptions {
+    fn iteration_limit(&self) -> Option<usize> {
+        if self.once {
+            Some(1)
+        } else {
+            self.max_iterations
+        }
+    }
+}
+
 impl RunLoopOptions {
     fn iteration_limit(&self) -> Option<usize> {
         if self.once {
@@ -1298,10 +2266,15 @@ enum CliCommand {
     Inspect(WorkflowPathArgs),
     #[command(alias = "audit-project")]
     Doctor(WorkflowPathArgs),
+    Profiles(WorkflowPathArgs),
+    #[command(name = "dogfood-smoke")]
+    DogfoodSmoke(DogfoodSmokeArgs),
     #[command(name = "run-once")]
     RunOnce(WorkflowPathArgs),
     #[command(name = "run-loop")]
     RunLoop(RunLoopArgs),
+    #[command(name = "merge-once", alias = "land")]
+    MergeOnce(MergeOnceArgs),
     #[command(name = "set-state")]
     SetState(SetStateArgs),
     Workpad(WorkpadArgs),
@@ -1315,6 +2288,8 @@ enum CliCommand {
     ReviewOnce(ReviewOnceArgs),
     #[command(name = "review-freshness")]
     ReviewFreshness(ReviewFreshnessArgs),
+    #[command(name = "review-loop")]
+    ReviewLoop(ReviewLoopArgs),
     Gate(GateArgs),
     #[command(name = "gate-apply")]
     GateApply(GateArgs),
@@ -1354,6 +2329,26 @@ struct RunLoopArgs {
     max_iterations: Option<usize>,
     #[arg(long)]
     once: bool,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct DogfoodSmokeArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct MergeOnceArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
     #[arg(long)]
     write: bool,
     #[arg(long = "dry-run")]
@@ -1464,6 +2459,22 @@ struct ReviewFreshnessArgs {
     rework_class: CliReviewReworkClass,
     #[arg(long = "patch-summary")]
     patch_summary: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct ReviewLoopArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long)]
+    max_iterations: Option<usize>,
+    #[arg(long)]
+    once: bool,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+    #[arg(long = "fake-outcome", value_enum)]
+    fake_outcome: Option<CliFakeReviewOutcome>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -1628,6 +2639,13 @@ impl TryFrom<Cli> for Command {
                     CliCommand::Doctor(args) => Ok(Self::Doctor {
                         workflow_path: args.workflow_path,
                     }),
+                    CliCommand::Profiles(args) => Ok(Self::Profiles {
+                        workflow_path: args.workflow_path,
+                    }),
+                    CliCommand::DogfoodSmoke(args) => Ok(Self::DogfoodSmoke {
+                        workflow_path: args.workflow_path,
+                        write: args.write,
+                    }),
                     CliCommand::RunOnce(args) => Ok(Self::RunOnce {
                         workflow_path: args.workflow_path,
                     }),
@@ -1644,6 +2662,10 @@ impl TryFrom<Cli> for Command {
                             },
                         })
                     }
+                    CliCommand::MergeOnce(args) => Ok(Self::MergeOnce {
+                        workflow_path: args.workflow_path,
+                        write: args.write,
+                    }),
                     CliCommand::SetState(args) => Ok(Self::SetState {
                         workflow_path: args.workflow_path,
                         issue_ref: args.issue_ref,
@@ -1691,6 +2713,20 @@ impl TryFrom<Cli> for Command {
                             patch_summary: args.patch_summary,
                         },
                     }),
+                    CliCommand::ReviewLoop(args) => {
+                        if args.max_iterations == Some(0) {
+                            return Err(usage());
+                        }
+                        Ok(Self::ReviewLoop {
+                            options: ReviewLoopOptions {
+                                workflow_path: args.workflow_path,
+                                max_iterations: args.max_iterations,
+                                once: args.once,
+                                write: args.write,
+                                fake_outcome: args.fake_outcome.map(Into::into),
+                            },
+                        })
+                    }
                     CliCommand::Gate(args) => Ok(Self::Gate {
                         workflow_path: args.workflow_path,
                         issue_ref: args.issue_ref,
@@ -1867,6 +2903,8 @@ fn usage() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jade_symphony::tracker::MemoryTracker;
+    use std::cell::RefCell;
 
     fn forge_contract() -> String {
         [
@@ -1886,6 +2924,8 @@ mod tests {
             "## Verification",
             "### Completion Criteria",
             "- Pass.",
+            "### Functional Verification",
+            "- `cargo test`",
         ]
         .join("\n")
     }
@@ -1925,6 +2965,118 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct RecordingAdapter {
+        operations: RefCell<Vec<String>>,
+        fail_workpad: bool,
+    }
+
+    impl RecordingAdapter {
+        fn operations(&self) -> Vec<String> {
+            self.operations.borrow().clone()
+        }
+    }
+
+    impl TrackerAdapter for RecordingAdapter {
+        fn kind(&self) -> &'static str {
+            "recording"
+        }
+
+        fn list_dispatchable_issues(
+            &self,
+        ) -> Result<Vec<TrackerIssue>, jade_symphony::tracker::TrackerError> {
+            Ok(Vec::new())
+        }
+
+        fn get_issue(
+            &self,
+            _issue_ref: &str,
+        ) -> Result<Option<TrackerIssue>, jade_symphony::tracker::TrackerError> {
+            Ok(None)
+        }
+
+        fn fetch_issues_by_states(
+            &self,
+            _states: &[String],
+        ) -> Result<Vec<TrackerIssue>, jade_symphony::tracker::TrackerError> {
+            Ok(Vec::new())
+        }
+
+        fn set_state(
+            &self,
+            issue_ref: &str,
+            normalized_state: &str,
+        ) -> Result<(), jade_symphony::tracker::TrackerError> {
+            self.operations
+                .borrow_mut()
+                .push(format!("set_state:{issue_ref}:{normalized_state}"));
+            Ok(())
+        }
+
+        fn upsert_workpad(
+            &self,
+            issue_ref: &str,
+            markdown: &str,
+        ) -> Result<(), jade_symphony::tracker::TrackerError> {
+            if self.fail_workpad {
+                return Err(
+                    jade_symphony::tracker::TrackerError::IntegrationUnavailable(
+                        "workpad failed".into(),
+                    ),
+                );
+            }
+            assert!(markdown.contains("## Rework Diagnostic"));
+            self.operations
+                .borrow_mut()
+                .push(format!("workpad:{issue_ref}"));
+            Ok(())
+        }
+
+        fn create_follow_up_issue(
+            &self,
+            _input: FollowUpIssueInput,
+        ) -> Result<String, jade_symphony::tracker::TrackerError> {
+            Ok("dry-run:follow-up".into())
+        }
+
+        fn add_issue_to_project(
+            &self,
+            _issue_id: &str,
+        ) -> Result<(), jade_symphony::tracker::TrackerError> {
+            Ok(())
+        }
+
+        fn link_pull_request(
+            &self,
+            _issue_ref: &str,
+            _pr_ref: &str,
+        ) -> Result<(), jade_symphony::tracker::TrackerError> {
+            Ok(())
+        }
+
+        fn list_linked_pull_requests(
+            &self,
+            _issue_ref: &str,
+        ) -> Result<
+            Vec<jade_symphony::model::LinkedPullRequest>,
+            jade_symphony::tracker::TrackerError,
+        > {
+            Ok(Vec::new())
+        }
+    }
+
+    fn active_runtime_state(identifier: &str) -> RuntimeState {
+        let mut state = RuntimeState::active(
+            RuntimeIssueState {
+                id: "ISSUE_29".into(),
+                identifier: identifier.into(),
+            },
+            "dry-run",
+        );
+        state.updated_at_ms = Some(1_000);
+        state
+    }
+
     #[test]
     fn clap_parser_preserves_default_plan_compatibility() {
         assert_eq!(
@@ -1961,6 +3113,51 @@ mod tests {
                 workflow_path: PathBuf::from("examples/dry-run-workflow.md")
             }
         );
+        assert_eq!(
+            parse(&["profiles", "examples/dry-run-workflow.md"]),
+            Command::Profiles {
+                workflow_path: PathBuf::from("examples/dry-run-workflow.md")
+            }
+        );
+    }
+
+    #[test]
+    fn parses_dogfood_smoke_command() {
+        assert_eq!(
+            parse(&[
+                "dogfood-smoke",
+                "examples/github-project-workflow.md",
+                "--dry-run"
+            ]),
+            Command::DogfoodSmoke {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                write: false
+            }
+        );
+        assert_eq!(
+            parse(&[
+                "dogfood-smoke",
+                "examples/github-project-workflow.md",
+                "--write"
+            ]),
+            Command::DogfoodSmoke {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                write: true
+            }
+        );
+    }
+
+    #[test]
+    fn controlled_smoke_issue_requires_marker_label_or_title() {
+        let mut issue = tracker_issue("Todo");
+        assert!(!is_controlled_dogfood_smoke_issue(&issue));
+
+        issue.labels = vec!["dogfood-smoke".into()];
+        assert!(is_controlled_dogfood_smoke_issue(&issue));
+
+        issue.labels.clear();
+        issue.title = "[dogfood-smoke] controlled run".into();
+        assert!(is_controlled_dogfood_smoke_issue(&issue));
     }
 
     #[test]
@@ -2048,6 +3245,53 @@ mod tests {
     }
 
     #[test]
+    fn parses_review_loop_flags() {
+        let command = Command::parse(vec![
+            "review-loop".into(),
+            "examples/review-fixture-workflow.md".into(),
+            "--max-iterations".into(),
+            "2".into(),
+            "--fake-outcome".into(),
+            "confirmed".into(),
+            "--write".into(),
+        ])
+        .unwrap();
+
+        let Command::ReviewLoop { options } = command else {
+            panic!("expected review-loop command");
+        };
+
+        assert_eq!(
+            options.workflow_path,
+            PathBuf::from("examples/review-fixture-workflow.md")
+        );
+        assert_eq!(options.max_iterations, Some(2));
+        assert_eq!(
+            options.fake_outcome,
+            Some(FakeReviewOutcome::ConfirmedFinding)
+        );
+        assert!(options.write);
+    }
+
+    #[test]
+    fn review_loop_once_overrides_max_iterations() {
+        let command = Command::parse(vec![
+            "review-loop".into(),
+            "WORKFLOW.md".into(),
+            "--max-iterations".into(),
+            "4".into(),
+            "--once".into(),
+        ])
+        .unwrap();
+
+        let Command::ReviewLoop { options } = command else {
+            panic!("expected review-loop command");
+        };
+
+        assert_eq!(options.iteration_limit(), Some(1));
+    }
+
+    #[test]
     fn parses_run_loop_flags() {
         let command = Command::parse(vec![
             "run-loop".into(),
@@ -2092,9 +3336,55 @@ mod tests {
     }
 
     #[test]
+    fn parses_merge_once_command() {
+        let command = Command::parse(vec![
+            "merge-once".into(),
+            "examples/github-project-workflow.md".into(),
+            "--dry-run".into(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            command,
+            Command::MergeOnce {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                write: false
+            }
+        );
+
+        let command = Command::parse(vec![
+            "land".into(),
+            "examples/github-project-workflow.md".into(),
+            "--write".into(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            command,
+            Command::MergeOnce {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                write: true
+            }
+        );
+    }
+
+    #[test]
     fn rejects_zero_run_loop_iterations() {
         let error = Command::parse(vec![
             "run-loop".into(),
+            "WORKFLOW.md".into(),
+            "--max-iterations".into(),
+            "0".into(),
+        ])
+        .unwrap_err();
+
+        assert!(error.contains("Usage:"));
+    }
+
+    #[test]
+    fn rejects_zero_review_loop_iterations() {
+        let error = Command::parse(vec![
+            "review-loop".into(),
             "WORKFLOW.md".into(),
             "--max-iterations".into(),
             "0".into(),
@@ -2129,11 +3419,86 @@ mod tests {
     }
 
     #[test]
-    fn run_loop_runtime_state_increments_same_issue_attempts() {
-        let issue = tracker_issue("In Progress");
-        let existing = run_loop_runtime_state_for_issue(None, &issue, "dry-run", "Claimed");
+    fn resume_preflight_continues_active_in_progress_state() {
+        let config = test_config();
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let state = active_runtime_state("#29");
 
-        let state = run_loop_runtime_state_for_issue(Some(&existing), &issue, "dry-run", "Resumed");
+        let action = run_loop_resume_preflight(&tracker, &config, Some(&state), 2_000).unwrap();
+
+        assert_eq!(action, ResumePreflightAction::Continue);
+    }
+
+    #[test]
+    fn resume_preflight_blocks_conflicting_tracker_state() {
+        let config = test_config();
+        let tracker = MemoryTracker::new(vec![tracker_issue("Todo")]);
+        let state = active_runtime_state("#29");
+
+        let action = run_loop_resume_preflight(&tracker, &config, Some(&state), 2_000).unwrap();
+
+        assert!(matches!(action, ResumePreflightAction::Block { .. }));
+    }
+
+    #[test]
+    fn resume_preflight_defers_until_retry_is_due() {
+        let config = test_config();
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let mut state = active_runtime_state("#29");
+        record_runtime_retry(&mut state, 1_000, 5_000, "rate limited");
+
+        let action = run_loop_resume_preflight(&tracker, &config, Some(&state), 2_000).unwrap();
+
+        assert!(matches!(
+            action,
+            ResumePreflightAction::RetryLater {
+                due_in_ms: 4_000,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn resume_preflight_detects_stalled_active_state() {
+        let config = test_config();
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let mut state = active_runtime_state("#29");
+        state.updated_at_ms = Some(1_000);
+
+        let action = run_loop_resume_preflight(
+            &tracker,
+            &config,
+            Some(&state),
+            config.codex.stall_timeout_ms + 2_000,
+        )
+        .unwrap();
+
+        assert!(matches!(action, ResumePreflightAction::Stalled { .. }));
+    }
+
+    #[test]
+    fn resume_preflight_clears_completed_tracker_state() {
+        let config = test_config();
+        let tracker = MemoryTracker::new(vec![tracker_issue("Agent Review")]);
+        let state = active_runtime_state("#29");
+
+        let action = run_loop_resume_preflight(&tracker, &config, Some(&state), 2_000).unwrap();
+
+        assert_eq!(
+            action,
+            ResumePreflightAction::ClearCompleted {
+                issue_identifier: "#29".into()
+            }
+        );
+    }
+
+    #[test]
+    fn run_loop_runtime_state_increments_same_issue_attempts() {
+        let config = test_config();
+        let issue = tracker_issue("In Progress");
+        let existing = run_loop_runtime_state_for_issue(None, &issue, &config, "Claimed");
+
+        let state = run_loop_runtime_state_for_issue(Some(&existing), &issue, &config, "Resumed");
 
         assert_eq!(state.attempt_count, 2);
         assert_eq!(
@@ -2144,24 +3509,44 @@ mod tests {
             Some("#29")
         );
         assert_eq!(state.branch_name, issue.branch_name);
+        assert_eq!(state.actor_role.as_deref(), Some("implementation_agent"));
+        assert_eq!(state.actor_label.as_deref(), Some("Jade Symphony Agent"));
         assert_eq!(state.last_event.as_deref(), Some("Resumed"));
     }
 
     #[test]
     fn run_loop_runtime_state_records_result_and_transition() {
+        let config = test_config();
         let issue = tracker_issue("In Progress");
-        let state = run_loop_runtime_state_for_issue(None, &issue, "dry-run", "Claimed");
+        let state = run_loop_runtime_state_for_issue(None, &issue, &config, "Claimed");
         let result = IssueExecutionResult {
             workspace_path: PathBuf::from("/tmp/jade/issue-29"),
             backend: "dry-run".into(),
+            profile_id: Some("codex-alpha".into()),
+            instance_name: Some("Codex Alpha".into()),
             success: true,
             session_id: Some("session-29".into()),
             message: "ok".into(),
+            actor_role: "implementation_agent".into(),
+            actor_label: "Jade Symphony Agent".into(),
+            git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+            git_identity: GitIdentityApplyResult {
+                status: jade_symphony::workspace::GitIdentityApplyStatus::Applied,
+                author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+                applied_keys: vec!["user.name".into(), "user.email".into()],
+            },
+            live_handoff: None,
         };
 
         let state = run_loop_runtime_state_with_result(state, &result);
         assert_eq!(state.workspace_path, Some(result.workspace_path));
         assert_eq!(state.backend_session_id.as_deref(), Some("session-29"));
+        assert_eq!(state.profile_id.as_deref(), Some("codex-alpha"));
+        assert_eq!(state.actor_role.as_deref(), Some("implementation_agent"));
+        assert_eq!(
+            state.git_author.as_deref(),
+            Some("Jade Symphony Agent <jade@example.invalid>")
+        );
         assert_eq!(state.last_event.as_deref(), Some("Completed"));
 
         let state = run_loop_runtime_state_with_transition(
@@ -2231,19 +3616,163 @@ mod tests {
         let result = IssueExecutionResult {
             workspace_path: handoff.workspace_path.clone(),
             backend: "dry-run".into(),
+            profile_id: None,
+            instance_name: None,
             success: true,
             session_id: Some("session-33".into()),
             message: "ok".into(),
+            actor_role: "implementation_agent".into(),
+            actor_label: "Jade Symphony Agent".into(),
+            git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+            git_identity: GitIdentityApplyResult {
+                status: jade_symphony::workspace::GitIdentityApplyStatus::Applied,
+                author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+                applied_keys: vec!["user.name".into(), "user.email".into()],
+            },
+            live_handoff: Some(RunLoopLiveHandoff {
+                worktree: LiveWorktreeResult {
+                    workspace_path: handoff.workspace_path.clone(),
+                    branch_name: handoff.branch_name.clone(),
+                    created: true,
+                },
+                publication: PullRequestPublication {
+                    branch_pushed: true,
+                    pr_url: "https://github.com/Alive24/jade-symphony/pull/45".into(),
+                    pr_created: true,
+                },
+                verification: "skipped:not_configured".into(),
+            }),
         };
 
         let workpad = run_loop_handoff_workpad(&issue, &result, &handoff);
 
         assert!(workpad.contains("### Planned Handoff"));
+        assert!(workpad.contains("Actor role: `implementation_agent`"));
+        assert!(
+            workpad.contains("Git identity: `applied:Jade Symphony Agent <jade@example.invalid>`")
+        );
         assert!(workpad
             .contains("Workspace key: `issue-29-wire-runtime-state-persistence-into-run-loop`"));
         assert!(workpad
             .contains("Branch: `feature/issue-29-wire-runtime-state-persistence-into-run-loop`"));
         assert!(workpad.contains("PR title: `#29: Wire runtime state persistence into run-loop`"));
+        assert!(workpad.contains("Live PR: `https://github.com/Alive24/jade-symphony/pull/45`"));
+    }
+
+    #[test]
+    fn rework_transition_writes_diagnostic_before_state_change() {
+        let adapter = RecordingAdapter::default();
+        let issue = tracker_issue("Agent Review");
+        let diagnostic = ReworkDiagnostic::validation_failure(
+            issue.identifier.clone(),
+            "cargo test",
+            "failing test output",
+        );
+
+        transition_issue_to_rework_with_diagnostic(&adapter, &issue, &diagnostic).unwrap();
+
+        assert_eq!(
+            adapter.operations(),
+            vec![
+                "workpad:#29".to_string(),
+                "set_state:#29:rework".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn rework_transition_does_not_set_state_when_workpad_write_fails() {
+        let adapter = RecordingAdapter {
+            operations: RefCell::new(Vec::new()),
+            fail_workpad: true,
+        };
+        let issue = tracker_issue("Agent Review");
+        let diagnostic = ReworkDiagnostic::validation_failure(
+            issue.identifier.clone(),
+            "cargo test",
+            "failing test output",
+        );
+
+        assert!(transition_issue_to_rework_with_diagnostic(&adapter, &issue, &diagnostic).is_err());
+        assert!(adapter.operations().is_empty());
+    }
+
+    #[test]
+    fn run_loop_agent_review_handoff_blocks_missing_pr_url() {
+        let config = test_config();
+        let issue = tracker_issue("In Progress");
+        let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+        let result = IssueExecutionResult {
+            workspace_path: handoff.workspace_path.clone(),
+            backend: "dry-run".into(),
+            profile_id: None,
+            instance_name: None,
+            success: true,
+            session_id: Some("session-57".into()),
+            message: "ok".into(),
+            actor_role: "implementation_agent".into(),
+            actor_label: "Jade Symphony Agent".into(),
+            git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+            git_identity: GitIdentityApplyResult {
+                status: jade_symphony::workspace::GitIdentityApplyStatus::Applied,
+                author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+                applied_keys: vec!["user.name".into(), "user.email".into()],
+            },
+            live_handoff: None,
+        };
+
+        let evidence = run_loop_agent_review_handoff_evidence(&issue, &result, &handoff);
+        let report = evaluate_agent_review_handoff(&evidence);
+
+        assert!(!report.is_ready());
+        assert_eq!(report.target_state.as_deref(), Some("need_human_input"));
+        assert!(evidence
+            .no_pr_blocker
+            .unwrap()
+            .contains("No pull request URL"));
+    }
+
+    #[test]
+    fn run_loop_agent_review_handoff_passes_with_pr_url() {
+        let config = test_config();
+        let mut issue = tracker_issue("In Progress");
+        issue
+            .linked_pull_requests
+            .push(jade_symphony::model::LinkedPullRequest {
+                id: Some("PR_57".into()),
+                number: Some(57),
+                url: Some("https://github.com/Alive24/jade-symphony/pull/57".into()),
+                state: Some("OPEN".into()),
+            });
+        let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+        let result = IssueExecutionResult {
+            workspace_path: handoff.workspace_path.clone(),
+            backend: "dry-run".into(),
+            profile_id: None,
+            instance_name: None,
+            success: true,
+            session_id: Some("session-57".into()),
+            message: "ok".into(),
+            actor_role: "implementation_agent".into(),
+            actor_label: "Jade Symphony Agent".into(),
+            git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+            git_identity: GitIdentityApplyResult {
+                status: jade_symphony::workspace::GitIdentityApplyStatus::Applied,
+                author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+                applied_keys: vec!["user.name".into(), "user.email".into()],
+            },
+            live_handoff: None,
+        };
+
+        let evidence = run_loop_agent_review_handoff_evidence(&issue, &result, &handoff);
+        let report = evaluate_agent_review_handoff(&evidence);
+
+        assert!(report.is_ready());
+        assert_eq!(report.target_state.as_deref(), Some("agent_review"));
+        assert_eq!(
+            evidence.pull_request_url.as_deref(),
+            Some("https://github.com/Alive24/jade-symphony/pull/57")
+        );
     }
 
     #[test]
@@ -2349,9 +3878,11 @@ mod tests {
 
     #[test]
     fn validates_forge_create_contract_before_tracker_write() {
-        assert!(validate_forge_create_contract("Create issue", &forge_contract()).is_ok());
+        let config = test_config();
+        assert!(validate_forge_create_contract("Create issue", &forge_contract(), &config).is_ok());
 
-        let error = validate_forge_create_contract("Thin issue", "make it better").unwrap_err();
+        let error =
+            validate_forge_create_contract("Thin issue", "make it better", &config).unwrap_err();
         assert!(error.contains("tracker issue was not created"));
     }
 

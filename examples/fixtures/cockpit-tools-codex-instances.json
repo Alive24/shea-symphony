@@ -1,0 +1,36 @@
+{
+  "instances": [
+    {
+      "id": "fixture-codex-alpha",
+      "name": "codex-alpha",
+      "userDataDir": "/tmp/cockpit/codex-alpha",
+      "workingDir": "/tmp/jade/alpha",
+      "extraArgs": "--profile alpha",
+      "bindAccountId": "redacted-fixture-account",
+      "launchMode": "cli",
+      "createdAt": 1710000000000,
+      "lastLaunchedAt": null,
+      "lastPid": null
+    },
+    {
+      "id": "fixture-codex-beta",
+      "name": "codex-beta",
+      "userDataDir": "/tmp/cockpit/codex-beta",
+      "workingDir": "/tmp/jade/beta",
+      "extraArgs": "",
+      "bindAccountId": null,
+      "launchMode": "cli",
+      "createdAt": 1710000001000,
+      "lastLaunchedAt": null,
+      "lastPid": null
+    }
+  ],
+  "defaultSettings": {
+    "bindAccountId": null,
+    "extraArgs": "",
+    "workingDir": null,
+    "launchMode": "app",
+    "followLocalAccount": true,
+    "lastPid": null
+  }
+}

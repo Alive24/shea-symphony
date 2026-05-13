@@ -1,3 +1,9 @@
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
+
 use crate::model::{GateDecision, GateDecisionKind, TrackerIssue};
 
 const REQUIRED_SECTIONS: &[(&str, &str)] = &[
@@ -60,6 +66,275 @@ pub fn evaluate_issue(issue: &TrackerIssue) -> GateDecision {
     }
 }
 
+pub fn evaluate_issue_with_source_alignment(
+    issue: &TrackerIssue,
+    repo_root: &Path,
+    expected_target_repo: Option<&str>,
+) -> GateDecision {
+    let mut decision = evaluate_issue(issue);
+    if !decision.is_dispatchable() {
+        return decision;
+    }
+
+    let description = issue.description.as_deref().unwrap_or_default();
+    let mut missing = Vec::new();
+    let mut notes = Vec::new();
+
+    if let Some(expected) = expected_target_repo {
+        match first_bullet_in_section(description, "Target Repository / Package") {
+            Some(actual) if normalize_target_repo(&actual) == normalize_target_repo(expected) => {}
+            Some(actual) => missing.push(format!(
+                "target repository mismatch: expected `{expected}`, found `{actual}`"
+            )),
+            None => missing.push("target repository bullet".into()),
+        }
+    }
+
+    for path in referenced_paths(description) {
+        if !repo_root.join(&path).exists() {
+            missing.push(format!("referenced path missing: `{}`", path.display()));
+        }
+    }
+
+    let commands = verification_commands(description);
+    if commands.is_empty() {
+        missing.push("verification command".into());
+    } else {
+        for command in commands {
+            if !is_supported_verification_command(&command) {
+                missing.push(format!("unsupported verification command: `{command}`"));
+            }
+        }
+    }
+
+    if missing.is_empty() {
+        notes.push("Source alignment preflight passed.".into());
+        decision.notes.extend(notes);
+        decision
+    } else {
+        GateDecision {
+            kind: GateDecisionKind::NeedToClarify,
+            missing,
+            assumptions: decision.assumptions,
+            notes: vec![
+                "Source alignment preflight found missing or unsupported repository context."
+                    .into(),
+            ],
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LlmGateMode {
+    Disabled,
+    Advisory,
+    Required,
+}
+
+impl LlmGateMode {
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "advisory" => Self::Advisory,
+            "required" => Self::Required,
+            _ => Self::Disabled,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LlmGateOptions {
+    pub mode: LlmGateMode,
+    pub command: Option<String>,
+    pub timeout_ms: u64,
+}
+
+pub fn evaluate_issue_with_llm_gate(
+    issue: &TrackerIssue,
+    deterministic: GateDecision,
+    options: &LlmGateOptions,
+) -> GateDecision {
+    if !deterministic.is_dispatchable() {
+        let mut decision = deterministic;
+        if !matches!(options.mode, LlmGateMode::Disabled) {
+            decision
+                .notes
+                .push("LLM gate skipped because deterministic gate failed.".into());
+        }
+        return decision;
+    }
+
+    match options.mode {
+        LlmGateMode::Disabled => deterministic,
+        LlmGateMode::Advisory => match run_llm_gate_command(issue, &deterministic, options) {
+            Ok(report) => advisory_decision(deterministic, report),
+            Err(error) => {
+                let mut decision = deterministic;
+                decision
+                    .notes
+                    .push(format!("LLM advisory gate unavailable: {error}"));
+                decision
+            }
+        },
+        LlmGateMode::Required => match run_llm_gate_command(issue, &deterministic, options) {
+            Ok(report) => report.into_gate_decision(),
+            Err(error) => GateDecision {
+                kind: GateDecisionKind::NeedToClarify,
+                missing: vec!["required LLM quality gate result".into()],
+                assumptions: deterministic.assumptions,
+                notes: vec![format!("Required LLM quality gate failed: {error}")],
+            },
+        },
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LlmGateReport {
+    kind: GateDecisionKind,
+    missing: Vec<String>,
+    assumptions: Vec<String>,
+    notes: Vec<String>,
+}
+
+impl LlmGateReport {
+    fn into_gate_decision(self) -> GateDecision {
+        GateDecision {
+            kind: self.kind,
+            missing: self.missing,
+            assumptions: self.assumptions,
+            notes: self.notes,
+        }
+    }
+}
+
+fn advisory_decision(mut deterministic: GateDecision, report: LlmGateReport) -> GateDecision {
+    deterministic
+        .notes
+        .push(format!("LLM advisory decision: {:?}", report.kind));
+    deterministic.notes.extend(
+        report
+            .missing
+            .into_iter()
+            .map(|item| format!("LLM finding: {item}")),
+    );
+    deterministic.assumptions.extend(
+        report
+            .assumptions
+            .into_iter()
+            .map(|item| format!("LLM: {item}")),
+    );
+    deterministic.notes.extend(report.notes);
+    deterministic
+}
+
+fn run_llm_gate_command(
+    issue: &TrackerIssue,
+    deterministic: &GateDecision,
+    options: &LlmGateOptions,
+) -> Result<LlmGateReport, String> {
+    let Some(command) = options
+        .command
+        .as_deref()
+        .filter(|command| !command.trim().is_empty())
+    else {
+        return Err("command not configured".into());
+    };
+
+    let request = serde_json::json!({
+        "title": issue.title,
+        "identifier": issue.identifier,
+        "body": issue.description.as_deref().unwrap_or_default(),
+        "deterministic": deterministic,
+    });
+    let mut child = Command::new("sh")
+        .arg("-lc")
+        .arg(command)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(request.to_string().as_bytes())
+            .map_err(|error| error.to_string())?;
+    }
+
+    let started = Instant::now();
+    let timeout = Duration::from_millis(options.timeout_ms.max(1));
+    loop {
+        if child
+            .try_wait()
+            .map_err(|error| error.to_string())?
+            .is_some()
+        {
+            let output = child
+                .wait_with_output()
+                .map_err(|error| error.to_string())?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(format!(
+                    "command exited with status {}: {}",
+                    output.status.code().unwrap_or(-1),
+                    stderr.trim()
+                ));
+            }
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            return parse_llm_gate_response(&stdout);
+        }
+
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("command timed out after {}ms", options.timeout_ms));
+        }
+
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn parse_llm_gate_response(raw: &str) -> Result<LlmGateReport, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(raw).map_err(|error| format!("malformed JSON: {error}"))?;
+    let decision = value
+        .get("decision")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "missing `decision`".to_string())?;
+    let kind = parse_gate_kind(decision)
+        .ok_or_else(|| format!("unsupported LLM gate decision `{decision}`"))?;
+
+    Ok(LlmGateReport {
+        kind,
+        missing: string_array(value.get("missing")),
+        assumptions: string_array(value.get("assumptions")),
+        notes: string_array(value.get("notes")),
+    })
+}
+
+fn parse_gate_kind(value: &str) -> Option<GateDecisionKind> {
+    match value {
+        "Ready" => Some(GateDecisionKind::Ready),
+        "ReadyWithAssumptions" => Some(GateDecisionKind::ReadyWithAssumptions),
+        "NeedToClarify" => Some(GateDecisionKind::NeedToClarify),
+        "TooBroad" => Some(GateDecisionKind::TooBroad),
+        "Blocked" => Some(GateDecisionKind::Blocked),
+        "DuplicateAlreadyCovered" => Some(GateDecisionKind::DuplicateAlreadyCovered),
+        _ => None,
+    }
+}
+
+fn string_array(value: Option<&serde_json::Value>) -> Vec<String> {
+    value
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(ToOwned::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn has_explicit_blocked_decision(markdown: &str) -> bool {
     markdown.lines().any(|line| {
         let normalized = line.trim().trim_start_matches('-').trim().to_lowercase();
@@ -101,6 +376,115 @@ fn extract_assumptions(markdown: &str) -> Vec<String> {
     }
 
     assumptions
+}
+
+fn first_bullet_in_section(markdown: &str, heading: &str) -> Option<String> {
+    section_lines(markdown, heading)
+        .into_iter()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix('-')
+                .map(clean_markdown_value)
+                .filter(|value| !value.is_empty())
+        })
+}
+
+fn referenced_paths(markdown: &str) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for heading in ["Relevant Knowledge Sources", "Relevant Code Paths"] {
+        for line in section_lines(markdown, heading) {
+            let Some(raw) = line.trim().strip_prefix('-') else {
+                continue;
+            };
+            let value = clean_markdown_value(raw);
+            if is_local_reference(&value) {
+                paths.push(PathBuf::from(value));
+            }
+        }
+    }
+    paths
+}
+
+fn verification_commands(markdown: &str) -> Vec<String> {
+    section_lines(markdown, "Functional Verification")
+        .into_iter()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix('-')
+                .map(clean_markdown_value)
+                .filter(|value| looks_like_command(value))
+        })
+        .collect()
+}
+
+fn section_lines(markdown: &str, heading: &str) -> Vec<String> {
+    let mut in_section = false;
+    let mut lines = Vec::new();
+    for line in markdown.lines() {
+        let trimmed = line.trim();
+        let normalized_heading = trimmed.trim_start_matches('#').trim();
+        if normalized_heading.eq_ignore_ascii_case(heading) {
+            in_section = true;
+            continue;
+        }
+        if in_section && trimmed.starts_with('#') {
+            break;
+        }
+        if in_section {
+            lines.push(line.to_string());
+        }
+    }
+    lines
+}
+
+fn clean_markdown_value(raw: &str) -> String {
+    raw.trim()
+        .trim_matches('`')
+        .trim()
+        .trim_end_matches('.')
+        .to_string()
+}
+
+fn normalize_target_repo(value: &str) -> String {
+    clean_markdown_value(value)
+        .trim_start_matches("https://github.com/")
+        .trim_start_matches("github.com/")
+        .trim_matches('`')
+        .to_ascii_lowercase()
+}
+
+fn is_local_reference(value: &str) -> bool {
+    !value.starts_with("http://")
+        && !value.starts_with("https://")
+        && !value.starts_with('$')
+        && (value.contains('/')
+            || value.starts_with("Cargo.")
+            || value == "README.md"
+            || value.ends_with(".rs")
+            || value.ends_with(".md"))
+}
+
+fn looks_like_command(value: &str) -> bool {
+    matches!(
+        value.split_whitespace().next(),
+        Some("cargo" | "gh" | "git" | "pnpm" | "npm" | "node")
+    )
+}
+
+fn is_supported_verification_command(command: &str) -> bool {
+    let parts: Vec<_> = command.split_whitespace().collect();
+    matches!(
+        parts.as_slice(),
+        ["cargo", "test"]
+            | ["cargo", "fmt", "--check"]
+            | ["cargo", "clippy", ..]
+            | ["cargo", "run", ..]
+            | ["gh", ..]
+            | ["git", ..]
+            | ["pnpm", ..]
+            | ["npm", ..]
+            | ["node", ..]
+    )
 }
 
 #[cfg(test)]
@@ -215,5 +599,233 @@ mod tests {
 
         let decision = evaluate_issue(&issue(Some(body)));
         assert_eq!(decision.kind, GateDecisionKind::Blocked);
+    }
+
+    #[test]
+    fn source_alignment_accepts_existing_paths_and_supported_commands() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("src")).unwrap();
+        std::fs::write(temp.path().join("src/main.rs"), "").unwrap();
+        std::fs::create_dir_all(temp.path().join("docs")).unwrap();
+        std::fs::write(temp.path().join("docs/dogfood-readiness.md"), "").unwrap();
+        let body = aligned_body(
+            "Alive24/jade-symphony",
+            &["docs/dogfood-readiness.md"],
+            &["src/main.rs"],
+            &["cargo test", "cargo fmt --check"],
+        );
+
+        let decision = evaluate_issue_with_source_alignment(
+            &issue(Some(body)),
+            temp.path(),
+            Some("Alive24/jade-symphony"),
+        );
+
+        assert!(decision.is_dispatchable());
+        assert!(decision
+            .notes
+            .contains(&"Source alignment preflight passed.".to_string()));
+    }
+
+    #[test]
+    fn source_alignment_reports_missing_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let body = aligned_body(
+            "Alive24/jade-symphony",
+            &["docs/missing.md"],
+            &["src/main.rs"],
+            &["cargo test"],
+        );
+
+        let decision = evaluate_issue_with_source_alignment(
+            &issue(Some(body)),
+            temp.path(),
+            Some("Alive24/jade-symphony"),
+        );
+
+        assert_eq!(decision.kind, GateDecisionKind::NeedToClarify);
+        assert!(decision
+            .missing
+            .iter()
+            .any(|item| item.contains("referenced path missing")));
+    }
+
+    #[test]
+    fn source_alignment_reports_target_repo_mismatch() {
+        let temp = tempfile::tempdir().unwrap();
+        let body = aligned_body("Other/repo", &[], &[], &["cargo test"]);
+
+        let decision = evaluate_issue_with_source_alignment(
+            &issue(Some(body)),
+            temp.path(),
+            Some("Alive24/jade-symphony"),
+        );
+
+        assert_eq!(decision.kind, GateDecisionKind::NeedToClarify);
+        assert!(decision
+            .missing
+            .iter()
+            .any(|item| item.contains("target repository mismatch")));
+    }
+
+    #[test]
+    fn source_alignment_reports_weak_verification() {
+        let temp = tempfile::tempdir().unwrap();
+        let body = aligned_body("Alive24/jade-symphony", &[], &[], &["manually inspect"]);
+
+        let decision = evaluate_issue_with_source_alignment(
+            &issue(Some(body)),
+            temp.path(),
+            Some("Alive24/jade-symphony"),
+        );
+
+        assert_eq!(decision.kind, GateDecisionKind::NeedToClarify);
+        assert!(decision
+            .missing
+            .iter()
+            .any(|item| item == "verification command"));
+    }
+
+    #[test]
+    fn required_llm_gate_can_pass_with_structured_output() {
+        let deterministic = GateDecision::ready();
+        let decision = evaluate_issue_with_llm_gate(
+            &issue(Some(aligned_body(
+                "Alive24/jade-symphony",
+                &[],
+                &[],
+                &["cargo test"],
+            ))),
+            deterministic,
+            &LlmGateOptions {
+                mode: LlmGateMode::Required,
+                command: Some("sh examples/fixtures/llm-gate-ready.sh".into()),
+                timeout_ms: 5_000,
+            },
+        );
+
+        assert_eq!(decision.kind, GateDecisionKind::ReadyWithAssumptions);
+        assert!(decision
+            .assumptions
+            .contains(&"LLM fixture says scope is coherent".to_string()));
+    }
+
+    #[test]
+    fn required_llm_gate_blocks_on_malformed_output() {
+        let decision = evaluate_issue_with_llm_gate(
+            &issue(Some(aligned_body(
+                "Alive24/jade-symphony",
+                &[],
+                &[],
+                &["cargo test"],
+            ))),
+            GateDecision::ready(),
+            &LlmGateOptions {
+                mode: LlmGateMode::Required,
+                command: Some("sh examples/fixtures/llm-gate-malformed.sh".into()),
+                timeout_ms: 5_000,
+            },
+        );
+
+        assert_eq!(decision.kind, GateDecisionKind::NeedToClarify);
+        assert!(decision
+            .notes
+            .iter()
+            .any(|note| note.contains("Required LLM quality gate failed")));
+    }
+
+    #[test]
+    fn advisory_llm_gate_records_finding_without_blocking() {
+        let decision = evaluate_issue_with_llm_gate(
+            &issue(Some(aligned_body(
+                "Alive24/jade-symphony",
+                &[],
+                &[],
+                &["cargo test"],
+            ))),
+            GateDecision::ready(),
+            &LlmGateOptions {
+                mode: LlmGateMode::Advisory,
+                command: Some("sh examples/fixtures/llm-gate-clarify.sh".into()),
+                timeout_ms: 5_000,
+            },
+        );
+
+        assert_eq!(decision.kind, GateDecisionKind::Ready);
+        assert!(decision
+            .notes
+            .iter()
+            .any(|note| note.contains("LLM advisory decision: NeedToClarify")));
+    }
+
+    #[test]
+    fn deterministic_failure_precedes_llm_gate() {
+        let deterministic = GateDecision {
+            kind: GateDecisionKind::NeedToClarify,
+            missing: vec!["verification command".into()],
+            assumptions: Vec::new(),
+            notes: Vec::new(),
+        };
+        let decision = evaluate_issue_with_llm_gate(
+            &issue(Some("thin".into())),
+            deterministic,
+            &LlmGateOptions {
+                mode: LlmGateMode::Required,
+                command: Some("sh examples/fixtures/llm-gate-ready.sh".into()),
+                timeout_ms: 5_000,
+            },
+        );
+
+        assert_eq!(decision.kind, GateDecisionKind::NeedToClarify);
+        assert!(decision
+            .notes
+            .contains(&"LLM gate skipped because deterministic gate failed.".to_string()));
+    }
+
+    fn aligned_body(target_repo: &str, docs: &[&str], paths: &[&str], commands: &[&str]) -> String {
+        let docs = docs
+            .iter()
+            .map(|path| format!("- `{path}`"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let paths = paths
+            .iter()
+            .map(|path| format!("- `{path}`"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let commands = commands
+            .iter()
+            .map(|command| format!("- `{command}`"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        [
+            "## Issue Goal",
+            "Ship a thing.",
+            "## Why Now",
+            "Now.",
+            "## Issue Context",
+            "Context.",
+            "## Decisions / Assumptions",
+            "### Assumptions",
+            "- Deterministic source checks are enough.",
+            "## Non-Negotiable Guardrails",
+            "- Guard.",
+            "## Scope",
+            "### In Scope",
+            "- Code.",
+            "## Canonical References",
+            "### Target Repository / Package",
+            &format!("- `{target_repo}`"),
+            "### Relevant Knowledge Sources",
+            &docs,
+            "### Relevant Code Paths",
+            &paths,
+            "## Verification",
+            "### Completion Criteria",
+            "- Pass.",
+            "### Functional Verification",
+            &commands,
+        ]
+        .join("\n")
     }
 }

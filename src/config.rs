@@ -19,6 +19,9 @@ pub struct RuntimeConfig {
     pub codex: CodexConfig,
     pub claude: ClaudeConfig,
     pub review: ReviewConfig,
+    pub quality_gate: QualityGateConfig,
+    pub profiles: ProfilesConfig,
+    pub identity: IdentityConfig,
     pub observability: ObservabilityConfig,
     pub server: ServerConfig,
     #[serde(default)]
@@ -129,6 +132,77 @@ pub struct ReviewConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QualityGateConfig {
+    pub llm: LlmQualityGateConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LlmQualityGateConfig {
+    pub mode: String,
+    pub command: Option<String>,
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ProfilesConfig {
+    pub default: Option<String>,
+    pub cockpit_tools: CockpitToolsProfilesConfig,
+    #[serde(default)]
+    pub entries: Vec<ExecutionProfileConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct CockpitToolsProfilesConfig {
+    pub codex_instances_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ExecutionProfileConfig {
+    pub id: String,
+    pub instance_name: Option<String>,
+    pub backend: Option<String>,
+    pub workspace_namespace: Option<String>,
+    pub user_data_dir: Option<PathBuf>,
+    pub working_dir: Option<PathBuf>,
+    pub extra_args: Option<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdentityConfig {
+    pub actor_role: String,
+    pub actor_label: String,
+    pub git: GitIdentityConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct GitIdentityConfig {
+    pub name: Option<String>,
+    pub email: Option<String>,
+    pub signing_key: Option<String>,
+    pub extra: BTreeMap<String, String>,
+}
+
+impl GitIdentityConfig {
+    pub fn author(&self) -> Option<String> {
+        match (self.name.as_deref(), self.email.as_deref()) {
+            (Some(name), Some(email)) => Some(format!("{name} <{email}>")),
+            (Some(name), None) => Some(name.to_string()),
+            (None, Some(email)) => Some(format!("<{email}>")),
+            (None, None) => None,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.name.is_none()
+            && self.email.is_none()
+            && self.signing_key.is_none()
+            && self.extra.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObservabilityConfig {
     pub dashboard_enabled: bool,
     pub refresh_ms: u64,
@@ -220,6 +294,9 @@ impl RuntimeConfig {
                 .unwrap_or_else(|| "gemini".to_string()),
             timeout_ms: get_u64(root.get("review"), "timeout_ms").unwrap_or(600_000),
         };
+        let quality_gate = parse_quality_gate(root.get("quality_gate"));
+        let profiles = parse_profiles(root.get("profiles"), workflow_dir);
+        let identity = parse_identity(root.get("identity"));
         let observability = ObservabilityConfig {
             dashboard_enabled: get_bool(root.get("observability"), "dashboard_enabled")
                 .unwrap_or(true),
@@ -247,6 +324,9 @@ impl RuntimeConfig {
             codex,
             claude,
             review,
+            quality_gate,
+            profiles,
+            identity,
             observability,
             server,
             raw: workflow.config.clone(),
@@ -267,6 +347,20 @@ impl RuntimeConfig {
             "fake" | "gemini-cli" => {}
             other => return Err(ConfigError::UnsupportedBackend(other.to_string())),
         }
+        match self.quality_gate.llm.mode.as_str() {
+            "disabled" | "advisory" | "required" => {}
+            other => {
+                return Err(ConfigError::Invalid(format!(
+                    "quality_gate.llm.mode must be disabled, advisory, or required; got {other}"
+                )))
+            }
+        }
+        if self.quality_gate.llm.mode == "required" {
+            require_present(
+                "quality_gate.llm.command",
+                self.quality_gate.llm.command.as_deref(),
+            )?;
+        }
 
         require_positive("polling.interval_ms", self.polling.interval_ms)?;
         require_positive("hooks.timeout_ms", self.hooks.timeout_ms)?;
@@ -280,6 +374,10 @@ impl RuntimeConfig {
             self.agent.max_retry_backoff_ms,
         )?;
         require_positive("review.timeout_ms", self.review.timeout_ms)?;
+        require_positive(
+            "quality_gate.llm.timeout_ms",
+            self.quality_gate.llm.timeout_ms,
+        )?;
 
         if self.tracker.kind == "github_project_v2" {
             require_present("tracker.owner", self.tracker.owner.as_deref())?;
@@ -394,6 +492,72 @@ fn parse_workpad(value: Option<&Value>) -> WorkpadConfig {
     }
 }
 
+fn parse_profiles(value: Option<&Value>, workflow_dir: &Path) -> ProfilesConfig {
+    ProfilesConfig {
+        default: get_string(value, "default"),
+        cockpit_tools: CockpitToolsProfilesConfig {
+            codex_instances_path: get_string(
+                get_value(value, "cockpit_tools"),
+                "codex_instances_path",
+            )
+            .map(|path| resolve_path(Some(&path), workflow_dir, Path::new(""))),
+        },
+        entries: parse_execution_profiles(get_value(value, "entries"), workflow_dir),
+    }
+}
+
+fn parse_quality_gate(value: Option<&Value>) -> QualityGateConfig {
+    let llm = get_value(value, "llm");
+    QualityGateConfig {
+        llm: LlmQualityGateConfig {
+            mode: get_string(llm, "mode").unwrap_or_else(|| "disabled".to_string()),
+            command: get_string(llm, "command"),
+            timeout_ms: get_u64(llm, "timeout_ms").unwrap_or(120_000),
+        },
+    }
+}
+
+fn parse_execution_profiles(
+    value: Option<&Value>,
+    workflow_dir: &Path,
+) -> Vec<ExecutionProfileConfig> {
+    value
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let id = get_string(Some(item), "id")?;
+                    Some(ExecutionProfileConfig {
+                        id,
+                        instance_name: get_string(Some(item), "instance_name"),
+                        backend: get_string(Some(item), "backend"),
+                        workspace_namespace: get_string(Some(item), "workspace_namespace"),
+                        user_data_dir: get_string(Some(item), "user_data_dir")
+                            .map(|path| resolve_path(Some(&path), workflow_dir, Path::new(""))),
+                        working_dir: get_string(Some(item), "working_dir")
+                            .map(|path| resolve_path(Some(&path), workflow_dir, Path::new(""))),
+                        extra_args: get_string(Some(item), "extra_args"),
+                        env: parse_string_map(get_value(Some(item), "env")),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_string_map(value: Option<&Value>) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
+    if let Some(Value::Object(values)) = value {
+        for (key, value) in values {
+            if let Some(value) = value.as_str() {
+                map.insert(key.clone(), value.to_string());
+            }
+        }
+    }
+    map
+}
+
 fn parse_state_limits(value: Option<&Value>) -> BTreeMap<String, usize> {
     let mut limits = BTreeMap::new();
     if let Some(Value::Object(map)) = value {
@@ -406,6 +570,25 @@ fn parse_state_limits(value: Option<&Value>) -> BTreeMap<String, usize> {
         }
     }
     limits
+}
+
+fn parse_identity(value: Option<&Value>) -> IdentityConfig {
+    IdentityConfig {
+        actor_role: get_string(value, "actor_role")
+            .unwrap_or_else(|| "implementation_agent".to_string()),
+        actor_label: get_string(value, "actor_label")
+            .unwrap_or_else(|| "Jade Symphony Agent".to_string()),
+        git: parse_git_identity(get_value(value, "git")),
+    }
+}
+
+fn parse_git_identity(value: Option<&Value>) -> GitIdentityConfig {
+    GitIdentityConfig {
+        name: get_string(value, "name"),
+        email: get_string(value, "email"),
+        signing_key: get_string(value, "signing_key"),
+        extra: parse_string_map(get_value(value, "extra")),
+    }
 }
 
 fn get_value<'a>(root: Option<&'a Value>, key: &str) -> Option<&'a Value> {
@@ -569,6 +752,33 @@ mod tests {
     }
 
     #[test]
+    fn parses_actor_and_git_identity_config() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\nidentity:\n  actor_role: review_agent\n  actor_label: Gemini Review Runner\n  git:\n    name: Jade Review Bot\n    email: jade-review@example.invalid\n    signing_key: ABC123\n    extra:\n      jade.actorRole: review_agent\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.identity.actor_role, "review_agent");
+        assert_eq!(config.identity.actor_label, "Gemini Review Runner");
+        assert_eq!(
+            config.identity.git.author().as_deref(),
+            Some("Jade Review Bot <jade-review@example.invalid>")
+        );
+        assert_eq!(
+            config
+                .identity
+                .git
+                .extra
+                .get("jade.actorRole")
+                .map(String::as_str),
+            Some("review_agent")
+        );
+    }
+
+    #[test]
     fn linear_defaults_endpoint_and_allows_fixture_without_token() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
@@ -584,5 +794,69 @@ mod tests {
             Some("https://api.linear.app/graphql")
         );
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn parses_execution_profiles_from_workflow_config() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/config/WORKFLOW.md",
+            "---\nprofiles:\n  default: codex-alpha\n  cockpit_tools:\n    codex_instances_path: fixtures/cockpit-tools-codex-instances.json\n  entries:\n    - id: fallback\n      instance_name: Fallback Worker\n      backend: dry-run\n      workspace_namespace: fallback-worker\n      user_data_dir: ./profiles/fallback\n      env:\n        JADE_TEST_PROFILE: fallback\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/config/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.profiles.default.as_deref(), Some("codex-alpha"));
+        assert_eq!(
+            config
+                .profiles
+                .cockpit_tools
+                .codex_instances_path
+                .as_deref(),
+            Some(Path::new(
+                "/tmp/config/fixtures/cockpit-tools-codex-instances.json"
+            ))
+        );
+        assert_eq!(config.profiles.entries.len(), 1);
+        assert_eq!(
+            config.profiles.entries[0].env.get("JADE_TEST_PROFILE"),
+            Some(&"fallback".into())
+        );
+        assert_eq!(
+            config.profiles.entries[0].user_data_dir.as_deref(),
+            Some(Path::new("/tmp/config/profiles/fallback"))
+        );
+    }
+
+    #[test]
+    fn parses_llm_quality_gate_config() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nquality_gate:\n  llm:\n    mode: required\n    command: sh examples/fixtures/llm-gate-ready.sh\n    timeout_ms: 5000\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.quality_gate.llm.mode, "required");
+        assert_eq!(
+            config.quality_gate.llm.command.as_deref(),
+            Some("sh examples/fixtures/llm-gate-ready.sh")
+        );
+        assert_eq!(config.quality_gate.llm.timeout_ms, 5_000);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn required_llm_quality_gate_requires_command() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nquality_gate:\n  llm:\n    mode: required\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert!(config.validate().is_err());
     }
 }

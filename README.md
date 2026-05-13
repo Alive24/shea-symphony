@@ -78,7 +78,12 @@ worker supervision are still future work.
   `git config --local` only.
 - workspace/branch/PR handoff planning can derive a deterministic issue
   workspace key, branch name, and PR handoff body, and can detect an existing
-  branch that appears to belong to a different issue.
+  branch that appears to belong to a different issue; profile-scoped workspace
+  keys can avoid collisions between parallel worker identities.
+- execution profiles can be listed from workflow config. The first slice can
+  read cockpit-tools Codex instance stores (`codex_instances.json`) and treats
+  each instance name as a Jade worker profile without reading or logging account
+  bindings.
 - Agent Review handoff invariant helpers require durable issue, workspace,
   branch, validation, transition, and PR URL evidence before the run-loop can
   move completed work to `Agent Review`; missing PR evidence is routed to
@@ -88,9 +93,10 @@ worker supervision are still future work.
   branch, and create or reuse one GitHub PR after successful execution.
 - terminal status output reports polling state, planned running/skipped/retrying
   issues, token counters, event-log path, gate details, and integration gaps.
-- JSONL event-log primitives exist.
+- JSONL event-log primitives exist and can record selected profile identity.
 - runtime state helpers can write, read, and clear a tracker-neutral
-  `runtime/runtime-state.json` file under the configured logs root.
+  `runtime/runtime-state.json` file under the configured logs root, including
+  optional profile and instance identity.
 - write-mode `run-loop` performs a resume preflight before claiming new work:
   active runtime state must reconcile with tracker state, retry backoff is
   honored, and stale active work is reported as stalled instead of being
@@ -150,6 +156,7 @@ cargo run -- run-once examples/git-identity-workflow.md
 cargo run -- run-once examples/codex-subprocess-workflow.md
 cargo run -- run-once examples/claude-subprocess-workflow.md
 cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
+cargo run -- profiles examples/cockpit-profiles-workflow.md
 cargo run -- plan examples/linear-fixture-workflow.md
 cargo run -- gate examples/dry-run-workflow.md '#3'
 cargo run -- forge-discover --intent "Add Issue Forge validate and repair commands"
@@ -167,6 +174,15 @@ cargo run -- forge-create --workflow path/to/WORKFLOW.md --title "Follow-up titl
 fixtures show controlled real-backend paths without invoking live hosted
 services. They write `JADE_SYMPHONY_PROMPT.md` into the prepared workspace and
 append JSONL events for the selected workflow.
+
+`profiles` lists execution profiles discovered from workflow config. For
+cockpit-tools, Jade currently reads the Codex instance store shape inspected in
+`https://github.com/jlcodes99/cockpit-tools`: a local `codex_instances.json` with camelCase
+`instances[]` records such as `name`, `userDataDir`, `workingDir`, and
+`extraArgs`. Jade ignores account binding fields, uses the instance name as the
+worker identity, and falls back to explicit `profiles.entries` when the
+cockpit-tools file is not present. This is a small adapter boundary, not a full
+account manager.
 
 `examples/git-identity-workflow.md` is a fixture workflow that runs
 `after_create: git init`, applies the configured `identity.git` values with
@@ -228,6 +244,8 @@ Merging role separation.
 ## Stubbed
 
 - linked PR attachment/linking as a first-class relationship.
+- full multi-account manager UI or account switching; cockpit-tools integration
+  is currently read-only fixture/path parsing for Codex instance names.
 - automatic repair of existing `Agent Review` items with missing PR evidence;
   the current slice prevents new silent handoffs and records diagnostics.
 - robust cleanup for live git worktrees after terminal tracker reconciliation.
@@ -251,6 +269,8 @@ Merging role separation.
   create-or-reuse handoff.
 - continuation retries and automated stall restart.
 - terminal workspace cleanup tied to tracker state.
+- profile-aware tracker claim ownership beyond namespaced runtime/log/workspace
+  metadata.
 - live token/rate-limit accounting beyond the current snapshot counters.
 - persistent background Agent Review worker supervision beyond bounded
   `review-loop` ticks.

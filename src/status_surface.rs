@@ -47,11 +47,12 @@ fn render_running(snapshot: &RuntimeSnapshot, lines: &mut Vec<String>) {
     lines.push("running issues:".into());
     for entry in &snapshot.running {
         lines.push(format!(
-            "- {} {} state={} backend={} workspace={} session={}",
+            "- {} {} state={} backend={} profile={} workspace={} session={}",
             entry.issue_id,
             entry.identifier,
             entry.state,
             entry.backend,
+            entry.profile_id.as_deref().unwrap_or("n/a"),
             entry.workspace_path.as_deref().unwrap_or("n/a"),
             entry.session_id.as_deref().unwrap_or("n/a"),
         ));
@@ -140,6 +141,8 @@ mod tests {
                 backend: "codex".into(),
                 workspace_path: Some("/tmp/ws".into()),
                 session_id: Some("session".into()),
+                profile_id: Some("codex-alpha".into()),
+                instance_name: Some("Codex Alpha".into()),
             }],
             retrying: vec![RetrySnapshot {
                 issue_id: "GHI_2".into(),
@@ -175,6 +178,7 @@ mod tests {
         });
 
         assert!(rendered.contains("running issues:"));
+        assert!(rendered.contains("profile=codex-alpha"));
         assert!(rendered.contains("retrying issues:"));
         assert!(rendered.contains("skipped issues:"));
         assert!(rendered.contains("gate=NeedToClarify"));

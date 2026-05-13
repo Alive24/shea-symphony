@@ -12,17 +12,18 @@ yet.
 | --- | --- |
 | Workflow loader | Implemented for explicit workflow path and optional YAML front matter. Runtime reload is not implemented. |
 | Dogfood workflow prompt | `examples/github-project-workflow.md` includes the Jade operating loop, issue quality gate expectation, workpad discipline, role boundaries, stop conditions, and one issue / one branch / one PR handoff rules. Tests guard against reverting to a placeholder-thin prompt. |
-| Typed config | Implemented for the current skeleton, including GitHub Project v2-shaped settings and operator/agent identity metadata. |
+| Typed config | Implemented for the current skeleton, including GitHub Project v2-shaped settings, operator/agent identity metadata, and first-slice execution profiles. |
 | Normalized issue model | Implemented as `TrackerIssue`, including ProjectV2 item ID, labels, assignees, blockers, linked PRs, and project fields. |
 | GitHub Project v2 tracker | Fixture-backed mode plus live loading and explicit write operations through `gh api graphql`. `run-loop` can coordinate existing primitives, idle-poll in unbounded write mode, and use claim decision helpers before write-mode dispatch; auth diagnostics distinguish fixture mode, env-token auth, usable `gh api graphql` auth, missing `gh`, and unusable auth. Same-state status writes are skipped, Project item addition initializes the configured `Status` field to `Todo`, marker workpad upsert is idempotent for the canonical marker, and claim decision helpers distinguish claimable, active, and externally changed states. Full claim reconciliation is not implemented yet. |
 | Linear tracker | Implemented behind the same trait for fixture-backed planning plus live GraphQL reads, state updates, marker workpad comments, follow-up issue creation, and project assignment. Credential-gated smoke coverage is still missing. |
 | Issue Quality Gate | Implemented as a Markdown contract check plus deterministic source-alignment preflight where workflow/repo context is available. It verifies target repository, referenced local paths, and supported verification command shapes; richer semantic validation is still a follow-up. |
 | Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, repair, CLI-first interactive issue shaping, conservative reflective follow-up candidate generation, and explicit `forge-create` tracker issue creation from quality-gated Markdown. Interactive creation requires `--write` and `--confirm-create`; reflective mode only prints candidates. Initial Project `Status` setup is available through the GitHub add-to-project path; arbitrary Project field setup after creation is not implemented yet. |
 | Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes, idle polling, claim-helper use, runtime-state persistence, resume preflight, retry backoff records, stall detection, and live PR handoff in non-fixture GitHub mode exists. No long-running worker supervision, automated stall restart, full multi-worker runtime resume reconciliation, or full state reconciliation yet. |
-| Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, repository-local git identity application, workspace/branch/PR handoff planning, live git worktree/branch creation, branch push, PR create-or-reuse, run-loop handoff evidence, and an Agent Review handoff invariant that blocks missing PR evidence before `Agent Review` exist. Runtime reconciliation cleanup is not wired yet. |
-| Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Full Codex app-server and Claude Code protocol parity are not implemented yet. |
+| Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, repository-local git identity application, workspace/branch/PR handoff planning, live git worktree/branch creation, branch push, PR create-or-reuse, run-loop handoff evidence, profile-scoped workspace keys, and an Agent Review handoff invariant that blocks missing PR evidence before `Agent Review` exist. Runtime reconciliation cleanup is not wired yet. |
+| Execution profiles | First-slice profile discovery exists. Workflow config can point to a cockpit-tools Codex `codex_instances.json` file, and Jade treats each instance `name` as a profile/worker identity while ignoring account binding fields. If the cockpit-tools file is missing, explicit `profiles.entries` are used. This is not a full account manager. |
+| Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Prepared runs include selected profile/instance metadata and profile environment context. Full Codex app-server and Claude Code protocol parity are not implemented yet. |
 | Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, evidence-first Rework diagnostics for confirmed findings, review-freshness evidence for Merging conflict repair, bounded `review-loop` selection/reconciliation, and workpad/status evidence helpers exist. Persistent background review worker supervision is not implemented yet. |
-| Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events with actor metadata. Runtime state files are written during write-mode `run-loop` issue execution, including actor role/label and git author when configured; resume, retry, and stall supervision events are also recorded. No web/API surface yet. |
+| Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events with actor and profile metadata. Runtime state files are written during write-mode `run-loop` issue execution, including actor role/label, git author, and optional profile/instance identity when configured; resume, retry, and stall supervision events are also recorded. No web/API surface yet. |
 | Tests | Unit tests cover the dry-run skeleton. No credential-gated integration tests yet. |
 
 ## Before Executing GitHub Project Issues
@@ -101,6 +102,8 @@ Project v2 issues:
      bootstrap contract evolves.
    - Harden the Codex and Claude Code subprocess backends, then implement full
      protocol transports.
+   - Preserve selected profile identity in prepared runs, logs, runtime state,
+     and backend environment context without logging secrets.
    - Keep Claude Code as a peer backend path.
    - Normalize session IDs, completion, failures, token usage, and rate-limit
      events.
@@ -128,6 +131,8 @@ Project v2 issues:
    - Existing `Agent Review` items with stale or missing PR evidence still need
      a reconciliation/repair command; the current handoff invariant prevents
      new silent transitions from passing without PR evidence.
+   - profile-scoped workspace keys exist, but tracker claim ownership still
+     needs profile-aware reconciliation before parallel worker dogfooding.
    - continuation retry after normal active-state exits.
    - exponential backoff for failures.
    - stall detection.
@@ -147,6 +152,13 @@ Project v2 issues:
    - Fixture tests for pagination, status option cache, malformed payloads, and
      permission failures.
    - Dry-run fixtures remain available for local development without credentials.
+   - cockpit-tools integration remains a small adapter over the local Codex
+     instance store. The inspected source in
+     `https://github.com/jlcodes99/cockpit-tools` uses a camelCase `InstanceStore`
+     (`instances`, `defaultSettings`) and `InstanceProfile` records with
+     `id`, `name`, `userDataDir`, `workingDir`, `extraArgs`, launch metadata,
+     and account binding fields. Jade reads only non-secret instance identity
+     and path/argument context.
 
 10. Issue Forge tracker completion.
    - `forge-create` can create a tracker issue and optionally add it to the

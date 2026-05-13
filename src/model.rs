@@ -102,6 +102,10 @@ pub struct RunningSnapshot {
     pub backend: String,
     pub workspace_path: Option<String>,
     pub session_id: Option<String>,
+    #[serde(default)]
+    pub profile_id: Option<String>,
+    #[serde(default)]
+    pub instance_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

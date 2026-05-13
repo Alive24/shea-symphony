@@ -6,6 +6,7 @@ pub mod handoff;
 pub mod issue_forge;
 pub mod model;
 pub mod orchestrator;
+pub mod profiles;
 pub mod prompt;
 pub mod quality_gate;
 pub mod review;

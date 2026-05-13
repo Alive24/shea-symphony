@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread;
@@ -9,6 +10,7 @@ use thiserror::Error;
 
 use crate::config::RuntimeConfig;
 use crate::model::AgentEvent;
+use crate::profiles::{selected_execution_profile, ExecutionProfile};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreparedRun {
@@ -19,6 +21,10 @@ pub struct PreparedRun {
     pub timeout_ms: u64,
     pub approval_policy: Option<String>,
     pub sandbox: Option<String>,
+    pub profile_id: Option<String>,
+    pub instance_name: Option<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
     pub actor_role: Option<String>,
     pub actor_label: Option<String>,
     pub git_author: Option<String>,
@@ -67,6 +73,8 @@ impl AgentBackend for DryRunBackend {
         rendered_prompt: String,
         config: &RuntimeConfig,
     ) -> Result<PreparedRun, AgentError> {
+        let profile = selected_execution_profile(&config.profiles)
+            .map_err(|error| AgentError::Unavailable(error.to_string()))?;
         Ok(PreparedRun {
             backend: self.name().into(),
             workspace,
@@ -75,6 +83,11 @@ impl AgentBackend for DryRunBackend {
             timeout_ms: 0,
             approval_policy: None,
             sandbox: None,
+            profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
+            instance_name: profile
+                .as_ref()
+                .map(|profile| profile.instance_name.clone()),
+            env: profile_environment(profile.as_ref(), self.name()),
             actor_role: Some(config.identity.actor_role.clone()),
             actor_label: Some(config.identity.actor_label.clone()),
             git_author: config.identity.git.author(),
@@ -82,14 +95,15 @@ impl AgentBackend for DryRunBackend {
     }
 
     fn run(&self, prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError> {
+        let session_id = session_id_with_profile("dry-run-session", &prepared);
         Ok(vec![
             AgentEvent::SessionStarted {
                 backend: prepared.backend.clone(),
-                session_id: "dry-run-session".into(),
+                session_id: session_id.clone(),
             },
             AgentEvent::Completed {
                 backend: prepared.backend,
-                session_id: Some("dry-run-session".into()),
+                session_id: Some(session_id),
                 summary: "Dry-run backend did not execute external agent commands.".into(),
             },
         ])
@@ -106,7 +120,10 @@ impl AgentBackend for DryRunBackend {
         AgentSummary {
             backend: self.name().into(),
             success,
-            session_id: Some("dry-run-session".into()),
+            session_id: events.iter().find_map(|event| match event {
+                AgentEvent::SessionStarted { session_id, .. } => Some(session_id.clone()),
+                _ => None,
+            }),
             message: "dry-run complete".into(),
         }
     }
@@ -126,6 +143,8 @@ impl AgentBackend for CodexBackend {
         rendered_prompt: String,
         config: &RuntimeConfig,
     ) -> Result<PreparedRun, AgentError> {
+        let profile = selected_execution_profile(&config.profiles)
+            .map_err(|error| AgentError::Unavailable(error.to_string()))?;
         Ok(PreparedRun {
             backend: self.name().into(),
             workspace,
@@ -134,6 +153,11 @@ impl AgentBackend for CodexBackend {
             timeout_ms: config.codex.turn_timeout_ms,
             approval_policy: Some(config.codex.approval_policy.to_string()),
             sandbox: Some(config.codex.thread_sandbox.clone()),
+            profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
+            instance_name: profile
+                .as_ref()
+                .map(|profile| profile.instance_name.clone()),
+            env: profile_environment(profile.as_ref(), self.name()),
             actor_role: Some(config.identity.actor_role.clone()),
             actor_label: Some(config.identity.actor_label.clone()),
             git_author: config.identity.git.author(),
@@ -167,6 +191,8 @@ impl AgentBackend for ClaudeCodeBackend {
         rendered_prompt: String,
         config: &RuntimeConfig,
     ) -> Result<PreparedRun, AgentError> {
+        let profile = selected_execution_profile(&config.profiles)
+            .map_err(|error| AgentError::Unavailable(error.to_string()))?;
         Ok(PreparedRun {
             backend: self.name().into(),
             workspace,
@@ -175,6 +201,11 @@ impl AgentBackend for ClaudeCodeBackend {
             timeout_ms: config.claude.turn_timeout_ms,
             approval_policy: None,
             sandbox: None,
+            profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
+            instance_name: profile
+                .as_ref()
+                .map(|profile| profile.instance_name.clone()),
+            env: profile_environment(profile.as_ref(), self.name()),
             actor_role: Some(config.identity.actor_role.clone()),
             actor_label: Some(config.identity.actor_label.clone()),
             git_author: config.identity.git.author(),
@@ -199,9 +230,10 @@ fn run_subprocess_backend(
     session_id: &str,
     completion_subject: &str,
 ) -> Result<Vec<AgentEvent>, AgentError> {
+    let session_id = session_id_with_profile(session_id, &prepared);
     let mut events = vec![AgentEvent::SessionStarted {
         backend: prepared.backend.clone(),
-        session_id: session_id.into(),
+        session_id: session_id.clone(),
     }];
 
     if !prepared.workspace.is_dir() {
@@ -237,6 +269,7 @@ fn run_subprocess_backend(
             "JADE_SYMPHONY_SANDBOX",
             prepared.sandbox.as_deref().unwrap_or_default(),
         )
+        .envs(prepared.env.iter())
         .env(
             "JADE_SYMPHONY_ACTOR_ROLE",
             prepared.actor_role.as_deref().unwrap_or_default(),
@@ -268,21 +301,21 @@ fn run_subprocess_backend(
             if !stdout.trim().is_empty() {
                 events.push(AgentEvent::Message {
                     backend: prepared.backend.clone(),
-                    session_id: Some(session_id.into()),
+                    session_id: Some(session_id.clone()),
                     text: stdout,
                 });
             }
             if !stderr.trim().is_empty() {
                 events.push(AgentEvent::Message {
                     backend: prepared.backend.clone(),
-                    session_id: Some(session_id.into()),
+                    session_id: Some(session_id.clone()),
                     text: stderr,
                 });
             }
             if output.status.success() {
                 events.push(AgentEvent::Completed {
                     backend: prepared.backend,
-                    session_id: Some(session_id.into()),
+                    session_id: Some(session_id),
                     summary: format!("{completion_subject} completed successfully."),
                 });
             } else {
@@ -312,6 +345,23 @@ fn run_subprocess_backend(
 
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+fn profile_environment(
+    profile: Option<&ExecutionProfile>,
+    backend: &str,
+) -> BTreeMap<String, String> {
+    profile
+        .map(|profile| profile.environment_for_backend(backend))
+        .unwrap_or_default()
+}
+
+fn session_id_with_profile(base: &str, prepared: &PreparedRun) -> String {
+    prepared
+        .profile_id
+        .as_deref()
+        .map(|profile| format!("{base}:{profile}"))
+        .unwrap_or_else(|| base.into())
 }
 
 fn summarize_events(backend: &str, events: &[AgentEvent]) -> AgentSummary {
@@ -388,6 +438,20 @@ mod tests {
         RuntimeConfig::from_workflow(&workflow, std::path::Path::new("/tmp/WORKFLOW.md")).unwrap()
     }
 
+    fn codex_config_with_profile(command: &str) -> RuntimeConfig {
+        let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("examples/fixtures/cockpit-tools-codex-instances.json");
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            &format!(
+                "---\nagent:\n  backend: codex\ncodex:\n  command: {command:?}\nprofiles:\n  default: codex-alpha\n  cockpit_tools:\n    codex_instances_path: {:?}\n---\nPrompt",
+                fixture_path.display().to_string()
+            ),
+        )
+        .unwrap();
+        RuntimeConfig::from_workflow(&workflow, std::path::Path::new("/tmp/WORKFLOW.md")).unwrap()
+    }
+
     #[test]
     fn codex_backend_runs_subprocess_in_workspace() {
         let temp = tempfile::tempdir().unwrap();
@@ -403,6 +467,27 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(temp.path().join("response.txt")).unwrap(),
             "hello prompt"
+        );
+    }
+
+    #[test]
+    fn codex_backend_prepared_run_includes_profile_context() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = codex_config_with_profile("printf profile");
+        let backend = CodexBackend;
+        let prepared = backend
+            .prepare(temp.path().to_path_buf(), "prompt".into(), &config)
+            .unwrap();
+
+        assert_eq!(prepared.profile_id.as_deref(), Some("codex-alpha"));
+        assert_eq!(prepared.instance_name.as_deref(), Some("codex-alpha"));
+        assert_eq!(
+            prepared.env.get("CODEX_HOME"),
+            Some(&"/tmp/cockpit/codex-alpha".into())
+        );
+        assert_eq!(
+            session_id_with_profile("codex-subprocess", &prepared),
+            "codex-subprocess:codex-alpha"
         );
     }
 

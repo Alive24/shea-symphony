@@ -68,9 +68,11 @@ one-issue-one-PR automation are still future work.
 - `run-once` can execute the conservative Claude Code subprocess backend when a
   workflow explicitly sets `agent.backend: claude-code`.
 - `run-loop` can re-read tracker state per iteration, select dispatchable work,
-  print dry-run claim/run/workpad/handoff actions, use tracker claim helpers to
+  print dry-run claim/run/workpad/handoff actions, surface deterministic
+  workspace/branch/PR handoff plans, use tracker claim helpers to
   claim/resume/skip externally changed issues, and in explicit `--write` mode
-  run one issue at a time and stop main-agent completion at `Agent Review`;
+  run one issue at a time, record planned handoff evidence, and stop main-agent
+  completion at `Agent Review`;
   unbounded write mode sleeps on idle polls using the workflow polling interval.
 
 ## Dry-Run Only
@@ -167,8 +169,8 @@ claim reconciliation, resume state, and PR automation exist.
 - richer issue claiming, state transition, and reconciliation safety beyond the
   current claim helper and runtime-state wiring.
 - full runtime-state resume reconciliation after interruption.
-- workspace-per-issue branch and PR automation beyond the current planning
-  primitive.
+- workspace-per-issue branch and PR automation beyond current handoff planning
+  and workpad evidence.
 - retry timers, continuation retries, and stall restart.
 - terminal workspace cleanup tied to tracker state.
 - live token/rate-limit accounting beyond the current snapshot counters.

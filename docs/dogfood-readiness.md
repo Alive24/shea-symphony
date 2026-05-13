@@ -16,8 +16,8 @@ yet.
 | Linear tracker | Implemented behind the same trait for fixture-backed planning plus live GraphQL reads, state updates, marker workpad comments, follow-up issue creation, and project assignment. Credential-gated smoke coverage is still missing. |
 | Issue Quality Gate | Implemented as a first-pass Markdown contract check. It is useful for dry-run classification, not yet a full source-alignment gate. |
 | Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, repair, and explicit `forge-create` tracker issue creation from quality-gated Markdown. Initial Project `Status` setup is available through the GitHub add-to-project path; arbitrary Project field setup after creation is not implemented yet. |
-| Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes and idle polling exists. Write-mode `run-loop` persists active issue runtime state during execution and clears it after terminal handoff/block transitions. No long-running worker supervision, retry timers, full runtime resume reconciliation, or full state reconciliation yet. |
-| Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, and workspace/branch/PR handoff planning exist. Live git worktree creation, PR creation, and runtime reconciliation cleanup are not wired yet. |
+| Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes, idle polling, claim-helper use, runtime-state persistence, and planned handoff evidence exists. No long-running worker supervision, retry timers, full runtime resume reconciliation, or full state reconciliation yet. |
+| Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, workspace/branch/PR handoff planning, and run-loop handoff evidence exist. Live git worktree creation, PR creation, and runtime reconciliation cleanup are not wired yet. |
 | Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Full Codex app-server and Claude Code protocol parity are not implemented yet. |
 | Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, and workpad/status evidence helpers exist. Persistent review worker reconciliation is not implemented yet. |
 | Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events. Runtime state files are written during write-mode `run-loop` issue execution, but full resume reconciliation is still pending. No web/API surface yet. |
@@ -93,9 +93,9 @@ Project v2 issues:
    - Runtime state writes exist for claim/resume, backend result evidence, and
      final transition intent; full resume reconciliation after interruption
      remains pending.
-   - workspace/branch/PR handoff planning exists, but the runtime still needs
-     live worktree creation, branch checkout, push, PR creation, and PR link
-     recording.
+   - workspace/branch/PR handoff planning is recorded by `run-loop`, but the
+     runtime still needs live worktree creation, branch checkout, push, PR
+     creation, and PR link recording.
    - continuation retry after normal active-state exits.
    - exponential backoff for failures.
    - stall detection.
@@ -216,14 +216,16 @@ Acceptance:
 
 ### 6. Wire Workspace Branch And PR Handoff Into Run-Loop
 
-Goal: connect the current handoff planning primitive to controlled runtime
-mutation without mixing multiple issue scopes in one branch.
+Goal: connect handoff planning evidence to controlled runtime mutation without
+mixing multiple issue scopes in one branch.
 
 Acceptance:
 
+- records the planned workspace key, workspace path, branch, and PR title in
+  `run-loop` dry-run output and workpad evidence.
+- refuses branches that appear to belong to a different issue.
 - creates or reuses one isolated git worktree per issue.
 - checks out the planned issue branch from the configured base branch.
-- refuses branches that appear to belong to a different issue.
 - pushes the issue branch after local completion.
 - creates one PR with a handoff body and records the PR link in the workpad.
 - keeps main implementation completion at `Agent Review`.

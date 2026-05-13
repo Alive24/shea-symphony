@@ -2,7 +2,8 @@
 
 Status: dry-run dogfood baseline with read-only GitHub Project v2 loading through
 the `gh` CLI and a `run-loop` skeleton that can idle-poll in unbounded write
-mode. Jade Symphony is not ready for unattended live GitHub Project v2 execution
+mode. The live GitHub Project workflow now carries a real Jade operating prompt,
+but Jade Symphony is not ready for unattended live GitHub Project v2 execution
 yet.
 
 ## Current Capability Status
@@ -10,6 +11,7 @@ yet.
 | Capability | Current Status |
 | --- | --- |
 | Workflow loader | Implemented for explicit workflow path and optional YAML front matter. Runtime reload is not implemented. |
+| Dogfood workflow prompt | `examples/github-project-workflow.md` includes the Jade operating loop, issue quality gate expectation, workpad discipline, role boundaries, stop conditions, and one issue / one branch / one PR handoff rules. Tests guard against reverting to a placeholder-thin prompt. |
 | Typed config | Implemented for the current skeleton, including GitHub Project v2-shaped settings and operator/agent identity metadata. |
 | Normalized issue model | Implemented as `TrackerIssue`, including ProjectV2 item ID, labels, assignees, blockers, linked PRs, and project fields. |
 | GitHub Project v2 tracker | Fixture-backed mode plus live loading and explicit write operations through `gh api graphql`. `run-loop` can coordinate existing primitives, idle-poll in unbounded write mode, and use claim decision helpers before write-mode dispatch; auth diagnostics distinguish fixture mode, env-token auth, usable `gh api graphql` auth, missing `gh`, and unusable auth. Same-state status writes are skipped, Project item addition initializes the configured `Status` field to `Todo`, marker workpad upsert is idempotent for the canonical marker, and claim decision helpers distinguish claimable, active, and externally changed states. Full claim reconciliation is not implemented yet. |
@@ -85,6 +87,11 @@ Project v2 issues:
    - Preserve fixture mode for credential-free development.
 
 6. Live agent execution.
+   - The live dogfood workflow prompt now embeds enough Jade protocol for an
+     isolated backend agent to understand the issue work cycle, workpad, review
+     boundary, and stop conditions.
+   - Keep the prompt aligned with `docs/bootstrap/JADE_WORKFLOW.md` as the
+     bootstrap contract evolves.
    - Harden the Codex and Claude Code subprocess backends, then implement full
      protocol transports.
    - Keep Claude Code as a peer backend path.
@@ -339,7 +346,9 @@ GitHub Project v2 execution is hardened.
 
 `examples/github-project-workflow.md` is a non-fixture workflow template for
 manual live Project v2 reads and explicit tracker writes through `gh`. It still
-uses the `dry-run` backend by default. `run-loop --write` is available only as a
-bounded runtime skeleton and should not be treated as full autonomous agent
-execution until claim reconciliation, full runtime resume reconciliation,
-configured verification commands, and worker supervision are hardened.
+uses the `dry-run` backend by default, but the prompt body is now the real Jade
+dogfood operating prompt rather than a placeholder. `run-loop --write` is
+available only as a bounded runtime skeleton and should not be treated as full
+autonomous agent execution until claim reconciliation, full runtime resume
+reconciliation, configured verification commands, and worker supervision are
+hardened.

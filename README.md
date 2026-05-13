@@ -9,8 +9,8 @@ The repo currently proves the core shape and has a small operator CLI: workflow
 parsing, typed config, normalized tracker issues, fixture-backed and `gh`-backed
 read-only GitHub Project v2 issue loading, dispatch planning, quality-gate
 checks, backend abstractions, workspace safety helpers, event-log primitives,
-and an operator-readable status snapshot with event-log and integration-gap
-links.
+an operator-readable status snapshot with event-log and integration-gap links,
+and a real dogfood workflow prompt for GitHub Project v2 runs.
 
 It does **not** yet fully autonomously execute GitHub Project v2 issues,
 run Codex/Claude through the final app-server flow, or supervise long-running
@@ -64,6 +64,9 @@ worker supervision are still future work.
   creating tracker issues.
 - basic strict prompt rendering supports known `issue.*` fields, `attempt`, and
   simple `{% if %}` / `{% else %}` blocks.
+- `examples/github-project-workflow.md` now contains an inline Jade execution
+  prompt with the operating loop, workpad discipline, review boundary, stop
+  conditions, and one issue / one branch / one PR handoff rules.
 - workspace identifiers are sanitized; local workspace paths stay under the
   configured root; hooks support timeouts, stdout/stderr capture,
   `before_remove`, and safe cleanup helpers.
@@ -205,6 +208,12 @@ These commands are adapter operations plus the first runtime-loop
 skeleton, not full autonomous orchestration. Use write mode carefully until
 claim reconciliation, resume state, and PR automation exist.
 
+The live GitHub Project workflow template includes the actual Jade operating
+prompt used for dogfooding. It is intentionally more than tracker config: the
+rendered prompt embeds the issue body, quality-gate expectation, workpad
+requirements, main-agent `Agent Review` boundary, Review Agent boundary, and
+Merging role separation.
+
 ## Stubbed
 
 - linked PR attachment/linking as a first-class relationship.
@@ -286,7 +295,9 @@ For a real GitHub Project v2 read/write workflow template, copy and edit:
 - `examples/github-project-workflow.md`
 
 Update `owner`, `repo`, `project_owner`, `project_number`, and `state_map` before
-using it with a live project.
+using it with a live project. The prompt body is the current Jade dogfood
+operator prompt; keep it aligned with `docs/bootstrap/JADE_WORKFLOW.md` when
+the workflow contract changes.
 
 ## Bootstrap Sources
 

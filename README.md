@@ -137,6 +137,11 @@ cargo run -- review-once path/to/WORKFLOW.md '#123' --write
 cargo run -- review-fake path/to/WORKFLOW.md '#123' --outcome pass --write
 ```
 
+`add-to-project` initializes the configured ProjectV2 `Status` field to the
+workflow's mapped `Todo` option so newly added issues are visible to the
+normalized tracker state machine. Arbitrary Project field setup, such as
+Capability, is still a follow-up.
+
 `set-state` is a main-implementation-agent command and refuses `Human Review`.
 `review-once` / `review-fake` are independent Review Agent commands: a passing
 review can move `Agent Review` to `Human Review`, confirmed findings move to
@@ -186,8 +191,9 @@ cargo run -- plan path/to/WORKFLOW.md
 
 This path can read ProjectV2 items and normalize GitHub Issue content for
 planning. Explicit `--write` commands can update ProjectV2 status, write workpad
-comments, create follow-up issues, and add issues to the project. PR linking uses
-an issue comment/autolink strategy rather than a first-class relationship. Jade
+comments, create follow-up issues, and add issues to the project with initial
+`Todo` status. PR linking uses an issue comment/autolink strategy rather than a
+first-class relationship. Jade
 Symphony can idle-poll in unbounded write mode, but still cannot fully reconcile
 state or supervise live agents.
 

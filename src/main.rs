@@ -9,12 +9,13 @@ use jade_symphony::event_log::{EventLog, EventRecord};
 use jade_symphony::handoff::{plan_issue_handoff, HandoffError, IssueHandoffPlan};
 use jade_symphony::issue_forge::{
     discover_candidates, draft_from_template, find_issue_skill, interactive_forge,
-    reflective_candidates_from_context, repair_markdown, validate_markdown, InteractiveForgeInput,
+    next_clarification_question, reflective_candidates_from_context, repair_markdown,
+    validate_markdown, InteractiveForgeInput,
 };
 use jade_symphony::model::{normalize_state, GateDecision, GateDecisionKind, TrackerIssue};
 use jade_symphony::orchestrator::Orchestrator;
 use jade_symphony::prompt::render_prompt;
-use jade_symphony::quality_gate::evaluate_issue;
+use jade_symphony::quality_gate::evaluate_issue_with_source_alignment;
 use jade_symphony::review::{
     classify_review_freshness, render_review_freshness_workpad, render_review_workpad,
     review_gate_decision, transition_allowed_for_main_agent, transition_allowed_for_review_agent,
@@ -187,7 +188,7 @@ fn quality_gate(
     let issue = adapter
         .get_issue(&issue_ref)?
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
-    let decision = evaluate_issue(&issue);
+    let decision = evaluate_issue_for_current_source(&config, &issue)?;
 
     println!(
         "gate={:?} dispatchable={}",
@@ -215,6 +216,27 @@ fn quality_gate(
     }
 
     Ok(())
+}
+
+fn evaluate_issue_for_current_source(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+) -> Result<GateDecision, Box<dyn std::error::Error>> {
+    let repo_root = std::env::current_dir()?;
+    let expected_target = expected_target_repository(config);
+    Ok(evaluate_issue_with_source_alignment(
+        issue,
+        &repo_root,
+        expected_target.as_deref(),
+    ))
+}
+
+fn expected_target_repository(config: &RuntimeConfig) -> Option<String> {
+    Some(format!(
+        "{}/{}",
+        config.tracker.owner.as_ref()?,
+        config.tracker.repo.as_ref()?
+    ))
 }
 
 fn set_state(
@@ -282,12 +304,14 @@ fn forge_create(
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     require_write_intent(write)?;
-    let report = validate_forge_create_contract(&title, &markdown).inspect_err(|_message| {
-        let report = validate_markdown(&title, &markdown);
-        print_forge_validation(&report);
-    })?;
-
     let config = load_config(&workflow_path)?;
+    let report =
+        validate_forge_create_contract(&title, &markdown, &config).inspect_err(|_message| {
+            let report = validate_forge_create_report(&title, &markdown, &config)
+                .unwrap_or_else(|_| validate_markdown(&title, &markdown));
+            print_forge_validation(&report);
+        })?;
+
     let adapter = adapter_from_config(&config);
     let issue_id = adapter.create_follow_up_issue(FollowUpIssueInput {
         title: report.title,
@@ -375,13 +399,47 @@ fn forge_reflect(
 fn validate_forge_create_contract(
     title: &str,
     markdown: &str,
+    config: &RuntimeConfig,
 ) -> Result<jade_symphony::issue_forge::ForgeValidationReport, String> {
-    let report = validate_markdown(title, markdown);
+    let report = validate_forge_create_report(title, markdown, config)
+        .map_err(|error| format!("source alignment failed: {error}"))?;
     if report.decision.is_dispatchable() {
         Ok(report)
     } else {
         Err("issue forge validation failed; tracker issue was not created".into())
     }
+}
+
+fn validate_forge_create_report(
+    title: &str,
+    markdown: &str,
+    config: &RuntimeConfig,
+) -> Result<jade_symphony::issue_forge::ForgeValidationReport, Box<dyn std::error::Error>> {
+    let issue = TrackerIssue {
+        tracker_kind: config.tracker.kind.clone(),
+        id: "forge-draft".into(),
+        item_id: None,
+        identifier: "#draft".into(),
+        title: title.into(),
+        description: Some(markdown.into()),
+        url: None,
+        state: config.tracker.state_map.todo.clone(),
+        labels: Vec::new(),
+        assignees: Vec::new(),
+        priority: None,
+        branch_name: None,
+        linked_pull_requests: Vec::new(),
+        blocked_by: Vec::new(),
+        project_fields: Default::default(),
+        created_at: None,
+        updated_at: None,
+    };
+    let decision = evaluate_issue_for_current_source(config, &issue)?;
+    Ok(jade_symphony::issue_forge::ForgeValidationReport {
+        title: title.to_string(),
+        question: next_clarification_question(&decision),
+        decision,
+    })
 }
 
 fn add_to_project(
@@ -570,7 +628,7 @@ fn inspect(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 
     println!("issues={}", issues.len());
     for issue in issues {
-        let gate = evaluate_issue(&issue);
+        let gate = evaluate_issue_for_current_source(&config, &issue)?;
         println!(
             "- {} {} state={} gate={:?}",
             issue.identifier, issue.title, issue.state, gate.kind
@@ -726,7 +784,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
-        let decision = evaluate_issue(&issue);
+        let decision = evaluate_issue_for_current_source(&config, &issue)?;
         if !decision.is_dispatchable() {
             handle_run_loop_gate_failure(adapter.as_ref(), &issue, &decision, &options)?;
             continue;
@@ -762,7 +820,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         let latest = adapter
             .get_issue(&issue.identifier)?
             .ok_or_else(|| format!("issue disappeared before claim: {}", issue.identifier))?;
-        let latest_gate = evaluate_issue(&latest);
+        let latest_gate = evaluate_issue_for_current_source(&config, &latest)?;
         if !latest_gate.is_dispatchable() {
             handle_run_loop_gate_failure(adapter.as_ref(), &latest, &latest_gate, &options)?;
             continue;
@@ -1858,6 +1916,8 @@ mod tests {
             "## Verification",
             "### Completion Criteria",
             "- Pass.",
+            "### Functional Verification",
+            "- `cargo test`",
         ]
         .join("\n")
     }
@@ -2315,9 +2375,11 @@ mod tests {
 
     #[test]
     fn validates_forge_create_contract_before_tracker_write() {
-        assert!(validate_forge_create_contract("Create issue", &forge_contract()).is_ok());
+        let config = test_config();
+        assert!(validate_forge_create_contract("Create issue", &forge_contract(), &config).is_ok());
 
-        let error = validate_forge_create_contract("Thin issue", "make it better").unwrap_err();
+        let error =
+            validate_forge_create_contract("Thin issue", "make it better", &config).unwrap_err();
         assert!(error.contains("tracker issue was not created"));
     }
 

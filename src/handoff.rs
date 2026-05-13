@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::model::TrackerIssue;
+use crate::model::{LinkedPullRequest, TrackerIssue};
 use crate::workspace::safe_identifier;
 
 const DEFAULT_BRANCH_PREFIX: &str = "feature";
@@ -17,6 +17,7 @@ pub struct IssueHandoffPlan {
     pub workspace_path: PathBuf,
     pub branch_name: String,
     pub pull_request: PullRequestHandoffPlan,
+    pub continuation: Option<ReworkContinuationEvidence>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,6 +27,13 @@ pub struct PullRequestHandoffPlan {
     pub base_branch: String,
     pub issue_ref: String,
     pub body: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReworkContinuationEvidence {
+    pub pull_request_url: String,
+    pub pull_request_state: String,
+    pub source: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,6 +69,24 @@ pub enum HandoffError {
         branch_name: String,
         expected_issue: String,
         found_issue: String,
+    },
+    #[error("issue {issue_ref} has multiple open pull request candidates: {candidates:?}")]
+    AmbiguousReworkContinuation {
+        issue_ref: String,
+        candidates: Vec<String>,
+    },
+    #[error(
+        "issue {issue_ref} has stale pull request evidence {pull_request_url} in state {state}"
+    )]
+    StaleReworkContinuation {
+        issue_ref: String,
+        pull_request_url: String,
+        state: String,
+    },
+    #[error("issue {issue_ref} has pull request {pull_request_url} but no safe branch/workspace evidence")]
+    MissingReworkContinuationBranch {
+        issue_ref: String,
+        pull_request_url: String,
     },
 }
 
@@ -212,11 +238,23 @@ pub fn plan_issue_handoff_for_profile(
     base_branch: &str,
     profile_id: Option<&str>,
 ) -> Result<IssueHandoffPlan, HandoffError> {
+    let continuation = rework_continuation_evidence(issue)?;
+    let is_rework = issue.normalized_state() == "rework";
     if let Some(existing_branch) = issue.branch_name.as_deref() {
         guard_branch_for_issue(existing_branch, &issue.identifier)?;
     }
 
-    let branch_name = branch_name_for_issue(&issue.identifier, &issue.title);
+    let branch_name = match issue.branch_name.as_deref() {
+        Some(existing_branch) if is_rework => existing_branch.to_string(),
+        None if let Some(continuation) = &continuation => {
+            return Err(HandoffError::MissingReworkContinuationBranch {
+                issue_ref: issue.identifier.clone(),
+                pull_request_url: continuation.pull_request_url.clone(),
+            });
+        }
+        _ => branch_name_for_issue(&issue.identifier, &issue.title),
+    };
+
     let workspace_key =
         profile_workspace_key_for_issue(profile_id, &issue.identifier, &issue.title);
     let workspace_path = workspace_root.join(&workspace_key);
@@ -230,7 +268,71 @@ pub fn plan_issue_handoff_for_profile(
         workspace_path,
         branch_name,
         pull_request,
+        continuation,
     })
+}
+
+fn rework_continuation_evidence(
+    issue: &TrackerIssue,
+) -> Result<Option<ReworkContinuationEvidence>, HandoffError> {
+    if issue.normalized_state() != "rework" || issue.linked_pull_requests.is_empty() {
+        return Ok(None);
+    }
+
+    let mut open = issue
+        .linked_pull_requests
+        .iter()
+        .filter(|pull_request| pull_request_is_open(pull_request))
+        .collect::<Vec<_>>();
+
+    match open.len() {
+        0 => {
+            let pull_request = &issue.linked_pull_requests[0];
+            Err(HandoffError::StaleReworkContinuation {
+                issue_ref: issue.identifier.clone(),
+                pull_request_url: pull_request_url(pull_request),
+                state: pull_request
+                    .state
+                    .clone()
+                    .unwrap_or_else(|| "unknown".into()),
+            })
+        }
+        1 => {
+            let pull_request = open.remove(0);
+            Ok(Some(ReworkContinuationEvidence {
+                pull_request_url: pull_request_url(pull_request),
+                pull_request_state: pull_request
+                    .state
+                    .clone()
+                    .unwrap_or_else(|| "unknown".into()),
+                source: "linked_pull_request".into(),
+            }))
+        }
+        _ => Err(HandoffError::AmbiguousReworkContinuation {
+            issue_ref: issue.identifier.clone(),
+            candidates: open.into_iter().map(pull_request_url).collect(),
+        }),
+    }
+}
+
+fn pull_request_is_open(pull_request: &LinkedPullRequest) -> bool {
+    pull_request
+        .state
+        .as_deref()
+        .map(|state| state.eq_ignore_ascii_case("open"))
+        .unwrap_or(false)
+}
+
+fn pull_request_url(pull_request: &LinkedPullRequest) -> String {
+    pull_request
+        .url
+        .clone()
+        .or_else(|| {
+            pull_request
+                .number
+                .map(|number| format!("pull request #{number}"))
+        })
+        .unwrap_or_else(|| "unknown pull request".into())
 }
 
 pub fn workspace_key_for_issue(issue_identifier: &str, title: &str) -> String {
@@ -420,6 +522,17 @@ mod tests {
         }
     }
 
+    fn linked_pr(number: u64, state: &str) -> LinkedPullRequest {
+        LinkedPullRequest {
+            id: Some(format!("PR_{number}")),
+            number: Some(number),
+            url: Some(format!(
+                "https://github.com/Alive24/jade-symphony/pull/{number}"
+            )),
+            state: Some(state.into()),
+        }
+    }
+
     #[test]
     fn creates_deterministic_workspace_and_branch_plan() {
         let plan = plan_issue_handoff(Path::new("/tmp/jade-workspaces"), &issue(), "main").unwrap();
@@ -499,6 +612,79 @@ mod tests {
                 branch_name: "feature/issue-20-auth".into(),
                 expected_issue: "21".into(),
                 found_issue: "20".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn reuses_existing_branch_for_rework_continuation() {
+        let mut issue = issue();
+        issue.state = "Rework".into();
+        issue.branch_name = Some("feature/issue-21-existing-work".into());
+        issue.linked_pull_requests = vec![linked_pr(45, "OPEN")];
+
+        let plan = plan_issue_handoff(Path::new("/tmp/workspaces"), &issue, "main").unwrap();
+
+        assert_eq!(plan.branch_name, "feature/issue-21-existing-work");
+        assert_eq!(
+            plan.pull_request.head_branch,
+            "feature/issue-21-existing-work"
+        );
+        assert_eq!(
+            plan.continuation
+                .as_ref()
+                .map(|continuation| continuation.pull_request_url.as_str()),
+            Some("https://github.com/Alive24/jade-symphony/pull/45")
+        );
+    }
+
+    #[test]
+    fn blocks_rework_with_multiple_open_pull_requests() {
+        let mut issue = issue();
+        issue.state = "Rework".into();
+        issue.branch_name = Some("feature/issue-21-existing-work".into());
+        issue.linked_pull_requests = vec![linked_pr(45, "OPEN"), linked_pr(46, "OPEN")];
+
+        let err = plan_issue_handoff(Path::new("/tmp/workspaces"), &issue, "main").unwrap_err();
+
+        assert!(matches!(
+            err,
+            HandoffError::AmbiguousReworkContinuation { .. }
+        ));
+    }
+
+    #[test]
+    fn blocks_rework_with_stale_pull_request() {
+        let mut issue = issue();
+        issue.state = "Rework".into();
+        issue.branch_name = Some("feature/issue-21-existing-work".into());
+        issue.linked_pull_requests = vec![linked_pr(45, "MERGED")];
+
+        let err = plan_issue_handoff(Path::new("/tmp/workspaces"), &issue, "main").unwrap_err();
+
+        assert_eq!(
+            err,
+            HandoffError::StaleReworkContinuation {
+                issue_ref: "#21".into(),
+                pull_request_url: "https://github.com/Alive24/jade-symphony/pull/45".into(),
+                state: "MERGED".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn blocks_rework_with_pr_but_no_branch_evidence() {
+        let mut issue = issue();
+        issue.state = "Rework".into();
+        issue.linked_pull_requests = vec![linked_pr(45, "OPEN")];
+
+        let err = plan_issue_handoff(Path::new("/tmp/workspaces"), &issue, "main").unwrap_err();
+
+        assert_eq!(
+            err,
+            HandoffError::MissingReworkContinuationBranch {
+                issue_ref: "#21".into(),
+                pull_request_url: "https://github.com/Alive24/jade-symphony/pull/45".into(),
             }
         );
     }

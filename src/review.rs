@@ -9,6 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::agent::{classify_usage_limit_text, UsageLimitPause};
 use crate::model::{normalize_state, TrackerIssue};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -516,6 +517,11 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
     if let Some(error) = &job.error {
         lines.push(format!("- Error: {error}"));
     }
+    if let Some(pause) = review_usage_limit_pause(job) {
+        lines.push(format!("- Usage-limit classifier: `{}`", pause.classifier));
+        lines.push(format!("- Usage-limit evidence: {}", pause.evidence));
+        lines.push("- Review did not pass; unavailable or inconclusive review must not move to Human Review.".into());
+    }
 
     lines.push(String::new());
     lines.push("### Findings".into());
@@ -540,6 +546,27 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
     }
 
     lines.join("\n")
+}
+
+pub fn review_usage_limit_pause(job: &ReviewJob) -> Option<UsageLimitPause> {
+    job.error
+        .as_deref()
+        .and_then(classify_usage_limit_text)
+        .or_else(|| {
+            job.report.as_ref().and_then(|report| {
+                report
+                    .stderr
+                    .as_deref()
+                    .and_then(classify_usage_limit_text)
+                    .or_else(|| report.stdout.as_deref().and_then(classify_usage_limit_text))
+                    .or_else(|| {
+                        report
+                            .summary
+                            .as_deref()
+                            .and_then(classify_usage_limit_text)
+                    })
+            })
+        })
 }
 
 pub fn classify_review_freshness(input: ReviewFreshnessInput) -> ReviewFreshnessReport {
@@ -1014,5 +1041,26 @@ mod tests {
                 worker_key: "review:#1:fake".into()
             }
         );
+    }
+
+    #[test]
+    fn review_workpad_surfaces_usage_limit_without_human_review() {
+        let job = ReviewJob {
+            id: "job".into(),
+            issue_ref: "#1".into(),
+            backend: "gemini-cli".into(),
+            state: ReviewJobState::Failed,
+            artifact_path: None,
+            report: None,
+            error: Some("rate limit exceeded; retry later".into()),
+        };
+        let workpad = render_review_workpad(&issue(), &job);
+
+        assert_eq!(
+            review_usage_limit_pause(&job).unwrap().classifier,
+            "rate_limit"
+        );
+        assert!(workpad.contains("Usage-limit classifier: `rate_limit`"));
+        assert!(workpad.contains("must not move to Human Review"));
     }
 }

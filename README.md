@@ -70,6 +70,9 @@ worker supervision are still future work.
 - `examples/github-project-workflow.md` now contains an inline Jade execution
   prompt with the operating loop, workpad discipline, review boundary, stop
   conditions, and one issue / one branch / one PR handoff rules.
+- `scripts/jade-dogfood` provides a bounded operator launcher for the GitHub
+  Project workflow with explicit dry-run/write modes and preflight checks for
+  the built binary, git, `gh`, auth, and workflow validation.
 - workspace identifiers are sanitized; local workspace paths stay under the
   configured root; hooks support timeouts, stdout/stderr capture,
   `before_remove`, and safe cleanup helpers.
@@ -314,6 +317,7 @@ Dry-run dispatch:
 cargo run -- plan examples/dry-run-workflow.md
 cargo run -- run-once examples/dry-run-workflow.md
 cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
+scripts/jade-dogfood --dry-run
 ```
 
 The dry-run workflow uses:

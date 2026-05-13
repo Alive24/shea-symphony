@@ -104,7 +104,8 @@ worker supervision are still future work.
   `Need Human Input` with a workpad diagnostic.
 - live GitHub `run-loop --write` can create or reuse the planned issue
   worktree/branch, run the configured backend inside that worktree, push the
-  branch, and create or reuse one GitHub PR after successful execution.
+  branch, run optional configured verification commands, and create or reuse
+  one GitHub PR after successful execution and verification.
 - live GitHub `run-loop --write` checks assignee ownership before claim:
   unassigned issues require an explicit workflow override, and assigned issues
   must match the current `gh` login or a selected profile login exposed through
@@ -298,6 +299,7 @@ Merging role separation.
 - full multi-worker runtime-state resume reconciliation after interruption.
 - richer workspace-per-issue branch and PR reconciliation beyond current
   create-or-reuse handoff.
+- richer verification modeling beyond the current workflow-level command list.
 - continuation retries and automated stall restart.
 - richer vendor-specific quota handling beyond conservative usage-limit
   pattern matching.

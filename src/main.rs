@@ -58,7 +58,7 @@ use jade_symphony::tracker::{
 use jade_symphony::workflow::WorkflowDefinition;
 use jade_symphony::workspace::{
     apply_local_git_identity, prepare_workspace, profile_scoped_identifier, run_after_run,
-    run_before_run, GitIdentityApplyResult,
+    run_before_run, run_workspace_command, GitIdentityApplyResult,
 };
 
 const DEFAULT_RUN_LOOP_BASE_BRANCH: &str = "main";
@@ -1327,6 +1327,7 @@ struct IssueExecutionResult {
     git_author: Option<String>,
     git_identity: GitIdentityApplyResult,
     live_handoff: Option<RunLoopLiveHandoff>,
+    handoff_verification: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1334,6 +1335,12 @@ struct RunLoopLiveHandoff {
     worktree: LiveWorktreeResult,
     publication: PullRequestPublication,
     verification: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HandoffVerification {
+    success: bool,
+    summary: String,
 }
 
 fn execute_issue_once(
@@ -1406,6 +1413,7 @@ fn execute_issue_once_with_workspace_key(
         git_author: config.identity.git.author(),
         git_identity,
         live_handoff: None,
+        handoff_verification: None,
     })
 }
 
@@ -1668,22 +1676,34 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         if result.success {
             if let Some(worktree) = live_worktree {
                 let runner = ProcessHandoffCommandRunner;
-                match publish_issue_pull_request(&handoff, &runner) {
-                    Ok(publication) => {
-                        println!(
-                            "run_loop_action=pr issue={} url={} created={}",
-                            latest.identifier, publication.pr_url, publication.pr_created
-                        );
-                        result.live_handoff = Some(RunLoopLiveHandoff {
-                            worktree,
-                            publication,
-                            verification: "skipped:not_configured".into(),
-                        });
+                let verification = run_handoff_verification(&handoff.workspace_path, &config);
+                println!(
+                    "run_loop_action=verify issue={} success={} summary={}",
+                    latest.identifier, verification.success, verification.summary
+                );
+                result.handoff_verification = Some(verification.summary.clone());
+                if verification.success {
+                    match publish_issue_pull_request(&handoff, &runner) {
+                        Ok(publication) => {
+                            println!(
+                                "run_loop_action=pr issue={} url={} created={}",
+                                latest.identifier, publication.pr_url, publication.pr_created
+                            );
+                            result.live_handoff = Some(RunLoopLiveHandoff {
+                                worktree,
+                                publication,
+                                verification: verification.summary,
+                            });
+                        }
+                        Err(error) => {
+                            result.success = false;
+                            result.message = format!("handoff publication failed: {error}");
+                        }
                     }
-                    Err(error) => {
-                        result.success = false;
-                        result.message = format!("handoff publication failed: {error}");
-                    }
+                } else {
+                    result.success = false;
+                    result.message =
+                        format!("handoff verification failed: {}", verification.summary);
                 }
             }
         }
@@ -2161,6 +2181,56 @@ fn run_loop_live_handoff_enabled(config: &RuntimeConfig) -> bool {
     config.tracker.kind == "github_project_v2" && config.tracker.fixture_path.is_none()
 }
 
+fn run_handoff_verification(workspace_path: &Path, config: &RuntimeConfig) -> HandoffVerification {
+    if config.verification.commands.is_empty() {
+        return HandoffVerification {
+            success: true,
+            summary: "skipped:not_configured".into(),
+        };
+    }
+
+    for (index, command) in config.verification.commands.iter().enumerate() {
+        let label = format!("verification:{}", index + 1);
+        if let Err(error) = run_workspace_command(
+            &label,
+            command,
+            workspace_path,
+            config.verification.timeout_ms,
+        ) {
+            return HandoffVerification {
+                success: false,
+                summary: format!(
+                    "failed command={} index={} error={}",
+                    shell_summary(command),
+                    index + 1,
+                    compact_evidence(&error.to_string())
+                ),
+            };
+        }
+    }
+
+    HandoffVerification {
+        success: true,
+        summary: format!("passed:{} command(s)", config.verification.commands.len()),
+    }
+}
+
+fn shell_summary(command: &str) -> String {
+    let compact = compact_evidence(command);
+    format!("`{compact}`")
+}
+
+fn compact_evidence(value: &str) -> String {
+    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    const LIMIT: usize = 240;
+    let truncated = compact.chars().take(LIMIT).collect::<String>();
+    if truncated.len() < compact.len() {
+        format!("{truncated}...")
+    } else {
+        compact
+    }
+}
+
 fn handle_run_loop_gate_failure(
     adapter: &dyn jade_symphony::tracker::TrackerAdapter,
     issue: &TrackerIssue,
@@ -2260,6 +2330,18 @@ fn print_run_loop_dry_run_actions(
         handoff.workspace_path.display(),
         handoff.branch_name
     );
+    let verification_summary = if config.verification.commands.is_empty() {
+        "skipped:not_configured".to_string()
+    } else {
+        format!(
+            "configured:{} command(s)",
+            config.verification.commands.len()
+        )
+    };
+    println!(
+        "run_loop_dry_run action=verify issue={} summary={}",
+        issue.identifier, verification_summary
+    );
     println!(
         "run_loop_dry_run action=pr issue={} head={} base={}",
         issue.identifier, handoff.branch_name, handoff.pull_request.base_branch
@@ -2319,6 +2401,7 @@ fn run_loop_handoff_workpad(
         format!("- PR title: `{}`", handoff.pull_request.title),
         format!("- PR base branch: `{}`", handoff.pull_request.base_branch),
         rework_continuation_workpad_line(handoff),
+        handoff_verification_workpad_line(result),
         live_handoff_workpad_line(result),
         String::new(),
         "### Main-Agent Boundary".to_string(),
@@ -2336,6 +2419,16 @@ fn rework_continuation_workpad_line(handoff: &IssueHandoffPlan) -> String {
         ),
         None => "- Rework continuation: `not-used`".to_string(),
     }
+}
+
+fn handoff_verification_workpad_line(result: &IssueExecutionResult) -> String {
+    format!(
+        "- Handoff verification: `{}`",
+        result
+            .handoff_verification
+            .as_deref()
+            .unwrap_or("skipped:not_run")
+    )
 }
 
 fn live_handoff_workpad_line(result: &IssueExecutionResult) -> String {
@@ -4234,6 +4327,7 @@ mod tests {
                 applied_keys: vec!["user.name".into(), "user.email".into()],
             },
             live_handoff: None,
+            handoff_verification: None,
         };
 
         let state = run_loop_runtime_state_with_result(state, &result);
@@ -4341,6 +4435,7 @@ mod tests {
                 },
                 verification: "skipped:not_configured".into(),
             }),
+            handoff_verification: Some("skipped:not_configured".into()),
         };
 
         let workpad = run_loop_handoff_workpad(&issue, &result, &handoff);
@@ -4355,7 +4450,50 @@ mod tests {
         assert!(workpad
             .contains("Branch: `feature/issue-29-wire-runtime-state-persistence-into-run-loop`"));
         assert!(workpad.contains("PR title: `#29: Wire runtime state persistence into run-loop`"));
+        assert!(workpad.contains("Handoff verification: `skipped:not_configured`"));
         assert!(workpad.contains("Live PR: `https://github.com/Alive24/jade-symphony/pull/45`"));
+    }
+
+    #[test]
+    fn handoff_verification_skips_when_not_configured() {
+        let config = test_config();
+        let temp = tempfile::tempdir().unwrap();
+
+        let verification = run_handoff_verification(temp.path(), &config);
+
+        assert!(verification.success);
+        assert_eq!(verification.summary, "skipped:not_configured");
+    }
+
+    #[test]
+    fn handoff_verification_runs_configured_commands() {
+        let mut config = test_config();
+        config.verification.commands = vec!["printf verified > verification.txt".into()];
+        config.verification.timeout_ms = 5_000;
+        let temp = tempfile::tempdir().unwrap();
+
+        let verification = run_handoff_verification(temp.path(), &config);
+
+        assert!(verification.success);
+        assert_eq!(verification.summary, "passed:1 command(s)");
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("verification.txt")).unwrap(),
+            "verified"
+        );
+    }
+
+    #[test]
+    fn handoff_verification_failure_blocks_success() {
+        let mut config = test_config();
+        config.verification.commands = vec!["echo nope >&2; exit 7".into()];
+        config.verification.timeout_ms = 5_000;
+        let temp = tempfile::tempdir().unwrap();
+
+        let verification = run_handoff_verification(temp.path(), &config);
+
+        assert!(!verification.success);
+        assert!(verification.summary.contains("failed command=`echo nope"));
+        assert!(verification.summary.contains("status 7"));
     }
 
     #[test]
@@ -4382,6 +4520,7 @@ mod tests {
                 applied_keys: Vec::new(),
             },
             live_handoff: None,
+            handoff_verification: None,
         };
         let pause = result.usage_limit_pause.as_ref().unwrap();
         let workpad = run_loop_usage_limit_pause_workpad(&issue, &result, pause, 20_000);
@@ -4453,6 +4592,7 @@ mod tests {
                 applied_keys: vec!["user.name".into(), "user.email".into()],
             },
             live_handoff: None,
+            handoff_verification: None,
         };
 
         let evidence = run_loop_agent_review_handoff_evidence(&issue, &result, &handoff);
@@ -4497,6 +4637,7 @@ mod tests {
                 applied_keys: vec!["user.name".into(), "user.email".into()],
             },
             live_handoff: None,
+            handoff_verification: None,
         };
 
         let evidence = run_loop_agent_review_handoff_evidence(&issue, &result, &handoff);

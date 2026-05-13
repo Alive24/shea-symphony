@@ -50,6 +50,9 @@ review:
   backend: fake
   gemini_command: gemini
   timeout_ms: 600000
+verification:
+  timeout_ms: 600000
+  commands: []
 observability:
   logs_root: /tmp/jade-symphony-logs
 ---

@@ -20,6 +20,7 @@ pub struct RuntimeConfig {
     pub claude: ClaudeConfig,
     pub review: ReviewConfig,
     pub quality_gate: QualityGateConfig,
+    pub verification: VerificationConfig,
     pub profiles: ProfilesConfig,
     pub identity: IdentityConfig,
     pub observability: ObservabilityConfig,
@@ -135,6 +136,12 @@ pub struct ReviewConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QualityGateConfig {
     pub llm: LlmQualityGateConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct VerificationConfig {
+    pub commands: Vec<String>,
+    pub timeout_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -299,6 +306,7 @@ impl RuntimeConfig {
                 .max(1) as usize,
         };
         let quality_gate = parse_quality_gate(root.get("quality_gate"));
+        let verification = parse_verification(root.get("verification"));
         let profiles = parse_profiles(root.get("profiles"), workflow_dir);
         let identity = parse_identity(root.get("identity"));
         let observability = ObservabilityConfig {
@@ -329,6 +337,7 @@ impl RuntimeConfig {
             claude,
             review,
             quality_gate,
+            verification,
             profiles,
             identity,
             observability,
@@ -386,6 +395,7 @@ impl RuntimeConfig {
             "quality_gate.llm.timeout_ms",
             self.quality_gate.llm.timeout_ms,
         )?;
+        require_positive("verification.timeout_ms", self.verification.timeout_ms)?;
 
         if self.tracker.kind == "github_project_v2" {
             require_present("tracker.owner", self.tracker.owner.as_deref())?;
@@ -522,6 +532,13 @@ fn parse_quality_gate(value: Option<&Value>) -> QualityGateConfig {
             command: get_string(llm, "command"),
             timeout_ms: get_u64(llm, "timeout_ms").unwrap_or(120_000),
         },
+    }
+}
+
+fn parse_verification(value: Option<&Value>) -> VerificationConfig {
+    VerificationConfig {
+        commands: get_string_vec(value, "commands").unwrap_or_default(),
+        timeout_ms: get_u64(value, "timeout_ms").unwrap_or(600_000),
     }
 }
 
@@ -852,6 +869,24 @@ mod tests {
             Some("sh examples/fixtures/llm-gate-ready.sh")
         );
         assert_eq!(config.quality_gate.llm.timeout_ms, 5_000);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn parses_handoff_verification_config() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nverification:\n  timeout_ms: 15000\n  commands:\n    - cargo test\n    - cargo fmt --check\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.verification.timeout_ms, 15_000);
+        assert_eq!(
+            config.verification.commands,
+            vec!["cargo test".to_string(), "cargo fmt --check".to_string()]
+        );
         assert!(config.validate().is_ok());
     }
 

@@ -41,6 +41,9 @@ one-issue-one-PR automation are still future work.
 - dry-run dispatch planning sorts by priority and respects global/state
   concurrency limits.
 - Issue Quality Gate classifies executable versus underspecified issue bodies.
+- review freshness helpers can classify Merging-to-Rework repairs as
+  mechanical, semantic, or unknown and render workpad evidence for whether prior
+  Human Review remains valid.
 - Issue Forge can discover local candidates from intent, ask one focused
   clarification question, draft from the quality template, validate Markdown,
   repair rough Markdown into an executable issue contract shape, and create a
@@ -146,6 +149,7 @@ cargo run -- add-to-project path/to/WORKFLOW.md <github-issue-node-id> --write
 cargo run -- gate-apply path/to/WORKFLOW.md '#123' --write
 cargo run -- review-once path/to/WORKFLOW.md '#123' --write
 cargo run -- review-fake path/to/WORKFLOW.md '#123' --outcome pass --write
+cargo run -- review-freshness --issue '#123' --prior-head old --current-head new --prior-base old-base --current-base new-base --changed-file docs/dogfood-readiness.md --stale-reason merge-conflict --rework-class mechanical-conflict-resolution --patch-summary "Resolved merge conflict without semantic changes."
 ```
 
 `forge-interactive` is dry-run by default. If it is used to create a tracker
@@ -161,6 +165,12 @@ Capability, is still a follow-up.
 `review-once` / `review-fake` are independent Review Agent commands: a passing
 review can move `Agent Review` to `Human Review`, confirmed findings move to
 `Rework`, and failed or inconclusive reviews do not advance to `Human Review`.
+`review-freshness` is an evidence command for Merging conflict repair: it does
+not mutate tracker state, does not approve a PR, and does not authorize the main
+implementation agent to set `Human Review`. Mechanical conflict repair can
+preserve prior Human Review evidence for an authorized merge/handoff flow;
+semantic or unknown rework requires the normal Agent Review and Human Review
+path.
 These commands are adapter operations plus the first runtime-loop
 skeleton, not full autonomous orchestration. Use write mode carefully until
 claim reconciliation, resume state, and PR automation exist.

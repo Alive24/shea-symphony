@@ -47,6 +47,10 @@ worker supervision are still future work.
 - review freshness helpers can classify Merging-to-Rework repairs as
   mechanical, semantic, or unknown and render workpad evidence for whether prior
   Human Review remains valid.
+- `merge-once` can consume issues already in `Merging`, resolve a single linked
+  PR, run guarded GitHub PR preflight checks, write durable workpad evidence,
+  merge clean approved PRs with explicit `--write`, and route blockers to
+  `Rework` or `Need Human Input` without ever setting `Human Review`.
 - structured Rework diagnostics can render compact, durable issue workpad
   evidence for confirmed review findings, merge conflicts, dirty PRs,
   validation failures, and runtime failures before a transition to `Rework`.
@@ -274,6 +278,7 @@ Merging role separation.
 - live token/rate-limit accounting beyond the current snapshot counters.
 - persistent background Agent Review worker supervision beyond bounded
   `review-loop` ticks.
+- long-running `merge-loop` polling beyond one guarded `merge-once` tick.
 - Issue Forge Project field setup after issue creation.
 - autonomous Issue Forge issue creation from reflective mode without explicit
   operator confirmation.
@@ -314,6 +319,7 @@ Dry-run dispatch:
 cargo run -- plan examples/dry-run-workflow.md
 cargo run -- run-once examples/dry-run-workflow.md
 cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
+cargo run -- merge-once examples/github-project-workflow.md --dry-run
 ```
 
 The dry-run workflow uses:

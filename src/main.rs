@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::{error::ErrorKind, Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use jade_symphony::agent::backend_from_config;
@@ -27,8 +27,9 @@ use jade_symphony::review::{
     ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
 };
 use jade_symphony::runtime_state::{
-    clear_runtime_state, load_runtime_state, save_runtime_state, RuntimeIssueState, RuntimeState,
-    RuntimeTransition,
+    clear_runtime_state, detect_runtime_stall, load_runtime_state, mark_runtime_state_updated,
+    record_runtime_retry, save_runtime_state, RuntimeIssueState, RuntimeRetryState,
+    RuntimeStallState, RuntimeState, RuntimeTransition,
 };
 use jade_symphony::status_surface::render_snapshot;
 use jade_symphony::tracker::{
@@ -889,6 +890,73 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         let config = RuntimeConfig::from_workflow(&workflow, &options.workflow_path)?;
         config.validate()?;
         let adapter = adapter_from_config(&config);
+        if options.write {
+            let runtime_state = load_runtime_state(&config)?;
+            match run_loop_resume_preflight(
+                adapter.as_ref(),
+                &config,
+                runtime_state.as_ref(),
+                current_time_ms(),
+            )? {
+                ResumePreflightAction::Continue => {}
+                ResumePreflightAction::ClearCompleted { issue_identifier } => {
+                    clear_runtime_state(&config)?;
+                    println!(
+                        "run_loop_resume_preflight action=clear issue={} reason=tracker_state_terminal",
+                        issue_identifier
+                    );
+                }
+                ResumePreflightAction::RetryLater {
+                    issue_identifier,
+                    retry,
+                    due_in_ms,
+                } => {
+                    append_runtime_supervision_event(
+                        &config,
+                        runtime_state.as_ref(),
+                        "RetryDeferred",
+                        &format!(
+                            "issue={issue_identifier} attempt={} due_in_ms={} error={}",
+                            retry.attempt, due_in_ms, retry.error
+                        ),
+                    )?;
+                    println!(
+                        "run_loop=stopped reason=retry_backoff issue={} due_in_ms={} attempt={}",
+                        issue_identifier, due_in_ms, retry.attempt
+                    );
+                    break;
+                }
+                ResumePreflightAction::Stalled {
+                    issue_identifier,
+                    stall,
+                } => {
+                    append_runtime_supervision_event(
+                        &config,
+                        runtime_state.as_ref(),
+                        "RuntimeStalled",
+                        &format!(
+                            "issue={issue_identifier} stalled_for_ms={} reason={}",
+                            stall.stalled_for_ms, stall.reason
+                        ),
+                    )?;
+                    println!(
+                        "run_loop=stopped reason=runtime_stalled issue={} stalled_for_ms={}",
+                        issue_identifier, stall.stalled_for_ms
+                    );
+                    break;
+                }
+                ResumePreflightAction::Block { reason } => {
+                    append_runtime_supervision_event(
+                        &config,
+                        runtime_state.as_ref(),
+                        "ResumeBlocked",
+                        &reason,
+                    )?;
+                    println!("run_loop=stopped reason=resume_preflight_blocked detail={reason}");
+                    break;
+                }
+            }
+        }
         let issues = adapter.list_dispatchable_issues()?;
         let orchestrator = Orchestrator::new(config.clone());
         let mut plan = orchestrator.plan_dispatch(issues);
@@ -1008,6 +1076,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             &config,
             event,
         );
+        mark_runtime_state_updated(&mut runtime_state, current_time_ms());
         save_runtime_state(&config, &runtime_state)?;
         println!(
             "run_loop_runtime_state action=saved issue={} event={event}",
@@ -1059,6 +1128,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         runtime_state = run_loop_runtime_state_with_result(runtime_state, &result);
+        mark_runtime_state_updated(&mut runtime_state, current_time_ms());
         save_runtime_state(&config, &runtime_state)?;
         println!(
             "run_loop_runtime_state action=updated issue={} event={}",
@@ -1079,6 +1149,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 "agent_review",
                 "main agent completed",
             );
+            mark_runtime_state_updated(&mut runtime_state, current_time_ms());
             save_runtime_state(&config, &runtime_state)?;
             adapter.set_state(&latest.identifier, "agent_review")?;
             clear_runtime_state(&config)?;
@@ -1087,19 +1158,49 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 latest.identifier
             );
         } else {
-            runtime_state = run_loop_runtime_state_with_transition(
-                runtime_state,
-                Some(latest.state.clone()),
-                "need_human_input",
-                "backend run failed",
-            );
-            save_runtime_state(&config, &runtime_state)?;
-            adapter.set_state(&latest.identifier, "need_human_input")?;
-            clear_runtime_state(&config)?;
-            println!(
-                "run_loop_action=blocked issue={} target_state=need_human_input",
-                latest.identifier
-            );
+            let retry_delay_ms = Orchestrator::new(config.clone())
+                .retry_delay_ms(runtime_state.attempt_count, false);
+            if runtime_state.attempt_count < config.agent.max_turns {
+                record_runtime_retry(
+                    &mut runtime_state,
+                    current_time_ms(),
+                    retry_delay_ms,
+                    result.message.clone(),
+                );
+                save_runtime_state(&config, &runtime_state)?;
+                append_runtime_supervision_event(
+                    &config,
+                    Some(&runtime_state),
+                    "RetryScheduled",
+                    &format!(
+                        "issue={} attempt={} due_in_ms={} error={}",
+                        latest.identifier,
+                        runtime_state.attempt_count,
+                        retry_delay_ms,
+                        result.message
+                    ),
+                )?;
+                println!(
+                    "run_loop_action=retry_scheduled issue={} attempt={} due_in_ms={}",
+                    latest.identifier, runtime_state.attempt_count, retry_delay_ms
+                );
+                break;
+            } else {
+                runtime_state = run_loop_runtime_state_with_transition(
+                    runtime_state,
+                    Some(latest.state.clone()),
+                    "need_human_input",
+                    "backend run failed after retry limit",
+                );
+                mark_runtime_state_updated(&mut runtime_state, current_time_ms());
+                save_runtime_state(&config, &runtime_state)?;
+                adapter.set_state(&latest.identifier, "need_human_input")?;
+                clear_runtime_state(&config)?;
+                println!(
+                    "run_loop_action=blocked issue={} target_state=need_human_input",
+                    latest.identifier
+                );
+            }
         }
     }
 
@@ -1119,6 +1220,26 @@ enum RunLoopClaimAction {
     StopAndReplan { current_state: String },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ResumePreflightAction {
+    Continue,
+    ClearCompleted {
+        issue_identifier: String,
+    },
+    RetryLater {
+        issue_identifier: String,
+        retry: RuntimeRetryState,
+        due_in_ms: u64,
+    },
+    Stalled {
+        issue_identifier: String,
+        stall: RuntimeStallState,
+    },
+    Block {
+        reason: String,
+    },
+}
+
 fn run_loop_claim_action(issue: &TrackerIssue, config: &RuntimeConfig) -> RunLoopClaimAction {
     match claim_decision(issue, config) {
         ClaimDecision::Claimable => RunLoopClaimAction::Claim,
@@ -1127,6 +1248,70 @@ fn run_loop_claim_action(issue: &TrackerIssue, config: &RuntimeConfig) -> RunLoo
             RunLoopClaimAction::StopAndReplan { current_state }
         }
     }
+}
+
+fn run_loop_resume_preflight(
+    adapter: &dyn jade_symphony::tracker::TrackerAdapter,
+    config: &RuntimeConfig,
+    state: Option<&RuntimeState>,
+    now_ms: u64,
+) -> Result<ResumePreflightAction, Box<dyn std::error::Error>> {
+    let Some(state) = state else {
+        return Ok(ResumePreflightAction::Continue);
+    };
+    let Some(active_issue) = state.active_issue.as_ref() else {
+        return Ok(ResumePreflightAction::Continue);
+    };
+
+    let Some(issue) = adapter.get_issue(&active_issue.identifier)? else {
+        return Ok(ResumePreflightAction::Block {
+            reason: format!(
+                "runtime state references missing issue {}",
+                active_issue.identifier
+            ),
+        });
+    };
+    let normalized_state = normalize_state(&issue.state);
+
+    if config
+        .terminal_state_set()
+        .iter()
+        .any(|state| state == &normalized_state)
+        || matches!(normalized_state.as_str(), "agent review" | "human review")
+    {
+        return Ok(ResumePreflightAction::ClearCompleted {
+            issue_identifier: active_issue.identifier.clone(),
+        });
+    }
+
+    if normalized_state != "in progress" {
+        return Ok(ResumePreflightAction::Block {
+            reason: format!(
+                "runtime state references {} but tracker state is {}",
+                active_issue.identifier, issue.state
+            ),
+        });
+    }
+
+    if let Some(retry) = state.retry.clone() {
+        let due_in_ms = retry.due_in_ms(now_ms);
+        if due_in_ms > 0 {
+            return Ok(ResumePreflightAction::RetryLater {
+                issue_identifier: active_issue.identifier.clone(),
+                retry,
+                due_in_ms,
+            });
+        }
+    }
+
+    if let Some(stall) = detect_runtime_stall(state, now_ms, config.codex.stall_timeout_ms) {
+        return Ok(ResumePreflightAction::Stalled {
+            issue_identifier: active_issue.identifier.clone(),
+            stall,
+        });
+    }
+
+    Ok(ResumePreflightAction::Continue)
 }
 
 fn no_dispatch_action(
@@ -1143,6 +1328,34 @@ fn no_dispatch_action(
     NoDispatchAction::SleepAndContinue {
         delay_ms: poll_interval_ms,
     }
+}
+
+fn current_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn append_runtime_supervision_event(
+    config: &RuntimeConfig,
+    state: Option<&RuntimeState>,
+    event: &str,
+    message: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let log = EventLog::new(config.observability.logs_root.join("jade-symphony.jsonl"));
+    let active_issue = state.and_then(|state| state.active_issue.as_ref());
+    log.append(&EventRecord {
+        event: event.into(),
+        issue_id: active_issue.map(|issue| issue.id.clone()),
+        issue_identifier: active_issue.map(|issue| issue.identifier.clone()),
+        session_id: state.and_then(|state| state.backend_session_id.clone()),
+        actor_role: Some(config.identity.actor_role.clone()),
+        actor_label: Some(config.identity.actor_label.clone()),
+        git_author: config.identity.git.author(),
+        message: message.into(),
+    })?;
+    Ok(())
 }
 
 fn run_loop_runtime_state_for_issue(
@@ -2176,6 +2389,7 @@ fn usage() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jade_symphony::tracker::MemoryTracker;
 
     fn forge_contract() -> String {
         [
@@ -2232,6 +2446,18 @@ mod tests {
             created_at: None,
             updated_at: None,
         }
+    }
+
+    fn active_runtime_state(identifier: &str) -> RuntimeState {
+        let mut state = RuntimeState::active(
+            RuntimeIssueState {
+                id: "ISSUE_29".into(),
+                identifier: identifier.into(),
+            },
+            "dry-run",
+        );
+        state.updated_at_ms = Some(1_000);
+        state
     }
 
     #[test]
@@ -2487,6 +2713,80 @@ mod tests {
             run_loop_claim_action(&tracker_issue("Agent Review"), &config),
             RunLoopClaimAction::StopAndReplan {
                 current_state: "Agent Review".into()
+            }
+        );
+    }
+
+    #[test]
+    fn resume_preflight_continues_active_in_progress_state() {
+        let config = test_config();
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let state = active_runtime_state("#29");
+
+        let action = run_loop_resume_preflight(&tracker, &config, Some(&state), 2_000).unwrap();
+
+        assert_eq!(action, ResumePreflightAction::Continue);
+    }
+
+    #[test]
+    fn resume_preflight_blocks_conflicting_tracker_state() {
+        let config = test_config();
+        let tracker = MemoryTracker::new(vec![tracker_issue("Todo")]);
+        let state = active_runtime_state("#29");
+
+        let action = run_loop_resume_preflight(&tracker, &config, Some(&state), 2_000).unwrap();
+
+        assert!(matches!(action, ResumePreflightAction::Block { .. }));
+    }
+
+    #[test]
+    fn resume_preflight_defers_until_retry_is_due() {
+        let config = test_config();
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let mut state = active_runtime_state("#29");
+        record_runtime_retry(&mut state, 1_000, 5_000, "rate limited");
+
+        let action = run_loop_resume_preflight(&tracker, &config, Some(&state), 2_000).unwrap();
+
+        assert!(matches!(
+            action,
+            ResumePreflightAction::RetryLater {
+                due_in_ms: 4_000,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn resume_preflight_detects_stalled_active_state() {
+        let config = test_config();
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let mut state = active_runtime_state("#29");
+        state.updated_at_ms = Some(1_000);
+
+        let action = run_loop_resume_preflight(
+            &tracker,
+            &config,
+            Some(&state),
+            config.codex.stall_timeout_ms + 2_000,
+        )
+        .unwrap();
+
+        assert!(matches!(action, ResumePreflightAction::Stalled { .. }));
+    }
+
+    #[test]
+    fn resume_preflight_clears_completed_tracker_state() {
+        let config = test_config();
+        let tracker = MemoryTracker::new(vec![tracker_issue("Agent Review")]);
+        let state = active_runtime_state("#29");
+
+        let action = run_loop_resume_preflight(&tracker, &config, Some(&state), 2_000).unwrap();
+
+        assert_eq!(
+            action,
+            ResumePreflightAction::ClearCompleted {
+                issue_identifier: "#29".into()
             }
         );
     }

@@ -16,11 +16,11 @@ yet.
 | Linear tracker | Implemented behind the same trait for fixture-backed planning plus live GraphQL reads, state updates, marker workpad comments, follow-up issue creation, and project assignment. Credential-gated smoke coverage is still missing. |
 | Issue Quality Gate | Implemented as a first-pass Markdown contract check. It is useful for dry-run classification, not yet a full source-alignment gate. |
 | Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, repair, CLI-first interactive issue shaping, conservative reflective follow-up candidate generation, and explicit `forge-create` tracker issue creation from quality-gated Markdown. Interactive creation requires `--write` and `--confirm-create`; reflective mode only prints candidates. Initial Project `Status` setup is available through the GitHub add-to-project path; arbitrary Project field setup after creation is not implemented yet. |
-| Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes, idle polling, claim-helper use, runtime-state persistence, and live PR handoff in non-fixture GitHub mode exists. No long-running worker supervision, retry timers, full runtime resume reconciliation, or full state reconciliation yet. |
+| Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes, idle polling, claim-helper use, runtime-state persistence, resume preflight, retry backoff records, stall detection, and live PR handoff in non-fixture GitHub mode exists. No long-running worker supervision, automated stall restart, full multi-worker runtime resume reconciliation, or full state reconciliation yet. |
 | Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, repository-local git identity application, workspace/branch/PR handoff planning, live git worktree/branch creation, branch push, PR create-or-reuse, and run-loop handoff evidence exist. Runtime reconciliation cleanup is not wired yet. |
 | Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Full Codex app-server and Claude Code protocol parity are not implemented yet. |
 | Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, review-freshness evidence for Merging conflict repair, bounded `review-loop` selection/reconciliation, and workpad/status evidence helpers exist. Persistent background review worker supervision is not implemented yet. |
-| Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events with actor metadata. Runtime state files are written during write-mode `run-loop` issue execution, including actor role/label and git author when configured, but full resume reconciliation is still pending. No web/API surface yet. |
+| Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events with actor metadata. Runtime state files are written during write-mode `run-loop` issue execution, including actor role/label and git author when configured; resume, retry, and stall supervision events are also recorded. No web/API surface yet. |
 | Tests | Unit tests cover the dry-run skeleton. No credential-gated integration tests yet. |
 
 ## Before Executing GitHub Project Issues
@@ -100,8 +100,9 @@ Project v2 issues:
      supervision is still pending.
    - claimed/running/retry state ownership.
    - Runtime state writes exist for claim/resume, backend result evidence, and
-     final transition intent; full resume reconciliation after interruption
-     remains pending.
+     final transition intent. Resume preflight now blocks conflicting stale
+     active state, honors retry backoff, and reports stalls; full multi-worker
+     reconciliation remains pending.
    - workspace/branch/PR handoff is recorded by `run-loop`; in live
      non-fixture GitHub mode the runtime can create/reuse the issue worktree and
      branch, push the branch, and create/reuse one PR after successful backend
@@ -194,6 +195,9 @@ Acceptance:
   gaps.
 - uses the runtime state file model to resume active issue, workspace, branch,
   backend session, attempt count, last event, and last transition.
+- preserves the current resume preflight guarantees: stale active state must not
+  be overwritten, retry backoff must be visible, and stalled work must stop the
+  loop safely.
 
 ### 4. Implement Full Codex App-Server Backend
 

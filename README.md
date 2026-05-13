@@ -78,6 +78,10 @@ worker supervision are still future work.
 - JSONL event-log primitives exist.
 - runtime state helpers can write, read, and clear a tracker-neutral
   `runtime/runtime-state.json` file under the configured logs root.
+- write-mode `run-loop` performs a resume preflight before claiming new work:
+  active runtime state must reconcile with tracker state, retry backoff is
+  honored, and stale active work is reported as stalled instead of being
+  silently overwritten.
 - write-mode `run-loop` saves active issue runtime state, updates it with
   backend result evidence, records final transition intent, and clears it after
   successful handoff/block transition.
@@ -216,11 +220,11 @@ claim reconciliation, resume state, and PR automation exist.
 
 - long-running worker supervision beyond idle polling in `run-loop`.
 - richer issue claiming, state transition, and reconciliation safety beyond the
-  current claim helper and runtime-state wiring.
-- full runtime-state resume reconciliation after interruption.
+  current claim helper and resume preflight.
+- full multi-worker runtime-state resume reconciliation after interruption.
 - richer workspace-per-issue branch and PR reconciliation beyond current
   create-or-reuse handoff.
-- retry timers, continuation retries, and stall restart.
+- continuation retries and automated stall restart.
 - terminal workspace cleanup tied to tracker state.
 - live token/rate-limit accounting beyond the current snapshot counters.
 - persistent background Agent Review worker supervision beyond bounded

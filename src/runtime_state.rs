@@ -22,6 +22,12 @@ pub struct RuntimeState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_author: Option<String>,
     pub attempt_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry: Option<RuntimeRetryState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stall: Option<RuntimeStallState>,
     pub last_event: Option<String>,
     pub last_transition: Option<RuntimeTransition>,
 }
@@ -38,6 +44,9 @@ impl RuntimeState {
             actor_label: None,
             git_author: None,
             attempt_count: 1,
+            updated_at_ms: None,
+            retry: None,
+            stall: None,
             last_event: None,
             last_transition: None,
         }
@@ -55,6 +64,60 @@ pub struct RuntimeTransition {
     pub from: Option<String>,
     pub to: String,
     pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeRetryState {
+    pub attempt: u32,
+    pub scheduled_at_ms: u64,
+    pub next_retry_at_ms: u64,
+    pub error: String,
+}
+
+impl RuntimeRetryState {
+    pub fn due_in_ms(&self, now_ms: u64) -> u64 {
+        self.next_retry_at_ms.saturating_sub(now_ms)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeStallState {
+    pub detected_at_ms: u64,
+    pub stalled_for_ms: u64,
+    pub reason: String,
+}
+
+pub fn mark_runtime_state_updated(state: &mut RuntimeState, now_ms: u64) {
+    state.updated_at_ms = Some(now_ms);
+}
+
+pub fn record_runtime_retry(
+    state: &mut RuntimeState,
+    now_ms: u64,
+    delay_ms: u64,
+    error: impl Into<String>,
+) {
+    state.retry = Some(RuntimeRetryState {
+        attempt: state.attempt_count,
+        scheduled_at_ms: now_ms,
+        next_retry_at_ms: now_ms.saturating_add(delay_ms),
+        error: error.into(),
+    });
+    mark_runtime_state_updated(state, now_ms);
+}
+
+pub fn detect_runtime_stall(
+    state: &RuntimeState,
+    now_ms: u64,
+    stall_timeout_ms: u64,
+) -> Option<RuntimeStallState> {
+    let updated_at_ms = state.updated_at_ms?;
+    let stalled_for_ms = now_ms.saturating_sub(updated_at_ms);
+    (stall_timeout_ms > 0 && stalled_for_ms >= stall_timeout_ms).then(|| RuntimeStallState {
+        detected_at_ms: now_ms,
+        stalled_for_ms,
+        reason: format!("no runtime update for {stalled_for_ms}ms"),
+    })
 }
 
 #[derive(Debug, Error)]
@@ -154,6 +217,9 @@ mod tests {
             actor_label: Some("Jade Symphony Agent".into()),
             git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
             attempt_count: 2,
+            updated_at_ms: Some(1_000),
+            retry: None,
+            stall: None,
             last_event: Some("Completed".into()),
             last_transition: Some(RuntimeTransition {
                 from: Some("In Progress".into()),
@@ -204,5 +270,29 @@ mod tests {
         clear_runtime_state_at_path(&path).unwrap();
 
         assert_eq!(load_runtime_state_from_path(&path).unwrap(), None);
+    }
+
+    #[test]
+    fn retry_state_reports_due_in_ms() {
+        let retry = RuntimeRetryState {
+            attempt: 2,
+            scheduled_at_ms: 1_000,
+            next_retry_at_ms: 6_000,
+            error: "rate limited".into(),
+        };
+
+        assert_eq!(retry.due_in_ms(2_000), 4_000);
+        assert_eq!(retry.due_in_ms(7_000), 0);
+    }
+
+    #[test]
+    fn detects_stale_runtime_state_as_stall() {
+        let mut state = state();
+        state.updated_at_ms = Some(1_000);
+
+        let stall = detect_runtime_stall(&state, 7_000, 5_000).unwrap();
+
+        assert_eq!(stall.stalled_for_ms, 6_000);
+        assert!(stall.reason.contains("no runtime update"));
     }
 }

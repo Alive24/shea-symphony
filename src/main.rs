@@ -38,9 +38,9 @@ use jade_symphony::quality_gate::{
 use jade_symphony::review::{
     classify_review_freshness, render_review_freshness_workpad, render_review_workpad,
     review_gate_decision, review_run_eligibility, transition_allowed_for_main_agent,
-    transition_allowed_for_review_agent, FakeReviewBackend, FakeReviewOutcome,
-    GeminiCliReviewBackend, ReviewBackend, ReviewFreshnessInput, ReviewJob, ReviewRequest,
-    ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
+    transition_allowed_for_review_agent, write_review_job_ledger_record, FakeReviewBackend,
+    FakeReviewOutcome, GeminiCliReviewBackend, ReviewBackend, ReviewFreshnessInput, ReviewJob,
+    ReviewRequest, ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
 };
 use jade_symphony::rework::{
     render_rework_diagnostic_workpad, rework_diagnostic_from_review, rework_transition_expected,
@@ -738,8 +738,14 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                         &backend_kind,
                     ) {
                         ReviewRunEligibility::Eligible { .. } => {
-                            let job =
+                            let mut job =
                                 run_review_job(&config, &latest, options.fake_outcome.clone())?;
+                            let ledger_path = write_review_job_ledger_record(
+                                &config.observability.logs_root,
+                                &latest,
+                                &job,
+                            )?;
+                            job.ledger_path = Some(ledger_path.clone());
                             apply_review_result(
                                 adapter.as_ref(),
                                 &latest.identifier,
@@ -748,8 +754,12 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                             )?;
                             let decision = review_gate_decision(&job);
                             println!(
-                            "review_loop_action=reconciled issue={} backend={} outcome={:?} target_state={:?}",
-                            latest.identifier, job.backend, decision.outcome, decision.target_state
+                            "review_loop_action=reconciled issue={} backend={} outcome={:?} target_state={:?} ledger={}",
+                            latest.identifier,
+                            job.backend,
+                            decision.outcome,
+                            decision.target_state,
+                            ledger_path.display()
                         );
                         }
                         ReviewRunEligibility::AlreadyQueued { worker_key } => {

@@ -1,0 +1,424 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use crate::handoff::IssueHandoffPlan;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LiveWorktreeResult {
+    pub workspace_path: PathBuf,
+    pub branch_name: String,
+    pub created: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PullRequestPublication {
+    pub branch_pushed: bool,
+    pub pr_url: String,
+    pub pr_created: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandOutput {
+    pub status: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+pub trait HandoffCommandRunner {
+    fn run(
+        &self,
+        program: &str,
+        args: &[String],
+        cwd: &Path,
+    ) -> Result<CommandOutput, GitHandoffError>;
+}
+
+#[derive(Debug, Default)]
+pub struct ProcessHandoffCommandRunner;
+
+impl HandoffCommandRunner for ProcessHandoffCommandRunner {
+    fn run(
+        &self,
+        program: &str,
+        args: &[String],
+        cwd: &Path,
+    ) -> Result<CommandOutput, GitHandoffError> {
+        let output = Command::new(program).args(args).current_dir(cwd).output()?;
+        Ok(CommandOutput {
+            status: output.status.code().unwrap_or(-1),
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        })
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum GitHandoffError {
+    #[error("git handoff io error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("{program} failed with status {status}: stdout={stdout} stderr={stderr}")]
+    CommandFailed {
+        program: String,
+        status: i32,
+        stdout: String,
+        stderr: String,
+    },
+    #[error("existing worktree {path} is on branch {current_branch}, expected {expected_branch}")]
+    WorktreeBranchMismatch {
+        path: PathBuf,
+        expected_branch: String,
+        current_branch: String,
+    },
+    #[error("pull request command did not return a URL")]
+    MissingPullRequestUrl,
+}
+
+pub fn prepare_issue_worktree(
+    repo_root: &Path,
+    plan: &IssueHandoffPlan,
+    runner: &dyn HandoffCommandRunner,
+) -> Result<LiveWorktreeResult, GitHandoffError> {
+    if plan.workspace_path.exists() {
+        let current_branch = current_branch(&plan.workspace_path, runner)?;
+        if current_branch != plan.branch_name {
+            return Err(GitHandoffError::WorktreeBranchMismatch {
+                path: plan.workspace_path.clone(),
+                expected_branch: plan.branch_name.clone(),
+                current_branch,
+            });
+        }
+
+        return Ok(LiveWorktreeResult {
+            workspace_path: plan.workspace_path.clone(),
+            branch_name: plan.branch_name.clone(),
+            created: false,
+        });
+    }
+
+    if let Some(parent) = plan.workspace_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let branch_ref = format!("refs/heads/{}", plan.branch_name);
+    let branch_exists = command_status(
+        "git",
+        &[
+            "-C".into(),
+            repo_root.display().to_string(),
+            "show-ref".into(),
+            "--verify".into(),
+            "--quiet".into(),
+            branch_ref,
+        ],
+        repo_root,
+        runner,
+    )? == 0;
+
+    let args = if branch_exists {
+        vec![
+            "-C".into(),
+            repo_root.display().to_string(),
+            "worktree".into(),
+            "add".into(),
+            plan.workspace_path.display().to_string(),
+            plan.branch_name.clone(),
+        ]
+    } else {
+        vec![
+            "-C".into(),
+            repo_root.display().to_string(),
+            "worktree".into(),
+            "add".into(),
+            "-b".into(),
+            plan.branch_name.clone(),
+            plan.workspace_path.display().to_string(),
+            plan.pull_request.base_branch.clone(),
+        ]
+    };
+    require_success("git", runner.run("git", &args, repo_root)?)?;
+
+    Ok(LiveWorktreeResult {
+        workspace_path: plan.workspace_path.clone(),
+        branch_name: plan.branch_name.clone(),
+        created: true,
+    })
+}
+
+pub fn publish_issue_pull_request(
+    plan: &IssueHandoffPlan,
+    runner: &dyn HandoffCommandRunner,
+) -> Result<PullRequestPublication, GitHandoffError> {
+    require_success(
+        "git",
+        runner.run(
+            "git",
+            &[
+                "push".into(),
+                "-u".into(),
+                "origin".into(),
+                plan.branch_name.clone(),
+            ],
+            &plan.workspace_path,
+        )?,
+    )?;
+
+    let existing = runner.run(
+        "gh",
+        &[
+            "pr".into(),
+            "view".into(),
+            plan.branch_name.clone(),
+            "--json".into(),
+            "url".into(),
+            "--jq".into(),
+            ".url".into(),
+        ],
+        &plan.workspace_path,
+    )?;
+    if existing.status == 0 {
+        let url = extract_url(&existing.stdout)?;
+        return Ok(PullRequestPublication {
+            branch_pushed: true,
+            pr_url: url,
+            pr_created: false,
+        });
+    }
+
+    let created = runner.run(
+        "gh",
+        &[
+            "pr".into(),
+            "create".into(),
+            "--title".into(),
+            plan.pull_request.title.clone(),
+            "--body".into(),
+            plan.pull_request.body.clone(),
+            "--base".into(),
+            plan.pull_request.base_branch.clone(),
+            "--head".into(),
+            plan.pull_request.head_branch.clone(),
+        ],
+        &plan.workspace_path,
+    )?;
+    require_success("gh", created.clone())?;
+
+    Ok(PullRequestPublication {
+        branch_pushed: true,
+        pr_url: extract_url(&created.stdout)?,
+        pr_created: true,
+    })
+}
+
+fn current_branch(
+    workspace_path: &Path,
+    runner: &dyn HandoffCommandRunner,
+) -> Result<String, GitHandoffError> {
+    let output = runner.run(
+        "git",
+        &["branch".into(), "--show-current".into()],
+        workspace_path,
+    )?;
+    require_success("git", output.clone())?;
+    Ok(output.stdout.trim().to_string())
+}
+
+fn command_status(
+    program: &str,
+    args: &[String],
+    cwd: &Path,
+    runner: &dyn HandoffCommandRunner,
+) -> Result<i32, GitHandoffError> {
+    Ok(runner.run(program, args, cwd)?.status)
+}
+
+fn require_success(program: &str, output: CommandOutput) -> Result<(), GitHandoffError> {
+    if output.status == 0 {
+        Ok(())
+    } else {
+        Err(GitHandoffError::CommandFailed {
+            program: program.into(),
+            status: output.status,
+            stdout: output.stdout,
+            stderr: output.stderr,
+        })
+    }
+}
+
+fn extract_url(stdout: &str) -> Result<String, GitHandoffError> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("http://") || line.starts_with("https://"))
+        .map(ToOwned::to_owned)
+        .ok_or(GitHandoffError::MissingPullRequestUrl)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::handoff::plan_issue_handoff;
+    use crate::model::TrackerIssue;
+    use std::cell::RefCell;
+
+    #[derive(Debug, Default)]
+    struct FakeRunner {
+        commands: RefCell<Vec<String>>,
+        existing_branch: bool,
+        existing_pr_url: Option<String>,
+        worktree_branch: Option<String>,
+    }
+
+    impl HandoffCommandRunner for FakeRunner {
+        fn run(
+            &self,
+            program: &str,
+            args: &[String],
+            _cwd: &Path,
+        ) -> Result<CommandOutput, GitHandoffError> {
+            let command = format!("{program} {}", args.join(" "));
+            self.commands.borrow_mut().push(command.clone());
+
+            if command.contains("show-ref --verify --quiet") {
+                return Ok(CommandOutput {
+                    status: if self.existing_branch { 0 } else { 1 },
+                    stdout: String::new(),
+                    stderr: String::new(),
+                });
+            }
+            if command.contains("branch --show-current") {
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: self.worktree_branch.clone().unwrap_or_default(),
+                    stderr: String::new(),
+                });
+            }
+            if command.starts_with("gh pr view") {
+                return Ok(match &self.existing_pr_url {
+                    Some(url) => CommandOutput {
+                        status: 0,
+                        stdout: format!("{url}\n"),
+                        stderr: String::new(),
+                    },
+                    None => CommandOutput {
+                        status: 1,
+                        stdout: String::new(),
+                        stderr: "no pull request".into(),
+                    },
+                });
+            }
+            if command.starts_with("gh pr create") {
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: "https://github.com/Alive24/jade-symphony/pull/99\n".into(),
+                    stderr: String::new(),
+                });
+            }
+
+            Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    fn issue() -> TrackerIssue {
+        TrackerIssue {
+            tracker_kind: "github_project_v2".into(),
+            id: "I_45".into(),
+            item_id: Some("PVTI_45".into()),
+            identifier: "#45".into(),
+            title: "Wire live worktree and PR creation into run-loop".into(),
+            description: None,
+            url: None,
+            state: "In Progress".into(),
+            labels: Vec::new(),
+            assignees: Vec::new(),
+            priority: None,
+            branch_name: None,
+            linked_pull_requests: Vec::new(),
+            blocked_by: Vec::new(),
+            project_fields: Default::default(),
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn creates_new_issue_worktree_from_base_branch() {
+        let temp = tempfile::tempdir().unwrap();
+        let plan = plan_issue_handoff(temp.path(), &issue(), "main").unwrap();
+        let runner = FakeRunner::default();
+
+        let result = prepare_issue_worktree(temp.path(), &plan, &runner).unwrap();
+
+        assert!(result.created);
+        assert_eq!(result.branch_name, plan.branch_name);
+        let commands = runner.commands.borrow().join("\n");
+        assert!(commands.contains("show-ref --verify --quiet"));
+        assert!(commands.contains("worktree add -b feature/issue-45"));
+    }
+
+    #[test]
+    fn refuses_existing_worktree_on_different_branch() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace_root = temp.path().join("workspaces");
+        let plan = plan_issue_handoff(&workspace_root, &issue(), "main").unwrap();
+        fs::create_dir_all(&plan.workspace_path).unwrap();
+        let runner = FakeRunner {
+            worktree_branch: Some("feature/issue-99-other".into()),
+            ..Default::default()
+        };
+
+        let error = prepare_issue_worktree(temp.path(), &plan, &runner).unwrap_err();
+
+        assert!(matches!(
+            error,
+            GitHandoffError::WorktreeBranchMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn reuses_existing_pull_request_after_push() {
+        let temp = tempfile::tempdir().unwrap();
+        let plan = plan_issue_handoff(temp.path(), &issue(), "main").unwrap();
+        let runner = FakeRunner {
+            existing_pr_url: Some("https://github.com/Alive24/jade-symphony/pull/45".into()),
+            ..Default::default()
+        };
+
+        let result = publish_issue_pull_request(&plan, &runner).unwrap();
+
+        assert!(result.branch_pushed);
+        assert!(!result.pr_created);
+        assert_eq!(
+            result.pr_url,
+            "https://github.com/Alive24/jade-symphony/pull/45"
+        );
+        let commands = runner.commands.borrow().join("\n");
+        assert!(commands.contains("git push -u origin"));
+        assert!(!commands.contains("gh pr create"));
+    }
+
+    #[test]
+    fn creates_pull_request_when_none_exists() {
+        let temp = tempfile::tempdir().unwrap();
+        let plan = plan_issue_handoff(temp.path(), &issue(), "main").unwrap();
+        let runner = FakeRunner::default();
+
+        let result = publish_issue_pull_request(&plan, &runner).unwrap();
+
+        assert!(result.branch_pushed);
+        assert!(result.pr_created);
+        assert_eq!(
+            result.pr_url,
+            "https://github.com/Alive24/jade-symphony/pull/99"
+        );
+        let commands = runner.commands.borrow().join("\n");
+        assert!(commands.contains("gh pr create"));
+    }
+}

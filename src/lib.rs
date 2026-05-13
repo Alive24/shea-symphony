@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod config;
 pub mod event_log;
+pub mod git_handoff;
 pub mod handoff;
 pub mod issue_forge;
 pub mod model;
@@ -8,6 +9,7 @@ pub mod orchestrator;
 pub mod prompt;
 pub mod quality_gate;
 pub mod review;
+pub mod rework;
 pub mod runtime_state;
 pub mod status_surface;
 pub mod tracker;

@@ -50,6 +50,41 @@ pub struct RepairReport {
     pub repaired_markdown: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueForgeSkill {
+    pub key: String,
+    pub label: String,
+    pub description: String,
+    pub knowledge_sources: Vec<String>,
+    pub code_paths: Vec<String>,
+    pub guardrails: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InteractiveForgeInput {
+    pub title: String,
+    pub intent: String,
+    pub skill: Option<String>,
+    pub context: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InteractiveForgeReport {
+    pub selected_skill: IssueForgeSkill,
+    pub issue_markdown: String,
+    pub validation: ForgeValidationReport,
+    pub question: Option<ClarificationQuestion>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReflectiveForgeCandidate {
+    pub title: String,
+    pub skill: IssueForgeSkill,
+    pub rationale: String,
+    pub issue_markdown: String,
+    pub validation: ForgeValidationReport,
+}
+
 pub fn discover_candidates(intent: &str) -> Vec<IssueCandidate> {
     let title = title_from_intent(intent);
     let classification = if intent.split_whitespace().count() >= 5 {
@@ -64,6 +99,208 @@ pub fn discover_candidates(intent: &str) -> Vec<IssueCandidate> {
         rationale: "Derived from local operator intent; validate or repair before dispatch.".into(),
         follow_up_candidates: Vec::new(),
     }]
+}
+
+pub fn issue_skill_registry() -> Vec<IssueForgeSkill> {
+    vec![
+        IssueForgeSkill {
+            key: "runtime".into(),
+            label: "Runtime loop".into(),
+            description: "Run-loop, runtime state, polling, resume, and orchestration control."
+                .into(),
+            knowledge_sources: vec![
+                "docs/bootstrap/JADE_SYMPHONY_SPEC.md".into(),
+                "docs/bootstrap/JADE_WORKFLOW.md".into(),
+            ],
+            code_paths: vec![
+                "src/main.rs".into(),
+                "src/runtime_state.rs".into(),
+                "src/orchestrator.rs".into(),
+            ],
+            guardrails: vec![
+                "Main implementation work must stop at Agent Review.".into(),
+                "Preserve dry-run behavior and bounded-loop controls.".into(),
+            ],
+        },
+        IssueForgeSkill {
+            key: "tracker".into(),
+            label: "Tracker integration".into(),
+            description:
+                "GitHub Project v2, Linear, status transitions, workpads, and issue creation."
+                    .into(),
+            knowledge_sources: vec![
+                "docs/bootstrap/TRACKER_GITHUB_PROJECT_V2.md".into(),
+                "docs/bootstrap/JADE_WORKFLOW.md".into(),
+            ],
+            code_paths: vec!["src/tracker.rs".into(), "src/config.rs".into()],
+            guardrails: vec![
+                "Keep GitHub Project v2 and Linear behind the normalized tracker adapter.".into(),
+                "Do not mutate tracker state without explicit --write.".into(),
+            ],
+        },
+        IssueForgeSkill {
+            key: "backend".into(),
+            label: "Agent backend".into(),
+            description: "Codex, Claude Code, dry-run, and subprocess execution backends.".into(),
+            knowledge_sources: vec![
+                "docs/bootstrap/JADE_SYMPHONY_SPEC.md".into(),
+                "docs/bootstrap/references/openai-symphony/SPEC.md".into(),
+            ],
+            code_paths: vec!["src/agent.rs".into(), "src/prompt.rs".into()],
+            guardrails: vec![
+                "Keep Codex and Claude Code behind the normalized backend boundary.".into(),
+                "Keep dry-run backend safe for tests.".into(),
+            ],
+        },
+        IssueForgeSkill {
+            key: "review".into(),
+            label: "Agent Review".into(),
+            description:
+                "Review agent lifecycle, finding classification, and review-state ownership.".into(),
+            knowledge_sources: vec![
+                "docs/bootstrap/JADE_WORKFLOW.md".into(),
+                "docs/bootstrap/JADE_SYMPHONY_SPEC.md".into(),
+            ],
+            code_paths: vec!["src/review.rs".into(), "src/main.rs".into()],
+            guardrails: vec![
+                "Main implementation agent must never set Human Review.".into(),
+                "Failed, unavailable, or inconclusive review must not advance to Human Review."
+                    .into(),
+            ],
+        },
+        IssueForgeSkill {
+            key: "docs".into(),
+            label: "Docs and readiness".into(),
+            description: "README, dogfood readiness, workflow docs, and operator-facing examples."
+                .into(),
+            knowledge_sources: vec![
+                "README.md".into(),
+                "docs/dogfood-readiness.md".into(),
+                "docs/bootstrap/ISSUE_QUALITY_GATE_TEMPLATE.md".into(),
+            ],
+            code_paths: vec!["README.md".into(), "docs/dogfood-readiness.md".into()],
+            guardrails: vec![
+                "Keep docs honest about dry-run, stubbed, and live behavior.".into(),
+                "Do not claim full autonomous orchestration before controlled live proof.".into(),
+            ],
+        },
+        IssueForgeSkill {
+            key: "integration-test".into(),
+            label: "Integration test".into(),
+            description: "Credential-gated smoke tests, fixtures, and dry-run/live verification."
+                .into(),
+            knowledge_sources: vec![
+                "docs/bootstrap/JADE_SYMPHONY_SPEC.md".into(),
+                "docs/dogfood-readiness.md".into(),
+            ],
+            code_paths: vec!["examples/".into(), "tests/".into(), "src/tracker.rs".into()],
+            guardrails: vec![
+                "Keep live tests credential-gated and safe to skip locally.".into(),
+                "Preserve fixture-backed dry-run coverage.".into(),
+            ],
+        },
+    ]
+}
+
+pub fn find_issue_skill(key: &str) -> Option<IssueForgeSkill> {
+    let normalized = key.trim().to_lowercase();
+    issue_skill_registry()
+        .into_iter()
+        .find(|skill| skill.key == normalized)
+}
+
+pub fn select_issue_skill(intent: &str, explicit: Option<&str>) -> IssueForgeSkill {
+    if let Some(skill) = explicit.and_then(find_issue_skill) {
+        return skill;
+    }
+
+    let text = intent.to_lowercase();
+    let selected = if contains_any(
+        &text,
+        &[
+            "github", "project", "tracker", "linear", "status", "workpad",
+        ],
+    ) {
+        "tracker"
+    } else if contains_any(
+        &text,
+        &[
+            "backend",
+            "codex",
+            "claude",
+            "subprocess",
+            "agent execution",
+        ],
+    ) {
+        "backend"
+    } else if contains_any(
+        &text,
+        &[
+            "review",
+            "gemini",
+            "finding",
+            "human review",
+            "agent review",
+        ],
+    ) {
+        "review"
+    } else if contains_any(&text, &["readme", "docs", "documentation", "dogfood"]) {
+        "docs"
+    } else if contains_any(&text, &["test", "fixture", "smoke", "uat", "verification"]) {
+        "integration-test"
+    } else {
+        "runtime"
+    };
+
+    find_issue_skill(selected).expect("built-in issue forge skill exists")
+}
+
+pub fn interactive_forge(input: InteractiveForgeInput) -> InteractiveForgeReport {
+    let selected_skill = select_issue_skill(&input.intent, input.skill.as_deref());
+    let issue_markdown = issue_markdown_from_interactive_input(&input, &selected_skill);
+    let validation = validate_markdown(&input.title, &issue_markdown);
+    let question = focused_interactive_question(&input, &selected_skill, &validation);
+
+    InteractiveForgeReport {
+        selected_skill,
+        issue_markdown,
+        validation,
+        question,
+    }
+}
+
+pub fn reflective_candidates_from_context(
+    context: &str,
+    requested_skill: Option<&str>,
+    limit: usize,
+) -> Vec<ReflectiveForgeCandidate> {
+    context
+        .lines()
+        .map(str::trim)
+        .filter(|line| reflective_signal(line))
+        .take(limit)
+        .enumerate()
+        .map(|(index, line)| {
+            let title = reflective_title(line, index + 1);
+            let intent = reflective_intent(line);
+            let skill = select_issue_skill(&format!("{title} {intent}"), requested_skill);
+            let input = InteractiveForgeInput {
+                title: title.clone(),
+                intent,
+                skill: Some(skill.key.clone()),
+                context: Some(line.to_string()),
+            };
+            let report = interactive_forge(input);
+            ReflectiveForgeCandidate {
+                title,
+                skill,
+                rationale: "Derived from a conservative follow-up signal in the supplied context."
+                    .into(),
+                issue_markdown: report.issue_markdown,
+                validation: report.validation,
+            }
+        })
+        .collect()
 }
 
 pub fn next_clarification_question(decision: &GateDecision) -> Option<ClarificationQuestion> {
@@ -211,6 +448,224 @@ fn title_from_intent(intent: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ");
     format!("Issue candidate: {words}")
+}
+
+fn issue_markdown_from_interactive_input(
+    input: &InteractiveForgeInput,
+    skill: &IssueForgeSkill,
+) -> String {
+    let mut draft = draft_from_template(&input.title, input.intent.trim());
+    draft = draft.replace(
+        "## Why Now\n\nTBD",
+        "## Why Now\n\nThis follow-up is needed to continue turning Jade Symphony from a dry-run skeleton into a usable orchestration binary.",
+    );
+    draft = draft.replace(
+        "## Issue Context\n\nTBD",
+        &format_interactive_context(input, skill),
+    );
+    draft = draft.replace(
+        "### Decisions\n\n- TBD",
+        &format!(
+            "### Decisions\n\n- Use the `{}` Issue Forge skill as the starting contract shape.\n- Keep the implementation focused to this issue and create follow-ups for broader work.",
+            skill.key
+        ),
+    );
+    draft = draft.replace(
+        "### Assumptions\n\n- TBD",
+        "### Assumptions\n\n- The existing Issue Quality Gate remains the acceptance boundary for generated tracker issues.",
+    );
+    draft = draft.replace(
+        "## Non-Negotiable Guardrails\n\n- Keep Jade Symphony orchestration infrastructure separate from downstream product business logic.",
+        &format!(
+            "## Non-Negotiable Guardrails\n\n- Keep Jade Symphony orchestration infrastructure separate from downstream product business logic.\n{}",
+            skill
+                .guardrails
+                .iter()
+                .map(|guardrail| format!("- {guardrail}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+    );
+    draft = draft.replace(
+        &format!("### In Scope\n\n- {}", input.title),
+        &format!(
+            "### In Scope\n\n- Implement the smallest executable slice for: {}.\n- Update tests and docs that directly describe this capability.",
+            input.title
+        ),
+    );
+    draft = draft.replace(
+        "### Target Repository / Package\n\n- TBD",
+        "### Target Repository / Package\n\n- Alive24/jade-symphony",
+    );
+    draft = draft.replace(
+        "### Relevant Knowledge Sources\n\n- TBD",
+        &format!(
+            "### Relevant Knowledge Sources\n\n{}",
+            skill
+                .knowledge_sources
+                .iter()
+                .map(|source| format!("- {source}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+    );
+    draft = draft.replace(
+        "### Relevant Code Paths\n\n- TBD",
+        &format!(
+            "### Relevant Code Paths\n\n{}",
+            skill
+                .code_paths
+                .iter()
+                .map(|path| format!("- {path}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+    );
+    draft = draft.replace(
+        "## Current State\n\nTBD",
+        "## Current State\n\nOperator intent has been captured by Issue Forge and shaped into a quality-gated issue contract.",
+    );
+    draft = draft.replace(
+        "## Deliverable Shape\n\nTBD",
+        "## Deliverable Shape\n\nA focused code, test, fixture, or documentation change matching the selected Issue Forge skill.",
+    );
+    draft = draft.replace(
+        "## Risks or Constraints\n\n- TBD",
+        "## Risks or Constraints\n\n- Do not expand this issue into unrelated roadmap or product work.\n- Keep live external mutations behind explicit `--write` flags.",
+    );
+    draft = draft.replace(
+        "## Expected Outcome\n\nTBD",
+        "## Expected Outcome\n\nA locally verifiable slice that can be handed from main implementation to Agent Review.",
+    );
+    draft = draft.replace(
+        "### Completion Criteria\n\n- TBD",
+        "### Completion Criteria\n\n- The issue contract passes `jade-symphony forge-validate`.\n- Implementation and documentation are limited to the issue scope.",
+    );
+    draft = draft.replace(
+        "### Functional Verification\n\n- TBD",
+        "### Functional Verification\n\n- Run `cargo test`.\n- Run `cargo fmt --check`.\n- Run `cargo clippy --all-targets --all-features -- -D warnings`.",
+    );
+    draft = draft.replace(
+        "### Context Verification\n\n- Confirm the issue still matches canonical sources.",
+        "### Context Verification\n\n- Confirm the issue still matches canonical sources and Project #9 state before dispatch.",
+    );
+    draft
+}
+
+fn format_interactive_context(input: &InteractiveForgeInput, skill: &IssueForgeSkill) -> String {
+    let mut lines = vec![
+        "## Issue Context".to_string(),
+        String::new(),
+        format!(
+            "- Selected Issue Forge skill: `{}` ({})",
+            skill.key, skill.label
+        ),
+        format!("- Operator intent: {}", input.intent.trim()),
+    ];
+    if let Some(context) = input
+        .context
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        lines.push("- Supplied context:".into());
+        lines.push(String::new());
+        lines.push("```md".into());
+        lines.push(context.trim().into());
+        lines.push("```".into());
+    }
+    lines.join("\n")
+}
+
+fn focused_interactive_question(
+    input: &InteractiveForgeInput,
+    skill: &IssueForgeSkill,
+    validation: &ForgeValidationReport,
+) -> Option<ClarificationQuestion> {
+    if let Some(question) = next_clarification_question(&validation.decision) {
+        return Some(question);
+    }
+
+    if input.intent.split_whitespace().count() < 5 {
+        return Some(ClarificationQuestion {
+            question: format!(
+                "What concrete behavior should the `{}` issue change first?",
+                skill.key
+            ),
+            why_it_matters:
+                "The generated issue is structurally valid, but the operator intent is still thin."
+                    .into(),
+        });
+    }
+
+    None
+}
+
+fn contains_any(text: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| text.contains(needle))
+}
+
+fn reflective_signal(line: &str) -> bool {
+    let normalized = line.to_lowercase();
+    contains_any(
+        &normalized,
+        &[
+            "not implemented",
+            "follow-up",
+            "todo",
+            "missing",
+            "must exist",
+            "next issue",
+            "recommended next",
+        ],
+    )
+}
+
+fn reflective_title(line: &str, index: usize) -> String {
+    if let Some(title) = reflective_table_title(line) {
+        return title;
+    }
+
+    let cleaned = line
+        .trim_start_matches(|ch: char| {
+            ch == '-' || ch == '*' || ch == '#' || ch.is_ascii_digit() || ch == '.'
+        })
+        .trim();
+    let words = cleaned
+        .split_whitespace()
+        .take(9)
+        .collect::<Vec<_>>()
+        .join(" ");
+    if words.is_empty() {
+        format!("Reflective follow-up {index}")
+    } else {
+        format!("Follow-up: {words}")
+    }
+}
+
+fn reflective_table_title(line: &str) -> Option<String> {
+    if !line.contains('|') {
+        return None;
+    }
+
+    let cells = line
+        .split('|')
+        .map(str::trim)
+        .filter(|cell| !cell.is_empty())
+        .collect::<Vec<_>>();
+    let capability = cells.first()?;
+    let status = cells.get(1).copied().unwrap_or_default().to_lowercase();
+    if status.contains("not implemented") || status.contains("remaining work") {
+        Some(format!("Follow-up: close {} readiness gap", capability))
+    } else {
+        Some(format!("Follow-up: {}", capability))
+    }
+}
+
+fn reflective_intent(line: &str) -> String {
+    format!(
+        "Turn this reflective readiness signal into an executable Jade Symphony issue: {}",
+        line.trim()
+    )
 }
 
 fn forge_issue(title: &str, markdown: &str) -> TrackerIssue {
@@ -376,5 +831,60 @@ mod tests {
             CandidateClassification::ReadyWithAssumptions
         ));
         assert!(!candidates[0].title.to_lowercase().contains("gsd"));
+    }
+
+    #[test]
+    fn selects_skill_from_explicit_key_or_intent() {
+        assert_eq!(select_issue_skill("anything", Some("review")).key, "review");
+        assert_eq!(
+            select_issue_skill("fix GitHub Project status writes", None).key,
+            "tracker"
+        );
+        assert_eq!(
+            select_issue_skill("update dogfood readiness docs", None).key,
+            "docs"
+        );
+    }
+
+    #[test]
+    fn interactive_forge_builds_quality_gated_contract() {
+        let report = interactive_forge(InteractiveForgeInput {
+            title: "Add resume preflight".into(),
+            intent: "run-loop should inspect runtime state before claiming new work".into(),
+            skill: Some("runtime".into()),
+            context: None,
+        });
+
+        assert_eq!(report.selected_skill.key, "runtime");
+        assert!(report.validation.decision.is_dispatchable());
+        assert!(report.issue_markdown.contains("## Issue Goal"));
+        assert!(report.issue_markdown.contains("src/runtime_state.rs"));
+        assert!(report.question.is_none());
+    }
+
+    #[test]
+    fn interactive_forge_asks_focused_question_for_thin_intent() {
+        let report = interactive_forge(InteractiveForgeInput {
+            title: "Improve tracker".into(),
+            intent: "fix tracker".into(),
+            skill: Some("tracker".into()),
+            context: None,
+        });
+
+        assert!(report.validation.decision.is_dispatchable());
+        assert!(report.question.unwrap().question.contains("tracker"));
+    }
+
+    #[test]
+    fn reflective_candidates_are_conservative_and_quality_gated() {
+        let candidates = reflective_candidates_from_context(
+            "- Not implemented yet: live PR creation.\n- Already done: fixture planning.",
+            None,
+            3,
+        );
+
+        assert_eq!(candidates.len(), 1);
+        assert!(candidates[0].validation.decision.is_dispatchable());
+        assert!(candidates[0].title.contains("live PR creation"));
     }
 }

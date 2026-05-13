@@ -8,7 +8,8 @@ use jade_symphony::config::RuntimeConfig;
 use jade_symphony::event_log::{EventLog, EventRecord};
 use jade_symphony::handoff::{plan_issue_handoff, HandoffError, IssueHandoffPlan};
 use jade_symphony::issue_forge::{
-    discover_candidates, draft_from_template, repair_markdown, validate_markdown,
+    discover_candidates, draft_from_template, find_issue_skill, interactive_forge,
+    reflective_candidates_from_context, repair_markdown, validate_markdown, InteractiveForgeInput,
 };
 use jade_symphony::model::{normalize_state, GateDecision, GateDecisionKind, TrackerIssue};
 use jade_symphony::orchestrator::Orchestrator;
@@ -135,6 +136,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             add_to_project,
             write,
         } => forge_create(workflow_path, title, markdown, add_to_project, write),
+        Command::ForgeInteractive { options } => forge_interactive(options),
+        Command::ForgeReflect {
+            context,
+            skill,
+            limit,
+        } => forge_reflect(context, skill, limit),
         Command::Help => {
             println!("{}", usage());
             Ok(())
@@ -293,6 +300,73 @@ fn forge_create(
     }
 
     println!("forge_create=ok issue_id={issue_id} added_to_project={add_to_project}");
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ForgeInteractiveOptions {
+    workflow_path: Option<PathBuf>,
+    title: String,
+    intent: String,
+    skill: Option<String>,
+    context: Option<String>,
+    add_to_project: bool,
+    write: bool,
+    confirm_create: bool,
+}
+
+fn forge_interactive(options: ForgeInteractiveOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let report = interactive_forge(InteractiveForgeInput {
+        title: options.title.clone(),
+        intent: options.intent,
+        skill: options.skill,
+        context: options.context,
+    });
+    print_interactive_forge_report(&report);
+
+    if options.write {
+        if !options.confirm_create {
+            return Err("forge-interactive --write requires --confirm-create".into());
+        }
+        let workflow_path = options
+            .workflow_path
+            .ok_or("forge-interactive --write requires --workflow")?;
+        forge_create(
+            workflow_path,
+            options.title,
+            report.issue_markdown,
+            options.add_to_project,
+            true,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn forge_reflect(
+    context: String,
+    skill: Option<String>,
+    limit: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if limit == 0 {
+        return Err("forge-reflect --limit must be greater than 0".into());
+    }
+
+    let candidates = reflective_candidates_from_context(&context, skill.as_deref(), limit);
+    println!("candidates={}", candidates.len());
+    for (index, candidate) in candidates.iter().enumerate() {
+        println!("{}. {}", index + 1, candidate.title);
+        println!("skill={}", candidate.skill.key);
+        println!("gate={:?}", candidate.validation.decision.kind);
+        println!(
+            "dispatchable={}",
+            candidate.validation.decision.is_dispatchable()
+        );
+        println!("rationale={}", candidate.rationale);
+        println!("--- issue draft ---");
+        println!("{}", candidate.issue_markdown);
+    }
+
     Ok(())
 }
 
@@ -1098,6 +1172,14 @@ enum Command {
         add_to_project: bool,
         write: bool,
     },
+    ForgeInteractive {
+        options: ForgeInteractiveOptions,
+    },
+    ForgeReflect {
+        context: String,
+        skill: Option<String>,
+        limit: usize,
+    },
     Help,
 }
 
@@ -1187,6 +1269,10 @@ enum CliCommand {
     ForgeRepair(ForgeMarkdownArgs),
     #[command(name = "forge-create")]
     ForgeCreate(ForgeCreateArgs),
+    #[command(name = "forge-interactive")]
+    ForgeInteractive(ForgeInteractiveArgs),
+    #[command(name = "forge-reflect")]
+    ForgeReflect(ForgeReflectArgs),
 }
 
 #[derive(Debug, Args)]
@@ -1358,6 +1444,40 @@ struct ForgeCreateArgs {
     _dry_run: bool,
 }
 
+#[derive(Debug, Args)]
+struct ForgeInteractiveArgs {
+    #[arg(long)]
+    workflow: Option<PathBuf>,
+    #[arg(long)]
+    title: String,
+    #[arg(long)]
+    intent: Option<String>,
+    #[arg(long)]
+    file: Option<PathBuf>,
+    #[arg(long)]
+    skill: Option<String>,
+    #[arg(long = "context-file")]
+    context_file: Option<PathBuf>,
+    #[arg(long = "add-to-project")]
+    add_to_project: bool,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "confirm-create")]
+    confirm_create: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct ForgeReflectArgs {
+    #[arg(long = "context-file")]
+    context_file: PathBuf,
+    #[arg(long)]
+    skill: Option<String>,
+    #[arg(long, default_value_t = 3)]
+    limit: usize,
+}
+
 impl TryFrom<Cli> for Command {
     type Error = String;
 
@@ -1470,6 +1590,23 @@ impl TryFrom<Cli> for Command {
                         add_to_project: args.add_to_project,
                         write: args.write,
                     }),
+                    CliCommand::ForgeInteractive(args) => Ok(Self::ForgeInteractive {
+                        options: ForgeInteractiveOptions {
+                            workflow_path: args.workflow,
+                            title: args.title,
+                            intent: read_source_arg(args.intent, args.file)?,
+                            skill: validate_optional_forge_skill(args.skill)?,
+                            context: read_optional_file(args.context_file)?,
+                            add_to_project: args.add_to_project,
+                            write: args.write,
+                            confirm_create: args.confirm_create,
+                        },
+                    }),
+                    CliCommand::ForgeReflect(args) => Ok(Self::ForgeReflect {
+                        context: read_required_file(args.context_file)?,
+                        skill: validate_optional_forge_skill(args.skill)?,
+                        limit: args.limit,
+                    }),
                 }
             }
         }
@@ -1536,6 +1673,24 @@ fn read_source_arg(inline: Option<String>, file: Option<PathBuf>) -> Result<Stri
     }
 }
 
+fn read_optional_file(file: Option<PathBuf>) -> Result<Option<String>, String> {
+    file.map(read_required_file).transpose()
+}
+
+fn read_required_file(path: PathBuf) -> Result<String, String> {
+    std::fs::read_to_string(&path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))
+}
+
+fn validate_optional_forge_skill(skill: Option<String>) -> Result<Option<String>, String> {
+    if let Some(key) = skill.as_deref() {
+        if find_issue_skill(key).is_none() {
+            return Err(format!("unknown Issue Forge skill: {key}"));
+        }
+    }
+    Ok(skill)
+}
+
 fn print_forge_validation(report: &jade_symphony::issue_forge::ForgeValidationReport) {
     println!("title={}", report.title);
     println!("gate={:?}", report.decision.kind);
@@ -1550,6 +1705,19 @@ fn print_forge_validation(report: &jade_symphony::issue_forge::ForgeValidationRe
         println!("question={}", question.question);
         println!("why={}", question.why_it_matters);
     }
+}
+
+fn print_interactive_forge_report(report: &jade_symphony::issue_forge::InteractiveForgeReport) {
+    println!("skill={}", report.selected_skill.key);
+    print_forge_validation(&report.validation);
+    if let Some(question) = &report.question {
+        println!("clarification_question={}", question.question);
+        println!("clarification_why={}", question.why_it_matters);
+    } else {
+        println!("clarification_question=none");
+    }
+    println!("\n--- issue draft ---\n");
+    println!("{}", report.issue_markdown);
 }
 
 fn usage() -> String {
@@ -1925,6 +2093,56 @@ mod tests {
         assert!(markdown.contains("## Issue Goal"));
         assert!(add_to_project);
         assert!(write);
+    }
+
+    #[test]
+    fn parses_forge_interactive_flags() {
+        let command = Command::parse(vec![
+            "forge-interactive".into(),
+            "--workflow".into(),
+            "examples/github-project-workflow.md".into(),
+            "--title".into(),
+            "Add resume preflight".into(),
+            "--intent".into(),
+            "run-loop should inspect runtime state before claiming new work".into(),
+            "--skill".into(),
+            "runtime".into(),
+            "--add-to-project".into(),
+            "--write".into(),
+            "--confirm-create".into(),
+        ])
+        .unwrap();
+
+        let Command::ForgeInteractive { options } = command else {
+            panic!("expected forge-interactive command");
+        };
+
+        assert_eq!(
+            options.workflow_path,
+            Some(PathBuf::from("examples/github-project-workflow.md"))
+        );
+        assert_eq!(options.title, "Add resume preflight");
+        assert!(options.intent.contains("runtime state"));
+        assert_eq!(options.skill.as_deref(), Some("runtime"));
+        assert!(options.add_to_project);
+        assert!(options.write);
+        assert!(options.confirm_create);
+    }
+
+    #[test]
+    fn rejects_unknown_forge_skill() {
+        let error = Command::parse(vec![
+            "forge-interactive".into(),
+            "--title".into(),
+            "Add a thing".into(),
+            "--intent".into(),
+            "make the runtime loop safer".into(),
+            "--skill".into(),
+            "product-roadmap".into(),
+        ])
+        .unwrap_err();
+
+        assert!(error.contains("unknown Issue Forge skill"));
     }
 
     #[test]

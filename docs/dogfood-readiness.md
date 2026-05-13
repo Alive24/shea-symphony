@@ -19,7 +19,7 @@ yet.
 | Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes, idle polling, claim-helper use, runtime-state persistence, and planned handoff evidence exists. No long-running worker supervision, retry timers, full runtime resume reconciliation, or full state reconciliation yet. |
 | Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, workspace/branch/PR handoff planning, and run-loop handoff evidence exist. Live git worktree creation, PR creation, and runtime reconciliation cleanup are not wired yet. |
 | Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Full Codex app-server and Claude Code protocol parity are not implemented yet. |
-| Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, review-freshness evidence for Merging conflict repair, and workpad/status evidence helpers exist. Persistent review worker reconciliation is not implemented yet. |
+| Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, review-freshness evidence for Merging conflict repair, bounded `review-loop` selection/reconciliation, and workpad/status evidence helpers exist. Persistent background review worker supervision is not implemented yet. |
 | Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events. Runtime state files are written during write-mode `run-loop` issue execution, but full resume reconciliation is still pending. No web/API surface yet. |
 | Tests | Unit tests cover the dry-run skeleton. No credential-gated integration tests yet. |
 
@@ -65,6 +65,9 @@ Project v2 issues:
      `Agent Review` but cannot set `Human Review`.
    - Independent Review Agent commands can set `Human Review` only after a
      passed review with evidence.
+   - Bounded `review-loop` can discover eligible `Agent Review` issues, skip
+     existing review-worker markers, and apply the same independent Review Agent
+     transition rules as `review-once`.
    - Confirmed findings route to `Rework`.
    - Failed, timed out, inconclusive, or unavailable reviews remain out of
      `Human Review` and route to `Need Human Input` or stay in `Agent Review`.
@@ -240,21 +243,20 @@ Acceptance:
 - creates one PR with a handoff body and records the PR link in the workpad.
 - keeps main implementation completion at `Agent Review`.
 
-### 7. Add Agent Review Gate
+### 7. Add Persistent Agent Review Worker Supervision
 
-Goal: make `Agent Review` a real state before `Human Review`.
+Goal: evolve the bounded `review-loop` into persistent worker supervision.
 
 Acceptance:
 
 - reviewer backend is selected through config.
-- findings are classified as `Confirmed`, `Plausible`, `Rejected`, or
-  `Needs Context`.
-- confirmed findings block human handoff.
-- rejected/deferred findings are recorded in the workpad.
-- main implementation agent completion target is `Agent Review`.
-- independent Review Agent may move passed reviews to `Human Review` only after
-  evidence is recorded.
-- failed, timed out, inconclusive, or unavailable reviews must not set
+- one review worker per issue/PR is started and reconciled without blocking the
+  main run-loop.
+- review job identity, backend, artifact path, and result evidence are persisted
+  in workpad/runtime state.
+- duplicate review workers are prevented across repeated loop ticks.
+- passed reviews move to `Human Review`; confirmed findings move to `Rework`;
+  failed, timed out, inconclusive, or unavailable reviews must not set
   `Human Review`.
 
 ### 7b. Preserve Review Freshness During Merging Rework

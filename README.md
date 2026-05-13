@@ -63,6 +63,10 @@ one-issue-one-PR automation are still future work.
 - workspace/branch/PR handoff planning can derive a deterministic issue
   workspace key, branch name, and PR handoff body, and can detect an existing
   branch that appears to belong to a different issue.
+- Agent Review handoff invariant helpers require durable issue, workspace,
+  branch, validation, transition, and PR URL evidence before the run-loop can
+  move completed work to `Agent Review`; missing PR evidence is routed to
+  `Need Human Input` with a workpad diagnostic.
 - terminal status output reports polling state, planned running/skipped/retrying
   issues, token counters, event-log path, gate details, and integration gaps.
 - JSONL event-log primitives exist.
@@ -179,6 +183,8 @@ claim reconciliation, resume state, and PR automation exist.
 
 - linked PR attachment/linking as a first-class relationship.
 - live git worktree creation and `gh pr create` from the runtime loop.
+- automatic repair of existing `Agent Review` items with missing PR evidence;
+  the current slice prevents new silent handoffs and records diagnostics.
 - rich interactive Issue Forge TUI; the current flow is CLI-first and
   command-step based.
 - Linear live adapter credential-gated smoke coverage.

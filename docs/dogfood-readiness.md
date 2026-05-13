@@ -17,7 +17,7 @@ yet.
 | Issue Quality Gate | Implemented as a first-pass Markdown contract check. It is useful for dry-run classification, not yet a full source-alignment gate. |
 | Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, repair, CLI-first interactive issue shaping, conservative reflective follow-up candidate generation, and explicit `forge-create` tracker issue creation from quality-gated Markdown. Interactive creation requires `--write` and `--confirm-create`; reflective mode only prints candidates. Initial Project `Status` setup is available through the GitHub add-to-project path; arbitrary Project field setup after creation is not implemented yet. |
 | Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes, idle polling, claim-helper use, runtime-state persistence, and planned handoff evidence exists. No long-running worker supervision, retry timers, full runtime resume reconciliation, or full state reconciliation yet. |
-| Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, workspace/branch/PR handoff planning, and run-loop handoff evidence exist. Live git worktree creation, PR creation, and runtime reconciliation cleanup are not wired yet. |
+| Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, workspace/branch/PR handoff planning, run-loop handoff evidence, and an Agent Review handoff invariant that blocks missing PR evidence before `Agent Review`. Live git worktree creation, PR creation, and runtime reconciliation cleanup are not wired yet. |
 | Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Full Codex app-server and Claude Code protocol parity are not implemented yet. |
 | Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, review-freshness evidence for Merging conflict repair, and workpad/status evidence helpers exist. Persistent review worker reconciliation is not implemented yet. |
 | Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events. Runtime state files are written during write-mode `run-loop` issue execution, but full resume reconciliation is still pending. No web/API surface yet. |
@@ -72,6 +72,10 @@ Project v2 issues:
      preserving prior Human Review. Mechanical conflict repair can preserve
      prior Human Review for an authorized merge/handoff flow; semantic or
      unknown rework requires the normal Agent Review and Human Review path.
+   - Main-agent completion should enter `Agent Review` only after durable
+     handoff evidence includes issue, workspace, branch, validation, transition,
+     and PR URL. Missing PR evidence should keep the issue out of
+     `Agent Review` with a workpad diagnostic.
 
 5. Linear integration hardening.
    - Add credential-gated live smoke tests for reads, state updates, and workpad
@@ -100,6 +104,9 @@ Project v2 issues:
    - workspace/branch/PR handoff planning is recorded by `run-loop`, but the
      runtime still needs live worktree creation, branch checkout, push, PR
      creation, and PR link recording.
+   - Existing `Agent Review` items with stale or missing PR evidence still need
+     a reconciliation/repair command; the current handoff invariant prevents
+     new silent transitions from passing without PR evidence.
    - continuation retry after normal active-state exits.
    - exponential backoff for failures.
    - stall detection.

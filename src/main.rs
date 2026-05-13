@@ -6,7 +6,10 @@ use clap::{error::ErrorKind, Args, CommandFactory, Parser, Subcommand, ValueEnum
 use jade_symphony::agent::backend_from_config;
 use jade_symphony::config::RuntimeConfig;
 use jade_symphony::event_log::{EventLog, EventRecord};
-use jade_symphony::handoff::{plan_issue_handoff, HandoffError, IssueHandoffPlan};
+use jade_symphony::handoff::{
+    evaluate_agent_review_handoff, plan_issue_handoff, render_agent_review_handoff_workpad,
+    AgentReviewHandoffEvidence, HandoffError, IssueHandoffPlan,
+};
 use jade_symphony::issue_forge::{
     discover_candidates, draft_from_template, find_issue_skill, interactive_forge,
     reflective_candidates_from_context, repair_markdown, validate_markdown, InteractiveForgeInput,
@@ -841,6 +844,27 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             if !transition_allowed_for_main_agent("agent_review") {
                 return Err("main implementation agent cannot set requested review state".into());
             }
+            let evidence = run_loop_agent_review_handoff_evidence(&latest, &result, &handoff);
+            let handoff_report = evaluate_agent_review_handoff(&evidence);
+            let handoff_workpad =
+                render_agent_review_handoff_workpad(&latest, &evidence, &handoff_report);
+            adapter.upsert_workpad(&latest.identifier, &handoff_workpad)?;
+            if !handoff_report.is_ready() {
+                runtime_state = run_loop_runtime_state_with_transition(
+                    runtime_state,
+                    Some(latest.state.clone()),
+                    "need_human_input",
+                    "agent review handoff invariant failed",
+                );
+                save_runtime_state(&config, &runtime_state)?;
+                adapter.set_state(&latest.identifier, "need_human_input")?;
+                clear_runtime_state(&config)?;
+                println!(
+                    "run_loop_action=blocked issue={} target_state=need_human_input reason=handoff_invariant_failed",
+                    latest.identifier
+                );
+                continue;
+            }
             runtime_state = run_loop_runtime_state_with_transition(
                 runtime_state,
                 Some(latest.state.clone()),
@@ -1100,6 +1124,34 @@ fn run_loop_handoff_workpad(
         "- `Human Review` is reserved for independent Review Agent pass evidence.".to_string(),
     ]
     .join("\n")
+}
+
+fn run_loop_agent_review_handoff_evidence(
+    issue: &TrackerIssue,
+    result: &IssueExecutionResult,
+    handoff: &IssueHandoffPlan,
+) -> AgentReviewHandoffEvidence {
+    let mut evidence = AgentReviewHandoffEvidence::from_plan(
+        handoff,
+        format!(
+            "backend={} success={} session={} message={}",
+            result.backend,
+            result.success,
+            result.session_id.as_deref().unwrap_or("n/a"),
+            result.message
+        ),
+        "main agent completed local run",
+    );
+    evidence.pull_request_url = issue
+        .linked_pull_requests
+        .iter()
+        .find_map(|pr| pr.url.clone());
+    if evidence.pull_request_url.is_none() {
+        evidence.no_pr_blocker = Some(
+            "No pull request URL was present in tracker data at handoff time; keeping issue out of Agent Review until PR evidence is durable.".into(),
+        );
+    }
+    evidence
 }
 
 fn run_loop_handoff_failure_workpad(issue: &TrackerIssue, error: &HandoffError) -> String {
@@ -2210,6 +2262,62 @@ mod tests {
         assert!(workpad
             .contains("Branch: `feature/issue-29-wire-runtime-state-persistence-into-run-loop`"));
         assert!(workpad.contains("PR title: `#29: Wire runtime state persistence into run-loop`"));
+    }
+
+    #[test]
+    fn run_loop_agent_review_handoff_blocks_missing_pr_url() {
+        let config = test_config();
+        let issue = tracker_issue("In Progress");
+        let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+        let result = IssueExecutionResult {
+            workspace_path: handoff.workspace_path.clone(),
+            backend: "dry-run".into(),
+            success: true,
+            session_id: Some("session-57".into()),
+            message: "ok".into(),
+        };
+
+        let evidence = run_loop_agent_review_handoff_evidence(&issue, &result, &handoff);
+        let report = evaluate_agent_review_handoff(&evidence);
+
+        assert!(!report.is_ready());
+        assert_eq!(report.target_state.as_deref(), Some("need_human_input"));
+        assert!(evidence
+            .no_pr_blocker
+            .unwrap()
+            .contains("No pull request URL"));
+    }
+
+    #[test]
+    fn run_loop_agent_review_handoff_passes_with_pr_url() {
+        let config = test_config();
+        let mut issue = tracker_issue("In Progress");
+        issue
+            .linked_pull_requests
+            .push(jade_symphony::model::LinkedPullRequest {
+                id: Some("PR_57".into()),
+                number: Some(57),
+                url: Some("https://github.com/Alive24/jade-symphony/pull/57".into()),
+                state: Some("OPEN".into()),
+            });
+        let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+        let result = IssueExecutionResult {
+            workspace_path: handoff.workspace_path.clone(),
+            backend: "dry-run".into(),
+            success: true,
+            session_id: Some("session-57".into()),
+            message: "ok".into(),
+        };
+
+        let evidence = run_loop_agent_review_handoff_evidence(&issue, &result, &handoff);
+        let report = evaluate_agent_review_handoff(&evidence);
+
+        assert!(report.is_ready());
+        assert_eq!(report.target_state.as_deref(), Some("agent_review"));
+        assert_eq!(
+            evidence.pull_request_url.as_deref(),
+            Some("https://github.com/Alive24/jade-symphony/pull/57")
+        );
     }
 
     #[test]

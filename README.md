@@ -45,6 +45,13 @@ one-issue-one-PR automation are still future work.
   clarification question, draft from the quality template, validate Markdown,
   repair rough Markdown into an executable issue contract shape, and create a
   tracker issue from a quality-gated contract with explicit `--write`.
+- Issue Forge also has a CLI-first interactive mode that selects a lightweight
+  issue skill/template (`runtime`, `tracker`, `backend`, `review`, `docs`, or
+  `integration-test`), emits one focused clarification question for thin intent,
+  and prints a quality-gated issue draft before any tracker write.
+- Issue Forge reflective mode can scan a local context file for conservative
+  follow-up signals and print quality-gated candidate issue drafts without
+  creating tracker issues.
 - basic strict prompt rendering supports known `issue.*` fields, `attempt`, and
   simple `{% if %}` / `{% else %}` blocks.
 - workspace identifiers are sanitized; local workspace paths stay under the
@@ -118,6 +125,8 @@ cargo run -- forge-discuss --title "Thin Forge issue" --file examples/fixtures/t
 cargo run -- forge-repair --title "Thin Forge issue" --file examples/fixtures/thin-issue.md
 cargo run -- forge-validate --title "Repaired Forge issue" --file examples/fixtures/repaired-issue.md
 cargo run -- forge-draft --title "Implement read-only Project v2 adapter" --goal "Load Project v2 issues into TrackerIssue records."
+cargo run -- forge-interactive --title "Add resume preflight" --intent "run-loop should inspect runtime state before claiming new work" --skill runtime
+cargo run -- forge-reflect --context-file docs/dogfood-readiness.md --limit 1
 cargo run -- forge-create --workflow path/to/WORKFLOW.md --title "Follow-up title" --file path/to/issue.md --add-to-project --write
 ```
 
@@ -139,6 +148,10 @@ cargo run -- review-once path/to/WORKFLOW.md '#123' --write
 cargo run -- review-fake path/to/WORKFLOW.md '#123' --outcome pass --write
 ```
 
+`forge-interactive` is dry-run by default. If it is used to create a tracker
+issue, it requires both `--write` and `--confirm-create`; `--workflow` is also
+required for that write path, and `--add-to-project` remains explicit.
+
 `add-to-project` initializes the configured ProjectV2 `Status` field to the
 workflow's mapped `Todo` option so newly added issues are visible to the
 normalized tracker state machine. Arbitrary Project field setup, such as
@@ -156,6 +169,8 @@ claim reconciliation, resume state, and PR automation exist.
 
 - linked PR attachment/linking as a first-class relationship.
 - live git worktree creation and `gh pr create` from the runtime loop.
+- rich interactive Issue Forge TUI; the current flow is CLI-first and
+  command-step based.
 - Linear live adapter credential-gated smoke coverage.
 - Codex app-server transport.
 - Claude Code full protocol transport beyond the subprocess fixture path.
@@ -176,6 +191,8 @@ claim reconciliation, resume state, and PR automation exist.
 - live token/rate-limit accounting beyond the current snapshot counters.
 - persistent Agent Review worker supervision and reconciliation.
 - Issue Forge Project field setup after issue creation.
+- autonomous Issue Forge issue creation from reflective mode without explicit
+  operator confirmation.
 - automated Issue Quality Gate application inside the polling runtime.
 - full Liquid-compatible prompt renderer.
 - credential-gated integration tests.

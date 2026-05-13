@@ -152,7 +152,9 @@ Project v2 issues:
    - Clear integration-gap reporting when credentials are missing or unusable
      while avoiding false missing-token warnings when `gh api graphql` works.
    - `doctor` / `audit-project` is available as a read-only project invariant
-     audit. Explicit-write repair mode remains a follow-up.
+     audit with human-readable output, JSON output, and explicit strict failure
+     signaling for blocker violations. Explicit-write repair mode remains a
+     follow-up.
 
 9. Integration profile.
    - Credential-gated GitHub Project v2 smoke test.

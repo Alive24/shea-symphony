@@ -141,6 +141,12 @@ pub fn render_project_audit_report(report: &ProjectAuditReport) -> String {
     lines.join("\n")
 }
 
+pub fn render_project_audit_report_json(
+    report: &ProjectAuditReport,
+) -> Result<String, serde_json::Error> {
+    serde_json::to_string_pretty(report)
+}
+
 fn violation(
     issue: &TrackerIssue,
     severity: AuditSeverity,
@@ -307,5 +313,17 @@ mod tests {
         assert!(rendered.contains("project_doctor=ok"));
         assert!(rendered.contains("violations=1"));
         assert!(rendered.contains("agent_review_missing_pr_handoff"));
+    }
+
+    #[test]
+    fn renders_json_report() {
+        let report = audit_project_issues(&[issue("#57", "Agent Review")]);
+
+        let rendered = render_project_audit_report_json(&report).unwrap();
+        let parsed: ProjectAuditReport = serde_json::from_str(&rendered).unwrap();
+
+        assert_eq!(parsed.total_issues, 1);
+        assert_eq!(parsed.blocker_count(), 1);
+        assert_eq!(parsed.violations[0].code, "agent_review_missing_pr_handoff");
     }
 }

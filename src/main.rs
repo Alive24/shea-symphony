@@ -5,7 +5,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use clap::{error::ErrorKind, Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use jade_symphony::agent::backend_from_config;
 use jade_symphony::config::RuntimeConfig;
-use jade_symphony::doctor::{audit_project_issues, render_project_audit_report};
+use jade_symphony::doctor::{
+    audit_project_issues, render_project_audit_report, render_project_audit_report_json,
+};
 use jade_symphony::event_log::{EventLog, EventRecord};
 use jade_symphony::git_handoff::{
     prepare_issue_worktree, publish_issue_pull_request, LiveWorktreeResult,
@@ -75,7 +77,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Command::Plan { workflow_path } => plan(workflow_path),
         Command::Validate { workflow_path } => validate(workflow_path),
         Command::Inspect { workflow_path } => inspect(workflow_path),
-        Command::Doctor { workflow_path } => doctor(workflow_path),
+        Command::Doctor { options } => doctor(options),
         Command::Profiles { workflow_path } => list_profiles(workflow_path),
         Command::DogfoodSmoke {
             workflow_path,
@@ -992,7 +994,8 @@ fn inspect(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn doctor(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let workflow_path = options.workflow_path;
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
@@ -1001,10 +1004,22 @@ fn doctor(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let issues = adapter.list_dispatchable_issues()?;
     let report = audit_project_issues(&issues);
 
-    println!("{}", render_project_audit_report(&report));
+    if options.json {
+        println!("{}", render_project_audit_report_json(&report)?);
+    } else {
+        println!("{}", render_project_audit_report(&report));
+    }
 
     for gap in adapter.integration_gaps() {
         println!("integration_gap={gap}");
+    }
+
+    if options.strict && report.blocker_count() > 0 {
+        return Err(format!(
+            "project doctor strict mode found {} blocker violation(s)",
+            report.blocker_count()
+        )
+        .into());
     }
 
     Ok(())
@@ -2087,7 +2102,7 @@ enum Command {
         workflow_path: PathBuf,
     },
     Doctor {
-        workflow_path: PathBuf,
+        options: DoctorOptions,
     },
     Profiles {
         workflow_path: PathBuf,
@@ -2206,6 +2221,13 @@ struct ReviewLoopOptions {
     fake_outcome: Option<FakeReviewOutcome>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DoctorOptions {
+    workflow_path: PathBuf,
+    json: bool,
+    strict: bool,
+}
+
 impl ReviewLoopOptions {
     fn iteration_limit(&self) -> Option<usize> {
         if self.once {
@@ -2265,7 +2287,7 @@ enum CliCommand {
     Validate(WorkflowPathArgs),
     Inspect(WorkflowPathArgs),
     #[command(alias = "audit-project")]
-    Doctor(WorkflowPathArgs),
+    Doctor(DoctorArgs),
     Profiles(WorkflowPathArgs),
     #[command(name = "dogfood-smoke")]
     DogfoodSmoke(DogfoodSmokeArgs),
@@ -2315,6 +2337,20 @@ enum CliCommand {
 struct WorkflowPathArgs {
     #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
     workflow_path: PathBuf,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+    #[arg(long = "write")]
+    _write: bool,
+}
+
+#[derive(Debug, Args)]
+struct DoctorArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long)]
+    json: bool,
+    #[arg(long)]
+    strict: bool,
     #[arg(long = "dry-run")]
     _dry_run: bool,
     #[arg(long = "write")]
@@ -2637,7 +2673,11 @@ impl TryFrom<Cli> for Command {
                         workflow_path: args.workflow_path,
                     }),
                     CliCommand::Doctor(args) => Ok(Self::Doctor {
-                        workflow_path: args.workflow_path,
+                        options: DoctorOptions {
+                            workflow_path: args.workflow_path,
+                            json: args.json,
+                            strict: args.strict,
+                        },
                     }),
                     CliCommand::Profiles(args) => Ok(Self::Profiles {
                         workflow_path: args.workflow_path,
@@ -3110,13 +3150,36 @@ mod tests {
         assert_eq!(
             parse(&["audit-project", "examples/dry-run-workflow.md"]),
             Command::Doctor {
-                workflow_path: PathBuf::from("examples/dry-run-workflow.md")
+                options: DoctorOptions {
+                    workflow_path: PathBuf::from("examples/dry-run-workflow.md"),
+                    json: false,
+                    strict: false,
+                }
             }
         );
         assert_eq!(
             parse(&["profiles", "examples/dry-run-workflow.md"]),
             Command::Profiles {
                 workflow_path: PathBuf::from("examples/dry-run-workflow.md")
+            }
+        );
+    }
+
+    #[test]
+    fn parses_doctor_json_and_strict_flags() {
+        assert_eq!(
+            parse(&[
+                "doctor",
+                "examples/github-project-workflow.md",
+                "--json",
+                "--strict"
+            ]),
+            Command::Doctor {
+                options: DoctorOptions {
+                    workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                    json: true,
+                    strict: true,
+                }
             }
         );
     }

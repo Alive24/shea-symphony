@@ -630,88 +630,136 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
         let issues = adapter
             .fetch_issues_by_states(std::slice::from_ref(&config.tracker.state_map.agent_review))?;
 
-        let Some(issue) = issues.first().cloned() else {
+        if issues.is_empty() {
             println!("review_loop=stopped reason=no_agent_review_issue iterations={iterations}");
             break;
         };
 
         let backend_kind = review_backend_kind(&config, options.fake_outcome.as_ref());
-        match review_run_eligibility(
-            &issue,
+        let selected = select_review_worker_issues(
+            &issues,
             &config.tracker.state_map.agent_review,
             &backend_kind,
-        ) {
-            ReviewRunEligibility::Eligible { worker_key } => {
-                println!(
-                    "review_loop_iteration={iterations} issue={} worker_key={worker_key} mode={}",
-                    issue.identifier,
-                    if options.write { "write" } else { "dry-run" }
-                );
-                if !options.write {
-                    println!(
-                        "review_loop_dry_run action=start issue={} backend={backend_kind}",
-                        issue.identifier
-                    );
-                    println!(
-                        "review_loop_dry_run action=workpad issue={} evidence=review_job",
-                        issue.identifier
-                    );
-                    println!(
-                        "review_loop_dry_run action=reconcile issue={} actor=independent_review_agent",
-                        issue.identifier
-                    );
-                    if limit.is_none() {
-                        println!(
-                            "review_loop=stopped reason=dry_run_would_repeat_without_mutation iterations={iterations}"
-                        );
-                        break;
-                    }
-                    continue;
-                }
+            options.worker_limit(&config),
+        );
 
-                let latest = adapter.get_issue(&issue.identifier)?.ok_or_else(|| {
-                    format!("issue disappeared before review: {}", issue.identifier)
-                })?;
+        if selected.is_empty() {
+            for issue in issues {
                 match review_run_eligibility(
-                    &latest,
+                    &issue,
                     &config.tracker.state_map.agent_review,
                     &backend_kind,
                 ) {
-                    ReviewRunEligibility::Eligible { .. } => {
-                        let job = run_review_job(&config, &latest, options.fake_outcome.clone())?;
-                        apply_review_result(adapter.as_ref(), &latest.identifier, &latest, &job)?;
-                        let decision = review_gate_decision(&job);
-                        println!(
-                            "review_loop_action=reconciled issue={} backend={} outcome={:?} target_state={:?}",
-                            latest.identifier, job.backend, decision.outcome, decision.target_state
-                        );
-                    }
                     ReviewRunEligibility::AlreadyQueued { worker_key } => {
                         println!(
                             "review_loop_action=skip issue={} reason=review_worker_exists worker_key={worker_key}",
-                            latest.identifier
+                            issue.identifier
                         );
                     }
                     ReviewRunEligibility::NotInAgentReview { current_state } => {
                         println!(
                             "review_loop_action=skip issue={} reason=state_changed current_state={current_state:?}",
-                            latest.identifier
+                            issue.identifier
                         );
                     }
+                    ReviewRunEligibility::Eligible { .. } => {}
                 }
             }
-            ReviewRunEligibility::AlreadyQueued { worker_key } => {
-                println!(
+            continue;
+        }
+
+        for (slot, selected_issue) in selected.into_iter().enumerate() {
+            let worker_slot = slot + 1;
+            match review_run_eligibility(
+                &selected_issue,
+                &config.tracker.state_map.agent_review,
+                &backend_kind,
+            ) {
+                ReviewRunEligibility::Eligible { worker_key } => {
+                    println!(
+                    "review_loop_iteration={iterations} worker_slot={worker_slot} issue={} worker_key={worker_key} mode={}",
+                    selected_issue.identifier,
+                    if options.write { "write" } else { "dry-run" }
+                );
+                    if !options.write {
+                        println!(
+                            "review_loop_dry_run action=start issue={} backend={backend_kind}",
+                            selected_issue.identifier
+                        );
+                        println!(
+                            "review_loop_dry_run action=workpad issue={} evidence=review_job",
+                            selected_issue.identifier
+                        );
+                        println!(
+                        "review_loop_dry_run action=reconcile issue={} actor=independent_review_agent",
+                        selected_issue.identifier
+                    );
+                        continue;
+                    }
+
+                    let latest =
+                        adapter
+                            .get_issue(&selected_issue.identifier)?
+                            .ok_or_else(|| {
+                                format!(
+                                    "issue disappeared before review: {}",
+                                    selected_issue.identifier
+                                )
+                            })?;
+                    match review_run_eligibility(
+                        &latest,
+                        &config.tracker.state_map.agent_review,
+                        &backend_kind,
+                    ) {
+                        ReviewRunEligibility::Eligible { .. } => {
+                            let job =
+                                run_review_job(&config, &latest, options.fake_outcome.clone())?;
+                            apply_review_result(
+                                adapter.as_ref(),
+                                &latest.identifier,
+                                &latest,
+                                &job,
+                            )?;
+                            let decision = review_gate_decision(&job);
+                            println!(
+                            "review_loop_action=reconciled issue={} backend={} outcome={:?} target_state={:?}",
+                            latest.identifier, job.backend, decision.outcome, decision.target_state
+                        );
+                        }
+                        ReviewRunEligibility::AlreadyQueued { worker_key } => {
+                            println!(
+                            "review_loop_action=skip issue={} reason=review_worker_exists worker_key={worker_key}",
+                            latest.identifier
+                        );
+                        }
+                        ReviewRunEligibility::NotInAgentReview { current_state } => {
+                            println!(
+                            "review_loop_action=skip issue={} reason=state_changed current_state={current_state:?}",
+                            latest.identifier
+                        );
+                        }
+                    }
+                }
+                ReviewRunEligibility::AlreadyQueued { worker_key } => {
+                    println!(
                     "review_loop_action=skip issue={} reason=review_worker_exists worker_key={worker_key}",
-                    issue.identifier
+                    selected_issue.identifier
                 );
-            }
-            ReviewRunEligibility::NotInAgentReview { current_state } => {
-                println!(
+                }
+                ReviewRunEligibility::NotInAgentReview { current_state } => {
+                    println!(
                     "review_loop_action=skip issue={} reason=state_changed current_state={current_state:?}",
-                    issue.identifier
+                    selected_issue.identifier
                 );
+                }
             }
+        }
+
+        if !options.write && limit.is_none() {
+            println!(
+                "review_loop=stopped reason=dry_run_would_repeat_without_mutation iterations={iterations}"
+            );
+            break;
         }
     }
 
@@ -855,6 +903,25 @@ fn review_backend_kind(config: &RuntimeConfig, fake_outcome: Option<&FakeReviewO
     }
 }
 
+fn select_review_worker_issues(
+    issues: &[TrackerIssue],
+    agent_review_state: &str,
+    backend_kind: &str,
+    max_concurrent: usize,
+) -> Vec<TrackerIssue> {
+    issues
+        .iter()
+        .filter(|issue| {
+            matches!(
+                review_run_eligibility(issue, agent_review_state, backend_kind),
+                ReviewRunEligibility::Eligible { .. }
+            )
+        })
+        .take(max_concurrent.max(1))
+        .cloned()
+        .collect()
+}
+
 fn run_review_job(
     config: &RuntimeConfig,
     issue: &TrackerIssue,
@@ -868,7 +935,7 @@ fn run_review_job(
             issue.title,
             issue.description.as_deref().unwrap_or_default()
         ),
-        workspace: config.workspace.root.clone(),
+        workspace: review_workspace_for_issue(config, issue),
         artifact_root: config.observability.logs_root.join("reviews"),
     };
 
@@ -894,6 +961,12 @@ fn run_review_job(
             Ok(backend.poll(backend.start(request)?)?)
         }
     }
+}
+
+fn review_workspace_for_issue(config: &RuntimeConfig, issue: &TrackerIssue) -> PathBuf {
+    run_loop_handoff_plan(config, issue)
+        .map(|handoff| handoff.workspace_path)
+        .unwrap_or_else(|_| config.workspace.root.clone())
 }
 
 fn apply_review_result(
@@ -2204,6 +2277,7 @@ struct ReviewLoopOptions {
     once: bool,
     write: bool,
     fake_outcome: Option<FakeReviewOutcome>,
+    max_concurrent: Option<usize>,
 }
 
 impl ReviewLoopOptions {
@@ -2213,6 +2287,12 @@ impl ReviewLoopOptions {
         } else {
             self.max_iterations
         }
+    }
+
+    fn worker_limit(&self, config: &RuntimeConfig) -> usize {
+        self.max_concurrent
+            .unwrap_or(config.review.max_concurrent_workers)
+            .max(1)
     }
 }
 
@@ -2471,6 +2551,8 @@ struct ReviewLoopArgs {
     once: bool,
     #[arg(long)]
     write: bool,
+    #[arg(long = "max-concurrent")]
+    max_concurrent: Option<usize>,
     #[arg(long = "dry-run")]
     _dry_run: bool,
     #[arg(long = "fake-outcome", value_enum)]
@@ -2714,7 +2796,7 @@ impl TryFrom<Cli> for Command {
                         },
                     }),
                     CliCommand::ReviewLoop(args) => {
-                        if args.max_iterations == Some(0) {
+                        if args.max_iterations == Some(0) || args.max_concurrent == Some(0) {
                             return Err(usage());
                         }
                         Ok(Self::ReviewLoop {
@@ -2724,6 +2806,7 @@ impl TryFrom<Cli> for Command {
                                 once: args.once,
                                 write: args.write,
                                 fake_outcome: args.fake_outcome.map(Into::into),
+                                max_concurrent: args.max_concurrent,
                             },
                         })
                     }
@@ -2963,6 +3046,14 @@ mod tests {
             created_at: None,
             updated_at: None,
         }
+    }
+
+    fn tracker_issue_with_ref(identifier: &str, title: &str, state: &str) -> TrackerIssue {
+        let mut issue = tracker_issue(state);
+        issue.identifier = identifier.into();
+        issue.title = title.into();
+        issue.branch_name = None;
+        issue
     }
 
     #[derive(Default)]
@@ -3253,6 +3344,8 @@ mod tests {
             "2".into(),
             "--fake-outcome".into(),
             "confirmed".into(),
+            "--max-concurrent".into(),
+            "2".into(),
             "--write".into(),
         ])
         .unwrap();
@@ -3270,6 +3363,7 @@ mod tests {
             options.fake_outcome,
             Some(FakeReviewOutcome::ConfirmedFinding)
         );
+        assert_eq!(options.max_concurrent, Some(2));
         assert!(options.write);
     }
 
@@ -3289,6 +3383,55 @@ mod tests {
         };
 
         assert_eq!(options.iteration_limit(), Some(1));
+    }
+
+    #[test]
+    fn review_worker_selection_respects_concurrency_limit() {
+        let selected = select_review_worker_issues(
+            &[
+                tracker_issue_with_ref("#67", "First review", "Agent Review"),
+                tracker_issue_with_ref("#68", "Second review", "Agent Review"),
+                tracker_issue_with_ref("#69", "Third review", "Agent Review"),
+            ],
+            "Agent Review",
+            "fake-reviewer",
+            2,
+        );
+
+        assert_eq!(
+            selected
+                .iter()
+                .map(|issue| issue.identifier.as_str())
+                .collect::<Vec<_>>(),
+            vec!["#67", "#68"]
+        );
+    }
+
+    #[test]
+    fn review_worker_selection_skips_existing_worker_marker() {
+        let mut queued = tracker_issue_with_ref("#67", "Queued review", "Agent Review");
+        queued.project_fields.insert(
+            "Review Worker".into(),
+            serde_json::Value::String("queued review:#67:fake-reviewer".into()),
+        );
+        let ready = tracker_issue_with_ref("#68", "Ready review", "Agent Review");
+
+        let selected =
+            select_review_worker_issues(&[queued, ready], "Agent Review", "fake-reviewer", 2);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].identifier, "#68");
+    }
+
+    #[test]
+    fn review_workspace_uses_issue_handoff_workspace() {
+        let config = test_config();
+        let issue =
+            tracker_issue_with_ref("#67", "Add parallel review worker pool", "Agent Review");
+
+        let workspace = review_workspace_for_issue(&config, &issue);
+
+        assert!(workspace.ends_with("issue-67-add-parallel-review-worker-pool"));
     }
 
     #[test]

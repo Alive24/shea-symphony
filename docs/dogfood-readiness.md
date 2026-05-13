@@ -22,7 +22,7 @@ yet.
 | Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, repository-local git identity application, workspace/branch/PR handoff planning, live git worktree/branch creation, branch push, PR create-or-reuse, run-loop handoff evidence, profile-scoped workspace keys, and an Agent Review handoff invariant that blocks missing PR evidence before `Agent Review` exist. Runtime reconciliation cleanup is not wired yet. |
 | Execution profiles | First-slice profile discovery exists. Workflow config can point to a cockpit-tools Codex `codex_instances.json` file, and Jade treats each instance `name` as a profile/worker identity while ignoring account binding fields. If the cockpit-tools file is missing, explicit `profiles.entries` are used. This is not a full account manager. |
 | Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Prepared runs include selected profile/instance metadata and profile environment context. Full Codex app-server and Claude Code protocol parity are not implemented yet. |
-| Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, evidence-first Rework diagnostics for confirmed findings, review-freshness evidence for Merging conflict repair, bounded `review-loop` selection/reconciliation, and workpad/status evidence helpers exist. Persistent background review worker supervision is not implemented yet. |
+| Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, evidence-first Rework diagnostics for confirmed findings, review-freshness evidence for Merging conflict repair, bounded `review-loop` worker selection/reconciliation with one issue per worker slot, and workpad/status evidence helpers exist. Persistent background review worker supervision is not implemented yet. |
 | Merging | `merge-once` can inspect issues already in `Merging`, require one linked PR, check live GitHub PR state/review/check/mergeability data where available, merge clean approved PRs only with explicit `--write`, and route blockers to `Rework` or `Need Human Input` with workpad evidence. Continuous merge polling and issue closing beyond Project `Done` are not implemented yet. |
 | Project doctor | Read-only `doctor` / `audit-project` reports workflow invariant violations from normalized tracker issues, including missing PR handoff evidence, missing review pass evidence, dirty Merging PRs, missing runtime ownership hints, and queued issues with PRs. Repair mode is not implemented yet. |
 | Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events with actor and profile metadata. Runtime state files are written during write-mode `run-loop` issue execution, including actor role/label, git author, and optional profile/instance identity when configured; resume, retry, and stall supervision events are also recorded. No web/API surface yet. |
@@ -74,8 +74,9 @@ Project v2 issues:
    - Independent Review Agent commands can set `Human Review` only after a
      passed review with evidence.
    - Bounded `review-loop` can discover eligible `Agent Review` issues, skip
-     existing review-worker markers, and apply the same independent Review Agent
-     transition rules as `review-once`.
+     existing review-worker markers, select up to the configured concurrent
+     worker limit, and apply the same independent Review Agent transition rules
+     as `review-once`.
    - Confirmed findings route to `Rework`.
    - Failed, timed out, inconclusive, or unavailable reviews remain out of
      `Human Review` and route to `Need Human Input` or stay in `Agent Review`.
@@ -307,8 +308,8 @@ Goal: evolve the bounded `review-loop` into persistent worker supervision.
 Acceptance:
 
 - reviewer backend is selected through config.
-- one review worker per issue/PR is started and reconciled without blocking the
-  main run-loop.
+- one review worker per issue/PR is started and reconciled without batching
+  unrelated issues into one prompt or blocking the main run-loop.
 - review job identity, backend, artifact path, and result evidence are persisted
   in workpad/runtime state.
 - duplicate review workers are prevented across repeated loop ticks.

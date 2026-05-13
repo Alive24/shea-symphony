@@ -19,6 +19,9 @@ pub struct PreparedRun {
     pub timeout_ms: u64,
     pub approval_policy: Option<String>,
     pub sandbox: Option<String>,
+    pub actor_role: Option<String>,
+    pub actor_label: Option<String>,
+    pub git_author: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,7 +65,7 @@ impl AgentBackend for DryRunBackend {
         &self,
         workspace: PathBuf,
         rendered_prompt: String,
-        _config: &RuntimeConfig,
+        config: &RuntimeConfig,
     ) -> Result<PreparedRun, AgentError> {
         Ok(PreparedRun {
             backend: self.name().into(),
@@ -72,6 +75,9 @@ impl AgentBackend for DryRunBackend {
             timeout_ms: 0,
             approval_policy: None,
             sandbox: None,
+            actor_role: Some(config.identity.actor_role.clone()),
+            actor_label: Some(config.identity.actor_label.clone()),
+            git_author: config.identity.git.author(),
         })
     }
 
@@ -128,6 +134,9 @@ impl AgentBackend for CodexBackend {
             timeout_ms: config.codex.turn_timeout_ms,
             approval_policy: Some(config.codex.approval_policy.to_string()),
             sandbox: Some(config.codex.thread_sandbox.clone()),
+            actor_role: Some(config.identity.actor_role.clone()),
+            actor_label: Some(config.identity.actor_label.clone()),
+            git_author: config.identity.git.author(),
         })
     }
 
@@ -166,6 +175,9 @@ impl AgentBackend for ClaudeCodeBackend {
             timeout_ms: config.claude.turn_timeout_ms,
             approval_policy: None,
             sandbox: None,
+            actor_role: Some(config.identity.actor_role.clone()),
+            actor_label: Some(config.identity.actor_label.clone()),
+            git_author: config.identity.git.author(),
         })
     }
 
@@ -224,6 +236,18 @@ fn run_subprocess_backend(
         .env(
             "JADE_SYMPHONY_SANDBOX",
             prepared.sandbox.as_deref().unwrap_or_default(),
+        )
+        .env(
+            "JADE_SYMPHONY_ACTOR_ROLE",
+            prepared.actor_role.as_deref().unwrap_or_default(),
+        )
+        .env(
+            "JADE_SYMPHONY_ACTOR_LABEL",
+            prepared.actor_label.as_deref().unwrap_or_default(),
+        )
+        .env(
+            "JADE_SYMPHONY_GIT_AUTHOR",
+            prepared.git_author.as_deref().unwrap_or_default(),
         )
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::model::TrackerIssue;
+use crate::model::{normalize_state, TrackerIssue};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReviewFindingClass {
@@ -142,6 +142,13 @@ pub struct ReviewFreshnessDecision {
 pub struct ReviewFreshnessReport {
     pub input: ReviewFreshnessInput,
     pub decision: ReviewFreshnessDecision,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReviewRunEligibility {
+    Eligible { worker_key: String },
+    AlreadyQueued { worker_key: String },
+    NotInAgentReview { current_state: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -440,12 +447,64 @@ pub fn review_gate_decision_for_actor(job: &ReviewJob, actor: ReviewActor) -> Re
     }
 }
 
+pub fn review_worker_key(issue: &TrackerIssue, backend: &str) -> String {
+    format!(
+        "review:{}:{}",
+        issue.identifier.trim(),
+        backend.trim().to_lowercase()
+    )
+}
+
+pub fn review_run_eligibility(
+    issue: &TrackerIssue,
+    agent_review_state: &str,
+    backend: &str,
+) -> ReviewRunEligibility {
+    if issue.normalized_state() != normalize_state(agent_review_state) {
+        return ReviewRunEligibility::NotInAgentReview {
+            current_state: issue.state.clone(),
+        };
+    }
+
+    let worker_key = review_worker_key(issue, backend);
+    if has_active_review_worker(issue, &worker_key) {
+        ReviewRunEligibility::AlreadyQueued { worker_key }
+    } else {
+        ReviewRunEligibility::Eligible { worker_key }
+    }
+}
+
+fn has_active_review_worker(issue: &TrackerIssue, worker_key: &str) -> bool {
+    issue.project_fields.iter().any(|(key, value)| {
+        let key = key.to_lowercase();
+        if !key.contains("review") {
+            return false;
+        }
+
+        let value = value
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| value.to_string());
+        active_review_marker_matches(&value, worker_key)
+    }) || issue
+        .description
+        .as_deref()
+        .is_some_and(|description| active_review_marker_matches(description, worker_key))
+}
+
+fn active_review_marker_matches(value: &str, worker_key: &str) -> bool {
+    let value = value.to_lowercase();
+    value.contains(&worker_key.to_lowercase())
+        && (value.contains("queued") || value.contains("running"))
+}
+
 pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
     let decision = review_gate_decision_for_actor(job, ReviewActor::IndependentReviewAgent);
     let mut lines = vec![
         "## Agent Review".to_string(),
         String::new(),
         format!("- Issue: {} {}", issue.identifier, issue.title),
+        format!("- Worker key: {}", review_worker_key(issue, &job.backend)),
         format!("- Reviewer backend: {}", job.backend),
         format!("- Job state: {:?}", job.state),
         format!("- Decision: {}", decision.message),
@@ -902,5 +961,58 @@ mod tests {
         assert!(workpad.contains("Prior Human Review still valid: `true`"));
         assert!(workpad.contains("Main implementation agent still stops at `Agent Review`"));
         assert!(workpad.contains("Human Review"));
+    }
+
+    #[test]
+    fn review_run_eligibility_accepts_agent_review_issue() {
+        assert_eq!(
+            review_run_eligibility(&issue(), "Agent Review", "fake"),
+            ReviewRunEligibility::Eligible {
+                worker_key: "review:#1:fake".into()
+            }
+        );
+    }
+
+    #[test]
+    fn review_run_eligibility_rejects_non_agent_review_issue() {
+        let mut issue = issue();
+        issue.state = "Todo".into();
+
+        assert_eq!(
+            review_run_eligibility(&issue, "Agent Review", "fake"),
+            ReviewRunEligibility::NotInAgentReview {
+                current_state: "Todo".into()
+            }
+        );
+    }
+
+    #[test]
+    fn review_run_eligibility_detects_existing_worker_marker() {
+        let mut issue = issue();
+        issue.project_fields.insert(
+            "Review Worker".into(),
+            serde_json::Value::String("queued review:#1:fake".into()),
+        );
+
+        assert_eq!(
+            review_run_eligibility(&issue, "Agent Review", "fake"),
+            ReviewRunEligibility::AlreadyQueued {
+                worker_key: "review:#1:fake".into()
+            }
+        );
+    }
+
+    #[test]
+    fn review_run_eligibility_detects_workpad_worker_marker() {
+        let mut issue = issue();
+        issue.description =
+            Some("## Workpad\n\nReview worker running with key `review:#1:fake`.".into());
+
+        assert_eq!(
+            review_run_eligibility(&issue, "Agent Review", "fake"),
+            ReviewRunEligibility::AlreadyQueued {
+                worker_key: "review:#1:fake".into()
+            }
+        );
     }
 }

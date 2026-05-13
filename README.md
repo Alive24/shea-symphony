@@ -67,6 +67,9 @@ worker supervision are still future work.
   clarification question, draft from the quality template, validate Markdown,
   repair rough Markdown into an executable issue contract shape, and create a
   tracker issue from a quality-gated contract with explicit `--write`.
+  `forge-create --add-to-project` can also set GitHub Project v2 single-select
+  fields by name with repeatable `--project-field NAME=VALUE` flags, for
+  example `--project-field Capability=CLI`.
 - Issue Forge also has a CLI-first interactive mode that selects a lightweight
   issue skill/template (`runtime`, `tracker`, `backend`, `review`, `docs`, or
   `integration-test`), emits one focused clarification question for thin intent,
@@ -207,7 +210,7 @@ cargo run -- forge-validate --title "Repaired Forge issue" --file examples/fixtu
 cargo run -- forge-draft --title "Implement read-only Project v2 adapter" --goal "Load Project v2 issues into TrackerIssue records."
 cargo run -- forge-interactive --title "Add resume preflight" --intent "run-loop should inspect runtime state before claiming new work" --skill runtime
 cargo run -- forge-reflect --context-file docs/dogfood-readiness.md --limit 1
-cargo run -- forge-create --workflow path/to/WORKFLOW.md --title "Follow-up title" --file path/to/issue.md --add-to-project --write
+cargo run -- forge-create --workflow path/to/WORKFLOW.md --title "Follow-up title" --file path/to/issue.md --add-to-project --project-field Capability=CLI --write
 ```
 
 `run-once` defaults to dry-run examples, but the Codex and Claude subprocess
@@ -256,8 +259,10 @@ required for that write path, and `--add-to-project` remains explicit.
 
 `add-to-project` initializes the configured ProjectV2 `Status` field to the
 workflow's mapped `Todo` option so newly added issues are visible to the
-normalized tracker state machine. Arbitrary Project field setup, such as
-Capability, is still a follow-up.
+normalized tracker state machine. `forge-create --add-to-project` can set
+additional GitHub Project v2 single-select fields by name with repeatable
+`--project-field NAME=VALUE` flags. Text, number, date, and multi-step field
+editing remain follow-ups.
 
 `set-state` is a main-implementation-agent command and refuses `Human Review`.
 `review-once` / `review-fake` are independent Review Agent commands: a passing

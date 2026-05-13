@@ -81,7 +81,7 @@ pub fn evaluate_issue_with_source_alignment(
     let mut notes = Vec::new();
 
     if let Some(expected) = expected_target_repo {
-        match first_bullet_in_section(description, "Target Repository / Package") {
+        match target_repository_in_section(description) {
             Some(actual) if normalize_target_repo(&actual) == normalize_target_repo(expected) => {}
             Some(actual) => missing.push(format!(
                 "target repository mismatch: expected `{expected}`, found `{actual}`"
@@ -389,6 +389,23 @@ fn first_bullet_in_section(markdown: &str, heading: &str) -> Option<String> {
         })
 }
 
+fn target_repository_in_section(markdown: &str) -> Option<String> {
+    first_bullet_in_section(markdown, "Target Repository / Package").map(|value| {
+        let Some((label, repository)) = value.split_once(':') else {
+            return value;
+        };
+        let normalized_label = label.trim().to_ascii_lowercase();
+        if matches!(
+            normalized_label.as_str(),
+            "repository" | "repo" | "target repository"
+        ) {
+            clean_markdown_value(repository)
+        } else {
+            value
+        }
+    })
+}
+
 fn referenced_paths(markdown: &str) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     for heading in ["Relevant Knowledge Sources", "Relevant Code Paths"] {
@@ -408,11 +425,18 @@ fn referenced_paths(markdown: &str) -> Vec<PathBuf> {
 fn verification_commands(markdown: &str) -> Vec<String> {
     section_lines(markdown, "Functional Verification")
         .into_iter()
-        .filter_map(|line| {
-            line.trim()
-                .strip_prefix('-')
-                .map(clean_markdown_value)
-                .filter(|value| looks_like_command(value))
+        .flat_map(|line| {
+            let Some(raw) = line.trim().strip_prefix('-') else {
+                return Vec::new();
+            };
+            let value = clean_markdown_value(raw);
+            if looks_like_command(&value) {
+                vec![value]
+            } else if is_standard_rust_verification_phrase(&value) {
+                standard_rust_verification_commands()
+            } else {
+                Vec::new()
+            }
         })
         .collect()
 }
@@ -469,6 +493,20 @@ fn looks_like_command(value: &str) -> bool {
         value.split_whitespace().next(),
         Some("cargo" | "gh" | "git" | "pnpm" | "npm" | "node")
     )
+}
+
+fn is_standard_rust_verification_phrase(value: &str) -> bool {
+    let normalized = value.to_ascii_lowercase();
+    normalized.contains("standard rust verification suite")
+        || normalized.contains("standard rust verification")
+}
+
+fn standard_rust_verification_commands() -> Vec<String> {
+    vec![
+        "cargo test".into(),
+        "cargo fmt --check".into(),
+        "cargo clippy --all-targets --all-features -- -D warnings".into(),
+    ]
 }
 
 fn is_supported_verification_command(command: &str) -> bool {
@@ -628,6 +666,48 @@ mod tests {
     }
 
     #[test]
+    fn source_alignment_accepts_labeled_target_repository_bullet() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("src")).unwrap();
+        std::fs::write(temp.path().join("src/quality_gate.rs"), "").unwrap();
+        let body = aligned_body_with_target_line(
+            "- Repository: `Alive24/jade-symphony`",
+            &[],
+            &["src/quality_gate.rs"],
+            &["cargo test"],
+        );
+
+        let decision = evaluate_issue_with_source_alignment(
+            &issue(Some(body)),
+            temp.path(),
+            Some("Alive24/jade-symphony"),
+        );
+
+        assert!(decision.is_dispatchable(), "{decision:?}");
+    }
+
+    #[test]
+    fn source_alignment_accepts_standard_rust_verification_suite_wording() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("src")).unwrap();
+        std::fs::write(temp.path().join("src/quality_gate.rs"), "").unwrap();
+        let body = aligned_body_with_target_line(
+            "- Repository: `Alive24/jade-symphony`",
+            &[],
+            &["src/quality_gate.rs"],
+            &["Run the standard Rust verification suite."],
+        );
+
+        let decision = evaluate_issue_with_source_alignment(
+            &issue(Some(body)),
+            temp.path(),
+            Some("Alive24/jade-symphony"),
+        );
+
+        assert!(decision.is_dispatchable(), "{decision:?}");
+    }
+
+    #[test]
     fn source_alignment_reports_missing_paths() {
         let temp = tempfile::tempdir().unwrap();
         let body = aligned_body(
@@ -783,6 +863,15 @@ mod tests {
     }
 
     fn aligned_body(target_repo: &str, docs: &[&str], paths: &[&str], commands: &[&str]) -> String {
+        aligned_body_with_target_line(&format!("- `{target_repo}`"), docs, paths, commands)
+    }
+
+    fn aligned_body_with_target_line(
+        target_line: &str,
+        docs: &[&str],
+        paths: &[&str],
+        commands: &[&str],
+    ) -> String {
         let docs = docs
             .iter()
             .map(|path| format!("- `{path}`"))
@@ -815,7 +904,7 @@ mod tests {
             "- Code.",
             "## Canonical References",
             "### Target Repository / Package",
-            &format!("- `{target_repo}`"),
+            target_line,
             "### Relevant Knowledge Sources",
             &docs,
             "### Relevant Code Paths",

@@ -3,7 +3,7 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::{error::ErrorKind, Args, CommandFactory, Parser, Subcommand, ValueEnum};
-use jade_symphony::agent::backend_from_config;
+use jade_symphony::agent::{backend_from_config, usage_limit_pause_from_events, UsageLimitPause};
 use jade_symphony::config::RuntimeConfig;
 use jade_symphony::doctor::{audit_project_issues, render_project_audit_report};
 use jade_symphony::event_log::{EventLog, EventRecord};
@@ -1158,6 +1158,7 @@ struct IssueExecutionResult {
     success: bool,
     session_id: Option<String>,
     message: String,
+    usage_limit_pause: Option<UsageLimitPause>,
     actor_role: String,
     actor_label: String,
     git_author: Option<String>,
@@ -1205,6 +1206,7 @@ fn execute_issue_once_with_workspace_key(
     let prepared = backend.prepare(workspace.path.clone(), prompt, config)?;
     let events = backend.run(prepared)?;
     let summary = backend.summarize(&events);
+    let usage_limit_pause = usage_limit_pause_from_events(&events);
     run_after_run(&workspace.path, &config.hooks);
 
     let log = EventLog::new(config.observability.logs_root.join("jade-symphony.jsonl"));
@@ -1235,6 +1237,7 @@ fn execute_issue_once_with_workspace_key(
         success: summary.success,
         session_id: summary.session_id,
         message: summary.message,
+        usage_limit_pause,
         actor_role: config.identity.actor_role.clone(),
         actor_label: config.identity.actor_label.clone(),
         git_author: config.identity.git.author(),
@@ -1551,6 +1554,32 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         } else {
             let retry_delay_ms = Orchestrator::new(config.clone())
                 .retry_delay_ms(runtime_state.attempt_count, false);
+            if let Some(pause) = &result.usage_limit_pause {
+                record_runtime_retry(
+                    &mut runtime_state,
+                    current_time_ms(),
+                    retry_delay_ms,
+                    format!("usage-limit pause: {}", pause.evidence),
+                );
+                save_runtime_state(&config, &runtime_state)?;
+                let pause_workpad =
+                    run_loop_usage_limit_pause_workpad(&latest, &result, pause, retry_delay_ms);
+                adapter.upsert_workpad(&latest.identifier, &pause_workpad)?;
+                append_runtime_supervision_event(
+                    &config,
+                    Some(&runtime_state),
+                    "UsageLimitPaused",
+                    &format!(
+                        "issue={} classifier={} due_in_ms={} evidence={}",
+                        latest.identifier, pause.classifier, retry_delay_ms, pause.evidence
+                    ),
+                )?;
+                println!(
+                    "run_loop_action=usage_limit_paused issue={} classifier={} due_in_ms={}",
+                    latest.identifier, pause.classifier, retry_delay_ms
+                );
+                break;
+            }
             if runtime_state.attempt_count < config.agent.max_turns {
                 record_runtime_retry(
                     &mut runtime_state,
@@ -2082,6 +2111,32 @@ fn run_loop_handoff_failure_workpad(issue: &TrackerIssue, error: &HandoffError) 
         String::new(),
         "### Required Human Decision".to_string(),
         "- Confirm the correct branch/workspace ownership before retrying.".to_string(),
+    ]
+    .join("\n")
+}
+
+fn run_loop_usage_limit_pause_workpad(
+    issue: &TrackerIssue,
+    result: &IssueExecutionResult,
+    pause: &UsageLimitPause,
+    retry_delay_ms: u64,
+) -> String {
+    [
+        "## Jade Symphony Workpad".to_string(),
+        String::new(),
+        "### Usage-Limit Pause".to_string(),
+        format!("- Issue: {} {}", issue.identifier, issue.title),
+        "- Source: `jade-symphony run-loop`".to_string(),
+        format!("- Backend: `{}`", result.backend),
+        format!("- Classifier: `{}`", pause.classifier),
+        format!("- Evidence: {}", pause.evidence),
+        format!("- Retry backoff: `{retry_delay_ms}ms`"),
+        String::new(),
+        "### State Safety".to_string(),
+        "- Tracker state was not advanced to `Agent Review`.".to_string(),
+        "- Runtime state keeps the active issue and next retry time.".to_string(),
+        "- The run-loop will skip this issue until retry backoff expires or an operator intervenes."
+            .to_string(),
     ]
     .join("\n")
 }
@@ -3538,6 +3593,7 @@ mod tests {
             success: true,
             session_id: Some("session-29".into()),
             message: "ok".into(),
+            usage_limit_pause: None,
             actor_role: "implementation_agent".into(),
             actor_label: "Jade Symphony Agent".into(),
             git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
@@ -3632,6 +3688,7 @@ mod tests {
             success: true,
             session_id: Some("session-33".into()),
             message: "ok".into(),
+            usage_limit_pause: None,
             actor_role: "implementation_agent".into(),
             actor_label: "Jade Symphony Agent".into(),
             git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
@@ -3668,6 +3725,40 @@ mod tests {
             .contains("Branch: `feature/issue-29-wire-runtime-state-persistence-into-run-loop`"));
         assert!(workpad.contains("PR title: `#29: Wire runtime state persistence into run-loop`"));
         assert!(workpad.contains("Live PR: `https://github.com/Alive24/jade-symphony/pull/45`"));
+    }
+
+    #[test]
+    fn usage_limit_pause_workpad_preserves_tracker_state_boundary() {
+        let issue = tracker_issue("In Progress");
+        let result = IssueExecutionResult {
+            workspace_path: PathBuf::from("/tmp/jade/issue-63"),
+            backend: "codex".into(),
+            profile_id: None,
+            instance_name: None,
+            success: false,
+            session_id: Some("session-63".into()),
+            message: "Codex subprocess exited with status 1".into(),
+            usage_limit_pause: Some(UsageLimitPause {
+                classifier: "usage_limit".into(),
+                evidence: "usage limit reached".into(),
+            }),
+            actor_role: "implementation_agent".into(),
+            actor_label: "Jade Symphony Agent".into(),
+            git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+            git_identity: GitIdentityApplyResult {
+                status: jade_symphony::workspace::GitIdentityApplyStatus::NotGitRepository,
+                author: None,
+                applied_keys: Vec::new(),
+            },
+            live_handoff: None,
+        };
+        let pause = result.usage_limit_pause.as_ref().unwrap();
+        let workpad = run_loop_usage_limit_pause_workpad(&issue, &result, pause, 20_000);
+
+        assert!(workpad.contains("### Usage-Limit Pause"));
+        assert!(workpad.contains("Classifier: `usage_limit`"));
+        assert!(workpad.contains("Tracker state was not advanced to `Agent Review`"));
+        assert!(workpad.contains("Retry backoff: `20000ms`"));
     }
 
     #[test]
@@ -3721,6 +3812,7 @@ mod tests {
             success: true,
             session_id: Some("session-57".into()),
             message: "ok".into(),
+            usage_limit_pause: None,
             actor_role: "implementation_agent".into(),
             actor_label: "Jade Symphony Agent".into(),
             git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
@@ -3764,6 +3856,7 @@ mod tests {
             success: true,
             session_id: Some("session-57".into()),
             message: "ok".into(),
+            usage_limit_pause: None,
             actor_role: "implementation_agent".into(),
             actor_label: "Jade Symphony Agent".into(),
             git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),

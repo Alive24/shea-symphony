@@ -58,6 +58,7 @@ use jade_symphony::runtime_state::{
 use jade_symphony::status_surface::render_snapshot;
 use jade_symphony::tracker::{
     adapter_from_config, claim_decision, ClaimDecision, FollowUpIssueInput, TrackerAdapter,
+    TrackerError,
 };
 use jade_symphony::workflow::WorkflowDefinition;
 use jade_symphony::workspace::{
@@ -917,8 +918,7 @@ fn merge_once_tick(
             .ok_or("merge-ready decision missing pull request URL")?;
         let output = merge_pull_request(pr_ref, &runner, &std::env::current_dir()?)?;
         let workpad = merge_lane_workpad(&issue, &decision, Some(&output));
-        adapter.upsert_workpad(&issue.identifier, &workpad)?;
-        adapter.set_state(&issue.identifier, "done")?;
+        record_done_merge_lane_completion(adapter.as_ref(), &issue, &workpad)?;
         println!(
             "merge_once_action=merged issue={} target_state=done",
             issue.identifier
@@ -930,6 +930,11 @@ fn merge_once_tick(
     adapter.upsert_workpad(&issue.identifier, &workpad)?;
     if let Some(target_state) = decision.target_state {
         adapter.set_state(&issue.identifier, target_state)?;
+        if decision.kind == MergeLaneDecisionKind::AlreadyMerged
+            && normalize_state(target_state) == "done"
+        {
+            close_completed_issue(adapter.as_ref(), &issue.identifier)?;
+        }
         println!(
             "merge_once_action=routed issue={} target_state={target_state}",
             issue.identifier
@@ -940,6 +945,38 @@ fn merge_once_tick(
     }
 
     Ok(MergeOnceOutcome::Skipped)
+}
+
+fn record_done_merge_lane_completion(
+    adapter: &dyn TrackerAdapter,
+    issue: &TrackerIssue,
+    workpad: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    adapter.upsert_workpad(&issue.identifier, workpad)?;
+    adapter.set_state(&issue.identifier, "done")?;
+    close_completed_issue(adapter, &issue.identifier)?;
+    Ok(())
+}
+
+fn close_completed_issue(
+    adapter: &dyn TrackerAdapter,
+    issue_ref: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match adapter.close_issue(issue_ref) {
+        Ok(()) => {
+            println!("merge_once_action=closed_issue issue={issue_ref}");
+            Ok(())
+        }
+        Err(TrackerError::NotImplemented(message)) => {
+            eprintln!("merge_once_warning=issue_close_unavailable reason={message}");
+            Ok(())
+        }
+        Err(TrackerError::IntegrationUnavailable(message)) => {
+            eprintln!("merge_once_warning=issue_close_unavailable reason={message}");
+            Ok(())
+        }
+        Err(error) => Err(Box::new(error)),
+    }
 }
 
 fn merge_preflight_status(
@@ -977,10 +1014,12 @@ fn print_merge_dry_run_actions(decision: &jade_symphony::merge_lane::MergeLaneDe
             println!("merge_once_dry_run action=merge");
             println!("merge_once_dry_run action=workpad evidence=merge_result");
             println!("merge_once_dry_run action=set_state target_state=done");
+            println!("merge_once_dry_run action=close_issue");
         }
         MergeLaneDecisionKind::AlreadyMerged => {
             println!("merge_once_dry_run action=workpad evidence=already_merged");
             println!("merge_once_dry_run action=set_state target_state=done");
+            println!("merge_once_dry_run action=close_issue");
         }
         _ => {
             println!("merge_once_dry_run action=workpad evidence=preflight_blocker");
@@ -3845,7 +3884,10 @@ mod tests {
                     ),
                 );
             }
-            assert!(markdown.contains("## Rework Diagnostic"));
+            assert!(
+                markdown.contains("## Rework Diagnostic")
+                    || markdown.contains("### Merge Lane Handoff")
+            );
             self.operations
                 .borrow_mut()
                 .push(format!("workpad:{issue_ref}"));
@@ -3882,6 +3924,13 @@ mod tests {
             jade_symphony::tracker::TrackerError,
         > {
             Ok(Vec::new())
+        }
+
+        fn close_issue(&self, issue_ref: &str) -> Result<(), jade_symphony::tracker::TrackerError> {
+            self.operations
+                .borrow_mut()
+                .push(format!("close_issue:{issue_ref}"));
+            Ok(())
         }
     }
 
@@ -4908,6 +4957,24 @@ mod tests {
 
         assert!(transition_issue_to_rework_with_diagnostic(&adapter, &issue, &diagnostic).is_err());
         assert!(adapter.operations().is_empty());
+    }
+
+    #[test]
+    fn merge_completion_closes_issue_after_workpad_and_done_state() {
+        let adapter = RecordingAdapter::default();
+        let issue = tracker_issue("Merging");
+        let workpad = "## Jade Symphony Workpad\n\n### Merge Lane Handoff\n";
+
+        record_done_merge_lane_completion(&adapter, &issue, workpad).unwrap();
+
+        assert_eq!(
+            adapter.operations(),
+            vec![
+                "workpad:#29".to_string(),
+                "set_state:#29:done".to_string(),
+                "close_issue:#29".to_string()
+            ]
+        );
     }
 
     #[test]

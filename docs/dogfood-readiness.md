@@ -16,11 +16,11 @@ yet.
 | Linear tracker | Implemented behind the same trait for fixture-backed planning plus live GraphQL reads, state updates, marker workpad comments, follow-up issue creation, and project assignment. Credential-gated smoke coverage is still missing. |
 | Issue Quality Gate | Implemented as a first-pass Markdown contract check. It is useful for dry-run classification, not yet a full source-alignment gate. |
 | Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, repair, and explicit `forge-create` tracker issue creation from quality-gated Markdown. Project field setup after creation is not implemented yet. |
-| Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes and idle polling exists. No long-running worker supervision, retry timers, runtime resume, or full state reconciliation yet. |
+| Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes and idle polling exists. Write-mode `run-loop` persists active issue runtime state during execution and clears it after terminal handoff/block transitions. No long-running worker supervision, retry timers, full runtime resume reconciliation, or full state reconciliation yet. |
 | Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, and workspace/branch/PR handoff planning exist. Live git worktree creation, PR creation, and runtime reconciliation cleanup are not wired yet. |
 | Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Full Codex app-server and Claude Code protocol parity are not implemented yet. |
 | Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, and workpad/status evidence helpers exist. Persistent review worker reconciliation is not implemented yet. |
-| Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events. Runtime state file helpers exist under `logs_root/runtime`, but loop wiring is still pending. No web/API surface yet. |
+| Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events. Runtime state files are written during write-mode `run-loop` issue execution, but full resume reconciliation is still pending. No web/API surface yet. |
 | Tests | Unit tests cover the dry-run skeleton. No credential-gated integration tests yet. |
 
 ## Before Executing GitHub Project Issues
@@ -90,8 +90,9 @@ Project v2 issues:
    - Continuous idle polling exists for unbounded write mode; full active worker
      supervision is still pending.
    - claimed/running/retry state ownership.
-   - Wire runtime state reads/writes into each claim, backend run, transition,
-     and resume point.
+   - Runtime state writes exist for claim/resume, backend result evidence, and
+     final transition intent; full resume reconciliation after interruption
+     remains pending.
    - workspace/branch/PR handoff planning exists, but the runtime still needs
      live worktree creation, branch checkout, push, PR creation, and PR link
      recording.
@@ -272,5 +273,6 @@ GitHub Project v2 execution is hardened.
 `examples/github-project-workflow.md` is a non-fixture workflow template for
 manual live Project v2 reads and explicit tracker writes through `gh`. It still
 uses the `dry-run` backend by default. `run-loop --write` is available only as a
-runtime skeleton and should not be treated as full autonomous agent execution
-until claim reconciliation, runtime resume, and live PR automation wiring exist.
+bounded runtime skeleton and should not be treated as full autonomous agent
+execution until claim reconciliation, full runtime resume reconciliation, and
+live PR automation wiring exist.

@@ -20,6 +20,10 @@ use jade_symphony::issue_forge::{
     next_clarification_question, reflective_candidates_from_context, repair_markdown,
     validate_markdown, InteractiveForgeInput,
 };
+use jade_symphony::merge_lane::{
+    expected_merge_base_branch, fetch_pull_request_status, merge_lane_decision, merge_lane_workpad,
+    merge_pull_request, pull_request_status_from_linked, MergeLaneDecisionKind,
+};
 use jade_symphony::model::{normalize_state, GateDecision, GateDecisionKind, TrackerIssue};
 use jade_symphony::orchestrator::Orchestrator;
 use jade_symphony::profiles::{discover_execution_profiles, selected_execution_profile};
@@ -73,6 +77,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Command::Profiles { workflow_path } => list_profiles(workflow_path),
         Command::RunOnce { workflow_path } => run_once(workflow_path),
         Command::RunLoop { options } => run_loop(options),
+        Command::MergeOnce {
+            workflow_path,
+            write,
+        } => merge_once(workflow_path, write),
         Command::SetState {
             workflow_path,
             issue_ref,
@@ -702,6 +710,133 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
     }
 
     Ok(())
+}
+
+fn merge_once(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let workflow = WorkflowDefinition::load(&workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
+    config.validate()?;
+
+    let adapter = adapter_from_config(&config);
+    let merging_state = config.tracker.state_map.merging.clone();
+    let mut issues = adapter.fetch_issues_by_states(std::slice::from_ref(&merging_state))?;
+    if issues.is_empty() {
+        println!("merge_once=stopped reason=no_merging_issue");
+        return Ok(());
+    }
+
+    issues.sort_by_key(|issue| issue.priority.unwrap_or(i64::MAX));
+    let selected = issues.remove(0);
+    let issue = adapter
+        .get_issue(&selected.identifier)?
+        .unwrap_or(selected.clone());
+    let linked_pull_requests = adapter.list_linked_pull_requests(&issue.identifier)?;
+    let runner = ProcessHandoffCommandRunner;
+    let expected_base = expected_merge_base_branch(&config);
+    let status = merge_preflight_status(&config, &issue, &linked_pull_requests, &runner)?;
+    let decision = merge_lane_decision(
+        &issue,
+        &merging_state,
+        expected_base,
+        &linked_pull_requests,
+        status.as_ref(),
+    );
+
+    println!(
+        "merge_once issue={} decision={:?} target_state={} write={}",
+        issue.identifier,
+        decision.kind,
+        decision.target_state.unwrap_or("none"),
+        write
+    );
+    println!("reason={}", decision.reason);
+    if let Some(pr_url) = decision.pr_url.as_deref() {
+        println!("pull_request={pr_url}");
+    }
+
+    if !write {
+        print_merge_dry_run_actions(&decision);
+        return Ok(());
+    }
+
+    if decision.kind.is_merge_ready() {
+        let pr_ref = decision
+            .pr_url
+            .as_deref()
+            .ok_or("merge-ready decision missing pull request URL")?;
+        let output = merge_pull_request(pr_ref, &runner, &std::env::current_dir()?)?;
+        let workpad = merge_lane_workpad(&issue, &decision, Some(&output));
+        adapter.upsert_workpad(&issue.identifier, &workpad)?;
+        adapter.set_state(&issue.identifier, "done")?;
+        println!(
+            "merge_once_action=merged issue={} target_state=done",
+            issue.identifier
+        );
+        return Ok(());
+    }
+
+    let workpad = merge_lane_workpad(&issue, &decision, None);
+    adapter.upsert_workpad(&issue.identifier, &workpad)?;
+    if let Some(target_state) = decision.target_state {
+        adapter.set_state(&issue.identifier, target_state)?;
+        println!(
+            "merge_once_action=routed issue={} target_state={target_state}",
+            issue.identifier
+        );
+    } else {
+        println!("merge_once_action=skipped issue={}", issue.identifier);
+    }
+
+    Ok(())
+}
+
+fn merge_preflight_status(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    linked_pull_requests: &[jade_symphony::model::LinkedPullRequest],
+    runner: &ProcessHandoffCommandRunner,
+) -> Result<Option<jade_symphony::merge_lane::PullRequestMergeStatus>, Box<dyn std::error::Error>> {
+    if linked_pull_requests.len() != 1 {
+        return Ok(None);
+    }
+
+    let linked = &linked_pull_requests[0];
+    let number_ref = linked.number.map(|number| number.to_string());
+    let Some(pr_ref) = linked.url.as_deref().or(number_ref.as_deref()) else {
+        return Ok(None);
+    };
+
+    if config.tracker.fixture_path.is_some() || issue.tracker_kind == "memory" {
+        return Ok(pull_request_status_from_linked(linked));
+    }
+
+    match fetch_pull_request_status(pr_ref, runner, &std::env::current_dir()?) {
+        Ok(status) => Ok(Some(status)),
+        Err(error) => {
+            eprintln!("merge_preflight_warning={error}");
+            Ok(None)
+        }
+    }
+}
+
+fn print_merge_dry_run_actions(decision: &jade_symphony::merge_lane::MergeLaneDecision) {
+    match decision.kind {
+        MergeLaneDecisionKind::ReadyToMerge => {
+            println!("merge_once_dry_run action=merge");
+            println!("merge_once_dry_run action=workpad evidence=merge_result");
+            println!("merge_once_dry_run action=set_state target_state=done");
+        }
+        MergeLaneDecisionKind::AlreadyMerged => {
+            println!("merge_once_dry_run action=workpad evidence=already_merged");
+            println!("merge_once_dry_run action=set_state target_state=done");
+        }
+        _ => {
+            println!("merge_once_dry_run action=workpad evidence=preflight_blocker");
+            if let Some(target_state) = decision.target_state {
+                println!("merge_once_dry_run action=set_state target_state={target_state}");
+            }
+        }
+    }
 }
 
 fn review_backend_kind(config: &RuntimeConfig, fake_outcome: Option<&FakeReviewOutcome>) -> String {
@@ -1860,6 +1995,10 @@ enum Command {
     RunLoop {
         options: RunLoopOptions,
     },
+    MergeOnce {
+        workflow_path: PathBuf,
+        write: bool,
+    },
     SetState {
         workflow_path: PathBuf,
         issue_ref: String,
@@ -2023,6 +2162,8 @@ enum CliCommand {
     RunOnce(WorkflowPathArgs),
     #[command(name = "run-loop")]
     RunLoop(RunLoopArgs),
+    #[command(name = "merge-once", alias = "land")]
+    MergeOnce(MergeOnceArgs),
     #[command(name = "set-state")]
     SetState(SetStateArgs),
     Workpad(WorkpadArgs),
@@ -2077,6 +2218,16 @@ struct RunLoopArgs {
     max_iterations: Option<usize>,
     #[arg(long)]
     once: bool,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct MergeOnceArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
     #[arg(long)]
     write: bool,
     #[arg(long = "dry-run")]
@@ -2383,6 +2534,10 @@ impl TryFrom<Cli> for Command {
                             },
                         })
                     }
+                    CliCommand::MergeOnce(args) => Ok(Self::MergeOnce {
+                        workflow_path: args.workflow_path,
+                        write: args.write,
+                    }),
                     CliCommand::SetState(args) => Ok(Self::SetState {
                         workflow_path: args.workflow_path,
                         issue_ref: args.issue_ref,
@@ -3005,6 +3160,39 @@ mod tests {
 
         assert_eq!(options.iteration_limit(), Some(1));
         assert!(options.write);
+    }
+
+    #[test]
+    fn parses_merge_once_command() {
+        let command = Command::parse(vec![
+            "merge-once".into(),
+            "examples/github-project-workflow.md".into(),
+            "--dry-run".into(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            command,
+            Command::MergeOnce {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                write: false
+            }
+        );
+
+        let command = Command::parse(vec![
+            "land".into(),
+            "examples/github-project-workflow.md".into(),
+            "--write".into(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            command,
+            Command::MergeOnce {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                write: true
+            }
+        );
     }
 
     #[test]

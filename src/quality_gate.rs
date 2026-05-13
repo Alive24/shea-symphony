@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use crate::model::{GateDecision, GateDecisionKind, TrackerIssue};
 
 const REQUIRED_SECTIONS: &[(&str, &str)] = &[
@@ -60,6 +62,64 @@ pub fn evaluate_issue(issue: &TrackerIssue) -> GateDecision {
     }
 }
 
+pub fn evaluate_issue_with_source_alignment(
+    issue: &TrackerIssue,
+    repo_root: &Path,
+    expected_target_repo: Option<&str>,
+) -> GateDecision {
+    let mut decision = evaluate_issue(issue);
+    if !decision.is_dispatchable() {
+        return decision;
+    }
+
+    let description = issue.description.as_deref().unwrap_or_default();
+    let mut missing = Vec::new();
+    let mut notes = Vec::new();
+
+    if let Some(expected) = expected_target_repo {
+        match first_bullet_in_section(description, "Target Repository / Package") {
+            Some(actual) if normalize_target_repo(&actual) == normalize_target_repo(expected) => {}
+            Some(actual) => missing.push(format!(
+                "target repository mismatch: expected `{expected}`, found `{actual}`"
+            )),
+            None => missing.push("target repository bullet".into()),
+        }
+    }
+
+    for path in referenced_paths(description) {
+        if !repo_root.join(&path).exists() {
+            missing.push(format!("referenced path missing: `{}`", path.display()));
+        }
+    }
+
+    let commands = verification_commands(description);
+    if commands.is_empty() {
+        missing.push("verification command".into());
+    } else {
+        for command in commands {
+            if !is_supported_verification_command(&command) {
+                missing.push(format!("unsupported verification command: `{command}`"));
+            }
+        }
+    }
+
+    if missing.is_empty() {
+        notes.push("Source alignment preflight passed.".into());
+        decision.notes.extend(notes);
+        decision
+    } else {
+        GateDecision {
+            kind: GateDecisionKind::NeedToClarify,
+            missing,
+            assumptions: decision.assumptions,
+            notes: vec![
+                "Source alignment preflight found missing or unsupported repository context."
+                    .into(),
+            ],
+        }
+    }
+}
+
 fn has_explicit_blocked_decision(markdown: &str) -> bool {
     markdown.lines().any(|line| {
         let normalized = line.trim().trim_start_matches('-').trim().to_lowercase();
@@ -101,6 +161,115 @@ fn extract_assumptions(markdown: &str) -> Vec<String> {
     }
 
     assumptions
+}
+
+fn first_bullet_in_section(markdown: &str, heading: &str) -> Option<String> {
+    section_lines(markdown, heading)
+        .into_iter()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix('-')
+                .map(clean_markdown_value)
+                .filter(|value| !value.is_empty())
+        })
+}
+
+fn referenced_paths(markdown: &str) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for heading in ["Relevant Knowledge Sources", "Relevant Code Paths"] {
+        for line in section_lines(markdown, heading) {
+            let Some(raw) = line.trim().strip_prefix('-') else {
+                continue;
+            };
+            let value = clean_markdown_value(raw);
+            if is_local_reference(&value) {
+                paths.push(PathBuf::from(value));
+            }
+        }
+    }
+    paths
+}
+
+fn verification_commands(markdown: &str) -> Vec<String> {
+    section_lines(markdown, "Functional Verification")
+        .into_iter()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix('-')
+                .map(clean_markdown_value)
+                .filter(|value| looks_like_command(value))
+        })
+        .collect()
+}
+
+fn section_lines(markdown: &str, heading: &str) -> Vec<String> {
+    let mut in_section = false;
+    let mut lines = Vec::new();
+    for line in markdown.lines() {
+        let trimmed = line.trim();
+        let normalized_heading = trimmed.trim_start_matches('#').trim();
+        if normalized_heading.eq_ignore_ascii_case(heading) {
+            in_section = true;
+            continue;
+        }
+        if in_section && trimmed.starts_with('#') {
+            break;
+        }
+        if in_section {
+            lines.push(line.to_string());
+        }
+    }
+    lines
+}
+
+fn clean_markdown_value(raw: &str) -> String {
+    raw.trim()
+        .trim_matches('`')
+        .trim()
+        .trim_end_matches('.')
+        .to_string()
+}
+
+fn normalize_target_repo(value: &str) -> String {
+    clean_markdown_value(value)
+        .trim_start_matches("https://github.com/")
+        .trim_start_matches("github.com/")
+        .trim_matches('`')
+        .to_ascii_lowercase()
+}
+
+fn is_local_reference(value: &str) -> bool {
+    !value.starts_with("http://")
+        && !value.starts_with("https://")
+        && !value.starts_with('$')
+        && (value.contains('/')
+            || value.starts_with("Cargo.")
+            || value == "README.md"
+            || value.ends_with(".rs")
+            || value.ends_with(".md"))
+}
+
+fn looks_like_command(value: &str) -> bool {
+    matches!(
+        value.split_whitespace().next(),
+        Some("cargo" | "gh" | "git" | "pnpm" | "npm" | "node")
+    )
+}
+
+fn is_supported_verification_command(command: &str) -> bool {
+    let parts: Vec<_> = command.split_whitespace().collect();
+    matches!(
+        parts.as_slice(),
+        ["cargo", "test"]
+            | ["cargo", "fmt", "--check"]
+            | ["cargo", "clippy", ..]
+            | ["cargo", "run", ..]
+            | ["gh", ..]
+            | ["git", ..]
+            | ["pnpm", ..]
+            | ["npm", ..]
+            | ["node", ..]
+    )
 }
 
 #[cfg(test)]
@@ -215,5 +384,137 @@ mod tests {
 
         let decision = evaluate_issue(&issue(Some(body)));
         assert_eq!(decision.kind, GateDecisionKind::Blocked);
+    }
+
+    #[test]
+    fn source_alignment_accepts_existing_paths_and_supported_commands() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("src")).unwrap();
+        std::fs::write(temp.path().join("src/main.rs"), "").unwrap();
+        std::fs::create_dir_all(temp.path().join("docs")).unwrap();
+        std::fs::write(temp.path().join("docs/dogfood-readiness.md"), "").unwrap();
+        let body = aligned_body(
+            "Alive24/jade-symphony",
+            &["docs/dogfood-readiness.md"],
+            &["src/main.rs"],
+            &["cargo test", "cargo fmt --check"],
+        );
+
+        let decision = evaluate_issue_with_source_alignment(
+            &issue(Some(body)),
+            temp.path(),
+            Some("Alive24/jade-symphony"),
+        );
+
+        assert!(decision.is_dispatchable());
+        assert!(decision
+            .notes
+            .contains(&"Source alignment preflight passed.".to_string()));
+    }
+
+    #[test]
+    fn source_alignment_reports_missing_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let body = aligned_body(
+            "Alive24/jade-symphony",
+            &["docs/missing.md"],
+            &["src/main.rs"],
+            &["cargo test"],
+        );
+
+        let decision = evaluate_issue_with_source_alignment(
+            &issue(Some(body)),
+            temp.path(),
+            Some("Alive24/jade-symphony"),
+        );
+
+        assert_eq!(decision.kind, GateDecisionKind::NeedToClarify);
+        assert!(decision
+            .missing
+            .iter()
+            .any(|item| item.contains("referenced path missing")));
+    }
+
+    #[test]
+    fn source_alignment_reports_target_repo_mismatch() {
+        let temp = tempfile::tempdir().unwrap();
+        let body = aligned_body("Other/repo", &[], &[], &["cargo test"]);
+
+        let decision = evaluate_issue_with_source_alignment(
+            &issue(Some(body)),
+            temp.path(),
+            Some("Alive24/jade-symphony"),
+        );
+
+        assert_eq!(decision.kind, GateDecisionKind::NeedToClarify);
+        assert!(decision
+            .missing
+            .iter()
+            .any(|item| item.contains("target repository mismatch")));
+    }
+
+    #[test]
+    fn source_alignment_reports_weak_verification() {
+        let temp = tempfile::tempdir().unwrap();
+        let body = aligned_body("Alive24/jade-symphony", &[], &[], &["manually inspect"]);
+
+        let decision = evaluate_issue_with_source_alignment(
+            &issue(Some(body)),
+            temp.path(),
+            Some("Alive24/jade-symphony"),
+        );
+
+        assert_eq!(decision.kind, GateDecisionKind::NeedToClarify);
+        assert!(decision
+            .missing
+            .iter()
+            .any(|item| item == "verification command"));
+    }
+
+    fn aligned_body(target_repo: &str, docs: &[&str], paths: &[&str], commands: &[&str]) -> String {
+        let docs = docs
+            .iter()
+            .map(|path| format!("- `{path}`"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let paths = paths
+            .iter()
+            .map(|path| format!("- `{path}`"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let commands = commands
+            .iter()
+            .map(|command| format!("- `{command}`"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        [
+            "## Issue Goal",
+            "Ship a thing.",
+            "## Why Now",
+            "Now.",
+            "## Issue Context",
+            "Context.",
+            "## Decisions / Assumptions",
+            "### Assumptions",
+            "- Deterministic source checks are enough.",
+            "## Non-Negotiable Guardrails",
+            "- Guard.",
+            "## Scope",
+            "### In Scope",
+            "- Code.",
+            "## Canonical References",
+            "### Target Repository / Package",
+            &format!("- `{target_repo}`"),
+            "### Relevant Knowledge Sources",
+            &docs,
+            "### Relevant Code Paths",
+            &paths,
+            "## Verification",
+            "### Completion Criteria",
+            "- Pass.",
+            "### Functional Verification",
+            &commands,
+        ]
+        .join("\n")
     }
 }

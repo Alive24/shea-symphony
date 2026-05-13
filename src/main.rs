@@ -6,6 +6,10 @@ use clap::{error::ErrorKind, Args, CommandFactory, Parser, Subcommand, ValueEnum
 use jade_symphony::agent::backend_from_config;
 use jade_symphony::config::RuntimeConfig;
 use jade_symphony::event_log::{EventLog, EventRecord};
+use jade_symphony::git_handoff::{
+    prepare_issue_worktree, publish_issue_pull_request, LiveWorktreeResult,
+    ProcessHandoffCommandRunner, PullRequestPublication,
+};
 use jade_symphony::handoff::{plan_issue_handoff, HandoffError, IssueHandoffPlan};
 use jade_symphony::issue_forge::{
     discover_candidates, draft_from_template, find_issue_skill, interactive_forge,
@@ -803,6 +807,14 @@ struct IssueExecutionResult {
     actor_label: String,
     git_author: Option<String>,
     git_identity: GitIdentityApplyResult,
+    live_handoff: Option<RunLoopLiveHandoff>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RunLoopLiveHandoff {
+    worktree: LiveWorktreeResult,
+    publication: PullRequestPublication,
+    verification: String,
 }
 
 fn execute_issue_once(
@@ -856,6 +868,7 @@ fn execute_issue_once_with_workspace_key(
         actor_label: config.identity.actor_label.clone(),
         git_author: config.identity.git.author(),
         git_identity,
+        live_handoff: None,
     })
 }
 
@@ -1001,12 +1014,50 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             latest.identifier
         );
 
-        let result = execute_issue_once_with_workspace_key(
+        let live_worktree = if run_loop_live_handoff_enabled(&config) {
+            let runner = ProcessHandoffCommandRunner;
+            let repo_root = std::env::current_dir()?;
+            let worktree = prepare_issue_worktree(&repo_root, &handoff, &runner)?;
+            println!(
+                "run_loop_action=worktree issue={} workspace={} branch={} created={}",
+                latest.identifier,
+                worktree.workspace_path.display(),
+                worktree.branch_name,
+                worktree.created
+            );
+            Some(worktree)
+        } else {
+            None
+        };
+
+        let mut result = execute_issue_once_with_workspace_key(
             &workflow,
             &config,
             &latest,
             &handoff.workspace_key,
         )?;
+        if result.success {
+            if let Some(worktree) = live_worktree {
+                let runner = ProcessHandoffCommandRunner;
+                match publish_issue_pull_request(&handoff, &runner) {
+                    Ok(publication) => {
+                        println!(
+                            "run_loop_action=pr issue={} url={} created={}",
+                            latest.identifier, publication.pr_url, publication.pr_created
+                        );
+                        result.live_handoff = Some(RunLoopLiveHandoff {
+                            worktree,
+                            publication,
+                            verification: "skipped:not_configured".into(),
+                        });
+                    }
+                    Err(error) => {
+                        result.success = false;
+                        result.message = format!("handoff publication failed: {error}");
+                    }
+                }
+            }
+        }
         runtime_state = run_loop_runtime_state_with_result(runtime_state, &result);
         save_runtime_state(&config, &runtime_state)?;
         println!(
@@ -1167,6 +1218,10 @@ fn run_loop_handoff_plan(
     plan_issue_handoff(&config.workspace.root, issue, DEFAULT_RUN_LOOP_BASE_BRANCH)
 }
 
+fn run_loop_live_handoff_enabled(config: &RuntimeConfig) -> bool {
+    config.tracker.kind == "github_project_v2" && config.tracker.fixture_path.is_none()
+}
+
 fn handle_run_loop_gate_failure(
     adapter: &dyn jade_symphony::tracker::TrackerAdapter,
     issue: &TrackerIssue,
@@ -1254,6 +1309,16 @@ fn print_run_loop_dry_run_actions(
         issue.identifier
     );
     println!(
+        "run_loop_dry_run action=worktree issue={} workspace={} branch={}",
+        issue.identifier,
+        handoff.workspace_path.display(),
+        handoff.branch_name
+    );
+    println!(
+        "run_loop_dry_run action=pr issue={} head={} base={}",
+        issue.identifier, handoff.branch_name, handoff.pull_request.base_branch
+    );
+    println!(
         "run_loop_dry_run action=workpad issue={} evidence=run_summary",
         issue.identifier
     );
@@ -1298,13 +1363,26 @@ fn run_loop_handoff_workpad(
         format!("- Branch: `{}`", handoff.branch_name),
         format!("- PR title: `{}`", handoff.pull_request.title),
         format!("- PR base branch: `{}`", handoff.pull_request.base_branch),
-        "- PR creation is planned evidence only in this slice.".to_string(),
+        live_handoff_workpad_line(result),
         String::new(),
         "### Main-Agent Boundary".to_string(),
         "- Locally complete main-agent work stops at `Agent Review`.".to_string(),
         "- `Human Review` is reserved for independent Review Agent pass evidence.".to_string(),
     ]
     .join("\n")
+}
+
+fn live_handoff_workpad_line(result: &IssueExecutionResult) -> String {
+    match &result.live_handoff {
+        Some(handoff) => format!(
+            "- Live PR: `{}` (created: `{}`, branch pushed: `{}`, verification: `{}`)",
+            handoff.publication.pr_url,
+            handoff.publication.pr_created,
+            handoff.publication.branch_pushed,
+            handoff.verification
+        ),
+        None => "- Live PR: `not-created`".to_string(),
+    }
 }
 
 fn run_loop_handoff_failure_workpad(issue: &TrackerIssue, error: &HandoffError) -> String {
@@ -2454,6 +2532,7 @@ mod tests {
                 author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
                 applied_keys: vec!["user.name".into(), "user.email".into()],
             },
+            live_handoff: None,
         };
 
         let state = run_loop_runtime_state_with_result(state, &result);
@@ -2544,6 +2623,19 @@ mod tests {
                 author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
                 applied_keys: vec!["user.name".into(), "user.email".into()],
             },
+            live_handoff: Some(RunLoopLiveHandoff {
+                worktree: LiveWorktreeResult {
+                    workspace_path: handoff.workspace_path.clone(),
+                    branch_name: handoff.branch_name.clone(),
+                    created: true,
+                },
+                publication: PullRequestPublication {
+                    branch_pushed: true,
+                    pr_url: "https://github.com/Alive24/jade-symphony/pull/45".into(),
+                    pr_created: true,
+                },
+                verification: "skipped:not_configured".into(),
+            }),
         };
 
         let workpad = run_loop_handoff_workpad(&issue, &result, &handoff);
@@ -2558,6 +2650,7 @@ mod tests {
         assert!(workpad
             .contains("Branch: `feature/issue-29-wire-runtime-state-persistence-into-run-loop`"));
         assert!(workpad.contains("PR title: `#29: Wire runtime state persistence into run-loop`"));
+        assert!(workpad.contains("Live PR: `https://github.com/Alive24/jade-symphony/pull/45`"));
     }
 
     #[test]

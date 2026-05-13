@@ -16,8 +16,8 @@ yet.
 | Linear tracker | Implemented behind the same trait for fixture-backed planning plus live GraphQL reads, state updates, marker workpad comments, follow-up issue creation, and project assignment. Credential-gated smoke coverage is still missing. |
 | Issue Quality Gate | Implemented as a first-pass Markdown contract check. It is useful for dry-run classification, not yet a full source-alignment gate. |
 | Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, repair, CLI-first interactive issue shaping, conservative reflective follow-up candidate generation, and explicit `forge-create` tracker issue creation from quality-gated Markdown. Interactive creation requires `--write` and `--confirm-create`; reflective mode only prints candidates. Initial Project `Status` setup is available through the GitHub add-to-project path; arbitrary Project field setup after creation is not implemented yet. |
-| Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes, idle polling, claim-helper use, runtime-state persistence, and planned handoff evidence exists. No long-running worker supervision, retry timers, full runtime resume reconciliation, or full state reconciliation yet. |
-| Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, repository-local git identity application, workspace/branch/PR handoff planning, and run-loop handoff evidence exist. Live git worktree creation, PR creation, and runtime reconciliation cleanup are not wired yet. |
+| Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes, idle polling, claim-helper use, runtime-state persistence, and live PR handoff in non-fixture GitHub mode exists. No long-running worker supervision, retry timers, full runtime resume reconciliation, or full state reconciliation yet. |
+| Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, repository-local git identity application, workspace/branch/PR handoff planning, live git worktree/branch creation, branch push, PR create-or-reuse, and run-loop handoff evidence exist. Runtime reconciliation cleanup is not wired yet. |
 | Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Full Codex app-server and Claude Code protocol parity are not implemented yet. |
 | Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, review-freshness evidence for Merging conflict repair, bounded `review-loop` selection/reconciliation, and workpad/status evidence helpers exist. Persistent background review worker supervision is not implemented yet. |
 | Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events with actor metadata. Runtime state files are written during write-mode `run-loop` issue execution, including actor role/label and git author when configured, but full resume reconciliation is still pending. No web/API surface yet. |
@@ -102,11 +102,13 @@ Project v2 issues:
    - Runtime state writes exist for claim/resume, backend result evidence, and
      final transition intent; full resume reconciliation after interruption
      remains pending.
-   - workspace/branch/PR handoff planning is recorded by `run-loop`, but the
-     runtime still needs live worktree creation, branch checkout, push, PR
-     creation, and PR link recording.
+   - workspace/branch/PR handoff is recorded by `run-loop`; in live
+     non-fixture GitHub mode the runtime can create/reuse the issue worktree and
+     branch, push the branch, and create/reuse one PR after successful backend
+     execution. Remaining work: cleanup, richer reconciliation, and stronger
+     verification command modeling.
    - Local git identity application exists for prepared git repositories; the
-     future live worktree path must apply it before commits and preserve the
+     live worktree path must continue to apply it before commits and preserve the
      distinction between agent actors and human operators.
    - continuation retry after normal active-state exits.
    - exponential backoff for failures.
@@ -232,20 +234,18 @@ Acceptance:
 - terminal cleanup is tied to tracker reconciliation.
 - path escape tests cover symlink and non-directory cases.
 
-### 6. Wire Workspace Branch And PR Handoff Into Run-Loop
+### 6. Harden Workspace Branch And PR Handoff Reconciliation
 
-Goal: connect handoff planning evidence to controlled runtime mutation without
-mixing multiple issue scopes in one branch.
+Goal: strengthen the current live handoff path without mixing multiple issue
+scopes in one branch.
 
 Acceptance:
 
-- records the planned workspace key, workspace path, branch, and PR title in
-  `run-loop` dry-run output and workpad evidence.
-- refuses branches that appear to belong to a different issue.
-- creates or reuses one isolated git worktree per issue.
-- checks out the planned issue branch from the configured base branch.
-- pushes the issue branch after local completion.
-- creates one PR with a handoff body and records the PR link in the workpad.
+- reconciles existing worktrees with tracker state before reuse.
+- records PR URL and branch evidence in the tracker workpad.
+- detects missing remote commits or no-op branches before PR creation.
+- adds configured verification command execution before push/PR handoff.
+- cleans terminal worktrees after tracker reconciliation.
 - keeps main implementation completion at `Agent Review`.
 
 ### 7. Add Persistent Agent Review Worker Supervision
@@ -325,5 +325,5 @@ GitHub Project v2 execution is hardened.
 manual live Project v2 reads and explicit tracker writes through `gh`. It still
 uses the `dry-run` backend by default. `run-loop --write` is available only as a
 bounded runtime skeleton and should not be treated as full autonomous agent
-execution until claim reconciliation, full runtime resume reconciliation, and
-live PR automation wiring exist.
+execution until claim reconciliation, full runtime resume reconciliation,
+configured verification commands, and worker supervision are hardened.

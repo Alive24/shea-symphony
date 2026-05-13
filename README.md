@@ -16,7 +16,7 @@ It does **not** yet fully autonomously execute GitHub Project v2 issues,
 run Codex/Claude through the final app-server flow, or supervise long-running
 workers. A `run-loop` skeleton now exists and can idle-poll in unbounded
 write mode, but full claim reconciliation, runtime resume, and
-one-issue-one-PR automation are still future work.
+worker supervision are still future work.
 
 ## What Works Now
 
@@ -70,6 +70,9 @@ one-issue-one-PR automation are still future work.
 - workspace/branch/PR handoff planning can derive a deterministic issue
   workspace key, branch name, and PR handoff body, and can detect an existing
   branch that appears to belong to a different issue.
+- live GitHub `run-loop --write` can create or reuse the planned issue
+  worktree/branch, run the configured backend inside that worktree, push the
+  branch, and create or reuse one GitHub PR after successful execution.
 - terminal status output reports polling state, planned running/skipped/retrying
   issues, token counters, event-log path, gate details, and integration gaps.
 - JSONL event-log primitives exist.
@@ -89,8 +92,9 @@ one-issue-one-PR automation are still future work.
   print dry-run claim/run/workpad/handoff actions, surface deterministic
   workspace/branch/PR handoff plans, use tracker claim helpers to
   claim/resume/skip externally changed issues, and in explicit `--write` mode
-  run one issue at a time, record planned handoff evidence, and stop main-agent
-  completion at `Agent Review`;
+  run one issue at a time, record handoff evidence, create a live PR handoff in
+  non-fixture GitHub Project v2 mode, and stop main-agent completion at
+  `Agent Review`;
   unbounded write mode sleeps on idle polls using the workflow polling interval.
 
 ## Dry-Run Only
@@ -197,7 +201,7 @@ claim reconciliation, resume state, and PR automation exist.
 ## Stubbed
 
 - linked PR attachment/linking as a first-class relationship.
-- live git worktree creation and `gh pr create` from the runtime loop.
+- robust cleanup for live git worktrees after terminal tracker reconciliation.
 - profile-specific account/token routing for git hosts or agent backends.
 - rich interactive Issue Forge TUI; the current flow is CLI-first and
   command-step based.
@@ -214,8 +218,8 @@ claim reconciliation, resume state, and PR automation exist.
 - richer issue claiming, state transition, and reconciliation safety beyond the
   current claim helper and runtime-state wiring.
 - full runtime-state resume reconciliation after interruption.
-- workspace-per-issue branch and PR automation beyond current handoff planning
-  and workpad evidence.
+- richer workspace-per-issue branch and PR reconciliation beyond current
+  create-or-reuse handoff.
 - retry timers, continuation retries, and stall restart.
 - terminal workspace cleanup tied to tracker state.
 - live token/rate-limit accounting beyond the current snapshot counters.

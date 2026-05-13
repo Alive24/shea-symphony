@@ -19,6 +19,7 @@ pub struct RuntimeConfig {
     pub codex: CodexConfig,
     pub claude: ClaudeConfig,
     pub review: ReviewConfig,
+    pub quality_gate: QualityGateConfig,
     pub profiles: ProfilesConfig,
     pub identity: IdentityConfig,
     pub observability: ObservabilityConfig,
@@ -127,6 +128,18 @@ pub struct ClaudeConfig {
 pub struct ReviewConfig {
     pub backend: String,
     pub gemini_command: String,
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QualityGateConfig {
+    pub llm: LlmQualityGateConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LlmQualityGateConfig {
+    pub mode: String,
+    pub command: Option<String>,
     pub timeout_ms: u64,
 }
 
@@ -281,6 +294,7 @@ impl RuntimeConfig {
                 .unwrap_or_else(|| "gemini".to_string()),
             timeout_ms: get_u64(root.get("review"), "timeout_ms").unwrap_or(600_000),
         };
+        let quality_gate = parse_quality_gate(root.get("quality_gate"));
         let profiles = parse_profiles(root.get("profiles"), workflow_dir);
         let identity = parse_identity(root.get("identity"));
         let observability = ObservabilityConfig {
@@ -310,6 +324,7 @@ impl RuntimeConfig {
             codex,
             claude,
             review,
+            quality_gate,
             profiles,
             identity,
             observability,
@@ -332,6 +347,20 @@ impl RuntimeConfig {
             "fake" | "gemini-cli" => {}
             other => return Err(ConfigError::UnsupportedBackend(other.to_string())),
         }
+        match self.quality_gate.llm.mode.as_str() {
+            "disabled" | "advisory" | "required" => {}
+            other => {
+                return Err(ConfigError::Invalid(format!(
+                    "quality_gate.llm.mode must be disabled, advisory, or required; got {other}"
+                )))
+            }
+        }
+        if self.quality_gate.llm.mode == "required" {
+            require_present(
+                "quality_gate.llm.command",
+                self.quality_gate.llm.command.as_deref(),
+            )?;
+        }
 
         require_positive("polling.interval_ms", self.polling.interval_ms)?;
         require_positive("hooks.timeout_ms", self.hooks.timeout_ms)?;
@@ -345,6 +374,10 @@ impl RuntimeConfig {
             self.agent.max_retry_backoff_ms,
         )?;
         require_positive("review.timeout_ms", self.review.timeout_ms)?;
+        require_positive(
+            "quality_gate.llm.timeout_ms",
+            self.quality_gate.llm.timeout_ms,
+        )?;
 
         if self.tracker.kind == "github_project_v2" {
             require_present("tracker.owner", self.tracker.owner.as_deref())?;
@@ -470,6 +503,17 @@ fn parse_profiles(value: Option<&Value>, workflow_dir: &Path) -> ProfilesConfig 
             .map(|path| resolve_path(Some(&path), workflow_dir, Path::new(""))),
         },
         entries: parse_execution_profiles(get_value(value, "entries"), workflow_dir),
+    }
+}
+
+fn parse_quality_gate(value: Option<&Value>) -> QualityGateConfig {
+    let llm = get_value(value, "llm");
+    QualityGateConfig {
+        llm: LlmQualityGateConfig {
+            mode: get_string(llm, "mode").unwrap_or_else(|| "disabled".to_string()),
+            command: get_string(llm, "command"),
+            timeout_ms: get_u64(llm, "timeout_ms").unwrap_or(120_000),
+        },
     }
 }
 
@@ -782,5 +826,37 @@ mod tests {
             config.profiles.entries[0].user_data_dir.as_deref(),
             Some(Path::new("/tmp/config/profiles/fallback"))
         );
+    }
+
+    #[test]
+    fn parses_llm_quality_gate_config() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nquality_gate:\n  llm:\n    mode: required\n    command: sh examples/fixtures/llm-gate-ready.sh\n    timeout_ms: 5000\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.quality_gate.llm.mode, "required");
+        assert_eq!(
+            config.quality_gate.llm.command.as_deref(),
+            Some("sh examples/fixtures/llm-gate-ready.sh")
+        );
+        assert_eq!(config.quality_gate.llm.timeout_ms, 5_000);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn required_llm_quality_gate_requires_command() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nquality_gate:\n  llm:\n    mode: required\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert!(config.validate().is_err());
     }
 }

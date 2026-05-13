@@ -24,7 +24,9 @@ use jade_symphony::model::{normalize_state, GateDecision, GateDecisionKind, Trac
 use jade_symphony::orchestrator::Orchestrator;
 use jade_symphony::profiles::{discover_execution_profiles, selected_execution_profile};
 use jade_symphony::prompt::render_prompt;
-use jade_symphony::quality_gate::evaluate_issue_with_source_alignment;
+use jade_symphony::quality_gate::{
+    evaluate_issue_with_llm_gate, evaluate_issue_with_source_alignment, LlmGateMode, LlmGateOptions,
+};
 use jade_symphony::review::{
     classify_review_freshness, render_review_freshness_workpad, render_review_workpad,
     review_gate_decision, review_run_eligibility, transition_allowed_for_main_agent,
@@ -244,10 +246,16 @@ fn evaluate_issue_for_current_source(
 ) -> Result<GateDecision, Box<dyn std::error::Error>> {
     let repo_root = std::env::current_dir()?;
     let expected_target = expected_target_repository(config);
-    Ok(evaluate_issue_with_source_alignment(
+    let deterministic =
+        evaluate_issue_with_source_alignment(issue, &repo_root, expected_target.as_deref());
+    Ok(evaluate_issue_with_llm_gate(
         issue,
-        &repo_root,
-        expected_target.as_deref(),
+        deterministic,
+        &LlmGateOptions {
+            mode: LlmGateMode::parse(&config.quality_gate.llm.mode),
+            command: config.quality_gate.llm.command.clone(),
+            timeout_ms: config.quality_gate.llm.timeout_ms,
+        },
     ))
 }
 

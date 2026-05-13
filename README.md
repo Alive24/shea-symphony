@@ -86,7 +86,8 @@ worker supervision are still future work.
   the built binary, git, `gh`, auth, and workflow validation.
 - workspace identifiers are sanitized; local workspace paths stay under the
   configured root; hooks support timeouts, stdout/stderr capture,
-  `before_remove`, and safe cleanup helpers.
+  `before_remove`, safe cleanup helpers, and a guarded terminal workspace
+  cleanup planner.
 - workflow identity config can distinguish the acting role/label from the human
   operator and can apply configured git author metadata with repository-local
   `git config --local` only.
@@ -280,7 +281,8 @@ Merging role separation.
   is currently read-only fixture/path parsing for Codex instance names.
 - automatic repair of existing `Agent Review` items with missing PR evidence;
   the current slice prevents new silent handoffs and records diagnostics.
-- robust cleanup for live git worktrees after terminal tracker reconciliation.
+- automatic cleanup for live git worktrees after terminal tracker
+  reconciliation.
 - profile-specific account/token routing for git hosts or agent backends.
 - rich interactive Issue Forge TUI; the current flow is CLI-first and
   command-step based.
@@ -303,9 +305,9 @@ Merging role separation.
 - continuation retries and automated stall restart.
 - richer vendor-specific quota handling beyond conservative usage-limit
   pattern matching.
-- terminal workspace cleanup tied to tracker state.
-- full profile-specific account/token switching for tracker claim ownership
-  beyond login comparison.
+- automatic terminal workspace cleanup inside the runtime loop.
+- profile-aware tracker claim ownership beyond namespaced runtime/log/workspace
+  metadata.
 - live token/rate-limit accounting beyond the current snapshot counters.
 - persistent background Agent Review worker supervision beyond bounded
   `review-loop` ticks.
@@ -357,6 +359,7 @@ cargo run -- run-loop examples/usage-limit-workflow.md --max-iterations 1 --writ
 cargo run -- dogfood-smoke examples/github-project-workflow.md --dry-run
 cargo run -- merge-once examples/github-project-workflow.md --dry-run
 cargo run -- merge-loop examples/github-project-workflow.md --max-iterations 3 --dry-run
+cargo run -- cleanup-workspaces examples/github-project-workflow.md --dry-run
 cargo run -- gate examples/llm-gate-workflow.md '#1'
 ```
 

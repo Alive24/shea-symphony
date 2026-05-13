@@ -19,7 +19,7 @@ yet.
 | Issue Quality Gate | Implemented as a Markdown contract check plus deterministic source-alignment preflight where workflow/repo context is available. It verifies target repository, referenced local paths, and supported verification command shapes. Optional local command-backed LLM gate mode exists as disabled/advisory/required; richer semantic validation and hosted providers are still follow-ups. |
 | Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, repair, CLI-first interactive issue shaping, conservative reflective follow-up candidate generation, and explicit `forge-create` tracker issue creation from quality-gated Markdown. Interactive creation requires `--write` and `--confirm-create`; reflective mode only prints candidates. Initial Project `Status` setup is available through the GitHub add-to-project path; arbitrary Project field setup after creation is not implemented yet. |
 | Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes, idle polling, claim-helper use, runtime-state persistence, resume preflight, retry backoff records, stall detection, live PR handoff in non-fixture GitHub mode, guarded `merge-once` and bounded `merge-loop` lanes for `Merging` issues, a controlled `dogfood-smoke` preflight report, and a bounded operator launcher script exist. No long-running worker supervision, automated stall restart, full multi-worker runtime resume reconciliation, unbounded merge idle polling, or full state reconciliation yet. |
-| Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, repository-local git identity application, workspace/branch/PR handoff planning, live git worktree/branch creation, branch push, optional configured verification commands before PR handoff, PR create-or-reuse, run-loop handoff evidence, profile-scoped workspace keys, and an Agent Review handoff invariant that blocks missing PR evidence before `Agent Review` exist. Runtime reconciliation cleanup is not wired yet. |
+| Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, guarded terminal cleanup planning, repository-local git identity application, workspace/branch/PR handoff planning, live git worktree/branch creation, branch push, optional configured verification commands before PR handoff, PR create-or-reuse, run-loop handoff evidence, profile-scoped workspace keys, and an Agent Review handoff invariant that blocks missing PR evidence before `Agent Review` exist. Automatic runtime cleanup is not wired yet. |
 | Execution profiles | First-slice profile discovery exists. Workflow config can point to a cockpit-tools Codex `codex_instances.json` file, and Jade treats each instance `name` as a profile/worker identity while ignoring account binding fields. If the cockpit-tools file is missing, explicit `profiles.entries` are used. This is not a full account manager. |
 | Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Prepared runs include selected profile/instance metadata and profile environment context. Full Codex app-server and Claude Code protocol parity are not implemented yet. |
 | Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, evidence-first Rework diagnostics for confirmed findings, review-freshness evidence for Merging conflict repair, bounded `review-loop` worker selection/reconciliation with one issue per worker slot, and workpad/status evidence helpers exist. Persistent background review worker supervision is not implemented yet. |
@@ -152,7 +152,8 @@ Project v2 issues:
    - exponential backoff for failures.
    - stall detection.
    - terminal/non-active reconciliation.
-- terminal workspace cleanup wiring in the runtime loop.
+- terminal workspace cleanup planning exists as an explicit dry-run/write
+  command; automatic cleanup wiring in the runtime loop remains pending.
 
 8. Observability.
    - Structured logs for dispatch, retry, state transition, backend session, and
@@ -295,7 +296,8 @@ Acceptance:
 - hook timeout is enforced.
 - `after_create`, `before_run`, `after_run`, and `before_remove` behavior match
   the parity roadmap.
-- terminal cleanup is tied to tracker reconciliation.
+- terminal cleanup can be planned from tracker reconciliation; automatic runtime
+  cleanup remains pending.
 - path escape tests cover symlink and non-directory cases.
 
 ### 6. Harden Workspace Branch And PR Handoff Reconciliation

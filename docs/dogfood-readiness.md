@@ -19,7 +19,7 @@ yet.
 | Issue Quality Gate | Implemented as a Markdown contract check plus deterministic source-alignment preflight where workflow/repo context is available. It verifies target repository, referenced local paths, and supported verification command shapes; richer semantic validation is still a follow-up. |
 | Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, repair, CLI-first interactive issue shaping, conservative reflective follow-up candidate generation, and explicit `forge-create` tracker issue creation from quality-gated Markdown. Interactive creation requires `--write` and `--confirm-create`; reflective mode only prints candidates. Initial Project `Status` setup is available through the GitHub add-to-project path; arbitrary Project field setup after creation is not implemented yet. |
 | Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes, idle polling, claim-helper use, runtime-state persistence, resume preflight, retry backoff records, stall detection, and live PR handoff in non-fixture GitHub mode exists. No long-running worker supervision, automated stall restart, full multi-worker runtime resume reconciliation, or full state reconciliation yet. |
-| Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, repository-local git identity application, workspace/branch/PR handoff planning, live git worktree/branch creation, branch push, PR create-or-reuse, and run-loop handoff evidence exist. Runtime reconciliation cleanup is not wired yet. |
+| Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, repository-local git identity application, workspace/branch/PR handoff planning, live git worktree/branch creation, branch push, PR create-or-reuse, run-loop handoff evidence, and an Agent Review handoff invariant that blocks missing PR evidence before `Agent Review` exist. Runtime reconciliation cleanup is not wired yet. |
 | Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Full Codex app-server and Claude Code protocol parity are not implemented yet. |
 | Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, evidence-first Rework diagnostics for confirmed findings, review-freshness evidence for Merging conflict repair, bounded `review-loop` selection/reconciliation, and workpad/status evidence helpers exist. Persistent background review worker supervision is not implemented yet. |
 | Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events with actor metadata. Runtime state files are written during write-mode `run-loop` issue execution, including actor role/label and git author when configured; resume, retry, and stall supervision events are also recorded. No web/API surface yet. |
@@ -77,6 +77,10 @@ Project v2 issues:
      preserving prior Human Review. Mechanical conflict repair can preserve
      prior Human Review for an authorized merge/handoff flow; semantic or
      unknown rework requires the normal Agent Review and Human Review path.
+   - Main-agent completion should enter `Agent Review` only after durable
+     handoff evidence includes issue, workspace, branch, validation, transition,
+     and PR URL. Missing PR evidence should keep the issue out of
+     `Agent Review` with a workpad diagnostic.
    - Rework transitions should remain evidence-first: write compact structured
      diagnostics to the canonical issue workpad before setting `Rework`; if the
      diagnostic write fails, stop before changing state.
@@ -121,6 +125,9 @@ Project v2 issues:
    - Local git identity application exists for prepared git repositories; the
      live worktree path must continue to apply it before commits and preserve the
      distinction between agent actors and human operators.
+   - Existing `Agent Review` items with stale or missing PR evidence still need
+     a reconciliation/repair command; the current handoff invariant prevents
+     new silent transitions from passing without PR evidence.
    - continuation retry after normal active-state exits.
    - exponential backoff for failures.
    - stall detection.

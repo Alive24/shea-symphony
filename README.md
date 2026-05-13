@@ -79,6 +79,10 @@ worker supervision are still future work.
 - workspace/branch/PR handoff planning can derive a deterministic issue
   workspace key, branch name, and PR handoff body, and can detect an existing
   branch that appears to belong to a different issue.
+- Agent Review handoff invariant helpers require durable issue, workspace,
+  branch, validation, transition, and PR URL evidence before the run-loop can
+  move completed work to `Agent Review`; missing PR evidence is routed to
+  `Need Human Input` with a workpad diagnostic.
 - live GitHub `run-loop --write` can create or reuse the planned issue
   worktree/branch, run the configured backend inside that worktree, push the
   branch, and create or reuse one GitHub PR after successful execution.
@@ -224,6 +228,8 @@ Merging role separation.
 ## Stubbed
 
 - linked PR attachment/linking as a first-class relationship.
+- automatic repair of existing `Agent Review` items with missing PR evidence;
+  the current slice prevents new silent handoffs and records diagnostics.
 - robust cleanup for live git worktrees after terminal tracker reconciliation.
 - profile-specific account/token routing for git hosts or agent backends.
 - rich interactive Issue Forge TUI; the current flow is CLI-first and

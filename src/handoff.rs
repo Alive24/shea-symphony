@@ -28,6 +28,32 @@ pub struct PullRequestHandoffPlan {
     pub body: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentReviewHandoffEvidence {
+    pub issue_ref: String,
+    pub workspace_key: String,
+    pub workspace_path: PathBuf,
+    pub branch_name: String,
+    pub pull_request_url: Option<String>,
+    pub validation_summary: String,
+    pub last_transition: String,
+    pub no_pr_blocker: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentReviewHandoffStatus {
+    Ready,
+    Blocked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentReviewHandoffReport {
+    pub status: AgentReviewHandoffStatus,
+    pub missing: Vec<String>,
+    pub target_state: Option<String>,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum HandoffError {
     #[error("branch {branch_name} appears to belong to issue #{found_issue}, expected #{expected_issue}")]
@@ -43,6 +69,133 @@ pub enum BranchIssueCheck {
     Matches { issue_number: String },
     Mismatch { expected: String, found: String },
     Unknown,
+}
+
+impl AgentReviewHandoffReport {
+    pub fn is_ready(&self) -> bool {
+        self.status == AgentReviewHandoffStatus::Ready
+    }
+}
+
+impl AgentReviewHandoffEvidence {
+    pub fn from_plan(
+        plan: &IssueHandoffPlan,
+        validation_summary: impl Into<String>,
+        last_transition: impl Into<String>,
+    ) -> Self {
+        Self {
+            issue_ref: plan.issue_ref.clone(),
+            workspace_key: plan.workspace_key.clone(),
+            workspace_path: plan.workspace_path.clone(),
+            branch_name: plan.branch_name.clone(),
+            pull_request_url: None,
+            validation_summary: validation_summary.into(),
+            last_transition: last_transition.into(),
+            no_pr_blocker: None,
+        }
+    }
+}
+
+pub fn evaluate_agent_review_handoff(
+    evidence: &AgentReviewHandoffEvidence,
+) -> AgentReviewHandoffReport {
+    let mut missing = Vec::new();
+
+    if evidence.issue_ref.trim().is_empty() {
+        missing.push("issue id".into());
+    }
+    if evidence.workspace_key.trim().is_empty() {
+        missing.push("workspace key".into());
+    }
+    if evidence.branch_name.trim().is_empty() {
+        missing.push("branch name".into());
+    }
+    if evidence.validation_summary.trim().is_empty() {
+        missing.push("validation summary".into());
+    }
+    if evidence.last_transition.trim().is_empty() {
+        missing.push("last transition".into());
+    }
+
+    let has_pr = evidence
+        .pull_request_url
+        .as_deref()
+        .map(|url| !url.trim().is_empty())
+        .unwrap_or(false);
+    let has_no_pr_blocker = evidence
+        .no_pr_blocker
+        .as_deref()
+        .map(|blocker| !blocker.trim().is_empty())
+        .unwrap_or(false);
+
+    if !has_pr && !has_no_pr_blocker {
+        missing.push("pull request url or explicit no-PR blocker".into());
+    }
+
+    if missing.is_empty() && has_pr {
+        AgentReviewHandoffReport {
+            status: AgentReviewHandoffStatus::Ready,
+            missing,
+            target_state: Some("agent_review".into()),
+            message: "Agent Review handoff invariant passed.".into(),
+        }
+    } else {
+        AgentReviewHandoffReport {
+            status: AgentReviewHandoffStatus::Blocked,
+            missing,
+            target_state: Some("need_human_input".into()),
+            message: "Agent Review handoff invariant is not satisfied; keeping issue out of Agent Review.".into(),
+        }
+    }
+}
+
+pub fn render_agent_review_handoff_workpad(
+    issue: &TrackerIssue,
+    evidence: &AgentReviewHandoffEvidence,
+    report: &AgentReviewHandoffReport,
+) -> String {
+    let mut lines = vec![
+        "## Jade Symphony Workpad".to_string(),
+        String::new(),
+        "### Agent Review Handoff Invariant".to_string(),
+        format!("- Issue: {} {}", issue.identifier, issue.title),
+        format!("- Status: `{:?}`", report.status),
+        format!("- Message: {}", report.message),
+        format!(
+            "- Target state: `{}`",
+            report.target_state.as_deref().unwrap_or("none")
+        ),
+        String::new(),
+        "### Evidence".to_string(),
+        format!("- Workspace key: `{}`", evidence.workspace_key),
+        format!("- Workspace path: `{}`", evidence.workspace_path.display()),
+        format!("- Branch: `{}`", evidence.branch_name),
+        format!(
+            "- Pull request: `{}`",
+            evidence.pull_request_url.as_deref().unwrap_or("missing")
+        ),
+        format!("- Validation: {}", evidence.validation_summary),
+        format!("- Last transition: {}", evidence.last_transition),
+    ];
+
+    if let Some(blocker) = &evidence.no_pr_blocker {
+        lines.push(format!("- No-PR blocker: {}", blocker));
+    }
+
+    if !report.missing.is_empty() {
+        lines.push(String::new());
+        lines.push("### Missing Handoff Evidence".into());
+        for item in &report.missing {
+            lines.push(format!("- {item}"));
+        }
+    }
+
+    lines.push(String::new());
+    lines.push("### Boundary".into());
+    lines.push("- Main implementation agent may move complete work to `Agent Review` only after this invariant passes.".into());
+    lines.push("- Main implementation agent must never set `Human Review`.".into());
+
+    lines.join("\n")
 }
 
 pub fn plan_issue_handoff(
@@ -320,5 +473,50 @@ mod tests {
             .contains("cargo clippy --all-targets --all-features -- -D warnings"));
         assert!(pr.body.contains("stops at Agent Review"));
         assert!(pr.body.contains("Closes #21"));
+    }
+
+    #[test]
+    fn agent_review_handoff_requires_pr_url() {
+        let plan = plan_issue_handoff(Path::new("/tmp/jade-workspaces"), &issue(), "main").unwrap();
+        let evidence =
+            AgentReviewHandoffEvidence::from_plan(&plan, "cargo test passed", "completed");
+
+        let report = evaluate_agent_review_handoff(&evidence);
+
+        assert!(!report.is_ready());
+        assert_eq!(report.target_state.as_deref(), Some("need_human_input"));
+        assert!(report
+            .missing
+            .contains(&"pull request url or explicit no-PR blocker".to_string()));
+    }
+
+    #[test]
+    fn agent_review_handoff_passes_with_pr_url() {
+        let plan = plan_issue_handoff(Path::new("/tmp/jade-workspaces"), &issue(), "main").unwrap();
+        let mut evidence =
+            AgentReviewHandoffEvidence::from_plan(&plan, "cargo test passed", "completed");
+        evidence.pull_request_url = Some("https://github.com/Alive24/jade-symphony/pull/21".into());
+
+        let report = evaluate_agent_review_handoff(&evidence);
+
+        assert!(report.is_ready());
+        assert_eq!(report.target_state.as_deref(), Some("agent_review"));
+    }
+
+    #[test]
+    fn agent_review_handoff_workpad_names_missing_pr_evidence() {
+        let issue = issue();
+        let plan = plan_issue_handoff(Path::new("/tmp/jade-workspaces"), &issue, "main").unwrap();
+        let evidence =
+            AgentReviewHandoffEvidence::from_plan(&plan, "cargo test passed", "completed");
+        let report = evaluate_agent_review_handoff(&evidence);
+
+        let workpad = render_agent_review_handoff_workpad(&issue, &evidence, &report);
+
+        assert!(workpad.contains("## Jade Symphony Workpad"));
+        assert!(workpad.contains("Agent Review Handoff Invariant"));
+        assert!(workpad.contains("Pull request: `missing`"));
+        assert!(workpad.contains("pull request url or explicit no-PR blocker"));
+        assert!(workpad.contains("must never set `Human Review`"));
     }
 }

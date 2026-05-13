@@ -11,10 +11,16 @@ pub struct EventRecord {
     pub issue_id: Option<String>,
     pub issue_identifier: Option<String>,
     pub session_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_author: Option<String>,
     pub message: String,
 }
 
@@ -68,6 +74,9 @@ mod tests {
             session_id: None,
             profile_id: Some("codex-alpha".into()),
             instance_name: Some("Codex Alpha".into()),
+            actor_role: Some("implementation_agent".into()),
+            actor_label: Some("Jade Symphony Agent".into()),
+            git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
             message: "queued".into(),
         })
         .unwrap();
@@ -75,5 +84,6 @@ mod tests {
         let content = std::fs::read_to_string(temp.path().join("events.jsonl")).unwrap();
         assert!(content.contains("\"event\":\"dispatch\""));
         assert!(content.contains("\"profile_id\":\"codex-alpha\""));
+        assert!(content.contains("\"actor_role\":\"implementation_agent\""));
     }
 }

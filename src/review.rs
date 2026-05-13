@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::model::TrackerIssue;
+use crate::model::{normalize_state, TrackerIssue};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReviewFindingClass {
@@ -89,6 +89,66 @@ pub struct ReviewGateDecision {
     pub outcome: ReviewOutcome,
     pub target_state: Option<&'static str>,
     pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReviewStaleReason {
+    MergeConflict,
+    BaseBranchUpdated,
+    ReviewOutdated,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReviewReworkClass {
+    MechanicalConflictResolution,
+    BaseRefresh,
+    SemanticChange,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReviewFreshnessDecisionKind {
+    PriorReviewStillValid,
+    PriorReviewInvalidated,
+    NeedsHumanInput,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReviewFreshnessInput {
+    pub issue_ref: String,
+    pub prior_head_sha: String,
+    pub current_head_sha: String,
+    pub prior_base_sha: String,
+    pub current_base_sha: String,
+    #[serde(default)]
+    pub changed_files: Vec<String>,
+    pub stale_reason: ReviewStaleReason,
+    pub rework_class: ReviewReworkClass,
+    pub patch_summary: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReviewFreshnessDecision {
+    pub kind: ReviewFreshnessDecisionKind,
+    pub prior_human_review_valid: bool,
+    pub human_rereview_required: bool,
+    pub main_agent_target_state: String,
+    pub authorized_next_state: Option<String>,
+    pub rationale: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReviewFreshnessReport {
+    pub input: ReviewFreshnessInput,
+    pub decision: ReviewFreshnessDecision,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReviewRunEligibility {
+    Eligible { worker_key: String },
+    AlreadyQueued { worker_key: String },
+    NotInAgentReview { current_state: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -387,12 +447,64 @@ pub fn review_gate_decision_for_actor(job: &ReviewJob, actor: ReviewActor) -> Re
     }
 }
 
+pub fn review_worker_key(issue: &TrackerIssue, backend: &str) -> String {
+    format!(
+        "review:{}:{}",
+        issue.identifier.trim(),
+        backend.trim().to_lowercase()
+    )
+}
+
+pub fn review_run_eligibility(
+    issue: &TrackerIssue,
+    agent_review_state: &str,
+    backend: &str,
+) -> ReviewRunEligibility {
+    if issue.normalized_state() != normalize_state(agent_review_state) {
+        return ReviewRunEligibility::NotInAgentReview {
+            current_state: issue.state.clone(),
+        };
+    }
+
+    let worker_key = review_worker_key(issue, backend);
+    if has_active_review_worker(issue, &worker_key) {
+        ReviewRunEligibility::AlreadyQueued { worker_key }
+    } else {
+        ReviewRunEligibility::Eligible { worker_key }
+    }
+}
+
+fn has_active_review_worker(issue: &TrackerIssue, worker_key: &str) -> bool {
+    issue.project_fields.iter().any(|(key, value)| {
+        let key = key.to_lowercase();
+        if !key.contains("review") {
+            return false;
+        }
+
+        let value = value
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| value.to_string());
+        active_review_marker_matches(&value, worker_key)
+    }) || issue
+        .description
+        .as_deref()
+        .is_some_and(|description| active_review_marker_matches(description, worker_key))
+}
+
+fn active_review_marker_matches(value: &str, worker_key: &str) -> bool {
+    let value = value.to_lowercase();
+    value.contains(&worker_key.to_lowercase())
+        && (value.contains("queued") || value.contains("running"))
+}
+
 pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
     let decision = review_gate_decision_for_actor(job, ReviewActor::IndependentReviewAgent);
     let mut lines = vec![
         "## Agent Review".to_string(),
         String::new(),
         format!("- Issue: {} {}", issue.identifier, issue.title),
+        format!("- Worker key: {}", review_worker_key(issue, &job.backend)),
         format!("- Reviewer backend: {}", job.backend),
         format!("- Job state: {:?}", job.state),
         format!("- Decision: {}", decision.message),
@@ -426,6 +538,100 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
         lines.push(String::new());
         lines.push("Evidence recorded. Independent Review Agent may move this issue to Human Review; the main implementation agent must not.".into());
     }
+
+    lines.join("\n")
+}
+
+pub fn classify_review_freshness(input: ReviewFreshnessInput) -> ReviewFreshnessReport {
+    let decision = match input.rework_class {
+        ReviewReworkClass::MechanicalConflictResolution | ReviewReworkClass::BaseRefresh => {
+            ReviewFreshnessDecision {
+                kind: ReviewFreshnessDecisionKind::PriorReviewStillValid,
+                prior_human_review_valid: true,
+                human_rereview_required: false,
+                main_agent_target_state: "agent_review".into(),
+                authorized_next_state: Some("merging".into()),
+                rationale: "Rework is classified as mechanical; prior Human Review can be preserved when evidence is recorded.".into(),
+            }
+        }
+        ReviewReworkClass::SemanticChange => ReviewFreshnessDecision {
+            kind: ReviewFreshnessDecisionKind::PriorReviewInvalidated,
+            prior_human_review_valid: false,
+            human_rereview_required: true,
+            main_agent_target_state: "agent_review".into(),
+            authorized_next_state: Some("agent_review".into()),
+            rationale: "Semantic implementation changes invalidate prior Human Review and require the normal Agent Review then Human Review path.".into(),
+        },
+        ReviewReworkClass::Unknown => ReviewFreshnessDecision {
+            kind: ReviewFreshnessDecisionKind::NeedsHumanInput,
+            prior_human_review_valid: false,
+            human_rereview_required: true,
+            main_agent_target_state: "agent_review".into(),
+            authorized_next_state: Some("need_human_input".into()),
+            rationale: "Rework class is unknown, so prior review freshness cannot be safely preserved.".into(),
+        },
+    };
+
+    ReviewFreshnessReport { input, decision }
+}
+
+pub fn render_review_freshness_workpad(report: &ReviewFreshnessReport) -> String {
+    let input = &report.input;
+    let decision = &report.decision;
+    let mut lines = vec![
+        "## Review Freshness".to_string(),
+        String::new(),
+        format!("- Issue: {}", input.issue_ref),
+        format!("- Stale reason: {:?}", input.stale_reason),
+        format!("- Rework class: {:?}", input.rework_class),
+        format!("- Prior head SHA: `{}`", input.prior_head_sha),
+        format!("- Current head SHA: `{}`", input.current_head_sha),
+        format!("- Prior base SHA: `{}`", input.prior_base_sha),
+        format!("- Current base SHA: `{}`", input.current_base_sha),
+        format!(
+            "- Prior Human Review still valid: `{}`",
+            decision.prior_human_review_valid
+        ),
+        format!(
+            "- Human re-review required: `{}`",
+            decision.human_rereview_required
+        ),
+        format!(
+            "- Main-agent target state: `{}`",
+            decision.main_agent_target_state
+        ),
+        format!(
+            "- Authorized next state after review-freshness evidence: `{}`",
+            decision.authorized_next_state.as_deref().unwrap_or("none")
+        ),
+        format!("- Decision: {:?}", decision.kind),
+        format!("- Rationale: {}", decision.rationale),
+    ];
+
+    lines.push(String::new());
+    lines.push("### Changed Files".into());
+    if input.changed_files.is_empty() {
+        lines.push("- None recorded.".into());
+    } else {
+        lines.extend(input.changed_files.iter().map(|file| format!("- `{file}`")));
+    }
+
+    lines.push(String::new());
+    lines.push("### Patch Summary".into());
+    lines.push(
+        input
+            .patch_summary
+            .as_deref()
+            .filter(|summary| !summary.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| "Not recorded.".into()),
+    );
+
+    lines.push(String::new());
+    lines.push("### Authority Boundary".into());
+    lines.push("- This freshness report is evidence, not an automatic approval.".into());
+    lines.push("- Main implementation agent still stops at `Agent Review`.".into());
+    lines.push("- `Human Review` remains reserved for an independent Review Agent or human-authorized workflow.".into());
 
     lines.join("\n")
 }
@@ -681,5 +887,132 @@ mod tests {
             ReviewOutcome::NeedsHumanInput
         );
         assert_ne!(inconclusive_decision.target_state, Some("human_review"));
+    }
+
+    #[test]
+    fn mechanical_review_freshness_preserves_prior_human_review_evidence() {
+        let report = classify_review_freshness(ReviewFreshnessInput {
+            issue_ref: "#33".into(),
+            prior_head_sha: "old-head".into(),
+            current_head_sha: "new-head".into(),
+            prior_base_sha: "old-base".into(),
+            current_base_sha: "new-base".into(),
+            changed_files: vec!["docs/dogfood-readiness.md".into()],
+            stale_reason: ReviewStaleReason::MergeConflict,
+            rework_class: ReviewReworkClass::MechanicalConflictResolution,
+            patch_summary: Some("Resolved merge conflict without semantic changes.".into()),
+        });
+
+        assert_eq!(
+            report.decision.kind,
+            ReviewFreshnessDecisionKind::PriorReviewStillValid
+        );
+        assert!(report.decision.prior_human_review_valid);
+        assert!(!report.decision.human_rereview_required);
+        assert_eq!(report.decision.main_agent_target_state, "agent_review");
+        assert_eq!(
+            report.decision.authorized_next_state.as_deref(),
+            Some("merging")
+        );
+    }
+
+    #[test]
+    fn semantic_review_freshness_requires_normal_review_path() {
+        let report = classify_review_freshness(ReviewFreshnessInput {
+            issue_ref: "#38".into(),
+            prior_head_sha: "old-head".into(),
+            current_head_sha: "new-head".into(),
+            prior_base_sha: "same-base".into(),
+            current_base_sha: "same-base".into(),
+            changed_files: vec!["src/review.rs".into()],
+            stale_reason: ReviewStaleReason::ReviewOutdated,
+            rework_class: ReviewReworkClass::SemanticChange,
+            patch_summary: Some("Changed review decision behavior.".into()),
+        });
+
+        assert_eq!(
+            report.decision.kind,
+            ReviewFreshnessDecisionKind::PriorReviewInvalidated
+        );
+        assert!(!report.decision.prior_human_review_valid);
+        assert!(report.decision.human_rereview_required);
+        assert_eq!(report.decision.main_agent_target_state, "agent_review");
+        assert_eq!(
+            report.decision.authorized_next_state.as_deref(),
+            Some("agent_review")
+        );
+    }
+
+    #[test]
+    fn review_freshness_workpad_records_authority_boundary() {
+        let report = classify_review_freshness(ReviewFreshnessInput {
+            issue_ref: "#33".into(),
+            prior_head_sha: "old-head".into(),
+            current_head_sha: "new-head".into(),
+            prior_base_sha: "old-base".into(),
+            current_base_sha: "new-base".into(),
+            changed_files: Vec::new(),
+            stale_reason: ReviewStaleReason::BaseBranchUpdated,
+            rework_class: ReviewReworkClass::BaseRefresh,
+            patch_summary: None,
+        });
+        let workpad = render_review_freshness_workpad(&report);
+
+        assert!(workpad.contains("Prior Human Review still valid: `true`"));
+        assert!(workpad.contains("Main implementation agent still stops at `Agent Review`"));
+        assert!(workpad.contains("Human Review"));
+    }
+
+    #[test]
+    fn review_run_eligibility_accepts_agent_review_issue() {
+        assert_eq!(
+            review_run_eligibility(&issue(), "Agent Review", "fake"),
+            ReviewRunEligibility::Eligible {
+                worker_key: "review:#1:fake".into()
+            }
+        );
+    }
+
+    #[test]
+    fn review_run_eligibility_rejects_non_agent_review_issue() {
+        let mut issue = issue();
+        issue.state = "Todo".into();
+
+        assert_eq!(
+            review_run_eligibility(&issue, "Agent Review", "fake"),
+            ReviewRunEligibility::NotInAgentReview {
+                current_state: "Todo".into()
+            }
+        );
+    }
+
+    #[test]
+    fn review_run_eligibility_detects_existing_worker_marker() {
+        let mut issue = issue();
+        issue.project_fields.insert(
+            "Review Worker".into(),
+            serde_json::Value::String("queued review:#1:fake".into()),
+        );
+
+        assert_eq!(
+            review_run_eligibility(&issue, "Agent Review", "fake"),
+            ReviewRunEligibility::AlreadyQueued {
+                worker_key: "review:#1:fake".into()
+            }
+        );
+    }
+
+    #[test]
+    fn review_run_eligibility_detects_workpad_worker_marker() {
+        let mut issue = issue();
+        issue.description =
+            Some("## Workpad\n\nReview worker running with key `review:#1:fake`.".into());
+
+        assert_eq!(
+            review_run_eligibility(&issue, "Agent Review", "fake"),
+            ReviewRunEligibility::AlreadyQueued {
+                worker_key: "review:#1:fake".into()
+            }
+        );
     }
 }

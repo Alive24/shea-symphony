@@ -25,6 +25,9 @@ pub struct PreparedRun {
     pub instance_name: Option<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    pub actor_role: Option<String>,
+    pub actor_label: Option<String>,
+    pub git_author: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,6 +88,9 @@ impl AgentBackend for DryRunBackend {
                 .as_ref()
                 .map(|profile| profile.instance_name.clone()),
             env: profile_environment(profile.as_ref(), self.name()),
+            actor_role: Some(config.identity.actor_role.clone()),
+            actor_label: Some(config.identity.actor_label.clone()),
+            git_author: config.identity.git.author(),
         })
     }
 
@@ -152,6 +158,9 @@ impl AgentBackend for CodexBackend {
                 .as_ref()
                 .map(|profile| profile.instance_name.clone()),
             env: profile_environment(profile.as_ref(), self.name()),
+            actor_role: Some(config.identity.actor_role.clone()),
+            actor_label: Some(config.identity.actor_label.clone()),
+            git_author: config.identity.git.author(),
         })
     }
 
@@ -197,6 +206,9 @@ impl AgentBackend for ClaudeCodeBackend {
                 .as_ref()
                 .map(|profile| profile.instance_name.clone()),
             env: profile_environment(profile.as_ref(), self.name()),
+            actor_role: Some(config.identity.actor_role.clone()),
+            actor_label: Some(config.identity.actor_label.clone()),
+            git_author: config.identity.git.author(),
         })
     }
 
@@ -258,6 +270,18 @@ fn run_subprocess_backend(
             prepared.sandbox.as_deref().unwrap_or_default(),
         )
         .envs(prepared.env.iter())
+        .env(
+            "JADE_SYMPHONY_ACTOR_ROLE",
+            prepared.actor_role.as_deref().unwrap_or_default(),
+        )
+        .env(
+            "JADE_SYMPHONY_ACTOR_LABEL",
+            prepared.actor_label.as_deref().unwrap_or_default(),
+        )
+        .env(
+            "JADE_SYMPHONY_GIT_AUTHOR",
+            prepared.git_author.as_deref().unwrap_or_default(),
+        )
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

@@ -15,6 +15,12 @@ pub struct RuntimeState {
     pub branch_name: Option<String>,
     pub backend: String,
     pub backend_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_author: Option<String>,
     pub attempt_count: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at_ms: Option<u64>,
@@ -34,6 +40,9 @@ impl RuntimeState {
             branch_name: None,
             backend: backend.into(),
             backend_session_id: None,
+            actor_role: None,
+            actor_label: None,
+            git_author: None,
             attempt_count: 1,
             updated_at_ms: None,
             retry: None,
@@ -204,6 +213,9 @@ mod tests {
             branch_name: Some("feature-issue-1".into()),
             backend: "dry-run".into(),
             backend_session_id: Some("session".into()),
+            actor_role: Some("implementation_agent".into()),
+            actor_label: Some("Jade Symphony Agent".into()),
+            git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
             attempt_count: 2,
             updated_at_ms: Some(1_000),
             retry: None,

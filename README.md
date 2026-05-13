@@ -16,7 +16,7 @@ It does **not** yet fully autonomously execute GitHub Project v2 issues,
 run Codex/Claude through the final app-server flow, or supervise long-running
 workers. A `run-loop` skeleton now exists and can idle-poll in unbounded
 write mode, but full claim reconciliation, runtime resume, and
-one-issue-one-PR automation are still future work.
+worker supervision are still future work.
 
 ## What Works Now
 
@@ -44,6 +44,10 @@ one-issue-one-PR automation are still future work.
 - review freshness helpers can classify Merging-to-Rework repairs as
   mechanical, semantic, or unknown and render workpad evidence for whether prior
   Human Review remains valid.
+- `review-loop` can discover `Agent Review` issues, avoid duplicate review
+  worker markers, run a configured independent review backend in bounded mode,
+  and reconcile pass/rework/inconclusive transitions through the Review Agent
+  authority boundary.
 - Issue Forge can discover local candidates from intent, ask one focused
   clarification question, draft from the quality template, validate Markdown,
   repair rough Markdown into an executable issue contract shape, and create a
@@ -60,9 +64,15 @@ one-issue-one-PR automation are still future work.
 - workspace identifiers are sanitized; local workspace paths stay under the
   configured root; hooks support timeouts, stdout/stderr capture,
   `before_remove`, and safe cleanup helpers.
+- workflow identity config can distinguish the acting role/label from the human
+  operator and can apply configured git author metadata with repository-local
+  `git config --local` only.
 - workspace/branch/PR handoff planning can derive a deterministic issue
   workspace key, branch name, and PR handoff body, and can detect an existing
   branch that appears to belong to a different issue.
+- live GitHub `run-loop --write` can create or reuse the planned issue
+  worktree/branch, run the configured backend inside that worktree, push the
+  branch, and create or reuse one GitHub PR after successful execution.
 - terminal status output reports polling state, planned running/skipped/retrying
   issues, token counters, event-log path, gate details, and integration gaps.
 - JSONL event-log primitives exist.
@@ -76,7 +86,8 @@ one-issue-one-PR automation are still future work.
   backend result evidence, records final transition intent, and clears it after
   successful handoff/block transition.
 - `run-once` can prepare one dry-run workspace, render a prompt file, run the
-  dry-run backend, and append JSONL events.
+  dry-run backend, apply local git identity when the prepared workspace is a git
+  repository, and append JSONL events with actor metadata.
 - `run-once` can execute the conservative Codex subprocess backend when a
   workflow explicitly sets `agent.backend: codex`.
 - `run-once` can execute the conservative Claude Code subprocess backend when a
@@ -85,8 +96,9 @@ one-issue-one-PR automation are still future work.
   print dry-run claim/run/workpad/handoff actions, surface deterministic
   workspace/branch/PR handoff plans, use tracker claim helpers to
   claim/resume/skip externally changed issues, and in explicit `--write` mode
-  run one issue at a time, record planned handoff evidence, and stop main-agent
-  completion at `Agent Review`;
+  run one issue at a time, record handoff evidence, create a live PR handoff in
+  non-fixture GitHub Project v2 mode, and stop main-agent completion at
+  `Agent Review`;
   unbounded write mode sleeps on idle polls using the workflow polling interval.
 
 ## Dry-Run Only
@@ -121,6 +133,7 @@ cargo run -- plan examples/dry-run-workflow.md
 cargo run -- plan-dispatch examples/dry-run-workflow.md
 cargo run -- status examples/dry-run-workflow.md
 cargo run -- run-once examples/dry-run-workflow.md
+cargo run -- run-once examples/git-identity-workflow.md
 cargo run -- run-once examples/codex-subprocess-workflow.md
 cargo run -- run-once examples/claude-subprocess-workflow.md
 cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
@@ -142,6 +155,11 @@ fixtures show controlled real-backend paths without invoking live hosted
 services. They write `JADE_SYMPHONY_PROMPT.md` into the prepared workspace and
 append JSONL events for the selected workflow.
 
+`examples/git-identity-workflow.md` is a fixture workflow that runs
+`after_create: git init`, applies the configured `identity.git` values with
+workspace-local git config, and prints actor/git identity evidence. Jade
+Symphony does not write global git identity config.
+
 Live GitHub write commands are explicit and require a non-fixture workflow plus
 usable GitHub auth through `GITHUB_TOKEN` / `GH_TOKEN` or `gh api graphql`:
 
@@ -153,6 +171,7 @@ cargo run -- add-to-project path/to/WORKFLOW.md <github-issue-node-id> --write
 cargo run -- gate-apply path/to/WORKFLOW.md '#123' --write
 cargo run -- review-once path/to/WORKFLOW.md '#123' --write
 cargo run -- review-fake path/to/WORKFLOW.md '#123' --outcome pass --write
+cargo run -- review-loop examples/review-fixture-workflow.md --max-iterations 1 --dry-run
 cargo run -- review-freshness --issue '#123' --prior-head old --current-head new --prior-base old-base --current-base new-base --changed-file docs/dogfood-readiness.md --stale-reason merge-conflict --rework-class mechanical-conflict-resolution --patch-summary "Resolved merge conflict without semantic changes."
 ```
 
@@ -169,6 +188,10 @@ Capability, is still a follow-up.
 `review-once` / `review-fake` are independent Review Agent commands: a passing
 review can move `Agent Review` to `Human Review`, confirmed findings move to
 `Rework`, and failed or inconclusive reviews do not advance to `Human Review`.
+`review-loop` is the first runtime-style Review Agent command: it selects
+eligible `Agent Review` issues, prints intended review work in dry-run mode, and
+in write mode records review evidence plus the allowed review transition. It is
+bounded by `--max-iterations` or `--once` and is not a persistent daemon yet.
 `review-freshness` is an evidence command for Merging conflict repair: it does
 not mutate tracker state, does not approve a PR, and does not authorize the main
 implementation agent to set `Human Review`. Mechanical conflict repair can
@@ -182,7 +205,8 @@ claim reconciliation, resume state, and PR automation exist.
 ## Stubbed
 
 - linked PR attachment/linking as a first-class relationship.
-- live git worktree creation and `gh pr create` from the runtime loop.
+- robust cleanup for live git worktrees after terminal tracker reconciliation.
+- profile-specific account/token routing for git hosts or agent backends.
 - rich interactive Issue Forge TUI; the current flow is CLI-first and
   command-step based.
 - Linear live adapter credential-gated smoke coverage.
@@ -198,12 +222,13 @@ claim reconciliation, resume state, and PR automation exist.
 - richer issue claiming, state transition, and reconciliation safety beyond the
   current claim helper and resume preflight.
 - full multi-worker runtime-state resume reconciliation after interruption.
-- workspace-per-issue branch and PR automation beyond current handoff planning
-  and workpad evidence.
+- richer workspace-per-issue branch and PR reconciliation beyond current
+  create-or-reuse handoff.
 - continuation retries and automated stall restart.
 - terminal workspace cleanup tied to tracker state.
 - live token/rate-limit accounting beyond the current snapshot counters.
-- persistent Agent Review worker supervision and reconciliation.
+- persistent background Agent Review worker supervision beyond bounded
+  `review-loop` ticks.
 - Issue Forge Project field setup after issue creation.
 - autonomous Issue Forge issue creation from reflective mode without explicit
   operator confirmation.

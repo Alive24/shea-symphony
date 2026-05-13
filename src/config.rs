@@ -19,6 +19,7 @@ pub struct RuntimeConfig {
     pub codex: CodexConfig,
     pub claude: ClaudeConfig,
     pub review: ReviewConfig,
+    pub identity: IdentityConfig,
     pub observability: ObservabilityConfig,
     pub server: ServerConfig,
     #[serde(default)]
@@ -129,6 +130,39 @@ pub struct ReviewConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdentityConfig {
+    pub actor_role: String,
+    pub actor_label: String,
+    pub git: GitIdentityConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct GitIdentityConfig {
+    pub name: Option<String>,
+    pub email: Option<String>,
+    pub signing_key: Option<String>,
+    pub extra: BTreeMap<String, String>,
+}
+
+impl GitIdentityConfig {
+    pub fn author(&self) -> Option<String> {
+        match (self.name.as_deref(), self.email.as_deref()) {
+            (Some(name), Some(email)) => Some(format!("{name} <{email}>")),
+            (Some(name), None) => Some(name.to_string()),
+            (None, Some(email)) => Some(format!("<{email}>")),
+            (None, None) => None,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.name.is_none()
+            && self.email.is_none()
+            && self.signing_key.is_none()
+            && self.extra.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObservabilityConfig {
     pub dashboard_enabled: bool,
     pub refresh_ms: u64,
@@ -220,6 +254,7 @@ impl RuntimeConfig {
                 .unwrap_or_else(|| "gemini".to_string()),
             timeout_ms: get_u64(root.get("review"), "timeout_ms").unwrap_or(600_000),
         };
+        let identity = parse_identity(root.get("identity"));
         let observability = ObservabilityConfig {
             dashboard_enabled: get_bool(root.get("observability"), "dashboard_enabled")
                 .unwrap_or(true),
@@ -247,6 +282,7 @@ impl RuntimeConfig {
             codex,
             claude,
             review,
+            identity,
             observability,
             server,
             raw: workflow.config.clone(),
@@ -408,6 +444,37 @@ fn parse_state_limits(value: Option<&Value>) -> BTreeMap<String, usize> {
     limits
 }
 
+fn parse_identity(value: Option<&Value>) -> IdentityConfig {
+    IdentityConfig {
+        actor_role: get_string(value, "actor_role")
+            .unwrap_or_else(|| "implementation_agent".to_string()),
+        actor_label: get_string(value, "actor_label")
+            .unwrap_or_else(|| "Jade Symphony Agent".to_string()),
+        git: parse_git_identity(get_value(value, "git")),
+    }
+}
+
+fn parse_git_identity(value: Option<&Value>) -> GitIdentityConfig {
+    GitIdentityConfig {
+        name: get_string(value, "name"),
+        email: get_string(value, "email"),
+        signing_key: get_string(value, "signing_key"),
+        extra: parse_string_map(get_value(value, "extra")),
+    }
+}
+
+fn parse_string_map(value: Option<&Value>) -> BTreeMap<String, String> {
+    let mut output = BTreeMap::new();
+    if let Some(Value::Object(map)) = value {
+        for (key, value) in map {
+            if let Some(value) = value.as_str() {
+                output.insert(key.clone(), value.to_string());
+            }
+        }
+    }
+    output
+}
+
 fn get_value<'a>(root: Option<&'a Value>, key: &str) -> Option<&'a Value> {
     root.and_then(Value::as_object).and_then(|map| map.get(key))
 }
@@ -566,6 +633,33 @@ mod tests {
             .agent
             .max_concurrent_agents_by_state
             .contains_key("bad"));
+    }
+
+    #[test]
+    fn parses_actor_and_git_identity_config() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\nidentity:\n  actor_role: review_agent\n  actor_label: Gemini Review Runner\n  git:\n    name: Jade Review Bot\n    email: jade-review@example.invalid\n    signing_key: ABC123\n    extra:\n      jade.actorRole: review_agent\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.identity.actor_role, "review_agent");
+        assert_eq!(config.identity.actor_label, "Gemini Review Runner");
+        assert_eq!(
+            config.identity.git.author().as_deref(),
+            Some("Jade Review Bot <jade-review@example.invalid>")
+        );
+        assert_eq!(
+            config
+                .identity
+                .git
+                .extra
+                .get("jade.actorRole")
+                .map(String::as_str),
+            Some("review_agent")
+        );
     }
 
     #[test]

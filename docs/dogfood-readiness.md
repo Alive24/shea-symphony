@@ -10,17 +10,17 @@ yet.
 | Capability | Current Status |
 | --- | --- |
 | Workflow loader | Implemented for explicit workflow path and optional YAML front matter. Runtime reload is not implemented. |
-| Typed config | Implemented for the current skeleton, including GitHub Project v2-shaped settings. |
+| Typed config | Implemented for the current skeleton, including GitHub Project v2-shaped settings and operator/agent identity metadata. |
 | Normalized issue model | Implemented as `TrackerIssue`, including ProjectV2 item ID, labels, assignees, blockers, linked PRs, and project fields. |
 | GitHub Project v2 tracker | Fixture-backed mode plus live loading and explicit write operations through `gh api graphql`. `run-loop` can coordinate existing primitives, idle-poll in unbounded write mode, and use claim decision helpers before write-mode dispatch; auth diagnostics distinguish fixture mode, env-token auth, usable `gh api graphql` auth, missing `gh`, and unusable auth. Same-state status writes are skipped, Project item addition initializes the configured `Status` field to `Todo`, marker workpad upsert is idempotent for the canonical marker, and claim decision helpers distinguish claimable, active, and externally changed states. Full claim reconciliation is not implemented yet. |
 | Linear tracker | Implemented behind the same trait for fixture-backed planning plus live GraphQL reads, state updates, marker workpad comments, follow-up issue creation, and project assignment. Credential-gated smoke coverage is still missing. |
 | Issue Quality Gate | Implemented as a first-pass Markdown contract check. It is useful for dry-run classification, not yet a full source-alignment gate. |
 | Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, repair, CLI-first interactive issue shaping, conservative reflective follow-up candidate generation, and explicit `forge-create` tracker issue creation from quality-gated Markdown. Interactive creation requires `--write` and `--confirm-create`; reflective mode only prints candidates. Initial Project `Status` setup is available through the GitHub add-to-project path; arbitrary Project field setup after creation is not implemented yet. |
-| Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes, idle polling, claim-helper use, runtime-state persistence, resume preflight, retry backoff records, stall detection, and planned handoff evidence exists. No long-running worker supervision, automated stall restart, full multi-worker runtime resume reconciliation, or full state reconciliation yet. |
-| Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, workspace/branch/PR handoff planning, and run-loop handoff evidence exist. Live git worktree creation, PR creation, and runtime reconciliation cleanup are not wired yet. |
+| Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes, idle polling, claim-helper use, runtime-state persistence, resume preflight, retry backoff records, stall detection, and live PR handoff in non-fixture GitHub mode exists. No long-running worker supervision, automated stall restart, full multi-worker runtime resume reconciliation, or full state reconciliation yet. |
+| Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, repository-local git identity application, workspace/branch/PR handoff planning, live git worktree/branch creation, branch push, PR create-or-reuse, and run-loop handoff evidence exist. Runtime reconciliation cleanup is not wired yet. |
 | Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Full Codex app-server and Claude Code protocol parity are not implemented yet. |
-| Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, review-freshness evidence for Merging conflict repair, and workpad/status evidence helpers exist. Persistent review worker reconciliation is not implemented yet. |
-| Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events. Runtime state files are written during write-mode `run-loop` issue execution; resume, retry, and stall supervision events are also recorded. No web/API surface yet. |
+| Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, review-freshness evidence for Merging conflict repair, bounded `review-loop` selection/reconciliation, and workpad/status evidence helpers exist. Persistent background review worker supervision is not implemented yet. |
+| Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events with actor metadata. Runtime state files are written during write-mode `run-loop` issue execution, including actor role/label and git author when configured; resume, retry, and stall supervision events are also recorded. No web/API surface yet. |
 | Tests | Unit tests cover the dry-run skeleton. No credential-gated integration tests yet. |
 
 ## Before Executing GitHub Project Issues
@@ -65,6 +65,9 @@ Project v2 issues:
      `Agent Review` but cannot set `Human Review`.
    - Independent Review Agent commands can set `Human Review` only after a
      passed review with evidence.
+   - Bounded `review-loop` can discover eligible `Agent Review` issues, skip
+     existing review-worker markers, and apply the same independent Review Agent
+     transition rules as `review-once`.
    - Confirmed findings route to `Rework`.
    - Failed, timed out, inconclusive, or unavailable reviews remain out of
      `Human Review` and route to `Need Human Input` or stay in `Agent Review`.
@@ -89,6 +92,8 @@ Project v2 issues:
      events.
    - Ensure external command execution happens only inside the prepared
      workspace.
+   - Keep acting identity explicit in backend context and avoid sharing profile
+     credentials across concurrent workers.
 
 7. Long-running orchestration.
    - Continuous idle polling exists for unbounded write mode; full active worker
@@ -98,9 +103,14 @@ Project v2 issues:
      final transition intent. Resume preflight now blocks conflicting stale
      active state, honors retry backoff, and reports stalls; full multi-worker
      reconciliation remains pending.
-   - workspace/branch/PR handoff planning is recorded by `run-loop`, but the
-     runtime still needs live worktree creation, branch checkout, push, PR
-     creation, and PR link recording.
+   - workspace/branch/PR handoff is recorded by `run-loop`; in live
+     non-fixture GitHub mode the runtime can create/reuse the issue worktree and
+     branch, push the branch, and create/reuse one PR after successful backend
+     execution. Remaining work: cleanup, richer reconciliation, and stronger
+     verification command modeling.
+   - Local git identity application exists for prepared git repositories; the
+     live worktree path must continue to apply it before commits and preserve the
+     distinction between agent actors and human operators.
    - continuation retry after normal active-state exits.
    - exponential backoff for failures.
    - stall detection.
@@ -228,37 +238,34 @@ Acceptance:
 - terminal cleanup is tied to tracker reconciliation.
 - path escape tests cover symlink and non-directory cases.
 
-### 6. Wire Workspace Branch And PR Handoff Into Run-Loop
+### 6. Harden Workspace Branch And PR Handoff Reconciliation
 
-Goal: connect handoff planning evidence to controlled runtime mutation without
-mixing multiple issue scopes in one branch.
+Goal: strengthen the current live handoff path without mixing multiple issue
+scopes in one branch.
 
 Acceptance:
 
-- records the planned workspace key, workspace path, branch, and PR title in
-  `run-loop` dry-run output and workpad evidence.
-- refuses branches that appear to belong to a different issue.
-- creates or reuses one isolated git worktree per issue.
-- checks out the planned issue branch from the configured base branch.
-- pushes the issue branch after local completion.
-- creates one PR with a handoff body and records the PR link in the workpad.
+- reconciles existing worktrees with tracker state before reuse.
+- records PR URL and branch evidence in the tracker workpad.
+- detects missing remote commits or no-op branches before PR creation.
+- adds configured verification command execution before push/PR handoff.
+- cleans terminal worktrees after tracker reconciliation.
 - keeps main implementation completion at `Agent Review`.
 
-### 7. Add Agent Review Gate
+### 7. Add Persistent Agent Review Worker Supervision
 
-Goal: make `Agent Review` a real state before `Human Review`.
+Goal: evolve the bounded `review-loop` into persistent worker supervision.
 
 Acceptance:
 
 - reviewer backend is selected through config.
-- findings are classified as `Confirmed`, `Plausible`, `Rejected`, or
-  `Needs Context`.
-- confirmed findings block human handoff.
-- rejected/deferred findings are recorded in the workpad.
-- main implementation agent completion target is `Agent Review`.
-- independent Review Agent may move passed reviews to `Human Review` only after
-  evidence is recorded.
-- failed, timed out, inconclusive, or unavailable reviews must not set
+- one review worker per issue/PR is started and reconciled without blocking the
+  main run-loop.
+- review job identity, backend, artifact path, and result evidence are persisted
+  in workpad/runtime state.
+- duplicate review workers are prevented across repeated loop ticks.
+- passed reviews move to `Human Review`; confirmed findings move to `Rework`;
+  failed, timed out, inconclusive, or unavailable reviews must not set
   `Human Review`.
 
 ### 7b. Preserve Review Freshness During Merging Rework
@@ -322,5 +329,5 @@ GitHub Project v2 execution is hardened.
 manual live Project v2 reads and explicit tracker writes through `gh`. It still
 uses the `dry-run` backend by default. `run-loop --write` is available only as a
 bounded runtime skeleton and should not be treated as full autonomous agent
-execution until claim reconciliation, full runtime resume reconciliation, and
-live PR automation wiring exist.
+execution until claim reconciliation, full runtime resume reconciliation,
+configured verification commands, and worker supervision are hardened.

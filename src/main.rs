@@ -17,9 +17,10 @@ use jade_symphony::prompt::render_prompt;
 use jade_symphony::quality_gate::evaluate_issue;
 use jade_symphony::review::{
     classify_review_freshness, render_review_freshness_workpad, render_review_workpad,
-    review_gate_decision, transition_allowed_for_main_agent, transition_allowed_for_review_agent,
-    FakeReviewBackend, FakeReviewOutcome, GeminiCliReviewBackend, ReviewBackend,
-    ReviewFreshnessInput, ReviewJob, ReviewRequest, ReviewReworkClass, ReviewStaleReason,
+    review_gate_decision, review_run_eligibility, transition_allowed_for_main_agent,
+    transition_allowed_for_review_agent, FakeReviewBackend, FakeReviewOutcome,
+    GeminiCliReviewBackend, ReviewBackend, ReviewFreshnessInput, ReviewJob, ReviewRequest,
+    ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
 };
 use jade_symphony::runtime_state::{
     clear_runtime_state, load_runtime_state, save_runtime_state, RuntimeIssueState, RuntimeState,
@@ -86,6 +87,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             write,
         } => review_once(workflow_path, issue_ref, write),
         Command::ReviewFreshness { input } => review_freshness(input),
+        Command::ReviewLoop { options } => review_loop(options),
         Command::Gate {
             workflow_path,
             issue_ref,
@@ -510,6 +512,163 @@ fn review_freshness(input: ReviewFreshnessInput) -> Result<(), Box<dyn std::erro
     println!("\n--- workpad evidence ---\n");
     println!("{}", render_review_freshness_workpad(&report));
     Ok(())
+}
+
+fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let limit = options.iteration_limit();
+    let mut iterations = 0usize;
+
+    loop {
+        if let Some(max) = limit {
+            if iterations >= max {
+                println!("review_loop=stopped reason=max_iterations iterations={iterations}");
+                break;
+            }
+        }
+
+        iterations += 1;
+        let config = load_config(&options.workflow_path)?;
+        let adapter = adapter_from_config(&config);
+        let issues = adapter
+            .fetch_issues_by_states(std::slice::from_ref(&config.tracker.state_map.agent_review))?;
+
+        let Some(issue) = issues.first().cloned() else {
+            println!("review_loop=stopped reason=no_agent_review_issue iterations={iterations}");
+            break;
+        };
+
+        let backend_kind = review_backend_kind(&config, options.fake_outcome.as_ref());
+        match review_run_eligibility(
+            &issue,
+            &config.tracker.state_map.agent_review,
+            &backend_kind,
+        ) {
+            ReviewRunEligibility::Eligible { worker_key } => {
+                println!(
+                    "review_loop_iteration={iterations} issue={} worker_key={worker_key} mode={}",
+                    issue.identifier,
+                    if options.write { "write" } else { "dry-run" }
+                );
+                if !options.write {
+                    println!(
+                        "review_loop_dry_run action=start issue={} backend={backend_kind}",
+                        issue.identifier
+                    );
+                    println!(
+                        "review_loop_dry_run action=workpad issue={} evidence=review_job",
+                        issue.identifier
+                    );
+                    println!(
+                        "review_loop_dry_run action=reconcile issue={} actor=independent_review_agent",
+                        issue.identifier
+                    );
+                    if limit.is_none() {
+                        println!(
+                            "review_loop=stopped reason=dry_run_would_repeat_without_mutation iterations={iterations}"
+                        );
+                        break;
+                    }
+                    continue;
+                }
+
+                let latest = adapter.get_issue(&issue.identifier)?.ok_or_else(|| {
+                    format!("issue disappeared before review: {}", issue.identifier)
+                })?;
+                match review_run_eligibility(
+                    &latest,
+                    &config.tracker.state_map.agent_review,
+                    &backend_kind,
+                ) {
+                    ReviewRunEligibility::Eligible { .. } => {
+                        let job = run_review_job(&config, &latest, options.fake_outcome.clone())?;
+                        apply_review_result(adapter.as_ref(), &latest.identifier, &latest, &job)?;
+                        let decision = review_gate_decision(&job);
+                        println!(
+                            "review_loop_action=reconciled issue={} backend={} outcome={:?} target_state={:?}",
+                            latest.identifier, job.backend, decision.outcome, decision.target_state
+                        );
+                    }
+                    ReviewRunEligibility::AlreadyQueued { worker_key } => {
+                        println!(
+                            "review_loop_action=skip issue={} reason=review_worker_exists worker_key={worker_key}",
+                            latest.identifier
+                        );
+                    }
+                    ReviewRunEligibility::NotInAgentReview { current_state } => {
+                        println!(
+                            "review_loop_action=skip issue={} reason=state_changed current_state={current_state:?}",
+                            latest.identifier
+                        );
+                    }
+                }
+            }
+            ReviewRunEligibility::AlreadyQueued { worker_key } => {
+                println!(
+                    "review_loop_action=skip issue={} reason=review_worker_exists worker_key={worker_key}",
+                    issue.identifier
+                );
+            }
+            ReviewRunEligibility::NotInAgentReview { current_state } => {
+                println!(
+                    "review_loop_action=skip issue={} reason=state_changed current_state={current_state:?}",
+                    issue.identifier
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn review_backend_kind(config: &RuntimeConfig, fake_outcome: Option<&FakeReviewOutcome>) -> String {
+    if fake_outcome.is_some() {
+        "fake-reviewer".into()
+    } else if config.review.backend == "gemini-cli" {
+        "gemini-cli".into()
+    } else {
+        "fake-reviewer".into()
+    }
+}
+
+fn run_review_job(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    fake_outcome: Option<FakeReviewOutcome>,
+) -> Result<ReviewJob, Box<dyn std::error::Error>> {
+    let request = ReviewRequest {
+        issue: issue.clone(),
+        prompt: format!(
+            "Review {} {}\n\n{}",
+            issue.identifier,
+            issue.title,
+            issue.description.as_deref().unwrap_or_default()
+        ),
+        workspace: config.workspace.root.clone(),
+        artifact_root: config.observability.logs_root.join("reviews"),
+    };
+
+    if let Some(outcome) = fake_outcome {
+        let backend = FakeReviewBackend::new(outcome);
+        return Ok(backend.poll(backend.start(request)?)?);
+    }
+
+    match config.review.backend.as_str() {
+        "gemini-cli" => {
+            let backend = GeminiCliReviewBackend::new(config.review.gemini_command.clone());
+            match backend.start(request) {
+                Ok(job) => Ok(backend.poll(job)?),
+                Err(error) => Ok(ReviewJob::failed_unavailable(
+                    issue.identifier.clone(),
+                    "gemini-cli",
+                    error.to_string(),
+                )),
+            }
+        }
+        _ => {
+            let backend = FakeReviewBackend::new(FakeReviewOutcome::Pass);
+            Ok(backend.poll(backend.start(request)?)?)
+        }
+    }
 }
 
 fn apply_review_result(
@@ -1174,6 +1333,9 @@ enum Command {
     ReviewFreshness {
         input: ReviewFreshnessInput,
     },
+    ReviewLoop {
+        options: ReviewLoopOptions,
+    },
     Gate {
         workflow_path: PathBuf,
         issue_ref: String,
@@ -1223,6 +1385,25 @@ struct RunLoopOptions {
     max_iterations: Option<usize>,
     once: bool,
     write: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReviewLoopOptions {
+    workflow_path: PathBuf,
+    max_iterations: Option<usize>,
+    once: bool,
+    write: bool,
+    fake_outcome: Option<FakeReviewOutcome>,
+}
+
+impl ReviewLoopOptions {
+    fn iteration_limit(&self) -> Option<usize> {
+        if self.once {
+            Some(1)
+        } else {
+            self.max_iterations
+        }
+    }
 }
 
 impl RunLoopOptions {
@@ -1290,6 +1471,8 @@ enum CliCommand {
     ReviewOnce(ReviewOnceArgs),
     #[command(name = "review-freshness")]
     ReviewFreshness(ReviewFreshnessArgs),
+    #[command(name = "review-loop")]
+    ReviewLoop(ReviewLoopArgs),
     Gate(GateArgs),
     #[command(name = "gate-apply")]
     GateApply(GateArgs),
@@ -1439,6 +1622,22 @@ struct ReviewFreshnessArgs {
     rework_class: CliReviewReworkClass,
     #[arg(long = "patch-summary")]
     patch_summary: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct ReviewLoopArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long)]
+    max_iterations: Option<usize>,
+    #[arg(long)]
+    once: bool,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+    #[arg(long = "fake-outcome", value_enum)]
+    fake_outcome: Option<CliFakeReviewOutcome>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -1663,6 +1862,20 @@ impl TryFrom<Cli> for Command {
                             patch_summary: args.patch_summary,
                         },
                     }),
+                    CliCommand::ReviewLoop(args) => {
+                        if args.max_iterations == Some(0) {
+                            return Err(usage());
+                        }
+                        Ok(Self::ReviewLoop {
+                            options: ReviewLoopOptions {
+                                workflow_path: args.workflow_path,
+                                max_iterations: args.max_iterations,
+                                once: args.once,
+                                write: args.write,
+                                fake_outcome: args.fake_outcome.map(Into::into),
+                            },
+                        })
+                    }
                     CliCommand::Gate(args) => Ok(Self::Gate {
                         workflow_path: args.workflow_path,
                         issue_ref: args.issue_ref,
@@ -2014,6 +2227,53 @@ mod tests {
     }
 
     #[test]
+    fn parses_review_loop_flags() {
+        let command = Command::parse(vec![
+            "review-loop".into(),
+            "examples/review-fixture-workflow.md".into(),
+            "--max-iterations".into(),
+            "2".into(),
+            "--fake-outcome".into(),
+            "confirmed".into(),
+            "--write".into(),
+        ])
+        .unwrap();
+
+        let Command::ReviewLoop { options } = command else {
+            panic!("expected review-loop command");
+        };
+
+        assert_eq!(
+            options.workflow_path,
+            PathBuf::from("examples/review-fixture-workflow.md")
+        );
+        assert_eq!(options.max_iterations, Some(2));
+        assert_eq!(
+            options.fake_outcome,
+            Some(FakeReviewOutcome::ConfirmedFinding)
+        );
+        assert!(options.write);
+    }
+
+    #[test]
+    fn review_loop_once_overrides_max_iterations() {
+        let command = Command::parse(vec![
+            "review-loop".into(),
+            "WORKFLOW.md".into(),
+            "--max-iterations".into(),
+            "4".into(),
+            "--once".into(),
+        ])
+        .unwrap();
+
+        let Command::ReviewLoop { options } = command else {
+            panic!("expected review-loop command");
+        };
+
+        assert_eq!(options.iteration_limit(), Some(1));
+    }
+
+    #[test]
     fn parses_run_loop_flags() {
         let command = Command::parse(vec![
             "run-loop".into(),
@@ -2061,6 +2321,19 @@ mod tests {
     fn rejects_zero_run_loop_iterations() {
         let error = Command::parse(vec![
             "run-loop".into(),
+            "WORKFLOW.md".into(),
+            "--max-iterations".into(),
+            "0".into(),
+        ])
+        .unwrap_err();
+
+        assert!(error.contains("Usage:"));
+    }
+
+    #[test]
+    fn rejects_zero_review_loop_iterations() {
+        let error = Command::parse(vec![
+            "review-loop".into(),
             "WORKFLOW.md".into(),
             "--max-iterations".into(),
             "0".into(),

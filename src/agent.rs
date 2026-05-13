@@ -38,6 +38,12 @@ pub struct AgentSummary {
     pub message: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsageLimitPause {
+    pub classifier: String,
+    pub evidence: String,
+}
+
 pub trait AgentBackend {
     fn name(&self) -> &'static str;
     fn prepare(
@@ -388,6 +394,47 @@ fn summarize_events(backend: &str, events: &[AgentEvent]) -> AgentSummary {
     }
 }
 
+pub fn usage_limit_pause_from_events(events: &[AgentEvent]) -> Option<UsageLimitPause> {
+    events.iter().find_map(|event| match event {
+        AgentEvent::Message { text, .. } | AgentEvent::Failed { error: text, .. } => {
+            classify_usage_limit_text(text)
+        }
+        _ => None,
+    })
+}
+
+pub fn classify_usage_limit_text(text: &str) -> Option<UsageLimitPause> {
+    let normalized = text.to_ascii_lowercase();
+    let patterns = [
+        ("usage_limit", "usage limit"),
+        ("rate_limit", "rate limit"),
+        ("rate_limit", "rate limited"),
+        ("resource_exhausted", "resource exhausted"),
+        ("quota_exceeded", "quota exceeded"),
+        ("quota_exceeded", "insufficient quota"),
+        ("too_many_requests", "too many requests"),
+        ("http_429", "429"),
+    ];
+
+    patterns
+        .iter()
+        .find(|(_, pattern)| normalized.contains(pattern))
+        .map(|(classifier, _)| UsageLimitPause {
+            classifier: (*classifier).into(),
+            evidence: compact_evidence(text),
+        })
+}
+
+fn compact_evidence(text: &str) -> String {
+    let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    const MAX_LEN: usize = 240;
+    if compact.len() > MAX_LEN {
+        format!("{}...", &compact[..MAX_LEN])
+    } else {
+        compact
+    }
+}
+
 pub fn backend_from_config(config: &RuntimeConfig) -> Box<dyn AgentBackend> {
     match config.backend.kind.as_str() {
         "codex" => Box::<CodexBackend>::default(),
@@ -414,6 +461,40 @@ mod tests {
             .unwrap();
         let events = backend.run(prepared).unwrap();
         assert!(matches!(events[0], AgentEvent::SessionStarted { .. }));
+    }
+
+    #[test]
+    fn classifies_usage_limit_text_conservatively() {
+        let pause = classify_usage_limit_text("Error: usage limit reached for this model").unwrap();
+        assert_eq!(pause.classifier, "usage_limit");
+        assert!(pause.evidence.contains("usage limit"));
+
+        let pause = classify_usage_limit_text("HTTP 429: too many requests").unwrap();
+        assert_eq!(pause.classifier, "too_many_requests");
+
+        assert!(classify_usage_limit_text("syntax error in generated patch").is_none());
+    }
+
+    #[test]
+    fn detects_usage_limit_from_backend_events() {
+        let events = vec![
+            AgentEvent::SessionStarted {
+                backend: "codex".into(),
+                session_id: "s1".into(),
+            },
+            AgentEvent::Message {
+                backend: "codex".into(),
+                session_id: Some("s1".into()),
+                text: "Resource exhausted, please retry later.".into(),
+            },
+            AgentEvent::Failed {
+                backend: "codex".into(),
+                error: "Codex subprocess exited with status 1".into(),
+            },
+        ];
+
+        let pause = usage_limit_pause_from_events(&events).unwrap();
+        assert_eq!(pause.classifier, "resource_exhausted");
     }
 
     fn codex_config(command: &str, timeout_ms: u64) -> RuntimeConfig {

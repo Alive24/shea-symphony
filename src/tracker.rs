@@ -407,16 +407,8 @@ impl GithubProjectV2GhClient {
             ))
         })?;
         let metadata = self.project_metadata()?;
-        let option_id = metadata
-            .status_options
-            .iter()
-            .find_map(|(id, name)| (name == &option_name).then_some(id.clone()))
-            .ok_or_else(|| {
-                TrackerError::IntegrationUnavailable(format!(
-                    "status option {option_name:?} was not found in ProjectV2 field {}",
-                    self.config.tracker.status_field
-                ))
-            })?;
+        let option_id =
+            status_option_id(&metadata, &option_name, &self.config.tracker.status_field)?;
 
         self.graphql(
             GITHUB_UPDATE_PROJECT_ITEM_FIELD_MUTATION,
@@ -481,11 +473,24 @@ impl GithubProjectV2GhClient {
 
     fn add_issue_to_project(&self, issue_id: &str) -> Result<(), TrackerError> {
         let metadata = self.project_metadata()?;
-        self.graphql(
+        let option_name = self.state_option_name("todo")?;
+        let option_id =
+            status_option_id(&metadata, &option_name, &self.config.tracker.status_field)?;
+        let response = self.graphql(
             GITHUB_ADD_PROJECT_ITEM_MUTATION,
             &[
-                ("projectId", metadata.project_id),
+                ("projectId", metadata.project_id.clone()),
                 ("contentId", issue_id.to_string()),
+            ],
+        )?;
+        let item_id = project_item_id_from_add_response(&response)?;
+        self.graphql(
+            GITHUB_UPDATE_PROJECT_ITEM_FIELD_MUTATION,
+            &[
+                ("projectId", metadata.project_id),
+                ("itemId", item_id),
+                ("fieldId", metadata.status_field_id),
+                ("optionId", option_id),
             ],
         )?;
         Ok(())
@@ -1109,6 +1114,32 @@ fn ensure_workpad_marker(markdown: &str, marker: &str) -> String {
     } else {
         format!("{marker}\n{markdown}")
     }
+}
+
+fn status_option_id(
+    metadata: &ProjectMetadata,
+    option_name: &str,
+    status_field: &str,
+) -> Result<String, TrackerError> {
+    metadata
+        .status_options
+        .iter()
+        .find_map(|(id, name)| (name == option_name).then_some(id.clone()))
+        .ok_or_else(|| {
+            TrackerError::IntegrationUnavailable(format!(
+                "status option {option_name:?} was not found in ProjectV2 field {status_field}"
+            ))
+        })
+}
+
+fn project_item_id_from_add_response(response: &serde_json::Value) -> Result<String, TrackerError> {
+    response
+        .pointer("/data/addProjectV2ItemById/item/id")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| {
+            TrackerError::Payload("addProjectV2ItemById response missing item id".into())
+        })
 }
 
 fn status_update_required(issue: &TrackerIssue, target_state: &str) -> bool {
@@ -2430,6 +2461,43 @@ Prompt
                 ("OPT_DONE".into(), "Done".into())
             ]
         );
+    }
+
+    #[test]
+    fn resolves_project_status_option_id() {
+        let metadata = ProjectMetadata {
+            project_id: "PVT_1".into(),
+            status_field_id: "FIELD_STATUS".into(),
+            status_options: vec![
+                ("OPT_TODO".into(), "Todo".into()),
+                ("OPT_DONE".into(), "Done".into()),
+            ],
+        };
+
+        assert_eq!(
+            status_option_id(&metadata, "Todo", "Status").unwrap(),
+            "OPT_TODO"
+        );
+        assert!(status_option_id(&metadata, "Agent Review", "Status").is_err());
+    }
+
+    #[test]
+    fn parses_added_project_item_id() {
+        let response = serde_json::json!({
+            "data": {
+                "addProjectV2ItemById": {
+                    "item": {
+                        "id": "PVTI_35"
+                    }
+                }
+            }
+        });
+
+        assert_eq!(
+            project_item_id_from_add_response(&response).unwrap(),
+            "PVTI_35"
+        );
+        assert!(project_item_id_from_add_response(&serde_json::json!({"data": {}})).is_err());
     }
 
     #[test]

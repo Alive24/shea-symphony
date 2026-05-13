@@ -320,7 +320,8 @@ This path can read ProjectV2 items and normalize GitHub Issue content for
 planning. Explicit `--write` commands can update ProjectV2 status, write workpad
 comments, create follow-up issues, and add issues to the project with initial
 `Todo` status. PR linking uses an issue comment/autolink strategy rather than a
-first-class relationship. Jade
+first-class relationship; linked PR discovery reads closing references and PR
+URLs recorded in canonical Jade workpad comments. Jade
 Symphony can idle-poll in unbounded write mode, but still cannot fully reconcile
 state or supervise live agents.
 

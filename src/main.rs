@@ -5,7 +5,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use clap::{error::ErrorKind, Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use jade_symphony::agent::{backend_from_config, usage_limit_pause_from_events, UsageLimitPause};
 use jade_symphony::config::RuntimeConfig;
-use jade_symphony::doctor::{audit_project_issues, render_project_audit_report};
+use jade_symphony::doctor::{
+    audit_project_issues, human_review_repair_candidates, render_human_review_repair_workpad,
+    render_project_audit_report,
+};
 use jade_symphony::event_log::{EventLog, EventRecord};
 use jade_symphony::git_handoff::{
     prepare_issue_worktree, publish_issue_pull_request, LiveWorktreeResult,
@@ -76,6 +79,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Command::Validate { workflow_path } => validate(workflow_path),
         Command::Inspect { workflow_path } => inspect(workflow_path),
         Command::Doctor { workflow_path } => doctor(workflow_path),
+        Command::DoctorRepairHumanReview {
+            workflow_path,
+            write,
+        } => doctor_repair_human_review(workflow_path, write),
         Command::Profiles { workflow_path } => list_profiles(workflow_path),
         Command::DogfoodSmoke {
             workflow_path,
@@ -1005,6 +1012,47 @@ fn doctor(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 
     for gap in adapter.integration_gaps() {
         println!("integration_gap={gap}");
+    }
+
+    Ok(())
+}
+
+fn doctor_repair_human_review(
+    workflow_path: PathBuf,
+    write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let workflow = WorkflowDefinition::load(&workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
+    config.validate()?;
+
+    let adapter = adapter_from_config(&config);
+    let issues = adapter.list_dispatchable_issues()?;
+    let report = audit_project_issues(&issues);
+    let candidates = human_review_repair_candidates(&report);
+
+    println!(
+        "doctor_repair_human_review candidates={} write={write}",
+        candidates.len()
+    );
+    for violation in candidates {
+        println!(
+            "doctor_repair_human_review action=move issue={} from={:?} to=agent_review",
+            violation.issue_ref, violation.state
+        );
+        if write {
+            let workpad = render_human_review_repair_workpad(violation);
+            adapter.upsert_workpad(&violation.issue_ref, &workpad)?;
+            adapter.set_state(&violation.issue_ref, "agent_review")?;
+        } else {
+            println!(
+                "doctor_repair_human_review_dry_run action=workpad issue={} evidence=human_review_missing_review_evidence",
+                violation.issue_ref
+            );
+            println!(
+                "doctor_repair_human_review_dry_run action=set_state issue={} target_state=agent_review",
+                violation.issue_ref
+            );
+        }
     }
 
     Ok(())
@@ -2155,6 +2203,10 @@ enum Command {
     Doctor {
         workflow_path: PathBuf,
     },
+    DoctorRepairHumanReview {
+        workflow_path: PathBuf,
+        write: bool,
+    },
     Profiles {
         workflow_path: PathBuf,
     },
@@ -2332,6 +2384,8 @@ enum CliCommand {
     Inspect(WorkflowPathArgs),
     #[command(alias = "audit-project")]
     Doctor(WorkflowPathArgs),
+    #[command(name = "doctor-repair-human-review")]
+    DoctorRepairHumanReview(DoctorRepairArgs),
     Profiles(WorkflowPathArgs),
     #[command(name = "dogfood-smoke")]
     DogfoodSmoke(DogfoodSmokeArgs),
@@ -2385,6 +2439,16 @@ struct WorkflowPathArgs {
     _dry_run: bool,
     #[arg(long = "write")]
     _write: bool,
+}
+
+#[derive(Debug, Args)]
+struct DoctorRepairArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -2705,6 +2769,12 @@ impl TryFrom<Cli> for Command {
                     CliCommand::Doctor(args) => Ok(Self::Doctor {
                         workflow_path: args.workflow_path,
                     }),
+                    CliCommand::DoctorRepairHumanReview(args) => {
+                        Ok(Self::DoctorRepairHumanReview {
+                            workflow_path: args.workflow_path,
+                            write: args.write,
+                        })
+                    }
                     CliCommand::Profiles(args) => Ok(Self::Profiles {
                         workflow_path: args.workflow_path,
                     }),
@@ -3183,6 +3253,32 @@ mod tests {
             parse(&["profiles", "examples/dry-run-workflow.md"]),
             Command::Profiles {
                 workflow_path: PathBuf::from("examples/dry-run-workflow.md")
+            }
+        );
+    }
+
+    #[test]
+    fn parses_doctor_repair_human_review_command() {
+        assert_eq!(
+            parse(&[
+                "doctor-repair-human-review",
+                "examples/github-project-workflow.md",
+                "--dry-run"
+            ]),
+            Command::DoctorRepairHumanReview {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                write: false
+            }
+        );
+        assert_eq!(
+            parse(&[
+                "doctor-repair-human-review",
+                "examples/github-project-workflow.md",
+                "--write"
+            ]),
+            Command::DoctorRepairHumanReview {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                write: true
             }
         );
     }

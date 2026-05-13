@@ -16,13 +16,14 @@ yet.
 | Normalized issue model | Implemented as `TrackerIssue`, including ProjectV2 item ID, labels, assignees, blockers, linked PRs, and project fields. |
 | GitHub Project v2 tracker | Fixture-backed mode plus live loading and explicit write operations through `gh api graphql`. `run-loop` can coordinate existing primitives, idle-poll in unbounded write mode, and use claim decision helpers before write-mode dispatch; auth diagnostics distinguish fixture mode, env-token auth, usable `gh api graphql` auth, missing `gh`, and unusable auth. Same-state status writes are skipped, Project item addition initializes the configured `Status` field to `Todo`, marker workpad upsert is idempotent for the canonical marker, and claim decision helpers distinguish claimable, active, and externally changed states. Full claim reconciliation is not implemented yet. |
 | Linear tracker | Implemented behind the same trait for fixture-backed planning plus live GraphQL reads, state updates, marker workpad comments, follow-up issue creation, and project assignment. Credential-gated smoke coverage is still missing. |
-| Issue Quality Gate | Implemented as a Markdown contract check plus deterministic source-alignment preflight where workflow/repo context is available. It verifies target repository, referenced local paths, and supported verification command shapes; richer semantic validation is still a follow-up. |
+| Issue Quality Gate | Implemented as a Markdown contract check plus deterministic source-alignment preflight where workflow/repo context is available. It verifies target repository, referenced local paths, and supported verification command shapes. Optional local command-backed LLM gate mode exists as disabled/advisory/required; richer semantic validation and hosted providers are still follow-ups. |
 | Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, repair, CLI-first interactive issue shaping, conservative reflective follow-up candidate generation, and explicit `forge-create` tracker issue creation from quality-gated Markdown. Interactive creation requires `--write` and `--confirm-create`; reflective mode only prints candidates. Initial Project `Status` setup is available through the GitHub add-to-project path; arbitrary Project field setup after creation is not implemented yet. |
-| Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes, idle polling, claim-helper use, runtime-state persistence, resume preflight, retry backoff records, stall detection, live PR handoff in non-fixture GitHub mode, and a controlled `dogfood-smoke` preflight report exist. No long-running worker supervision, automated stall restart, full multi-worker runtime resume reconciliation, or full state reconciliation yet. |
+| Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes, idle polling, claim-helper use, runtime-state persistence, resume preflight, retry backoff records, stall detection, live PR handoff in non-fixture GitHub mode, a guarded one-shot `merge-once` lane for `Merging` issues, and a controlled `dogfood-smoke` preflight report exist. No long-running worker supervision, automated stall restart, full multi-worker runtime resume reconciliation, `merge-loop`, or full state reconciliation yet. |
 | Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, repository-local git identity application, workspace/branch/PR handoff planning, live git worktree/branch creation, branch push, PR create-or-reuse, run-loop handoff evidence, profile-scoped workspace keys, and an Agent Review handoff invariant that blocks missing PR evidence before `Agent Review` exist. Runtime reconciliation cleanup is not wired yet. |
 | Execution profiles | First-slice profile discovery exists. Workflow config can point to a cockpit-tools Codex `codex_instances.json` file, and Jade treats each instance `name` as a profile/worker identity while ignoring account binding fields. If the cockpit-tools file is missing, explicit `profiles.entries` are used. This is not a full account manager. |
 | Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Prepared runs include selected profile/instance metadata and profile environment context. Full Codex app-server and Claude Code protocol parity are not implemented yet. |
 | Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, evidence-first Rework diagnostics for confirmed findings, review-freshness evidence for Merging conflict repair, bounded `review-loop` selection/reconciliation, and workpad/status evidence helpers exist. Persistent background review worker supervision is not implemented yet. |
+| Merging | `merge-once` can inspect issues already in `Merging`, require one linked PR, check live GitHub PR state/review/check/mergeability data where available, merge clean approved PRs only with explicit `--write`, and route blockers to `Rework` or `Need Human Input` with workpad evidence. Continuous merge polling and issue closing beyond Project `Done` are not implemented yet. |
 | Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events with actor and profile metadata. Runtime state files are written during write-mode `run-loop` issue execution, including actor role/label, git author, and optional profile/instance identity when configured; resume, retry, and stall supervision events are also recorded. No web/API surface yet. |
 | Tests | Unit tests cover the dry-run skeleton. No credential-gated integration tests yet. |
 
@@ -231,17 +232,17 @@ Acceptance:
   be overwritten, retry backoff must be visible, and stalled work must stop the
   loop safely.
 
-### 3b. Add LLM-Assisted Issue Quality Gate
+### 3b. Harden LLM-Assisted Issue Quality Gate
 
-Goal: augment the deterministic source-alignment gate with optional local model
-review while preserving explainable, non-mutating defaults.
+Goal: evolve the optional local command-backed LLM gate into a stronger
+dogfood path without weakening deterministic checks.
 
 Acceptance:
 
-- keeps deterministic checks as the first gate.
-- runs only when explicitly configured.
-- records model findings in the workpad.
-- routes missing or inconclusive model output to clarification, not dispatch.
+- add credential-gated or local-model smoke coverage for a real reviewer.
+- refine the prompt/output schema from dogfood evidence.
+- add hosted-provider adapters only behind explicit configuration.
+- preserve required-mode blocking for malformed or unavailable model output.
 
 ### 4. Implement Full Codex App-Server Backend
 

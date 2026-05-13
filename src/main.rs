@@ -1,4 +1,6 @@
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::Duration;
 
 use clap::{error::ErrorKind, Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use jade_symphony::agent::backend_from_config;
@@ -586,8 +588,19 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
 
         let Some(issue) = plan.selected.first().cloned() else {
             println!("{}", render_snapshot(&plan.snapshot));
-            println!("run_loop=stopped reason=no_dispatchable_issue iterations={iterations}");
-            break;
+            match no_dispatch_action(&options, limit, config.polling.interval_ms) {
+                NoDispatchAction::Stop { reason } => {
+                    println!("run_loop=stopped reason={reason} iterations={iterations}");
+                    break;
+                }
+                NoDispatchAction::SleepAndContinue { delay_ms } => {
+                    println!(
+                        "run_loop_idle action=sleep delay_ms={delay_ms} iterations={iterations}"
+                    );
+                    thread::sleep(Duration::from_millis(delay_ms));
+                    continue;
+                }
+            }
         };
 
         let decision = evaluate_issue(&issue);
@@ -657,6 +670,28 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NoDispatchAction {
+    Stop { reason: &'static str },
+    SleepAndContinue { delay_ms: u64 },
+}
+
+fn no_dispatch_action(
+    options: &RunLoopOptions,
+    limit: Option<usize>,
+    poll_interval_ms: u64,
+) -> NoDispatchAction {
+    if !options.write || limit.is_some() {
+        return NoDispatchAction::Stop {
+            reason: "no_dispatchable_issue",
+        };
+    }
+
+    NoDispatchAction::SleepAndContinue {
+        delay_ms: poll_interval_ms,
+    }
 }
 
 fn handle_run_loop_gate_failure(
@@ -1517,5 +1552,54 @@ mod tests {
             true,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn no_dispatch_stops_for_dry_run_even_without_limit() {
+        let options = RunLoopOptions {
+            workflow_path: PathBuf::from("WORKFLOW.md"),
+            max_iterations: None,
+            once: false,
+            write: false,
+        };
+
+        assert_eq!(
+            no_dispatch_action(&options, options.iteration_limit(), 250),
+            NoDispatchAction::Stop {
+                reason: "no_dispatchable_issue"
+            }
+        );
+    }
+
+    #[test]
+    fn no_dispatch_stops_for_bounded_write_loop() {
+        let options = RunLoopOptions {
+            workflow_path: PathBuf::from("WORKFLOW.md"),
+            max_iterations: Some(2),
+            once: false,
+            write: true,
+        };
+
+        assert_eq!(
+            no_dispatch_action(&options, options.iteration_limit(), 250),
+            NoDispatchAction::Stop {
+                reason: "no_dispatchable_issue"
+            }
+        );
+    }
+
+    #[test]
+    fn no_dispatch_sleeps_for_unbounded_write_loop() {
+        let options = RunLoopOptions {
+            workflow_path: PathBuf::from("WORKFLOW.md"),
+            max_iterations: None,
+            once: false,
+            write: true,
+        };
+
+        assert_eq!(
+            no_dispatch_action(&options, options.iteration_limit(), 250),
+            NoDispatchAction::SleepAndContinue { delay_ms: 250 }
+        );
     }
 }

@@ -1,8 +1,9 @@
 # Dogfood Readiness
 
 Status: dry-run dogfood baseline with read-only GitHub Project v2 loading through
-the `gh` CLI and a bounded `run-loop` skeleton. Jade Symphony is not ready for
-unattended live GitHub Project v2 execution yet.
+the `gh` CLI and a `run-loop` skeleton that can idle-poll in unbounded write
+mode. Jade Symphony is not ready for unattended live GitHub Project v2 execution
+yet.
 
 ## Current Capability Status
 
@@ -11,11 +12,11 @@ unattended live GitHub Project v2 execution yet.
 | Workflow loader | Implemented for explicit workflow path and optional YAML front matter. Runtime reload is not implemented. |
 | Typed config | Implemented for the current skeleton, including GitHub Project v2-shaped settings. |
 | Normalized issue model | Implemented as `TrackerIssue`, including ProjectV2 item ID, labels, assignees, blockers, linked PRs, and project fields. |
-| GitHub Project v2 tracker | Fixture-backed mode plus live loading and explicit write operations through `gh api graphql`. Bounded `run-loop` can coordinate existing primitives; auth diagnostics distinguish fixture mode, env-token auth, usable `gh api graphql` auth, missing `gh`, and unusable auth. Same-state status writes are skipped, marker workpad upsert is idempotent for the canonical marker, and claim decision helpers distinguish claimable, active, and externally changed states. Full claim reconciliation is not implemented yet. |
+| GitHub Project v2 tracker | Fixture-backed mode plus live loading and explicit write operations through `gh api graphql`. `run-loop` can coordinate existing primitives and idle-poll in unbounded write mode; auth diagnostics distinguish fixture mode, env-token auth, usable `gh api graphql` auth, missing `gh`, and unusable auth. Same-state status writes are skipped, marker workpad upsert is idempotent for the canonical marker, and claim decision helpers distinguish claimable, active, and externally changed states. Full claim reconciliation is not implemented yet. |
 | Linear tracker | Implemented behind the same trait for fixture-backed planning plus live GraphQL reads, state updates, marker workpad comments, follow-up issue creation, and project assignment. Credential-gated smoke coverage is still missing. |
 | Issue Quality Gate | Implemented as a first-pass Markdown contract check. It is useful for dry-run classification, not yet a full source-alignment gate. |
 | Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, repair, and explicit `forge-create` tracker issue creation from quality-gated Markdown. Project field setup after creation is not implemented yet. |
-| Orchestrator | Deterministic dispatch planning and a bounded CLI `run-loop` skeleton exist. No long-running worker supervision, retry timers, runtime resume, or full state reconciliation yet. |
+| Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes and idle polling exists. No long-running worker supervision, retry timers, runtime resume, or full state reconciliation yet. |
 | Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, and workspace/branch/PR handoff planning exist. Live git worktree creation, PR creation, and runtime reconciliation cleanup are not wired yet. |
 | Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Full Codex app-server and Claude Code protocol parity are not implemented yet. |
 | Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, and workpad/status evidence helpers exist. Persistent review worker reconciliation is not implemented yet. |
@@ -86,7 +87,8 @@ Project v2 issues:
      workspace.
 
 7. Long-running orchestration.
-   - Continuous poll loop beyond bounded `run-loop` iterations.
+   - Continuous idle polling exists for unbounded write mode; full active worker
+     supervision is still pending.
    - claimed/running/retry state ownership.
    - Wire runtime state reads/writes into each claim, backend run, transition,
      and resume point.
@@ -270,5 +272,5 @@ GitHub Project v2 execution is hardened.
 `examples/github-project-workflow.md` is a non-fixture workflow template for
 manual live Project v2 reads and explicit tracker writes through `gh`. It still
 uses the `dry-run` backend by default. `run-loop --write` is available only as a
-bounded skeleton and should not be treated as full autonomous agent execution
+runtime skeleton and should not be treated as full autonomous agent execution
 until claim reconciliation, runtime resume, and live PR automation wiring exist.

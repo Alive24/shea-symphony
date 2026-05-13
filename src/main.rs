@@ -19,7 +19,9 @@ use jade_symphony::review::{
     GeminiCliReviewBackend, ReviewBackend, ReviewJob, ReviewRequest,
 };
 use jade_symphony::status_surface::render_snapshot;
-use jade_symphony::tracker::{adapter_from_config, FollowUpIssueInput};
+use jade_symphony::tracker::{
+    adapter_from_config, claim_decision, ClaimDecision, FollowUpIssueInput,
+};
 use jade_symphony::workflow::WorkflowDefinition;
 use jade_symphony::workspace::{prepare_workspace, run_after_run, run_before_run};
 
@@ -637,14 +639,24 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        if normalize_state(&latest.state) != "in progress" {
-            adapter.set_state(&latest.identifier, "in_progress")?;
-            println!(
-                "run_loop_action=claim issue={} target_state=in_progress",
-                latest.identifier
-            );
-        } else {
-            println!("run_loop_action=resume issue={}", latest.identifier);
+        match run_loop_claim_action(&latest, &config) {
+            RunLoopClaimAction::Claim => {
+                adapter.set_state(&latest.identifier, "in_progress")?;
+                println!(
+                    "run_loop_action=claim issue={} target_state=in_progress",
+                    latest.identifier
+                );
+            }
+            RunLoopClaimAction::Resume => {
+                println!("run_loop_action=resume issue={}", latest.identifier);
+            }
+            RunLoopClaimAction::StopAndReplan { current_state } => {
+                println!(
+                    "run_loop_action=skip issue={} reason=external_state_change current_state={:?}",
+                    latest.identifier, current_state
+                );
+                continue;
+            }
         }
 
         let result = execute_issue_once(&workflow, &config, &latest)?;
@@ -676,6 +688,23 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
 enum NoDispatchAction {
     Stop { reason: &'static str },
     SleepAndContinue { delay_ms: u64 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RunLoopClaimAction {
+    Claim,
+    Resume,
+    StopAndReplan { current_state: String },
+}
+
+fn run_loop_claim_action(issue: &TrackerIssue, config: &RuntimeConfig) -> RunLoopClaimAction {
+    match claim_decision(issue, config) {
+        ClaimDecision::Claimable => RunLoopClaimAction::Claim,
+        ClaimDecision::AlreadyInProgress => RunLoopClaimAction::Resume,
+        ClaimDecision::StopAndReplan { current_state } => {
+            RunLoopClaimAction::StopAndReplan { current_state }
+        }
+    }
 }
 
 fn no_dispatch_action(
@@ -1341,6 +1370,37 @@ mod tests {
         Command::parse(args.iter().map(|arg| arg.to_string()).collect()).unwrap()
     }
 
+    fn test_config() -> RuntimeConfig {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\n---\nPrompt",
+        )
+        .unwrap();
+        RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap()
+    }
+
+    fn tracker_issue(state: &str) -> TrackerIssue {
+        TrackerIssue {
+            tracker_kind: "memory".into(),
+            id: "ISSUE_31".into(),
+            item_id: None,
+            identifier: "#31".into(),
+            title: "Wire run-loop to tracker claim helpers".into(),
+            description: None,
+            url: None,
+            state: state.into(),
+            labels: Vec::new(),
+            assignees: Vec::new(),
+            priority: None,
+            branch_name: None,
+            linked_pull_requests: Vec::new(),
+            blocked_by: Vec::new(),
+            project_fields: Default::default(),
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
     #[test]
     fn clap_parser_preserves_default_plan_compatibility() {
         assert_eq!(
@@ -1473,6 +1533,30 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("Usage:"));
+    }
+
+    #[test]
+    fn run_loop_claim_action_uses_tracker_claim_decision() {
+        let config = test_config();
+
+        assert_eq!(
+            run_loop_claim_action(&tracker_issue("Todo"), &config),
+            RunLoopClaimAction::Claim
+        );
+        assert_eq!(
+            run_loop_claim_action(&tracker_issue("Rework"), &config),
+            RunLoopClaimAction::Claim
+        );
+        assert_eq!(
+            run_loop_claim_action(&tracker_issue("In Progress"), &config),
+            RunLoopClaimAction::Resume
+        );
+        assert_eq!(
+            run_loop_claim_action(&tracker_issue("Agent Review"), &config),
+            RunLoopClaimAction::StopAndReplan {
+                current_state: "Agent Review".into()
+            }
+        );
     }
 
     #[test]

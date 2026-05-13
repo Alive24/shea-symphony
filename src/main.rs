@@ -5,6 +5,7 @@ use std::time::Duration;
 use clap::{error::ErrorKind, Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use jade_symphony::agent::backend_from_config;
 use jade_symphony::config::RuntimeConfig;
+use jade_symphony::doctor::{audit_project_issues, render_project_audit_report};
 use jade_symphony::event_log::{EventLog, EventRecord};
 use jade_symphony::handoff::{plan_issue_handoff, HandoffError, IssueHandoffPlan};
 use jade_symphony::issue_forge::{
@@ -49,6 +50,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Command::Plan { workflow_path } => plan(workflow_path),
         Command::Validate { workflow_path } => validate(workflow_path),
         Command::Inspect { workflow_path } => inspect(workflow_path),
+        Command::Doctor { workflow_path } => doctor(workflow_path),
         Command::RunOnce { workflow_path } => run_once(workflow_path),
         Command::RunLoop { options } => run_loop(options),
         Command::SetState {
@@ -582,6 +584,24 @@ fn inspect(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
             println!("  assumptions={}", gate.assumptions.join("; "));
         }
     }
+
+    for gap in adapter.integration_gaps() {
+        println!("integration_gap={gap}");
+    }
+
+    Ok(())
+}
+
+fn doctor(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let workflow = WorkflowDefinition::load(&workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
+    config.validate()?;
+
+    let adapter = adapter_from_config(&config);
+    let issues = adapter.list_dispatchable_issues()?;
+    let report = audit_project_issues(&issues);
+
+    println!("{}", render_project_audit_report(&report));
 
     for gap in adapter.integration_gaps() {
         println!("integration_gap={gap}");
@@ -1131,6 +1151,9 @@ enum Command {
     Inspect {
         workflow_path: PathBuf,
     },
+    Doctor {
+        workflow_path: PathBuf,
+    },
     RunOnce {
         workflow_path: PathBuf,
     },
@@ -1273,6 +1296,8 @@ enum CliCommand {
     #[command(alias = "validate-workflow")]
     Validate(WorkflowPathArgs),
     Inspect(WorkflowPathArgs),
+    #[command(alias = "audit-project")]
+    Doctor(WorkflowPathArgs),
     #[command(name = "run-once")]
     RunOnce(WorkflowPathArgs),
     #[command(name = "run-loop")]
@@ -1600,6 +1625,9 @@ impl TryFrom<Cli> for Command {
                     CliCommand::Inspect(args) => Ok(Self::Inspect {
                         workflow_path: args.workflow_path,
                     }),
+                    CliCommand::Doctor(args) => Ok(Self::Doctor {
+                        workflow_path: args.workflow_path,
+                    }),
                     CliCommand::RunOnce(args) => Ok(Self::RunOnce {
                         workflow_path: args.workflow_path,
                     }),
@@ -1924,6 +1952,12 @@ mod tests {
         assert_eq!(
             parse(&["validate-workflow", "examples/dry-run-workflow.md"]),
             Command::Validate {
+                workflow_path: PathBuf::from("examples/dry-run-workflow.md")
+            }
+        );
+        assert_eq!(
+            parse(&["audit-project", "examples/dry-run-workflow.md"]),
+            Command::Doctor {
                 workflow_path: PathBuf::from("examples/dry-run-workflow.md")
             }
         );

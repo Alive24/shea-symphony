@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod config;
+pub mod doctor;
 pub mod event_log;
 pub mod handoff;
 pub mod issue_forge;

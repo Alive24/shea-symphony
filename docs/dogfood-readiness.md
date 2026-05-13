@@ -21,6 +21,7 @@ yet.
 | Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Full Codex app-server and Claude Code protocol parity are not implemented yet. |
 | Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, review-freshness evidence for Merging conflict repair, and workpad/status evidence helpers exist. Persistent review worker reconciliation is not implemented yet. |
 | Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events. Runtime state files are written during write-mode `run-loop` issue execution, but full resume reconciliation is still pending. No web/API surface yet. |
+| Project doctor | Read-only `doctor` / `audit-project` reports workflow invariant violations from normalized tracker issues, including missing PR handoff evidence, missing review pass evidence, dirty Merging PRs, missing runtime ownership hints, and queued issues with PRs. Repair mode is not implemented yet. |
 | Tests | Unit tests cover the dry-run skeleton. No credential-gated integration tests yet. |
 
 ## Before Executing GitHub Project Issues
@@ -113,6 +114,8 @@ Project v2 issues:
      endpoint is still needed.
    - Clear integration-gap reporting when credentials are missing or unusable
      while avoiding false missing-token warnings when `gh api graphql` works.
+   - `doctor` / `audit-project` is available as a read-only project invariant
+     audit. Explicit-write repair mode remains a follow-up.
 
 9. Integration profile.
    - Credential-gated GitHub Project v2 smoke test.

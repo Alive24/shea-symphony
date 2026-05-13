@@ -31,7 +31,10 @@ use jade_symphony::tracker::{
     adapter_from_config, claim_decision, ClaimDecision, FollowUpIssueInput,
 };
 use jade_symphony::workflow::WorkflowDefinition;
-use jade_symphony::workspace::{prepare_workspace, run_after_run, run_before_run};
+use jade_symphony::workspace::{
+    apply_local_git_identity, prepare_workspace, run_after_run, run_before_run,
+    GitIdentityApplyResult,
+};
 
 const DEFAULT_RUN_LOOP_BASE_BRANCH: &str = "main";
 
@@ -770,6 +773,13 @@ fn run_once(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     println!("issue={} {}", issue.identifier, issue.title);
     println!("workspace={}", result.workspace_path.display());
     println!("backend={}", result.backend);
+    println!("actor_role={}", result.actor_role);
+    println!("actor_label={}", result.actor_label);
+    println!(
+        "git_author={}",
+        result.git_author.as_deref().unwrap_or("n/a")
+    );
+    println!("git_identity={}", result.git_identity.summary());
     println!("success={}", result.success);
     println!(
         "event_log={}",
@@ -789,6 +799,10 @@ struct IssueExecutionResult {
     success: bool,
     session_id: Option<String>,
     message: String,
+    actor_role: String,
+    actor_label: String,
+    git_author: Option<String>,
+    git_identity: GitIdentityApplyResult,
 }
 
 fn execute_issue_once(
@@ -806,6 +820,7 @@ fn execute_issue_once_with_workspace_key(
     workspace_key: &str,
 ) -> Result<IssueExecutionResult, Box<dyn std::error::Error>> {
     let workspace = prepare_workspace(&config.workspace.root, workspace_key, &config.hooks)?;
+    let git_identity = apply_local_git_identity(&workspace.path, &config.identity.git)?;
     run_before_run(&workspace.path, &config.hooks)?;
 
     let prompt = render_prompt(&workflow.prompt_template, issue, None)?;
@@ -824,6 +839,9 @@ fn execute_issue_once_with_workspace_key(
             issue_id: Some(issue.id.clone()),
             issue_identifier: Some(issue.identifier.clone()),
             session_id: summary.session_id.clone(),
+            actor_role: Some(config.identity.actor_role.clone()),
+            actor_label: Some(config.identity.actor_label.clone()),
+            git_author: config.identity.git.author(),
             message: summary.message.clone(),
         })?;
     }
@@ -834,6 +852,10 @@ fn execute_issue_once_with_workspace_key(
         success: summary.success,
         session_id: summary.session_id,
         message: summary.message,
+        actor_role: config.identity.actor_role.clone(),
+        actor_label: config.identity.actor_label.clone(),
+        git_author: config.identity.git.author(),
+        git_identity,
     })
 }
 
@@ -908,7 +930,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         };
 
         if !options.write {
-            print_run_loop_dry_run_actions(&issue, &handoff);
+            print_run_loop_dry_run_actions(&issue, &handoff, &config);
             if limit.is_none() {
                 println!(
                     "run_loop=stopped reason=dry_run_would_repeat_without_mutation iterations={iterations}"
@@ -970,7 +992,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         let mut runtime_state = run_loop_runtime_state_for_issue(
             existing_runtime_state.as_ref(),
             &latest,
-            &config.backend.kind,
+            &config,
             event,
         );
         save_runtime_state(&config, &runtime_state)?;
@@ -1075,7 +1097,7 @@ fn no_dispatch_action(
 fn run_loop_runtime_state_for_issue(
     existing: Option<&RuntimeState>,
     issue: &TrackerIssue,
-    backend: &str,
+    config: &RuntimeConfig,
     event: &str,
 ) -> RuntimeState {
     let mut state = RuntimeState::active(
@@ -1083,10 +1105,13 @@ fn run_loop_runtime_state_for_issue(
             id: issue.id.clone(),
             identifier: issue.identifier.clone(),
         },
-        backend,
+        &config.backend.kind,
     );
     state.attempt_count = next_runtime_attempt_count(existing, &issue.identifier);
     state.branch_name = issue.branch_name.clone();
+    state.actor_role = Some(config.identity.actor_role.clone());
+    state.actor_label = Some(config.identity.actor_label.clone());
+    state.git_author = config.identity.git.author();
     state.last_event = Some(event.into());
     state
 }
@@ -1110,6 +1135,9 @@ fn run_loop_runtime_state_with_result(
     state.workspace_path = Some(result.workspace_path.clone());
     state.backend = result.backend.clone();
     state.backend_session_id = result.session_id.clone();
+    state.actor_role = Some(result.actor_role.clone());
+    state.actor_label = Some(result.actor_label.clone());
+    state.git_author = result.git_author.clone();
     state.last_event = Some(if result.success {
         "Completed".into()
     } else {
@@ -1193,7 +1221,11 @@ fn handle_run_loop_handoff_failure(
     Ok(())
 }
 
-fn print_run_loop_dry_run_actions(issue: &TrackerIssue, handoff: &IssueHandoffPlan) {
+fn print_run_loop_dry_run_actions(
+    issue: &TrackerIssue,
+    handoff: &IssueHandoffPlan,
+    config: &RuntimeConfig,
+) {
     if normalize_state(&issue.state) != "in progress" {
         println!(
             "run_loop_dry_run action=claim issue={} target_state=in_progress",
@@ -1209,6 +1241,13 @@ fn print_run_loop_dry_run_actions(issue: &TrackerIssue, handoff: &IssueHandoffPl
         handoff.workspace_path.display(),
         handoff.branch_name,
         handoff.pull_request.title
+    );
+    println!(
+        "run_loop_dry_run action=identity issue={} actor_role={} actor_label={:?} git_author={:?}",
+        issue.identifier,
+        config.identity.actor_role,
+        config.identity.actor_label,
+        config.identity.git.author()
     );
     println!(
         "run_loop_dry_run action=run issue={} backend=configured",
@@ -1239,6 +1278,13 @@ fn run_loop_handoff_workpad(
         "### Run Evidence".to_string(),
         format!("- Workspace: `{}`", result.workspace_path.display()),
         format!("- Backend: `{}`", result.backend),
+        format!("- Actor role: `{}`", result.actor_role),
+        format!("- Actor label: `{}`", result.actor_label),
+        format!(
+            "- Git author: `{}`",
+            result.git_author.as_deref().unwrap_or("n/a")
+        ),
+        format!("- Git identity: `{}`", result.git_identity.summary()),
         format!("- Success: `{}`", result.success),
         format!(
             "- Session: `{}`",
@@ -2369,10 +2415,11 @@ mod tests {
 
     #[test]
     fn run_loop_runtime_state_increments_same_issue_attempts() {
+        let config = test_config();
         let issue = tracker_issue("In Progress");
-        let existing = run_loop_runtime_state_for_issue(None, &issue, "dry-run", "Claimed");
+        let existing = run_loop_runtime_state_for_issue(None, &issue, &config, "Claimed");
 
-        let state = run_loop_runtime_state_for_issue(Some(&existing), &issue, "dry-run", "Resumed");
+        let state = run_loop_runtime_state_for_issue(Some(&existing), &issue, &config, "Resumed");
 
         assert_eq!(state.attempt_count, 2);
         assert_eq!(
@@ -2383,24 +2430,40 @@ mod tests {
             Some("#29")
         );
         assert_eq!(state.branch_name, issue.branch_name);
+        assert_eq!(state.actor_role.as_deref(), Some("implementation_agent"));
+        assert_eq!(state.actor_label.as_deref(), Some("Jade Symphony Agent"));
         assert_eq!(state.last_event.as_deref(), Some("Resumed"));
     }
 
     #[test]
     fn run_loop_runtime_state_records_result_and_transition() {
+        let config = test_config();
         let issue = tracker_issue("In Progress");
-        let state = run_loop_runtime_state_for_issue(None, &issue, "dry-run", "Claimed");
+        let state = run_loop_runtime_state_for_issue(None, &issue, &config, "Claimed");
         let result = IssueExecutionResult {
             workspace_path: PathBuf::from("/tmp/jade/issue-29"),
             backend: "dry-run".into(),
             success: true,
             session_id: Some("session-29".into()),
             message: "ok".into(),
+            actor_role: "implementation_agent".into(),
+            actor_label: "Jade Symphony Agent".into(),
+            git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+            git_identity: GitIdentityApplyResult {
+                status: jade_symphony::workspace::GitIdentityApplyStatus::Applied,
+                author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+                applied_keys: vec!["user.name".into(), "user.email".into()],
+            },
         };
 
         let state = run_loop_runtime_state_with_result(state, &result);
         assert_eq!(state.workspace_path, Some(result.workspace_path));
         assert_eq!(state.backend_session_id.as_deref(), Some("session-29"));
+        assert_eq!(state.actor_role.as_deref(), Some("implementation_agent"));
+        assert_eq!(
+            state.git_author.as_deref(),
+            Some("Jade Symphony Agent <jade@example.invalid>")
+        );
         assert_eq!(state.last_event.as_deref(), Some("Completed"));
 
         let state = run_loop_runtime_state_with_transition(
@@ -2473,11 +2536,23 @@ mod tests {
             success: true,
             session_id: Some("session-33".into()),
             message: "ok".into(),
+            actor_role: "implementation_agent".into(),
+            actor_label: "Jade Symphony Agent".into(),
+            git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+            git_identity: GitIdentityApplyResult {
+                status: jade_symphony::workspace::GitIdentityApplyStatus::Applied,
+                author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+                applied_keys: vec!["user.name".into(), "user.email".into()],
+            },
         };
 
         let workpad = run_loop_handoff_workpad(&issue, &result, &handoff);
 
         assert!(workpad.contains("### Planned Handoff"));
+        assert!(workpad.contains("Actor role: `implementation_agent`"));
+        assert!(
+            workpad.contains("Git identity: `applied:Jade Symphony Agent <jade@example.invalid>`")
+        );
         assert!(workpad
             .contains("Workspace key: `issue-29-wire-runtime-state-persistence-into-run-loop`"));
         assert!(workpad

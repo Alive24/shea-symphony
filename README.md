@@ -64,6 +64,9 @@ one-issue-one-PR automation are still future work.
 - workspace identifiers are sanitized; local workspace paths stay under the
   configured root; hooks support timeouts, stdout/stderr capture,
   `before_remove`, and safe cleanup helpers.
+- workflow identity config can distinguish the acting role/label from the human
+  operator and can apply configured git author metadata with repository-local
+  `git config --local` only.
 - workspace/branch/PR handoff planning can derive a deterministic issue
   workspace key, branch name, and PR handoff body, and can detect an existing
   branch that appears to belong to a different issue.
@@ -76,7 +79,8 @@ one-issue-one-PR automation are still future work.
   backend result evidence, records final transition intent, and clears it after
   successful handoff/block transition.
 - `run-once` can prepare one dry-run workspace, render a prompt file, run the
-  dry-run backend, and append JSONL events.
+  dry-run backend, apply local git identity when the prepared workspace is a git
+  repository, and append JSONL events with actor metadata.
 - `run-once` can execute the conservative Codex subprocess backend when a
   workflow explicitly sets `agent.backend: codex`.
 - `run-once` can execute the conservative Claude Code subprocess backend when a
@@ -121,6 +125,7 @@ cargo run -- plan examples/dry-run-workflow.md
 cargo run -- plan-dispatch examples/dry-run-workflow.md
 cargo run -- status examples/dry-run-workflow.md
 cargo run -- run-once examples/dry-run-workflow.md
+cargo run -- run-once examples/git-identity-workflow.md
 cargo run -- run-once examples/codex-subprocess-workflow.md
 cargo run -- run-once examples/claude-subprocess-workflow.md
 cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
@@ -141,6 +146,11 @@ cargo run -- forge-create --workflow path/to/WORKFLOW.md --title "Follow-up titl
 fixtures show controlled real-backend paths without invoking live hosted
 services. They write `JADE_SYMPHONY_PROMPT.md` into the prepared workspace and
 append JSONL events for the selected workflow.
+
+`examples/git-identity-workflow.md` is a fixture workflow that runs
+`after_create: git init`, applies the configured `identity.git` values with
+workspace-local git config, and prints actor/git identity evidence. Jade
+Symphony does not write global git identity config.
 
 Live GitHub write commands are explicit and require a non-fixture workflow plus
 usable GitHub auth through `GITHUB_TOKEN` / `GH_TOKEN` or `gh api graphql`:
@@ -188,6 +198,7 @@ claim reconciliation, resume state, and PR automation exist.
 
 - linked PR attachment/linking as a first-class relationship.
 - live git worktree creation and `gh pr create` from the runtime loop.
+- profile-specific account/token routing for git hosts or agent backends.
 - rich interactive Issue Forge TUI; the current flow is CLI-first and
   command-step based.
 - Linear live adapter credential-gated smoke coverage.

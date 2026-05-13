@@ -934,6 +934,11 @@ query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
                   state
                 }}
               }}
+              comments(first: 20) {{
+                nodes {{
+                  body
+                }}
+              }}
             }}
           }}
         }}
@@ -1271,10 +1276,7 @@ fn issue_from_project_item(
             .map(ToOwned::to_owned),
         identifier: format!("#{number}"),
         title: content.get("title")?.as_str()?.to_string(),
-        description: content
-            .get("body")
-            .and_then(serde_json::Value::as_str)
-            .map(ToOwned::to_owned),
+        description: github_issue_description_with_workpad(content, &config.tracker.workpad.marker),
         url: content
             .get("url")
             .and_then(serde_json::Value::as_str)
@@ -1299,6 +1301,37 @@ fn issue_from_project_item(
             .and_then(serde_json::Value::as_str)
             .map(ToOwned::to_owned),
     })
+}
+
+fn github_issue_description_with_workpad(
+    content: &serde_json::Value,
+    marker: &str,
+) -> Option<String> {
+    let body = content
+        .get("body")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let workpad = canonical_workpad_comment_body(content.pointer("/comments/nodes"), marker);
+
+    match (body.trim().is_empty(), workpad) {
+        (true, None) => None,
+        (false, None) => Some(body),
+        (true, Some(workpad)) => Some(workpad),
+        (false, Some(workpad)) => Some(format!("{body}\n\n{workpad}")),
+    }
+}
+
+fn canonical_workpad_comment_body(
+    comments: Option<&serde_json::Value>,
+    marker: &str,
+) -> Option<String> {
+    comments?
+        .as_array()?
+        .iter()
+        .filter_map(|comment| comment.get("body").and_then(serde_json::Value::as_str))
+        .find(|body| body.contains(marker) && !body.contains("Superseded Jade Symphony workpad"))
+        .map(ToOwned::to_owned)
 }
 
 fn blocker_refs_from_project_fields(
@@ -2516,6 +2549,26 @@ mod tests {
             merged[1].url.as_deref(),
             Some("https://github.com/Alive24/jade-symphony/pull/100")
         );
+    }
+
+    #[test]
+    fn github_issue_description_includes_canonical_workpad_comment() {
+        let content = serde_json::json!({
+            "body": "issue body",
+            "comments": {
+                "nodes": [
+                    {"body": "ordinary comment"},
+                    {"body": "<!-- jade-symphony-workpad -->\n## Workpad\n\n<!-- jade-symphony-runtime-ownership -->\n### Runtime Ownership\n<!-- /jade-symphony-runtime-ownership -->"}
+                ]
+            }
+        });
+
+        let description =
+            github_issue_description_with_workpad(&content, "<!-- jade-symphony-workpad -->")
+                .unwrap();
+
+        assert!(description.contains("issue body"));
+        assert!(description.contains("jade-symphony-runtime-ownership"));
     }
 
     #[test]

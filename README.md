@@ -296,7 +296,7 @@ Merging role separation.
 - live token/rate-limit accounting beyond the current snapshot counters.
 - persistent background Agent Review worker supervision beyond bounded
   `review-loop` ticks.
-- long-running `merge-loop` polling beyond one guarded `merge-once` tick.
+- unbounded idle `merge-loop` polling beyond bounded guarded merge ticks.
 - Issue Forge Project field setup after issue creation.
 - autonomous Issue Forge issue creation from reflective mode without explicit
   operator confirmation.
@@ -342,6 +342,7 @@ scripts/jade-dogfood --dry-run
 cargo run -- run-loop examples/usage-limit-workflow.md --max-iterations 1 --write
 cargo run -- dogfood-smoke examples/github-project-workflow.md --dry-run
 cargo run -- merge-once examples/github-project-workflow.md --dry-run
+cargo run -- merge-loop examples/github-project-workflow.md --max-iterations 3 --dry-run
 cargo run -- gate examples/llm-gate-workflow.md '#1'
 ```
 

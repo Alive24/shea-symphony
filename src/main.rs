@@ -44,8 +44,8 @@ use jade_symphony::rework::{
 };
 use jade_symphony::runtime_state::{
     clear_runtime_state, detect_runtime_stall, load_runtime_state, mark_runtime_state_updated,
-    record_runtime_retry, save_runtime_state, RuntimeIssueState, RuntimeRetryState,
-    RuntimeStallState, RuntimeState, RuntimeTransition,
+    record_runtime_retry, runtime_state_path, save_runtime_state, RuntimeIssueState,
+    RuntimeRetryState, RuntimeStallState, RuntimeState, RuntimeTransition,
 };
 use jade_symphony::status_surface::render_snapshot;
 use jade_symphony::tracker::{
@@ -75,6 +75,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Command::Validate { workflow_path } => validate(workflow_path),
         Command::Inspect { workflow_path } => inspect(workflow_path),
         Command::Profiles { workflow_path } => list_profiles(workflow_path),
+        Command::DogfoodSmoke {
+            workflow_path,
+            write,
+        } => dogfood_smoke(workflow_path, write),
         Command::RunOnce { workflow_path } => run_once(workflow_path),
         Command::RunLoop { options } => run_loop(options),
         Command::MergeOnce {
@@ -1007,6 +1011,82 @@ fn list_profiles(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error
         );
     }
     Ok(())
+}
+
+fn dogfood_smoke(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let workflow = WorkflowDefinition::load(&workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
+    config.validate()?;
+
+    let adapter = adapter_from_config(&config);
+    let integration_gaps = adapter.integration_gaps();
+    let issues = adapter.list_dispatchable_issues()?;
+    let controlled_candidates: Vec<_> = issues
+        .iter()
+        .filter(|issue| is_controlled_dogfood_smoke_issue(issue))
+        .collect();
+    let executable_candidates = controlled_candidates
+        .iter()
+        .filter(|issue| {
+            evaluate_issue_for_current_source(&config, issue)
+                .map(|decision| decision.is_dispatchable())
+                .unwrap_or(false)
+        })
+        .count();
+    let fixture_mode = config.tracker.fixture_path.is_some();
+    let write_ready =
+        !fixture_mode && integration_gaps.is_empty() && executable_candidates == 1 && write;
+
+    println!("dogfood_smoke=ok");
+    println!("workflow={}", workflow_path.display());
+    println!("tracker_kind={}", config.tracker.kind);
+    println!("fixture_mode={fixture_mode}");
+    println!("write_requested={write}");
+    println!("controlled_candidates={}", controlled_candidates.len());
+    println!("executable_candidates={executable_candidates}");
+    println!(
+        "runtime_state_path={}",
+        runtime_state_path(&config).display()
+    );
+    println!(
+        "event_log_root={}",
+        config.observability.logs_root.join("events").display()
+    );
+    if integration_gaps.is_empty() {
+        println!("integration_gaps=none");
+    } else {
+        for gap in &integration_gaps {
+            println!("integration_gap={gap}");
+        }
+    }
+    println!("write_ready={write_ready}");
+
+    if !write {
+        println!("dogfood_smoke_dry_run action=inspect_project");
+        println!("dogfood_smoke_dry_run action=quality_gate_controlled_issue");
+        println!("dogfood_smoke_dry_run action=report_run_loop_command");
+        return Ok(());
+    }
+
+    if write_ready {
+        println!(
+            "dogfood_smoke_next_command=cargo run -- run-loop {} --max-iterations 1 --write",
+            workflow_path.display()
+        );
+    } else {
+        println!("dogfood_smoke_blocked=true");
+        println!("dogfood_smoke_blocker=requires exactly one executable controlled smoke issue, non-fixture tracker mode, and no integration gaps");
+    }
+
+    Ok(())
+}
+
+fn is_controlled_dogfood_smoke_issue(issue: &TrackerIssue) -> bool {
+    issue
+        .labels_lowercase()
+        .iter()
+        .any(|label| label == "dogfood-smoke" || label == "smoke")
+        || issue.title.to_ascii_lowercase().contains("[dogfood-smoke]")
 }
 
 fn run_once(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
@@ -1989,6 +2069,10 @@ enum Command {
     Profiles {
         workflow_path: PathBuf,
     },
+    DogfoodSmoke {
+        workflow_path: PathBuf,
+        write: bool,
+    },
     RunOnce {
         workflow_path: PathBuf,
     },
@@ -2158,6 +2242,8 @@ enum CliCommand {
     Validate(WorkflowPathArgs),
     Inspect(WorkflowPathArgs),
     Profiles(WorkflowPathArgs),
+    #[command(name = "dogfood-smoke")]
+    DogfoodSmoke(DogfoodSmokeArgs),
     #[command(name = "run-once")]
     RunOnce(WorkflowPathArgs),
     #[command(name = "run-loop")]
@@ -2218,6 +2304,16 @@ struct RunLoopArgs {
     max_iterations: Option<usize>,
     #[arg(long)]
     once: bool,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct DogfoodSmokeArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
     #[arg(long)]
     write: bool,
     #[arg(long = "dry-run")]
@@ -2517,6 +2613,10 @@ impl TryFrom<Cli> for Command {
                     }),
                     CliCommand::Profiles(args) => Ok(Self::Profiles {
                         workflow_path: args.workflow_path,
+                    }),
+                    CliCommand::DogfoodSmoke(args) => Ok(Self::DogfoodSmoke {
+                        workflow_path: args.workflow_path,
+                        write: args.write,
                     }),
                     CliCommand::RunOnce(args) => Ok(Self::RunOnce {
                         workflow_path: args.workflow_path,
@@ -2985,6 +3085,45 @@ mod tests {
                 workflow_path: PathBuf::from("examples/dry-run-workflow.md")
             }
         );
+    }
+
+    #[test]
+    fn parses_dogfood_smoke_command() {
+        assert_eq!(
+            parse(&[
+                "dogfood-smoke",
+                "examples/github-project-workflow.md",
+                "--dry-run"
+            ]),
+            Command::DogfoodSmoke {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                write: false
+            }
+        );
+        assert_eq!(
+            parse(&[
+                "dogfood-smoke",
+                "examples/github-project-workflow.md",
+                "--write"
+            ]),
+            Command::DogfoodSmoke {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                write: true
+            }
+        );
+    }
+
+    #[test]
+    fn controlled_smoke_issue_requires_marker_label_or_title() {
+        let mut issue = tracker_issue("Todo");
+        assert!(!is_controlled_dogfood_smoke_issue(&issue));
+
+        issue.labels = vec!["dogfood-smoke".into()];
+        assert!(is_controlled_dogfood_smoke_issue(&issue));
+
+        issue.labels.clear();
+        issue.title = "[dogfood-smoke] controlled run".into();
+        assert!(is_controlled_dogfood_smoke_issue(&issue));
     }
 
     #[test]

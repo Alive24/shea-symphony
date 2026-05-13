@@ -102,7 +102,9 @@ worker supervision are still future work.
   `Need Human Input` with a workpad diagnostic.
 - live GitHub `run-loop --write` can create or reuse the planned issue
   worktree/branch, run the configured backend inside that worktree, push the
-  branch, and create or reuse one GitHub PR after successful execution.
+  branch, and create or reuse one GitHub PR after successful execution; the
+  handoff helper blocks dirty worktrees and branches with no commits ahead of
+  the configured base before publishing.
 - terminal status output reports polling state, planned running/skipped/retrying
   issues, token counters, event-log path, gate details, and integration gaps.
 - `doctor` / `audit-project` can read the configured tracker and report
@@ -286,7 +288,7 @@ Merging role separation.
   current claim helper and resume preflight.
 - full multi-worker runtime-state resume reconciliation after interruption.
 - richer workspace-per-issue branch and PR reconciliation beyond current
-  create-or-reuse handoff.
+  dirty/no-op guarded create-or-reuse handoff.
 - continuation retries and automated stall restart.
 - richer vendor-specific quota handling beyond conservative usage-limit
   pattern matching.

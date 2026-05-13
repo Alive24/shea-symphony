@@ -79,6 +79,9 @@ worker supervision are still future work.
 - `examples/github-project-workflow.md` now contains an inline Jade execution
   prompt with the operating loop, workpad discipline, review boundary, stop
   conditions, and one issue / one branch / one PR handoff rules.
+- `scripts/jade-dogfood` provides a bounded operator launcher for the GitHub
+  Project workflow with explicit dry-run/write modes and preflight checks for
+  the built binary, git, `gh`, auth, and workflow validation.
 - workspace identifiers are sanitized; local workspace paths stay under the
   configured root; hooks support timeouts, stdout/stderr capture,
   `before_remove`, and safe cleanup helpers.
@@ -121,6 +124,9 @@ worker supervision are still future work.
 - write-mode `run-loop` saves active issue runtime state, updates it with
   backend result evidence, records final transition intent, and clears it after
   successful handoff/block transition.
+- write-mode `run-loop` classifies conservative usage-limit/rate-limit backend
+  failures, writes pause evidence to the workpad, records retry backoff in
+  runtime state, and does not advance the issue to `Agent Review`.
 - `run-once` can prepare one dry-run workspace, render a prompt file, run the
   dry-run backend, apply local git identity when the prepared workspace is a git
   repository, and append JSONL events with actor metadata.
@@ -286,6 +292,8 @@ Merging role separation.
 - richer workspace-per-issue branch and PR reconciliation beyond current
   create-or-reuse handoff.
 - continuation retries and automated stall restart.
+- richer vendor-specific quota handling beyond conservative usage-limit
+  pattern matching.
 - terminal workspace cleanup tied to tracker state.
 - full profile-specific account/token switching for tracker claim ownership
   beyond login comparison.
@@ -334,6 +342,8 @@ Dry-run dispatch:
 cargo run -- plan examples/dry-run-workflow.md
 cargo run -- run-once examples/dry-run-workflow.md
 cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
+scripts/jade-dogfood --dry-run
+cargo run -- run-loop examples/usage-limit-workflow.md --max-iterations 1 --write
 cargo run -- dogfood-smoke examples/github-project-workflow.md --dry-run
 cargo run -- merge-once examples/github-project-workflow.md --dry-run
 cargo run -- gate examples/llm-gate-workflow.md '#1'
@@ -343,6 +353,8 @@ The dry-run workflow uses:
 
 - `examples/dry-run-workflow.md`
 - `examples/fixtures/dry-run-issues.json`
+- `examples/usage-limit-workflow.md`
+- `examples/fixtures/usage-limit-issues.json`
 - `examples/linear-fixture-workflow.md`
 - `examples/fixtures/linear-issues.json`
 - `examples/llm-gate-workflow.md`

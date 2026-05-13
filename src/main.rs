@@ -6,6 +6,7 @@ use clap::{error::ErrorKind, Args, CommandFactory, Parser, Subcommand, ValueEnum
 use jade_symphony::agent::backend_from_config;
 use jade_symphony::config::RuntimeConfig;
 use jade_symphony::event_log::{EventLog, EventRecord};
+use jade_symphony::handoff::{plan_issue_handoff, HandoffError, IssueHandoffPlan};
 use jade_symphony::issue_forge::{
     discover_candidates, draft_from_template, repair_markdown, validate_markdown,
 };
@@ -28,6 +29,8 @@ use jade_symphony::tracker::{
 };
 use jade_symphony::workflow::WorkflowDefinition;
 use jade_symphony::workspace::{prepare_workspace, run_after_run, run_before_run};
+
+const DEFAULT_RUN_LOOP_BASE_BRANCH: &str = "main";
 
 fn main() {
     if let Err(error) = run() {
@@ -529,7 +532,16 @@ fn execute_issue_once(
     config: &RuntimeConfig,
     issue: &TrackerIssue,
 ) -> Result<IssueExecutionResult, Box<dyn std::error::Error>> {
-    let workspace = prepare_workspace(&config.workspace.root, &issue.identifier, &config.hooks)?;
+    execute_issue_once_with_workspace_key(workflow, config, issue, &issue.identifier)
+}
+
+fn execute_issue_once_with_workspace_key(
+    workflow: &WorkflowDefinition,
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    workspace_key: &str,
+) -> Result<IssueExecutionResult, Box<dyn std::error::Error>> {
+    let workspace = prepare_workspace(&config.workspace.root, workspace_key, &config.hooks)?;
     run_before_run(&workspace.path, &config.hooks)?;
 
     let prompt = render_prompt(&workflow.prompt_template, issue, None)?;
@@ -623,8 +635,16 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             if options.write { "write" } else { "dry-run" }
         );
 
+        let handoff = match run_loop_handoff_plan(&config, &issue) {
+            Ok(handoff) => handoff,
+            Err(error) => {
+                handle_run_loop_handoff_failure(adapter.as_ref(), &issue, &error, &options)?;
+                continue;
+            }
+        };
+
         if !options.write {
-            print_run_loop_dry_run_actions(&issue);
+            print_run_loop_dry_run_actions(&issue, &handoff);
             if limit.is_none() {
                 println!(
                     "run_loop=stopped reason=dry_run_would_repeat_without_mutation iterations={iterations}"
@@ -642,6 +662,14 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             handle_run_loop_gate_failure(adapter.as_ref(), &latest, &latest_gate, &options)?;
             continue;
         }
+
+        let handoff = match run_loop_handoff_plan(&config, &latest) {
+            Ok(handoff) => handoff,
+            Err(error) => {
+                handle_run_loop_handoff_failure(adapter.as_ref(), &latest, &error, &options)?;
+                continue;
+            }
+        };
 
         let existing_runtime_state = load_runtime_state(&config)?;
         if let Some(state) = &existing_runtime_state {
@@ -687,7 +715,12 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             latest.identifier
         );
 
-        let result = execute_issue_once(&workflow, &config, &latest)?;
+        let result = execute_issue_once_with_workspace_key(
+            &workflow,
+            &config,
+            &latest,
+            &handoff.workspace_key,
+        )?;
         runtime_state = run_loop_runtime_state_with_result(runtime_state, &result);
         save_runtime_state(&config, &runtime_state)?;
         println!(
@@ -696,7 +729,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             runtime_state.last_event.as_deref().unwrap_or("unknown")
         );
 
-        let workpad = run_loop_handoff_workpad(&latest, &result);
+        let workpad = run_loop_handoff_workpad(&latest, &result, &handoff);
         adapter.upsert_workpad(&latest.identifier, &workpad)?;
 
         if result.success {
@@ -835,6 +868,13 @@ fn run_loop_runtime_state_with_transition(
     state
 }
 
+fn run_loop_handoff_plan(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+) -> Result<IssueHandoffPlan, HandoffError> {
+    plan_issue_handoff(&config.workspace.root, issue, DEFAULT_RUN_LOOP_BASE_BRANCH)
+}
+
 fn handle_run_loop_gate_failure(
     adapter: &dyn jade_symphony::tracker::TrackerAdapter,
     issue: &TrackerIssue,
@@ -862,7 +902,34 @@ fn handle_run_loop_gate_failure(
     Ok(())
 }
 
-fn print_run_loop_dry_run_actions(issue: &TrackerIssue) {
+fn handle_run_loop_handoff_failure(
+    adapter: &dyn jade_symphony::tracker::TrackerAdapter,
+    issue: &TrackerIssue,
+    error: &HandoffError,
+    options: &RunLoopOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!(
+        "run_loop_handoff=failed issue={} error={}",
+        issue.identifier, error
+    );
+    let workpad = run_loop_handoff_failure_workpad(issue, error);
+    if options.write {
+        adapter.upsert_workpad(&issue.identifier, &workpad)?;
+        adapter.set_state(&issue.identifier, "need_human_input")?;
+    } else {
+        println!(
+            "run_loop_dry_run action=workpad issue={} reason=handoff_plan_failed",
+            issue.identifier
+        );
+        println!(
+            "run_loop_dry_run action=set_state issue={} target_state=need_human_input",
+            issue.identifier
+        );
+    }
+    Ok(())
+}
+
+fn print_run_loop_dry_run_actions(issue: &TrackerIssue, handoff: &IssueHandoffPlan) {
     if normalize_state(&issue.state) != "in progress" {
         println!(
             "run_loop_dry_run action=claim issue={} target_state=in_progress",
@@ -871,6 +938,14 @@ fn print_run_loop_dry_run_actions(issue: &TrackerIssue) {
     } else {
         println!("run_loop_dry_run action=resume issue={}", issue.identifier);
     }
+    println!(
+        "run_loop_dry_run action=handoff_plan issue={} workspace_key={} workspace_path={} branch={} pr_title={:?}",
+        issue.identifier,
+        handoff.workspace_key,
+        handoff.workspace_path.display(),
+        handoff.branch_name,
+        handoff.pull_request.title
+    );
     println!(
         "run_loop_dry_run action=run issue={} backend=configured",
         issue.identifier
@@ -885,7 +960,11 @@ fn print_run_loop_dry_run_actions(issue: &TrackerIssue) {
     );
 }
 
-fn run_loop_handoff_workpad(issue: &TrackerIssue, result: &IssueExecutionResult) -> String {
+fn run_loop_handoff_workpad(
+    issue: &TrackerIssue,
+    result: &IssueExecutionResult,
+    handoff: &IssueHandoffPlan,
+) -> String {
     [
         "## Jade Symphony Workpad".to_string(),
         String::new(),
@@ -903,9 +982,35 @@ fn run_loop_handoff_workpad(issue: &TrackerIssue, result: &IssueExecutionResult)
         ),
         format!("- Message: {}", result.message),
         String::new(),
+        "### Planned Handoff".to_string(),
+        format!("- Workspace key: `{}`", handoff.workspace_key),
+        format!("- Workspace path: `{}`", handoff.workspace_path.display()),
+        format!("- Branch: `{}`", handoff.branch_name),
+        format!("- PR title: `{}`", handoff.pull_request.title),
+        format!("- PR base branch: `{}`", handoff.pull_request.base_branch),
+        "- PR creation is planned evidence only in this slice.".to_string(),
+        String::new(),
         "### Main-Agent Boundary".to_string(),
         "- Locally complete main-agent work stops at `Agent Review`.".to_string(),
         "- `Human Review` is reserved for independent Review Agent pass evidence.".to_string(),
+    ]
+    .join("\n")
+}
+
+fn run_loop_handoff_failure_workpad(issue: &TrackerIssue, error: &HandoffError) -> String {
+    [
+        "## Jade Symphony Workpad".to_string(),
+        String::new(),
+        "### Context".to_string(),
+        format!("- Issue: {} {}", issue.identifier, issue.title),
+        "- Source: `jade-symphony run-loop`".to_string(),
+        String::new(),
+        "### Handoff Planning Blocker".to_string(),
+        format!("- Error: `{}`", error),
+        "- Backend execution was skipped before claim/run to avoid mixing issue scope.".to_string(),
+        String::new(),
+        "### Required Human Decision".to_string(),
+        "- Confirm the correct branch/workspace ownership before retrying.".to_string(),
     ]
     .join("\n")
 }
@@ -1721,6 +1826,72 @@ mod tests {
                 reason: "main agent completed".into(),
             })
         );
+    }
+
+    #[test]
+    fn run_loop_handoff_plan_uses_issue_workspace_and_branch_plan() {
+        let config = test_config();
+        let issue = tracker_issue("In Progress");
+
+        let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+
+        assert_eq!(
+            handoff.workspace_key,
+            "issue-29-wire-runtime-state-persistence-into-run-loop"
+        );
+        assert!(handoff
+            .workspace_path
+            .ends_with("issue-29-wire-runtime-state-persistence-into-run-loop"));
+        assert_eq!(
+            handoff.branch_name,
+            "feature/issue-29-wire-runtime-state-persistence-into-run-loop"
+        );
+        assert_eq!(
+            handoff.pull_request.title,
+            "#29: Wire runtime state persistence into run-loop"
+        );
+        assert_eq!(handoff.pull_request.base_branch, "main");
+    }
+
+    #[test]
+    fn run_loop_handoff_plan_rejects_branch_for_different_issue() {
+        let config = test_config();
+        let mut issue = tracker_issue("In Progress");
+        issue.branch_name = Some("feature/issue-99-other-work".into());
+
+        let error = run_loop_handoff_plan(&config, &issue).unwrap_err();
+
+        assert!(matches!(
+            error,
+            HandoffError::BranchIssueMismatch {
+                expected_issue,
+                found_issue,
+                ..
+            } if expected_issue == "29" && found_issue == "99"
+        ));
+    }
+
+    #[test]
+    fn run_loop_handoff_workpad_records_planned_pr_evidence() {
+        let config = test_config();
+        let issue = tracker_issue("In Progress");
+        let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+        let result = IssueExecutionResult {
+            workspace_path: handoff.workspace_path.clone(),
+            backend: "dry-run".into(),
+            success: true,
+            session_id: Some("session-33".into()),
+            message: "ok".into(),
+        };
+
+        let workpad = run_loop_handoff_workpad(&issue, &result, &handoff);
+
+        assert!(workpad.contains("### Planned Handoff"));
+        assert!(workpad
+            .contains("Workspace key: `issue-29-wire-runtime-state-persistence-into-run-loop`"));
+        assert!(workpad
+            .contains("Branch: `feature/issue-29-wire-runtime-state-persistence-into-run-loop`"));
+        assert!(workpad.contains("PR title: `#29: Wire runtime state persistence into run-loop`"));
     }
 
     #[test]

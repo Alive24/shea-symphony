@@ -40,7 +40,10 @@ worker supervision are still future work.
   `In Progress`, and externally changed states.
 - dry-run dispatch planning sorts by priority and respects global/state
   concurrency limits.
-- Issue Quality Gate classifies executable versus underspecified issue bodies.
+- Issue Quality Gate classifies executable versus underspecified issue bodies
+  and, where workflow/repo context is available, runs deterministic
+  source-alignment checks for target repository, referenced local paths, and
+  verification command shapes.
 - review freshness helpers can classify Merging-to-Rework repairs as
   mechanical, semantic, or unknown and render workpad evidence for whether prior
   Human Review remains valid.
@@ -232,7 +235,7 @@ claim reconciliation, resume state, and PR automation exist.
 - Issue Forge Project field setup after issue creation.
 - autonomous Issue Forge issue creation from reflective mode without explicit
   operator confirmation.
-- automated Issue Quality Gate application inside the polling runtime.
+- richer semantic or LLM-assisted Issue Quality Gate analysis.
 - full Liquid-compatible prompt renderer.
 - credential-gated integration tests.
 

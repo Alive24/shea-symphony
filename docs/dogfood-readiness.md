@@ -14,7 +14,7 @@ yet.
 | Normalized issue model | Implemented as `TrackerIssue`, including ProjectV2 item ID, labels, assignees, blockers, linked PRs, and project fields. |
 | GitHub Project v2 tracker | Fixture-backed mode plus live loading and explicit write operations through `gh api graphql`. `run-loop` can coordinate existing primitives, idle-poll in unbounded write mode, and use claim decision helpers before write-mode dispatch; auth diagnostics distinguish fixture mode, env-token auth, usable `gh api graphql` auth, missing `gh`, and unusable auth. Same-state status writes are skipped, Project item addition initializes the configured `Status` field to `Todo`, marker workpad upsert is idempotent for the canonical marker, and claim decision helpers distinguish claimable, active, and externally changed states. Full claim reconciliation is not implemented yet. |
 | Linear tracker | Implemented behind the same trait for fixture-backed planning plus live GraphQL reads, state updates, marker workpad comments, follow-up issue creation, and project assignment. Credential-gated smoke coverage is still missing. |
-| Issue Quality Gate | Implemented as a first-pass Markdown contract check. It is useful for dry-run classification, not yet a full source-alignment gate. |
+| Issue Quality Gate | Implemented as a Markdown contract check plus deterministic source-alignment preflight where workflow/repo context is available. It verifies target repository, referenced local paths, and supported verification command shapes; richer semantic validation is still a follow-up. |
 | Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, repair, CLI-first interactive issue shaping, conservative reflective follow-up candidate generation, and explicit `forge-create` tracker issue creation from quality-gated Markdown. Interactive creation requires `--write` and `--confirm-create`; reflective mode only prints candidates. Initial Project `Status` setup is available through the GitHub add-to-project path; arbitrary Project field setup after creation is not implemented yet. |
 | Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes, idle polling, claim-helper use, runtime-state persistence, resume preflight, retry backoff records, stall detection, and live PR handoff in non-fixture GitHub mode exists. No long-running worker supervision, automated stall restart, full multi-worker runtime resume reconciliation, or full state reconciliation yet. |
 | Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, repository-local git identity application, workspace/branch/PR handoff planning, live git worktree/branch creation, branch push, PR create-or-reuse, and run-loop handoff evidence exist. Runtime reconciliation cleanup is not wired yet. |
@@ -57,8 +57,8 @@ Project v2 issues:
    - Keep GitHub-specific fields out of `orchestrator`.
 - Current explicit `gate-apply` can record quality-gate assumptions or
   missing context in the workpad and move non-dispatchable issues to
-  `Need to Clarify` / `Need Human Input`; the future runtime must call that
-  flow automatically before dispatch.
+  `Need to Clarify` / `Need Human Input`; run-loop pre-dispatch uses the same
+  deterministic source-alignment decision before dispatch.
 
 4. Agent Review authority boundary.
    - Main implementation commands can move locally complete work to
@@ -198,6 +198,18 @@ Acceptance:
 - preserves the current resume preflight guarantees: stale active state must not
   be overwritten, retry backoff must be visible, and stalled work must stop the
   loop safely.
+
+### 3b. Add LLM-Assisted Issue Quality Gate
+
+Goal: augment the deterministic source-alignment gate with optional local model
+review while preserving explainable, non-mutating defaults.
+
+Acceptance:
+
+- keeps deterministic checks as the first gate.
+- runs only when explicitly configured.
+- records model findings in the workpad.
+- routes missing or inconclusive model output to clarification, not dispatch.
 
 ### 4. Implement Full Codex App-Server Backend
 

@@ -89,6 +89,8 @@ fn parse_front_matter(front_matter: &str) -> Result<Value, WorkflowError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::TrackerIssue;
+    use crate::prompt::render_prompt;
 
     #[test]
     fn parses_front_matter_and_prompt() {
@@ -107,5 +109,73 @@ mod tests {
         let workflow = WorkflowDefinition::parse("WORKFLOW.md", "Only prompt").unwrap();
         assert!(workflow.config.as_object().unwrap().is_empty());
         assert_eq!(workflow.prompt_template, "Only prompt");
+    }
+
+    fn fixture_issue() -> TrackerIssue {
+        TrackerIssue {
+            tracker_kind: "github_project_v2".into(),
+            id: "ISSUE_48".into(),
+            item_id: Some("PROJECT_ITEM_48".into()),
+            identifier: "#48".into(),
+            title: "Replace placeholder dogfood workflow with real Jade prompt".into(),
+            description: Some(
+                [
+                    "## Issue Goal",
+                    "Replace the placeholder live workflow prompt.",
+                    "## Verification",
+                    "- cargo test",
+                ]
+                .join("\n"),
+            ),
+            url: Some("https://github.com/Alive24/jade-symphony/issues/48".into()),
+            state: "Todo".into(),
+            labels: Vec::new(),
+            assignees: Vec::new(),
+            priority: None,
+            branch_name: None,
+            linked_pull_requests: Vec::new(),
+            blocked_by: Vec::new(),
+            project_fields: Default::default(),
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    fn github_project_workflow() -> WorkflowDefinition {
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/github-project-workflow.md");
+        WorkflowDefinition::load(path).unwrap()
+    }
+
+    #[test]
+    fn github_project_workflow_prompt_is_not_placeholder_thin() {
+        let workflow = github_project_workflow();
+
+        assert!(workflow.prompt_template.len() > 3_000);
+        assert!(workflow.prompt_template.contains("## Operating Loop"));
+        assert!(workflow.prompt_template.contains("## Workpad Discipline"));
+        assert!(workflow.prompt_template.contains("Issue Quality Gate"));
+        assert!(workflow.prompt_template.contains("one issue per branch"));
+        assert!(workflow
+            .prompt_template
+            .contains("The main implementation agent must never set `Human Review`."));
+        assert!(!workflow
+            .prompt_template
+            .contains("stop before\nmaking live agent changes"));
+    }
+
+    #[test]
+    fn github_project_workflow_prompt_renders_for_fixture_issue() {
+        let workflow = github_project_workflow();
+        let rendered = render_prompt(&workflow.prompt_template, &fixture_issue(), Some(2)).unwrap();
+
+        assert!(rendered.contains("Jade Symphony issue #48"));
+        assert!(rendered.contains("Replace placeholder dogfood workflow"));
+        assert!(rendered.contains("This is attempt 2."));
+        assert!(rendered.contains("## Issue Goal\nReplace the placeholder live workflow prompt."));
+        assert!(rendered.contains("Move locally complete main-agent work to `Agent Review` only."));
+        assert!(rendered.contains("Do not set `Human Review`."));
+        assert!(!rendered.contains("{{"));
+        assert!(!rendered.contains("{%"));
     }
 }

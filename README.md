@@ -43,10 +43,15 @@ worker supervision are still future work.
 - Issue Quality Gate classifies executable versus underspecified issue bodies
   and, where workflow/repo context is available, runs deterministic
   source-alignment checks for target repository, referenced local paths, and
-  verification command shapes.
+  verification command shapes. An optional command-backed LLM gate can run in
+  `disabled`, `advisory`, or `required` mode after deterministic checks.
 - review freshness helpers can classify Merging-to-Rework repairs as
   mechanical, semantic, or unknown and render workpad evidence for whether prior
   Human Review remains valid.
+- `merge-once` can consume issues already in `Merging`, resolve a single linked
+  PR, run guarded GitHub PR preflight checks, write durable workpad evidence,
+  merge clean approved PRs with explicit `--write`, and route blockers to
+  `Rework` or `Need Human Input` without ever setting `Human Review`.
 - structured Rework diagnostics can render compact, durable issue workpad
   evidence for confirmed review findings, merge conflicts, dirty PRs,
   validation failures, and runtime failures before a transition to `Rework`.
@@ -65,6 +70,10 @@ worker supervision are still future work.
 - Issue Forge reflective mode can scan a local context file for conservative
   follow-up signals and print quality-gated candidate issue drafts without
   creating tracker issues.
+- `dogfood-smoke` can run a non-mutating preflight for a controlled live
+  dogfood issue, report tracker/auth gaps, runtime state and event log paths,
+  and print the bounded `run-loop --max-iterations 1 --write` next step when the
+  smoke is ready.
 - basic strict prompt rendering supports known `issue.*` fields, `attempt`, and
   simple `{% if %}` / `{% else %}` blocks.
 - `examples/github-project-workflow.md` now contains an inline Jade execution
@@ -96,6 +105,10 @@ worker supervision are still future work.
   branch, and create or reuse one GitHub PR after successful execution.
 - terminal status output reports polling state, planned running/skipped/retrying
   issues, token counters, event-log path, gate details, and integration gaps.
+- `doctor` / `audit-project` can read the configured tracker and report
+  workflow invariant violations such as Agent Review without PR evidence, Human
+  Review without review pass evidence, dirty Merging PRs, stale-looking In
+  Progress work, and queued issues with attached PRs.
 - JSONL event-log primitives exist and can record selected profile identity.
 - runtime state helpers can write, read, and clear a tracker-neutral
   `runtime/runtime-state.json` file under the configured logs root, including
@@ -107,6 +120,9 @@ worker supervision are still future work.
 - write-mode `run-loop` saves active issue runtime state, updates it with
   backend result evidence, records final transition intent, and clears it after
   successful handoff/block transition.
+- write-mode `run-loop` classifies conservative usage-limit/rate-limit backend
+  failures, writes pause evidence to the workpad, records retry backoff in
+  runtime state, and does not advance the issue to `Agent Review`.
 - `run-once` can prepare one dry-run workspace, render a prompt file, run the
   dry-run backend, apply local git identity when the prepared workspace is a git
   repository, and append JSONL events with actor metadata.
@@ -151,6 +167,7 @@ Expected shape:
 cargo run -- validate examples/dry-run-workflow.md
 cargo run -- validate-workflow examples/dry-run-workflow.md
 cargo run -- inspect examples/dry-run-workflow.md
+cargo run -- doctor examples/dry-run-workflow.md
 cargo run -- plan examples/dry-run-workflow.md
 cargo run -- plan-dispatch examples/dry-run-workflow.md
 cargo run -- status examples/dry-run-workflow.md
@@ -271,16 +288,20 @@ Merging role separation.
 - richer workspace-per-issue branch and PR reconciliation beyond current
   create-or-reuse handoff.
 - continuation retries and automated stall restart.
+- richer vendor-specific quota handling beyond conservative usage-limit
+  pattern matching.
 - terminal workspace cleanup tied to tracker state.
 - profile-aware tracker claim ownership beyond namespaced runtime/log/workspace
   metadata.
 - live token/rate-limit accounting beyond the current snapshot counters.
 - persistent background Agent Review worker supervision beyond bounded
   `review-loop` ticks.
+- long-running `merge-loop` polling beyond one guarded `merge-once` tick.
 - Issue Forge Project field setup after issue creation.
 - autonomous Issue Forge issue creation from reflective mode without explicit
   operator confirmation.
-- richer semantic or LLM-assisted Issue Quality Gate analysis.
+- hosted-provider LLM gate integrations beyond the local command adapter.
+- richer semantic Issue Quality Gate analysis beyond the structured LLM result.
 - full Liquid-compatible prompt renderer.
 - credential-gated integration tests.
 
@@ -318,14 +339,24 @@ cargo run -- plan examples/dry-run-workflow.md
 cargo run -- run-once examples/dry-run-workflow.md
 cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
 scripts/jade-dogfood --dry-run
+cargo run -- run-loop examples/usage-limit-workflow.md --max-iterations 1 --write
+cargo run -- dogfood-smoke examples/github-project-workflow.md --dry-run
+cargo run -- merge-once examples/github-project-workflow.md --dry-run
+cargo run -- gate examples/llm-gate-workflow.md '#1'
 ```
 
 The dry-run workflow uses:
 
 - `examples/dry-run-workflow.md`
 - `examples/fixtures/dry-run-issues.json`
+- `examples/usage-limit-workflow.md`
+- `examples/fixtures/usage-limit-issues.json`
 - `examples/linear-fixture-workflow.md`
 - `examples/fixtures/linear-issues.json`
+- `examples/llm-gate-workflow.md`
+- `examples/fixtures/llm-gate-ready.sh`
+- `examples/fixtures/llm-gate-clarify.sh`
+- `examples/fixtures/llm-gate-malformed.sh`
 
 For a real GitHub Project v2 read/write workflow template, copy and edit:
 

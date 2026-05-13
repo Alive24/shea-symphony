@@ -1,11 +1,15 @@
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::{error::ErrorKind, Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use jade_symphony::agent::backend_from_config;
 use jade_symphony::config::RuntimeConfig;
 use jade_symphony::event_log::{EventLog, EventRecord};
+use jade_symphony::git_handoff::{
+    prepare_issue_worktree, publish_issue_pull_request, LiveWorktreeResult,
+    ProcessHandoffCommandRunner, PullRequestPublication,
+};
 use jade_symphony::handoff::{plan_issue_handoff, HandoffError, IssueHandoffPlan};
 use jade_symphony::issue_forge::{
     discover_candidates, draft_from_template, find_issue_skill, interactive_forge,
@@ -18,20 +22,25 @@ use jade_symphony::prompt::render_prompt;
 use jade_symphony::quality_gate::evaluate_issue_with_source_alignment;
 use jade_symphony::review::{
     classify_review_freshness, render_review_freshness_workpad, render_review_workpad,
-    review_gate_decision, transition_allowed_for_main_agent, transition_allowed_for_review_agent,
-    FakeReviewBackend, FakeReviewOutcome, GeminiCliReviewBackend, ReviewBackend,
-    ReviewFreshnessInput, ReviewJob, ReviewRequest, ReviewReworkClass, ReviewStaleReason,
+    review_gate_decision, review_run_eligibility, transition_allowed_for_main_agent,
+    transition_allowed_for_review_agent, FakeReviewBackend, FakeReviewOutcome,
+    GeminiCliReviewBackend, ReviewBackend, ReviewFreshnessInput, ReviewJob, ReviewRequest,
+    ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
 };
 use jade_symphony::runtime_state::{
-    clear_runtime_state, load_runtime_state, save_runtime_state, RuntimeIssueState, RuntimeState,
-    RuntimeTransition,
+    clear_runtime_state, detect_runtime_stall, load_runtime_state, mark_runtime_state_updated,
+    record_runtime_retry, save_runtime_state, RuntimeIssueState, RuntimeRetryState,
+    RuntimeStallState, RuntimeState, RuntimeTransition,
 };
 use jade_symphony::status_surface::render_snapshot;
 use jade_symphony::tracker::{
     adapter_from_config, claim_decision, ClaimDecision, FollowUpIssueInput,
 };
 use jade_symphony::workflow::WorkflowDefinition;
-use jade_symphony::workspace::{prepare_workspace, run_after_run, run_before_run};
+use jade_symphony::workspace::{
+    apply_local_git_identity, prepare_workspace, run_after_run, run_before_run,
+    GitIdentityApplyResult,
+};
 
 const DEFAULT_RUN_LOOP_BASE_BRANCH: &str = "main";
 
@@ -87,6 +96,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             write,
         } => review_once(workflow_path, issue_ref, write),
         Command::ReviewFreshness { input } => review_freshness(input),
+        Command::ReviewLoop { options } => review_loop(options),
         Command::Gate {
             workflow_path,
             issue_ref,
@@ -570,6 +580,163 @@ fn review_freshness(input: ReviewFreshnessInput) -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let limit = options.iteration_limit();
+    let mut iterations = 0usize;
+
+    loop {
+        if let Some(max) = limit {
+            if iterations >= max {
+                println!("review_loop=stopped reason=max_iterations iterations={iterations}");
+                break;
+            }
+        }
+
+        iterations += 1;
+        let config = load_config(&options.workflow_path)?;
+        let adapter = adapter_from_config(&config);
+        let issues = adapter
+            .fetch_issues_by_states(std::slice::from_ref(&config.tracker.state_map.agent_review))?;
+
+        let Some(issue) = issues.first().cloned() else {
+            println!("review_loop=stopped reason=no_agent_review_issue iterations={iterations}");
+            break;
+        };
+
+        let backend_kind = review_backend_kind(&config, options.fake_outcome.as_ref());
+        match review_run_eligibility(
+            &issue,
+            &config.tracker.state_map.agent_review,
+            &backend_kind,
+        ) {
+            ReviewRunEligibility::Eligible { worker_key } => {
+                println!(
+                    "review_loop_iteration={iterations} issue={} worker_key={worker_key} mode={}",
+                    issue.identifier,
+                    if options.write { "write" } else { "dry-run" }
+                );
+                if !options.write {
+                    println!(
+                        "review_loop_dry_run action=start issue={} backend={backend_kind}",
+                        issue.identifier
+                    );
+                    println!(
+                        "review_loop_dry_run action=workpad issue={} evidence=review_job",
+                        issue.identifier
+                    );
+                    println!(
+                        "review_loop_dry_run action=reconcile issue={} actor=independent_review_agent",
+                        issue.identifier
+                    );
+                    if limit.is_none() {
+                        println!(
+                            "review_loop=stopped reason=dry_run_would_repeat_without_mutation iterations={iterations}"
+                        );
+                        break;
+                    }
+                    continue;
+                }
+
+                let latest = adapter.get_issue(&issue.identifier)?.ok_or_else(|| {
+                    format!("issue disappeared before review: {}", issue.identifier)
+                })?;
+                match review_run_eligibility(
+                    &latest,
+                    &config.tracker.state_map.agent_review,
+                    &backend_kind,
+                ) {
+                    ReviewRunEligibility::Eligible { .. } => {
+                        let job = run_review_job(&config, &latest, options.fake_outcome.clone())?;
+                        apply_review_result(adapter.as_ref(), &latest.identifier, &latest, &job)?;
+                        let decision = review_gate_decision(&job);
+                        println!(
+                            "review_loop_action=reconciled issue={} backend={} outcome={:?} target_state={:?}",
+                            latest.identifier, job.backend, decision.outcome, decision.target_state
+                        );
+                    }
+                    ReviewRunEligibility::AlreadyQueued { worker_key } => {
+                        println!(
+                            "review_loop_action=skip issue={} reason=review_worker_exists worker_key={worker_key}",
+                            latest.identifier
+                        );
+                    }
+                    ReviewRunEligibility::NotInAgentReview { current_state } => {
+                        println!(
+                            "review_loop_action=skip issue={} reason=state_changed current_state={current_state:?}",
+                            latest.identifier
+                        );
+                    }
+                }
+            }
+            ReviewRunEligibility::AlreadyQueued { worker_key } => {
+                println!(
+                    "review_loop_action=skip issue={} reason=review_worker_exists worker_key={worker_key}",
+                    issue.identifier
+                );
+            }
+            ReviewRunEligibility::NotInAgentReview { current_state } => {
+                println!(
+                    "review_loop_action=skip issue={} reason=state_changed current_state={current_state:?}",
+                    issue.identifier
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn review_backend_kind(config: &RuntimeConfig, fake_outcome: Option<&FakeReviewOutcome>) -> String {
+    if fake_outcome.is_some() {
+        "fake-reviewer".into()
+    } else if config.review.backend == "gemini-cli" {
+        "gemini-cli".into()
+    } else {
+        "fake-reviewer".into()
+    }
+}
+
+fn run_review_job(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    fake_outcome: Option<FakeReviewOutcome>,
+) -> Result<ReviewJob, Box<dyn std::error::Error>> {
+    let request = ReviewRequest {
+        issue: issue.clone(),
+        prompt: format!(
+            "Review {} {}\n\n{}",
+            issue.identifier,
+            issue.title,
+            issue.description.as_deref().unwrap_or_default()
+        ),
+        workspace: config.workspace.root.clone(),
+        artifact_root: config.observability.logs_root.join("reviews"),
+    };
+
+    if let Some(outcome) = fake_outcome {
+        let backend = FakeReviewBackend::new(outcome);
+        return Ok(backend.poll(backend.start(request)?)?);
+    }
+
+    match config.review.backend.as_str() {
+        "gemini-cli" => {
+            let backend = GeminiCliReviewBackend::new(config.review.gemini_command.clone());
+            match backend.start(request) {
+                Ok(job) => Ok(backend.poll(job)?),
+                Err(error) => Ok(ReviewJob::failed_unavailable(
+                    issue.identifier.clone(),
+                    "gemini-cli",
+                    error.to_string(),
+                )),
+            }
+        }
+        _ => {
+            let backend = FakeReviewBackend::new(FakeReviewOutcome::Pass);
+            Ok(backend.poll(backend.start(request)?)?)
+        }
+    }
+}
+
 fn apply_review_result(
     adapter: &dyn jade_symphony::tracker::TrackerAdapter,
     issue_ref: &str,
@@ -669,6 +836,13 @@ fn run_once(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     println!("issue={} {}", issue.identifier, issue.title);
     println!("workspace={}", result.workspace_path.display());
     println!("backend={}", result.backend);
+    println!("actor_role={}", result.actor_role);
+    println!("actor_label={}", result.actor_label);
+    println!(
+        "git_author={}",
+        result.git_author.as_deref().unwrap_or("n/a")
+    );
+    println!("git_identity={}", result.git_identity.summary());
     println!("success={}", result.success);
     println!(
         "event_log={}",
@@ -688,6 +862,18 @@ struct IssueExecutionResult {
     success: bool,
     session_id: Option<String>,
     message: String,
+    actor_role: String,
+    actor_label: String,
+    git_author: Option<String>,
+    git_identity: GitIdentityApplyResult,
+    live_handoff: Option<RunLoopLiveHandoff>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RunLoopLiveHandoff {
+    worktree: LiveWorktreeResult,
+    publication: PullRequestPublication,
+    verification: String,
 }
 
 fn execute_issue_once(
@@ -705,6 +891,7 @@ fn execute_issue_once_with_workspace_key(
     workspace_key: &str,
 ) -> Result<IssueExecutionResult, Box<dyn std::error::Error>> {
     let workspace = prepare_workspace(&config.workspace.root, workspace_key, &config.hooks)?;
+    let git_identity = apply_local_git_identity(&workspace.path, &config.identity.git)?;
     run_before_run(&workspace.path, &config.hooks)?;
 
     let prompt = render_prompt(&workflow.prompt_template, issue, None)?;
@@ -723,6 +910,9 @@ fn execute_issue_once_with_workspace_key(
             issue_id: Some(issue.id.clone()),
             issue_identifier: Some(issue.identifier.clone()),
             session_id: summary.session_id.clone(),
+            actor_role: Some(config.identity.actor_role.clone()),
+            actor_label: Some(config.identity.actor_label.clone()),
+            git_author: config.identity.git.author(),
             message: summary.message.clone(),
         })?;
     }
@@ -733,6 +923,11 @@ fn execute_issue_once_with_workspace_key(
         success: summary.success,
         session_id: summary.session_id,
         message: summary.message,
+        actor_role: config.identity.actor_role.clone(),
+        actor_label: config.identity.actor_label.clone(),
+        git_author: config.identity.git.author(),
+        git_identity,
+        live_handoff: None,
     })
 }
 
@@ -753,6 +948,73 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         let config = RuntimeConfig::from_workflow(&workflow, &options.workflow_path)?;
         config.validate()?;
         let adapter = adapter_from_config(&config);
+        if options.write {
+            let runtime_state = load_runtime_state(&config)?;
+            match run_loop_resume_preflight(
+                adapter.as_ref(),
+                &config,
+                runtime_state.as_ref(),
+                current_time_ms(),
+            )? {
+                ResumePreflightAction::Continue => {}
+                ResumePreflightAction::ClearCompleted { issue_identifier } => {
+                    clear_runtime_state(&config)?;
+                    println!(
+                        "run_loop_resume_preflight action=clear issue={} reason=tracker_state_terminal",
+                        issue_identifier
+                    );
+                }
+                ResumePreflightAction::RetryLater {
+                    issue_identifier,
+                    retry,
+                    due_in_ms,
+                } => {
+                    append_runtime_supervision_event(
+                        &config,
+                        runtime_state.as_ref(),
+                        "RetryDeferred",
+                        &format!(
+                            "issue={issue_identifier} attempt={} due_in_ms={} error={}",
+                            retry.attempt, due_in_ms, retry.error
+                        ),
+                    )?;
+                    println!(
+                        "run_loop=stopped reason=retry_backoff issue={} due_in_ms={} attempt={}",
+                        issue_identifier, due_in_ms, retry.attempt
+                    );
+                    break;
+                }
+                ResumePreflightAction::Stalled {
+                    issue_identifier,
+                    stall,
+                } => {
+                    append_runtime_supervision_event(
+                        &config,
+                        runtime_state.as_ref(),
+                        "RuntimeStalled",
+                        &format!(
+                            "issue={issue_identifier} stalled_for_ms={} reason={}",
+                            stall.stalled_for_ms, stall.reason
+                        ),
+                    )?;
+                    println!(
+                        "run_loop=stopped reason=runtime_stalled issue={} stalled_for_ms={}",
+                        issue_identifier, stall.stalled_for_ms
+                    );
+                    break;
+                }
+                ResumePreflightAction::Block { reason } => {
+                    append_runtime_supervision_event(
+                        &config,
+                        runtime_state.as_ref(),
+                        "ResumeBlocked",
+                        &reason,
+                    )?;
+                    println!("run_loop=stopped reason=resume_preflight_blocked detail={reason}");
+                    break;
+                }
+            }
+        }
         let issues = adapter.list_dispatchable_issues()?;
         let orchestrator = Orchestrator::new(config.clone());
         let mut plan = orchestrator.plan_dispatch(issues);
@@ -807,7 +1069,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         };
 
         if !options.write {
-            print_run_loop_dry_run_actions(&issue, &handoff);
+            print_run_loop_dry_run_actions(&issue, &handoff, &config);
             if limit.is_none() {
                 println!(
                     "run_loop=stopped reason=dry_run_would_repeat_without_mutation iterations={iterations}"
@@ -869,22 +1131,62 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         let mut runtime_state = run_loop_runtime_state_for_issue(
             existing_runtime_state.as_ref(),
             &latest,
-            &config.backend.kind,
+            &config,
             event,
         );
+        mark_runtime_state_updated(&mut runtime_state, current_time_ms());
         save_runtime_state(&config, &runtime_state)?;
         println!(
             "run_loop_runtime_state action=saved issue={} event={event}",
             latest.identifier
         );
 
-        let result = execute_issue_once_with_workspace_key(
+        let live_worktree = if run_loop_live_handoff_enabled(&config) {
+            let runner = ProcessHandoffCommandRunner;
+            let repo_root = std::env::current_dir()?;
+            let worktree = prepare_issue_worktree(&repo_root, &handoff, &runner)?;
+            println!(
+                "run_loop_action=worktree issue={} workspace={} branch={} created={}",
+                latest.identifier,
+                worktree.workspace_path.display(),
+                worktree.branch_name,
+                worktree.created
+            );
+            Some(worktree)
+        } else {
+            None
+        };
+
+        let mut result = execute_issue_once_with_workspace_key(
             &workflow,
             &config,
             &latest,
             &handoff.workspace_key,
         )?;
+        if result.success {
+            if let Some(worktree) = live_worktree {
+                let runner = ProcessHandoffCommandRunner;
+                match publish_issue_pull_request(&handoff, &runner) {
+                    Ok(publication) => {
+                        println!(
+                            "run_loop_action=pr issue={} url={} created={}",
+                            latest.identifier, publication.pr_url, publication.pr_created
+                        );
+                        result.live_handoff = Some(RunLoopLiveHandoff {
+                            worktree,
+                            publication,
+                            verification: "skipped:not_configured".into(),
+                        });
+                    }
+                    Err(error) => {
+                        result.success = false;
+                        result.message = format!("handoff publication failed: {error}");
+                    }
+                }
+            }
+        }
         runtime_state = run_loop_runtime_state_with_result(runtime_state, &result);
+        mark_runtime_state_updated(&mut runtime_state, current_time_ms());
         save_runtime_state(&config, &runtime_state)?;
         println!(
             "run_loop_runtime_state action=updated issue={} event={}",
@@ -905,6 +1207,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 "agent_review",
                 "main agent completed",
             );
+            mark_runtime_state_updated(&mut runtime_state, current_time_ms());
             save_runtime_state(&config, &runtime_state)?;
             adapter.set_state(&latest.identifier, "agent_review")?;
             clear_runtime_state(&config)?;
@@ -913,19 +1216,49 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 latest.identifier
             );
         } else {
-            runtime_state = run_loop_runtime_state_with_transition(
-                runtime_state,
-                Some(latest.state.clone()),
-                "need_human_input",
-                "backend run failed",
-            );
-            save_runtime_state(&config, &runtime_state)?;
-            adapter.set_state(&latest.identifier, "need_human_input")?;
-            clear_runtime_state(&config)?;
-            println!(
-                "run_loop_action=blocked issue={} target_state=need_human_input",
-                latest.identifier
-            );
+            let retry_delay_ms = Orchestrator::new(config.clone())
+                .retry_delay_ms(runtime_state.attempt_count, false);
+            if runtime_state.attempt_count < config.agent.max_turns {
+                record_runtime_retry(
+                    &mut runtime_state,
+                    current_time_ms(),
+                    retry_delay_ms,
+                    result.message.clone(),
+                );
+                save_runtime_state(&config, &runtime_state)?;
+                append_runtime_supervision_event(
+                    &config,
+                    Some(&runtime_state),
+                    "RetryScheduled",
+                    &format!(
+                        "issue={} attempt={} due_in_ms={} error={}",
+                        latest.identifier,
+                        runtime_state.attempt_count,
+                        retry_delay_ms,
+                        result.message
+                    ),
+                )?;
+                println!(
+                    "run_loop_action=retry_scheduled issue={} attempt={} due_in_ms={}",
+                    latest.identifier, runtime_state.attempt_count, retry_delay_ms
+                );
+                break;
+            } else {
+                runtime_state = run_loop_runtime_state_with_transition(
+                    runtime_state,
+                    Some(latest.state.clone()),
+                    "need_human_input",
+                    "backend run failed after retry limit",
+                );
+                mark_runtime_state_updated(&mut runtime_state, current_time_ms());
+                save_runtime_state(&config, &runtime_state)?;
+                adapter.set_state(&latest.identifier, "need_human_input")?;
+                clear_runtime_state(&config)?;
+                println!(
+                    "run_loop_action=blocked issue={} target_state=need_human_input",
+                    latest.identifier
+                );
+            }
         }
     }
 
@@ -945,6 +1278,26 @@ enum RunLoopClaimAction {
     StopAndReplan { current_state: String },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ResumePreflightAction {
+    Continue,
+    ClearCompleted {
+        issue_identifier: String,
+    },
+    RetryLater {
+        issue_identifier: String,
+        retry: RuntimeRetryState,
+        due_in_ms: u64,
+    },
+    Stalled {
+        issue_identifier: String,
+        stall: RuntimeStallState,
+    },
+    Block {
+        reason: String,
+    },
+}
+
 fn run_loop_claim_action(issue: &TrackerIssue, config: &RuntimeConfig) -> RunLoopClaimAction {
     match claim_decision(issue, config) {
         ClaimDecision::Claimable => RunLoopClaimAction::Claim,
@@ -953,6 +1306,70 @@ fn run_loop_claim_action(issue: &TrackerIssue, config: &RuntimeConfig) -> RunLoo
             RunLoopClaimAction::StopAndReplan { current_state }
         }
     }
+}
+
+fn run_loop_resume_preflight(
+    adapter: &dyn jade_symphony::tracker::TrackerAdapter,
+    config: &RuntimeConfig,
+    state: Option<&RuntimeState>,
+    now_ms: u64,
+) -> Result<ResumePreflightAction, Box<dyn std::error::Error>> {
+    let Some(state) = state else {
+        return Ok(ResumePreflightAction::Continue);
+    };
+    let Some(active_issue) = state.active_issue.as_ref() else {
+        return Ok(ResumePreflightAction::Continue);
+    };
+
+    let Some(issue) = adapter.get_issue(&active_issue.identifier)? else {
+        return Ok(ResumePreflightAction::Block {
+            reason: format!(
+                "runtime state references missing issue {}",
+                active_issue.identifier
+            ),
+        });
+    };
+    let normalized_state = normalize_state(&issue.state);
+
+    if config
+        .terminal_state_set()
+        .iter()
+        .any(|state| state == &normalized_state)
+        || matches!(normalized_state.as_str(), "agent review" | "human review")
+    {
+        return Ok(ResumePreflightAction::ClearCompleted {
+            issue_identifier: active_issue.identifier.clone(),
+        });
+    }
+
+    if normalized_state != "in progress" {
+        return Ok(ResumePreflightAction::Block {
+            reason: format!(
+                "runtime state references {} but tracker state is {}",
+                active_issue.identifier, issue.state
+            ),
+        });
+    }
+
+    if let Some(retry) = state.retry.clone() {
+        let due_in_ms = retry.due_in_ms(now_ms);
+        if due_in_ms > 0 {
+            return Ok(ResumePreflightAction::RetryLater {
+                issue_identifier: active_issue.identifier.clone(),
+                retry,
+                due_in_ms,
+            });
+        }
+    }
+
+    if let Some(stall) = detect_runtime_stall(state, now_ms, config.codex.stall_timeout_ms) {
+        return Ok(ResumePreflightAction::Stalled {
+            issue_identifier: active_issue.identifier.clone(),
+            stall,
+        });
+    }
+
+    Ok(ResumePreflightAction::Continue)
 }
 
 fn no_dispatch_action(
@@ -971,10 +1388,38 @@ fn no_dispatch_action(
     }
 }
 
+fn current_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn append_runtime_supervision_event(
+    config: &RuntimeConfig,
+    state: Option<&RuntimeState>,
+    event: &str,
+    message: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let log = EventLog::new(config.observability.logs_root.join("jade-symphony.jsonl"));
+    let active_issue = state.and_then(|state| state.active_issue.as_ref());
+    log.append(&EventRecord {
+        event: event.into(),
+        issue_id: active_issue.map(|issue| issue.id.clone()),
+        issue_identifier: active_issue.map(|issue| issue.identifier.clone()),
+        session_id: state.and_then(|state| state.backend_session_id.clone()),
+        actor_role: Some(config.identity.actor_role.clone()),
+        actor_label: Some(config.identity.actor_label.clone()),
+        git_author: config.identity.git.author(),
+        message: message.into(),
+    })?;
+    Ok(())
+}
+
 fn run_loop_runtime_state_for_issue(
     existing: Option<&RuntimeState>,
     issue: &TrackerIssue,
-    backend: &str,
+    config: &RuntimeConfig,
     event: &str,
 ) -> RuntimeState {
     let mut state = RuntimeState::active(
@@ -982,10 +1427,13 @@ fn run_loop_runtime_state_for_issue(
             id: issue.id.clone(),
             identifier: issue.identifier.clone(),
         },
-        backend,
+        &config.backend.kind,
     );
     state.attempt_count = next_runtime_attempt_count(existing, &issue.identifier);
     state.branch_name = issue.branch_name.clone();
+    state.actor_role = Some(config.identity.actor_role.clone());
+    state.actor_label = Some(config.identity.actor_label.clone());
+    state.git_author = config.identity.git.author();
     state.last_event = Some(event.into());
     state
 }
@@ -1009,6 +1457,9 @@ fn run_loop_runtime_state_with_result(
     state.workspace_path = Some(result.workspace_path.clone());
     state.backend = result.backend.clone();
     state.backend_session_id = result.session_id.clone();
+    state.actor_role = Some(result.actor_role.clone());
+    state.actor_label = Some(result.actor_label.clone());
+    state.git_author = result.git_author.clone();
     state.last_event = Some(if result.success {
         "Completed".into()
     } else {
@@ -1036,6 +1487,10 @@ fn run_loop_handoff_plan(
     issue: &TrackerIssue,
 ) -> Result<IssueHandoffPlan, HandoffError> {
     plan_issue_handoff(&config.workspace.root, issue, DEFAULT_RUN_LOOP_BASE_BRANCH)
+}
+
+fn run_loop_live_handoff_enabled(config: &RuntimeConfig) -> bool {
+    config.tracker.kind == "github_project_v2" && config.tracker.fixture_path.is_none()
 }
 
 fn handle_run_loop_gate_failure(
@@ -1092,7 +1547,11 @@ fn handle_run_loop_handoff_failure(
     Ok(())
 }
 
-fn print_run_loop_dry_run_actions(issue: &TrackerIssue, handoff: &IssueHandoffPlan) {
+fn print_run_loop_dry_run_actions(
+    issue: &TrackerIssue,
+    handoff: &IssueHandoffPlan,
+    config: &RuntimeConfig,
+) {
     if normalize_state(&issue.state) != "in progress" {
         println!(
             "run_loop_dry_run action=claim issue={} target_state=in_progress",
@@ -1110,8 +1569,25 @@ fn print_run_loop_dry_run_actions(issue: &TrackerIssue, handoff: &IssueHandoffPl
         handoff.pull_request.title
     );
     println!(
+        "run_loop_dry_run action=identity issue={} actor_role={} actor_label={:?} git_author={:?}",
+        issue.identifier,
+        config.identity.actor_role,
+        config.identity.actor_label,
+        config.identity.git.author()
+    );
+    println!(
         "run_loop_dry_run action=run issue={} backend=configured",
         issue.identifier
+    );
+    println!(
+        "run_loop_dry_run action=worktree issue={} workspace={} branch={}",
+        issue.identifier,
+        handoff.workspace_path.display(),
+        handoff.branch_name
+    );
+    println!(
+        "run_loop_dry_run action=pr issue={} head={} base={}",
+        issue.identifier, handoff.branch_name, handoff.pull_request.base_branch
     );
     println!(
         "run_loop_dry_run action=workpad issue={} evidence=run_summary",
@@ -1138,6 +1614,13 @@ fn run_loop_handoff_workpad(
         "### Run Evidence".to_string(),
         format!("- Workspace: `{}`", result.workspace_path.display()),
         format!("- Backend: `{}`", result.backend),
+        format!("- Actor role: `{}`", result.actor_role),
+        format!("- Actor label: `{}`", result.actor_label),
+        format!(
+            "- Git author: `{}`",
+            result.git_author.as_deref().unwrap_or("n/a")
+        ),
+        format!("- Git identity: `{}`", result.git_identity.summary()),
         format!("- Success: `{}`", result.success),
         format!(
             "- Session: `{}`",
@@ -1151,13 +1634,26 @@ fn run_loop_handoff_workpad(
         format!("- Branch: `{}`", handoff.branch_name),
         format!("- PR title: `{}`", handoff.pull_request.title),
         format!("- PR base branch: `{}`", handoff.pull_request.base_branch),
-        "- PR creation is planned evidence only in this slice.".to_string(),
+        live_handoff_workpad_line(result),
         String::new(),
         "### Main-Agent Boundary".to_string(),
         "- Locally complete main-agent work stops at `Agent Review`.".to_string(),
         "- `Human Review` is reserved for independent Review Agent pass evidence.".to_string(),
     ]
     .join("\n")
+}
+
+fn live_handoff_workpad_line(result: &IssueExecutionResult) -> String {
+    match &result.live_handoff {
+        Some(handoff) => format!(
+            "- Live PR: `{}` (created: `{}`, branch pushed: `{}`, verification: `{}`)",
+            handoff.publication.pr_url,
+            handoff.publication.pr_created,
+            handoff.publication.branch_pushed,
+            handoff.verification
+        ),
+        None => "- Live PR: `not-created`".to_string(),
+    }
 }
 
 fn run_loop_handoff_failure_workpad(issue: &TrackerIssue, error: &HandoffError) -> String {
@@ -1232,6 +1728,9 @@ enum Command {
     ReviewFreshness {
         input: ReviewFreshnessInput,
     },
+    ReviewLoop {
+        options: ReviewLoopOptions,
+    },
     Gate {
         workflow_path: PathBuf,
         issue_ref: String,
@@ -1281,6 +1780,25 @@ struct RunLoopOptions {
     max_iterations: Option<usize>,
     once: bool,
     write: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReviewLoopOptions {
+    workflow_path: PathBuf,
+    max_iterations: Option<usize>,
+    once: bool,
+    write: bool,
+    fake_outcome: Option<FakeReviewOutcome>,
+}
+
+impl ReviewLoopOptions {
+    fn iteration_limit(&self) -> Option<usize> {
+        if self.once {
+            Some(1)
+        } else {
+            self.max_iterations
+        }
+    }
 }
 
 impl RunLoopOptions {
@@ -1348,6 +1866,8 @@ enum CliCommand {
     ReviewOnce(ReviewOnceArgs),
     #[command(name = "review-freshness")]
     ReviewFreshness(ReviewFreshnessArgs),
+    #[command(name = "review-loop")]
+    ReviewLoop(ReviewLoopArgs),
     Gate(GateArgs),
     #[command(name = "gate-apply")]
     GateApply(GateArgs),
@@ -1497,6 +2017,22 @@ struct ReviewFreshnessArgs {
     rework_class: CliReviewReworkClass,
     #[arg(long = "patch-summary")]
     patch_summary: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct ReviewLoopArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long)]
+    max_iterations: Option<usize>,
+    #[arg(long)]
+    once: bool,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+    #[arg(long = "fake-outcome", value_enum)]
+    fake_outcome: Option<CliFakeReviewOutcome>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -1721,6 +2257,20 @@ impl TryFrom<Cli> for Command {
                             patch_summary: args.patch_summary,
                         },
                     }),
+                    CliCommand::ReviewLoop(args) => {
+                        if args.max_iterations == Some(0) {
+                            return Err(usage());
+                        }
+                        Ok(Self::ReviewLoop {
+                            options: ReviewLoopOptions {
+                                workflow_path: args.workflow_path,
+                                max_iterations: args.max_iterations,
+                                once: args.once,
+                                write: args.write,
+                                fake_outcome: args.fake_outcome.map(Into::into),
+                            },
+                        })
+                    }
                     CliCommand::Gate(args) => Ok(Self::Gate {
                         workflow_path: args.workflow_path,
                         issue_ref: args.issue_ref,
@@ -1897,6 +2447,7 @@ fn usage() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jade_symphony::tracker::MemoryTracker;
 
     fn forge_contract() -> String {
         [
@@ -1955,6 +2506,18 @@ mod tests {
             created_at: None,
             updated_at: None,
         }
+    }
+
+    fn active_runtime_state(identifier: &str) -> RuntimeState {
+        let mut state = RuntimeState::active(
+            RuntimeIssueState {
+                id: "ISSUE_29".into(),
+                identifier: identifier.into(),
+            },
+            "dry-run",
+        );
+        state.updated_at_ms = Some(1_000);
+        state
     }
 
     #[test]
@@ -2074,6 +2637,53 @@ mod tests {
     }
 
     #[test]
+    fn parses_review_loop_flags() {
+        let command = Command::parse(vec![
+            "review-loop".into(),
+            "examples/review-fixture-workflow.md".into(),
+            "--max-iterations".into(),
+            "2".into(),
+            "--fake-outcome".into(),
+            "confirmed".into(),
+            "--write".into(),
+        ])
+        .unwrap();
+
+        let Command::ReviewLoop { options } = command else {
+            panic!("expected review-loop command");
+        };
+
+        assert_eq!(
+            options.workflow_path,
+            PathBuf::from("examples/review-fixture-workflow.md")
+        );
+        assert_eq!(options.max_iterations, Some(2));
+        assert_eq!(
+            options.fake_outcome,
+            Some(FakeReviewOutcome::ConfirmedFinding)
+        );
+        assert!(options.write);
+    }
+
+    #[test]
+    fn review_loop_once_overrides_max_iterations() {
+        let command = Command::parse(vec![
+            "review-loop".into(),
+            "WORKFLOW.md".into(),
+            "--max-iterations".into(),
+            "4".into(),
+            "--once".into(),
+        ])
+        .unwrap();
+
+        let Command::ReviewLoop { options } = command else {
+            panic!("expected review-loop command");
+        };
+
+        assert_eq!(options.iteration_limit(), Some(1));
+    }
+
+    #[test]
     fn parses_run_loop_flags() {
         let command = Command::parse(vec![
             "run-loop".into(),
@@ -2131,6 +2741,19 @@ mod tests {
     }
 
     #[test]
+    fn rejects_zero_review_loop_iterations() {
+        let error = Command::parse(vec![
+            "review-loop".into(),
+            "WORKFLOW.md".into(),
+            "--max-iterations".into(),
+            "0".into(),
+        ])
+        .unwrap_err();
+
+        assert!(error.contains("Usage:"));
+    }
+
+    #[test]
     fn run_loop_claim_action_uses_tracker_claim_decision() {
         let config = test_config();
 
@@ -2155,11 +2778,86 @@ mod tests {
     }
 
     #[test]
-    fn run_loop_runtime_state_increments_same_issue_attempts() {
-        let issue = tracker_issue("In Progress");
-        let existing = run_loop_runtime_state_for_issue(None, &issue, "dry-run", "Claimed");
+    fn resume_preflight_continues_active_in_progress_state() {
+        let config = test_config();
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let state = active_runtime_state("#29");
 
-        let state = run_loop_runtime_state_for_issue(Some(&existing), &issue, "dry-run", "Resumed");
+        let action = run_loop_resume_preflight(&tracker, &config, Some(&state), 2_000).unwrap();
+
+        assert_eq!(action, ResumePreflightAction::Continue);
+    }
+
+    #[test]
+    fn resume_preflight_blocks_conflicting_tracker_state() {
+        let config = test_config();
+        let tracker = MemoryTracker::new(vec![tracker_issue("Todo")]);
+        let state = active_runtime_state("#29");
+
+        let action = run_loop_resume_preflight(&tracker, &config, Some(&state), 2_000).unwrap();
+
+        assert!(matches!(action, ResumePreflightAction::Block { .. }));
+    }
+
+    #[test]
+    fn resume_preflight_defers_until_retry_is_due() {
+        let config = test_config();
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let mut state = active_runtime_state("#29");
+        record_runtime_retry(&mut state, 1_000, 5_000, "rate limited");
+
+        let action = run_loop_resume_preflight(&tracker, &config, Some(&state), 2_000).unwrap();
+
+        assert!(matches!(
+            action,
+            ResumePreflightAction::RetryLater {
+                due_in_ms: 4_000,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn resume_preflight_detects_stalled_active_state() {
+        let config = test_config();
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let mut state = active_runtime_state("#29");
+        state.updated_at_ms = Some(1_000);
+
+        let action = run_loop_resume_preflight(
+            &tracker,
+            &config,
+            Some(&state),
+            config.codex.stall_timeout_ms + 2_000,
+        )
+        .unwrap();
+
+        assert!(matches!(action, ResumePreflightAction::Stalled { .. }));
+    }
+
+    #[test]
+    fn resume_preflight_clears_completed_tracker_state() {
+        let config = test_config();
+        let tracker = MemoryTracker::new(vec![tracker_issue("Agent Review")]);
+        let state = active_runtime_state("#29");
+
+        let action = run_loop_resume_preflight(&tracker, &config, Some(&state), 2_000).unwrap();
+
+        assert_eq!(
+            action,
+            ResumePreflightAction::ClearCompleted {
+                issue_identifier: "#29".into()
+            }
+        );
+    }
+
+    #[test]
+    fn run_loop_runtime_state_increments_same_issue_attempts() {
+        let config = test_config();
+        let issue = tracker_issue("In Progress");
+        let existing = run_loop_runtime_state_for_issue(None, &issue, &config, "Claimed");
+
+        let state = run_loop_runtime_state_for_issue(Some(&existing), &issue, &config, "Resumed");
 
         assert_eq!(state.attempt_count, 2);
         assert_eq!(
@@ -2170,24 +2868,41 @@ mod tests {
             Some("#29")
         );
         assert_eq!(state.branch_name, issue.branch_name);
+        assert_eq!(state.actor_role.as_deref(), Some("implementation_agent"));
+        assert_eq!(state.actor_label.as_deref(), Some("Jade Symphony Agent"));
         assert_eq!(state.last_event.as_deref(), Some("Resumed"));
     }
 
     #[test]
     fn run_loop_runtime_state_records_result_and_transition() {
+        let config = test_config();
         let issue = tracker_issue("In Progress");
-        let state = run_loop_runtime_state_for_issue(None, &issue, "dry-run", "Claimed");
+        let state = run_loop_runtime_state_for_issue(None, &issue, &config, "Claimed");
         let result = IssueExecutionResult {
             workspace_path: PathBuf::from("/tmp/jade/issue-29"),
             backend: "dry-run".into(),
             success: true,
             session_id: Some("session-29".into()),
             message: "ok".into(),
+            actor_role: "implementation_agent".into(),
+            actor_label: "Jade Symphony Agent".into(),
+            git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+            git_identity: GitIdentityApplyResult {
+                status: jade_symphony::workspace::GitIdentityApplyStatus::Applied,
+                author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+                applied_keys: vec!["user.name".into(), "user.email".into()],
+            },
+            live_handoff: None,
         };
 
         let state = run_loop_runtime_state_with_result(state, &result);
         assert_eq!(state.workspace_path, Some(result.workspace_path));
         assert_eq!(state.backend_session_id.as_deref(), Some("session-29"));
+        assert_eq!(state.actor_role.as_deref(), Some("implementation_agent"));
+        assert_eq!(
+            state.git_author.as_deref(),
+            Some("Jade Symphony Agent <jade@example.invalid>")
+        );
         assert_eq!(state.last_event.as_deref(), Some("Completed"));
 
         let state = run_loop_runtime_state_with_transition(
@@ -2260,16 +2975,42 @@ mod tests {
             success: true,
             session_id: Some("session-33".into()),
             message: "ok".into(),
+            actor_role: "implementation_agent".into(),
+            actor_label: "Jade Symphony Agent".into(),
+            git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+            git_identity: GitIdentityApplyResult {
+                status: jade_symphony::workspace::GitIdentityApplyStatus::Applied,
+                author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+                applied_keys: vec!["user.name".into(), "user.email".into()],
+            },
+            live_handoff: Some(RunLoopLiveHandoff {
+                worktree: LiveWorktreeResult {
+                    workspace_path: handoff.workspace_path.clone(),
+                    branch_name: handoff.branch_name.clone(),
+                    created: true,
+                },
+                publication: PullRequestPublication {
+                    branch_pushed: true,
+                    pr_url: "https://github.com/Alive24/jade-symphony/pull/45".into(),
+                    pr_created: true,
+                },
+                verification: "skipped:not_configured".into(),
+            }),
         };
 
         let workpad = run_loop_handoff_workpad(&issue, &result, &handoff);
 
         assert!(workpad.contains("### Planned Handoff"));
+        assert!(workpad.contains("Actor role: `implementation_agent`"));
+        assert!(
+            workpad.contains("Git identity: `applied:Jade Symphony Agent <jade@example.invalid>`")
+        );
         assert!(workpad
             .contains("Workspace key: `issue-29-wire-runtime-state-persistence-into-run-loop`"));
         assert!(workpad
             .contains("Branch: `feature/issue-29-wire-runtime-state-persistence-into-run-loop`"));
         assert!(workpad.contains("PR title: `#29: Wire runtime state persistence into run-loop`"));
+        assert!(workpad.contains("Live PR: `https://github.com/Alive24/jade-symphony/pull/45`"));
     }
 
     #[test]

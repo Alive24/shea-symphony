@@ -1028,7 +1028,11 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                             "review_loop_dry_run action=start issue={} backend={backend_kind}",
                             selected_issue.identifier
                         );
-                        print_review_claim_field_dry_run(&selected_issue.identifier, &worker_key);
+                        print_review_claim_field_dry_run(
+                            &selected_issue.identifier,
+                            &worker_key,
+                            worker_slot,
+                        );
                         println!(
                             "review_loop_dry_run action=workpad issue={} evidence=review_job",
                             selected_issue.identifier
@@ -1060,6 +1064,7 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                                 adapter.as_ref(),
                                 &latest.identifier,
                                 &worker_key,
+                                worker_slot,
                             )?;
                             let mut job =
                                 run_review_job(&config, &latest, options.fake_outcome.clone())?;
@@ -1477,11 +1482,23 @@ fn review_claim_field_value(worker_key: &str) -> String {
     format!("running {worker_key}")
 }
 
-fn print_review_claim_field_dry_run(issue_ref: &str, worker_key: &str) {
+fn review_claim_field_value_for_slot(worker_key: &str, worker_slot: usize) -> String {
+    if worker_key.to_ascii_lowercase().contains(":gemini-cli") {
+        match worker_slot {
+            1 => "Gemini A".into(),
+            2 => "Gemini B".into(),
+            _ => "Hold".into(),
+        }
+    } else {
+        review_claim_field_value(worker_key)
+    }
+}
+
+fn print_review_claim_field_dry_run(issue_ref: &str, worker_key: &str, worker_slot: usize) {
     println!(
         "review_loop_dry_run action=claim_field issue={issue_ref} field={:?} value={:?}",
         "Review Agent",
-        review_claim_field_value(worker_key)
+        review_claim_field_value_for_slot(worker_key, worker_slot)
     );
 }
 
@@ -1490,12 +1507,14 @@ fn write_review_claim_field(
     adapter: &dyn TrackerAdapter,
     issue_ref: &str,
     worker_key: &str,
+    worker_slot: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let claim_value = review_claim_field_value_for_slot(worker_key, worker_slot);
     adapter.set_project_field(
         issue_ref,
         &ProjectFieldAssignment {
             name: "Review Agent".into(),
-            value: review_claim_field_value(worker_key),
+            value: claim_value.clone(),
         },
     )?;
     append_tracker_mutation_audit(
@@ -1504,10 +1523,7 @@ fn write_review_claim_field(
             command: "review-loop",
             mutation_type: "claim_field",
             issue_ref: Some(issue_ref),
-            target: Some(format!(
-                "Review Agent={}",
-                review_claim_field_value(worker_key)
-            )),
+            target: Some(format!("Review Agent={claim_value}")),
             from_state: None,
             to_state: None,
             reason: "review worker claim",

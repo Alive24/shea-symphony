@@ -102,7 +102,8 @@ worker supervision are still future work.
   `Need Human Input` with a workpad diagnostic.
 - live GitHub `run-loop --write` can create or reuse the planned issue
   worktree/branch, run the configured backend inside that worktree, push the
-  branch, and create or reuse one GitHub PR after successful execution.
+  branch, create or reuse one GitHub PR after successful execution, and record
+  that PR through the normalized tracker adapter before Agent Review handoff.
 - terminal status output reports polling state, planned running/skipped/retrying
   issues, token counters, event-log path, gate details, and integration gaps.
 - `doctor` / `audit-project` can read the configured tracker and report
@@ -135,8 +136,8 @@ worker supervision are still future work.
   workspace/branch/PR handoff plans, use tracker claim helpers to
   claim/resume/skip externally changed issues, and in explicit `--write` mode
   run one issue at a time, record handoff evidence, create a live PR handoff in
-  non-fixture GitHub Project v2 mode, and stop main-agent completion at
-  `Agent Review`;
+  non-fixture GitHub Project v2 mode, link that PR through the tracker adapter,
+  and stop main-agent completion at `Agent Review`;
   unbounded write mode sleeps on idle polls using the workflow polling interval.
 
 ## Dry-Run Only

@@ -31,7 +31,8 @@ yet.
 | Tests | Unit tests cover the dry-run skeleton. Read-only / dry-run live GitHub smoke tests exist behind explicit `JADE_LIVE_GITHUB_SMOKE=1` opt-in; mutation and Linear credential-gated smoke coverage are still missing. |
 
 The operator launcher runbook is in `docs/operator-dogfood.md`; it keeps write
-mode explicit through `scripts/jade-dogfood --write --confirm-write`.
+mode explicit through `scripts/jade-dogfood --write --confirm-write` and runs
+the controlled dogfood smoke preflight before a mutating tick.
 
 The controlled live smoke runbook is in `docs/dogfood-smoke.md`. It keeps the
 first dogfood acceptance path supervised and bounded to one controlled issue.

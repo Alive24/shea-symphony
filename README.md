@@ -97,7 +97,8 @@ For a compact source-linked view of what is landed, what is waiting in
   conditions, and one issue / one branch / one PR handoff rules.
 - `scripts/jade-dogfood` provides a bounded operator launcher for the GitHub
   Project workflow with explicit dry-run/write modes and preflight checks for
-  the built binary, git, `gh`, auth, and workflow validation.
+  the built binary, git, `gh`, auth, workflow validation, and controlled
+  dogfood smoke readiness before write-mode mutation.
 - workspace identifiers are sanitized; local workspace paths stay under the
   configured root; hooks support timeouts, stdout/stderr capture,
   `before_remove`, safe cleanup helpers, and a guarded terminal workspace
@@ -407,8 +408,9 @@ cargo run -- plan examples/dry-run-workflow.md
 cargo run -- run-once examples/dry-run-workflow.md
 cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
 scripts/jade-dogfood --dry-run
-cargo run -- run-loop examples/usage-limit-workflow.md --max-iterations 1 --write
 cargo run -- dogfood-smoke examples/github-project-workflow.md --dry-run
+scripts/jade-dogfood --write --confirm-write --max-iterations 1
+cargo run -- run-loop examples/usage-limit-workflow.md --max-iterations 1 --write
 cargo run -- merge-once examples/github-project-workflow.md --dry-run
 cargo run -- merge-loop examples/github-project-workflow.md --max-iterations 3 --dry-run
 cargo run -- cleanup-workspaces examples/github-project-workflow.md --dry-run

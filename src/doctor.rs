@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{normalize_state, LinkedPullRequest, TrackerIssue};
 
+pub const HUMAN_REVIEW_MISSING_REVIEW_EVIDENCE: &str = "human_review_missing_review_evidence";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AuditSeverity {
     Warning,
@@ -58,7 +60,7 @@ pub fn audit_project_issues(issues: &[TrackerIssue]) -> ProjectAuditReport {
                 violations.push(violation(
                     issue,
                     AuditSeverity::Blocker,
-                    "human_review_missing_review_evidence",
+                    HUMAN_REVIEW_MISSING_REVIEW_EVIDENCE,
                     "Human Review issue has no independent review pass evidence.",
                     "Return to Agent Review until Review Agent pass evidence is recorded.",
                 ));
@@ -146,6 +148,35 @@ pub fn render_project_audit_report(report: &ProjectAuditReport) -> String {
     }
 
     lines.join("\n")
+}
+
+pub fn human_review_repair_candidates(report: &ProjectAuditReport) -> Vec<&ProjectAuditViolation> {
+    report
+        .violations
+        .iter()
+        .filter(|violation| {
+            violation.severity == AuditSeverity::Blocker
+                && violation.code == HUMAN_REVIEW_MISSING_REVIEW_EVIDENCE
+        })
+        .collect()
+}
+
+pub fn render_human_review_repair_workpad(violation: &ProjectAuditViolation) -> String {
+    [
+        "## Jade Symphony Workpad".to_string(),
+        String::new(),
+        "### Project Doctor Repair".to_string(),
+        format!("- Issue: {} {}", violation.issue_ref, violation.title),
+        format!("- Violation: `{}`", violation.code),
+        format!("- Previous state: `{}`", violation.state),
+        format!("- Message: {}", violation.message),
+        format!("- Repair: {}", violation.suggestion),
+        String::new(),
+        "### State Boundary".to_string(),
+        "- Main implementation agent is moving this issue back to `Agent Review`.".to_string(),
+        "- This repair does not set `Human Review`; that state requires independent Review Agent pass evidence.".to_string(),
+    ]
+    .join("\n")
 }
 
 pub fn render_project_audit_report_json(
@@ -295,8 +326,29 @@ mod tests {
 
         assert_eq!(
             report.violations[0].code,
-            "human_review_missing_review_evidence"
+            HUMAN_REVIEW_MISSING_REVIEW_EVIDENCE
         );
+    }
+
+    #[test]
+    fn human_review_repair_candidates_are_specific_to_missing_review_evidence() {
+        let report =
+            audit_project_issues(&[issue("#41", "Human Review"), issue("#57", "Agent Review")]);
+
+        let candidates = human_review_repair_candidates(&report);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].issue_ref, "#41");
+    }
+
+    #[test]
+    fn human_review_repair_workpad_preserves_authority_boundary() {
+        let report = audit_project_issues(&[issue("#41", "Human Review")]);
+        let workpad = render_human_review_repair_workpad(&report.violations[0]);
+
+        assert!(workpad.contains("Project Doctor Repair"));
+        assert!(workpad.contains("moving this issue back to `Agent Review`"));
+        assert!(workpad.contains("does not set `Human Review`"));
     }
 
     #[test]

@@ -24,7 +24,7 @@ yet.
 | Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Prepared runs include selected profile/instance metadata and profile environment context. Full Codex app-server and Claude Code protocol parity are not implemented yet. |
 | Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, evidence-first Rework diagnostics for confirmed findings, review-freshness evidence for Merging conflict repair, bounded `review-loop` worker selection/reconciliation with one issue per worker slot, durable JSON review job ledger records, and workpad/status evidence helpers exist. Persistent background review worker supervision is not implemented yet. |
 | Merging | `merge-once` can inspect issues already in `Merging`, require one linked PR, treat Project `Merging` as the approval signal, check live GitHub PR state/review/check/mergeability data where available, merge clean PRs only with explicit `--write`, record workpad evidence, set Project `Done`, close the linked GitHub issue when supported by the tracker, and route blockers to `Rework` or `Need Human Input`. Bounded `merge-loop` can repeat that guarded tick for an explicit iteration count. Unbounded continuous merge polling is not implemented yet. |
-| Project doctor | Read-only `doctor` / `audit-project` reports workflow invariant violations from normalized tracker issues, including missing PR handoff evidence, missing review pass evidence, dirty Merging PRs, missing runtime ownership hints, and queued issues with PRs. Repair mode is not implemented yet. |
+| Project doctor | Read-only `doctor` / `audit-project` reports workflow invariant violations from normalized tracker issues, including missing PR handoff evidence, missing review pass evidence, dirty Merging PRs, missing runtime ownership hints, and queued issues with PRs. JSON output and strict blocker failure modes exist. `doctor-repair-human-review` can repair the specific invalid Human Review-without-pass-evidence case with explicit `--write`; broader repair mode is not implemented yet. |
 | Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events with actor and profile metadata. Runtime state files are written during write-mode `run-loop` issue execution, including actor role/label, git author, and optional profile/instance identity when configured; resume, retry, usage-limit pause, and stall supervision events are also recorded. No web/API surface yet. |
 | Usage-limit pause/resume | Conservative usage-limit/rate-limit/resource-exhausted classification exists for subprocess agent events and review job output. `run-loop` records usage-limit pauses in workpad/runtime retry state and does not advance to `Agent Review`; review workpads surface usage-limit failures without moving to `Human Review`. Vendor-specific quota management is not implemented. |
 | Tests | Unit tests cover the dry-run skeleton. Read-only / dry-run live GitHub smoke tests exist behind explicit `JADE_LIVE_GITHUB_SMOKE=1` opt-in; mutation and Linear credential-gated smoke coverage are still missing. |
@@ -173,8 +173,9 @@ Project v2 issues:
      while avoiding false missing-token warnings when `gh api graphql` works.
    - `doctor` / `audit-project` is available as a read-only project invariant
      audit with human-readable output, JSON output, and explicit strict failure
-     signaling for blocker violations. Explicit-write repair mode remains a
-     follow-up.
+     signaling for blocker violations. Explicit-write repair currently covers
+     only invalid `Human Review` issues that lack independent Review Agent pass
+     evidence; broader repair mode remains a follow-up.
 
 9. Integration profile.
    - Credential-gated GitHub Project v2 smoke test.

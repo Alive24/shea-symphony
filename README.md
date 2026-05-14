@@ -122,7 +122,9 @@ worker supervision are still future work.
   Review without review pass evidence, dirty Merging PRs, stale-looking In
   Progress work, and queued issues with attached PRs. `--json` emits the same
   report as structured data, and `--strict` exits nonzero when blocker
-  violations are present.
+  violations are present. A guarded `doctor-repair-human-review` command can
+  repair the specific invalid Human Review-without-pass-evidence case by
+  writing workpad evidence and moving the issue back to `Agent Review`.
 - JSONL event-log primitives exist and can record selected profile identity.
 - runtime state helpers can write, read, and clear a tracker-neutral
   `runtime/runtime-state.json` file under the configured logs root, including
@@ -185,6 +187,7 @@ cargo run -- validate examples/dry-run-workflow.md
 cargo run -- validate-workflow examples/dry-run-workflow.md
 cargo run -- inspect examples/dry-run-workflow.md
 cargo run -- doctor examples/dry-run-workflow.md
+cargo run -- doctor-repair-human-review examples/dry-run-workflow.md --dry-run
 cargo run -- doctor examples/dry-run-workflow.md --json
 cargo run -- doctor examples/dry-run-workflow.md --strict
 cargo run -- plan examples/dry-run-workflow.md

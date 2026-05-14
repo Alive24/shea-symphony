@@ -272,6 +272,7 @@ fn status_api(
 fn build_plan_snapshot(
     workflow_path: &Path,
 ) -> Result<jade_symphony::model::RuntimeSnapshot, Box<dyn std::error::Error>> {
+    warn_if_temporary_workflow_path(workflow_path);
     let workflow = WorkflowDefinition::load(workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, workflow_path)?;
     config.validate()?;
@@ -1672,7 +1673,31 @@ fn require_write_intent(write: bool) -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
+fn warn_if_temporary_workflow_path(workflow_path: &Path) {
+    if let Some(warning) = temporary_workflow_warning(workflow_path) {
+        eprintln!("{warning}");
+    }
+}
+
+fn temporary_workflow_warning(workflow_path: &Path) -> Option<String> {
+    if !is_temporary_workflow_path(workflow_path) {
+        return None;
+    }
+    Some(format!(
+        "workflow_warning=temporary_path path={} action=promote durable_config=examples/ docs=docs/operator-dogfood.md",
+        workflow_path.display()
+    ))
+}
+
+fn is_temporary_workflow_path(workflow_path: &Path) -> bool {
+    [Path::new("/private/tmp"), Path::new("/tmp")]
+        .iter()
+        .any(|prefix| workflow_path.starts_with(prefix))
+        || workflow_path.starts_with(std::env::temp_dir())
+}
+
 fn load_config(workflow_path: &Path) -> Result<RuntimeConfig, Box<dyn std::error::Error>> {
+    warn_if_temporary_workflow_path(workflow_path);
     let workflow = WorkflowDefinition::load(workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, workflow_path)?;
     config.validate()?;
@@ -1680,6 +1705,7 @@ fn load_config(workflow_path: &Path) -> Result<RuntimeConfig, Box<dyn std::error
 }
 
 fn validate(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    warn_if_temporary_workflow_path(&workflow_path);
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
@@ -1731,6 +1757,7 @@ fn inspect(
 }
 
 fn project_state(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    warn_if_temporary_workflow_path(&workflow_path);
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
@@ -2474,6 +2501,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         }
 
         iterations += 1;
+        warn_if_temporary_workflow_path(&options.workflow_path);
         let workflow = WorkflowDefinition::load(&options.workflow_path)?;
         let config = RuntimeConfig::from_workflow(&workflow, &options.workflow_path)?;
         config.validate()?;
@@ -5188,6 +5216,19 @@ mod tests {
                 .as_ref()
                 .map(|audit| audit.mutation_type.as_str()),
             Some("state_change")
+        );
+    }
+
+    #[test]
+    fn temporary_workflow_paths_emit_operator_warning() {
+        let warning =
+            temporary_workflow_warning(Path::new("/private/tmp/jade-github-project-workflow.md"))
+                .expect("expected temporary workflow warning");
+
+        assert!(warning.contains("workflow_warning=temporary_path"));
+        assert!(warning.contains("action=promote"));
+        assert!(
+            temporary_workflow_warning(Path::new("examples/github-project-workflow.md")).is_none()
         );
     }
 

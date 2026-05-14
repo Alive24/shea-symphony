@@ -36,9 +36,9 @@ tracker:
 polling:
   interval_ms: 5000
 artifacts:
-  root: ~/.jade-symphony/artifacts
+  root: $JADE_SYMPHONY_ARTIFACT_ROOT
 workspace:
-  root: ~/.jade-symphony/artifacts/Alive24/jade-symphony/default/worktrees
+  root: $JADE_SYMPHONY_ARTIFACT_ROOT/Alive24/jade-symphony/default/worktrees
 agent:
   backend: dry-run
   max_concurrent_agents: 1
@@ -56,7 +56,7 @@ verification:
   timeout_ms: 600000
   commands: []
 observability:
-  logs_root: ~/.jade-symphony/artifacts/Alive24/jade-symphony/default/logs
+  logs_root: $JADE_SYMPHONY_ARTIFACT_ROOT/Alive24/jade-symphony/default/logs
 ---
 
 You are working on Jade Symphony issue {{ issue.identifier }}.
@@ -102,9 +102,9 @@ question, but do not edit files under
 2. Confirm the issue is still executable with the Issue Quality Gate. If the
    issue is not executable, leave a precise workpad note, move it to
    `Need to Clarify`, and stop this issue.
-   The gate must include explicit dependency semantics: either no blocking
-   dependencies, or named blockers/overlaps with the condition that makes the
-   issue claimable.
+   Structured tracker blockers are the dependency source of truth. Body text can
+   explain dependencies, but missing dependency boilerplate is not a blocker for
+   otherwise independent work.
 3. Work in exactly one isolated workspace and branch for this issue. Do not mix
    unrelated issue scopes in this branch or PR.
 4. Capture a short implementation plan in the workpad before significant edits.

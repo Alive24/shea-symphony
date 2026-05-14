@@ -206,6 +206,9 @@ Expected shape:
 
 ## Operator Commands
 
+See `docs/cli-command-reference.md` for the grouped command reference, write
+boundaries, and role-specific lanes.
+
 ```bash
 cargo run -- validate examples/dry-run-workflow.md
 cargo run -- validate-workflow examples/dry-run-workflow.md

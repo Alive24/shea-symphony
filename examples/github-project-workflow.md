@@ -102,9 +102,9 @@ question, but do not edit files under
 2. Confirm the issue is still executable with the Issue Quality Gate. If the
    issue is not executable, leave a precise workpad note, move it to
    `Need to Clarify`, and stop this issue.
-   The gate must include explicit dependency semantics: either no blocking
-   dependencies, or named blockers/overlaps with the condition that makes the
-   issue claimable.
+   Structured tracker blockers are the dependency source of truth. Body text can
+   explain dependencies, but missing dependency boilerplate is not a blocker for
+   otherwise independent work.
 3. Work in exactly one isolated workspace and branch for this issue. Do not mix
    unrelated issue scopes in this branch or PR.
 4. Capture a short implementation plan in the workpad before significant edits.

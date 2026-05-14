@@ -106,6 +106,8 @@ cargo run -- review-loop examples/github-project-workflow.md --max-iterations 1 
 
 Expected outcomes:
 
+- each write-mode Review Agent records a `Review Agent` Project field claim
+  before launching the backend;
 - passed independent review may move the issue to `Human Review`;
 - confirmed findings move the issue to `Rework`;
 - failed, inconclusive, timed-out, or unavailable review stays out of

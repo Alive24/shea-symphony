@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -171,6 +171,24 @@ impl AgentBackend for CodexBackend {
     }
 
     fn run(&self, prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError> {
+        if prepared
+            .command
+            .as_deref()
+            .is_some_and(is_codex_app_server_command)
+        {
+            let session_id = session_id_with_profile("codex-subprocess", &prepared);
+            return Ok(vec![
+                AgentEvent::SessionStarted {
+                    backend: prepared.backend.clone(),
+                    session_id,
+                },
+                AgentEvent::Failed {
+                    backend: prepared.backend,
+                    error: "Codex app-server transport is not implemented for the subprocess backend; configure an explicit subprocess command or use dry-run until app-server support lands.".into(),
+                },
+            ]);
+        }
+
         run_subprocess_backend(prepared, "codex-subprocess", "Codex subprocess")
     }
 
@@ -370,6 +388,53 @@ fn session_id_with_profile(base: &str, prepared: &PreparedRun) -> String {
         .unwrap_or_else(|| base.into())
 }
 
+fn is_codex_app_server_command(command: &str) -> bool {
+    let tokens = command
+        .split_whitespace()
+        .map(clean_shell_token)
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+    let mut index = 0;
+
+    while let Some(token) = tokens.get(index) {
+        if matches!(*token, "env" | "exec" | "command") || is_env_assignment(token) {
+            index += 1;
+        } else {
+            break;
+        }
+    }
+
+    let Some(executable) = tokens.get(index) else {
+        return false;
+    };
+    let Some(first_arg) = tokens.get(index + 1) else {
+        return false;
+    };
+
+    is_codex_executable(executable) && *first_arg == "app-server"
+}
+
+fn clean_shell_token(token: &str) -> &str {
+    token.trim_matches(|character| matches!(character, '\'' | '"' | ';'))
+}
+
+fn is_env_assignment(token: &str) -> bool {
+    let Some((name, _)) = token.split_once('=') else {
+        return false;
+    };
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|character| character == '_' || character.is_ascii_alphanumeric())
+}
+
+fn is_codex_executable(token: &str) -> bool {
+    Path::new(token)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == "codex")
+}
+
 fn summarize_events(backend: &str, events: &[AgentEvent]) -> AgentSummary {
     let session_id = events.iter().find_map(|event| match event {
         AgentEvent::SessionStarted { session_id, .. } => Some(session_id.clone()),
@@ -549,6 +614,37 @@ mod tests {
             std::fs::read_to_string(temp.path().join("response.txt")).unwrap(),
             "hello prompt"
         );
+    }
+
+    #[test]
+    fn codex_backend_refuses_app_server_command_without_launching() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = codex_config("codex app-server", 5_000);
+        let backend = CodexBackend;
+        let prepared = backend
+            .prepare(temp.path().to_path_buf(), "hello prompt".into(), &config)
+            .unwrap();
+        let events = backend.run(prepared).unwrap();
+        let summary = backend.summarize(&events);
+
+        assert!(!summary.success);
+        assert!(summary
+            .message
+            .contains("app-server transport is not implemented"));
+        assert!(!temp.path().join("JADE_SYMPHONY_PROMPT.md").exists());
+    }
+
+    #[test]
+    fn codex_app_server_command_guard_is_specific() {
+        assert!(is_codex_app_server_command("codex app-server"));
+        assert!(is_codex_app_server_command(
+            "env CODEX_HOME=/tmp/codex /opt/bin/codex app-server --port 0"
+        ));
+        assert!(is_codex_app_server_command("exec 'codex' app-server"));
+
+        assert!(!is_codex_app_server_command("cat > response.txt"));
+        assert!(!is_codex_app_server_command("echo codex app-server"));
+        assert!(!is_codex_app_server_command("codex exec app-server"));
     }
 
     #[test]

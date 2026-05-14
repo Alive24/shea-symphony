@@ -1,0 +1,44 @@
+[
+  {
+    "tracker_kind": "github_project_v2",
+    "id": "GHI_dogfood_smoke_controlled",
+    "item_id": "PVTI_dogfood_smoke_controlled",
+    "identifier": "#9001",
+    "title": "[dogfood-smoke] Controlled fixture smoke candidate",
+    "description": "## Issue Setup\n\n- UAT Required: No\n\n## Issue Goal\n\nExercise the controlled dogfood smoke preflight path in fixture mode.\n\n## Why Now\n\nOperators need a deterministic credential-free way to verify the controlled dogfood smoke candidate path before running the live GitHub Project v2 smoke.\n\n## Issue Context\n\nThis issue is loaded by `examples/dogfood-smoke-workflow.md`. It intentionally carries the `dogfood-smoke` label and a `[dogfood-smoke]` title marker so `dogfood-smoke` can count it as the one controlled candidate.\n\n## Decisions / Assumptions\n\n### Decisions\n\n- Keep this issue fixture-only and dry-run only.\n- Use one controlled candidate so the preflight can report the expected count.\n\n### Assumptions\n\n- Fixture mode is enough to rehearse candidate filtering and quality-gate evaluation.\n\n## Non-Negotiable Guardrails\n\n- Do not perform live GitHub Project v2 writes from this fixture.\n- Do not treat fixture readiness as supervised live dogfood completion.\n- Do not move work to Human Review.\n\n## Scope\n\n### In Scope\n\n- Controlled smoke preflight candidate detection.\n- Issue Quality Gate evaluation.\n- Operator-visible dry-run reporting.\n\n### Out of Scope\n\n- Live tracker mutation.\n- Real backend execution.\n- Review Agent execution.\n\n## Canonical References\n\n### Target Repository / Package\n\n- `Alive24/jade-symphony`\n\n### Relevant Knowledge Sources\n\n- `docs/dogfood-smoke.md`\n- `docs/dogfood-readiness.md`\n\n### Relevant Code Paths\n\n- `src/main.rs`\n- `examples/dogfood-smoke-workflow.md`\n- `examples/fixtures/dogfood-smoke-issues.json`\n\n## Current State\n\nThe live dogfood smoke command exists, but this fixture provides a safe local candidate.\n\n## Deliverable Shape\n\nA dry-run smoke preflight report with one controlled executable candidate.\n\n## Risks or Constraints\n\n- Fixture mode must remain non-write-ready.\n\n## Expected Outcome\n\nThe smoke preflight reports one controlled executable candidate and `write_ready=false`.\n\n## Verification\n\n### Completion Criteria\n\n- `cargo run -- dogfood-smoke examples/dogfood-smoke-workflow.md --dry-run` reports `controlled_candidates=1` and `executable_candidates=1`.\n\n### Functional Verification\n\n- `cargo test`\n- `cargo fmt --check`\n- `cargo clippy --all-targets --all-features -- -D warnings`\n\n### UAT\n\n- Not required.\n\n### Context Verification\n\n- Confirm fixture smoke remains separate from live dogfood smoke.",
+    "url": "https://github.com/Alive24/jade-symphony/issues/9001",
+    "state": "Todo",
+    "labels": ["dogfood-smoke", "fixture"],
+    "assignees": ["codex"],
+    "priority": 1,
+    "branch_name": null,
+    "linked_pull_requests": [],
+    "blocked_by": [],
+    "project_fields": {
+      "Status": "Todo"
+    },
+    "created_at": "2026-05-14T00:00:00Z",
+    "updated_at": "2026-05-14T00:00:00Z"
+  },
+  {
+    "tracker_kind": "github_project_v2",
+    "id": "GHI_dogfood_smoke_uncontrolled",
+    "item_id": "PVTI_dogfood_smoke_uncontrolled",
+    "identifier": "#9002",
+    "title": "Ordinary fixture issue outside controlled smoke",
+    "description": "## Issue Setup\n\n- UAT Required: No\n\n## Issue Goal\n\nRemain outside the controlled dogfood smoke candidate set.\n\n## Why Now\n\nThe fixture should prove that ordinary Todo issues do not count as controlled dogfood smoke candidates.\n\n## Issue Context\n\nThis issue is loaded by `examples/dogfood-smoke-workflow.md` but does not carry the `dogfood-smoke` label or title marker.\n\n## Non-Negotiable Guardrails\n\n- Do not count this issue as a controlled smoke candidate.\n\n## Scope\n\n### In Scope\n\n- Candidate filtering fixture coverage.\n\n### Out of Scope\n\n- Live tracker mutation.\n\n## Canonical References\n\n### Target Repository / Package\n\n- `Alive24/jade-symphony`\n\n### Relevant Knowledge Sources\n\n- `docs/dogfood-smoke.md`\n\n### Relevant Code Paths\n\n- `examples/fixtures/dogfood-smoke-issues.json`\n\n## Current State\n\nThe fixture needs a non-controlled issue for contrast.\n\n## Deliverable Shape\n\nAn ordinary Todo issue that is ignored by controlled smoke filtering.\n\n## Risks or Constraints\n\n- This issue must not accidentally include the smoke marker.\n\n## Expected Outcome\n\nThe dry-run smoke command still reports exactly one controlled candidate.\n\n## Verification\n\n### Completion Criteria\n\n- The fixture smoke command reports `controlled_candidates=1`.\n\n### Functional Verification\n\n- `cargo test`\n\n### UAT\n\n- Not required.\n\n### Context Verification\n\n- Confirm the title and labels do not include the controlled smoke marker.",
+    "url": "https://github.com/Alive24/jade-symphony/issues/9002",
+    "state": "Todo",
+    "labels": ["fixture"],
+    "assignees": ["codex"],
+    "priority": 2,
+    "branch_name": null,
+    "linked_pull_requests": [],
+    "blocked_by": [],
+    "project_fields": {
+      "Status": "Todo"
+    },
+    "created_at": "2026-05-14T00:05:00Z",
+    "updated_at": "2026-05-14T00:05:00Z"
+  }
+]

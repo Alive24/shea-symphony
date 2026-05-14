@@ -19,6 +19,10 @@ workers. A `run-loop` skeleton now exists and can idle-poll in unbounded
 write mode, but full claim reconciliation, runtime resume, and
 worker supervision are still future work.
 
+For a compact source-linked view of what is landed, what is waiting in
+`Agent Review`, and what remains deferred, see
+`docs/bootstrap-parity-audit.md`.
+
 ## What Works Now
 
 - Rust crate builds and tests locally.

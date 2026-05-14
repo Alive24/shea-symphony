@@ -35,6 +35,10 @@ mode explicit through `scripts/jade-dogfood --write --confirm-write`.
 The controlled live smoke runbook is in `docs/dogfood-smoke.md`. It keeps the
 first dogfood acceptance path supervised and bounded to one controlled issue.
 
+The bootstrap completion audit is in `docs/bootstrap-parity-audit.md`. It
+separates landed mainline capability from open `Agent Review` coverage and
+deferred parity work.
+
 ## Before Executing GitHub Project Issues
 
 These must exist before Jade Symphony can safely dogfood against real GitHub

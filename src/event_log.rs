@@ -1,5 +1,6 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -24,12 +25,25 @@ pub struct EventRecord {
     pub message: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct EventLogSummary {
+    pub total_records: usize,
+    pub events_by_name: BTreeMap<String, usize>,
+    pub issue_identifiers: Vec<String>,
+    pub session_ids: Vec<String>,
+}
+
 #[derive(Debug, Error)]
 pub enum EventLogError {
     #[error("event log io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("event log serialization error: {0}")]
     Serialize(#[from] serde_json::Error),
+    #[error("event log parse error at line {line}: {source}")]
+    ParseLine {
+        line: usize,
+        source: serde_json::Error,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -56,6 +70,56 @@ impl EventLog {
         let line = serde_json::to_string(record)?;
         writeln!(file, "{line}")?;
         Ok(())
+    }
+
+    pub fn read_records(&self) -> Result<Vec<EventRecord>, EventLogError> {
+        let file = OpenOptions::new().read(true).open(&self.path)?;
+        let reader = BufReader::new(file);
+        let mut records = Vec::new();
+
+        for (index, line) in reader.lines().enumerate() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let record =
+                serde_json::from_str(&line).map_err(|source| EventLogError::ParseLine {
+                    line: index + 1,
+                    source,
+                })?;
+            records.push(record);
+        }
+
+        Ok(records)
+    }
+
+    pub fn summarize(&self) -> Result<EventLogSummary, EventLogError> {
+        Ok(EventLogSummary::from_records(&self.read_records()?))
+    }
+}
+
+impl EventLogSummary {
+    pub fn from_records(records: &[EventRecord]) -> Self {
+        let mut events_by_name = BTreeMap::new();
+        let mut issue_identifiers = BTreeSet::new();
+        let mut session_ids = BTreeSet::new();
+
+        for record in records {
+            *events_by_name.entry(record.event.clone()).or_insert(0) += 1;
+            if let Some(identifier) = &record.issue_identifier {
+                issue_identifiers.insert(identifier.clone());
+            }
+            if let Some(session_id) = &record.session_id {
+                session_ids.insert(session_id.clone());
+            }
+        }
+
+        Self {
+            total_records: records.len(),
+            events_by_name,
+            issue_identifiers: issue_identifiers.into_iter().collect(),
+            session_ids: session_ids.into_iter().collect(),
+        }
     }
 }
 
@@ -85,5 +149,71 @@ mod tests {
         assert!(content.contains("\"event\":\"dispatch\""));
         assert!(content.contains("\"profile_id\":\"codex-alpha\""));
         assert!(content.contains("\"actor_role\":\"implementation_agent\""));
+    }
+
+    #[test]
+    fn reads_records_and_summarizes_event_log() {
+        let temp = tempfile::tempdir().unwrap();
+        let log = EventLog::new(temp.path().join("events.jsonl"));
+        let first = EventRecord {
+            event: "dispatch".into(),
+            issue_id: Some("id-1".into()),
+            issue_identifier: Some("#1".into()),
+            session_id: Some("session-1".into()),
+            profile_id: None,
+            instance_name: None,
+            actor_role: None,
+            actor_label: None,
+            git_author: None,
+            message: "queued".into(),
+        };
+        let second = EventRecord {
+            event: "complete".into(),
+            issue_id: Some("id-1".into()),
+            issue_identifier: Some("#1".into()),
+            session_id: Some("session-1".into()),
+            profile_id: None,
+            instance_name: None,
+            actor_role: None,
+            actor_label: None,
+            git_author: None,
+            message: "done".into(),
+        };
+
+        log.append(&first).unwrap();
+        log.append(&second).unwrap();
+
+        assert_eq!(log.read_records().unwrap(), vec![first, second]);
+
+        let summary = log.summarize().unwrap();
+        assert_eq!(summary.total_records, 2);
+        assert_eq!(summary.events_by_name["dispatch"], 1);
+        assert_eq!(summary.events_by_name["complete"], 1);
+        assert_eq!(summary.issue_identifiers, vec!["#1"]);
+        assert_eq!(summary.session_ids, vec!["session-1"]);
+    }
+
+    #[test]
+    fn malformed_jsonl_is_a_parse_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("events.jsonl");
+        let valid = serde_json::to_string(&EventRecord {
+            event: "ok".into(),
+            issue_id: None,
+            issue_identifier: None,
+            session_id: None,
+            profile_id: None,
+            instance_name: None,
+            actor_role: None,
+            actor_label: None,
+            git_author: None,
+            message: "ok".into(),
+        })
+        .unwrap();
+        std::fs::write(&path, format!("{valid}\nnot-json\n")).unwrap();
+        let log = EventLog::new(path);
+
+        let error = log.read_records().unwrap_err();
+        assert!(matches!(error, EventLogError::ParseLine { line: 2, .. }));
     }
 }

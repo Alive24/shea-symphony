@@ -57,5 +57,17 @@ target/debug/jade-symphony inspect examples/github-project-workflow.md
 target/debug/jade-symphony run-loop examples/github-project-workflow.md --max-iterations 1 --write
 ```
 
+## Cleanup Planning
+
+Cleanup planning is read-only:
+
+```bash
+target/debug/jade-symphony cleanup-plan examples/github-project-workflow.md
+```
+
+It reports terminal worktrees that appear removable only when tracker state is
+terminal, the linked PR is merged or closed, the local worktree branch matches
+the issue branch, and the worktree is clean. It never deletes files.
+
 Do not use this launcher to bypass Agent Review, Human Review, or Merging role
 boundaries.

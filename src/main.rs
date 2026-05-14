@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::{error::ErrorKind, Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use jade_symphony::agent::{backend_from_config, usage_limit_pause_from_events, UsageLimitPause};
+use jade_symphony::artifacts::{artifact_layout, cleanup_plan, ArtifactClass, CleanupPlan};
 use jade_symphony::config::RuntimeConfig;
 use jade_symphony::doctor::{
     audit_project_issues, human_review_repair_candidates, render_human_review_repair_workpad,
@@ -108,6 +109,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             workflow_path,
             write,
         } => dogfood_smoke(workflow_path, write),
+        Command::CleanupPlan { workflow_path } => cleanup_plan_command(workflow_path),
         Command::RunOnce { workflow_path } => run_once(workflow_path),
         Command::RunLoop { options } => run_loop(options),
         Command::CleanupWorkspaces {
@@ -1584,6 +1586,96 @@ fn dogfood_smoke(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std:
     }
 
     Ok(())
+}
+
+fn cleanup_plan_command(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    let states = config.tracker.terminal_states.clone();
+    let issues = adapter.fetch_issues_by_states(&states)?;
+    let layout = artifact_layout(&config);
+    let plan = cleanup_plan(&config, &issues);
+
+    println!("cleanup_plan=dry_run");
+    println!("artifact_root={}", layout.root.display());
+    println!("artifact_namespace={}", layout.namespace);
+    println!("artifact_profile={}", layout.profile_namespace);
+    println!(
+        "artifact_class=per_issue_worktree path={}",
+        layout.class_path(ArtifactClass::PerIssueWorktree).display()
+    );
+    println!(
+        "artifact_class=runtime_state path={}",
+        layout.class_path(ArtifactClass::RuntimeState).display()
+    );
+    println!(
+        "artifact_class=event_log path={}",
+        layout.class_path(ArtifactClass::EventLog).display()
+    );
+    println!(
+        "artifact_class=review_job_artifact path={}",
+        layout
+            .class_path(ArtifactClass::ReviewJobArtifact)
+            .display()
+    );
+    println!(
+        "artifact_class=pr_body_draft path={}",
+        layout
+            .class_path(ArtifactClass::PullRequestBodyDraft)
+            .display()
+    );
+    println!(
+        "artifact_class=workpad_draft path={}",
+        layout.class_path(ArtifactClass::WorkpadDraft).display()
+    );
+    println!(
+        "artifact_class=reusable_workflow_prompt path={}",
+        layout
+            .class_path(ArtifactClass::ReusableWorkflowPrompt)
+            .display()
+    );
+    println!(
+        "artifact_class=disposable_scratch path={}",
+        layout
+            .class_path(ArtifactClass::DisposableScratch)
+            .display()
+    );
+    println!("{}", render_cleanup_plan(&plan));
+    println!("cleanup_plan_write_supported=false");
+    Ok(())
+}
+
+fn render_cleanup_plan(plan: &CleanupPlan) -> String {
+    let mut lines = vec![
+        format!("workspace_root={}", plan.workspace_root.display()),
+        format!("cleanup_candidates={}", plan.candidates.len()),
+    ];
+
+    for candidate in &plan.candidates {
+        lines.push(format!(
+            "- issue={} state={} removable={} path={}",
+            candidate.issue_identifier,
+            candidate.issue_state,
+            candidate.removable,
+            candidate.path.display()
+        ));
+        lines.push(format!(
+            "  branch={}",
+            candidate.branch.as_deref().unwrap_or("unknown")
+        ));
+        lines.push(format!(
+            "  linked_pr_state={}",
+            candidate.linked_pr_state.as_deref().unwrap_or("none")
+        ));
+        for reason in &candidate.reasons {
+            lines.push(format!("  reason={reason}"));
+        }
+        for blocker in &candidate.blockers {
+            lines.push(format!("  blocker={blocker}"));
+        }
+    }
+
+    lines.join("\n")
 }
 
 fn cleanup_workspaces(
@@ -3188,6 +3280,9 @@ enum Command {
         workflow_path: PathBuf,
         write: bool,
     },
+    CleanupPlan {
+        workflow_path: PathBuf,
+    },
     RunOnce {
         workflow_path: PathBuf,
     },
@@ -3411,6 +3506,8 @@ enum CliCommand {
     Profiles(WorkflowPathArgs),
     #[command(name = "dogfood-smoke")]
     DogfoodSmoke(DogfoodSmokeArgs),
+    #[command(name = "cleanup-plan")]
+    CleanupPlan(WorkflowPathArgs),
     #[command(name = "run-once")]
     RunOnce(WorkflowPathArgs),
     #[command(name = "run-loop")]
@@ -3899,6 +3996,9 @@ impl TryFrom<Cli> for Command {
                     CliCommand::DogfoodSmoke(args) => Ok(Self::DogfoodSmoke {
                         workflow_path: args.workflow_path,
                         write: args.write,
+                    }),
+                    CliCommand::CleanupPlan(args) => Ok(Self::CleanupPlan {
+                        workflow_path: args.workflow_path,
                     }),
                     CliCommand::RunOnce(args) => Ok(Self::RunOnce {
                         workflow_path: args.workflow_path,
@@ -4655,6 +4755,16 @@ mod tests {
             Command::DogfoodSmoke {
                 workflow_path: PathBuf::from("examples/github-project-workflow.md"),
                 write: true
+            }
+        );
+    }
+
+    #[test]
+    fn parses_cleanup_plan_command() {
+        assert_eq!(
+            parse(&["cleanup-plan", "examples/github-project-workflow.md"]),
+            Command::CleanupPlan {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md")
             }
         );
     }

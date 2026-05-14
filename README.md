@@ -107,6 +107,9 @@ For a compact source-linked view of what is landed, what is waiting in
 - workflow identity config can distinguish the acting role/label from the human
   operator and can apply configured git author metadata with repository-local
   `git config --local` only.
+- runtime artifact policy defines durable/recoverable/disposable artifact
+  classes and derives a project/repo/profile namespaced layout under the
+  configured `artifacts.root`.
 - workspace/branch/PR handoff planning can derive a deterministic issue
   workspace key, branch name, and PR handoff body, and can detect an existing
   branch that appears to belong to a different issue; profile-scoped workspace
@@ -178,6 +181,8 @@ For a compact source-linked view of what is landed, what is waiting in
   non-fixture GitHub Project v2 mode, link that PR through the tracker adapter,
   and stop main-agent completion at `Agent Review`;
   unbounded write mode sleeps on idle polls using the workflow polling interval.
+- `cleanup-plan` reports terminal worktree cleanup candidates in dry-run mode
+  only; it does not delete files.
 
 ## Dry-Run Only
 
@@ -213,6 +218,7 @@ boundaries, and role-specific lanes.
 cargo run -- validate examples/dry-run-workflow.md
 cargo run -- validate-workflow examples/dry-run-workflow.md
 cargo run -- inspect examples/dry-run-workflow.md
+cargo run -- cleanup-plan examples/github-project-workflow.md
 cargo run -- inspect examples/github-project-workflow.md --state Merging --state Rework
 cargo run -- doctor examples/dry-run-workflow.md
 cargo run -- doctor-repair-human-review examples/dry-run-workflow.md --dry-run
@@ -342,6 +348,7 @@ Merging role separation.
   is currently read-only fixture/path parsing for Codex instance names.
 - automatic repair of existing `Agent Review` items with missing PR evidence;
   the current slice prevents new silent handoffs and records diagnostics.
+- write-mode artifact cleanup; the current cleanup command is a dry-run planner.
 - automatic cleanup for live git worktrees after terminal tracker
   reconciliation.
 - SSH worker execution; the workflow config shape is preserved, but Jade still

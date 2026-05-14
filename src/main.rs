@@ -57,8 +57,8 @@ use jade_symphony::tracker::{
 };
 use jade_symphony::workflow::WorkflowDefinition;
 use jade_symphony::workspace::{
-    apply_local_git_identity, prepare_workspace, profile_scoped_identifier, run_after_run,
-    run_before_run, run_workspace_command, GitIdentityApplyResult,
+    apply_local_git_identity, prepare_workspace, profile_scoped_identifier, remove_issue_workspace,
+    run_after_run, run_before_run, run_workspace_command, GitIdentityApplyResult,
 };
 
 const DEFAULT_RUN_LOOP_BASE_BRANCH: &str = "main";
@@ -86,6 +86,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         } => dogfood_smoke(workflow_path, write),
         Command::RunOnce { workflow_path } => run_once(workflow_path),
         Command::RunLoop { options } => run_loop(options),
+        Command::CleanupWorkspaces {
+            workflow_path,
+            write,
+        } => cleanup_workspaces(workflow_path, write),
         Command::MergeOnce {
             workflow_path,
             write,
@@ -1262,6 +1266,149 @@ fn dogfood_smoke(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std:
     }
 
     Ok(())
+}
+
+fn cleanup_workspaces(
+    workflow_path: PathBuf,
+    write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    let issues = adapter.fetch_issues_by_states(&config.tracker.terminal_states)?;
+    let entries = workspace_cleanup_plan(&config, &issues)?;
+    let eligible = entries
+        .iter()
+        .filter(|entry| matches!(entry.action, WorkspaceCleanupAction::Eligible))
+        .count();
+
+    println!(
+        "workspace_cleanup mode={} terminal_issues={} eligible={eligible}",
+        if write { "write" } else { "dry-run" },
+        issues.len()
+    );
+
+    for entry in &entries {
+        println!(
+            "workspace_cleanup issue={} state={:?} action={} workspace_key={} path={}",
+            entry.issue_ref,
+            entry.state,
+            entry.action.label(),
+            entry.workspace_key,
+            entry.workspace_path.display()
+        );
+        if let WorkspaceCleanupAction::Skipped { reason } = &entry.action {
+            println!(
+                "workspace_cleanup_skip issue={} reason={}",
+                entry.issue_ref, reason
+            );
+        }
+    }
+
+    if write {
+        for entry in entries
+            .iter()
+            .filter(|entry| matches!(entry.action, WorkspaceCleanupAction::Eligible))
+        {
+            remove_issue_workspace(&config.workspace.root, &entry.workspace_key, &config.hooks)?;
+            println!(
+                "workspace_cleanup_removed issue={} path={}",
+                entry.issue_ref,
+                entry.workspace_path.display()
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkspaceCleanupEntry {
+    issue_ref: String,
+    state: String,
+    workspace_key: String,
+    workspace_path: PathBuf,
+    action: WorkspaceCleanupAction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum WorkspaceCleanupAction {
+    Eligible,
+    Skipped { reason: String },
+}
+
+impl WorkspaceCleanupAction {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Eligible => "eligible",
+            Self::Skipped { .. } => "skipped",
+        }
+    }
+}
+
+fn workspace_cleanup_plan(
+    config: &RuntimeConfig,
+    issues: &[TrackerIssue],
+) -> Result<Vec<WorkspaceCleanupEntry>, Box<dyn std::error::Error>> {
+    let terminal_states = config.terminal_state_set();
+    let profile = selected_execution_profile(&config.profiles)?;
+    let profile_namespace = profile
+        .as_ref()
+        .map(|profile| profile.workspace_namespace.as_str());
+
+    let mut entries = Vec::new();
+    for issue in issues {
+        if !terminal_states.contains(&issue.normalized_state()) {
+            entries.push(WorkspaceCleanupEntry {
+                issue_ref: issue.identifier.clone(),
+                state: issue.state.clone(),
+                workspace_key: "n/a".into(),
+                workspace_path: config.workspace.root.clone(),
+                action: WorkspaceCleanupAction::Skipped {
+                    reason: "non_terminal_state".into(),
+                },
+            });
+            continue;
+        }
+
+        let plan = match plan_issue_handoff_for_profile(
+            &config.workspace.root,
+            issue,
+            DEFAULT_RUN_LOOP_BASE_BRANCH,
+            profile_namespace,
+        ) {
+            Ok(plan) => plan,
+            Err(error) => {
+                entries.push(WorkspaceCleanupEntry {
+                    issue_ref: issue.identifier.clone(),
+                    state: issue.state.clone(),
+                    workspace_key: "n/a".into(),
+                    workspace_path: config.workspace.root.clone(),
+                    action: WorkspaceCleanupAction::Skipped {
+                        reason: format!("handoff_plan_failed:{error}"),
+                    },
+                });
+                continue;
+            }
+        };
+
+        let action = if plan.workspace_path.exists() {
+            WorkspaceCleanupAction::Eligible
+        } else {
+            WorkspaceCleanupAction::Skipped {
+                reason: "workspace_missing".into(),
+            }
+        };
+
+        entries.push(WorkspaceCleanupEntry {
+            issue_ref: issue.identifier.clone(),
+            state: issue.state.clone(),
+            workspace_key: plan.workspace_key,
+            workspace_path: plan.workspace_path,
+            action,
+        });
+    }
+
+    Ok(entries)
 }
 
 fn is_controlled_dogfood_smoke_issue(issue: &TrackerIssue) -> bool {
@@ -2565,6 +2712,10 @@ enum Command {
     RunLoop {
         options: RunLoopOptions,
     },
+    CleanupWorkspaces {
+        workflow_path: PathBuf,
+        write: bool,
+    },
     MergeOnce {
         workflow_path: PathBuf,
         write: bool,
@@ -2771,6 +2922,8 @@ enum CliCommand {
     RunOnce(WorkflowPathArgs),
     #[command(name = "run-loop")]
     RunLoop(RunLoopArgs),
+    #[command(name = "cleanup-workspaces", alias = "workspace-cleanup")]
+    CleanupWorkspaces(CleanupWorkspacesArgs),
     #[command(name = "merge-once", alias = "land")]
     MergeOnce(MergeOnceArgs),
     #[command(name = "merge-loop")]
@@ -2851,6 +3004,16 @@ struct RunLoopArgs {
 
 #[derive(Debug, Args)]
 struct DogfoodSmokeArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct CleanupWorkspacesArgs {
     #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
     workflow_path: PathBuf,
     #[arg(long)]
@@ -3196,6 +3359,10 @@ impl TryFrom<Cli> for Command {
                             },
                         })
                     }
+                    CliCommand::CleanupWorkspaces(args) => Ok(Self::CleanupWorkspaces {
+                        workflow_path: args.workflow_path,
+                        write: args.write,
+                    }),
                     CliCommand::MergeOnce(args) => Ok(Self::MergeOnce {
                         workflow_path: args.workflow_path,
                         write: args.write,
@@ -3745,6 +3912,74 @@ mod tests {
             Command::DogfoodSmoke {
                 workflow_path: PathBuf::from("examples/github-project-workflow.md"),
                 write: true
+            }
+        );
+    }
+
+    #[test]
+    fn parses_cleanup_workspaces_command() {
+        assert_eq!(
+            parse(&[
+                "cleanup-workspaces",
+                "examples/github-project-workflow.md",
+                "--write"
+            ]),
+            Command::CleanupWorkspaces {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                write: true,
+            }
+        );
+        assert_eq!(
+            parse(&["workspace-cleanup", "examples/github-project-workflow.md"]),
+            Command::CleanupWorkspaces {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                write: false,
+            }
+        );
+    }
+
+    #[test]
+    fn workspace_cleanup_plan_marks_terminal_existing_workspace_eligible() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.workspace.root = temp.path().join("workspaces");
+        let issue = tracker_issue("Done");
+        let handoff =
+            plan_issue_handoff_for_profile(&config.workspace.root, &issue, "main", None).unwrap();
+        std::fs::create_dir_all(&handoff.workspace_path).unwrap();
+
+        let entries = workspace_cleanup_plan(&config, &[issue]).unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].issue_ref, "#29");
+        assert_eq!(entries[0].workspace_key, handoff.workspace_key);
+        assert_eq!(entries[0].action, WorkspaceCleanupAction::Eligible);
+    }
+
+    #[test]
+    fn workspace_cleanup_plan_skips_non_terminal_and_missing_workspaces() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.workspace.root = temp.path().join("workspaces");
+        let mut active = tracker_issue("In Progress");
+        active.identifier = "#30".into();
+        active.title = "Active workspace".into();
+        active.branch_name = None;
+        let missing_terminal = tracker_issue("Done");
+
+        let entries = workspace_cleanup_plan(&config, &[active, missing_terminal]).unwrap();
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            entries[0].action,
+            WorkspaceCleanupAction::Skipped {
+                reason: "non_terminal_state".into()
+            }
+        );
+        assert_eq!(
+            entries[1].action,
+            WorkspaceCleanupAction::Skipped {
+                reason: "workspace_missing".into()
             }
         );
     }

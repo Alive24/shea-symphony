@@ -1036,15 +1036,10 @@ fn merge_once_tick(
 
     issues.sort_by_key(|issue| issue.priority.unwrap_or(i64::MAX));
     let worker_id = worker_identity(&config, WorkerLane::Merging);
-    let Some(selected) = select_pool_worker_issues(
-        &issues,
-        WorkerLane::Merging,
-        &worker_id,
-        1,
-        &config,
-    )
-    .into_iter()
-    .next()
+    let Some(selected) =
+        select_pool_worker_issues(&issues, WorkerLane::Merging, &worker_id, 1, &config)
+            .into_iter()
+            .next()
     else {
         println!("merge_once=stopped reason=no_unclaimed_merging_issue");
         return Ok(MergeOnceOutcome::NoMergingIssue);
@@ -1052,14 +1047,22 @@ fn merge_once_tick(
     let issue = adapter
         .get_issue(&selected.identifier)?
         .unwrap_or(selected.clone());
-    if !pool_claim_eligibility(&issue, WorkerLane::Merging, &worker_id, &config).is_claimable() {
+    let eligibility = pool_claim_eligibility(&issue, WorkerLane::Merging, &worker_id, &config);
+    if !eligibility.is_claimable() {
         println!(
-            "merge_once_action=skipped issue={} reason=merge_claim_owned_by_other",
-            issue.identifier
+            "merge_once_action=skipped issue={} reason={}",
+            issue.identifier,
+            eligibility.skip_reason()
         );
         return Ok(MergeOnceOutcome::Skipped);
     }
-    write_lane_claim_field(adapter.as_ref(), &issue, WorkerLane::Merging, &worker_id, write)?;
+    write_lane_claim_field(
+        adapter.as_ref(),
+        &issue,
+        WorkerLane::Merging,
+        &worker_id,
+        write,
+    )?;
     let linked_pull_requests = adapter.list_linked_pull_requests(&issue.identifier)?;
     let runner = ProcessHandoffCommandRunner;
     let expected_base = expected_merge_base_branch(&config);
@@ -2160,13 +2163,8 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
 
         let pool = options.pool_size(&config);
         let worker_id = worker_identity(&config, WorkerLane::Main);
-        let selected = select_pool_worker_issues(
-            &plan.selected,
-            WorkerLane::Main,
-            &worker_id,
-            pool,
-            &config,
-        );
+        let selected =
+            select_pool_worker_issues(&plan.selected, WorkerLane::Main, &worker_id, pool, &config);
 
         let Some(issue) = selected.first().cloned() else {
             println!("{}", render_snapshot(&plan.snapshot));
@@ -2210,6 +2208,15 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         };
 
         if !options.write {
+            for candidate in &selected {
+                write_lane_claim_field(
+                    adapter.as_ref(),
+                    candidate,
+                    WorkerLane::Main,
+                    &worker_id,
+                    false,
+                )?;
+            }
             print_run_loop_dry_run_actions(&issue, &handoff, &config)?;
             if limit.is_none() {
                 println!(
@@ -2223,10 +2230,12 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         let latest = adapter
             .get_issue(&issue.identifier)?
             .ok_or_else(|| format!("issue disappeared before claim: {}", issue.identifier))?;
-        if !pool_claim_eligibility(&latest, WorkerLane::Main, &worker_id, &config).is_claimable() {
+        let eligibility = pool_claim_eligibility(&latest, WorkerLane::Main, &worker_id, &config);
+        if !eligibility.is_claimable() {
             println!(
-                "run_loop_action=skip issue={} reason=main_claim_owned_by_other",
-                latest.identifier
+                "run_loop_action=skip issue={} reason={}",
+                latest.identifier,
+                eligibility.skip_reason()
             );
             continue;
         }
@@ -2294,7 +2303,13 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
 
         let event = match claim_action {
             RunLoopClaimAction::Claim => {
-                write_lane_claim_field(adapter.as_ref(), &latest, WorkerLane::Main, &worker_id, true)?;
+                write_lane_claim_field(
+                    adapter.as_ref(),
+                    &latest,
+                    WorkerLane::Main,
+                    &worker_id,
+                    true,
+                )?;
                 adapter.set_state(&latest.identifier, "in_progress")?;
                 println!(
                     "run_loop_action=claim issue={} target_state=in_progress",
@@ -2303,7 +2318,13 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 "Claimed"
             }
             RunLoopClaimAction::Resume => {
-                write_lane_claim_field(adapter.as_ref(), &latest, WorkerLane::Main, &worker_id, true)?;
+                write_lane_claim_field(
+                    adapter.as_ref(),
+                    &latest,
+                    WorkerLane::Main,
+                    &worker_id,
+                    true,
+                )?;
                 println!("run_loop_action=resume issue={}", latest.identifier);
                 "Resumed"
             }
@@ -2576,6 +2597,14 @@ enum PoolClaimEligibility {
 impl PoolClaimEligibility {
     fn is_claimable(&self) -> bool {
         matches!(self, Self::Claimable | Self::OwnedBySelf)
+    }
+
+    fn skip_reason(&self) -> String {
+        match self {
+            Self::Claimable | Self::OwnedBySelf => "claimable".into(),
+            Self::ClaimedByOther { owner } => format!("claimed_by_other:{owner}"),
+            Self::WrongLaneState { state } => format!("wrong_lane_state:{state}"),
+        }
     }
 }
 
@@ -5485,9 +5514,10 @@ mod tests {
         );
         let mut owned_by_self = tracker_issue_with_ref("#4", "Self owned", "In Progress");
         owned_by_self.priority = Some(5);
-        owned_by_self
-            .project_fields
-            .insert("Main Agent".into(), serde_json::Value::String(worker.into()));
+        owned_by_self.project_fields.insert(
+            "Main Agent".into(),
+            serde_json::Value::String(worker.into()),
+        );
         let merging = tracker_issue_with_ref("#5", "Merging", "Merging");
 
         let selected = select_pool_worker_issues(

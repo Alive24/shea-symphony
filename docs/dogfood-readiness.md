@@ -35,7 +35,9 @@ mode explicit through `scripts/jade-dogfood --write --confirm-write` and runs
 the controlled dogfood smoke preflight before a mutating tick.
 
 The controlled live smoke runbook is in `docs/dogfood-smoke.md`. It keeps the
-first dogfood acceptance path supervised and bounded to one controlled issue.
+first dogfood acceptance path supervised and bounded to one controlled issue;
+`examples/dogfood-smoke-workflow.md` provides a credential-free fixture
+rehearsal of the same candidate filtering path.
 
 The bootstrap completion audit is in `docs/bootstrap-parity-audit.md`. It
 separates landed mainline capability from open `Agent Review` coverage and

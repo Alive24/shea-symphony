@@ -19,6 +19,18 @@ Create or select exactly one non-production issue that:
 
 ## Preflight
 
+Local fixture rehearsal:
+
+```bash
+cargo run -- dogfood-smoke examples/dogfood-smoke-workflow.md --dry-run
+```
+
+This fixture should report one controlled executable candidate while remaining
+in fixture mode with `write_ready=false`. It does not prove live GitHub Project
+v2 readiness.
+
+Live Project preflight:
+
 ```bash
 cargo run -- dogfood-smoke examples/github-project-workflow.md --dry-run
 ```

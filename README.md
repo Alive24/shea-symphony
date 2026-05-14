@@ -25,6 +25,9 @@ worker supervision are still future work.
   command aliases.
 - `WORKFLOW.md` style files load from an explicit path or default CLI path.
 - YAML front matter is parsed into typed runtime config.
+- optional `worker.ssh_hosts` and `worker.max_concurrent_agents_per_host`
+  config is parsed and validated for future SSH worker scheduling, but remote
+  execution is not implemented.
 - normalized `TrackerIssue` records can be loaded from JSON fixtures.
 - GitHub Project v2 read-only issue loading can use the `gh` CLI when no fixture
   path is configured.
@@ -269,6 +272,8 @@ Merging role separation.
 - automatic repair of existing `Agent Review` items with missing PR evidence;
   the current slice prevents new silent handoffs and records diagnostics.
 - robust cleanup for live git worktrees after terminal tracker reconciliation.
+- SSH worker execution; the workflow config shape is preserved, but Jade still
+  runs workers locally.
 - profile-specific account/token routing for git hosts or agent backends.
 - rich interactive Issue Forge TUI; the current flow is CLI-first and
   command-step based.

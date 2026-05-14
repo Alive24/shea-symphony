@@ -1425,6 +1425,7 @@ fn dogfood_smoke(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std:
 
     let adapter = adapter_from_config(&config);
     let integration_gaps = adapter.integration_gaps();
+    let gap_report = classify_dogfood_integration_gaps(&integration_gaps);
     let issues = adapter.list_dispatchable_issues()?;
     let controlled_candidates: Vec<_> = issues
         .iter()
@@ -1439,8 +1440,12 @@ fn dogfood_smoke(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std:
         })
         .count();
     let fixture_mode = config.tracker.fixture_path.is_some();
-    let write_ready =
-        dogfood_smoke_write_ready(fixture_mode, integration_gaps.len(), executable_candidates);
+    let write_ready = dogfood_smoke_write_ready(
+        fixture_mode,
+        gap_report.blocking.len(),
+        executable_candidates,
+        write,
+    );
 
     println!("dogfood_smoke=ok");
     println!("workflow={}", workflow_path.display());
@@ -1460,11 +1465,22 @@ fn dogfood_smoke(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std:
     if integration_gaps.is_empty() {
         println!("integration_gaps=none");
     } else {
-        for gap in &integration_gaps {
-            println!("integration_gap={gap}");
+        println!(
+            "integration_gap_blocking_count={}",
+            gap_report.blocking.len()
+        );
+        println!(
+            "integration_gap_warning_count={}",
+            gap_report.warnings.len()
+        );
+        for gap in &gap_report.blocking {
+            println!("integration_gap_blocking={gap}");
+        }
+        for gap in &gap_report.warnings {
+            println!("integration_gap_warning={gap}");
         }
     }
-    println!("write_ready={}", write && write_ready);
+    println!("write_ready={write_ready}");
 
     if !write {
         println!("dogfood_smoke_dry_run action=inspect_project");
@@ -1630,15 +1646,54 @@ fn workspace_cleanup_plan(
     Ok(entries)
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct DogfoodIntegrationGapReport {
+    blocking: Vec<String>,
+    warnings: Vec<String>,
+}
+
+fn classify_dogfood_integration_gaps(gaps: &[String]) -> DogfoodIntegrationGapReport {
+    let mut report = DogfoodIntegrationGapReport::default();
+
+    for gap in gaps {
+        match dogfood_integration_gap_severity(gap) {
+            DogfoodIntegrationGapSeverity::Blocking => report.blocking.push(gap.clone()),
+            DogfoodIntegrationGapSeverity::Warning => report.warnings.push(gap.clone()),
+        }
+    }
+
+    report
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DogfoodIntegrationGapSeverity {
+    Blocking,
+    Warning,
+}
+
 const DOGFOOD_SMOKE_WRITE_BLOCKER: &str =
-    "requires exactly one executable controlled smoke issue, non-fixture tracker mode, and no integration gaps";
+    "requires exactly one executable controlled smoke issue, non-fixture tracker mode, and no blocking integration gaps";
+
+fn dogfood_integration_gap_severity(gap: &str) -> DogfoodIntegrationGapSeverity {
+    let normalized = gap.to_ascii_lowercase();
+
+    if normalized.contains("pr linking uses an issue comment/autolink strategy")
+        || normalized.contains("pull request linking currently records a tracker comment")
+        || normalized.contains("live write methods use `gh api graphql`")
+    {
+        DogfoodIntegrationGapSeverity::Warning
+    } else {
+        DogfoodIntegrationGapSeverity::Blocking
+    }
+}
 
 fn dogfood_smoke_write_ready(
     fixture_mode: bool,
-    integration_gap_count: usize,
+    blocking_gap_count: usize,
     executable_candidates: usize,
+    write: bool,
 ) -> bool {
-    !fixture_mode && integration_gap_count == 0 && executable_candidates == 1
+    !fixture_mode && blocking_gap_count == 0 && executable_candidates == 1 && write
 }
 
 fn is_controlled_dogfood_smoke_issue(issue: &TrackerIssue) -> bool {
@@ -4535,12 +4590,39 @@ mod tests {
     }
 
     #[test]
-    fn dogfood_smoke_write_ready_requires_one_live_gap_free_candidate() {
-        assert!(dogfood_smoke_write_ready(false, 0, 1));
-        assert!(!dogfood_smoke_write_ready(true, 0, 1));
-        assert!(!dogfood_smoke_write_ready(false, 1, 1));
-        assert!(!dogfood_smoke_write_ready(false, 0, 0));
-        assert!(!dogfood_smoke_write_ready(false, 0, 2));
+    fn dogfood_smoke_classifies_accepted_adapter_gaps_as_warnings() {
+        let gaps = vec![
+            "GitHub Project v2 PR linking uses an issue comment/autolink strategy; linked PR discovery currently reads closing PR references.".into(),
+            "GitHub Project v2 live write methods use `gh api graphql`; keep using `--write` for mutating CLI commands.".into(),
+            "Linear pull request linking currently records a tracker comment rather than a first-class Linear attachment.".into(),
+        ];
+
+        let report = classify_dogfood_integration_gaps(&gaps);
+
+        assert!(report.blocking.is_empty());
+        assert_eq!(report.warnings, gaps);
+    }
+
+    #[test]
+    fn dogfood_smoke_keeps_unknown_or_runtime_gaps_blocking() {
+        let gaps = vec![
+            "GitHub Project v2 is using fixture issues because tracker.fixture_path is set.".into(),
+            "unexpected live tracker blocker".into(),
+        ];
+
+        let report = classify_dogfood_integration_gaps(&gaps);
+
+        assert_eq!(report.blocking, gaps);
+        assert!(report.warnings.is_empty());
+    }
+
+    #[test]
+    fn dogfood_smoke_write_readiness_depends_on_blocking_gaps() {
+        assert!(dogfood_smoke_write_ready(false, 0, 1, true));
+        assert!(!dogfood_smoke_write_ready(true, 0, 1, true));
+        assert!(!dogfood_smoke_write_ready(false, 1, 1, true));
+        assert!(!dogfood_smoke_write_ready(false, 0, 2, true));
+        assert!(!dogfood_smoke_write_ready(false, 0, 1, false));
     }
 
     #[test]

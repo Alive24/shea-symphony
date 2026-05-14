@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::process::Command;
 
@@ -22,6 +22,12 @@ pub trait TrackerAdapter {
         &self,
         issue_ref: &str,
     ) -> Result<Vec<LinkedPullRequest>, TrackerError>;
+    fn close_issue(&self, _issue_ref: &str) -> Result<(), TrackerError> {
+        Err(TrackerError::NotImplemented(format!(
+            "{} tracker does not support issue closure",
+            self.kind()
+        )))
+    }
     fn integration_gaps(&self) -> Vec<String> {
         Vec::new()
     }
@@ -151,6 +157,10 @@ impl TrackerAdapter for MemoryTracker {
             .get_issue(issue_ref)?
             .map(|issue| issue.linked_pull_requests)
             .unwrap_or_default())
+    }
+
+    fn close_issue(&self, _issue_ref: &str) -> Result<(), TrackerError> {
+        Ok(())
     }
 }
 
@@ -310,10 +320,22 @@ impl TrackerAdapter for GithubProjectV2Adapter {
         &self,
         issue_ref: &str,
     ) -> Result<Vec<LinkedPullRequest>, TrackerError> {
-        Ok(self
-            .get_issue(issue_ref)?
-            .map(|issue| issue.linked_pull_requests)
-            .unwrap_or_default())
+        if self.config.tracker.fixture_path.is_some() {
+            return Ok(self
+                .get_issue(issue_ref)?
+                .map(|issue| issue.linked_pull_requests)
+                .unwrap_or_default());
+        }
+
+        GithubProjectV2GhClient::new(&self.config).list_linked_pull_requests(issue_ref)
+    }
+
+    fn close_issue(&self, issue_ref: &str) -> Result<(), TrackerError> {
+        if self.config.tracker.fixture_path.is_some() {
+            return Ok(());
+        }
+
+        GithubProjectV2GhClient::new(&self.config).close_issue(issue_ref)
     }
 
     fn integration_gaps(&self) -> Vec<String> {
@@ -334,7 +356,7 @@ impl TrackerAdapter for GithubProjectV2Adapter {
             gaps.push(gap);
         }
 
-        gaps.push("GitHub Project v2 PR linking uses an issue comment/autolink strategy; linked PR discovery currently reads closing PR references.".into());
+        gaps.push("GitHub Project v2 PR linking still uses an issue comment/autolink strategy rather than a first-class relationship.".into());
         gaps.push("GitHub Project v2 live write methods use `gh api graphql`; keep using `--write` for mutating CLI commands.".into());
         gaps
     }
@@ -544,6 +566,34 @@ impl GithubProjectV2GhClient {
         Ok(())
     }
 
+    fn list_linked_pull_requests(
+        &self,
+        issue_ref: &str,
+    ) -> Result<Vec<LinkedPullRequest>, TrackerError> {
+        let issue = self.resolve_issue(issue_ref)?;
+        let marker = &self.config.tracker.workpad.marker;
+        let workpad_bodies = self.find_workpad_comment_bodies(&issue.id, marker)?;
+        Ok(merge_linked_pull_requests(
+            issue.linked_pull_requests,
+            linked_pull_requests_from_workpads(&workpad_bodies),
+        ))
+    }
+
+    fn close_issue(&self, issue_ref: &str) -> Result<(), TrackerError> {
+        let issue = self.resolve_issue(issue_ref)?;
+        if issue
+            .project_fields
+            .get("GitHub Issue State")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|state| normalize_state(state) == "closed")
+        {
+            return Ok(());
+        }
+
+        self.graphql(GITHUB_CLOSE_ISSUE_MUTATION, &[("issueId", issue.id)])?;
+        Ok(())
+    }
+
     fn find_workpad_comment_ids(
         &self,
         issue_id: &str,
@@ -568,6 +618,27 @@ impl GithubProjectV2GhClient {
                 } else {
                     None
                 }
+            })
+            .collect())
+    }
+
+    fn find_workpad_comment_bodies(
+        &self,
+        issue_id: &str,
+        marker: &str,
+    ) -> Result<Vec<String>, TrackerError> {
+        let response = self.graphql(
+            GITHUB_ISSUE_COMMENTS_QUERY,
+            &[("issueId", issue_id.to_string())],
+        )?;
+        Ok(response
+            .pointer("/data/node/comments/nodes")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|comment| {
+                let body = comment.get("body")?.as_str()?;
+                body.contains(marker).then(|| body.to_string())
             })
             .collect())
     }
@@ -896,6 +967,11 @@ query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
                   state
                 }}
               }}
+              comments(first: 20) {{
+                nodes {{
+                  body
+                }}
+              }}
             }}
           }}
         }}
@@ -984,6 +1060,17 @@ mutation JadeSymphonyAddComment($subjectId: ID!, $body: String!) {
       node {
         id
       }
+    }
+  }
+}
+"#;
+
+const GITHUB_CLOSE_ISSUE_MUTATION: &str = r#"
+mutation JadeSymphonyCloseIssue($issueId: ID!) {
+  closeIssue(input: { issueId: $issueId, stateReason: COMPLETED }) {
+    issue {
+      id
+      state
     }
   }
 }
@@ -1222,6 +1309,12 @@ fn issue_from_project_item(
         config.tracker.status_field.clone(),
         serde_json::Value::String(state.clone()),
     );
+    if let Some(issue_state) = content.get("state").and_then(serde_json::Value::as_str) {
+        project_fields.insert(
+            "GitHub Issue State".into(),
+            serde_json::Value::String(issue_state.to_string()),
+        );
+    }
     let blocked_by = blocker_refs_from_project_fields(&project_fields);
 
     Some(TrackerIssue {
@@ -1233,10 +1326,7 @@ fn issue_from_project_item(
             .map(ToOwned::to_owned),
         identifier: format!("#{number}"),
         title: content.get("title")?.as_str()?.to_string(),
-        description: content
-            .get("body")
-            .and_then(serde_json::Value::as_str)
-            .map(ToOwned::to_owned),
+        description: github_issue_description_with_workpad(content, &config.tracker.workpad.marker),
         url: content
             .get("url")
             .and_then(serde_json::Value::as_str)
@@ -1261,6 +1351,37 @@ fn issue_from_project_item(
             .and_then(serde_json::Value::as_str)
             .map(ToOwned::to_owned),
     })
+}
+
+fn github_issue_description_with_workpad(
+    content: &serde_json::Value,
+    marker: &str,
+) -> Option<String> {
+    let body = content
+        .get("body")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let workpad = canonical_workpad_comment_body(content.pointer("/comments/nodes"), marker);
+
+    match (body.trim().is_empty(), workpad) {
+        (true, None) => None,
+        (false, None) => Some(body),
+        (true, Some(workpad)) => Some(workpad),
+        (false, Some(workpad)) => Some(format!("{body}\n\n{workpad}")),
+    }
+}
+
+fn canonical_workpad_comment_body(
+    comments: Option<&serde_json::Value>,
+    marker: &str,
+) -> Option<String> {
+    comments?
+        .as_array()?
+        .iter()
+        .filter_map(|comment| comment.get("body").and_then(serde_json::Value::as_str))
+        .find(|body| body.contains(marker) && !body.contains("Superseded Jade Symphony workpad"))
+        .map(ToOwned::to_owned)
 }
 
 fn blocker_refs_from_project_fields(
@@ -1380,6 +1501,75 @@ fn pull_requests_from_issue(issue: &serde_json::Value) -> Vec<LinkedPullRequest>
                 .map(ToOwned::to_owned),
         })
         .collect()
+}
+
+fn linked_pull_requests_from_workpads(workpad_bodies: &[String]) -> Vec<LinkedPullRequest> {
+    let mut seen = BTreeSet::new();
+    let mut linked = Vec::new();
+    for body in workpad_bodies {
+        for url in github_pull_request_urls(body) {
+            if seen.insert(url.clone()) {
+                linked.push(linked_pull_request_from_url(&url));
+            }
+        }
+    }
+    linked
+}
+
+fn merge_linked_pull_requests(
+    existing: Vec<LinkedPullRequest>,
+    discovered: Vec<LinkedPullRequest>,
+) -> Vec<LinkedPullRequest> {
+    let mut seen_urls = BTreeSet::new();
+    let mut merged = Vec::new();
+    for pr in existing.into_iter().chain(discovered) {
+        if let Some(url) = &pr.url {
+            if !seen_urls.insert(url.clone()) {
+                continue;
+            }
+        }
+        merged.push(pr);
+    }
+    merged
+}
+
+fn github_pull_request_urls(text: &str) -> Vec<String> {
+    text.split(|character: char| character.is_whitespace() || character == '<' || character == '>')
+        .filter_map(clean_github_pull_request_url)
+        .collect()
+}
+
+fn clean_github_pull_request_url(raw: &str) -> Option<String> {
+    let value = raw.trim_matches(|character: char| {
+        matches!(
+            character,
+            '`' | '\'' | '"' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | '.'
+        )
+    });
+    let marker = "/pull/";
+    let marker_index = value.find(marker)?;
+    let number_start = marker_index + marker.len();
+    let number_end = value[number_start..]
+        .find(|character: char| !character.is_ascii_digit())
+        .map(|offset| number_start + offset)
+        .unwrap_or(value.len());
+    if number_end == number_start {
+        return None;
+    }
+    let base = &value[..number_end];
+    (base.starts_with("https://github.com/") || base.starts_with("http://github.com/"))
+        .then(|| base.to_string())
+}
+
+fn linked_pull_request_from_url(url: &str) -> LinkedPullRequest {
+    LinkedPullRequest {
+        id: None,
+        number: url
+            .rsplit_once('/')
+            .and_then(|(_, number)| number.parse::<u64>().ok()),
+        url: Some(url.to_string()),
+        state: None,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -2359,7 +2549,83 @@ mod tests {
         assert_eq!(issues[0].labels, vec!["dogfood"]);
         assert_eq!(issues[0].assignees, vec!["codex"]);
         assert_eq!(issues[0].priority, Some(1));
+        assert_eq!(
+            issues[0]
+                .project_fields
+                .get("GitHub Issue State")
+                .and_then(serde_json::Value::as_str),
+            Some("OPEN")
+        );
         assert_eq!(issues[0].linked_pull_requests[0].number, Some(7));
+    }
+
+    #[test]
+    fn discovers_pull_request_urls_from_workpad_text() {
+        let bodies = vec![format!(
+            "{}\n- Live PR: `https://github.com/Alive24/jade-symphony/pull/98` (created: `true`)\n- Also see https://github.com/Alive24/jade-symphony/pull/100.",
+            "<!-- jade-symphony-workpad -->"
+        )];
+
+        let prs = linked_pull_requests_from_workpads(&bodies);
+
+        assert_eq!(prs.len(), 2);
+        assert_eq!(
+            prs[0].url.as_deref(),
+            Some("https://github.com/Alive24/jade-symphony/pull/98")
+        );
+        assert_eq!(prs[0].number, Some(98));
+        assert_eq!(prs[0].state, None);
+        assert_eq!(
+            prs[1].url.as_deref(),
+            Some("https://github.com/Alive24/jade-symphony/pull/100")
+        );
+    }
+
+    #[test]
+    fn merge_linked_pull_requests_deduplicates_by_url() {
+        let closing_ref = LinkedPullRequest {
+            id: Some("PR_98".into()),
+            number: Some(98),
+            url: Some("https://github.com/Alive24/jade-symphony/pull/98".into()),
+            state: Some("OPEN".into()),
+        };
+        let discovered_duplicate =
+            linked_pull_request_from_url("https://github.com/Alive24/jade-symphony/pull/98");
+        let discovered_new =
+            linked_pull_request_from_url("https://github.com/Alive24/jade-symphony/pull/100");
+
+        let merged = merge_linked_pull_requests(
+            vec![closing_ref],
+            vec![discovered_duplicate, discovered_new],
+        );
+
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].id.as_deref(), Some("PR_98"));
+        assert_eq!(merged[0].state.as_deref(), Some("OPEN"));
+        assert_eq!(
+            merged[1].url.as_deref(),
+            Some("https://github.com/Alive24/jade-symphony/pull/100")
+        );
+    }
+
+    #[test]
+    fn github_issue_description_includes_canonical_workpad_comment() {
+        let content = serde_json::json!({
+            "body": "issue body",
+            "comments": {
+                "nodes": [
+                    {"body": "ordinary comment"},
+                    {"body": "<!-- jade-symphony-workpad -->\n## Workpad\n\n<!-- jade-symphony-runtime-ownership -->\n### Runtime Ownership\n<!-- /jade-symphony-runtime-ownership -->"}
+                ]
+            }
+        });
+
+        let description =
+            github_issue_description_with_workpad(&content, "<!-- jade-symphony-workpad -->")
+                .unwrap();
+
+        assert!(description.contains("issue body"));
+        assert!(description.contains("jade-symphony-runtime-ownership"));
     }
 
     #[test]

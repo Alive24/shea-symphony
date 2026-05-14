@@ -332,6 +332,7 @@ mod tests {
             number: Some(1),
             url: Some(url.into()),
             state: Some(state.into()),
+            ..Default::default()
         }
     }
 

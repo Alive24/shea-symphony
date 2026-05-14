@@ -5637,6 +5637,7 @@ mod tests {
                 number: Some(57),
                 url: Some("https://github.com/Alive24/jade-symphony/pull/57".into()),
                 state: Some("OPEN".into()),
+                ..Default::default()
             });
         let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
         let result = IssueExecutionResult {

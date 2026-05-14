@@ -8,12 +8,20 @@ pub struct BlockerRef {
     pub state: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkedPullRequest {
     pub id: Option<String>,
     pub number: Option<u64>,
     pub url: Option<String>,
     pub state: Option<String>,
+    #[serde(default)]
+    pub is_draft: Option<bool>,
+    #[serde(default)]
+    pub merge_state_status: Option<String>,
+    #[serde(default)]
+    pub review_decision: Option<String>,
+    #[serde(default)]
+    pub base_ref_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

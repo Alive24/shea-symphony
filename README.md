@@ -411,6 +411,7 @@ cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
 scripts/jade-dogfood --dry-run
 cargo run -- dogfood-smoke examples/dogfood-smoke-workflow.md --dry-run
 cargo run -- dogfood-smoke examples/github-project-workflow.md --dry-run
+cargo run -- merge-once examples/merge-fixture-workflow.md --dry-run
 scripts/jade-dogfood --write --confirm-write --max-iterations 1
 cargo run -- run-loop examples/usage-limit-workflow.md --max-iterations 1 --write
 cargo run -- merge-once examples/github-project-workflow.md --dry-run
@@ -425,6 +426,8 @@ The dry-run workflow uses:
 - `examples/fixtures/dry-run-issues.json`
 - `examples/usage-limit-workflow.md`
 - `examples/fixtures/usage-limit-issues.json`
+- `examples/merge-fixture-workflow.md`
+- `examples/fixtures/merge-issues.json`
 - `examples/dogfood-smoke-workflow.md`
 - `examples/fixtures/dogfood-smoke-issues.json`
 - `examples/linear-fixture-workflow.md`

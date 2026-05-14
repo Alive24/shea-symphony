@@ -1672,6 +1672,7 @@ fn pull_requests_from_issue(issue: &serde_json::Value) -> Vec<LinkedPullRequest>
                 .get("state")
                 .and_then(serde_json::Value::as_str)
                 .map(ToOwned::to_owned),
+            ..Default::default()
         })
         .collect()
 }
@@ -1742,6 +1743,10 @@ fn linked_pull_request_from_url(url: &str) -> LinkedPullRequest {
             .and_then(|(_, number)| number.parse::<u64>().ok()),
         url: Some(url.to_string()),
         state: None,
+        is_draft: None,
+        merge_state_status: None,
+        review_decision: None,
+        base_ref_name: None,
     }
 }
 
@@ -2761,6 +2766,10 @@ mod tests {
             number: Some(98),
             url: Some("https://github.com/Alive24/jade-symphony/pull/98".into()),
             state: Some("OPEN".into()),
+            is_draft: None,
+            merge_state_status: None,
+            review_decision: None,
+            base_ref_name: None,
         };
         let discovered_duplicate =
             linked_pull_request_from_url("https://github.com/Alive24/jade-symphony/pull/98");

@@ -100,6 +100,7 @@ specific blocker before running another write tick.
 For a bounded Review Agent pass, run:
 
 ```bash
+export JADE_GEMINI_COMMAND="$(command -v gemini)"
 cargo run -- review-loop examples/github-project-workflow.md --max-iterations 1 --write
 ```
 
@@ -109,6 +110,11 @@ Expected outcomes:
 - confirmed findings move the issue to `Rework`;
 - failed, inconclusive, timed-out, or unavailable review stays out of
   `Human Review` and records evidence.
+
+If the review workflow uses `review.gemini_command: $JADE_GEMINI_COMMAND`,
+set that environment variable to an absolute Gemini CLI path before starting
+the supervised review loop. This avoids worker sessions with a narrower `PATH`
+recording a backend-unavailable failure for an otherwise installed Gemini CLI.
 
 Do not use review commands to bypass human acceptance.
 

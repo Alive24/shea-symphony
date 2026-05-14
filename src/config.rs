@@ -22,6 +22,7 @@ pub struct RuntimeConfig {
     pub quality_gate: QualityGateConfig,
     pub profiles: ProfilesConfig,
     pub identity: IdentityConfig,
+    pub artifacts: ArtifactConfig,
     pub observability: ObservabilityConfig,
     pub server: ServerConfig,
     #[serde(default)]
@@ -203,6 +204,12 @@ impl GitIdentityConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArtifactConfig {
+    pub root: PathBuf,
+    pub namespace: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObservabilityConfig {
     pub dashboard_enabled: bool,
     pub refresh_ms: u64,
@@ -297,6 +304,7 @@ impl RuntimeConfig {
         let quality_gate = parse_quality_gate(root.get("quality_gate"));
         let profiles = parse_profiles(root.get("profiles"), workflow_dir);
         let identity = parse_identity(root.get("identity"));
+        let artifacts = parse_artifacts(root.get("artifacts"), workflow_dir);
         let observability = ObservabilityConfig {
             dashboard_enabled: get_bool(root.get("observability"), "dashboard_enabled")
                 .unwrap_or(true),
@@ -327,6 +335,7 @@ impl RuntimeConfig {
             quality_gate,
             profiles,
             identity,
+            artifacts,
             observability,
             server,
             raw: workflow.config.clone(),
@@ -582,6 +591,17 @@ fn parse_identity(value: Option<&Value>) -> IdentityConfig {
     }
 }
 
+fn parse_artifacts(value: Option<&Value>, workflow_dir: &Path) -> ArtifactConfig {
+    ArtifactConfig {
+        root: resolve_path(
+            get_string(value, "root").as_deref(),
+            workflow_dir,
+            &default_artifact_root(),
+        ),
+        namespace: get_string(value, "namespace"),
+    }
+}
+
 fn parse_git_identity(value: Option<&Value>) -> GitIdentityConfig {
     GitIdentityConfig {
         name: get_string(value, "name"),
@@ -674,6 +694,12 @@ fn home_dir() -> Option<PathBuf> {
     env::var_os("HOME").map(PathBuf::from)
 }
 
+fn default_artifact_root() -> PathBuf {
+    home_dir()
+        .map(|home| home.join(".jade-symphony").join("artifacts"))
+        .unwrap_or_else(|| env::temp_dir().join("jade-symphony-artifacts"))
+}
+
 fn default_codex_approval_policy() -> Value {
     serde_json::json!({
         "reject": {
@@ -749,6 +775,23 @@ mod tests {
             .agent
             .max_concurrent_agents_by_state
             .contains_key("bad"));
+    }
+
+    #[test]
+    fn parses_artifact_root_and_namespace() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\nartifacts:\n  root: artifacts\n  namespace: custom/project\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.artifacts.root, PathBuf::from("/tmp/artifacts"));
+        assert_eq!(
+            config.artifacts.namespace.as_deref(),
+            Some("custom/project")
+        );
     }
 
     #[test]

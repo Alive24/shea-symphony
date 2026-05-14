@@ -89,6 +89,9 @@ worker supervision are still future work.
 - workflow identity config can distinguish the acting role/label from the human
   operator and can apply configured git author metadata with repository-local
   `git config --local` only.
+- runtime artifact policy defines durable/recoverable/disposable artifact
+  classes and derives a project/repo/profile namespaced layout under the
+  configured `artifacts.root`.
 - workspace/branch/PR handoff planning can derive a deterministic issue
   workspace key, branch name, and PR handoff body, and can detect an existing
   branch that appears to belong to a different issue; profile-scoped workspace
@@ -143,6 +146,8 @@ worker supervision are still future work.
   non-fixture GitHub Project v2 mode, and stop main-agent completion at
   `Agent Review`;
   unbounded write mode sleeps on idle polls using the workflow polling interval.
+- `cleanup-plan` reports terminal worktree cleanup candidates in dry-run mode
+  only; it does not delete files.
 
 ## Dry-Run Only
 
@@ -172,6 +177,7 @@ Expected shape:
 cargo run -- validate examples/dry-run-workflow.md
 cargo run -- validate-workflow examples/dry-run-workflow.md
 cargo run -- inspect examples/dry-run-workflow.md
+cargo run -- cleanup-plan examples/github-project-workflow.md
 cargo run -- doctor examples/dry-run-workflow.md
 cargo run -- plan examples/dry-run-workflow.md
 cargo run -- plan-dispatch examples/dry-run-workflow.md
@@ -274,6 +280,7 @@ Merging role separation.
 - automatic repair of existing `Agent Review` items with missing PR evidence;
   the current slice prevents new silent handoffs and records diagnostics.
 - robust cleanup for live git worktrees after terminal tracker reconciliation.
+- write-mode artifact cleanup; the current cleanup command is a dry-run planner.
 - profile-specific account/token routing for git hosts or agent backends.
 - rich interactive Issue Forge TUI; the current flow is CLI-first and
   command-step based.

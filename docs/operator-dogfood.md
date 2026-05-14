@@ -26,6 +26,7 @@ The launcher checks:
 - `gh` exists;
 - `gh auth status` succeeds;
 - the workflow validates.
+- in write mode, the controlled dogfood smoke preflight passes.
 
 After preflight, dry-run mode executes:
 
@@ -40,7 +41,14 @@ scripts/jade-dogfood --write --confirm-write --max-iterations 1
 ```
 
 Write mode is intentionally bounded. It runs one `run-loop` tick only after the
-explicit confirmation flag is present.
+explicit confirmation flag is present. Before that mutating tick, the launcher
+runs:
+
+```bash
+target/debug/jade-symphony dogfood-smoke examples/github-project-workflow.md --dry-run
+```
+
+If the smoke preflight fails, the launcher exits before claiming tracker work.
 
 ## Inspect And Resume
 

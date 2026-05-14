@@ -314,8 +314,10 @@ impl RuntimeConfig {
         let review = ReviewConfig {
             backend: get_string(root.get("review"), "backend")
                 .unwrap_or_else(|| "fake".to_string()),
-            gemini_command: get_string(root.get("review"), "gemini_command")
-                .unwrap_or_else(|| "gemini".to_string()),
+            gemini_command: resolve_command_token(
+                get_string(root.get("review"), "gemini_command"),
+                "gemini",
+            ),
             timeout_ms: get_u64(root.get("review"), "timeout_ms").unwrap_or(600_000),
             max_concurrent_workers: get_u64(root.get("review"), "max_concurrent_workers")
                 .unwrap_or(1)
@@ -712,6 +714,17 @@ fn resolve_secret(value: Option<String>, fallback_env: &str) -> Option<String> {
     }
 }
 
+fn resolve_command_token(value: Option<String>, default: &str) -> String {
+    match value {
+        Some(raw) if raw.starts_with('$') => env::var(raw.trim_start_matches('$'))
+            .ok()
+            .filter(|value| !value.is_empty())
+            .unwrap_or(raw),
+        Some(raw) if !raw.is_empty() => raw,
+        _ => default.to_string(),
+    }
+}
+
 fn resolve_path(raw: Option<&str>, workflow_dir: &Path, default: &Path) -> PathBuf {
     let value = raw
         .and_then(resolve_path_token)
@@ -876,6 +889,24 @@ mod tests {
                 .get("jade.actorRole")
                 .map(String::as_str),
             Some("review_agent")
+        );
+    }
+
+    #[test]
+    fn review_gemini_command_can_use_environment_token() {
+        std::env::set_var("JADE_TEST_GEMINI_COMMAND", "/opt/homebrew/bin/gemini-test");
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\nreview:\n  backend: gemini-cli\n  gemini_command: $JADE_TEST_GEMINI_COMMAND\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+        std::env::remove_var("JADE_TEST_GEMINI_COMMAND");
+
+        assert_eq!(
+            config.review.gemini_command,
+            "/opt/homebrew/bin/gemini-test"
         );
     }
 

@@ -49,8 +49,8 @@ codex:
 claude:
   command: claude
 review:
-  backend: fake
-  gemini_command: gemini
+  backend: gemini-cli
+  gemini_command: $JADE_GEMINI_COMMAND
   timeout_ms: 600000
 verification:
   timeout_ms: 600000

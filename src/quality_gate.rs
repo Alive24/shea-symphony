@@ -37,7 +37,7 @@ pub fn evaluate_issue(issue: &TrackerIssue) -> GateDecision {
     if let Err(missing_uat) = validate_uat_required(description) {
         missing.push(missing_uat);
     }
-    if let Err(missing_dependency) = validate_dependency_semantics(description) {
+    if let Err(missing_dependency) = validate_dependency_semantics(issue, description) {
         missing.push(missing_dependency);
     }
 
@@ -387,7 +387,11 @@ fn validate_uat_required(markdown: &str) -> Result<(), String> {
     }
 }
 
-fn validate_dependency_semantics(markdown: &str) -> Result<(), String> {
+fn validate_dependency_semantics(issue: &TrackerIssue, markdown: &str) -> Result<(), String> {
+    if !issue.blocked_by.is_empty() {
+        return Ok(());
+    }
+
     let lines = section_lines(markdown, "Dependencies");
     let dependencies = lines
         .iter()
@@ -397,11 +401,15 @@ fn validate_dependency_semantics(markdown: &str) -> Result<(), String> {
         .collect::<Vec<_>>();
 
     if dependencies.is_empty() {
-        return Err("dependency semantics".into());
+        return Ok(());
     }
 
     let joined = dependencies.join(" ").to_ascii_lowercase();
-    if contains_any_dependency_marker(&joined) && !contains_ambiguous_dependency_marker(&joined) {
+    if contains_ambiguous_dependency_marker(&joined) {
+        Err("resolved dependency semantics".into())
+    } else if claims_blocking_dependency_without_relationship(&joined) {
+        Err("structured blocked-by relationship".into())
+    } else if contains_any_dependency_marker(&joined) {
         Ok(())
     } else {
         Err("resolved dependency semantics".into())
@@ -424,6 +432,17 @@ fn contains_any_dependency_marker(text: &str) -> bool {
         || text.contains("pull request")
         || text.contains("pr #")
         || text.contains('#')
+}
+
+fn claims_blocking_dependency_without_relationship(text: &str) -> bool {
+    (text.contains("blocked by")
+        || text.contains("depends on")
+        || text.contains("dependency:")
+        || text.contains("dependencies:")
+        || text.contains("requires #"))
+        && !text.contains("no blocking")
+        && !text.contains("no known blocking")
+        && !text.contains("none")
 }
 
 fn contains_ambiguous_dependency_marker(text: &str) -> bool {
@@ -801,7 +820,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_dependency_semantics_needs_clarification() {
+    fn missing_dependency_section_does_not_block_independent_issue() {
         let body = [
             "## Issue Setup",
             "- UAT Required: No",
@@ -827,10 +846,23 @@ mod tests {
 
         let decision = evaluate_issue(&issue(Some(body)));
 
+        assert!(decision.is_dispatchable(), "{decision:?}");
+    }
+
+    #[test]
+    fn body_only_blocker_claim_needs_structured_relationship() {
+        let mut body = aligned_body_with_uat("No");
+        body = body.replace(
+            "## Dependencies\n- No blocking dependencies.",
+            "## Dependencies\n\n- Blocked by #44 until it is Done.",
+        );
+
+        let decision = evaluate_issue(&issue(Some(body)));
+
         assert_eq!(decision.kind, GateDecisionKind::NeedToClarify);
         assert!(decision
             .missing
-            .contains(&"dependency semantics".to_string()));
+            .contains(&"structured blocked-by relationship".to_string()));
     }
 
     #[test]
@@ -851,7 +883,11 @@ mod tests {
 
     #[test]
     fn dependency_preflight_blocks_non_terminal_tracker_blocker() {
-        let mut issue = issue(Some(aligned_body_with_uat("No")));
+        let body = aligned_body_with_uat("No").replace(
+            "## Dependencies\n- No blocking dependencies.",
+            "## Dependencies\n",
+        );
+        let mut issue = issue(Some(body));
         issue.blocked_by.push(crate::model::BlockerRef {
             id: None,
             identifier: Some("#99".into()),
@@ -867,7 +903,11 @@ mod tests {
 
     #[test]
     fn dependency_preflight_allows_terminal_tracker_blocker() {
-        let mut issue = issue(Some(aligned_body_with_uat("No")));
+        let body = aligned_body_with_uat("No").replace(
+            "## Dependencies\n- No blocking dependencies.",
+            "## Dependencies\n",
+        );
+        let mut issue = issue(Some(body));
         issue.blocked_by.push(crate::model::BlockerRef {
             id: None,
             identifier: Some("#99".into()),

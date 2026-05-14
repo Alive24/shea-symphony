@@ -16,7 +16,7 @@ yet.
 | Normalized issue model | Implemented as `TrackerIssue`, including ProjectV2 item ID, labels, assignees, blockers, linked PRs, and project fields. |
 | GitHub Project v2 tracker | Fixture-backed mode plus live loading and explicit write operations through `gh api graphql`. `run-loop` can coordinate existing primitives, idle-poll in unbounded write mode, and use claim decision helpers before write-mode dispatch; auth diagnostics distinguish fixture mode, env-token auth, usable `gh api graphql` auth, missing `gh`, and unusable auth. Same-state status writes are skipped, Project item addition initializes the configured `Status` field to `Todo`, marker workpad upsert is idempotent for the canonical marker, and claim decision helpers distinguish claimable, active, and externally changed states. Full claim reconciliation is not implemented yet. |
 | Linear tracker | Implemented behind the same trait for fixture-backed planning plus live GraphQL reads, state updates, marker workpad comments, follow-up issue creation, and project assignment. Credential-gated smoke coverage is still missing. |
-| Issue Quality Gate | Implemented as a Markdown contract check plus deterministic source-alignment preflight where workflow/repo context is available. It verifies the template `UAT Required` field, explicit dependency semantics, target repository, referenced local paths, and supported verification command shapes. Optional local command-backed LLM gate mode exists as disabled/advisory/required; richer semantic validation and hosted providers are still follow-ups. |
+| Issue Quality Gate | Implemented as a Markdown contract check plus deterministic source-alignment preflight where workflow/repo context is available. It verifies the template `UAT Required` field, relationship-first dependency semantics, target repository, referenced local paths, and supported verification command shapes. Structured `blocked_by` tracker relationships are authoritative for dispatch blocking; missing Markdown dependency boilerplate no longer blocks otherwise independent work, while body-only blocker claims still require clarification or a structured relationship. Optional local command-backed LLM gate mode exists as disabled/advisory/required; richer semantic validation and hosted providers are still follow-ups. |
 | Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, repair, CLI-first interactive issue shaping with dependency sections, conservative reflective follow-up candidate generation that surfaces likely dependency/overlap signals, and explicit `forge-create` tracker issue creation from quality-gated Markdown with duplicate-title guarding. Interactive creation requires `--write` and `--confirm-create`; reflective mode only prints candidates. Initial Project `Status` setup is available through the GitHub add-to-project path, `forge-create --add-to-project` can set GitHub Project v2 single-select fields such as `Capability` with repeatable `--project-field NAME=VALUE` flags, and live GitHub `forge-create` requires `--assignee` before adding executable Project items. Text/number/date field setup is not implemented yet. |
 | Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes, idle polling, claim-helper use, dependency preflight for `Todo` / `Rework`, runtime-state persistence, tracker-visible advisory ownership markers, resume preflight, retry backoff records, stall detection, live PR handoff plus tracker PR link recording in non-fixture GitHub mode, guarded `merge-once` and bounded `merge-loop` lanes for `Merging` issues, first-slice `--pool` selection guarded by `Main Agent` / `Merging Agent` Project fields, a controlled `dogfood-smoke` preflight report with blocking-vs-warning integration gap severity, and a bounded operator launcher script exist. No long-running worker supervision, automated stall restart, full multi-worker runtime resume reconciliation, unbounded merge idle polling, or full state reconciliation yet. |
 | Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, guarded terminal cleanup planning, repository-local git identity application, workspace/branch/PR handoff planning, live git worktree/branch creation, dirty/no-op guards before branch push, optional configured verification commands before PR handoff, branch push, PR create-or-reuse, tracker PR link recording, run-loop handoff evidence, profile-scoped workspace keys, parsed-but-unused SSH worker host config, a namespaced artifact layout, and dry-run cleanup planning exist. Automatic runtime cleanup, write-mode artifact cleanup, and live SSH execution are not wired yet. |
@@ -89,9 +89,9 @@ Project v2 issues:
      current `gh` login or selected profile login before claim.
    - `run-loop` reuses tracker claim helpers to claim only `Todo` / `Rework`,
      resume active `In Progress`, and stop/replan on externally changed states.
-   - Main-agent dispatch requires explicit dependency semantics in the issue
-     contract and skips `Todo` / `Rework` issues with unresolved tracker
-     blockers before claim.
+   - Main-agent dispatch treats structured tracker blockers as authoritative,
+     skips `Todo` / `Rework` issues with unresolved blockers before claim, and
+     no longer requires Markdown dependency boilerplate for independent work.
    - Revalidate issue state immediately before dispatch.
    - Keep GitHub-specific fields out of `orchestrator`.
 - Current explicit `gate-apply` can record quality-gate assumptions or
@@ -168,9 +168,10 @@ Project v2 issues:
      final transition intent. Resume preflight now blocks conflicting stale
      active state, honors retry backoff, and reports stalls; full multi-worker
      reconciliation remains pending.
-   - Dependency-free work must say so in the issue body; semantic dependency
-     placeholders stay in `Need to Clarify`, and tracker blockers must be
-     terminal before dispatch.
+   - Structured tracker blockers are the dependency source of truth. Missing
+     body dependency boilerplate does not block otherwise independent work, but
+     semantic dependency placeholders and body-only blocker claims stay in
+     `Need to Clarify`; tracker blockers must be terminal before dispatch.
    - Write-mode `run-loop` now writes a tracker-visible runtime ownership marker
      before backend execution and skips active `In Progress` work when the
      marker points at a different profile, workspace key, or branch. `run-loop`

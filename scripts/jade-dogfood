@@ -94,6 +94,9 @@ check "gh auth status" gh auth status
 
 if [ -x "$BIN" ]; then
   check "workflow validates" "$BIN" validate "$WORKFLOW"
+  if [ "$MODE" = "write" ]; then
+    check "controlled dogfood smoke preflight" "$BIN" dogfood-smoke "$WORKFLOW" --dry-run
+  fi
 fi
 
 echo
@@ -101,6 +104,7 @@ echo "Recommended commands:"
 echo "- preview: scripts/jade-dogfood --dry-run"
 echo "- supervised write: scripts/jade-dogfood --write --confirm-write --max-iterations 1"
 echo "- inspect: $BIN inspect $WORKFLOW"
+echo "- smoke preflight: $BIN dogfood-smoke $WORKFLOW --dry-run"
 echo "- resume tick: $BIN run-loop $WORKFLOW --max-iterations 1 --write"
 
 if [ "$FAILED" = "true" ]; then

@@ -1,0 +1,34 @@
+[
+  {
+    "tracker_kind": "github_project_v2",
+    "id": "GHI_merge_ready",
+    "item_id": "PVTI_merge_ready",
+    "identifier": "#9101",
+    "title": "Merge-ready fixture issue",
+    "description": "## Issue Setup\n\n- UAT Required: No\n\n## Issue Goal\n\nExercise the merge lane dry-run decision path for an approved clean pull request.\n\n## Why Now\n\nJade Symphony needs a credential-free way to rehearse merge readiness without calling live GitHub or merging a real PR.\n\n## Issue Context\n\nThis issue is loaded by `examples/merge-fixture-workflow.md`. It is already in `Merging` and carries fixture linked pull request metadata for review decision, base branch, and mergeability.\n\n## Decisions / Assumptions\n\n### Decisions\n\n- Keep this fixture dry-run only.\n- Represent clean approval through normalized linked PR fixture metadata.\n\n### Assumptions\n\n- Empty fixture checks are acceptable for the first clean merge-lane rehearsal.\n\n## Non-Negotiable Guardrails\n\n- Do not perform a live merge from this fixture.\n- Do not bypass real GitHub merge preflight in non-fixture mode.\n\n## Scope\n\n### In Scope\n\n- Fixture-linked PR status conversion.\n- Merge-ready dry-run decision reporting.\n\n### Out of Scope\n\n- Live PR fetching.\n- Continuous merge polling.\n- Closing real issues.\n\n## Canonical References\n\n### Target Repository / Package\n\n- `Alive24/jade-symphony`\n\n### Relevant Knowledge Sources\n\n- `docs/dogfood-readiness.md`\n\n### Relevant Code Paths\n\n- `src/merge_lane.rs`\n- `src/model.rs`\n- `examples/merge-fixture-workflow.md`\n- `examples/fixtures/merge-issues.json`\n\n## Current State\n\nFixture linked PRs can now carry metadata needed for merge preflight rehearsal.\n\n## Deliverable Shape\n\nA `merge-once --dry-run` report with a ready-to-merge decision and no mutation.\n\n## Risks or Constraints\n\n- Fixture readiness must not be treated as live approval.\n\n## Expected Outcome\n\nThe dry-run merge lane reports a ready merge decision and prints dry-run actions only.\n\n## Verification\n\n### Completion Criteria\n\n- `cargo run -- merge-once examples/merge-fixture-workflow.md --dry-run` reports `ReadyToMerge`.\n\n### Functional Verification\n\n- `cargo test`\n- `cargo fmt --check`\n- `cargo clippy --all-targets --all-features -- -D warnings`\n\n### UAT\n\n- Not required.\n\n### Context Verification\n\n- Confirm fixture mode remains separate from live merging.",
+    "url": "https://github.com/Alive24/jade-symphony/issues/9101",
+    "state": "Merging",
+    "labels": ["fixture", "merge"],
+    "assignees": ["codex"],
+    "priority": 1,
+    "branch_name": "feature/issue-9101-merge-fixture",
+    "linked_pull_requests": [
+      {
+        "id": "PR_merge_ready",
+        "number": 9101,
+        "url": "https://github.com/Alive24/jade-symphony/pull/9101",
+        "state": "OPEN",
+        "is_draft": false,
+        "merge_state_status": "CLEAN",
+        "review_decision": "APPROVED",
+        "base_ref_name": "main"
+      }
+    ],
+    "blocked_by": [],
+    "project_fields": {
+      "Status": "Merging"
+    },
+    "created_at": "2026-05-14T00:00:00Z",
+    "updated_at": "2026-05-14T00:00:00Z"
+  }
+]

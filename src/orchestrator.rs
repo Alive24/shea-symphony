@@ -181,6 +181,8 @@ mod tests {
 
     fn contract() -> String {
         [
+            "## Issue Setup",
+            "- UAT Required: No",
             "## Issue Goal",
             "Goal.",
             "## Why Now",

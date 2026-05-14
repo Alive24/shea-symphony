@@ -13,6 +13,7 @@ pub struct RuntimeConfig {
     pub tracker: TrackerConfig,
     pub polling: PollingConfig,
     pub workspace: WorkspaceConfig,
+    pub worker: WorkerConfig,
     pub hooks: HooksConfig,
     pub agent: AgentConfig,
     pub backend: BackendConfig,
@@ -20,8 +21,10 @@ pub struct RuntimeConfig {
     pub claude: ClaudeConfig,
     pub review: ReviewConfig,
     pub quality_gate: QualityGateConfig,
+    pub verification: VerificationConfig,
     pub profiles: ProfilesConfig,
     pub identity: IdentityConfig,
+    pub artifacts: ArtifactConfig,
     pub observability: ObservabilityConfig,
     pub server: ServerConfig,
     #[serde(default)]
@@ -85,6 +88,13 @@ pub struct WorkspaceConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct WorkerConfig {
+    #[serde(default)]
+    pub ssh_hosts: Vec<String>,
+    pub max_concurrent_agents_per_host: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct HooksConfig {
     pub after_create: Option<String>,
     pub before_run: Option<String>,
@@ -129,11 +139,18 @@ pub struct ReviewConfig {
     pub backend: String,
     pub gemini_command: String,
     pub timeout_ms: u64,
+    pub max_concurrent_workers: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QualityGateConfig {
     pub llm: LlmQualityGateConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct VerificationConfig {
+    pub commands: Vec<String>,
+    pub timeout_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -203,6 +220,12 @@ impl GitIdentityConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArtifactConfig {
+    pub root: PathBuf,
+    pub namespace: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObservabilityConfig {
     pub dashboard_enabled: bool,
     pub refresh_ms: u64,
@@ -245,6 +268,7 @@ impl RuntimeConfig {
                 &env::temp_dir().join("symphony_workspaces"),
             ),
         };
+        let worker = parse_worker(root.get("worker"));
         let hooks = HooksConfig {
             after_create: get_string(root.get("hooks"), "after_create"),
             before_run: get_string(root.get("hooks"), "before_run"),
@@ -293,10 +317,15 @@ impl RuntimeConfig {
             gemini_command: get_string(root.get("review"), "gemini_command")
                 .unwrap_or_else(|| "gemini".to_string()),
             timeout_ms: get_u64(root.get("review"), "timeout_ms").unwrap_or(600_000),
+            max_concurrent_workers: get_u64(root.get("review"), "max_concurrent_workers")
+                .unwrap_or(1)
+                .max(1) as usize,
         };
         let quality_gate = parse_quality_gate(root.get("quality_gate"));
+        let verification = parse_verification(root.get("verification"));
         let profiles = parse_profiles(root.get("profiles"), workflow_dir);
         let identity = parse_identity(root.get("identity"));
+        let artifacts = parse_artifacts(root.get("artifacts"), workflow_dir);
         let observability = ObservabilityConfig {
             dashboard_enabled: get_bool(root.get("observability"), "dashboard_enabled")
                 .unwrap_or(true),
@@ -318,6 +347,7 @@ impl RuntimeConfig {
             tracker,
             polling,
             workspace,
+            worker,
             hooks,
             agent,
             backend,
@@ -325,8 +355,10 @@ impl RuntimeConfig {
             claude,
             review,
             quality_gate,
+            verification,
             profiles,
             identity,
+            artifacts,
             observability,
             server,
             raw: workflow.config.clone(),
@@ -364,6 +396,13 @@ impl RuntimeConfig {
 
         require_positive("polling.interval_ms", self.polling.interval_ms)?;
         require_positive("hooks.timeout_ms", self.hooks.timeout_ms)?;
+        if let Some(limit) = self.worker.max_concurrent_agents_per_host {
+            if limit <= 0 {
+                return Err(ConfigError::Invalid(
+                    "worker.max_concurrent_agents_per_host must be positive".into(),
+                ));
+            }
+        }
         require_positive(
             "agent.max_concurrent_agents",
             self.agent.max_concurrent_agents as u64,
@@ -375,9 +414,14 @@ impl RuntimeConfig {
         )?;
         require_positive("review.timeout_ms", self.review.timeout_ms)?;
         require_positive(
+            "review.max_concurrent_workers",
+            self.review.max_concurrent_workers as u64,
+        )?;
+        require_positive(
             "quality_gate.llm.timeout_ms",
             self.quality_gate.llm.timeout_ms,
         )?;
+        require_positive("verification.timeout_ms", self.verification.timeout_ms)?;
 
         if self.tracker.kind == "github_project_v2" {
             require_present("tracker.owner", self.tracker.owner.as_deref())?;
@@ -492,6 +536,18 @@ fn parse_workpad(value: Option<&Value>) -> WorkpadConfig {
     }
 }
 
+fn parse_worker(value: Option<&Value>) -> WorkerConfig {
+    WorkerConfig {
+        ssh_hosts: get_string_vec(value, "ssh_hosts")
+            .unwrap_or_default()
+            .into_iter()
+            .map(|host| host.trim().to_string())
+            .filter(|host| !host.is_empty())
+            .collect(),
+        max_concurrent_agents_per_host: get_i64(value, "max_concurrent_agents_per_host"),
+    }
+}
+
 fn parse_profiles(value: Option<&Value>, workflow_dir: &Path) -> ProfilesConfig {
     ProfilesConfig {
         default: get_string(value, "default"),
@@ -514,6 +570,13 @@ fn parse_quality_gate(value: Option<&Value>) -> QualityGateConfig {
             command: get_string(llm, "command"),
             timeout_ms: get_u64(llm, "timeout_ms").unwrap_or(120_000),
         },
+    }
+}
+
+fn parse_verification(value: Option<&Value>) -> VerificationConfig {
+    VerificationConfig {
+        commands: get_string_vec(value, "commands").unwrap_or_default(),
+        timeout_ms: get_u64(value, "timeout_ms").unwrap_or(600_000),
     }
 }
 
@@ -582,6 +645,17 @@ fn parse_identity(value: Option<&Value>) -> IdentityConfig {
     }
 }
 
+fn parse_artifacts(value: Option<&Value>, workflow_dir: &Path) -> ArtifactConfig {
+    ArtifactConfig {
+        root: resolve_path(
+            get_string(value, "root").as_deref(),
+            workflow_dir,
+            &default_artifact_root(),
+        ),
+        namespace: get_string(value, "namespace"),
+    }
+}
+
 fn parse_git_identity(value: Option<&Value>) -> GitIdentityConfig {
     GitIdentityConfig {
         name: get_string(value, "name"),
@@ -605,6 +679,10 @@ fn value_string(root: Option<&Value>, key: &str, default: &str) -> String {
 
 fn get_u64(root: Option<&Value>, key: &str) -> Option<u64> {
     get_value(root, key).and_then(Value::as_u64)
+}
+
+fn get_i64(root: Option<&Value>, key: &str) -> Option<i64> {
+    get_value(root, key).and_then(Value::as_i64)
 }
 
 fn get_bool(root: Option<&Value>, key: &str) -> Option<bool> {
@@ -672,6 +750,12 @@ fn expand_tilde(path: PathBuf) -> PathBuf {
 
 fn home_dir() -> Option<PathBuf> {
     env::var_os("HOME").map(PathBuf::from)
+}
+
+fn default_artifact_root() -> PathBuf {
+    home_dir()
+        .map(|home| home.join(".jade-symphony").join("artifacts"))
+        .unwrap_or_else(|| env::temp_dir().join("jade-symphony-artifacts"))
 }
 
 fn default_codex_approval_policy() -> Value {
@@ -752,6 +836,23 @@ mod tests {
     }
 
     #[test]
+    fn parses_artifact_root_and_namespace() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\nartifacts:\n  root: artifacts\n  namespace: custom/project\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.artifacts.root, PathBuf::from("/tmp/artifacts"));
+        assert_eq!(
+            config.artifacts.namespace.as_deref(),
+            Some("custom/project")
+        );
+    }
+
+    #[test]
     fn parses_actor_and_git_identity_config() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
@@ -829,6 +930,38 @@ mod tests {
     }
 
     #[test]
+    fn parses_optional_ssh_worker_config_without_enabling_remote_execution() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nworker:\n  ssh_hosts:\n    - worker-a.example\n    - ' worker-b.example '\n    - ''\n  max_concurrent_agents_per_host: 2\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(
+            config.worker.ssh_hosts,
+            vec!["worker-a.example", "worker-b.example"]
+        );
+        assert_eq!(config.worker.max_concurrent_agents_per_host, Some(2));
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_non_positive_ssh_worker_host_limit() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nworker:\n  ssh_hosts:\n    - worker-a.example\n  max_concurrent_agents_per_host: 0\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        let error = config.validate().unwrap_err().to_string();
+        assert!(error.contains("worker.max_concurrent_agents_per_host must be positive"));
+    }
+
+    #[test]
     fn parses_llm_quality_gate_config() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
@@ -844,6 +977,24 @@ mod tests {
             Some("sh examples/fixtures/llm-gate-ready.sh")
         );
         assert_eq!(config.quality_gate.llm.timeout_ms, 5_000);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn parses_handoff_verification_config() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nverification:\n  timeout_ms: 15000\n  commands:\n    - cargo test\n    - cargo fmt --check\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.verification.timeout_ms, 15_000);
+        assert_eq!(
+            config.verification.commands,
+            vec!["cargo test".to_string(), "cargo fmt --check".to_string()]
+        );
         assert!(config.validate().is_ok());
     }
 

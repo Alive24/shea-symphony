@@ -530,6 +530,7 @@ mod tests {
                 "https://github.com/Alive24/jade-symphony/pull/{number}"
             )),
             state: Some(state.into()),
+            ..Default::default()
         }
     }
 

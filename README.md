@@ -57,9 +57,10 @@ worker supervision are still future work.
   evidence for confirmed review findings, merge conflicts, dirty PRs,
   validation failures, and runtime failures before a transition to `Rework`.
 - `review-loop` can discover `Agent Review` issues, avoid duplicate review
-  worker markers, run a configured independent review backend in bounded mode,
-  and reconcile pass/rework/inconclusive transitions through the Review Agent
-  authority boundary.
+  worker markers, select a bounded set of one-issue review worker jobs, run each
+  configured independent review backend from the issue workspace, and reconcile
+  pass/rework/inconclusive transitions through the Review Agent authority
+  boundary.
 - Issue Forge can discover local candidates from intent, ask one focused
   clarification question, draft from the quality template, validate Markdown,
   repair rough Markdown into an executable issue contract shape, and create a
@@ -245,7 +246,8 @@ review can move `Agent Review` to `Human Review`, confirmed findings move to
 `review-loop` is the first runtime-style Review Agent command: it selects
 eligible `Agent Review` issues, prints intended review work in dry-run mode, and
 in write mode records review evidence plus the allowed review transition. It is
-bounded by `--max-iterations` or `--once` and is not a persistent daemon yet.
+bounded by `--max-iterations` or `--once`, supports `--max-concurrent`, and is
+not a persistent daemon yet.
 `review-freshness` is an evidence command for Merging conflict repair: it does
 not mutate tracker state, does not approve a PR, and does not authorize the main
 implementation agent to set `Human Review`. Mechanical conflict repair can

@@ -129,6 +129,7 @@ pub struct ReviewConfig {
     pub backend: String,
     pub gemini_command: String,
     pub timeout_ms: u64,
+    pub max_concurrent_workers: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -293,6 +294,9 @@ impl RuntimeConfig {
             gemini_command: get_string(root.get("review"), "gemini_command")
                 .unwrap_or_else(|| "gemini".to_string()),
             timeout_ms: get_u64(root.get("review"), "timeout_ms").unwrap_or(600_000),
+            max_concurrent_workers: get_u64(root.get("review"), "max_concurrent_workers")
+                .unwrap_or(1)
+                .max(1) as usize,
         };
         let quality_gate = parse_quality_gate(root.get("quality_gate"));
         let profiles = parse_profiles(root.get("profiles"), workflow_dir);
@@ -374,6 +378,10 @@ impl RuntimeConfig {
             self.agent.max_retry_backoff_ms,
         )?;
         require_positive("review.timeout_ms", self.review.timeout_ms)?;
+        require_positive(
+            "review.max_concurrent_workers",
+            self.review.max_concurrent_workers as u64,
+        )?;
         require_positive(
             "quality_gate.llm.timeout_ms",
             self.quality_gate.llm.timeout_ms,

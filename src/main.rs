@@ -5899,6 +5899,7 @@ mod tests {
             "Create issue".into(),
             forge_contract(),
             true,
+            Vec::new(),
             true,
         )
         .unwrap_err()

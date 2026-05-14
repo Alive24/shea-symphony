@@ -129,6 +129,10 @@ The merge lane should:
 - check PR state, base branch, checks, review/approval signal, and mergeability;
 - merge clean approved work;
 - route dirty or failing work to `Rework` with workpad evidence;
+- retry transient missing or `UNKNOWN` mergeability instead of treating it as a
+  human decision;
+- include a `Required Human Input` question whenever a blocker really needs a
+  human answer;
 - never set `Human Review`.
 
 After each merge pass, run the Rust verification suite again on `main`.

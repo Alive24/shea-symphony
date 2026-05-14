@@ -181,8 +181,8 @@ pub fn merge_lane_decision(
             kind: MergeLaneDecisionKind::ChecksPending,
             issue_ref: issue.identifier.clone(),
             pr_url: Some(status.url.clone()),
-            target_state: Some("need_human_input"),
-            reason: format!("check `{pending}` is still pending"),
+            target_state: None,
+            reason: format!("check `{pending}` is still pending; retry merge preflight later"),
         };
     }
 
@@ -200,13 +200,26 @@ pub fn merge_lane_decision(
             };
         }
         Some("CLEAN") | Some("HAS_HOOKS") => {}
+        Some("UNKNOWN") => {
+            return MergeLaneDecision {
+                kind: MergeLaneDecisionKind::MergeabilityUnknown,
+                issue_ref: issue.identifier.clone(),
+                pr_url: Some(status.url.clone()),
+                target_state: None,
+                reason:
+                    "pull request merge state is `UNKNOWN` after recheck; retry merge preflight later"
+                        .into(),
+            };
+        }
         Some(other) => {
             return MergeLaneDecision {
                 kind: MergeLaneDecisionKind::MergeabilityUnknown,
                 issue_ref: issue.identifier.clone(),
                 pr_url: Some(status.url.clone()),
                 target_state: Some("need_human_input"),
-                reason: format!("pull request merge state is `{other}`"),
+                reason: format!(
+                    "pull request merge state is `{other}` and needs operator classification"
+                ),
             };
         }
         None => {
@@ -214,8 +227,10 @@ pub fn merge_lane_decision(
                 kind: MergeLaneDecisionKind::MergeabilityUnknown,
                 issue_ref: issue.identifier.clone(),
                 pr_url: Some(status.url.clone()),
-                target_state: Some("need_human_input"),
-                reason: "pull request merge state is missing".into(),
+                target_state: None,
+                reason:
+                    "pull request merge state is missing after recheck; retry merge preflight later"
+                        .into(),
             };
         }
     }
@@ -295,6 +310,23 @@ pub fn fetch_pull_request_status(
     pull_request_status_from_json(&value)
 }
 
+pub fn fetch_pull_request_status_with_recheck(
+    pr_ref: &str,
+    runner: &dyn HandoffCommandRunner,
+    cwd: &Path,
+    attempts: usize,
+) -> Result<PullRequestMergeStatus, MergeLaneError> {
+    let attempts = attempts.max(1);
+    let mut status = fetch_pull_request_status(pr_ref, runner, cwd)?;
+    for _ in 1..attempts {
+        if !mergeability_needs_recheck(&status) {
+            break;
+        }
+        status = fetch_pull_request_status(pr_ref, runner, cwd)?;
+    }
+    Ok(status)
+}
+
 pub fn merge_pull_request(
     pr_ref: &str,
     runner: &dyn HandoffCommandRunner,
@@ -352,6 +384,10 @@ pub fn merge_lane_workpad(
             format!("- Stdout: `{}`", single_line(&output.stdout)),
             format!("- Stderr: `{}`", single_line(&output.stderr)),
         ]);
+    }
+
+    if decision.target_state == Some("need_human_input") {
+        lines.extend(required_human_input_section(decision));
     }
 
     lines.join("\n")
@@ -443,6 +479,49 @@ fn first_pending_check(checks: &[PullRequestCheckStatus]) -> Option<String> {
     })
 }
 
+fn mergeability_needs_recheck(status: &PullRequestMergeStatus) -> bool {
+    status
+        .merge_state_status
+        .as_deref()
+        .map(|state| state.eq_ignore_ascii_case("UNKNOWN"))
+        .unwrap_or(true)
+}
+
+fn required_human_input_section(decision: &MergeLaneDecision) -> Vec<String> {
+    let question = match decision.kind {
+        MergeLaneDecisionKind::MissingPullRequest => {
+            "Which pull request should this Merging issue land?"
+        }
+        MergeLaneDecisionKind::AmbiguousPullRequest => {
+            "Which of the linked pull requests is the canonical merge target?"
+        }
+        MergeLaneDecisionKind::PullRequestClosed => {
+            "Should the closed pull request be reopened, replaced, or should the issue leave Merging?"
+        }
+        MergeLaneDecisionKind::DraftPullRequest => {
+            "Should the draft pull request stay in Merging, move back to Rework, or wait for the author to mark it ready?"
+        }
+        MergeLaneDecisionKind::BaseMismatch => {
+            "Should the pull request base branch be changed, or is this issue targeting a different release branch?"
+        }
+        MergeLaneDecisionKind::ReviewNotApproved => {
+            "Should the review decision block merge, or should the issue move back to Rework for follow-up?"
+        }
+        MergeLaneDecisionKind::MergeabilityUnknown => {
+            "How should this non-standard mergeability state be classified for the merge lane?"
+        }
+        _ => "What human decision is required before the merge lane can continue?",
+    };
+
+    vec![
+        String::new(),
+        "### Required Human Input".to_string(),
+        format!("- Question: {question}"),
+        "- Options: update PR metadata, choose the canonical PR, move the issue out of Merging, or document the required repair.".to_string(),
+        "- After answer: rerun `jade-symphony merge-once` so the merge lane can re-evaluate with concrete evidence.".to_string(),
+    ]
+}
+
 fn require_success(program: &str, output: &CommandOutput) -> Result<(), MergeLaneError> {
     if output.status == 0 {
         Ok(())
@@ -463,6 +542,8 @@ fn single_line(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git_handoff::GitHandoffError;
+    use std::cell::RefCell;
 
     fn issue(state: &str, prs: Vec<LinkedPullRequest>) -> TrackerIssue {
         TrackerIssue {
@@ -523,6 +604,42 @@ mod tests {
                 status: Some("COMPLETED".into()),
                 conclusion: Some("SUCCESS".into()),
             }],
+        }
+    }
+
+    fn pr_json(merge_state_status: &str) -> String {
+        format!(
+            r#"{{
+                "number": 60,
+                "url": "https://github.com/Alive24/jade-symphony/pull/60",
+                "state": "OPEN",
+                "isDraft": false,
+                "mergeStateStatus": "{merge_state_status}",
+                "reviewDecision": "APPROVED",
+                "baseRefName": "main",
+                "statusCheckRollup": [
+                    {{"name": "cargo test", "status": "COMPLETED", "conclusion": "SUCCESS"}}
+                ]
+            }}"#
+        )
+    }
+
+    struct SequenceRunner {
+        outputs: RefCell<Vec<String>>,
+    }
+
+    impl HandoffCommandRunner for SequenceRunner {
+        fn run(
+            &self,
+            _program: &str,
+            _args: &[String],
+            _cwd: &Path,
+        ) -> Result<CommandOutput, GitHandoffError> {
+            Ok(CommandOutput {
+                status: 0,
+                stdout: self.outputs.borrow_mut().remove(0),
+                stderr: String::new(),
+            })
         }
     }
 
@@ -605,6 +722,56 @@ mod tests {
     }
 
     #[test]
+    fn unknown_then_clean_after_recheck_becomes_ready() {
+        let runner = SequenceRunner {
+            outputs: RefCell::new(vec![pr_json("UNKNOWN"), pr_json("CLEAN")]),
+        };
+
+        let status =
+            fetch_pull_request_status_with_recheck("60", &runner, Path::new("."), 2).unwrap();
+
+        assert_eq!(status.merge_state_status.as_deref(), Some("CLEAN"));
+    }
+
+    #[test]
+    fn unknown_then_dirty_after_recheck_routes_to_rework() {
+        let runner = SequenceRunner {
+            outputs: RefCell::new(vec![pr_json("UNKNOWN"), pr_json("DIRTY")]),
+        };
+        let status =
+            fetch_pull_request_status_with_recheck("60", &runner, Path::new("."), 2).unwrap();
+        let issue = issue("Merging", vec![pr()]);
+        let decision = merge_lane_decision(
+            &issue,
+            "Merging",
+            "main",
+            &issue.linked_pull_requests,
+            Some(&status),
+        );
+
+        assert_eq!(decision.kind, MergeLaneDecisionKind::MergeDirty);
+        assert_eq!(decision.target_state, Some("rework"));
+    }
+
+    #[test]
+    fn unknown_remaining_after_recheck_stays_in_merging() {
+        let issue = issue("Merging", vec![pr()]);
+        let mut status = clean_status();
+        status.merge_state_status = Some("UNKNOWN".into());
+        let decision = merge_lane_decision(
+            &issue,
+            "Merging",
+            "main",
+            &issue.linked_pull_requests,
+            Some(&status),
+        );
+
+        assert_eq!(decision.kind, MergeLaneDecisionKind::MergeabilityUnknown);
+        assert_eq!(decision.target_state, None);
+        assert!(decision.reason.contains("retry merge preflight later"));
+    }
+
+    #[test]
     fn changes_requested_review_routes_to_rework() {
         let issue = issue("Merging", vec![pr()]);
         let mut status = clean_status();
@@ -645,6 +812,36 @@ mod tests {
 
         assert_eq!(decision.kind, MergeLaneDecisionKind::ChecksFailing);
         assert_eq!(decision.target_state, Some("rework"));
+    }
+
+    #[test]
+    fn pending_check_stays_in_merging_for_retry() {
+        let issue = issue("Merging", vec![pr()]);
+        let mut status = clean_status();
+        status.checks[0].status = Some("IN_PROGRESS".into());
+        status.checks[0].conclusion = None;
+        let decision = merge_lane_decision(
+            &issue,
+            "Merging",
+            "main",
+            &issue.linked_pull_requests,
+            Some(&status),
+        );
+
+        assert_eq!(decision.kind, MergeLaneDecisionKind::ChecksPending);
+        assert_eq!(decision.target_state, None);
+        assert!(decision.reason.contains("retry merge preflight later"));
+    }
+
+    #[test]
+    fn need_human_input_workpad_includes_actionable_question() {
+        let issue = issue("Merging", Vec::new());
+        let decision = merge_lane_decision(&issue, "Merging", "main", &[], None);
+        let workpad = merge_lane_workpad(&issue, &decision, None);
+
+        assert!(workpad.contains("### Required Human Input"));
+        assert!(workpad.contains("Which pull request should this Merging issue land?"));
+        assert!(workpad.contains("After answer"));
     }
 
     #[test]

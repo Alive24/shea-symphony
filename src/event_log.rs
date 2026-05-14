@@ -22,7 +22,67 @@ pub struct EventRecord {
     pub actor_label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_author: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tracker_mutation: Option<TrackerMutationAuditRecord>,
     pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrackerMutationAuditRecord {
+    pub command: String,
+    pub mutation_type: String,
+    pub issue_ref: Option<String>,
+    pub target: Option<String>,
+    pub from_state: Option<String>,
+    pub to_state: Option<String>,
+    pub reason: String,
+    pub timestamp_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackerMutationAuditInput {
+    pub command: String,
+    pub mutation_type: String,
+    pub issue_ref: Option<String>,
+    pub target: Option<String>,
+    pub from_state: Option<String>,
+    pub to_state: Option<String>,
+    pub reason: String,
+    pub timestamp_ms: u64,
+}
+
+impl TrackerMutationAuditRecord {
+    pub fn from_input(input: TrackerMutationAuditInput) -> Self {
+        Self {
+            command: input.command,
+            mutation_type: input.mutation_type,
+            issue_ref: input.issue_ref,
+            target: input.target.map(redact_audit_text),
+            from_state: input.from_state,
+            to_state: input.to_state,
+            reason: redact_audit_text(input.reason),
+            timestamp_ms: input.timestamp_ms,
+        }
+    }
+}
+
+fn redact_audit_text(value: String) -> String {
+    value
+        .split_whitespace()
+        .map(|part| {
+            let lower = part.to_ascii_lowercase();
+            if lower.contains("token=")
+                || lower.contains("gh_token=")
+                || lower.contains("github_token=")
+                || lower.contains("authorization:")
+            {
+                "[redacted]"
+            } else {
+                part
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -141,6 +201,7 @@ mod tests {
             actor_role: Some("implementation_agent".into()),
             actor_label: Some("Jade Symphony Agent".into()),
             git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+            tracker_mutation: None,
             message: "queued".into(),
         })
         .unwrap();
@@ -165,6 +226,7 @@ mod tests {
             actor_role: None,
             actor_label: None,
             git_author: None,
+            tracker_mutation: None,
             message: "queued".into(),
         };
         let second = EventRecord {
@@ -177,6 +239,7 @@ mod tests {
             actor_role: None,
             actor_label: None,
             git_author: None,
+            tracker_mutation: None,
             message: "done".into(),
         };
 
@@ -207,6 +270,7 @@ mod tests {
             actor_role: None,
             actor_label: None,
             git_author: None,
+            tracker_mutation: None,
             message: "ok".into(),
         })
         .unwrap();
@@ -215,5 +279,24 @@ mod tests {
 
         let error = log.read_records().unwrap_err();
         assert!(matches!(error, EventLogError::ParseLine { line: 2, .. }));
+    }
+
+    #[test]
+    fn tracker_mutation_records_redact_secret_like_text() {
+        let record = TrackerMutationAuditRecord::from_input(TrackerMutationAuditInput {
+            command: "run-loop".into(),
+            mutation_type: "state_change".into(),
+            issue_ref: Some("#1".into()),
+            target: Some("Authorization: bearer secret".into()),
+            from_state: Some("Todo".into()),
+            to_state: Some("In Progress".into()),
+            reason: "claim token=secret".into(),
+            timestamp_ms: 42,
+        });
+
+        assert_eq!(record.command, "run-loop");
+        assert_eq!(record.mutation_type, "state_change");
+        assert_eq!(record.target.as_deref(), Some("[redacted] bearer secret"));
+        assert_eq!(record.reason, "claim [redacted]");
     }
 }

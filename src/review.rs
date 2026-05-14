@@ -609,16 +609,27 @@ fn has_active_review_worker(issue: &TrackerIssue, worker_key: &str) -> bool {
         if !key.contains("review") {
             return false;
         }
+        let is_review_agent_field = key == "review agent";
 
         let value = value
             .as_str()
             .map(str::to_string)
             .unwrap_or_else(|| value.to_string());
         active_review_marker_matches(&value, worker_key)
+            || (is_review_agent_field && fixed_review_agent_claim_matches(&value, worker_key))
     }) || issue
         .description
         .as_deref()
         .is_some_and(|description| active_review_marker_matches(description, worker_key))
+}
+
+fn fixed_review_agent_claim_matches(value: &str, worker_key: &str) -> bool {
+    let value = value.trim().to_ascii_lowercase();
+    if value == "hold" {
+        return true;
+    }
+    worker_key.to_ascii_lowercase().contains(":gemini")
+        && matches!(value.as_str(), "gemini a" | "gemini b")
 }
 
 fn active_review_marker_matches(value: &str, worker_key: &str) -> bool {
@@ -1572,6 +1583,22 @@ mod tests {
             review_run_eligibility(&issue, "Agent Review", "fake"),
             ReviewRunEligibility::AlreadyQueued {
                 worker_key: "review:#1:fake".into()
+            }
+        );
+    }
+
+    #[test]
+    fn review_run_eligibility_detects_gemini_single_select_claim() {
+        let mut issue = issue();
+        issue.project_fields.insert(
+            "Review Agent".into(),
+            serde_json::Value::String("Gemini A".into()),
+        );
+
+        assert_eq!(
+            review_run_eligibility(&issue, "Agent Review", "gemini-cli"),
+            ReviewRunEligibility::AlreadyQueued {
+                worker_key: "review:#1:gemini-cli".into()
             }
         );
     }

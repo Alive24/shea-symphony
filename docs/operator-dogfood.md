@@ -133,6 +133,19 @@ target/debug/jade-symphony run-loop examples/github-project-workflow.md --max-it
 target/debug/jade-symphony merge-loop examples/github-project-workflow.md --max-iterations 1 --pool 2 --dry-run
 ```
 
+## Logical Actor Audit
+
+Dogfood can run many local workers through the same GitHub account. GitHub will
+show the configured account for API mutations, so Jade Symphony also writes a
+local `tracker_mutation` audit record to the configured event log. The record
+captures the logical actor role and label, git author when configured, command,
+mutation type, issue, target, from/to state when known, reason, and timestamp.
+
+Use this audit trail to distinguish `main_agent`, `review_agent`,
+`merge_agent`, operator repair, and Issue Forge activity without requiring
+multiple GitHub users or tokens. Audit records must not contain secrets; token
+or authorization-shaped text is redacted before serialization.
+
 ## Cleanup Planning
 
 Cleanup planning is read-only:

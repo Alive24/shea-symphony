@@ -22,4 +22,4 @@ pub mod workflow;
 pub mod workspace;
 
 pub use config::RuntimeConfig;
-pub use workflow::WorkflowDefinition;
+pub use workflow::{WorkflowDefinition, WorkflowStore};

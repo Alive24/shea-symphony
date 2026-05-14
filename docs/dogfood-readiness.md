@@ -10,7 +10,7 @@ yet.
 
 | Capability | Current Status |
 | --- | --- |
-| Workflow loader | Implemented for explicit workflow path and optional YAML front matter. Runtime reload is not implemented. |
+| Workflow loader | Implemented for explicit workflow path and optional YAML front matter. A first-slice `WorkflowStore` can explicitly reload a workflow while preserving the last known good definition after load/parse failures. Long-running runtime reload wiring is not implemented. |
 | Dogfood workflow prompt | `examples/github-project-workflow.md` includes the Jade operating loop, issue quality gate expectation, workpad discipline, role boundaries, stop conditions, and one issue / one branch / one PR handoff rules. Tests guard against reverting to a placeholder-thin prompt. |
 | Typed config | Implemented for the current skeleton, including GitHub Project v2-shaped settings, operator/agent identity metadata, and first-slice execution profiles. |
 | Normalized issue model | Implemented as `TrackerIssue`, including ProjectV2 item ID, labels, assignees, blockers, linked PRs, and project fields. |

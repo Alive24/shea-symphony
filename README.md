@@ -323,7 +323,7 @@ Merging role separation.
 - Codex app-server transport.
 - Claude Code full protocol transport beyond the subprocess fixture path.
 - dynamic tool registry such as `linear_graphql`.
-- runtime workflow reload and long-running worker supervision.
+- long-running runtime workflow reload wiring and worker supervision.
 - persistent/remote web observability beyond the local one-request
   `status-api` endpoint.
 

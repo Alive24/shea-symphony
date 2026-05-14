@@ -32,6 +32,10 @@ pub struct ReworkDiagnostic {
     pub stderr: Option<String>,
     pub pr_ref: Option<String>,
     #[serde(default)]
+    pub review_artifact_path: Option<String>,
+    #[serde(default)]
+    pub review_ledger_path: Option<String>,
+    #[serde(default)]
     pub changed_files: Vec<String>,
     #[serde(default)]
     pub findings: Vec<ReworkFinding>,
@@ -53,6 +57,8 @@ impl ReworkDiagnostic {
             stdout: None,
             stderr: Some(stderr.into()),
             pr_ref: None,
+            review_artifact_path: None,
+            review_ledger_path: None,
             changed_files: Vec::new(),
             findings: Vec::new(),
         }
@@ -74,6 +80,8 @@ impl ReworkDiagnostic {
             stdout: None,
             stderr: None,
             pr_ref: Some(pr_ref.into()),
+            review_artifact_path: None,
+            review_ledger_path: None,
             changed_files,
             findings: Vec::new(),
         }
@@ -123,6 +131,14 @@ pub fn rework_diagnostic_from_review(
             .linked_pull_requests
             .iter()
             .find_map(|pr| pr.url.clone()),
+        review_artifact_path: job
+            .artifact_path
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        review_ledger_path: job
+            .ledger_path
+            .as_ref()
+            .map(|path| path.display().to_string()),
         changed_files: Vec::new(),
         findings,
     }
@@ -146,6 +162,12 @@ pub fn render_rework_diagnostic_workpad(
     if let Some(pr_ref) = &diagnostic.pr_ref {
         lines.push(format!("- Pull request: `{pr_ref}`"));
         lines.push("- PR-specific context is captured here; mirror this note to the PR conversation when the active adapter supports PR comments.".into());
+    }
+    if let Some(path) = &diagnostic.review_artifact_path {
+        lines.push(format!("- Review artifact: `{path}`"));
+    }
+    if let Some(path) = &diagnostic.review_ledger_path {
+        lines.push(format!("- Review job ledger: `{path}`"));
     }
 
     if !diagnostic.changed_files.is_empty() {
@@ -256,7 +278,8 @@ mod tests {
             issue_ref: "#50".into(),
             backend: "fake-reviewer".into(),
             state: ReviewJobState::Completed,
-            artifact_path: None,
+            artifact_path: Some("/tmp/review-artifact.json".into()),
+            ledger_path: Some("/tmp/reviews/jobs/50-review-1.json".into()),
             report: Some(AgentReviewReport {
                 reviewer_backend: "fake-reviewer".into(),
                 findings: vec![ReviewFinding {
@@ -281,6 +304,8 @@ mod tests {
 
         assert_eq!(diagnostic.kind, ReworkDiagnosticKind::ReviewFinding);
         assert!(workpad.contains("Evidence was recorded before moving the issue to `Rework`"));
+        assert!(workpad.contains("Review artifact: `/tmp/review-artifact.json`"));
+        assert!(workpad.contains("Review job ledger: `/tmp/reviews/jobs/50-review-1.json`"));
         assert!(workpad.contains("Confirmed: Missing test - Add ordering coverage."));
         assert!(workpad.contains("review stdout"));
         assert!(workpad.contains("review stderr"));

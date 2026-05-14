@@ -1,11 +1,15 @@
 use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::{error::ErrorKind, Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use jade_symphony::agent::{backend_from_config, usage_limit_pause_from_events, UsageLimitPause};
 use jade_symphony::config::RuntimeConfig;
-use jade_symphony::doctor::{audit_project_issues, render_project_audit_report};
+use jade_symphony::doctor::{
+    audit_project_issues, human_review_repair_candidates, render_human_review_repair_workpad,
+    render_project_audit_report, render_project_audit_report_json,
+};
 use jade_symphony::event_log::{EventLog, EventRecord};
 use jade_symphony::git_handoff::{
     prepare_issue_worktree, publish_issue_pull_request, LiveWorktreeResult,
@@ -27,6 +31,10 @@ use jade_symphony::merge_lane::{
 };
 use jade_symphony::model::{normalize_state, GateDecision, GateDecisionKind, TrackerIssue};
 use jade_symphony::orchestrator::Orchestrator;
+use jade_symphony::ownership::{
+    render_runtime_ownership_marker, runtime_ownership_decision, RuntimeOwnershipDecision,
+    RuntimeOwnershipMarker,
+};
 use jade_symphony::profiles::{discover_execution_profiles, selected_execution_profile};
 use jade_symphony::prompt::render_prompt;
 use jade_symphony::quality_gate::{
@@ -35,9 +43,9 @@ use jade_symphony::quality_gate::{
 use jade_symphony::review::{
     classify_review_freshness, render_review_freshness_workpad, render_review_workpad,
     review_gate_decision, review_run_eligibility, transition_allowed_for_main_agent,
-    transition_allowed_for_review_agent, FakeReviewBackend, FakeReviewOutcome,
-    GeminiCliReviewBackend, ReviewBackend, ReviewFreshnessInput, ReviewJob, ReviewRequest,
-    ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
+    transition_allowed_for_review_agent, write_review_job_ledger_record, FakeReviewBackend,
+    FakeReviewOutcome, GeminiCliReviewBackend, ReviewBackend, ReviewFreshnessInput, ReviewJob,
+    ReviewRequest, ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
 };
 use jade_symphony::rework::{
     render_rework_diagnostic_workpad, rework_diagnostic_from_review, rework_transition_expected,
@@ -50,12 +58,13 @@ use jade_symphony::runtime_state::{
 };
 use jade_symphony::status_surface::render_snapshot;
 use jade_symphony::tracker::{
-    adapter_from_config, claim_decision, ClaimDecision, FollowUpIssueInput, TrackerAdapter,
+    adapter_from_config, claim_decision, ClaimDecision, FollowUpIssueInput, ProjectFieldAssignment,
+    TrackerAdapter, TrackerError,
 };
 use jade_symphony::workflow::WorkflowDefinition;
 use jade_symphony::workspace::{
-    apply_local_git_identity, prepare_workspace, profile_scoped_identifier, run_after_run,
-    run_before_run, GitIdentityApplyResult,
+    apply_local_git_identity, prepare_workspace, profile_scoped_identifier, remove_issue_workspace,
+    run_after_run, run_before_run, run_workspace_command, GitIdentityApplyResult,
 };
 
 const DEFAULT_RUN_LOOP_BASE_BRANCH: &str = "main";
@@ -78,7 +87,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         } => plan(workflow_path, json),
         Command::Validate { workflow_path } => validate(workflow_path),
         Command::Inspect { workflow_path } => inspect(workflow_path),
-        Command::Doctor { workflow_path } => doctor(workflow_path),
+        Command::Doctor { options } => doctor(options),
+        Command::DoctorRepairHumanReview {
+            workflow_path,
+            write,
+        } => doctor_repair_human_review(workflow_path, write),
         Command::Profiles { workflow_path } => list_profiles(workflow_path),
         Command::DogfoodSmoke {
             workflow_path,
@@ -86,10 +99,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         } => dogfood_smoke(workflow_path, write),
         Command::RunOnce { workflow_path } => run_once(workflow_path),
         Command::RunLoop { options } => run_loop(options),
+        Command::CleanupWorkspaces {
+            workflow_path,
+            write,
+        } => cleanup_workspaces(workflow_path, write),
         Command::MergeOnce {
             workflow_path,
             write,
         } => merge_once(workflow_path, write),
+        Command::MergeLoop { options } => merge_loop(options),
         Command::SetState {
             workflow_path,
             issue_ref,
@@ -176,8 +194,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             title,
             markdown,
             add_to_project,
+            project_fields,
             write,
-        } => forge_create(workflow_path, title, markdown, add_to_project, write),
+        } => forge_create(
+            workflow_path,
+            title,
+            markdown,
+            add_to_project,
+            project_fields,
+            write,
+        ),
         Command::ForgeInteractive { options } => forge_interactive(options),
         Command::ForgeReflect {
             context,
@@ -276,6 +302,14 @@ fn evaluate_issue_for_current_source(
     let expected_target = expected_target_repository(config);
     let deterministic =
         evaluate_issue_with_source_alignment(issue, &repo_root, expected_target.as_deref());
+    if let Some(blocker) = live_missing_assignee_gate_blocker(config, issue) {
+        return Ok(GateDecision {
+            kind: GateDecisionKind::NeedToClarify,
+            missing: vec![blocker],
+            assumptions: deterministic.assumptions,
+            notes: vec!["Live GitHub dispatch requires explicit issue ownership.".into()],
+        });
+    }
     Ok(evaluate_issue_with_llm_gate(
         issue,
         deterministic,
@@ -285,6 +319,16 @@ fn evaluate_issue_for_current_source(
             timeout_ms: config.quality_gate.llm.timeout_ms,
         },
     ))
+}
+
+fn live_missing_assignee_gate_blocker(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+) -> Option<String> {
+    (live_github_tracker(config)
+        && !config.tracker.assignee_filter.allow_unassigned
+        && issue.assignees.is_empty())
+    .then(|| "live GitHub issue assignee".into())
 }
 
 fn expected_target_repository(config: &RuntimeConfig) -> Option<String> {
@@ -357,9 +401,13 @@ fn forge_create(
     title: String,
     markdown: String,
     add_to_project: bool,
+    project_fields: Vec<ProjectFieldAssignment>,
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     require_write_intent(write)?;
+    if !project_fields.is_empty() && !add_to_project {
+        return Err("forge-create --project-field requires --add-to-project".into());
+    }
     let config = load_config(&workflow_path)?;
     let report =
         validate_forge_create_contract(&title, &markdown, &config).inspect_err(|_message| {
@@ -379,9 +427,15 @@ fn forge_create(
 
     if add_to_project {
         adapter.add_issue_to_project(&issue_id)?;
+        for assignment in &project_fields {
+            adapter.set_project_field(&issue_id, assignment)?;
+        }
     }
 
-    println!("forge_create=ok issue_id={issue_id} added_to_project={add_to_project}");
+    println!(
+        "forge_create=ok issue_id={issue_id} added_to_project={add_to_project} project_fields={}",
+        project_fields.len()
+    );
     Ok(())
 }
 
@@ -418,6 +472,7 @@ fn forge_interactive(options: ForgeInteractiveOptions) -> Result<(), Box<dyn std
             options.title,
             report.issue_markdown,
             options.add_to_project,
+            Vec::new(),
             true,
         )?;
     }
@@ -644,95 +699,210 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
         let issues = adapter
             .fetch_issues_by_states(std::slice::from_ref(&config.tracker.state_map.agent_review))?;
 
-        let Some(issue) = issues.first().cloned() else {
+        if issues.is_empty() {
             println!("review_loop=stopped reason=no_agent_review_issue iterations={iterations}");
             break;
         };
 
         let backend_kind = review_backend_kind(&config, options.fake_outcome.as_ref());
-        match review_run_eligibility(
-            &issue,
+        let selected = select_review_worker_issues(
+            &issues,
             &config.tracker.state_map.agent_review,
             &backend_kind,
-        ) {
-            ReviewRunEligibility::Eligible { worker_key } => {
-                println!(
-                    "review_loop_iteration={iterations} issue={} worker_key={worker_key} mode={}",
-                    issue.identifier,
-                    if options.write { "write" } else { "dry-run" }
-                );
-                if !options.write {
-                    println!(
-                        "review_loop_dry_run action=start issue={} backend={backend_kind}",
-                        issue.identifier
-                    );
-                    println!(
-                        "review_loop_dry_run action=workpad issue={} evidence=review_job",
-                        issue.identifier
-                    );
-                    println!(
-                        "review_loop_dry_run action=reconcile issue={} actor=independent_review_agent",
-                        issue.identifier
-                    );
-                    if limit.is_none() {
-                        println!(
-                            "review_loop=stopped reason=dry_run_would_repeat_without_mutation iterations={iterations}"
-                        );
-                        break;
-                    }
-                    continue;
-                }
+            options.worker_limit(&config),
+        );
 
-                let latest = adapter.get_issue(&issue.identifier)?.ok_or_else(|| {
-                    format!("issue disappeared before review: {}", issue.identifier)
-                })?;
+        if selected.is_empty() {
+            for issue in issues {
                 match review_run_eligibility(
-                    &latest,
+                    &issue,
                     &config.tracker.state_map.agent_review,
                     &backend_kind,
                 ) {
-                    ReviewRunEligibility::Eligible { .. } => {
-                        let job = run_review_job(&config, &latest, options.fake_outcome.clone())?;
-                        apply_review_result(adapter.as_ref(), &latest.identifier, &latest, &job)?;
-                        let decision = review_gate_decision(&job);
-                        println!(
-                            "review_loop_action=reconciled issue={} backend={} outcome={:?} target_state={:?}",
-                            latest.identifier, job.backend, decision.outcome, decision.target_state
-                        );
-                    }
                     ReviewRunEligibility::AlreadyQueued { worker_key } => {
                         println!(
                             "review_loop_action=skip issue={} reason=review_worker_exists worker_key={worker_key}",
-                            latest.identifier
+                            issue.identifier
                         );
                     }
                     ReviewRunEligibility::NotInAgentReview { current_state } => {
                         println!(
                             "review_loop_action=skip issue={} reason=state_changed current_state={current_state:?}",
-                            latest.identifier
+                            issue.identifier
                         );
                     }
+                    ReviewRunEligibility::Eligible { .. } => {}
                 }
             }
-            ReviewRunEligibility::AlreadyQueued { worker_key } => {
-                println!(
+            continue;
+        }
+
+        for (slot, selected_issue) in selected.into_iter().enumerate() {
+            let worker_slot = slot + 1;
+            match review_run_eligibility(
+                &selected_issue,
+                &config.tracker.state_map.agent_review,
+                &backend_kind,
+            ) {
+                ReviewRunEligibility::Eligible { worker_key } => {
+                    println!(
+                    "review_loop_iteration={iterations} worker_slot={worker_slot} issue={} worker_key={worker_key} mode={}",
+                    selected_issue.identifier,
+                    if options.write { "write" } else { "dry-run" }
+                );
+                    if !options.write {
+                        println!(
+                            "review_loop_dry_run action=start issue={} backend={backend_kind}",
+                            selected_issue.identifier
+                        );
+                        println!(
+                            "review_loop_dry_run action=workpad issue={} evidence=review_job",
+                            selected_issue.identifier
+                        );
+                        println!(
+                        "review_loop_dry_run action=reconcile issue={} actor=independent_review_agent",
+                        selected_issue.identifier
+                    );
+                        continue;
+                    }
+
+                    let latest =
+                        adapter
+                            .get_issue(&selected_issue.identifier)?
+                            .ok_or_else(|| {
+                                format!(
+                                    "issue disappeared before review: {}",
+                                    selected_issue.identifier
+                                )
+                            })?;
+                    match review_run_eligibility(
+                        &latest,
+                        &config.tracker.state_map.agent_review,
+                        &backend_kind,
+                    ) {
+                        ReviewRunEligibility::Eligible { .. } => {
+                            let mut job =
+                                run_review_job(&config, &latest, options.fake_outcome.clone())?;
+                            let ledger_path = write_review_job_ledger_record(
+                                &config.observability.logs_root,
+                                &latest,
+                                &job,
+                            )?;
+                            job.ledger_path = Some(ledger_path.clone());
+                            apply_review_result(
+                                adapter.as_ref(),
+                                &latest.identifier,
+                                &latest,
+                                &job,
+                            )?;
+                            let decision = review_gate_decision(&job);
+                            println!(
+                            "review_loop_action=reconciled issue={} backend={} outcome={:?} target_state={:?} ledger={}",
+                            latest.identifier,
+                            job.backend,
+                            decision.outcome,
+                            decision.target_state,
+                            ledger_path.display()
+                        );
+                        }
+                        ReviewRunEligibility::AlreadyQueued { worker_key } => {
+                            println!(
+                            "review_loop_action=skip issue={} reason=review_worker_exists worker_key={worker_key}",
+                            latest.identifier
+                        );
+                        }
+                        ReviewRunEligibility::NotInAgentReview { current_state } => {
+                            println!(
+                            "review_loop_action=skip issue={} reason=state_changed current_state={current_state:?}",
+                            latest.identifier
+                        );
+                        }
+                    }
+                }
+                ReviewRunEligibility::AlreadyQueued { worker_key } => {
+                    println!(
                     "review_loop_action=skip issue={} reason=review_worker_exists worker_key={worker_key}",
-                    issue.identifier
+                    selected_issue.identifier
                 );
-            }
-            ReviewRunEligibility::NotInAgentReview { current_state } => {
-                println!(
+                }
+                ReviewRunEligibility::NotInAgentReview { current_state } => {
+                    println!(
                     "review_loop_action=skip issue={} reason=state_changed current_state={current_state:?}",
-                    issue.identifier
+                    selected_issue.identifier
                 );
+                }
             }
+        }
+
+        if !options.write && limit.is_none() {
+            println!(
+                "review_loop=stopped reason=dry_run_would_repeat_without_mutation iterations={iterations}"
+            );
+            break;
         }
     }
 
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MergeOnceOutcome {
+    NoMergingIssue,
+    DryRun,
+    Merged,
+    Routed,
+    Skipped,
+}
+
 fn merge_once(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std::error::Error>> {
+    merge_once_tick(workflow_path, write).map(|_| ())
+}
+
+fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let max = options
+        .iteration_limit()
+        .ok_or("merge-loop requires --max-iterations or --once")?;
+    let mut stopped = false;
+
+    for iteration in 1..=max {
+        println!(
+            "merge_loop_iteration={} mode={}",
+            iteration,
+            if options.write { "write" } else { "dry-run" }
+        );
+        match merge_once_tick(options.workflow_path.clone(), options.write)? {
+            MergeOnceOutcome::NoMergingIssue => {
+                println!("merge_loop=stopped reason=no_merging_issue iterations={iteration}");
+                stopped = true;
+                break;
+            }
+            MergeOnceOutcome::DryRun if !options.write => {
+                println!("merge_loop_action=dry_run_tick iterations={iteration}");
+            }
+            MergeOnceOutcome::Merged => {
+                println!("merge_loop_action=merged iterations={iteration}");
+            }
+            MergeOnceOutcome::Routed => {
+                println!("merge_loop_action=routed iterations={iteration}");
+            }
+            MergeOnceOutcome::Skipped => {
+                println!("merge_loop_action=skipped iterations={iteration}");
+            }
+            MergeOnceOutcome::DryRun => {}
+        }
+    }
+
+    if !stopped {
+        println!("merge_loop=stopped reason=max_iterations iterations={max}");
+    }
+
+    Ok(())
+}
+
+fn merge_once_tick(
+    workflow_path: PathBuf,
+    write: bool,
+) -> Result<MergeOnceOutcome, Box<dyn std::error::Error>> {
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
@@ -742,7 +912,7 @@ fn merge_once(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std::er
     let mut issues = adapter.fetch_issues_by_states(std::slice::from_ref(&merging_state))?;
     if issues.is_empty() {
         println!("merge_once=stopped reason=no_merging_issue");
-        return Ok(());
+        return Ok(MergeOnceOutcome::NoMergingIssue);
     }
 
     issues.sort_by_key(|issue| issue.priority.unwrap_or(i64::MAX));
@@ -776,7 +946,7 @@ fn merge_once(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std::er
 
     if !write {
         print_merge_dry_run_actions(&decision);
-        return Ok(());
+        return Ok(MergeOnceOutcome::DryRun);
     }
 
     if decision.kind.is_merge_ready() {
@@ -786,28 +956,65 @@ fn merge_once(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std::er
             .ok_or("merge-ready decision missing pull request URL")?;
         let output = merge_pull_request(pr_ref, &runner, &std::env::current_dir()?)?;
         let workpad = merge_lane_workpad(&issue, &decision, Some(&output));
-        adapter.upsert_workpad(&issue.identifier, &workpad)?;
-        adapter.set_state(&issue.identifier, "done")?;
+        record_done_merge_lane_completion(adapter.as_ref(), &issue, &workpad)?;
         println!(
             "merge_once_action=merged issue={} target_state=done",
             issue.identifier
         );
-        return Ok(());
+        return Ok(MergeOnceOutcome::Merged);
     }
 
     let workpad = merge_lane_workpad(&issue, &decision, None);
     adapter.upsert_workpad(&issue.identifier, &workpad)?;
     if let Some(target_state) = decision.target_state {
         adapter.set_state(&issue.identifier, target_state)?;
+        if decision.kind == MergeLaneDecisionKind::AlreadyMerged
+            && normalize_state(target_state) == "done"
+        {
+            close_completed_issue(adapter.as_ref(), &issue.identifier)?;
+        }
         println!(
             "merge_once_action=routed issue={} target_state={target_state}",
             issue.identifier
         );
+        return Ok(MergeOnceOutcome::Routed);
     } else {
         println!("merge_once_action=skipped issue={}", issue.identifier);
     }
 
+    Ok(MergeOnceOutcome::Skipped)
+}
+
+fn record_done_merge_lane_completion(
+    adapter: &dyn TrackerAdapter,
+    issue: &TrackerIssue,
+    workpad: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    adapter.upsert_workpad(&issue.identifier, workpad)?;
+    adapter.set_state(&issue.identifier, "done")?;
+    close_completed_issue(adapter, &issue.identifier)?;
     Ok(())
+}
+
+fn close_completed_issue(
+    adapter: &dyn TrackerAdapter,
+    issue_ref: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match adapter.close_issue(issue_ref) {
+        Ok(()) => {
+            println!("merge_once_action=closed_issue issue={issue_ref}");
+            Ok(())
+        }
+        Err(TrackerError::NotImplemented(message)) => {
+            eprintln!("merge_once_warning=issue_close_unavailable reason={message}");
+            Ok(())
+        }
+        Err(TrackerError::IntegrationUnavailable(message)) => {
+            eprintln!("merge_once_warning=issue_close_unavailable reason={message}");
+            Ok(())
+        }
+        Err(error) => Err(Box::new(error)),
+    }
 }
 
 fn merge_preflight_status(
@@ -845,10 +1052,12 @@ fn print_merge_dry_run_actions(decision: &jade_symphony::merge_lane::MergeLaneDe
             println!("merge_once_dry_run action=merge");
             println!("merge_once_dry_run action=workpad evidence=merge_result");
             println!("merge_once_dry_run action=set_state target_state=done");
+            println!("merge_once_dry_run action=close_issue");
         }
         MergeLaneDecisionKind::AlreadyMerged => {
             println!("merge_once_dry_run action=workpad evidence=already_merged");
             println!("merge_once_dry_run action=set_state target_state=done");
+            println!("merge_once_dry_run action=close_issue");
         }
         _ => {
             println!("merge_once_dry_run action=workpad evidence=preflight_blocker");
@@ -869,6 +1078,25 @@ fn review_backend_kind(config: &RuntimeConfig, fake_outcome: Option<&FakeReviewO
     }
 }
 
+fn select_review_worker_issues(
+    issues: &[TrackerIssue],
+    agent_review_state: &str,
+    backend_kind: &str,
+    max_concurrent: usize,
+) -> Vec<TrackerIssue> {
+    issues
+        .iter()
+        .filter(|issue| {
+            matches!(
+                review_run_eligibility(issue, agent_review_state, backend_kind),
+                ReviewRunEligibility::Eligible { .. }
+            )
+        })
+        .take(max_concurrent.max(1))
+        .cloned()
+        .collect()
+}
+
 fn run_review_job(
     config: &RuntimeConfig,
     issue: &TrackerIssue,
@@ -882,7 +1110,7 @@ fn run_review_job(
             issue.title,
             issue.description.as_deref().unwrap_or_default()
         ),
-        workspace: config.workspace.root.clone(),
+        workspace: review_workspace_for_issue(config, issue),
         artifact_root: config.observability.logs_root.join("reviews"),
     };
 
@@ -908,6 +1136,12 @@ fn run_review_job(
             Ok(backend.poll(backend.start(request)?)?)
         }
     }
+}
+
+fn review_workspace_for_issue(config: &RuntimeConfig, issue: &TrackerIssue) -> PathBuf {
+    run_loop_handoff_plan(config, issue)
+        .map(|handoff| handoff.workspace_path)
+        .unwrap_or_else(|_| config.workspace.root.clone())
 }
 
 fn apply_review_result(
@@ -1006,7 +1240,38 @@ fn inspect(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn doctor(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let workflow_path = options.workflow_path;
+    let workflow = WorkflowDefinition::load(&workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
+    config.validate()?;
+
+    let adapter = adapter_from_config(&config);
+    let issues = adapter.fetch_issues_by_states(&all_mapped_tracker_states(&config))?;
+    let mut report = audit_project_issues(&issues);
+    report.integration_gaps = adapter.integration_gaps();
+
+    if options.json {
+        println!("{}", render_project_audit_report_json(&report)?);
+    } else {
+        println!("{}", render_project_audit_report(&report));
+    }
+
+    if options.strict && report.blocker_count() > 0 {
+        return Err(format!(
+            "project doctor strict mode found {} blocker violation(s)",
+            report.blocker_count()
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
+fn doctor_repair_human_review(
+    workflow_path: PathBuf,
+    write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
@@ -1014,14 +1279,50 @@ fn doctor(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let adapter = adapter_from_config(&config);
     let issues = adapter.list_dispatchable_issues()?;
     let report = audit_project_issues(&issues);
+    let candidates = human_review_repair_candidates(&report);
 
-    println!("{}", render_project_audit_report(&report));
-
-    for gap in adapter.integration_gaps() {
-        println!("integration_gap={gap}");
+    println!(
+        "doctor_repair_human_review candidates={} write={write}",
+        candidates.len()
+    );
+    for violation in candidates {
+        println!(
+            "doctor_repair_human_review action=move issue={} from={:?} to=agent_review",
+            violation.issue_ref, violation.state
+        );
+        if write {
+            let workpad = render_human_review_repair_workpad(violation);
+            adapter.upsert_workpad(&violation.issue_ref, &workpad)?;
+            adapter.set_state(&violation.issue_ref, "agent_review")?;
+        } else {
+            println!(
+                "doctor_repair_human_review_dry_run action=workpad issue={} evidence=human_review_missing_review_evidence",
+                violation.issue_ref
+            );
+            println!(
+                "doctor_repair_human_review_dry_run action=set_state issue={} target_state=agent_review",
+                violation.issue_ref
+            );
+        }
     }
 
     Ok(())
+}
+
+fn all_mapped_tracker_states(config: &RuntimeConfig) -> Vec<String> {
+    let state_map = &config.tracker.state_map;
+    vec![
+        state_map.backlog.clone(),
+        state_map.todo.clone(),
+        state_map.need_to_clarify.clone(),
+        state_map.in_progress.clone(),
+        state_map.need_human_input.clone(),
+        state_map.agent_review.clone(),
+        state_map.human_review.clone(),
+        state_map.rework.clone(),
+        state_map.merging.clone(),
+        state_map.done.clone(),
+    ]
 }
 
 fn list_profiles(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
@@ -1115,6 +1416,149 @@ fn dogfood_smoke(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std:
     Ok(())
 }
 
+fn cleanup_workspaces(
+    workflow_path: PathBuf,
+    write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    let issues = adapter.fetch_issues_by_states(&config.tracker.terminal_states)?;
+    let entries = workspace_cleanup_plan(&config, &issues)?;
+    let eligible = entries
+        .iter()
+        .filter(|entry| matches!(entry.action, WorkspaceCleanupAction::Eligible))
+        .count();
+
+    println!(
+        "workspace_cleanup mode={} terminal_issues={} eligible={eligible}",
+        if write { "write" } else { "dry-run" },
+        issues.len()
+    );
+
+    for entry in &entries {
+        println!(
+            "workspace_cleanup issue={} state={:?} action={} workspace_key={} path={}",
+            entry.issue_ref,
+            entry.state,
+            entry.action.label(),
+            entry.workspace_key,
+            entry.workspace_path.display()
+        );
+        if let WorkspaceCleanupAction::Skipped { reason } = &entry.action {
+            println!(
+                "workspace_cleanup_skip issue={} reason={}",
+                entry.issue_ref, reason
+            );
+        }
+    }
+
+    if write {
+        for entry in entries
+            .iter()
+            .filter(|entry| matches!(entry.action, WorkspaceCleanupAction::Eligible))
+        {
+            remove_issue_workspace(&config.workspace.root, &entry.workspace_key, &config.hooks)?;
+            println!(
+                "workspace_cleanup_removed issue={} path={}",
+                entry.issue_ref,
+                entry.workspace_path.display()
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkspaceCleanupEntry {
+    issue_ref: String,
+    state: String,
+    workspace_key: String,
+    workspace_path: PathBuf,
+    action: WorkspaceCleanupAction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum WorkspaceCleanupAction {
+    Eligible,
+    Skipped { reason: String },
+}
+
+impl WorkspaceCleanupAction {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Eligible => "eligible",
+            Self::Skipped { .. } => "skipped",
+        }
+    }
+}
+
+fn workspace_cleanup_plan(
+    config: &RuntimeConfig,
+    issues: &[TrackerIssue],
+) -> Result<Vec<WorkspaceCleanupEntry>, Box<dyn std::error::Error>> {
+    let terminal_states = config.terminal_state_set();
+    let profile = selected_execution_profile(&config.profiles)?;
+    let profile_namespace = profile
+        .as_ref()
+        .map(|profile| profile.workspace_namespace.as_str());
+
+    let mut entries = Vec::new();
+    for issue in issues {
+        if !terminal_states.contains(&issue.normalized_state()) {
+            entries.push(WorkspaceCleanupEntry {
+                issue_ref: issue.identifier.clone(),
+                state: issue.state.clone(),
+                workspace_key: "n/a".into(),
+                workspace_path: config.workspace.root.clone(),
+                action: WorkspaceCleanupAction::Skipped {
+                    reason: "non_terminal_state".into(),
+                },
+            });
+            continue;
+        }
+
+        let plan = match plan_issue_handoff_for_profile(
+            &config.workspace.root,
+            issue,
+            DEFAULT_RUN_LOOP_BASE_BRANCH,
+            profile_namespace,
+        ) {
+            Ok(plan) => plan,
+            Err(error) => {
+                entries.push(WorkspaceCleanupEntry {
+                    issue_ref: issue.identifier.clone(),
+                    state: issue.state.clone(),
+                    workspace_key: "n/a".into(),
+                    workspace_path: config.workspace.root.clone(),
+                    action: WorkspaceCleanupAction::Skipped {
+                        reason: format!("handoff_plan_failed:{error}"),
+                    },
+                });
+                continue;
+            }
+        };
+
+        let action = if plan.workspace_path.exists() {
+            WorkspaceCleanupAction::Eligible
+        } else {
+            WorkspaceCleanupAction::Skipped {
+                reason: "workspace_missing".into(),
+            }
+        };
+
+        entries.push(WorkspaceCleanupEntry {
+            issue_ref: issue.identifier.clone(),
+            state: issue.state.clone(),
+            workspace_key: plan.workspace_key,
+            workspace_path: plan.workspace_path,
+            action,
+        });
+    }
+
+    Ok(entries)
+}
+
 fn is_controlled_dogfood_smoke_issue(issue: &TrackerIssue) -> bool {
     issue
         .labels_lowercase()
@@ -1178,6 +1622,7 @@ struct IssueExecutionResult {
     git_author: Option<String>,
     git_identity: GitIdentityApplyResult,
     live_handoff: Option<RunLoopLiveHandoff>,
+    handoff_verification: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1185,6 +1630,12 @@ struct RunLoopLiveHandoff {
     worktree: LiveWorktreeResult,
     publication: PullRequestPublication,
     verification: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HandoffVerification {
+    success: bool,
+    summary: String,
 }
 
 fn execute_issue_once(
@@ -1257,6 +1708,7 @@ fn execute_issue_once_with_workspace_key(
         git_author: config.identity.git.author(),
         git_identity,
         live_handoff: None,
+        handoff_verification: None,
     })
 }
 
@@ -1425,6 +1877,30 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
+        let profile_login = selected_profile_github_login(&config)?;
+        let active_login = if live_github_tracker(&config) && profile_login.is_none() {
+            current_gh_login()?
+        } else {
+            None
+        };
+        match run_loop_assignee_ownership_decision(
+            &latest,
+            &config,
+            active_login.as_deref(),
+            profile_login.as_deref(),
+        ) {
+            AssigneeOwnershipDecision::Allowed => {}
+            AssigneeOwnershipDecision::Block { reason } => {
+                let workpad = run_loop_assignee_ownership_workpad(&latest, &reason);
+                adapter.upsert_workpad(&latest.identifier, &workpad)?;
+                println!(
+                    "run_loop_action=skip issue={} reason=assignee_ownership detail={}",
+                    latest.identifier, reason
+                );
+                continue;
+            }
+        }
+
         let existing_runtime_state = load_runtime_state(&config)?;
         if let Some(state) = &existing_runtime_state {
             if let Some(active_issue) = &state.active_issue {
@@ -1435,7 +1911,21 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        let event = match run_loop_claim_action(&latest, &config) {
+        let ownership = run_loop_runtime_ownership(&latest, &config, &handoff)?;
+        let claim_action = run_loop_claim_action(&latest, &config);
+        if matches!(claim_action, RunLoopClaimAction::Resume) {
+            if let RuntimeOwnershipDecision::Mismatched { reason, .. } =
+                runtime_ownership_decision(latest.description.as_deref(), &ownership)
+            {
+                println!(
+                    "run_loop_action=skip issue={} reason=ownership_mismatch detail={reason}",
+                    latest.identifier
+                );
+                continue;
+            }
+        }
+
+        let event = match claim_action {
             RunLoopClaimAction::Claim => {
                 adapter.set_state(&latest.identifier, "in_progress")?;
                 println!(
@@ -1456,6 +1946,14 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
         };
+        let ownership_workpad = run_loop_ownership_workpad(&latest, &ownership, event);
+        adapter.upsert_workpad(&latest.identifier, &ownership_workpad)?;
+        println!(
+            "run_loop_action=ownership issue={} profile={} branch={}",
+            latest.identifier,
+            ownership.profile_id.as_deref().unwrap_or("n/a"),
+            ownership.branch_name
+        );
 
         let mut runtime_state = run_loop_runtime_state_for_issue(
             existing_runtime_state.as_ref(),
@@ -1495,22 +1993,34 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         if result.success {
             if let Some(worktree) = live_worktree {
                 let runner = ProcessHandoffCommandRunner;
-                match publish_issue_pull_request(&handoff, &runner) {
-                    Ok(publication) => {
-                        println!(
-                            "run_loop_action=pr issue={} url={} created={}",
-                            latest.identifier, publication.pr_url, publication.pr_created
-                        );
-                        result.live_handoff = Some(RunLoopLiveHandoff {
-                            worktree,
-                            publication,
-                            verification: "skipped:not_configured".into(),
-                        });
+                let verification = run_handoff_verification(&handoff.workspace_path, &config);
+                println!(
+                    "run_loop_action=verify issue={} success={} summary={}",
+                    latest.identifier, verification.success, verification.summary
+                );
+                result.handoff_verification = Some(verification.summary.clone());
+                if verification.success {
+                    match publish_issue_pull_request(&handoff, &runner) {
+                        Ok(publication) => {
+                            println!(
+                                "run_loop_action=pr issue={} url={} created={}",
+                                latest.identifier, publication.pr_url, publication.pr_created
+                            );
+                            result.live_handoff = Some(RunLoopLiveHandoff {
+                                worktree,
+                                publication,
+                                verification: verification.summary,
+                            });
+                        }
+                        Err(error) => {
+                            result.success = false;
+                            result.message = format!("handoff publication failed: {error}");
+                        }
                     }
-                    Err(error) => {
-                        result.success = false;
-                        result.message = format!("handoff publication failed: {error}");
-                    }
+                } else {
+                    result.success = false;
+                    result.message =
+                        format!("handoff verification failed: {}", verification.summary);
                 }
             }
         }
@@ -1682,6 +2192,107 @@ fn run_loop_claim_action(issue: &TrackerIssue, config: &RuntimeConfig) -> RunLoo
             RunLoopClaimAction::StopAndReplan { current_state }
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AssigneeOwnershipDecision {
+    Allowed,
+    Block { reason: String },
+}
+
+fn run_loop_assignee_ownership_decision(
+    issue: &TrackerIssue,
+    config: &RuntimeConfig,
+    active_login: Option<&str>,
+    profile_login: Option<&str>,
+) -> AssigneeOwnershipDecision {
+    if !live_github_tracker(config) {
+        return AssigneeOwnershipDecision::Allowed;
+    }
+
+    if issue.assignees.is_empty() {
+        return if config.tracker.assignee_filter.allow_unassigned {
+            AssigneeOwnershipDecision::Allowed
+        } else {
+            AssigneeOwnershipDecision::Block {
+                reason: "live GitHub issue has no assignee".into(),
+            }
+        };
+    }
+
+    let identities = [profile_login, active_login]
+        .into_iter()
+        .flatten()
+        .map(normalized_login)
+        .filter(|login| !login.is_empty())
+        .collect::<Vec<_>>();
+
+    if identities.is_empty() {
+        return AssigneeOwnershipDecision::Block {
+            reason: "active GitHub identity unavailable for assignee ownership check".into(),
+        };
+    }
+
+    let assigned = issue
+        .assignees
+        .iter()
+        .map(|assignee| normalized_login(assignee))
+        .collect::<Vec<_>>();
+
+    if assigned
+        .iter()
+        .any(|assignee| identities.iter().any(|identity| identity == assignee))
+    {
+        AssigneeOwnershipDecision::Allowed
+    } else {
+        AssigneeOwnershipDecision::Block {
+            reason: format!(
+                "active identity {:?} does not match issue assignees {:?}",
+                identities, issue.assignees
+            ),
+        }
+    }
+}
+
+fn live_github_tracker(config: &RuntimeConfig) -> bool {
+    config.tracker.kind == "github_project_v2" && config.tracker.fixture_path.is_none()
+}
+
+fn normalized_login(value: &str) -> String {
+    value.trim().trim_start_matches('@').to_ascii_lowercase()
+}
+
+fn selected_profile_github_login(
+    config: &RuntimeConfig,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    Ok(
+        selected_execution_profile(&config.profiles)?.and_then(|profile| {
+            profile
+                .env
+                .get("GITHUB_LOGIN")
+                .cloned()
+                .or_else(|| profile.env.get("GH_LOGIN").cloned())
+                .or_else(|| profile.env.get("JADE_GITHUB_LOGIN").cloned())
+        }),
+    )
+}
+
+fn current_gh_login() -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let output = ProcessCommand::new("gh")
+        .args(["api", "user", "--jq", ".login"])
+        .output();
+    let output = match output {
+        Ok(output) => output,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let login = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok((!login.is_empty()).then_some(login))
 }
 
 fn run_loop_resume_preflight(
@@ -1883,8 +2494,96 @@ fn run_loop_handoff_plan(
     )
 }
 
+fn run_loop_runtime_ownership(
+    issue: &TrackerIssue,
+    config: &RuntimeConfig,
+    handoff: &IssueHandoffPlan,
+) -> Result<RuntimeOwnershipMarker, Box<dyn std::error::Error>> {
+    let profile = selected_execution_profile(&config.profiles)?;
+    Ok(RuntimeOwnershipMarker {
+        issue_ref: issue.identifier.clone(),
+        actor_role: config.identity.actor_role.clone(),
+        actor_label: config.identity.actor_label.clone(),
+        profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
+        instance_name: profile
+            .as_ref()
+            .map(|profile| profile.instance_name.clone()),
+        workspace_key: handoff.workspace_key.clone(),
+        branch_name: handoff.branch_name.clone(),
+    })
+}
+
+fn run_loop_ownership_workpad(
+    issue: &TrackerIssue,
+    ownership: &RuntimeOwnershipMarker,
+    event: &str,
+) -> String {
+    [
+        "## Jade Symphony Workpad".to_string(),
+        String::new(),
+        "### Runtime Ownership".to_string(),
+        format!("- Issue: {} {}", issue.identifier, issue.title),
+        format!("- Event: `{event}`"),
+        "- This marker is advisory tracker-visible ownership for active `In Progress` work.".into(),
+        "- Another run-loop profile should not resume this issue when the marker differs.".into(),
+        String::new(),
+        render_runtime_ownership_marker(ownership),
+    ]
+    .join("\n")
+}
+
 fn run_loop_live_handoff_enabled(config: &RuntimeConfig) -> bool {
     config.tracker.kind == "github_project_v2" && config.tracker.fixture_path.is_none()
+}
+
+fn run_handoff_verification(workspace_path: &Path, config: &RuntimeConfig) -> HandoffVerification {
+    if config.verification.commands.is_empty() {
+        return HandoffVerification {
+            success: true,
+            summary: "skipped:not_configured".into(),
+        };
+    }
+
+    for (index, command) in config.verification.commands.iter().enumerate() {
+        let label = format!("verification:{}", index + 1);
+        if let Err(error) = run_workspace_command(
+            &label,
+            command,
+            workspace_path,
+            config.verification.timeout_ms,
+        ) {
+            return HandoffVerification {
+                success: false,
+                summary: format!(
+                    "failed command={} index={} error={}",
+                    shell_summary(command),
+                    index + 1,
+                    compact_evidence(&error.to_string())
+                ),
+            };
+        }
+    }
+
+    HandoffVerification {
+        success: true,
+        summary: format!("passed:{} command(s)", config.verification.commands.len()),
+    }
+}
+
+fn shell_summary(command: &str) -> String {
+    let compact = compact_evidence(command);
+    format!("`{compact}`")
+}
+
+fn compact_evidence(value: &str) -> String {
+    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    const LIMIT: usize = 240;
+    let truncated = compact.chars().take(LIMIT).collect::<String>();
+    if truncated.len() < compact.len() {
+        format!("{truncated}...")
+    } else {
+        compact
+    }
 }
 
 fn handle_run_loop_gate_failure(
@@ -1986,6 +2685,18 @@ fn print_run_loop_dry_run_actions(
         handoff.workspace_path.display(),
         handoff.branch_name
     );
+    let verification_summary = if config.verification.commands.is_empty() {
+        "skipped:not_configured".to_string()
+    } else {
+        format!(
+            "configured:{} command(s)",
+            config.verification.commands.len()
+        )
+    };
+    println!(
+        "run_loop_dry_run action=verify issue={} summary={}",
+        issue.identifier, verification_summary
+    );
     println!(
         "run_loop_dry_run action=pr issue={} head={} base={}",
         issue.identifier, handoff.branch_name, handoff.pull_request.base_branch
@@ -2045,6 +2756,7 @@ fn run_loop_handoff_workpad(
         format!("- PR title: `{}`", handoff.pull_request.title),
         format!("- PR base branch: `{}`", handoff.pull_request.base_branch),
         rework_continuation_workpad_line(handoff),
+        handoff_verification_workpad_line(result),
         live_handoff_workpad_line(result),
         String::new(),
         "### Main-Agent Boundary".to_string(),
@@ -2062,6 +2774,16 @@ fn rework_continuation_workpad_line(handoff: &IssueHandoffPlan) -> String {
         ),
         None => "- Rework continuation: `not-used`".to_string(),
     }
+}
+
+fn handoff_verification_workpad_line(result: &IssueExecutionResult) -> String {
+    format!(
+        "- Handoff verification: `{}`",
+        result
+            .handoff_verification
+            .as_deref()
+            .unwrap_or("skipped:not_run")
+    )
 }
 
 fn live_handoff_workpad_line(result: &IssueExecutionResult) -> String {
@@ -2129,6 +2851,22 @@ fn run_loop_handoff_failure_workpad(issue: &TrackerIssue, error: &HandoffError) 
     .join("\n")
 }
 
+fn run_loop_assignee_ownership_workpad(issue: &TrackerIssue, reason: &str) -> String {
+    [
+        "## Jade Symphony Workpad".to_string(),
+        String::new(),
+        "### Assignee Ownership Blocker".to_string(),
+        format!("- Issue: {} {}", issue.identifier, issue.title),
+        format!("- Reason: {reason}"),
+        format!("- Issue assignees: `{}`", issue.assignees.join(", ")),
+        String::new(),
+        "### Boundary".to_string(),
+        "- Jade Symphony did not claim this issue or move it to `In Progress`.".to_string(),
+        "- Assign the issue to the active GitHub identity or selected execution profile before retrying.".to_string(),
+    ]
+    .join("\n")
+}
+
 fn run_loop_usage_limit_pause_workpad(
     issue: &TrackerIssue,
     result: &IssueExecutionResult,
@@ -2168,7 +2906,11 @@ enum Command {
         workflow_path: PathBuf,
     },
     Doctor {
+        options: DoctorOptions,
+    },
+    DoctorRepairHumanReview {
         workflow_path: PathBuf,
+        write: bool,
     },
     Profiles {
         workflow_path: PathBuf,
@@ -2182,6 +2924,10 @@ enum Command {
     },
     RunLoop {
         options: RunLoopOptions,
+    },
+    CleanupWorkspaces {
+        workflow_path: PathBuf,
+        write: bool,
     },
     MergeOnce {
         workflow_path: PathBuf,
@@ -2227,6 +2973,9 @@ enum Command {
     ReviewLoop {
         options: ReviewLoopOptions,
     },
+    MergeLoop {
+        options: MergeLoopOptions,
+    },
     Gate {
         workflow_path: PathBuf,
         issue_ref: String,
@@ -2257,6 +3006,7 @@ enum Command {
         title: String,
         markdown: String,
         add_to_project: bool,
+        project_fields: Vec<ProjectFieldAssignment>,
         write: bool,
     },
     ForgeInteractive {
@@ -2285,9 +3035,41 @@ struct ReviewLoopOptions {
     once: bool,
     write: bool,
     fake_outcome: Option<FakeReviewOutcome>,
+    max_concurrent: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DoctorOptions {
+    workflow_path: PathBuf,
+    json: bool,
+    strict: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MergeLoopOptions {
+    workflow_path: PathBuf,
+    max_iterations: Option<usize>,
+    once: bool,
+    write: bool,
 }
 
 impl ReviewLoopOptions {
+    fn iteration_limit(&self) -> Option<usize> {
+        if self.once {
+            Some(1)
+        } else {
+            self.max_iterations
+        }
+    }
+
+    fn worker_limit(&self, config: &RuntimeConfig) -> usize {
+        self.max_concurrent
+            .unwrap_or(config.review.max_concurrent_workers)
+            .max(1)
+    }
+}
+
+impl MergeLoopOptions {
     fn iteration_limit(&self) -> Option<usize> {
         if self.once {
             Some(1)
@@ -2346,7 +3128,9 @@ enum CliCommand {
     Validate(WorkflowPathArgs),
     Inspect(WorkflowPathArgs),
     #[command(alias = "audit-project")]
-    Doctor(WorkflowPathArgs),
+    Doctor(DoctorArgs),
+    #[command(name = "doctor-repair-human-review")]
+    DoctorRepairHumanReview(DoctorRepairArgs),
     Profiles(WorkflowPathArgs),
     #[command(name = "dogfood-smoke")]
     DogfoodSmoke(DogfoodSmokeArgs),
@@ -2354,8 +3138,12 @@ enum CliCommand {
     RunOnce(WorkflowPathArgs),
     #[command(name = "run-loop")]
     RunLoop(RunLoopArgs),
+    #[command(name = "cleanup-workspaces", alias = "workspace-cleanup")]
+    CleanupWorkspaces(CleanupWorkspacesArgs),
     #[command(name = "merge-once", alias = "land")]
     MergeOnce(MergeOnceArgs),
+    #[command(name = "merge-loop")]
+    MergeLoop(MergeLoopArgs),
     #[command(name = "set-state")]
     SetState(SetStateArgs),
     Workpad(WorkpadArgs),
@@ -2405,6 +3193,30 @@ struct WorkflowPathArgs {
 }
 
 #[derive(Debug, Args)]
+struct DoctorRepairArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct DoctorArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long)]
+    json: bool,
+    #[arg(long)]
+    strict: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+    #[arg(long = "write")]
+    _write: bool,
+}
+
+#[derive(Debug, Args)]
 struct RunLoopArgs {
     #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
     workflow_path: PathBuf,
@@ -2429,9 +3241,33 @@ struct DogfoodSmokeArgs {
 }
 
 #[derive(Debug, Args)]
+struct CleanupWorkspacesArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
 struct MergeOnceArgs {
     #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
     workflow_path: PathBuf,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct MergeLoopArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long)]
+    max_iterations: Option<usize>,
+    #[arg(long)]
+    once: bool,
     #[arg(long)]
     write: bool,
     #[arg(long = "dry-run")]
@@ -2554,6 +3390,8 @@ struct ReviewLoopArgs {
     once: bool,
     #[arg(long)]
     write: bool,
+    #[arg(long = "max-concurrent")]
+    max_concurrent: Option<usize>,
     #[arg(long = "dry-run")]
     _dry_run: bool,
     #[arg(long = "fake-outcome", value_enum)]
@@ -2655,6 +3493,8 @@ struct ForgeCreateArgs {
     body: Option<String>,
     #[arg(long = "add-to-project")]
     add_to_project: bool,
+    #[arg(long = "project-field")]
+    project_fields: Vec<String>,
     #[arg(long)]
     write: bool,
     #[arg(long = "dry-run")]
@@ -2722,8 +3562,18 @@ impl TryFrom<Cli> for Command {
                         workflow_path: args.workflow_path,
                     }),
                     CliCommand::Doctor(args) => Ok(Self::Doctor {
-                        workflow_path: args.workflow_path,
+                        options: DoctorOptions {
+                            workflow_path: args.workflow_path,
+                            json: args.json,
+                            strict: args.strict,
+                        },
                     }),
+                    CliCommand::DoctorRepairHumanReview(args) => {
+                        Ok(Self::DoctorRepairHumanReview {
+                            workflow_path: args.workflow_path,
+                            write: args.write,
+                        })
+                    }
                     CliCommand::Profiles(args) => Ok(Self::Profiles {
                         workflow_path: args.workflow_path,
                     }),
@@ -2747,10 +3597,29 @@ impl TryFrom<Cli> for Command {
                             },
                         })
                     }
+                    CliCommand::CleanupWorkspaces(args) => Ok(Self::CleanupWorkspaces {
+                        workflow_path: args.workflow_path,
+                        write: args.write,
+                    }),
                     CliCommand::MergeOnce(args) => Ok(Self::MergeOnce {
                         workflow_path: args.workflow_path,
                         write: args.write,
                     }),
+                    CliCommand::MergeLoop(args) => {
+                        if args.max_iterations == Some(0)
+                            || (!args.once && args.max_iterations.is_none())
+                        {
+                            return Err(usage());
+                        }
+                        Ok(Self::MergeLoop {
+                            options: MergeLoopOptions {
+                                workflow_path: args.workflow_path,
+                                max_iterations: args.max_iterations,
+                                once: args.once,
+                                write: args.write,
+                            },
+                        })
+                    }
                     CliCommand::SetState(args) => Ok(Self::SetState {
                         workflow_path: args.workflow_path,
                         issue_ref: args.issue_ref,
@@ -2799,7 +3668,7 @@ impl TryFrom<Cli> for Command {
                         },
                     }),
                     CliCommand::ReviewLoop(args) => {
-                        if args.max_iterations == Some(0) {
+                        if args.max_iterations == Some(0) || args.max_concurrent == Some(0) {
                             return Err(usage());
                         }
                         Ok(Self::ReviewLoop {
@@ -2809,6 +3678,7 @@ impl TryFrom<Cli> for Command {
                                 once: args.once,
                                 write: args.write,
                                 fake_outcome: args.fake_outcome.map(Into::into),
+                                max_concurrent: args.max_concurrent,
                             },
                         })
                     }
@@ -2848,6 +3718,7 @@ impl TryFrom<Cli> for Command {
                         title: args.title,
                         markdown: read_source_arg(args.body, args.file)?,
                         add_to_project: args.add_to_project,
+                        project_fields: parse_project_field_assignments(args.project_fields)?,
                         write: args.write,
                     }),
                     CliCommand::ForgeInteractive(args) => Ok(Self::ForgeInteractive {
@@ -2942,6 +3813,15 @@ fn read_required_file(path: PathBuf) -> Result<String, String> {
         .map_err(|error| format!("failed to read {}: {error}", path.display()))
 }
 
+fn parse_project_field_assignments(
+    values: Vec<String>,
+) -> Result<Vec<ProjectFieldAssignment>, String> {
+    values
+        .into_iter()
+        .map(|value| ProjectFieldAssignment::parse(&value).map_err(|error| error.to_string()))
+        .collect()
+}
+
 fn validate_optional_forge_skill(skill: Option<String>) -> Result<Option<String>, String> {
     if let Some(key) = skill.as_deref() {
         if find_issue_skill(key).is_none() {
@@ -3028,6 +3908,27 @@ mod tests {
         RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap()
     }
 
+    fn live_github_config(allow_unassigned: bool) -> RuntimeConfig {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            &format!(
+                "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 9\n  assignee_filter:\n    allow_unassigned: {}\n---\nPrompt",
+                allow_unassigned
+            ),
+        )
+        .unwrap();
+        RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap()
+    }
+
+    fn fixture_github_config() -> RuntimeConfig {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 9\n  fixture_path: fixtures/dry-run-issues.json\n---\nPrompt",
+        )
+        .unwrap();
+        RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap()
+    }
+
     fn tracker_issue(state: &str) -> TrackerIssue {
         TrackerIssue {
             tracker_kind: "memory".into(),
@@ -3048,6 +3949,14 @@ mod tests {
             created_at: None,
             updated_at: None,
         }
+    }
+
+    fn tracker_issue_with_ref(identifier: &str, title: &str, state: &str) -> TrackerIssue {
+        let mut issue = tracker_issue(state);
+        issue.identifier = identifier.into();
+        issue.title = title.into();
+        issue.branch_name = None;
+        issue
     }
 
     #[derive(Default)]
@@ -3110,7 +4019,10 @@ mod tests {
                     ),
                 );
             }
-            assert!(markdown.contains("## Rework Diagnostic"));
+            assert!(
+                markdown.contains("## Rework Diagnostic")
+                    || markdown.contains("### Merge Lane Handoff")
+            );
             self.operations
                 .borrow_mut()
                 .push(format!("workpad:{issue_ref}"));
@@ -3147,6 +4059,13 @@ mod tests {
             jade_symphony::tracker::TrackerError,
         > {
             Ok(Vec::new())
+        }
+
+        fn close_issue(&self, issue_ref: &str) -> Result<(), jade_symphony::tracker::TrackerError> {
+            self.operations
+                .borrow_mut()
+                .push(format!("close_issue:{issue_ref}"));
+            Ok(())
         }
     }
 
@@ -3198,7 +4117,11 @@ mod tests {
         assert_eq!(
             parse(&["audit-project", "examples/dry-run-workflow.md"]),
             Command::Doctor {
-                workflow_path: PathBuf::from("examples/dry-run-workflow.md")
+                options: DoctorOptions {
+                    workflow_path: PathBuf::from("examples/dry-run-workflow.md"),
+                    json: false,
+                    strict: false,
+                }
             }
         );
         assert_eq!(
@@ -3216,6 +4139,32 @@ mod tests {
             Command::Plan {
                 workflow_path: PathBuf::from("examples/dry-run-workflow.md"),
                 json: true,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_doctor_repair_human_review_command() {
+        assert_eq!(
+            parse(&[
+                "doctor-repair-human-review",
+                "examples/github-project-workflow.md",
+                "--dry-run"
+            ]),
+            Command::DoctorRepairHumanReview {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                write: false
+            }
+        );
+        assert_eq!(
+            parse(&[
+                "doctor-repair-human-review",
+                "examples/github-project-workflow.md",
+                "--write"
+            ]),
+            Command::DoctorRepairHumanReview {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                write: true
             }
         );
     }
@@ -3246,6 +4195,25 @@ mod tests {
     }
 
     #[test]
+    fn parses_doctor_json_and_strict_flags() {
+        assert_eq!(
+            parse(&[
+                "doctor",
+                "examples/github-project-workflow.md",
+                "--json",
+                "--strict"
+            ]),
+            Command::Doctor {
+                options: DoctorOptions {
+                    workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                    json: true,
+                    strict: true,
+                }
+            }
+        );
+    }
+
+    #[test]
     fn parses_dogfood_smoke_command() {
         assert_eq!(
             parse(&[
@@ -3269,6 +4237,84 @@ mod tests {
                 write: true
             }
         );
+    }
+
+    #[test]
+    fn parses_cleanup_workspaces_command() {
+        assert_eq!(
+            parse(&[
+                "cleanup-workspaces",
+                "examples/github-project-workflow.md",
+                "--write"
+            ]),
+            Command::CleanupWorkspaces {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                write: true,
+            }
+        );
+        assert_eq!(
+            parse(&["workspace-cleanup", "examples/github-project-workflow.md"]),
+            Command::CleanupWorkspaces {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                write: false,
+            }
+        );
+    }
+
+    #[test]
+    fn workspace_cleanup_plan_marks_terminal_existing_workspace_eligible() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.workspace.root = temp.path().join("workspaces");
+        let issue = tracker_issue("Done");
+        let handoff =
+            plan_issue_handoff_for_profile(&config.workspace.root, &issue, "main", None).unwrap();
+        std::fs::create_dir_all(&handoff.workspace_path).unwrap();
+
+        let entries = workspace_cleanup_plan(&config, &[issue]).unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].issue_ref, "#29");
+        assert_eq!(entries[0].workspace_key, handoff.workspace_key);
+        assert_eq!(entries[0].action, WorkspaceCleanupAction::Eligible);
+    }
+
+    #[test]
+    fn workspace_cleanup_plan_skips_non_terminal_and_missing_workspaces() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.workspace.root = temp.path().join("workspaces");
+        let mut active = tracker_issue("In Progress");
+        active.identifier = "#30".into();
+        active.title = "Active workspace".into();
+        active.branch_name = None;
+        let missing_terminal = tracker_issue("Done");
+
+        let entries = workspace_cleanup_plan(&config, &[active, missing_terminal]).unwrap();
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            entries[0].action,
+            WorkspaceCleanupAction::Skipped {
+                reason: "non_terminal_state".into()
+            }
+        );
+        assert_eq!(
+            entries[1].action,
+            WorkspaceCleanupAction::Skipped {
+                reason: "workspace_missing".into()
+            }
+        );
+    }
+
+    #[test]
+    fn all_mapped_tracker_states_includes_merging_for_doctor() {
+        let config = test_config();
+        let states = all_mapped_tracker_states(&config);
+
+        assert!(states.contains(&"Merging".to_string()));
+        assert!(states.contains(&"Rework".to_string()));
+        assert!(states.contains(&"Done".to_string()));
     }
 
     #[test]
@@ -3377,6 +4423,8 @@ mod tests {
             "2".into(),
             "--fake-outcome".into(),
             "confirmed".into(),
+            "--max-concurrent".into(),
+            "2".into(),
             "--write".into(),
         ])
         .unwrap();
@@ -3394,6 +4442,7 @@ mod tests {
             options.fake_outcome,
             Some(FakeReviewOutcome::ConfirmedFinding)
         );
+        assert_eq!(options.max_concurrent, Some(2));
         assert!(options.write);
     }
 
@@ -3413,6 +4462,112 @@ mod tests {
         };
 
         assert_eq!(options.iteration_limit(), Some(1));
+    }
+
+    #[test]
+    fn parses_merge_loop_flags() {
+        let command = Command::parse(vec![
+            "merge-loop".into(),
+            "examples/github-project-workflow.md".into(),
+            "--max-iterations".into(),
+            "3".into(),
+            "--write".into(),
+        ])
+        .unwrap();
+
+        let Command::MergeLoop { options } = command else {
+            panic!("expected merge-loop command");
+        };
+
+        assert_eq!(
+            options.workflow_path,
+            PathBuf::from("examples/github-project-workflow.md")
+        );
+        assert_eq!(options.max_iterations, Some(3));
+        assert!(options.write);
+    }
+
+    #[test]
+    fn merge_loop_once_overrides_max_iterations() {
+        let command = Command::parse(vec![
+            "merge-loop".into(),
+            "WORKFLOW.md".into(),
+            "--max-iterations".into(),
+            "4".into(),
+            "--once".into(),
+        ])
+        .unwrap();
+
+        let Command::MergeLoop { options } = command else {
+            panic!("expected merge-loop command");
+        };
+
+        assert_eq!(options.iteration_limit(), Some(1));
+    }
+
+    #[test]
+    fn rejects_unbounded_merge_loop_for_now() {
+        assert!(Command::parse(vec!["merge-loop".into(), "WORKFLOW.md".into()]).is_err());
+    }
+
+    #[test]
+    fn rejects_zero_merge_loop_iterations() {
+        assert!(Command::parse(vec![
+            "merge-loop".into(),
+            "WORKFLOW.md".into(),
+            "--max-iterations".into(),
+            "0".into(),
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn review_worker_selection_respects_concurrency_limit() {
+        let selected = select_review_worker_issues(
+            &[
+                tracker_issue_with_ref("#67", "First review", "Agent Review"),
+                tracker_issue_with_ref("#68", "Second review", "Agent Review"),
+                tracker_issue_with_ref("#69", "Third review", "Agent Review"),
+            ],
+            "Agent Review",
+            "fake-reviewer",
+            2,
+        );
+
+        assert_eq!(
+            selected
+                .iter()
+                .map(|issue| issue.identifier.as_str())
+                .collect::<Vec<_>>(),
+            vec!["#67", "#68"]
+        );
+    }
+
+    #[test]
+    fn review_worker_selection_skips_existing_worker_marker() {
+        let mut queued = tracker_issue_with_ref("#67", "Queued review", "Agent Review");
+        queued.project_fields.insert(
+            "Review Worker".into(),
+            serde_json::Value::String("queued review:#67:fake-reviewer".into()),
+        );
+        let ready = tracker_issue_with_ref("#68", "Ready review", "Agent Review");
+
+        let selected =
+            select_review_worker_issues(&[queued, ready], "Agent Review", "fake-reviewer", 2);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].identifier, "#68");
+    }
+
+    #[test]
+    fn review_workspace_uses_issue_handoff_workspace() {
+        let config = test_config();
+        let issue =
+            tracker_issue_with_ref("#67", "Add parallel review worker pool", "Agent Review");
+
+        let workspace = review_workspace_for_issue(&config, &issue);
+
+        assert!(workspace.ends_with("issue-67-add-parallel-review-worker-pool"));
     }
 
     #[test]
@@ -3543,6 +4698,117 @@ mod tests {
     }
 
     #[test]
+    fn live_gate_blocks_missing_assignee_without_override() {
+        let config = live_github_config(false);
+        let issue = tracker_issue("Todo");
+
+        assert_eq!(
+            live_missing_assignee_gate_blocker(&config, &issue).as_deref(),
+            Some("live GitHub issue assignee")
+        );
+    }
+
+    #[test]
+    fn fixture_mode_does_not_require_live_assignee() {
+        let config = fixture_github_config();
+        let issue = tracker_issue("Todo");
+
+        assert_eq!(live_missing_assignee_gate_blocker(&config, &issue), None);
+        assert_eq!(
+            run_loop_assignee_ownership_decision(&issue, &config, None, None),
+            AssigneeOwnershipDecision::Allowed
+        );
+    }
+
+    #[test]
+    fn assignee_ownership_allows_matching_active_login() {
+        let config = live_github_config(false);
+        let mut issue = tracker_issue("Todo");
+        issue.assignees = vec!["CodexUser".into()];
+
+        assert_eq!(
+            run_loop_assignee_ownership_decision(&issue, &config, Some("codexuser"), None),
+            AssigneeOwnershipDecision::Allowed
+        );
+    }
+
+    #[test]
+    fn assignee_ownership_blocks_mismatched_active_login() {
+        let config = live_github_config(false);
+        let mut issue = tracker_issue("Todo");
+        issue.assignees = vec!["owner-a".into()];
+
+        let decision = run_loop_assignee_ownership_decision(&issue, &config, Some("owner-b"), None);
+
+        assert!(matches!(decision, AssigneeOwnershipDecision::Block { .. }));
+    }
+
+    #[test]
+    fn assignee_ownership_allows_matching_profile_login() {
+        let config = live_github_config(false);
+        let mut issue = tracker_issue("Todo");
+        issue.assignees = vec!["profile-owner".into()];
+
+        assert_eq!(
+            run_loop_assignee_ownership_decision(
+                &issue,
+                &config,
+                Some("different-gh-user"),
+                Some("profile-owner"),
+            ),
+            AssigneeOwnershipDecision::Allowed
+        );
+    }
+
+    #[test]
+    fn assignee_ownership_blocks_missing_active_identity() {
+        let config = live_github_config(false);
+        let mut issue = tracker_issue("Todo");
+        issue.assignees = vec!["owner-a".into()];
+
+        let decision = run_loop_assignee_ownership_decision(&issue, &config, None, None);
+
+        assert_eq!(
+            decision,
+            AssigneeOwnershipDecision::Block {
+                reason: "active GitHub identity unavailable for assignee ownership check".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn run_loop_runtime_ownership_workpad_records_matching_marker() {
+        let config = test_config();
+        let issue = tracker_issue("In Progress");
+        let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+        let ownership = run_loop_runtime_ownership(&issue, &config, &handoff).unwrap();
+
+        let workpad = run_loop_ownership_workpad(&issue, &ownership, "Resumed");
+
+        assert!(workpad.contains("jade-symphony-runtime-ownership"));
+        assert_eq!(
+            runtime_ownership_decision(Some(&workpad), &ownership),
+            RuntimeOwnershipDecision::Matches
+        );
+    }
+
+    #[test]
+    fn run_loop_runtime_ownership_detects_different_active_branch() {
+        let config = test_config();
+        let issue = tracker_issue("In Progress");
+        let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+        let expected = run_loop_runtime_ownership(&issue, &config, &handoff).unwrap();
+        let mut existing = expected.clone();
+        existing.branch_name = "feature/issue-100-other-work".into();
+        let workpad = render_runtime_ownership_marker(&existing);
+
+        assert!(matches!(
+            runtime_ownership_decision(Some(&workpad), &expected),
+            RuntimeOwnershipDecision::Mismatched { .. }
+        ));
+    }
+
+    #[test]
     fn resume_preflight_continues_active_in_progress_state() {
         let config = test_config();
         let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
@@ -3661,6 +4927,7 @@ mod tests {
                 applied_keys: vec!["user.name".into(), "user.email".into()],
             },
             live_handoff: None,
+            handoff_verification: None,
         };
 
         let state = run_loop_runtime_state_with_result(state, &result);
@@ -3768,6 +5035,7 @@ mod tests {
                 },
                 verification: "skipped:not_configured".into(),
             }),
+            handoff_verification: Some("skipped:not_configured".into()),
         };
 
         let workpad = run_loop_handoff_workpad(&issue, &result, &handoff);
@@ -3782,7 +5050,50 @@ mod tests {
         assert!(workpad
             .contains("Branch: `feature/issue-29-wire-runtime-state-persistence-into-run-loop`"));
         assert!(workpad.contains("PR title: `#29: Wire runtime state persistence into run-loop`"));
+        assert!(workpad.contains("Handoff verification: `skipped:not_configured`"));
         assert!(workpad.contains("Live PR: `https://github.com/Alive24/jade-symphony/pull/45`"));
+    }
+
+    #[test]
+    fn handoff_verification_skips_when_not_configured() {
+        let config = test_config();
+        let temp = tempfile::tempdir().unwrap();
+
+        let verification = run_handoff_verification(temp.path(), &config);
+
+        assert!(verification.success);
+        assert_eq!(verification.summary, "skipped:not_configured");
+    }
+
+    #[test]
+    fn handoff_verification_runs_configured_commands() {
+        let mut config = test_config();
+        config.verification.commands = vec!["printf verified > verification.txt".into()];
+        config.verification.timeout_ms = 5_000;
+        let temp = tempfile::tempdir().unwrap();
+
+        let verification = run_handoff_verification(temp.path(), &config);
+
+        assert!(verification.success);
+        assert_eq!(verification.summary, "passed:1 command(s)");
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("verification.txt")).unwrap(),
+            "verified"
+        );
+    }
+
+    #[test]
+    fn handoff_verification_failure_blocks_success() {
+        let mut config = test_config();
+        config.verification.commands = vec!["echo nope >&2; exit 7".into()];
+        config.verification.timeout_ms = 5_000;
+        let temp = tempfile::tempdir().unwrap();
+
+        let verification = run_handoff_verification(temp.path(), &config);
+
+        assert!(!verification.success);
+        assert!(verification.summary.contains("failed command=`echo nope"));
+        assert!(verification.summary.contains("status 7"));
     }
 
     #[test]
@@ -3809,6 +5120,7 @@ mod tests {
                 applied_keys: Vec::new(),
             },
             live_handoff: None,
+            handoff_verification: None,
         };
         let pause = result.usage_limit_pause.as_ref().unwrap();
         let workpad = run_loop_usage_limit_pause_workpad(&issue, &result, pause, 20_000);
@@ -3858,6 +5170,24 @@ mod tests {
     }
 
     #[test]
+    fn merge_completion_closes_issue_after_workpad_and_done_state() {
+        let adapter = RecordingAdapter::default();
+        let issue = tracker_issue("Merging");
+        let workpad = "## Jade Symphony Workpad\n\n### Merge Lane Handoff\n";
+
+        record_done_merge_lane_completion(&adapter, &issue, workpad).unwrap();
+
+        assert_eq!(
+            adapter.operations(),
+            vec![
+                "workpad:#29".to_string(),
+                "set_state:#29:done".to_string(),
+                "close_issue:#29".to_string()
+            ]
+        );
+    }
+
+    #[test]
     fn run_loop_agent_review_handoff_blocks_missing_pr_url() {
         let config = test_config();
         let issue = tracker_issue("In Progress");
@@ -3880,6 +5210,7 @@ mod tests {
                 applied_keys: vec!["user.name".into(), "user.email".into()],
             },
             live_handoff: None,
+            handoff_verification: None,
         };
 
         let evidence = run_loop_agent_review_handoff_evidence(&issue, &result, &handoff);
@@ -3924,6 +5255,7 @@ mod tests {
                 applied_keys: vec!["user.name".into(), "user.email".into()],
             },
             live_handoff: None,
+            handoff_verification: None,
         };
 
         let evidence = run_loop_agent_review_handoff_evidence(&issue, &result, &handoff);
@@ -3948,6 +5280,8 @@ mod tests {
             "--body".into(),
             forge_contract(),
             "--add-to-project".into(),
+            "--project-field".into(),
+            "Capability=CLI".into(),
             "--write".into(),
         ])
         .unwrap();
@@ -3957,6 +5291,7 @@ mod tests {
             title,
             markdown,
             add_to_project,
+            project_fields,
             write,
         } = command
         else {
@@ -3967,7 +5302,36 @@ mod tests {
         assert_eq!(title, "Create issue");
         assert!(markdown.contains("## Issue Goal"));
         assert!(add_to_project);
+        assert_eq!(
+            project_fields,
+            vec![ProjectFieldAssignment {
+                name: "Capability".into(),
+                value: "CLI".into()
+            }]
+        );
         assert!(write);
+    }
+
+    #[test]
+    fn forge_create_project_fields_require_project_add() {
+        let error = forge_create(
+            PathBuf::from("missing-workflow.md"),
+            "Create issue".into(),
+            forge_contract(),
+            false,
+            vec![ProjectFieldAssignment {
+                name: "Capability".into(),
+                value: "CLI".into(),
+            }],
+            true,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert_eq!(
+            error,
+            "forge-create --project-field requires --add-to-project"
+        );
     }
 
     #[test]
@@ -4063,6 +5427,7 @@ mod tests {
             "Create issue".into(),
             forge_contract(),
             true,
+            Vec::new(),
             true,
         )
         .unwrap();

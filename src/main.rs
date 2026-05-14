@@ -2093,6 +2093,16 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                         format!("handoff verification failed: {}", verification.summary);
                 }
             }
+            if result.success {
+                let linked =
+                    apply_live_handoff_pr_link(adapter.as_ref(), &latest.identifier, &mut result);
+                if linked {
+                    println!(
+                        "run_loop_action=link_pr issue={} evidence=live_handoff",
+                        latest.identifier
+                    );
+                }
+            }
         }
         runtime_state = run_loop_runtime_state_with_result(runtime_state, &result);
         mark_runtime_state_updated(&mut runtime_state, current_time_ms());
@@ -2866,6 +2876,39 @@ fn live_handoff_workpad_line(result: &IssueExecutionResult) -> String {
             handoff.verification
         ),
         None => "- Live PR: `not-created`".to_string(),
+    }
+}
+
+fn record_live_handoff_pr_link(
+    adapter: &dyn TrackerAdapter,
+    issue_ref: &str,
+    result: &IssueExecutionResult,
+) -> Result<(), String> {
+    let Some(handoff) = &result.live_handoff else {
+        return Ok(());
+    };
+
+    adapter
+        .link_pull_request(issue_ref, &handoff.publication.pr_url)
+        .map_err(|error| format!("handoff PR link failed: {error}"))
+}
+
+fn apply_live_handoff_pr_link(
+    adapter: &dyn TrackerAdapter,
+    issue_ref: &str,
+    result: &mut IssueExecutionResult,
+) -> bool {
+    if result.live_handoff.is_none() {
+        return false;
+    }
+
+    match record_live_handoff_pr_link(adapter, issue_ref, result) {
+        Ok(()) => true,
+        Err(error) => {
+            result.success = false;
+            result.message = error;
+            false
+        }
     }
 }
 
@@ -4081,6 +4124,7 @@ mod tests {
     struct RecordingAdapter {
         operations: RefCell<Vec<String>>,
         fail_workpad: bool,
+        fail_link_pr: bool,
     }
 
     impl RecordingAdapter {
@@ -4166,6 +4210,13 @@ mod tests {
             issue_ref: &str,
             pr_ref: &str,
         ) -> Result<(), jade_symphony::tracker::TrackerError> {
+            if self.fail_link_pr {
+                return Err(
+                    jade_symphony::tracker::TrackerError::IntegrationUnavailable(
+                        "link failed".into(),
+                    ),
+                );
+            }
             self.operations
                 .borrow_mut()
                 .push(format!("link_pr:{issue_ref}:{pr_ref}"));
@@ -5194,6 +5245,27 @@ mod tests {
     }
 
     #[test]
+    fn live_run_loop_handoff_records_pr_link_through_tracker() {
+        let config = test_config();
+        let issue = tracker_issue("In Progress");
+        let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+        let mut result = successful_live_handoff_result(&handoff);
+        let adapter = RecordingAdapter::default();
+
+        assert!(apply_live_handoff_pr_link(
+            &adapter,
+            &issue.identifier,
+            &mut result
+        ));
+
+        assert!(result.success);
+        assert_eq!(
+            adapter.operations(),
+            vec!["link_pr:#29:https://github.com/Alive24/jade-symphony/pull/45"]
+        );
+    }
+
+    #[test]
     fn handoff_verification_skips_when_not_configured() {
         let config = test_config();
         let temp = tempfile::tempdir().unwrap();
@@ -5219,6 +5291,63 @@ mod tests {
             std::fs::read_to_string(temp.path().join("verification.txt")).unwrap(),
             "verified"
         );
+    }
+
+    #[test]
+    fn live_run_loop_handoff_link_failure_blocks_agent_review() {
+        let config = test_config();
+        let issue = tracker_issue("In Progress");
+        let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+        let mut result = successful_live_handoff_result(&handoff);
+        let adapter = RecordingAdapter {
+            operations: RefCell::new(Vec::new()),
+            fail_workpad: false,
+            fail_link_pr: true,
+        };
+
+        assert!(!apply_live_handoff_pr_link(
+            &adapter,
+            &issue.identifier,
+            &mut result
+        ));
+
+        assert!(!result.success);
+        assert!(result.message.contains("handoff PR link failed"));
+    }
+
+    fn successful_live_handoff_result(handoff: &IssueHandoffPlan) -> IssueExecutionResult {
+        IssueExecutionResult {
+            workspace_path: handoff.workspace_path.clone(),
+            backend: "dry-run".into(),
+            profile_id: None,
+            instance_name: None,
+            success: true,
+            session_id: Some("session-33".into()),
+            message: "ok".into(),
+            usage_limit_pause: None,
+            actor_role: "implementation_agent".into(),
+            actor_label: "Jade Symphony Agent".into(),
+            git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+            git_identity: GitIdentityApplyResult {
+                status: jade_symphony::workspace::GitIdentityApplyStatus::Applied,
+                author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+                applied_keys: vec!["user.name".into(), "user.email".into()],
+            },
+            live_handoff: Some(RunLoopLiveHandoff {
+                worktree: LiveWorktreeResult {
+                    workspace_path: handoff.workspace_path.clone(),
+                    branch_name: handoff.branch_name.clone(),
+                    created: true,
+                },
+                publication: PullRequestPublication {
+                    branch_pushed: true,
+                    pr_url: "https://github.com/Alive24/jade-symphony/pull/45".into(),
+                    pr_created: true,
+                },
+                verification: "skipped:not_configured".into(),
+            }),
+            handoff_verification: Some("skipped:not_configured".into()),
+        }
     }
 
     #[test]
@@ -5296,6 +5425,7 @@ mod tests {
         let adapter = RecordingAdapter {
             operations: RefCell::new(Vec::new()),
             fail_workpad: true,
+            fail_link_pr: false,
         };
         let issue = tracker_issue("Agent Review");
         let diagnostic = ReworkDiagnostic::validation_failure(

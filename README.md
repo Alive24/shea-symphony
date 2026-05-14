@@ -51,7 +51,8 @@ worker supervision are still future work.
 - `merge-once` can consume issues already in `Merging`, resolve a single linked
   PR, run guarded GitHub PR preflight checks, write durable workpad evidence,
   treat Project `Merging` as the approval signal for clean PRs, merge with
-  explicit `--write`, and route blockers to `Rework` or `Need Human Input`
+  explicit `--write`, set Project `Done`, close the linked GitHub issue when
+  supported by the tracker, and route blockers to `Rework` or `Need Human Input`
   without ever setting `Human Review`.
 - structured Rework diagnostics can render compact, durable issue workpad
   evidence for confirmed review findings, merge conflicts, dirty PRs,

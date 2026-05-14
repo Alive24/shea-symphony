@@ -22,6 +22,12 @@ pub trait TrackerAdapter {
         &self,
         issue_ref: &str,
     ) -> Result<Vec<LinkedPullRequest>, TrackerError>;
+    fn close_issue(&self, _issue_ref: &str) -> Result<(), TrackerError> {
+        Err(TrackerError::NotImplemented(format!(
+            "{} tracker does not support issue closure",
+            self.kind()
+        )))
+    }
     fn integration_gaps(&self) -> Vec<String> {
         Vec::new()
     }
@@ -151,6 +157,10 @@ impl TrackerAdapter for MemoryTracker {
             .get_issue(issue_ref)?
             .map(|issue| issue.linked_pull_requests)
             .unwrap_or_default())
+    }
+
+    fn close_issue(&self, _issue_ref: &str) -> Result<(), TrackerError> {
+        Ok(())
     }
 }
 
@@ -318,6 +328,14 @@ impl TrackerAdapter for GithubProjectV2Adapter {
         }
 
         GithubProjectV2GhClient::new(&self.config).list_linked_pull_requests(issue_ref)
+    }
+
+    fn close_issue(&self, issue_ref: &str) -> Result<(), TrackerError> {
+        if self.config.tracker.fixture_path.is_some() {
+            return Ok(());
+        }
+
+        GithubProjectV2GhClient::new(&self.config).close_issue(issue_ref)
     }
 
     fn integration_gaps(&self) -> Vec<String> {
@@ -559,6 +577,21 @@ impl GithubProjectV2GhClient {
             issue.linked_pull_requests,
             linked_pull_requests_from_workpads(&workpad_bodies),
         ))
+    }
+
+    fn close_issue(&self, issue_ref: &str) -> Result<(), TrackerError> {
+        let issue = self.resolve_issue(issue_ref)?;
+        if issue
+            .project_fields
+            .get("GitHub Issue State")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|state| normalize_state(state) == "closed")
+        {
+            return Ok(());
+        }
+
+        self.graphql(GITHUB_CLOSE_ISSUE_MUTATION, &[("issueId", issue.id)])?;
+        Ok(())
     }
 
     fn find_workpad_comment_ids(
@@ -1032,6 +1065,17 @@ mutation JadeSymphonyAddComment($subjectId: ID!, $body: String!) {
 }
 "#;
 
+const GITHUB_CLOSE_ISSUE_MUTATION: &str = r#"
+mutation JadeSymphonyCloseIssue($issueId: ID!) {
+  closeIssue(input: { issueId: $issueId, stateReason: COMPLETED }) {
+    issue {
+      id
+      state
+    }
+  }
+}
+"#;
+
 const GITHUB_REPOSITORY_ID_QUERY: &str = r#"
 query JadeSymphonyRepositoryId($owner: String!, $repo: String!) {
   repository(owner: $owner, name: $repo) {
@@ -1265,6 +1309,12 @@ fn issue_from_project_item(
         config.tracker.status_field.clone(),
         serde_json::Value::String(state.clone()),
     );
+    if let Some(issue_state) = content.get("state").and_then(serde_json::Value::as_str) {
+        project_fields.insert(
+            "GitHub Issue State".into(),
+            serde_json::Value::String(issue_state.to_string()),
+        );
+    }
     let blocked_by = blocker_refs_from_project_fields(&project_fields);
 
     Some(TrackerIssue {
@@ -2499,6 +2549,13 @@ mod tests {
         assert_eq!(issues[0].labels, vec!["dogfood"]);
         assert_eq!(issues[0].assignees, vec!["codex"]);
         assert_eq!(issues[0].priority, Some(1));
+        assert_eq!(
+            issues[0]
+                .project_fields
+                .get("GitHub Issue State")
+                .and_then(serde_json::Value::as_str),
+            Some("OPEN")
+        );
         assert_eq!(issues[0].linked_pull_requests[0].number, Some(7));
     }
 

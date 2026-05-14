@@ -161,14 +161,15 @@ start, message, token usage, rate-limit, review, completion, and error records.
 
 Initial observability:
 
-- JSONL event log.
+- JSONL event log with readback and compact summary helpers.
 - runtime snapshot model with running, retrying, skipped, polling, token,
   event-log path, and integration-gap fields.
 - runtime state file model under `logs_root/runtime` for active issue,
   workspace, branch, backend session, attempt count, last event, and last
   transition.
 - terminal/status renderer for operator-readable snapshots.
-- run summary data model.
+- run summary data model foundation for event counts, issue identifiers, and
+  session IDs.
 
 Planned parity:
 

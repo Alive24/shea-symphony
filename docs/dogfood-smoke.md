@@ -32,7 +32,7 @@ v2 readiness.
 Live Project preflight:
 
 ```bash
-cargo run -- dogfood-smoke examples/github-project-workflow.md --dry-run
+cargo run -- dogfood-smoke workflows/jade-symphony.md --dry-run
 ```
 
 The report includes:
@@ -50,7 +50,7 @@ When the preflight reports one executable controlled candidate, no blocking
 integration gaps, and a non-fixture tracker mode, run one bounded live tick:
 
 ```bash
-cargo run -- run-loop examples/github-project-workflow.md --max-iterations 1 --write
+cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
 Expected result:

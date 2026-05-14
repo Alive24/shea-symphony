@@ -43,7 +43,7 @@ must not be edited by Jade Symphony implementation work.
 | Workflow loading | Landed | `src/workflow.rs`, `README.md`, `docs/dogfood-readiness.md` | Runtime reload with last-known-good config remains deferred. |
 | Typed config | Partial | `src/config.rs`, `examples/*.md` | Config is enough for current CLI paths, but richer live worker settings are still evolving. |
 | Normalized tracker model | Landed | `src/model.rs`, `src/tracker.rs` | Blocker relationship sources need continued adapter hardening. |
-| GitHub Project v2 adapter | Partial | `src/tracker.rs`, `examples/github-project-workflow.md` | Live writes exist behind `--write`; full reconciliation and richer Project field mutation are not fully landed on main. |
+| GitHub Project v2 adapter | Partial | `src/tracker.rs`, `workflows/jade-symphony.md` | Live writes exist behind `--write`; full reconciliation and richer Project field mutation are not fully landed on main. |
 | Linear adapter | Partial | `src/tracker.rs`, `examples/linear-fixture-workflow.md` | Live schema smoke coverage is still required before routine use. |
 | Issue Quality Gate | Landed | `src/quality_gate.rs`, `docs/bootstrap/ISSUE_QUALITY_GATE_TEMPLATE.md` | Semantic/LLM-assisted checks remain optional and conservative. |
 | Issue Forge | Partial | `src/issue_forge.rs`, README command docs | Tracker creation exists; richer field setup and conversational UI remain follow-ups. |
@@ -126,8 +126,8 @@ set `Human Review`, and only after review evidence is recorded.
 Keep this document aligned by running:
 
 ```bash
-cargo run -- inspect examples/github-project-workflow.md
-cargo run -- doctor examples/github-project-workflow.md
+cargo run -- inspect workflows/jade-symphony.md
+cargo run -- doctor workflows/jade-symphony.md
 cargo test
 cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings

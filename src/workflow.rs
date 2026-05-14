@@ -225,8 +225,7 @@ mod tests {
     }
 
     fn github_project_workflow() -> WorkflowDefinition {
-        let path =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/github-project-workflow.md");
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("workflows/jade-symphony.md");
         WorkflowDefinition::load(path).unwrap()
     }
 

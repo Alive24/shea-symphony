@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-WORKFLOW="examples/github-project-workflow.md"
+WORKFLOW="workflows/jade-symphony.md"
 MAX_ITERATIONS="1"
 MODE="dry-run"
 CONFIRM_WRITE="false"
@@ -16,7 +16,7 @@ Options:
   --dry-run            Preview the dogfood command without tracker mutation.
   --write              Run one bounded live write-mode tick after preflight.
   --confirm-write      Required with --write.
-  --workflow PATH      Workflow markdown path. Default: examples/github-project-workflow.md
+  --workflow PATH      Workflow markdown path. Default: workflows/jade-symphony.md
   --max-iterations N   Bounded run-loop iterations. Default: 1
   --help               Show this help.
 EOF

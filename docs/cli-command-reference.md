@@ -17,10 +17,10 @@ remain the preferred rehearsal path for local development.
 | `status` | Operator status alias for planning output. | `cargo run -- status examples/dry-run-workflow.md` |
 | `validate` | Validate workflow loading/configuration. | `cargo run -- validate examples/dry-run-workflow.md` |
 | `validate-workflow` | Compatibility alias for `validate`. | `cargo run -- validate-workflow examples/dry-run-workflow.md` |
-| `inspect` | Read tracker issues and print gate/status information. | `cargo run -- inspect examples/github-project-workflow.md` |
-| `project-state` | Diagnose whether the canonical Project read path is trustworthy. | `cargo run -- project-state examples/github-project-workflow.md` |
-| `doctor` | Audit Project/workflow invariants. | `cargo run -- doctor examples/github-project-workflow.md` |
-| `audit-project` | Compatibility alias for `doctor`. | `cargo run -- audit-project examples/github-project-workflow.md` |
+| `inspect` | Read tracker issues and print gate/status information. | `cargo run -- inspect workflows/jade-symphony.md` |
+| `project-state` | Diagnose whether the canonical Project read path is trustworthy. | `cargo run -- project-state workflows/jade-symphony.md` |
+| `doctor` | Audit Project/workflow invariants. | `cargo run -- doctor workflows/jade-symphony.md` |
+| `audit-project` | Compatibility alias for `doctor`. | `cargo run -- audit-project workflows/jade-symphony.md` |
 | `profiles` | List configured/discovered execution profiles. | `cargo run -- profiles examples/cockpit-profiles-workflow.md` |
 
 ## Main Implementation Runtime
@@ -36,8 +36,8 @@ Examples:
 ```bash
 cargo run -- run-once examples/dry-run-workflow.md
 cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
-cargo run -- run-loop examples/github-project-workflow.md --max-iterations 1 --pool 2 --dry-run
-cargo run -- dogfood-smoke examples/github-project-workflow.md --dry-run
+cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --pool 2 --dry-run
+cargo run -- dogfood-smoke workflows/jade-symphony.md --dry-run
 ```
 
 `run-loop --pool N` is a supervised planning and claim-locking slice. Dry-run
@@ -61,8 +61,8 @@ These commands can mutate live tracker state and require `--write`.
 Examples:
 
 ```bash
-cargo run -- set-state examples/github-project-workflow.md '#123' need_to_clarify --write
-cargo run -- workpad examples/github-project-workflow.md '#123' /tmp/workpad.md --write
+cargo run -- set-state workflows/jade-symphony.md '#123' need_to_clarify --write
+cargo run -- workpad workflows/jade-symphony.md '#123' /tmp/workpad.md --write
 ```
 
 ## Issue Quality Gate
@@ -76,7 +76,7 @@ Examples:
 
 ```bash
 cargo run -- gate examples/dry-run-workflow.md '#3'
-cargo run -- gate-apply examples/github-project-workflow.md '#123' --write
+cargo run -- gate-apply workflows/jade-symphony.md '#123' --write
 ```
 
 ## Issue Forge
@@ -97,7 +97,7 @@ Examples:
 ```bash
 cargo run -- forge-validate --title "Thin Forge issue" --file examples/fixtures/thin-issue.md
 cargo run -- forge-reflect --context-file docs/dogfood-readiness.md --limit 1
-cargo run -- forge-create --workflow examples/github-project-workflow.md --title "Follow-up title" --file /tmp/issue.md --assignee Alive24 --add-to-project --write
+cargo run -- forge-create --workflow workflows/jade-symphony.md --title "Follow-up title" --file /tmp/issue.md --assignee Alive24 --add-to-project --write
 ```
 
 ## Review Agent Lane
@@ -117,7 +117,7 @@ Example:
 
 ```bash
 cargo run -- review-loop examples/review-fixture-workflow.md --max-iterations 1 --dry-run
-cargo run -- review-loop examples/github-project-gemini-review-workflow.md --max-iterations 1 --write
+cargo run -- review-loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
 ## Merge Lane
@@ -130,7 +130,7 @@ cargo run -- review-loop examples/github-project-gemini-review-workflow.md --max
 Examples:
 
 ```bash
-cargo run -- merge-once examples/github-project-workflow.md --dry-run
+cargo run -- merge-once workflows/jade-symphony.md --dry-run
 ```
 
 `merge-once` is separate from main implementation and review work. It should
@@ -138,7 +138,7 @@ only consume issues already in `Merging`.
 
 ## Live Dogfood Boundary
 
-Use `examples/github-project-workflow.md` for Project #9 live reads and explicit
+Use `workflows/jade-symphony.md` for Project #9 live reads and explicit
 writes. Before running live write commands, confirm:
 
 - the issue contract passes the Issue Quality Gate;

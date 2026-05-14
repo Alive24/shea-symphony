@@ -8,7 +8,7 @@ workflow. They are read-only / dry-run only in this slice, and ordinary
 
 - `gh` is installed.
 - `gh auth status` succeeds for the `Alive24/jade-symphony` repository.
-- The workflow at `examples/github-project-workflow.md` points at the intended
+- The workflow at `workflows/jade-symphony.md` points at the intended
   GitHub Project v2 tracker.
 
 No tokens or secrets are printed by the tests.
@@ -21,8 +21,8 @@ JADE_LIVE_GITHUB_SMOKE=1 cargo test --test live_github_smoke
 
 The smoke runs:
 
-- `jade-symphony inspect examples/github-project-workflow.md`
-- `jade-symphony dogfood-smoke examples/github-project-workflow.md --dry-run`
+- `jade-symphony inspect workflows/jade-symphony.md`
+- `jade-symphony dogfood-smoke workflows/jade-symphony.md --dry-run`
 
 ## Expected Behavior
 

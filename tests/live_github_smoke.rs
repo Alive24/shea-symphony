@@ -1,7 +1,7 @@
 use std::process::{Command, Output};
 
 const LIVE_SMOKE_ENV: &str = "JADE_LIVE_GITHUB_SMOKE";
-const WORKFLOW: &str = "examples/github-project-workflow.md";
+const WORKFLOW: &str = "workflows/jade-symphony.md";
 
 fn live_smoke_enabled() -> bool {
     matches!(

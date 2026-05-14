@@ -67,7 +67,7 @@ operator removal when all of these are true:
 The command never deletes files:
 
 ```bash
-cargo run -- cleanup-plan examples/github-project-workflow.md
+cargo run -- cleanup-plan workflows/jade-symphony.md
 ```
 
 Use the report to decide what to remove manually or in a future explicit

@@ -166,22 +166,6 @@ pub fn merge_lane_decision(
         };
     }
 
-    if !matches!(
-        status.review_decision.as_deref(),
-        Some("APPROVED") | Some("approved")
-    ) {
-        return MergeLaneDecision {
-            kind: MergeLaneDecisionKind::ReviewNotApproved,
-            issue_ref: issue.identifier.clone(),
-            pr_url: Some(status.url.clone()),
-            target_state: Some("need_human_input"),
-            reason: format!(
-                "pull request review decision is `{}`",
-                status.review_decision.as_deref().unwrap_or("missing")
-            ),
-        };
-    }
-
     if let Some(failing) = first_failing_check(&status.checks) {
         return MergeLaneDecision {
             kind: MergeLaneDecisionKind::ChecksFailing,
@@ -203,38 +187,74 @@ pub fn merge_lane_decision(
     }
 
     match status.merge_state_status.as_deref() {
-        Some("CLEAN") | Some("HAS_HOOKS") => MergeLaneDecision {
-            kind: MergeLaneDecisionKind::ReadyToMerge,
-            issue_ref: issue.identifier.clone(),
-            pr_url: Some(status.url.clone()),
-            target_state: Some("done"),
-            reason: "pull request passed merge preflight".into(),
-        },
-        Some("DIRTY") | Some("BEHIND") => MergeLaneDecision {
-            kind: MergeLaneDecisionKind::MergeDirty,
-            issue_ref: issue.identifier.clone(),
-            pr_url: Some(status.url.clone()),
-            target_state: Some("rework"),
-            reason: format!(
-                "pull request merge state is `{}`",
-                status.merge_state_status.as_deref().unwrap_or_default()
-            ),
-        },
-        Some(other) => MergeLaneDecision {
-            kind: MergeLaneDecisionKind::MergeabilityUnknown,
-            issue_ref: issue.identifier.clone(),
-            pr_url: Some(status.url.clone()),
-            target_state: Some("need_human_input"),
-            reason: format!("pull request merge state is `{other}`"),
-        },
-        None => MergeLaneDecision {
-            kind: MergeLaneDecisionKind::MergeabilityUnknown,
-            issue_ref: issue.identifier.clone(),
-            pr_url: Some(status.url.clone()),
-            target_state: Some("need_human_input"),
-            reason: "pull request merge state is missing".into(),
-        },
+        Some("DIRTY") | Some("BEHIND") => {
+            return MergeLaneDecision {
+                kind: MergeLaneDecisionKind::MergeDirty,
+                issue_ref: issue.identifier.clone(),
+                pr_url: Some(status.url.clone()),
+                target_state: Some("rework"),
+                reason: format!(
+                    "pull request merge state is `{}`",
+                    status.merge_state_status.as_deref().unwrap_or_default()
+                ),
+            };
+        }
+        Some("CLEAN") | Some("HAS_HOOKS") => {}
+        Some(other) => {
+            return MergeLaneDecision {
+                kind: MergeLaneDecisionKind::MergeabilityUnknown,
+                issue_ref: issue.identifier.clone(),
+                pr_url: Some(status.url.clone()),
+                target_state: Some("need_human_input"),
+                reason: format!("pull request merge state is `{other}`"),
+            };
+        }
+        None => {
+            return MergeLaneDecision {
+                kind: MergeLaneDecisionKind::MergeabilityUnknown,
+                issue_ref: issue.identifier.clone(),
+                pr_url: Some(status.url.clone()),
+                target_state: Some("need_human_input"),
+                reason: "pull request merge state is missing".into(),
+            };
+        }
     }
+
+    if let Some((target_state, reason)) = blocking_review_decision(&status.review_decision) {
+        return MergeLaneDecision {
+            kind: MergeLaneDecisionKind::ReviewNotApproved,
+            issue_ref: issue.identifier.clone(),
+            pr_url: Some(status.url.clone()),
+            target_state: Some(target_state),
+            reason,
+        };
+    }
+
+    MergeLaneDecision {
+        kind: MergeLaneDecisionKind::ReadyToMerge,
+        issue_ref: issue.identifier.clone(),
+        pr_url: Some(status.url.clone()),
+        target_state: Some("done"),
+        reason: "pull request passed merge preflight with Project Merging approval".into(),
+    }
+}
+
+fn blocking_review_decision(review_decision: &Option<String>) -> Option<(&'static str, String)> {
+    let decision = review_decision.as_deref().unwrap_or_default().trim();
+    if decision.is_empty() || decision.eq_ignore_ascii_case("APPROVED") {
+        return None;
+    }
+
+    let target_state = if decision.eq_ignore_ascii_case("CHANGES_REQUESTED") {
+        "rework"
+    } else {
+        "need_human_input"
+    };
+
+    Some((
+        target_state,
+        format!("pull request review decision is `{decision}`"),
+    ))
 }
 
 pub fn pull_request_status_from_linked(
@@ -533,6 +553,23 @@ mod tests {
     }
 
     #[test]
+    fn clean_project_merging_pr_without_github_review_decision_is_ready_to_merge() {
+        let issue = issue("Merging", vec![pr()]);
+        let mut status = clean_status();
+        status.review_decision = Some(String::new());
+        let decision = merge_lane_decision(
+            &issue,
+            "Merging",
+            "main",
+            &issue.linked_pull_requests,
+            Some(&status),
+        );
+
+        assert_eq!(decision.kind, MergeLaneDecisionKind::ReadyToMerge);
+        assert_eq!(decision.target_state, Some("done"));
+    }
+
+    #[test]
     fn dirty_pr_routes_to_rework() {
         let issue = issue("Merging", vec![pr()]);
         let mut status = clean_status();
@@ -546,6 +583,41 @@ mod tests {
         );
 
         assert_eq!(decision.kind, MergeLaneDecisionKind::MergeDirty);
+        assert_eq!(decision.target_state, Some("rework"));
+    }
+
+    #[test]
+    fn dirty_pr_without_github_review_decision_routes_to_rework() {
+        let issue = issue("Merging", vec![pr()]);
+        let mut status = clean_status();
+        status.merge_state_status = Some("DIRTY".into());
+        status.review_decision = Some(String::new());
+        let decision = merge_lane_decision(
+            &issue,
+            "Merging",
+            "main",
+            &issue.linked_pull_requests,
+            Some(&status),
+        );
+
+        assert_eq!(decision.kind, MergeLaneDecisionKind::MergeDirty);
+        assert_eq!(decision.target_state, Some("rework"));
+    }
+
+    #[test]
+    fn changes_requested_review_routes_to_rework() {
+        let issue = issue("Merging", vec![pr()]);
+        let mut status = clean_status();
+        status.review_decision = Some("CHANGES_REQUESTED".into());
+        let decision = merge_lane_decision(
+            &issue,
+            "Merging",
+            "main",
+            &issue.linked_pull_requests,
+            Some(&status),
+        );
+
+        assert_eq!(decision.kind, MergeLaneDecisionKind::ReviewNotApproved);
         assert_eq!(decision.target_state, Some("rework"));
     }
 

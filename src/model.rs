@@ -133,6 +133,31 @@ pub struct TokenTotals {
     pub seconds_running: u64,
 }
 
+impl TokenTotals {
+    pub fn from_agent_events(events: &[AgentEvent]) -> Self {
+        let mut totals = Self::default();
+        let mut latest_reported_total = 0;
+
+        for event in events {
+            if let AgentEvent::TokenUsage {
+                input_tokens,
+                output_tokens,
+                total_tokens,
+                ..
+            } = event
+            {
+                totals.input_tokens = totals.input_tokens.saturating_add(*input_tokens);
+                totals.output_tokens = totals.output_tokens.saturating_add(*output_tokens);
+                latest_reported_total = *total_tokens;
+            }
+        }
+
+        let summed_total = totals.input_tokens.saturating_add(totals.output_tokens);
+        totals.total_tokens = summed_total.max(latest_reported_total);
+        totals
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct RuntimeSnapshot {
     #[serde(default)]
@@ -203,4 +228,70 @@ pub enum AgentEvent {
 
 pub fn normalize_state(state: &str) -> String {
     state.trim().to_lowercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn token_totals_default_when_events_have_no_usage() {
+        let totals = TokenTotals::from_agent_events(&[
+            AgentEvent::SessionStarted {
+                backend: "dry-run".into(),
+                session_id: "session-1".into(),
+            },
+            AgentEvent::Completed {
+                backend: "dry-run".into(),
+                session_id: Some("session-1".into()),
+                summary: "done".into(),
+            },
+        ]);
+
+        assert_eq!(totals, TokenTotals::default());
+    }
+
+    #[test]
+    fn token_totals_accumulate_input_and_output_usage() {
+        let totals = TokenTotals::from_agent_events(&[
+            AgentEvent::TokenUsage {
+                backend: "codex".into(),
+                input_tokens: 10,
+                output_tokens: 4,
+                total_tokens: 14,
+            },
+            AgentEvent::TokenUsage {
+                backend: "codex".into(),
+                input_tokens: 3,
+                output_tokens: 8,
+                total_tokens: 11,
+            },
+        ]);
+
+        assert_eq!(totals.input_tokens, 13);
+        assert_eq!(totals.output_tokens, 12);
+        assert_eq!(totals.total_tokens, 25);
+    }
+
+    #[test]
+    fn token_totals_preserve_latest_absolute_total_when_larger() {
+        let totals = TokenTotals::from_agent_events(&[
+            AgentEvent::TokenUsage {
+                backend: "codex".into(),
+                input_tokens: 10,
+                output_tokens: 4,
+                total_tokens: 14,
+            },
+            AgentEvent::TokenUsage {
+                backend: "codex".into(),
+                input_tokens: 1,
+                output_tokens: 1,
+                total_tokens: 40,
+            },
+        ]);
+
+        assert_eq!(totals.input_tokens, 11);
+        assert_eq!(totals.output_tokens, 5);
+        assert_eq!(totals.total_tokens, 40);
+    }
 }

@@ -278,6 +278,10 @@ mod tests {
                     number: Some(158),
                     url: Some("https://github.com/Alive24/jade-symphony/pull/158".into()),
                     state: Some(state.into()),
+                    is_draft: None,
+                    merge_state_status: None,
+                    review_decision: None,
+                    base_ref_name: None,
                 })
                 .into_iter()
                 .collect(),

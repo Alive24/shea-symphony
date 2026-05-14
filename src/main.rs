@@ -1233,7 +1233,7 @@ fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::Error>> {
     config.validate()?;
 
     let adapter = adapter_from_config(&config);
-    let issues = adapter.list_dispatchable_issues()?;
+    let issues = adapter.fetch_issues_by_states(&all_mapped_tracker_states(&config))?;
     let mut report = audit_project_issues(&issues);
     report.integration_gaps = adapter.integration_gaps();
 
@@ -1293,6 +1293,22 @@ fn doctor_repair_human_review(
     }
 
     Ok(())
+}
+
+fn all_mapped_tracker_states(config: &RuntimeConfig) -> Vec<String> {
+    let state_map = &config.tracker.state_map;
+    vec![
+        state_map.backlog.clone(),
+        state_map.todo.clone(),
+        state_map.need_to_clarify.clone(),
+        state_map.in_progress.clone(),
+        state_map.need_human_input.clone(),
+        state_map.agent_review.clone(),
+        state_map.human_review.clone(),
+        state_map.rework.clone(),
+        state_map.merging.clone(),
+        state_map.done.clone(),
+    ]
 }
 
 fn list_profiles(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
@@ -4231,6 +4247,16 @@ mod tests {
                 reason: "workspace_missing".into()
             }
         );
+    }
+
+    #[test]
+    fn all_mapped_tracker_states_includes_merging_for_doctor() {
+        let config = test_config();
+        let states = all_mapped_tracker_states(&config);
+
+        assert!(states.contains(&"Merging".to_string()));
+        assert!(states.contains(&"Rework".to_string()));
+        assert!(states.contains(&"Done".to_string()));
     }
 
     #[test]

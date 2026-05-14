@@ -226,6 +226,13 @@ impl GithubProjectV2Adapter {
     }
 
     fn load_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError> {
+        Ok(apply_github_read_filters(
+            self.load_mapped_issues()?,
+            &self.config,
+        ))
+    }
+
+    fn load_mapped_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError> {
         let issues =
             if !self.fixture_issues.is_empty() || self.config.tracker.fixture_path.is_some() {
                 self.fixture_issues.clone()
@@ -233,17 +240,26 @@ impl GithubProjectV2Adapter {
                 GithubProjectV2GhClient::new(&self.config).fetch_project_issues()?
             };
 
-        Ok(apply_github_read_filters(issues, &self.config))
+        Ok(apply_github_status_filters(issues, &self.config))
     }
 }
 
-fn apply_github_read_filters(
+fn apply_github_status_filters(
     issues: Vec<TrackerIssue>,
     config: &RuntimeConfig,
 ) -> Vec<TrackerIssue> {
     issues
         .into_iter()
         .filter(|issue| status_is_mapped(&issue.state, config))
+        .collect()
+}
+
+fn apply_github_read_filters(
+    issues: Vec<TrackerIssue>,
+    config: &RuntimeConfig,
+) -> Vec<TrackerIssue> {
+    apply_github_status_filters(issues, config)
+        .into_iter()
         .filter(|issue| issue_matches_assignee_filter(issue, &config.tracker.assignee_filter))
         .collect()
 }
@@ -302,14 +318,14 @@ impl TrackerAdapter for GithubProjectV2Adapter {
 
     fn get_issue(&self, issue_ref: &str) -> Result<Option<TrackerIssue>, TrackerError> {
         Ok(self
-            .load_issues()?
+            .load_mapped_issues()?
             .iter()
             .find(|issue| issue.id == issue_ref || issue.identifier == issue_ref)
             .cloned())
     }
 
     fn fetch_issues_by_states(&self, states: &[String]) -> Result<Vec<TrackerIssue>, TrackerError> {
-        MemoryTracker::new(self.load_issues()?).fetch_issues_by_states(states)
+        MemoryTracker::new(self.load_mapped_issues()?).fetch_issues_by_states(states)
     }
 
     fn set_state(&self, issue_ref: &str, normalized_state: &str) -> Result<(), TrackerError> {
@@ -2821,6 +2837,35 @@ Prompt
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].state, "Todo");
         assert_eq!(filtered[0].assignees, vec!["Codex"]);
+    }
+
+    #[test]
+    fn github_state_reads_can_bypass_main_assignee_filter_for_merge_lane() {
+        let config = github_config(
+            r#"---
+tracker:
+  kind: github_project_v2
+  owner: Alive24
+  repo: jade-symphony
+  project_owner: Alive24
+  project_number: 1
+  assignee_filter:
+    source: issue_assignees
+    allow_unassigned: false
+    assignees: []
+---
+Prompt
+"#,
+        );
+
+        let unassigned_merging = issue("Merging");
+        let dispatch_filtered =
+            apply_github_read_filters(vec![unassigned_merging.clone()], &config);
+        let state_filtered = apply_github_status_filters(vec![unassigned_merging], &config);
+
+        assert!(dispatch_filtered.is_empty());
+        assert_eq!(state_filtered.len(), 1);
+        assert_eq!(state_filtered[0].state, "Merging");
     }
 
     #[test]

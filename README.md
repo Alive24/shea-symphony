@@ -213,6 +213,7 @@ boundaries, and role-specific lanes.
 cargo run -- validate examples/dry-run-workflow.md
 cargo run -- validate-workflow examples/dry-run-workflow.md
 cargo run -- inspect examples/dry-run-workflow.md
+cargo run -- inspect examples/github-project-workflow.md --state Merging --state Rework
 cargo run -- doctor examples/dry-run-workflow.md
 cargo run -- doctor-repair-human-review examples/dry-run-workflow.md --dry-run
 cargo run -- doctor examples/dry-run-workflow.md --json

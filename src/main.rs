@@ -94,7 +94,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             once,
         } => status_api(workflow_path, bind, once),
         Command::Validate { workflow_path } => validate(workflow_path),
-        Command::Inspect { workflow_path } => inspect(workflow_path),
+        Command::Inspect {
+            workflow_path,
+            states,
+        } => inspect(workflow_path, states),
         Command::Doctor { options } => doctor(options),
         Command::DoctorRepairHumanReview {
             workflow_path,
@@ -1309,14 +1312,20 @@ fn validate(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn inspect(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+fn inspect(
+    workflow_path: PathBuf,
+    state_filters: Vec<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
 
     let adapter = adapter_from_config(&config);
-    let issues = adapter.list_dispatchable_issues()?;
+    let issues = filter_issues_by_state(adapter.list_dispatchable_issues()?, &state_filters);
 
+    if !state_filters.is_empty() {
+        println!("state_filter={}", state_filters.join(","));
+    }
     println!("issues={}", issues.len());
     println!("{}", render_state_summary(&issues));
     for issue in issues {
@@ -1338,6 +1347,29 @@ fn inspect(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn filter_issues_by_state(
+    issues: Vec<TrackerIssue>,
+    state_filters: &[String],
+) -> Vec<TrackerIssue> {
+    if state_filters.is_empty() {
+        return issues;
+    }
+
+    let normalized_filters = state_filters
+        .iter()
+        .map(|state| normalize_state(state))
+        .collect::<Vec<_>>();
+    issues
+        .into_iter()
+        .filter(|issue| {
+            let issue_state = issue.normalized_state();
+            normalized_filters
+                .iter()
+                .any(|filter| filter == &issue_state)
+        })
+        .collect()
 }
 
 fn render_state_summary(issues: &[TrackerIssue]) -> String {
@@ -3140,6 +3172,7 @@ enum Command {
     },
     Inspect {
         workflow_path: PathBuf,
+        states: Vec<String>,
     },
     Doctor {
         options: DoctorOptions,
@@ -3370,7 +3403,7 @@ enum CliCommand {
     StatusApi(StatusApiArgs),
     #[command(alias = "validate-workflow")]
     Validate(WorkflowPathArgs),
-    Inspect(WorkflowPathArgs),
+    Inspect(InspectArgs),
     #[command(alias = "audit-project")]
     Doctor(DoctorArgs),
     #[command(name = "doctor-repair-human-review")]
@@ -3432,6 +3465,18 @@ struct WorkflowPathArgs {
     workflow_path: PathBuf,
     #[arg(long)]
     json: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+    #[arg(long = "write")]
+    _write: bool,
+}
+
+#[derive(Debug, Args)]
+struct InspectArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long = "state")]
+    states: Vec<String>,
     #[arg(long = "dry-run")]
     _dry_run: bool,
     #[arg(long = "write")]
@@ -3833,6 +3878,7 @@ impl TryFrom<Cli> for Command {
                     }),
                     CliCommand::Inspect(args) => Ok(Self::Inspect {
                         workflow_path: args.workflow_path,
+                        states: args.states,
                     }),
                     CliCommand::Doctor(args) => Ok(Self::Doctor {
                         options: DoctorOptions {
@@ -4422,6 +4468,50 @@ mod tests {
                 workflow_path: PathBuf::from("examples/dry-run-workflow.md")
             }
         );
+    }
+
+    #[test]
+    fn parses_inspect_state_filters() {
+        assert_eq!(
+            parse(&[
+                "inspect",
+                "examples/github-project-workflow.md",
+                "--state",
+                "Merging",
+                "--state",
+                "Rework"
+            ]),
+            Command::Inspect {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                states: vec!["Merging".into(), "Rework".into()]
+            }
+        );
+    }
+
+    #[test]
+    fn inspect_state_filter_matches_normalized_states() {
+        let issues = vec![
+            tracker_issue("Todo"),
+            tracker_issue("In Progress"),
+            tracker_issue("Agent Review"),
+        ];
+
+        let filtered = filter_issues_by_state(issues, &["in progress".into(), "todo".into()]);
+
+        assert_eq!(
+            filtered
+                .into_iter()
+                .map(|issue| issue.state)
+                .collect::<Vec<_>>(),
+            vec!["Todo", "In Progress"]
+        );
+    }
+
+    #[test]
+    fn inspect_state_filter_preserves_unfiltered_issue_list() {
+        let issues = vec![tracker_issue("Todo"), tracker_issue("Done")];
+
+        assert_eq!(filter_issues_by_state(issues.clone(), &[]), issues);
     }
 
     #[test]

@@ -264,6 +264,7 @@ usable GitHub auth through `GITHUB_TOKEN` / `GH_TOKEN` or `gh api graphql`:
 ```bash
 cargo run -- set-state path/to/WORKFLOW.md '#123' need_to_clarify --write
 cargo run -- workpad path/to/WORKFLOW.md '#123' path/to/workpad.md --write
+cargo run -- link-pr path/to/WORKFLOW.md '#123' https://github.com/OWNER/REPO/pull/456 --write
 cargo run -- create-follow-up --workflow path/to/WORKFLOW.md --title "Follow-up title" --body-file path/to/body.md --write
 cargo run -- add-to-project path/to/WORKFLOW.md <github-issue-node-id> --write
 cargo run -- gate-apply path/to/WORKFLOW.md '#123' --write
@@ -283,6 +284,10 @@ normalized tracker state machine. `forge-create --add-to-project` can set
 additional GitHub Project v2 single-select fields by name with repeatable
 `--project-field NAME=VALUE` flags. Text, number, date, and multi-step field
 editing remain follow-ups.
+
+`link-pr` records issue-to-PR evidence through the normalized tracker adapter.
+In GitHub Project v2 mode this currently writes a tracker comment, matching the
+adapter boundary; richer first-class PR reconciliation remains a follow-up.
 
 `set-state` is a main-implementation-agent command and refuses `Human Review`.
 `review-once` / `review-fake` are independent Review Agent commands: a passing

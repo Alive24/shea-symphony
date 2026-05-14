@@ -127,6 +127,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             markdown_path,
             write,
         } => upsert_workpad(workflow_path, issue_ref, markdown_path, write),
+        Command::LinkPr {
+            workflow_path,
+            issue_ref,
+            pr_ref,
+            write,
+        } => link_pr(workflow_path, issue_ref, pr_ref, write),
         Command::CreateFollowUp {
             workflow_path,
             title,
@@ -405,6 +411,38 @@ fn upsert_workpad(
         markdown_path.display()
     );
     Ok(())
+}
+
+fn link_pr(
+    workflow_path: PathBuf,
+    issue_ref: String,
+    pr_ref: String,
+    write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !write {
+        println!("link_pr_dry_run action=link_pull_request issue_ref={issue_ref} pr_ref={pr_ref}");
+        return Ok(());
+    }
+
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    link_pr_with_adapter(adapter.as_ref(), &issue_ref, &pr_ref, true)?;
+    println!("link_pr=ok issue_ref={issue_ref} pr_ref={pr_ref}");
+    Ok(())
+}
+
+fn link_pr_with_adapter(
+    adapter: &dyn TrackerAdapter,
+    issue_ref: &str,
+    pr_ref: &str,
+    write: bool,
+) -> Result<bool, TrackerError> {
+    if write {
+        adapter.link_pull_request(issue_ref, pr_ref)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
 }
 
 fn create_follow_up(
@@ -3025,6 +3063,12 @@ enum Command {
         markdown_path: PathBuf,
         write: bool,
     },
+    LinkPr {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        pr_ref: String,
+        write: bool,
+    },
     CreateFollowUp {
         workflow_path: PathBuf,
         title: String,
@@ -3229,6 +3273,8 @@ enum CliCommand {
     #[command(name = "set-state")]
     SetState(SetStateArgs),
     Workpad(WorkpadArgs),
+    #[command(name = "link-pr")]
+    LinkPr(LinkPrArgs),
     #[command(name = "create-follow-up")]
     CreateFollowUp(CreateFollowUpArgs),
     #[command(name = "add-to-project")]
@@ -3395,6 +3441,18 @@ struct WorkpadArgs {
     workflow_path: PathBuf,
     issue_ref: String,
     markdown_path: PathBuf,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct LinkPrArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    issue_ref: String,
+    pr_ref: String,
     #[arg(long)]
     write: bool,
     #[arg(long = "dry-run")]
@@ -3727,6 +3785,12 @@ impl TryFrom<Cli> for Command {
                         workflow_path: args.workflow_path,
                         issue_ref: args.issue_ref,
                         markdown_path: args.markdown_path,
+                        write: args.write,
+                    }),
+                    CliCommand::LinkPr(args) => Ok(Self::LinkPr {
+                        workflow_path: args.workflow_path,
+                        issue_ref: args.issue_ref,
+                        pr_ref: args.pr_ref,
                         write: args.write,
                     }),
                     CliCommand::CreateFollowUp(args) => Ok(Self::CreateFollowUp {
@@ -5537,6 +5601,47 @@ mod tests {
             error,
             "forge-create --project-field requires --add-to-project"
         );
+    }
+
+    #[test]
+    fn parses_link_pr_flags() {
+        let command = Command::parse(vec![
+            "link-pr".into(),
+            "examples/github-project-workflow.md".into(),
+            "#127".into(),
+            "https://github.com/Alive24/jade-symphony/pull/128".into(),
+            "--write".into(),
+        ])
+        .unwrap();
+
+        let Command::LinkPr {
+            workflow_path,
+            issue_ref,
+            pr_ref,
+            write,
+        } = command
+        else {
+            panic!("expected link-pr command");
+        };
+
+        assert_eq!(
+            workflow_path,
+            PathBuf::from("examples/github-project-workflow.md")
+        );
+        assert_eq!(issue_ref, "#127");
+        assert_eq!(pr_ref, "https://github.com/Alive24/jade-symphony/pull/128");
+        assert!(write);
+    }
+
+    #[test]
+    fn link_pr_helper_respects_write_intent() {
+        let adapter = RecordingAdapter::default();
+
+        assert!(!link_pr_with_adapter(&adapter, "#127", "PR_128", false).unwrap());
+        assert!(adapter.operations().is_empty());
+
+        assert!(link_pr_with_adapter(&adapter, "#127", "PR_128", true).unwrap());
+        assert_eq!(adapter.operations(), vec!["link_pr:#127:PR_128"]);
     }
 
     #[test]

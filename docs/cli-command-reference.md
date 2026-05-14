@@ -122,7 +122,7 @@ cargo run -- review-loop examples/review-fixture-workflow.md --max-iterations 1 
 
 | Command | Purpose | Boundary |
 | --- | --- | --- |
-| `merge-once` | Inspect one `Merging` issue, verify a single linked PR, and either merge or route blockers. | Live merge requires explicit `--write`; blocked PRs route to `Rework` or `Need Human Input`. |
+| `merge-once` | Inspect one `Merging` issue, verify a single linked PR, and either merge or route blockers. | Live merge requires explicit `--write`; dirty/failing PRs route to `Rework`, transient `UNKNOWN` mergeability stays in `Merging` for retry, and `Need Human Input` workpads include a concrete question. |
 | `land` | Compatibility alias for `merge-once`. | Same boundary as `merge-once`. |
 
 Examples:

@@ -29,8 +29,8 @@ use jade_symphony::issue_forge::{
     validate_markdown, InteractiveForgeInput,
 };
 use jade_symphony::merge_lane::{
-    expected_merge_base_branch, fetch_pull_request_status, merge_lane_decision, merge_lane_workpad,
-    merge_pull_request, pull_request_status_from_linked, MergeLaneDecisionKind,
+    expected_merge_base_branch, fetch_pull_request_status_with_recheck, merge_lane_decision,
+    merge_lane_workpad, merge_pull_request, pull_request_status_from_linked, MergeLaneDecisionKind,
 };
 use jade_symphony::model::{normalize_state, GateDecision, GateDecisionKind, TrackerIssue};
 use jade_symphony::observability_api::serve_once;
@@ -1220,7 +1220,7 @@ fn merge_preflight_status(
         return Ok(pull_request_status_from_linked(linked));
     }
 
-    match fetch_pull_request_status(pr_ref, runner, &std::env::current_dir()?) {
+    match fetch_pull_request_status_with_recheck(pr_ref, runner, &std::env::current_dir()?, 2) {
         Ok(status) => Ok(Some(status)),
         Err(error) => {
             eprintln!("merge_preflight_warning={error}");

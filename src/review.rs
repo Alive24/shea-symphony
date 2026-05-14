@@ -310,6 +310,8 @@ impl ReviewBackend for GeminiCliReviewBackend {
     }
 
     fn start(&self, request: ReviewRequest) -> Result<ReviewJob, ReviewError> {
+        fs::create_dir_all(&request.workspace)
+            .map_err(|error| ReviewError::Artifact(error.to_string()))?;
         fs::create_dir_all(&request.artifact_root)
             .map_err(|error| ReviewError::Artifact(error.to_string()))?;
         let id = review_job_id("gemini");
@@ -893,6 +895,46 @@ mod tests {
             "human_review",
             &decision
         ));
+    }
+
+    #[test]
+    fn gemini_backend_creates_missing_review_workspace_before_launch() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("missing-review-workspace");
+        let artifact_root = temp.path().join("reviews");
+        let reviewer = temp.path().join("reviewer.sh");
+        fs::write(&reviewer, "#!/bin/sh\nprintf 'Review completed.\\n'\n").unwrap();
+        let mut permissions = fs::metadata(&reviewer).unwrap().permissions();
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(0o755);
+        fs::set_permissions(&reviewer, permissions).unwrap();
+
+        let backend = GeminiCliReviewBackend::new(reviewer.display().to_string());
+        let request = ReviewRequest {
+            issue: issue(),
+            prompt: "Review completed.".into(),
+            workspace: workspace.clone(),
+            artifact_root,
+        };
+
+        let mut job = backend.start(request).unwrap();
+        assert!(workspace.is_dir());
+
+        for _ in 0..100 {
+            job = backend.poll(job).unwrap();
+            if job.state != ReviewJobState::Running {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        assert_eq!(job.state, ReviewJobState::Completed);
+        assert_eq!(
+            job.report
+                .as_ref()
+                .and_then(|report| report.summary.as_deref()),
+            Some("Review completed.")
+        );
     }
 
     #[test]

@@ -79,7 +79,9 @@ For a compact source-linked view of what is landed, what is waiting in
   explicit `--write`.
   `forge-create --add-to-project` can also set GitHub Project v2 single-select
   fields by name with repeatable `--project-field NAME=VALUE` flags, for
-  example `--project-field Capability=CLI`.
+  example `--project-field Capability=CLI`; live GitHub creation requires an
+  explicit `--assignee` so the created issue can pass the live assignee gate
+  before executable Project dispatch.
 - Issue Forge also has a CLI-first interactive mode that selects a lightweight
   issue skill/template (`runtime`, `tracker`, `backend`, `review`, `docs`, or
   `integration-test`), emits one focused clarification question for thin intent,
@@ -240,7 +242,7 @@ cargo run -- forge-validate --title "Repaired Forge issue" --file examples/fixtu
 cargo run -- forge-draft --title "Implement read-only Project v2 adapter" --goal "Load Project v2 issues into TrackerIssue records."
 cargo run -- forge-interactive --title "Add resume preflight" --intent "run-loop should inspect runtime state before claiming new work" --skill runtime
 cargo run -- forge-reflect --context-file docs/dogfood-readiness.md --limit 1
-cargo run -- forge-create --workflow path/to/WORKFLOW.md --title "Follow-up title" --file path/to/issue.md --add-to-project --project-field Capability=CLI --write
+cargo run -- forge-create --workflow path/to/WORKFLOW.md --title "Follow-up title" --file path/to/issue.md --assignee Alive24 --add-to-project --project-field Capability=CLI --write
 ```
 
 `run-once` defaults to dry-run examples, but the Codex and Claude subprocess

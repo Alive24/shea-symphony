@@ -212,6 +212,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             markdown,
             add_to_project,
             project_fields,
+            assignees,
             write,
         } => forge_create(
             workflow_path,
@@ -219,6 +220,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             markdown,
             add_to_project,
             project_fields,
+            assignees,
             write,
         ),
         Command::ForgeInteractive { options } => forge_interactive(options),
@@ -462,6 +464,7 @@ fn create_follow_up(
     let issue_id = adapter.create_follow_up_issue(FollowUpIssueInput {
         title,
         body,
+        assignees: Vec::new(),
         project_id: None,
         related_issue_ref: None,
         blocked_by_issue_ref: None,
@@ -476,6 +479,7 @@ fn forge_create(
     markdown: String,
     add_to_project: bool,
     project_fields: Vec<ProjectFieldAssignment>,
+    assignees: Vec<String>,
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     require_write_intent(write)?;
@@ -483,10 +487,15 @@ fn forge_create(
         return Err("forge-create --project-field requires --add-to-project".into());
     }
     let config = load_config(&workflow_path)?;
-    let report =
-        validate_forge_create_contract(&title, &markdown, &config).inspect_err(|_message| {
-            let report = validate_forge_create_report(&title, &markdown, &config)
-                .unwrap_or_else(|_| validate_markdown(&title, &markdown));
+    let assignees = normalize_forge_assignees(assignees);
+    if forge_create_requires_assignee(&config) && assignees.is_empty() {
+        return Err("forge-create requires --assignee for live GitHub issue creation".into());
+    }
+    let report = validate_forge_create_contract(&title, &markdown, &config, &assignees)
+        .inspect_err(|_message| {
+            let report =
+                validate_forge_create_report_with_assignees(&title, &markdown, &config, &assignees)
+                    .unwrap_or_else(|_| validate_markdown(&title, &markdown));
             print_forge_validation(&report);
         })?;
 
@@ -504,6 +513,7 @@ fn forge_create(
     let issue_id = adapter.create_follow_up_issue(FollowUpIssueInput {
         title: report.title,
         body: markdown,
+        assignees: assignees.clone(),
         project_id: None,
         related_issue_ref: None,
         blocked_by_issue_ref: None,
@@ -521,6 +531,20 @@ fn forge_create(
         project_fields.len()
     );
     Ok(())
+}
+
+fn normalize_forge_assignees(assignees: Vec<String>) -> Vec<String> {
+    assignees
+        .into_iter()
+        .map(|assignee| assignee.trim().trim_start_matches('@').to_string())
+        .filter(|assignee| !assignee.is_empty())
+        .collect()
+}
+
+fn forge_create_requires_assignee(config: &RuntimeConfig) -> bool {
+    config.tracker.kind == "github_project_v2"
+        && config.tracker.fixture_path.is_none()
+        && !config.tracker.assignee_filter.allow_unassigned
 }
 
 fn find_duplicate_issue_title<'a>(
@@ -575,6 +599,7 @@ fn forge_interactive(options: ForgeInteractiveOptions) -> Result<(), Box<dyn std
             report.issue_markdown,
             options.add_to_project,
             Vec::new(),
+            Vec::new(),
             true,
         )?;
     }
@@ -613,9 +638,11 @@ fn validate_forge_create_contract(
     title: &str,
     markdown: &str,
     config: &RuntimeConfig,
+    intended_assignees: &[String],
 ) -> Result<jade_symphony::issue_forge::ForgeValidationReport, String> {
-    let report = validate_forge_create_report(title, markdown, config)
-        .map_err(|error| format!("source alignment failed: {error}"))?;
+    let report =
+        validate_forge_create_report_with_assignees(title, markdown, config, intended_assignees)
+            .map_err(|error| format!("source alignment failed: {error}"))?;
     if report.decision.is_dispatchable() {
         Ok(report)
     } else {
@@ -623,10 +650,11 @@ fn validate_forge_create_contract(
     }
 }
 
-fn validate_forge_create_report(
+fn validate_forge_create_report_with_assignees(
     title: &str,
     markdown: &str,
     config: &RuntimeConfig,
+    intended_assignees: &[String],
 ) -> Result<jade_symphony::issue_forge::ForgeValidationReport, Box<dyn std::error::Error>> {
     let issue = TrackerIssue {
         tracker_kind: config.tracker.kind.clone(),
@@ -638,7 +666,7 @@ fn validate_forge_create_report(
         url: None,
         state: config.tracker.state_map.todo.clone(),
         labels: Vec::new(),
-        assignees: Vec::new(),
+        assignees: intended_assignees.to_vec(),
         priority: None,
         branch_name: None,
         linked_pull_requests: Vec::new(),
@@ -3282,6 +3310,7 @@ enum Command {
         markdown: String,
         add_to_project: bool,
         project_fields: Vec<ProjectFieldAssignment>,
+        assignees: Vec<String>,
         write: bool,
     },
     ForgeInteractive {
@@ -3808,6 +3837,8 @@ struct ForgeCreateArgs {
     add_to_project: bool,
     #[arg(long = "project-field")]
     project_fields: Vec<String>,
+    #[arg(long = "assignee")]
+    assignees: Vec<String>,
     #[arg(long)]
     write: bool,
     #[arg(long = "dry-run")]
@@ -4044,6 +4075,7 @@ impl TryFrom<Cli> for Command {
                         markdown: read_source_arg(args.body, args.file)?,
                         add_to_project: args.add_to_project,
                         project_fields: parse_project_field_assignments(args.project_fields)?,
+                        assignees: args.assignees,
                         write: args.write,
                     }),
                     CliCommand::ForgeInteractive(args) => Ok(Self::ForgeInteractive {
@@ -5818,6 +5850,8 @@ mod tests {
             "--add-to-project".into(),
             "--project-field".into(),
             "Capability=CLI".into(),
+            "--assignee".into(),
+            "@Alive24".into(),
             "--write".into(),
         ])
         .unwrap();
@@ -5828,6 +5862,7 @@ mod tests {
             markdown,
             add_to_project,
             project_fields,
+            assignees,
             write,
         } = command
         else {
@@ -5845,6 +5880,7 @@ mod tests {
                 value: "CLI".into()
             }]
         );
+        assert_eq!(assignees, vec!["@Alive24".to_string()]);
         assert!(write);
     }
 
@@ -5859,6 +5895,7 @@ mod tests {
                 name: "Capability".into(),
                 value: "CLI".into(),
             }],
+            Vec::new(),
             true,
         )
         .unwrap_err()
@@ -5982,11 +6019,68 @@ mod tests {
     #[test]
     fn validates_forge_create_contract_before_tracker_write() {
         let config = test_config();
-        assert!(validate_forge_create_contract("Create issue", &forge_contract(), &config).is_ok());
+        assert!(
+            validate_forge_create_contract("Create issue", &forge_contract(), &config, &[]).is_ok()
+        );
 
-        let error =
-            validate_forge_create_contract("Thin issue", "make it better", &config).unwrap_err();
+        let error = validate_forge_create_contract("Thin issue", "make it better", &config, &[])
+            .unwrap_err();
         assert!(error.contains("tracker issue was not created"));
+    }
+
+    #[test]
+    fn forge_create_draft_validation_uses_intended_assignee_for_live_github() {
+        let config = live_github_config(false);
+        let assignees = vec!["Alive24".to_string()];
+
+        let report = validate_forge_create_report_with_assignees(
+            "Create issue",
+            &forge_contract(),
+            &config,
+            &assignees,
+        )
+        .unwrap();
+
+        assert!(report.decision.is_dispatchable());
+    }
+
+    #[test]
+    fn forge_create_live_github_requires_assignee_before_creation() {
+        let config = live_github_config(false);
+
+        let error = validate_forge_create_contract("Create issue", &forge_contract(), &config, &[])
+            .unwrap_err();
+
+        assert!(error.contains("tracker issue was not created"));
+        assert!(forge_create_requires_assignee(&config));
+    }
+
+    #[test]
+    fn forge_create_entrypoint_rejects_live_github_without_assignee() {
+        let temp = tempfile::tempdir().unwrap();
+        let workflow_path = temp.path().join("WORKFLOW.md");
+        std::fs::write(
+            &workflow_path,
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 9\n  assignee_filter:\n    allow_unassigned: false\nobservability:\n  logs_root: log\n---\nPrompt",
+        )
+        .unwrap();
+
+        let error = forge_create(
+            workflow_path,
+            "Create issue".into(),
+            forge_contract(),
+            false,
+            Vec::new(),
+            Vec::new(),
+            true,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert_eq!(
+            error,
+            "forge-create requires --assignee for live GitHub issue creation"
+        );
     }
 
     #[test]
@@ -6034,6 +6128,7 @@ mod tests {
             forge_contract(),
             true,
             Vec::new(),
+            Vec::new(),
             true,
         )
         .unwrap_err()
@@ -6059,6 +6154,7 @@ mod tests {
             "Create issue".into(),
             forge_contract(),
             true,
+            Vec::new(),
             Vec::new(),
             true,
         )

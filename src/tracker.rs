@@ -75,6 +75,7 @@ impl ProjectFieldAssignment {
 pub struct FollowUpIssueInput {
     pub title: String,
     pub body: String,
+    pub assignees: Vec<String>,
     pub project_id: Option<String>,
     pub related_issue_ref: Option<String>,
     pub blocked_by_issue_ref: Option<String>,
@@ -566,7 +567,59 @@ impl GithubProjectV2GhClient {
             .pointer("/data/createIssue/issue/id")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| TrackerError::Payload("createIssue response missing issue id".into()))?;
+        let number = response
+            .pointer("/data/createIssue/issue/number")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| {
+                TrackerError::Payload("createIssue response missing issue number".into())
+            })?;
+        self.assign_issue(number, &input.assignees)?;
         Ok(id.to_string())
+    }
+
+    fn assign_issue(&self, number: u64, assignees: &[String]) -> Result<(), TrackerError> {
+        if assignees.is_empty() {
+            return Ok(());
+        }
+        if !gh_available() {
+            return Err(TrackerError::IntegrationUnavailable(
+                "GitHub issue assignment requires the `gh` CLI on PATH".into(),
+            ));
+        }
+        let owner = self
+            .config
+            .tracker
+            .owner
+            .as_deref()
+            .ok_or_else(|| TrackerError::Payload("tracker.owner is required".into()))?;
+        let repo = self
+            .config
+            .tracker
+            .repo
+            .as_deref()
+            .ok_or_else(|| TrackerError::Payload("tracker.repo is required".into()))?;
+
+        for assignee in assignees {
+            let output = Command::new("gh")
+                .args([
+                    "issue",
+                    "edit",
+                    &number.to_string(),
+                    "--repo",
+                    &format!("{owner}/{repo}"),
+                    "--add-assignee",
+                    assignee,
+                ])
+                .output()
+                .map_err(|error| TrackerError::IntegrationUnavailable(error.to_string()))?;
+            if !output.status.success() {
+                return Err(TrackerError::IntegrationUnavailable(
+                    String::from_utf8_lossy(&output.stderr).trim().to_string(),
+                ));
+            }
+        }
+
+        Ok(())
     }
 
     fn add_issue_to_project(&self, issue_id: &str) -> Result<(), TrackerError> {
@@ -2021,6 +2074,11 @@ impl LinearGraphqlClient {
     }
 
     fn create_follow_up_issue(&self, input: FollowUpIssueInput) -> Result<String, TrackerError> {
+        if !input.assignees.is_empty() {
+            return Err(TrackerError::NotImplemented(
+                "Linear follow-up issue assignee assignment is not implemented".into(),
+            ));
+        }
         let project = self.resolve_project()?;
         let body = follow_up_issue_body(&input);
         let response = self.graphql(
@@ -3188,6 +3246,7 @@ Prompt
         let body = follow_up_issue_body(&FollowUpIssueInput {
             title: "Follow-up".into(),
             body: "Main body".into(),
+            assignees: Vec::new(),
             project_id: Some("PVT_1".into()),
             related_issue_ref: Some("#3".into()),
             blocked_by_issue_ref: Some("#2".into()),

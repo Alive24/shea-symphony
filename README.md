@@ -167,6 +167,7 @@ Expected shape:
 cargo run -- validate examples/dry-run-workflow.md
 cargo run -- validate-workflow examples/dry-run-workflow.md
 cargo run -- inspect examples/dry-run-workflow.md
+cargo run -- inspect examples/github-project-workflow.md --state Merging --state Rework
 cargo run -- doctor examples/dry-run-workflow.md
 cargo run -- plan examples/dry-run-workflow.md
 cargo run -- plan-dispatch examples/dry-run-workflow.md

@@ -231,8 +231,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             skill,
             limit,
         } => forge_reflect(context, skill, limit),
-        Command::Help => {
-            println!("{}", usage());
+        Command::Help(text) => {
+            print!("{text}");
             Ok(())
         }
     }
@@ -3416,7 +3416,7 @@ enum Command {
         skill: Option<String>,
         limit: usize,
     },
-    Help,
+    Help(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3491,7 +3491,7 @@ impl RunLoopOptions {
 impl Command {
     fn parse(args: Vec<String>) -> Result<Self, String> {
         if matches!(args.first().map(String::as_str), Some("help")) {
-            return Ok(Self::Help);
+            return Ok(Self::Help(usage()));
         }
 
         let argv = std::iter::once("jade-symphony".to_string())
@@ -3499,7 +3499,9 @@ impl Command {
             .collect::<Vec<_>>();
         match Cli::try_parse_from(argv) {
             Ok(cli) => Command::try_from(cli),
-            Err(error) if error.kind() == ErrorKind::DisplayHelp => Ok(Self::Help),
+            Err(error) if error.kind() == ErrorKind::DisplayHelp => {
+                Ok(Self::Help(error.to_string()))
+            }
             Err(error) => Err(error.to_string()),
         }
     }
@@ -4358,6 +4360,13 @@ mod tests {
         Command::parse(args.iter().map(|arg| arg.to_string()).collect()).unwrap()
     }
 
+    fn help_text(args: &[&str]) -> String {
+        let Command::Help(text) = parse(args) else {
+            panic!("expected help command");
+        };
+        text
+    }
+
     fn test_config() -> RuntimeConfig {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
@@ -4930,8 +4939,25 @@ mod tests {
 
     #[test]
     fn clap_parser_treats_help_flags_as_successful_help() {
-        assert_eq!(parse(&["--help"]), Command::Help);
-        assert_eq!(parse(&["-h"]), Command::Help);
+        assert!(help_text(&["--help"]).contains("Usage: jade-symphony"));
+        assert!(help_text(&["-h"]).contains("Usage: jade-symphony"));
+    }
+
+    #[test]
+    fn clap_parser_preserves_subcommand_specific_help() {
+        let link_pr = help_text(&["link-pr", "--help"]);
+        assert!(link_pr.contains("Usage: jade-symphony link-pr"));
+        assert!(link_pr.contains("<path-to-WORKFLOW.md>"));
+        assert!(link_pr.contains("<ISSUE_REF>"));
+        assert!(link_pr.contains("<PR_REF>"));
+
+        let workpad = help_text(&["workpad", "--help"]);
+        assert!(workpad.contains("Usage: jade-symphony workpad"));
+        assert!(workpad.contains("<MARKDOWN_PATH>"));
+
+        let set_state = help_text(&["set-state", "--help"]);
+        assert!(set_state.contains("Usage: jade-symphony set-state"));
+        assert!(set_state.contains("<STATE>"));
     }
 
     #[test]

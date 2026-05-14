@@ -1378,6 +1378,7 @@ fn pull_requests_from_issue(issue: &serde_json::Value) -> Vec<LinkedPullRequest>
                 .get("state")
                 .and_then(serde_json::Value::as_str)
                 .map(ToOwned::to_owned),
+            ..Default::default()
         })
         .collect()
 }

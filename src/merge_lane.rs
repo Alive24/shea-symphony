@@ -244,10 +244,10 @@ pub fn pull_request_status_from_linked(
         number: pull_request.number,
         url: pull_request.url.clone()?,
         state: pull_request.state.clone().unwrap_or_else(|| "OPEN".into()),
-        is_draft: false,
-        merge_state_status: None,
-        review_decision: None,
-        base_ref_name: None,
+        is_draft: pull_request.is_draft.unwrap_or(false),
+        merge_state_status: pull_request.merge_state_status.clone(),
+        review_decision: pull_request.review_decision.clone(),
+        base_ref_name: pull_request.base_ref_name.clone(),
         checks: Vec::new(),
     })
 }
@@ -472,6 +472,20 @@ mod tests {
             number: Some(60),
             url: Some("https://github.com/Alive24/jade-symphony/pull/60".into()),
             state: Some("OPEN".into()),
+            ..Default::default()
+        }
+    }
+
+    fn clean_fixture_pr() -> LinkedPullRequest {
+        LinkedPullRequest {
+            id: Some("PR_60".into()),
+            number: Some(60),
+            url: Some("https://github.com/Alive24/jade-symphony/pull/60".into()),
+            state: Some("OPEN".into()),
+            is_draft: Some(false),
+            merge_state_status: Some("CLEAN".into()),
+            review_decision: Some("APPROVED".into()),
+            base_ref_name: Some("main".into()),
         }
     }
 
@@ -506,6 +520,16 @@ mod tests {
 
         assert_eq!(decision.kind, MergeLaneDecisionKind::ReadyToMerge);
         assert_eq!(decision.target_state, Some("done"));
+    }
+
+    #[test]
+    fn fixture_linked_pr_metadata_can_represent_clean_merge_preflight() {
+        let status = pull_request_status_from_linked(&clean_fixture_pr()).unwrap();
+
+        assert_eq!(status.review_decision.as_deref(), Some("APPROVED"));
+        assert_eq!(status.merge_state_status.as_deref(), Some("CLEAN"));
+        assert_eq!(status.base_ref_name.as_deref(), Some("main"));
+        assert!(!status.is_draft);
     }
 
     #[test]

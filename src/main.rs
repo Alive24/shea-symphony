@@ -899,6 +899,7 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                             "review_loop_dry_run action=start issue={} backend={backend_kind}",
                             selected_issue.identifier
                         );
+                        print_review_claim_field_dry_run(&selected_issue.identifier, &worker_key);
                         println!(
                             "review_loop_dry_run action=workpad issue={} evidence=review_job",
                             selected_issue.identifier
@@ -924,7 +925,12 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                         &config.tracker.state_map.agent_review,
                         &backend_kind,
                     ) {
-                        ReviewRunEligibility::Eligible { .. } => {
+                        ReviewRunEligibility::Eligible { worker_key } => {
+                            write_review_claim_field(
+                                adapter.as_ref(),
+                                &latest.identifier,
+                                &worker_key,
+                            )?;
                             let mut job =
                                 run_review_job(&config, &latest, options.fake_outcome.clone())?;
                             let ledger_path = write_review_job_ledger_record(
@@ -1278,6 +1284,34 @@ fn select_review_worker_issues(
         .take(max_concurrent.max(1))
         .cloned()
         .collect()
+}
+
+fn review_claim_field_value(worker_key: &str) -> String {
+    format!("running {worker_key}")
+}
+
+fn print_review_claim_field_dry_run(issue_ref: &str, worker_key: &str) {
+    println!(
+        "review_loop_dry_run action=claim_field issue={issue_ref} field={:?} value={:?}",
+        "Review Agent",
+        review_claim_field_value(worker_key)
+    );
+}
+
+fn write_review_claim_field(
+    adapter: &dyn TrackerAdapter,
+    issue_ref: &str,
+    worker_key: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    adapter.set_project_field(
+        issue_ref,
+        &ProjectFieldAssignment {
+            name: "Review Agent".into(),
+            value: review_claim_field_value(worker_key),
+        },
+    )?;
+    println!("review_loop_action=claim_field issue={issue_ref} field=\"Review Agent\"");
+    Ok(())
 }
 
 fn run_review_job(
@@ -5441,6 +5475,22 @@ mod tests {
         queued.project_fields.insert(
             "Review Worker".into(),
             serde_json::Value::String("queued review:#67:fake-reviewer".into()),
+        );
+        let ready = tracker_issue_with_ref("#68", "Ready review", "Agent Review");
+
+        let selected =
+            select_review_worker_issues(&[queued, ready], "Agent Review", "fake-reviewer", 2);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].identifier, "#68");
+    }
+
+    #[test]
+    fn review_worker_selection_skips_review_agent_field_claim() {
+        let mut queued = tracker_issue_with_ref("#67", "Queued review", "Agent Review");
+        queued.project_fields.insert(
+            "Review Agent".into(),
+            serde_json::Value::String(review_claim_field_value("review:#67:fake-reviewer")),
         );
         let ready = tracker_issue_with_ref("#68", "Ready review", "Agent Review");
 

@@ -75,7 +75,8 @@ For a compact source-linked view of what is landed, what is waiting in
 - Issue Forge can discover local candidates from intent, ask one focused
   clarification question, draft from the quality template, validate Markdown,
   repair rough Markdown into an executable issue contract shape, and create a
-  tracker issue from a quality-gated contract with explicit `--write`.
+  tracker issue from a quality-gated, duplicate-title-checked contract with
+  explicit `--write`.
   `forge-create --add-to-project` can also set GitHub Project v2 single-select
   fields by name with repeatable `--project-field NAME=VALUE` flags, for
   example `--project-field Capability=CLI`.

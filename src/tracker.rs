@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::process::Command;
 
@@ -310,10 +310,14 @@ impl TrackerAdapter for GithubProjectV2Adapter {
         &self,
         issue_ref: &str,
     ) -> Result<Vec<LinkedPullRequest>, TrackerError> {
-        Ok(self
-            .get_issue(issue_ref)?
-            .map(|issue| issue.linked_pull_requests)
-            .unwrap_or_default())
+        if self.config.tracker.fixture_path.is_some() {
+            return Ok(self
+                .get_issue(issue_ref)?
+                .map(|issue| issue.linked_pull_requests)
+                .unwrap_or_default());
+        }
+
+        GithubProjectV2GhClient::new(&self.config).list_linked_pull_requests(issue_ref)
     }
 
     fn integration_gaps(&self) -> Vec<String> {
@@ -334,7 +338,7 @@ impl TrackerAdapter for GithubProjectV2Adapter {
             gaps.push(gap);
         }
 
-        gaps.push("GitHub Project v2 PR linking uses an issue comment/autolink strategy; linked PR discovery currently reads closing PR references.".into());
+        gaps.push("GitHub Project v2 PR linking still uses an issue comment/autolink strategy rather than a first-class relationship.".into());
         gaps.push("GitHub Project v2 live write methods use `gh api graphql`; keep using `--write` for mutating CLI commands.".into());
         gaps
     }
@@ -544,6 +548,19 @@ impl GithubProjectV2GhClient {
         Ok(())
     }
 
+    fn list_linked_pull_requests(
+        &self,
+        issue_ref: &str,
+    ) -> Result<Vec<LinkedPullRequest>, TrackerError> {
+        let issue = self.resolve_issue(issue_ref)?;
+        let marker = &self.config.tracker.workpad.marker;
+        let workpad_bodies = self.find_workpad_comment_bodies(&issue.id, marker)?;
+        Ok(merge_linked_pull_requests(
+            issue.linked_pull_requests,
+            linked_pull_requests_from_workpads(&workpad_bodies),
+        ))
+    }
+
     fn find_workpad_comment_ids(
         &self,
         issue_id: &str,
@@ -568,6 +585,27 @@ impl GithubProjectV2GhClient {
                 } else {
                     None
                 }
+            })
+            .collect())
+    }
+
+    fn find_workpad_comment_bodies(
+        &self,
+        issue_id: &str,
+        marker: &str,
+    ) -> Result<Vec<String>, TrackerError> {
+        let response = self.graphql(
+            GITHUB_ISSUE_COMMENTS_QUERY,
+            &[("issueId", issue_id.to_string())],
+        )?;
+        Ok(response
+            .pointer("/data/node/comments/nodes")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|comment| {
+                let body = comment.get("body")?.as_str()?;
+                body.contains(marker).then(|| body.to_string())
             })
             .collect())
     }
@@ -1380,6 +1418,75 @@ fn pull_requests_from_issue(issue: &serde_json::Value) -> Vec<LinkedPullRequest>
                 .map(ToOwned::to_owned),
         })
         .collect()
+}
+
+fn linked_pull_requests_from_workpads(workpad_bodies: &[String]) -> Vec<LinkedPullRequest> {
+    let mut seen = BTreeSet::new();
+    let mut linked = Vec::new();
+    for body in workpad_bodies {
+        for url in github_pull_request_urls(body) {
+            if seen.insert(url.clone()) {
+                linked.push(linked_pull_request_from_url(&url));
+            }
+        }
+    }
+    linked
+}
+
+fn merge_linked_pull_requests(
+    existing: Vec<LinkedPullRequest>,
+    discovered: Vec<LinkedPullRequest>,
+) -> Vec<LinkedPullRequest> {
+    let mut seen_urls = BTreeSet::new();
+    let mut merged = Vec::new();
+    for pr in existing.into_iter().chain(discovered) {
+        if let Some(url) = &pr.url {
+            if !seen_urls.insert(url.clone()) {
+                continue;
+            }
+        }
+        merged.push(pr);
+    }
+    merged
+}
+
+fn github_pull_request_urls(text: &str) -> Vec<String> {
+    text.split(|character: char| character.is_whitespace() || character == '<' || character == '>')
+        .filter_map(clean_github_pull_request_url)
+        .collect()
+}
+
+fn clean_github_pull_request_url(raw: &str) -> Option<String> {
+    let value = raw.trim_matches(|character: char| {
+        matches!(
+            character,
+            '`' | '\'' | '"' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | '.'
+        )
+    });
+    let marker = "/pull/";
+    let marker_index = value.find(marker)?;
+    let number_start = marker_index + marker.len();
+    let number_end = value[number_start..]
+        .find(|character: char| !character.is_ascii_digit())
+        .map(|offset| number_start + offset)
+        .unwrap_or(value.len());
+    if number_end == number_start {
+        return None;
+    }
+    let base = &value[..number_end];
+    (base.starts_with("https://github.com/") || base.starts_with("http://github.com/"))
+        .then(|| base.to_string())
+}
+
+fn linked_pull_request_from_url(url: &str) -> LinkedPullRequest {
+    LinkedPullRequest {
+        id: None,
+        number: url
+            .rsplit_once('/')
+            .and_then(|(_, number)| number.parse::<u64>().ok()),
+        url: Some(url.to_string()),
+        state: None,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -2360,6 +2467,55 @@ mod tests {
         assert_eq!(issues[0].assignees, vec!["codex"]);
         assert_eq!(issues[0].priority, Some(1));
         assert_eq!(issues[0].linked_pull_requests[0].number, Some(7));
+    }
+
+    #[test]
+    fn discovers_pull_request_urls_from_workpad_text() {
+        let bodies = vec![format!(
+            "{}\n- Live PR: `https://github.com/Alive24/jade-symphony/pull/98` (created: `true`)\n- Also see https://github.com/Alive24/jade-symphony/pull/100.",
+            "<!-- jade-symphony-workpad -->"
+        )];
+
+        let prs = linked_pull_requests_from_workpads(&bodies);
+
+        assert_eq!(prs.len(), 2);
+        assert_eq!(
+            prs[0].url.as_deref(),
+            Some("https://github.com/Alive24/jade-symphony/pull/98")
+        );
+        assert_eq!(prs[0].number, Some(98));
+        assert_eq!(prs[0].state, None);
+        assert_eq!(
+            prs[1].url.as_deref(),
+            Some("https://github.com/Alive24/jade-symphony/pull/100")
+        );
+    }
+
+    #[test]
+    fn merge_linked_pull_requests_deduplicates_by_url() {
+        let closing_ref = LinkedPullRequest {
+            id: Some("PR_98".into()),
+            number: Some(98),
+            url: Some("https://github.com/Alive24/jade-symphony/pull/98".into()),
+            state: Some("OPEN".into()),
+        };
+        let discovered_duplicate =
+            linked_pull_request_from_url("https://github.com/Alive24/jade-symphony/pull/98");
+        let discovered_new =
+            linked_pull_request_from_url("https://github.com/Alive24/jade-symphony/pull/100");
+
+        let merged = merge_linked_pull_requests(
+            vec![closing_ref],
+            vec![discovered_duplicate, discovered_new],
+        );
+
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].id.as_deref(), Some("PR_98"));
+        assert_eq!(merged[0].state.as_deref(), Some("OPEN"));
+        assert_eq!(
+            merged[1].url.as_deref(),
+            Some("https://github.com/Alive24/jade-symphony/pull/100")
+        );
     }
 
     #[test]

@@ -1,9 +1,10 @@
 use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::{error::ErrorKind, Args, CommandFactory, Parser, Subcommand, ValueEnum};
-use jade_symphony::agent::backend_from_config;
+use jade_symphony::agent::{backend_from_config, usage_limit_pause_from_events, UsageLimitPause};
 use jade_symphony::config::RuntimeConfig;
 use jade_symphony::doctor::{audit_project_issues, render_project_audit_report};
 use jade_symphony::event_log::{EventLog, EventRecord};
@@ -262,6 +263,14 @@ fn evaluate_issue_for_current_source(
     let expected_target = expected_target_repository(config);
     let deterministic =
         evaluate_issue_with_source_alignment(issue, &repo_root, expected_target.as_deref());
+    if let Some(blocker) = live_missing_assignee_gate_blocker(config, issue) {
+        return Ok(GateDecision {
+            kind: GateDecisionKind::NeedToClarify,
+            missing: vec![blocker],
+            assumptions: deterministic.assumptions,
+            notes: vec!["Live GitHub dispatch requires explicit issue ownership.".into()],
+        });
+    }
     Ok(evaluate_issue_with_llm_gate(
         issue,
         deterministic,
@@ -271,6 +280,16 @@ fn evaluate_issue_for_current_source(
             timeout_ms: config.quality_gate.llm.timeout_ms,
         },
     ))
+}
+
+fn live_missing_assignee_gate_blocker(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+) -> Option<String> {
+    (live_github_tracker(config)
+        && !config.tracker.assignee_filter.allow_unassigned
+        && issue.assignees.is_empty())
+    .then(|| "live GitHub issue assignee".into())
 }
 
 fn expected_target_repository(config: &RuntimeConfig) -> Option<String> {
@@ -1231,6 +1250,7 @@ struct IssueExecutionResult {
     success: bool,
     session_id: Option<String>,
     message: String,
+    usage_limit_pause: Option<UsageLimitPause>,
     actor_role: String,
     actor_label: String,
     git_author: Option<String>,
@@ -1278,6 +1298,7 @@ fn execute_issue_once_with_workspace_key(
     let prepared = backend.prepare(workspace.path.clone(), prompt, config)?;
     let events = backend.run(prepared)?;
     let summary = backend.summarize(&events);
+    let usage_limit_pause = usage_limit_pause_from_events(&events);
     run_after_run(&workspace.path, &config.hooks);
 
     let log = EventLog::new(config.observability.logs_root.join("jade-symphony.jsonl"));
@@ -1308,6 +1329,7 @@ fn execute_issue_once_with_workspace_key(
         success: summary.success,
         session_id: summary.session_id,
         message: summary.message,
+        usage_limit_pause,
         actor_role: config.identity.actor_role.clone(),
         actor_label: config.identity.actor_label.clone(),
         git_author: config.identity.git.author(),
@@ -1481,6 +1503,30 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
+        let profile_login = selected_profile_github_login(&config)?;
+        let active_login = if live_github_tracker(&config) && profile_login.is_none() {
+            current_gh_login()?
+        } else {
+            None
+        };
+        match run_loop_assignee_ownership_decision(
+            &latest,
+            &config,
+            active_login.as_deref(),
+            profile_login.as_deref(),
+        ) {
+            AssigneeOwnershipDecision::Allowed => {}
+            AssigneeOwnershipDecision::Block { reason } => {
+                let workpad = run_loop_assignee_ownership_workpad(&latest, &reason);
+                adapter.upsert_workpad(&latest.identifier, &workpad)?;
+                println!(
+                    "run_loop_action=skip issue={} reason=assignee_ownership detail={}",
+                    latest.identifier, reason
+                );
+                continue;
+            }
+        }
+
         let existing_runtime_state = load_runtime_state(&config)?;
         if let Some(state) = &existing_runtime_state {
             if let Some(active_issue) = &state.active_issue {
@@ -1624,6 +1670,32 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         } else {
             let retry_delay_ms = Orchestrator::new(config.clone())
                 .retry_delay_ms(runtime_state.attempt_count, false);
+            if let Some(pause) = &result.usage_limit_pause {
+                record_runtime_retry(
+                    &mut runtime_state,
+                    current_time_ms(),
+                    retry_delay_ms,
+                    format!("usage-limit pause: {}", pause.evidence),
+                );
+                save_runtime_state(&config, &runtime_state)?;
+                let pause_workpad =
+                    run_loop_usage_limit_pause_workpad(&latest, &result, pause, retry_delay_ms);
+                adapter.upsert_workpad(&latest.identifier, &pause_workpad)?;
+                append_runtime_supervision_event(
+                    &config,
+                    Some(&runtime_state),
+                    "UsageLimitPaused",
+                    &format!(
+                        "issue={} classifier={} due_in_ms={} evidence={}",
+                        latest.identifier, pause.classifier, retry_delay_ms, pause.evidence
+                    ),
+                )?;
+                println!(
+                    "run_loop_action=usage_limit_paused issue={} classifier={} due_in_ms={}",
+                    latest.identifier, pause.classifier, retry_delay_ms
+                );
+                break;
+            }
             if runtime_state.attempt_count < config.agent.max_turns {
                 record_runtime_retry(
                     &mut runtime_state,
@@ -1712,6 +1784,107 @@ fn run_loop_claim_action(issue: &TrackerIssue, config: &RuntimeConfig) -> RunLoo
             RunLoopClaimAction::StopAndReplan { current_state }
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AssigneeOwnershipDecision {
+    Allowed,
+    Block { reason: String },
+}
+
+fn run_loop_assignee_ownership_decision(
+    issue: &TrackerIssue,
+    config: &RuntimeConfig,
+    active_login: Option<&str>,
+    profile_login: Option<&str>,
+) -> AssigneeOwnershipDecision {
+    if !live_github_tracker(config) {
+        return AssigneeOwnershipDecision::Allowed;
+    }
+
+    if issue.assignees.is_empty() {
+        return if config.tracker.assignee_filter.allow_unassigned {
+            AssigneeOwnershipDecision::Allowed
+        } else {
+            AssigneeOwnershipDecision::Block {
+                reason: "live GitHub issue has no assignee".into(),
+            }
+        };
+    }
+
+    let identities = [profile_login, active_login]
+        .into_iter()
+        .flatten()
+        .map(normalized_login)
+        .filter(|login| !login.is_empty())
+        .collect::<Vec<_>>();
+
+    if identities.is_empty() {
+        return AssigneeOwnershipDecision::Block {
+            reason: "active GitHub identity unavailable for assignee ownership check".into(),
+        };
+    }
+
+    let assigned = issue
+        .assignees
+        .iter()
+        .map(|assignee| normalized_login(assignee))
+        .collect::<Vec<_>>();
+
+    if assigned
+        .iter()
+        .any(|assignee| identities.iter().any(|identity| identity == assignee))
+    {
+        AssigneeOwnershipDecision::Allowed
+    } else {
+        AssigneeOwnershipDecision::Block {
+            reason: format!(
+                "active identity {:?} does not match issue assignees {:?}",
+                identities, issue.assignees
+            ),
+        }
+    }
+}
+
+fn live_github_tracker(config: &RuntimeConfig) -> bool {
+    config.tracker.kind == "github_project_v2" && config.tracker.fixture_path.is_none()
+}
+
+fn normalized_login(value: &str) -> String {
+    value.trim().trim_start_matches('@').to_ascii_lowercase()
+}
+
+fn selected_profile_github_login(
+    config: &RuntimeConfig,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    Ok(
+        selected_execution_profile(&config.profiles)?.and_then(|profile| {
+            profile
+                .env
+                .get("GITHUB_LOGIN")
+                .cloned()
+                .or_else(|| profile.env.get("GH_LOGIN").cloned())
+                .or_else(|| profile.env.get("JADE_GITHUB_LOGIN").cloned())
+        }),
+    )
+}
+
+fn current_gh_login() -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let output = ProcessCommand::new("gh")
+        .args(["api", "user", "--jq", ".login"])
+        .output();
+    let output = match output {
+        Ok(output) => output,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let login = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok((!login.is_empty()).then_some(login))
 }
 
 fn run_loop_resume_preflight(
@@ -2074,6 +2247,7 @@ fn run_loop_handoff_workpad(
         format!("- Branch: `{}`", handoff.branch_name),
         format!("- PR title: `{}`", handoff.pull_request.title),
         format!("- PR base branch: `{}`", handoff.pull_request.base_branch),
+        rework_continuation_workpad_line(handoff),
         live_handoff_workpad_line(result),
         String::new(),
         "### Main-Agent Boundary".to_string(),
@@ -2081,6 +2255,16 @@ fn run_loop_handoff_workpad(
         "- `Human Review` is reserved for independent Review Agent pass evidence.".to_string(),
     ]
     .join("\n")
+}
+
+fn rework_continuation_workpad_line(handoff: &IssueHandoffPlan) -> String {
+    match &handoff.continuation {
+        Some(continuation) => format!(
+            "- Rework continuation: `{}` from `{}` ({})",
+            continuation.pull_request_url, continuation.source, continuation.pull_request_state
+        ),
+        None => "- Rework continuation: `not-used`".to_string(),
+    }
 }
 
 fn live_handoff_workpad_line(result: &IssueExecutionResult) -> String {
@@ -2144,6 +2328,48 @@ fn run_loop_handoff_failure_workpad(issue: &TrackerIssue, error: &HandoffError) 
         String::new(),
         "### Required Human Decision".to_string(),
         "- Confirm the correct branch/workspace ownership before retrying.".to_string(),
+    ]
+    .join("\n")
+}
+
+fn run_loop_assignee_ownership_workpad(issue: &TrackerIssue, reason: &str) -> String {
+    [
+        "## Jade Symphony Workpad".to_string(),
+        String::new(),
+        "### Assignee Ownership Blocker".to_string(),
+        format!("- Issue: {} {}", issue.identifier, issue.title),
+        format!("- Reason: {reason}"),
+        format!("- Issue assignees: `{}`", issue.assignees.join(", ")),
+        String::new(),
+        "### Boundary".to_string(),
+        "- Jade Symphony did not claim this issue or move it to `In Progress`.".to_string(),
+        "- Assign the issue to the active GitHub identity or selected execution profile before retrying.".to_string(),
+    ]
+    .join("\n")
+}
+
+fn run_loop_usage_limit_pause_workpad(
+    issue: &TrackerIssue,
+    result: &IssueExecutionResult,
+    pause: &UsageLimitPause,
+    retry_delay_ms: u64,
+) -> String {
+    [
+        "## Jade Symphony Workpad".to_string(),
+        String::new(),
+        "### Usage-Limit Pause".to_string(),
+        format!("- Issue: {} {}", issue.identifier, issue.title),
+        "- Source: `jade-symphony run-loop`".to_string(),
+        format!("- Backend: `{}`", result.backend),
+        format!("- Classifier: `{}`", pause.classifier),
+        format!("- Evidence: {}", pause.evidence),
+        format!("- Retry backoff: `{retry_delay_ms}ms`"),
+        String::new(),
+        "### State Safety".to_string(),
+        "- Tracker state was not advanced to `Agent Review`.".to_string(),
+        "- Runtime state keeps the active issue and next retry time.".to_string(),
+        "- The run-loop will skip this issue until retry backoff expires or an operator intervenes."
+            .to_string(),
     ]
     .join("\n")
 }
@@ -3026,6 +3252,27 @@ mod tests {
         RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap()
     }
 
+    fn live_github_config(allow_unassigned: bool) -> RuntimeConfig {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            &format!(
+                "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 9\n  assignee_filter:\n    allow_unassigned: {}\n---\nPrompt",
+                allow_unassigned
+            ),
+        )
+        .unwrap();
+        RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap()
+    }
+
+    fn fixture_github_config() -> RuntimeConfig {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 9\n  fixture_path: fixtures/dry-run-issues.json\n---\nPrompt",
+        )
+        .unwrap();
+        RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap()
+    }
+
     fn tracker_issue(state: &str) -> TrackerIssue {
         TrackerIssue {
             tracker_kind: "memory".into(),
@@ -3562,6 +3809,85 @@ mod tests {
     }
 
     #[test]
+    fn live_gate_blocks_missing_assignee_without_override() {
+        let config = live_github_config(false);
+        let issue = tracker_issue("Todo");
+
+        assert_eq!(
+            live_missing_assignee_gate_blocker(&config, &issue).as_deref(),
+            Some("live GitHub issue assignee")
+        );
+    }
+
+    #[test]
+    fn fixture_mode_does_not_require_live_assignee() {
+        let config = fixture_github_config();
+        let issue = tracker_issue("Todo");
+
+        assert_eq!(live_missing_assignee_gate_blocker(&config, &issue), None);
+        assert_eq!(
+            run_loop_assignee_ownership_decision(&issue, &config, None, None),
+            AssigneeOwnershipDecision::Allowed
+        );
+    }
+
+    #[test]
+    fn assignee_ownership_allows_matching_active_login() {
+        let config = live_github_config(false);
+        let mut issue = tracker_issue("Todo");
+        issue.assignees = vec!["CodexUser".into()];
+
+        assert_eq!(
+            run_loop_assignee_ownership_decision(&issue, &config, Some("codexuser"), None),
+            AssigneeOwnershipDecision::Allowed
+        );
+    }
+
+    #[test]
+    fn assignee_ownership_blocks_mismatched_active_login() {
+        let config = live_github_config(false);
+        let mut issue = tracker_issue("Todo");
+        issue.assignees = vec!["owner-a".into()];
+
+        let decision = run_loop_assignee_ownership_decision(&issue, &config, Some("owner-b"), None);
+
+        assert!(matches!(decision, AssigneeOwnershipDecision::Block { .. }));
+    }
+
+    #[test]
+    fn assignee_ownership_allows_matching_profile_login() {
+        let config = live_github_config(false);
+        let mut issue = tracker_issue("Todo");
+        issue.assignees = vec!["profile-owner".into()];
+
+        assert_eq!(
+            run_loop_assignee_ownership_decision(
+                &issue,
+                &config,
+                Some("different-gh-user"),
+                Some("profile-owner"),
+            ),
+            AssigneeOwnershipDecision::Allowed
+        );
+    }
+
+    #[test]
+    fn assignee_ownership_blocks_missing_active_identity() {
+        let config = live_github_config(false);
+        let mut issue = tracker_issue("Todo");
+        issue.assignees = vec!["owner-a".into()];
+
+        let decision = run_loop_assignee_ownership_decision(&issue, &config, None, None);
+
+        assert_eq!(
+            decision,
+            AssigneeOwnershipDecision::Block {
+                reason: "active GitHub identity unavailable for assignee ownership check".into(),
+            }
+        );
+    }
+
+    #[test]
     fn resume_preflight_continues_active_in_progress_state() {
         let config = test_config();
         let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
@@ -3670,6 +3996,7 @@ mod tests {
             success: true,
             session_id: Some("session-29".into()),
             message: "ok".into(),
+            usage_limit_pause: None,
             actor_role: "implementation_agent".into(),
             actor_label: "Jade Symphony Agent".into(),
             git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
@@ -3764,6 +4091,7 @@ mod tests {
             success: true,
             session_id: Some("session-33".into()),
             message: "ok".into(),
+            usage_limit_pause: None,
             actor_role: "implementation_agent".into(),
             actor_label: "Jade Symphony Agent".into(),
             git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
@@ -3800,6 +4128,40 @@ mod tests {
             .contains("Branch: `feature/issue-29-wire-runtime-state-persistence-into-run-loop`"));
         assert!(workpad.contains("PR title: `#29: Wire runtime state persistence into run-loop`"));
         assert!(workpad.contains("Live PR: `https://github.com/Alive24/jade-symphony/pull/45`"));
+    }
+
+    #[test]
+    fn usage_limit_pause_workpad_preserves_tracker_state_boundary() {
+        let issue = tracker_issue("In Progress");
+        let result = IssueExecutionResult {
+            workspace_path: PathBuf::from("/tmp/jade/issue-63"),
+            backend: "codex".into(),
+            profile_id: None,
+            instance_name: None,
+            success: false,
+            session_id: Some("session-63".into()),
+            message: "Codex subprocess exited with status 1".into(),
+            usage_limit_pause: Some(UsageLimitPause {
+                classifier: "usage_limit".into(),
+                evidence: "usage limit reached".into(),
+            }),
+            actor_role: "implementation_agent".into(),
+            actor_label: "Jade Symphony Agent".into(),
+            git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+            git_identity: GitIdentityApplyResult {
+                status: jade_symphony::workspace::GitIdentityApplyStatus::NotGitRepository,
+                author: None,
+                applied_keys: Vec::new(),
+            },
+            live_handoff: None,
+        };
+        let pause = result.usage_limit_pause.as_ref().unwrap();
+        let workpad = run_loop_usage_limit_pause_workpad(&issue, &result, pause, 20_000);
+
+        assert!(workpad.contains("### Usage-Limit Pause"));
+        assert!(workpad.contains("Classifier: `usage_limit`"));
+        assert!(workpad.contains("Tracker state was not advanced to `Agent Review`"));
+        assert!(workpad.contains("Retry backoff: `20000ms`"));
     }
 
     #[test]
@@ -3853,6 +4215,7 @@ mod tests {
             success: true,
             session_id: Some("session-57".into()),
             message: "ok".into(),
+            usage_limit_pause: None,
             actor_role: "implementation_agent".into(),
             actor_label: "Jade Symphony Agent".into(),
             git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
@@ -3896,6 +4259,7 @@ mod tests {
             success: true,
             session_id: Some("session-57".into()),
             message: "ok".into(),
+            usage_limit_pause: None,
             actor_role: "implementation_agent".into(),
             actor_label: "Jade Symphony Agent".into(),
             git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),

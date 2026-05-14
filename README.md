@@ -50,8 +50,9 @@ worker supervision are still future work.
   Human Review remains valid.
 - `merge-once` can consume issues already in `Merging`, resolve a single linked
   PR, run guarded GitHub PR preflight checks, write durable workpad evidence,
-  merge clean approved PRs with explicit `--write`, and route blockers to
-  `Rework` or `Need Human Input` without ever setting `Human Review`.
+  treat Project `Merging` as the approval signal for clean PRs, merge with
+  explicit `--write`, and route blockers to `Rework` or `Need Human Input`
+  without ever setting `Human Review`.
 - structured Rework diagnostics can render compact, durable issue workpad
   evidence for confirmed review findings, merge conflicts, dirty PRs,
   validation failures, and runtime failures before a transition to `Rework`.
@@ -80,6 +81,9 @@ worker supervision are still future work.
 - `examples/github-project-workflow.md` now contains an inline Jade execution
   prompt with the operating loop, workpad discipline, review boundary, stop
   conditions, and one issue / one branch / one PR handoff rules.
+- `scripts/jade-dogfood` provides a bounded operator launcher for the GitHub
+  Project workflow with explicit dry-run/write modes and preflight checks for
+  the built binary, git, `gh`, auth, and workflow validation.
 - workspace identifiers are sanitized; local workspace paths stay under the
   configured root; hooks support timeouts, stdout/stderr capture,
   `before_remove`, and safe cleanup helpers.
@@ -101,6 +105,10 @@ worker supervision are still future work.
 - live GitHub `run-loop --write` can create or reuse the planned issue
   worktree/branch, run the configured backend inside that worktree, push the
   branch, and create or reuse one GitHub PR after successful execution.
+- live GitHub `run-loop --write` checks assignee ownership before claim:
+  unassigned issues require an explicit workflow override, and assigned issues
+  must match the current `gh` login or a selected profile login exposed through
+  profile environment config.
 - terminal status output reports polling state, planned running/skipped/retrying
   issues, token counters, event-log path, gate details, and integration gaps.
 - `doctor` / `audit-project` can read the configured tracker and report
@@ -118,6 +126,9 @@ worker supervision are still future work.
 - write-mode `run-loop` saves active issue runtime state, updates it with
   backend result evidence, records final transition intent, and clears it after
   successful handoff/block transition.
+- write-mode `run-loop` classifies conservative usage-limit/rate-limit backend
+  failures, writes pause evidence to the workpad, records retry backoff in
+  runtime state, and does not advance the issue to `Agent Review`.
 - `run-once` can prepare one dry-run workspace, render a prompt file, run the
   dry-run backend, apply local git identity when the prepared workspace is a git
   repository, and append JSONL events with actor metadata.
@@ -284,9 +295,11 @@ Merging role separation.
 - richer workspace-per-issue branch and PR reconciliation beyond current
   create-or-reuse handoff.
 - continuation retries and automated stall restart.
+- richer vendor-specific quota handling beyond conservative usage-limit
+  pattern matching.
 - terminal workspace cleanup tied to tracker state.
-- profile-aware tracker claim ownership beyond namespaced runtime/log/workspace
-  metadata.
+- full profile-specific account/token switching for tracker claim ownership
+  beyond login comparison.
 - live token/rate-limit accounting beyond the current snapshot counters.
 - persistent background Agent Review worker supervision beyond bounded
   `review-loop` ticks.
@@ -314,7 +327,8 @@ This path can read ProjectV2 items and normalize GitHub Issue content for
 planning. Explicit `--write` commands can update ProjectV2 status, write workpad
 comments, create follow-up issues, and add issues to the project with initial
 `Todo` status. PR linking uses an issue comment/autolink strategy rather than a
-first-class relationship. Jade
+first-class relationship; linked PR discovery reads closing references and PR
+URLs recorded in canonical Jade workpad comments. Jade
 Symphony can idle-poll in unbounded write mode, but still cannot fully reconcile
 state or supervise live agents.
 
@@ -332,6 +346,8 @@ Dry-run dispatch:
 cargo run -- plan examples/dry-run-workflow.md
 cargo run -- run-once examples/dry-run-workflow.md
 cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
+scripts/jade-dogfood --dry-run
+cargo run -- run-loop examples/usage-limit-workflow.md --max-iterations 1 --write
 cargo run -- dogfood-smoke examples/github-project-workflow.md --dry-run
 cargo run -- merge-once examples/github-project-workflow.md --dry-run
 cargo run -- gate examples/llm-gate-workflow.md '#1'
@@ -341,6 +357,8 @@ The dry-run workflow uses:
 
 - `examples/dry-run-workflow.md`
 - `examples/fixtures/dry-run-issues.json`
+- `examples/usage-limit-workflow.md`
+- `examples/fixtures/usage-limit-issues.json`
 - `examples/linear-fixture-workflow.md`
 - `examples/fixtures/linear-issues.json`
 - `examples/llm-gate-workflow.md`

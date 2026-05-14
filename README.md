@@ -256,6 +256,10 @@ record at `logs_root/reviews/jobs/*.json` with the issue, worker key, backend,
 artifact path, decision, summary/error, and finding count. Review and Rework
 workpads include that ledger path when available.
 
+`inspect` prints the total issue count, a state summary, per-issue gate status,
+and configured integration gaps. It is the quickest read-only check for whether
+the Project still has `Merging`, `Rework`, `Todo`, or `In Progress` work.
+
 `profiles` lists execution profiles discovered from workflow config. For
 cockpit-tools, Jade currently reads the Codex instance store shape inspected in
 `https://github.com/jlcodes99/cockpit-tools`: a local `codex_instances.json` with camelCase

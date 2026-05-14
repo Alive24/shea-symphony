@@ -58,8 +58,8 @@ use jade_symphony::runtime_state::{
 };
 use jade_symphony::status_surface::render_snapshot;
 use jade_symphony::tracker::{
-    adapter_from_config, claim_decision, ClaimDecision, FollowUpIssueInput, TrackerAdapter,
-    TrackerError,
+    adapter_from_config, claim_decision, ClaimDecision, FollowUpIssueInput, ProjectFieldAssignment,
+    TrackerAdapter, TrackerError,
 };
 use jade_symphony::workflow::WorkflowDefinition;
 use jade_symphony::workspace::{
@@ -191,8 +191,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             title,
             markdown,
             add_to_project,
+            project_fields,
             write,
-        } => forge_create(workflow_path, title, markdown, add_to_project, write),
+        } => forge_create(
+            workflow_path,
+            title,
+            markdown,
+            add_to_project,
+            project_fields,
+            write,
+        ),
         Command::ForgeInteractive { options } => forge_interactive(options),
         Command::ForgeReflect {
             context,
@@ -379,9 +387,13 @@ fn forge_create(
     title: String,
     markdown: String,
     add_to_project: bool,
+    project_fields: Vec<ProjectFieldAssignment>,
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     require_write_intent(write)?;
+    if !project_fields.is_empty() && !add_to_project {
+        return Err("forge-create --project-field requires --add-to-project".into());
+    }
     let config = load_config(&workflow_path)?;
     let report =
         validate_forge_create_contract(&title, &markdown, &config).inspect_err(|_message| {
@@ -401,9 +413,15 @@ fn forge_create(
 
     if add_to_project {
         adapter.add_issue_to_project(&issue_id)?;
+        for assignment in &project_fields {
+            adapter.set_project_field(&issue_id, assignment)?;
+        }
     }
 
-    println!("forge_create=ok issue_id={issue_id} added_to_project={add_to_project}");
+    println!(
+        "forge_create=ok issue_id={issue_id} added_to_project={add_to_project} project_fields={}",
+        project_fields.len()
+    );
     Ok(())
 }
 
@@ -440,6 +458,7 @@ fn forge_interactive(options: ForgeInteractiveOptions) -> Result<(), Box<dyn std
             options.title,
             report.issue_markdown,
             options.add_to_project,
+            Vec::new(),
             true,
         )?;
     }
@@ -2956,6 +2975,7 @@ enum Command {
         title: String,
         markdown: String,
         add_to_project: bool,
+        project_fields: Vec<ProjectFieldAssignment>,
         write: bool,
     },
     ForgeInteractive {
@@ -3440,6 +3460,8 @@ struct ForgeCreateArgs {
     body: Option<String>,
     #[arg(long = "add-to-project")]
     add_to_project: bool,
+    #[arg(long = "project-field")]
+    project_fields: Vec<String>,
     #[arg(long)]
     write: bool,
     #[arg(long = "dry-run")]
@@ -3661,6 +3683,7 @@ impl TryFrom<Cli> for Command {
                         title: args.title,
                         markdown: read_source_arg(args.body, args.file)?,
                         add_to_project: args.add_to_project,
+                        project_fields: parse_project_field_assignments(args.project_fields)?,
                         write: args.write,
                     }),
                     CliCommand::ForgeInteractive(args) => Ok(Self::ForgeInteractive {
@@ -3753,6 +3776,15 @@ fn read_optional_file(file: Option<PathBuf>) -> Result<Option<String>, String> {
 fn read_required_file(path: PathBuf) -> Result<String, String> {
     std::fs::read_to_string(&path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))
+}
+
+fn parse_project_field_assignments(
+    values: Vec<String>,
+) -> Result<Vec<ProjectFieldAssignment>, String> {
+    values
+        .into_iter()
+        .map(|value| ProjectFieldAssignment::parse(&value).map_err(|error| error.to_string()))
+        .collect()
 }
 
 fn validate_optional_forge_skill(skill: Option<String>) -> Result<Option<String>, String> {
@@ -5164,6 +5196,8 @@ mod tests {
             "--body".into(),
             forge_contract(),
             "--add-to-project".into(),
+            "--project-field".into(),
+            "Capability=CLI".into(),
             "--write".into(),
         ])
         .unwrap();
@@ -5173,6 +5207,7 @@ mod tests {
             title,
             markdown,
             add_to_project,
+            project_fields,
             write,
         } = command
         else {
@@ -5183,7 +5218,36 @@ mod tests {
         assert_eq!(title, "Create issue");
         assert!(markdown.contains("## Issue Goal"));
         assert!(add_to_project);
+        assert_eq!(
+            project_fields,
+            vec![ProjectFieldAssignment {
+                name: "Capability".into(),
+                value: "CLI".into()
+            }]
+        );
         assert!(write);
+    }
+
+    #[test]
+    fn forge_create_project_fields_require_project_add() {
+        let error = forge_create(
+            PathBuf::from("missing-workflow.md"),
+            "Create issue".into(),
+            forge_contract(),
+            false,
+            vec![ProjectFieldAssignment {
+                name: "Capability".into(),
+                value: "CLI".into(),
+            }],
+            true,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert_eq!(
+            error,
+            "forge-create --project-field requires --add-to-project"
+        );
     }
 
     #[test]
@@ -5279,6 +5343,7 @@ mod tests {
             "Create issue".into(),
             forge_contract(),
             true,
+            Vec::new(),
             true,
         )
         .unwrap();

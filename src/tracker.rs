@@ -17,6 +17,16 @@ pub trait TrackerAdapter {
     fn upsert_workpad(&self, issue_ref: &str, markdown: &str) -> Result<(), TrackerError>;
     fn create_follow_up_issue(&self, input: FollowUpIssueInput) -> Result<String, TrackerError>;
     fn add_issue_to_project(&self, issue_id: &str) -> Result<(), TrackerError>;
+    fn set_project_field(
+        &self,
+        _issue_ref: &str,
+        _assignment: &ProjectFieldAssignment,
+    ) -> Result<(), TrackerError> {
+        Err(TrackerError::NotImplemented(format!(
+            "{} tracker does not support Project field assignment",
+            self.kind()
+        )))
+    }
     fn link_pull_request(&self, issue_ref: &str, pr_ref: &str) -> Result<(), TrackerError>;
     fn list_linked_pull_requests(
         &self,
@@ -30,6 +40,34 @@ pub trait TrackerAdapter {
     }
     fn integration_gaps(&self) -> Vec<String> {
         Vec::new()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectFieldAssignment {
+    pub name: String,
+    pub value: String,
+}
+
+impl ProjectFieldAssignment {
+    pub fn parse(raw: &str) -> Result<Self, TrackerError> {
+        let Some((name, value)) = raw.split_once('=') else {
+            return Err(TrackerError::Payload(format!(
+                "Project field assignment {raw:?} must use NAME=VALUE"
+            )));
+        };
+        let name = name.trim();
+        let value = value.trim();
+        if name.is_empty() || value.is_empty() {
+            return Err(TrackerError::Payload(format!(
+                "Project field assignment {raw:?} must include non-empty name and value"
+            )));
+        }
+
+        Ok(Self {
+            name: name.to_string(),
+            value: value.to_string(),
+        })
     }
 }
 
@@ -142,6 +180,14 @@ impl TrackerAdapter for MemoryTracker {
     }
 
     fn add_issue_to_project(&self, _issue_id: &str) -> Result<(), TrackerError> {
+        Ok(())
+    }
+
+    fn set_project_field(
+        &self,
+        _issue_ref: &str,
+        _assignment: &ProjectFieldAssignment,
+    ) -> Result<(), TrackerError> {
         Ok(())
     }
 
@@ -304,6 +350,20 @@ impl TrackerAdapter for GithubProjectV2Adapter {
         }
 
         GithubProjectV2GhClient::new(&self.config).add_issue_to_project(issue_id)
+    }
+
+    fn set_project_field(
+        &self,
+        issue_ref: &str,
+        assignment: &ProjectFieldAssignment,
+    ) -> Result<(), TrackerError> {
+        if self.config.tracker.fixture_path.is_some() {
+            return Err(TrackerError::IntegrationUnavailable(
+                "GitHub Project v2 fixture mode cannot update live project fields".into(),
+            ));
+        }
+
+        GithubProjectV2GhClient::new(&self.config).set_project_field(issue_ref, assignment)
     }
 
     fn link_pull_request(&self, issue_ref: &str, pr_ref: &str) -> Result<(), TrackerError> {
@@ -512,6 +572,50 @@ impl GithubProjectV2GhClient {
                 ("projectId", metadata.project_id),
                 ("itemId", item_id),
                 ("fieldId", metadata.status_field_id),
+                ("optionId", option_id),
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn set_project_field(
+        &self,
+        issue_ref: &str,
+        assignment: &ProjectFieldAssignment,
+    ) -> Result<(), TrackerError> {
+        let issue = self.resolve_issue(issue_ref)?;
+        let item_id = issue.item_id.ok_or_else(|| {
+            TrackerError::IntegrationUnavailable(format!(
+                "issue {issue_ref} is not a ProjectV2 item; add it to the project before setting fields"
+            ))
+        })?;
+        let metadata = self.project_metadata()?;
+        let field = metadata.field(&assignment.name).ok_or_else(|| {
+            TrackerError::IntegrationUnavailable(format!(
+                "ProjectV2 field {:?} was not found",
+                assignment.name
+            ))
+        })?;
+        if field.kind != ProjectFieldKind::SingleSelect {
+            return Err(TrackerError::IntegrationUnavailable(format!(
+                "ProjectV2 field {:?} is {:?}; only single-select field assignment is currently supported",
+                assignment.name, field.kind
+            )));
+        }
+        let option_id = field.option_id(&assignment.value).ok_or_else(|| {
+            TrackerError::IntegrationUnavailable(format!(
+                "option {:?} was not found in ProjectV2 field {:?}",
+                assignment.value, assignment.name
+            ))
+        })?;
+        let project_id = metadata.project_id.clone();
+        let field_id = field.id.clone();
+        self.graphql(
+            GITHUB_UPDATE_PROJECT_ITEM_FIELD_MUTATION,
+            &[
+                ("projectId", project_id),
+                ("itemId", item_id),
+                ("fieldId", field_id),
                 ("optionId", option_id),
             ],
         )?;
@@ -799,6 +903,39 @@ struct ProjectMetadata {
     project_id: String,
     status_field_id: String,
     status_options: Vec<(String, String)>,
+    fields: Vec<ProjectFieldMetadata>,
+}
+
+impl ProjectMetadata {
+    fn field(&self, name: &str) -> Option<&ProjectFieldMetadata> {
+        self.fields.iter().find(|field| field.name == name)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProjectFieldMetadata {
+    id: String,
+    name: String,
+    kind: ProjectFieldKind,
+    options: Vec<(String, String)>,
+}
+
+impl ProjectFieldMetadata {
+    fn option_id(&self, option_name: &str) -> Option<String> {
+        self.options
+            .iter()
+            .find_map(|(id, name)| (name == option_name).then_some(id.clone()))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProjectFieldKind {
+    SingleSelect,
+    Text,
+    Number,
+    Date,
+    Iteration,
+    Unknown,
 }
 
 fn gh_available() -> bool {
@@ -996,6 +1133,7 @@ query JadeSymphonyProjectMetadata($owner: String!, $number: Int!) {{
             id
             name
           }}
+          __typename
           ... on ProjectV2SingleSelectField {{
             id
             name
@@ -1158,41 +1296,60 @@ fn project_metadata_from_response(
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| TrackerError::Payload("ProjectV2 metadata missing fields".into()))?;
 
-    for field in fields {
-        let Some(name) = field.get("name").and_then(serde_json::Value::as_str) else {
-            continue;
-        };
-        if name != status_field {
-            continue;
-        }
+    let fields = fields
+        .iter()
+        .filter_map(project_field_metadata)
+        .collect::<Vec<_>>();
 
-        let field_id = field
-            .get("id")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| TrackerError::Payload("Status field missing id".into()))?;
-        let status_options = field
-            .get("options")
-            .and_then(serde_json::Value::as_array)
-            .unwrap_or(&Vec::new())
-            .iter()
-            .filter_map(|option| {
-                Some((
-                    option.get("id")?.as_str()?.to_string(),
-                    option.get("name")?.as_str()?.to_string(),
-                ))
-            })
-            .collect();
-
+    if let Some(status_field_metadata) = fields.iter().find(|field| field.name == status_field) {
         return Ok(ProjectMetadata {
             project_id: project_id.to_string(),
-            status_field_id: field_id.to_string(),
-            status_options,
+            status_field_id: status_field_metadata.id.clone(),
+            status_options: status_field_metadata.options.clone(),
+            fields,
         });
     }
 
     Err(TrackerError::Payload(format!(
         "ProjectV2 status field {status_field:?} was not found"
     )))
+}
+
+fn project_field_metadata(field: &serde_json::Value) -> Option<ProjectFieldMetadata> {
+    let id = field.get("id")?.as_str()?.to_string();
+    let name = field.get("name")?.as_str()?.to_string();
+    let kind = match field
+        .get("__typename")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+    {
+        "ProjectV2SingleSelectField" => ProjectFieldKind::SingleSelect,
+        "ProjectV2Field" => ProjectFieldKind::Text,
+        "ProjectV2IterationField" => ProjectFieldKind::Iteration,
+        "ProjectV2FieldCommon" => ProjectFieldKind::Unknown,
+        "ProjectV2NumberField" => ProjectFieldKind::Number,
+        "ProjectV2DateField" => ProjectFieldKind::Date,
+        _ => ProjectFieldKind::Unknown,
+    };
+    let options = field
+        .get("options")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|option| {
+            Some((
+                option.get("id")?.as_str()?.to_string(),
+                option.get("name")?.as_str()?.to_string(),
+            ))
+        })
+        .collect();
+
+    Some(ProjectFieldMetadata {
+        id,
+        name,
+        kind,
+        options,
+    })
 }
 
 fn ensure_workpad_marker(markdown: &str, marker: &str) -> String {
@@ -2694,6 +2851,16 @@ Prompt
     }
 
     #[test]
+    fn parses_project_field_assignment() {
+        let assignment = ProjectFieldAssignment::parse("Capability=CLI").unwrap();
+
+        assert_eq!(assignment.name, "Capability");
+        assert_eq!(assignment.value, "CLI");
+        assert!(ProjectFieldAssignment::parse("Capability").is_err());
+        assert!(ProjectFieldAssignment::parse("=CLI").is_err());
+    }
+
+    #[test]
     fn parses_project_metadata_status_options() {
         let response = serde_json::json!({
             "data": {
@@ -2705,9 +2872,19 @@ Prompt
                                 {
                                     "id": "FIELD_STATUS",
                                     "name": "Status",
+                                    "__typename": "ProjectV2SingleSelectField",
                                     "options": [
                                         {"id": "OPT_TODO", "name": "Todo"},
                                         {"id": "OPT_DONE", "name": "Done"}
+                                    ]
+                                },
+                                {
+                                    "id": "FIELD_CAPABILITY",
+                                    "name": "Capability",
+                                    "__typename": "ProjectV2SingleSelectField",
+                                    "options": [
+                                        {"id": "OPT_CLI", "name": "CLI"},
+                                        {"id": "OPT_TRACKER", "name": "Tracker"}
                                     ]
                                 }
                             ]
@@ -2727,6 +2904,9 @@ Prompt
                 ("OPT_DONE".into(), "Done".into())
             ]
         );
+        let capability = metadata.field("Capability").unwrap();
+        assert_eq!(capability.kind, ProjectFieldKind::SingleSelect);
+        assert_eq!(capability.option_id("CLI").as_deref(), Some("OPT_CLI"));
     }
 
     #[test]
@@ -2738,6 +2918,15 @@ Prompt
                 ("OPT_TODO".into(), "Todo".into()),
                 ("OPT_DONE".into(), "Done".into()),
             ],
+            fields: vec![ProjectFieldMetadata {
+                id: "FIELD_STATUS".into(),
+                name: "Status".into(),
+                kind: ProjectFieldKind::SingleSelect,
+                options: vec![
+                    ("OPT_TODO".into(), "Todo".into()),
+                    ("OPT_DONE".into(), "Done".into()),
+                ],
+            }],
         };
 
         assert_eq!(

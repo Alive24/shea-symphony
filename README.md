@@ -128,6 +128,8 @@ worker supervision are still future work.
   repository, and append JSONL events with actor metadata.
 - `run-once` can execute the conservative Codex subprocess backend when a
   workflow explicitly sets `agent.backend: codex`.
+- the Codex subprocess backend refuses `codex app-server` commands with a clear
+  failure event because the app-server protocol is not implemented yet.
 - `run-once` can execute the conservative Claude Code subprocess backend when a
   workflow explicitly sets `agent.backend: claude-code`.
 - `run-loop` can re-read tracker state per iteration, select dispatchable work,
@@ -193,7 +195,10 @@ cargo run -- forge-create --workflow path/to/WORKFLOW.md --title "Follow-up titl
 `run-once` defaults to dry-run examples, but the Codex and Claude subprocess
 fixtures show controlled real-backend paths without invoking live hosted
 services. They write `JADE_SYMPHONY_PROMPT.md` into the prepared workspace and
-append JSONL events for the selected workflow.
+append JSONL events for the selected workflow. The Codex subprocess path is not
+the app-server protocol; if configured with `codex app-server`, Jade records an
+actionable failed backend event instead of launching it through the wrong
+transport.
 
 `profiles` lists execution profiles discovered from workflow config. For
 cockpit-tools, Jade currently reads the Codex instance store shape inspected in

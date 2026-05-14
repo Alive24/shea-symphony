@@ -196,4 +196,38 @@ mod tests {
         .unwrap();
         assert_eq!(rendered, "Body");
     }
+
+    #[test]
+    fn renders_attempt_and_falsey_conditionals() {
+        let mut issue = issue();
+        issue.description = None;
+
+        let rendered = render_prompt(
+            "attempt={{ attempt }} {% if issue.description %}body{% else %}missing{% endif %}",
+            &issue,
+            Some(3),
+        )
+        .unwrap();
+
+        assert_eq!(rendered, "attempt=3 missing");
+    }
+
+    #[test]
+    fn renders_non_string_issue_fields_as_json() {
+        let rendered = render_prompt("labels={{ issue.labels }}", &issue(), None).unwrap();
+
+        assert_eq!(rendered, "labels=[\"rust\"]");
+    }
+
+    #[test]
+    fn rejects_unsupported_liquid_tags() {
+        let error = render_prompt(
+            "{% for label in issue.labels %}{{ label }}{% endfor %}",
+            &issue(),
+            None,
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, PromptError::UnsupportedTag(_)));
+    }
 }

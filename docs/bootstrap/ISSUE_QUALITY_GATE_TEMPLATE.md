@@ -58,6 +58,16 @@ Use this section to preserve answers from the Issue Forge clarification loop.
 - ...
 - ...
 
+## Dependencies
+
+Every executable issue must say whether it has blocking dependencies. Use this
+section to make semantic dependency status explicit before dispatch.
+
+- No blocking dependencies.
+- Blocked By: [issue/PR/decision/data dependency and required terminal state]
+- Related / Overlapping Issues: [issue links and why they are not blockers, or why this issue should not run independently]
+- Parallel-Safe With: [issues that may run concurrently without invalidating this work]
+
 ## Non-Negotiable Guardrails
 
 - ...
@@ -149,3 +159,8 @@ Before dispatch, classify the issue as one of:
 - `Too Broad`: should be split before dispatch.
 - `Blocked`: external dependency, credentials, sample data, or decision is missing.
 - `Duplicate / Already Covered`: do not dispatch; link the canonical issue or artifact.
+
+Dependency semantics are part of the gate. If an issue omits this section or
+uses placeholder language such as `TBD`, `unknown`, or "potential dependency",
+route it to `Need to Clarify`. If tracker-level blockers are present, the main
+agent must not claim the issue until every blocker is terminal.

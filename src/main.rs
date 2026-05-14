@@ -42,7 +42,8 @@ use jade_symphony::ownership::{
 use jade_symphony::profiles::{discover_execution_profiles, selected_execution_profile};
 use jade_symphony::prompt::render_prompt;
 use jade_symphony::quality_gate::{
-    evaluate_issue_with_llm_gate, evaluate_issue_with_source_alignment, LlmGateMode, LlmGateOptions,
+    evaluate_issue_with_dependency_preflight, evaluate_issue_with_llm_gate,
+    evaluate_issue_with_source_alignment, LlmGateMode, LlmGateOptions,
 };
 use jade_symphony::review::{
     classify_review_freshness, render_review_freshness_workpad, render_review_workpad,
@@ -356,7 +357,7 @@ fn evaluate_issue_for_current_source(
             notes: vec!["Live GitHub dispatch requires explicit issue ownership.".into()],
         });
     }
-    Ok(evaluate_issue_with_llm_gate(
+    let decision = evaluate_issue_with_llm_gate(
         issue,
         deterministic,
         &LlmGateOptions {
@@ -364,7 +365,18 @@ fn evaluate_issue_for_current_source(
             command: config.quality_gate.llm.command.clone(),
             timeout_ms: config.quality_gate.llm.timeout_ms,
         },
-    ))
+    );
+    if !decision.is_dispatchable() {
+        return Ok(decision);
+    }
+
+    let terminal_states = config.terminal_state_set().into_iter().collect();
+    let dependency_preflight = evaluate_issue_with_dependency_preflight(issue, &terminal_states);
+    if dependency_preflight.is_dispatchable() {
+        Ok(decision)
+    } else {
+        Ok(dependency_preflight)
+    }
 }
 
 fn live_missing_assignee_gate_blocker(
@@ -4575,6 +4587,8 @@ mod tests {
             "Now.",
             "## Issue Context",
             "Context.",
+            "## Dependencies",
+            "- No blocking dependencies.",
             "## Non-Negotiable Guardrails",
             "- Guard.",
             "## Scope",

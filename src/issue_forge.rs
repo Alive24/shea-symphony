@@ -371,6 +371,10 @@ TBD
 
 - TBD
 
+## Dependencies
+
+- No blocking dependencies identified yet.
+
 ## Non-Negotiable Guardrails
 
 - Keep Jade Symphony orchestration infrastructure separate from downstream product business logic.
@@ -475,6 +479,10 @@ fn issue_markdown_from_interactive_input(
         "### Assumptions\n\n- The existing Issue Quality Gate remains the acceptance boundary for generated tracker issues.",
     );
     draft = draft.replace(
+        "## Dependencies\n\n- No blocking dependencies identified yet.",
+        &format_interactive_dependencies(input),
+    );
+    draft = draft.replace(
         "## Non-Negotiable Guardrails\n\n- Keep Jade Symphony orchestration infrastructure separate from downstream product business logic.",
         &format!(
             "## Non-Negotiable Guardrails\n\n- Keep Jade Symphony orchestration infrastructure separate from downstream product business logic.\n{}",
@@ -576,6 +584,23 @@ fn format_interactive_context(input: &InteractiveForgeInput, skill: &IssueForgeS
     lines.join("\n")
 }
 
+fn format_interactive_dependencies(input: &InteractiveForgeInput) -> String {
+    let dependency_source = [Some(input.intent.as_str()), input.context.as_deref()]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if dependency_signal(&dependency_source) {
+        format!(
+            "## Dependencies\n\n- Potential dependency requires operator confirmation: {}",
+            dependency_source.trim()
+        )
+    } else {
+        "## Dependencies\n\n- No blocking dependencies identified by Issue Forge from the supplied intent or context."
+            .into()
+    }
+}
+
 fn focused_interactive_question(
     input: &InteractiveForgeInput,
     skill: &IssueForgeSkill,
@@ -616,6 +641,24 @@ fn reflective_signal(line: &str) -> bool {
             "must exist",
             "next issue",
             "recommended next",
+        ],
+    )
+}
+
+fn dependency_signal(text: &str) -> bool {
+    let normalized = text.to_lowercase();
+    contains_any(
+        &normalized,
+        &[
+            "depends on",
+            "dependency",
+            "dependencies",
+            "blocked by",
+            "overlap",
+            "overlapping",
+            "supersede",
+            "parallel-safe with",
+            "parallel safe with",
         ],
     )
 }
@@ -858,6 +901,7 @@ mod tests {
         assert_eq!(report.selected_skill.key, "runtime");
         assert!(report.validation.decision.is_dispatchable());
         assert!(report.issue_markdown.contains("## Issue Goal"));
+        assert!(report.issue_markdown.contains("## Dependencies"));
         assert!(report.issue_markdown.contains("src/runtime_state.rs"));
         assert!(report.question.is_none());
     }
@@ -886,5 +930,23 @@ mod tests {
         assert_eq!(candidates.len(), 1);
         assert!(candidates[0].validation.decision.is_dispatchable());
         assert!(candidates[0].title.contains("live PR creation"));
+    }
+
+    #[test]
+    fn reflective_candidate_surfaces_potential_dependency_for_confirmation() {
+        let candidates = reflective_candidates_from_context(
+            "- Follow-up: add merge retry after #164 is done; overlaps issue #161.",
+            None,
+            1,
+        );
+
+        assert_eq!(candidates.len(), 1);
+        assert!(candidates[0]
+            .issue_markdown
+            .contains("Potential dependency requires operator confirmation"));
+        assert_eq!(
+            candidates[0].validation.decision.kind,
+            GateDecisionKind::NeedToClarify
+        );
     }
 }

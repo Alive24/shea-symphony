@@ -37,6 +37,9 @@ pub fn evaluate_issue(issue: &TrackerIssue) -> GateDecision {
     if let Err(missing_uat) = validate_uat_required(description) {
         missing.push(missing_uat);
     }
+    if let Err(missing_dependency) = validate_dependency_semantics(description) {
+        missing.push(missing_dependency);
+    }
 
     if has_explicit_blocked_decision(description) && missing.is_empty() {
         return GateDecision {
@@ -67,6 +70,27 @@ pub fn evaluate_issue(issue: &TrackerIssue) -> GateDecision {
             notes: Vec::new(),
         }
     }
+}
+
+pub fn evaluate_issue_with_dependency_preflight(
+    issue: &TrackerIssue,
+    terminal_states: &std::collections::BTreeSet<String>,
+) -> GateDecision {
+    let decision = evaluate_issue(issue);
+    if !decision.is_dispatchable() {
+        return decision;
+    }
+
+    if let Some(blocker) = unresolved_tracker_blocker(issue, terminal_states) {
+        return GateDecision {
+            kind: GateDecisionKind::Blocked,
+            missing: vec![format!("unresolved blocking dependency: {blocker}")],
+            assumptions: decision.assumptions,
+            notes: vec!["Tracker dependency preflight blocked dispatch.".into()],
+        };
+    }
+
+    decision
 }
 
 pub fn evaluate_issue_with_source_alignment(
@@ -363,6 +387,76 @@ fn validate_uat_required(markdown: &str) -> Result<(), String> {
     }
 }
 
+fn validate_dependency_semantics(markdown: &str) -> Result<(), String> {
+    let lines = section_lines(markdown, "Dependencies");
+    let dependencies = lines
+        .iter()
+        .filter_map(|line| line.trim().strip_prefix('-'))
+        .map(clean_markdown_value)
+        .filter(|value| !value.trim().is_empty())
+        .collect::<Vec<_>>();
+
+    if dependencies.is_empty() {
+        return Err("dependency semantics".into());
+    }
+
+    let joined = dependencies.join(" ").to_ascii_lowercase();
+    if contains_any_dependency_marker(&joined) && !contains_ambiguous_dependency_marker(&joined) {
+        Ok(())
+    } else {
+        Err("resolved dependency semantics".into())
+    }
+}
+
+fn contains_any_dependency_marker(text: &str) -> bool {
+    text.contains("no blocking dependenc")
+        || text.contains("no known blocking dependenc")
+        || text.contains("no dependenc")
+        || text.contains("none")
+        || text.contains("blocked by")
+        || text.contains("depends on")
+        || text.contains("dependency")
+        || text.contains("dependencies")
+        || text.contains("parallel-safe")
+        || text.contains("parallel safe")
+        || text.contains("overlap")
+        || text.contains("supersede")
+        || text.contains("pull request")
+        || text.contains("pr #")
+        || text.contains('#')
+}
+
+fn contains_ambiguous_dependency_marker(text: &str) -> bool {
+    text.contains("tbd")
+        || text.contains("unknown dependency")
+        || text.contains("unknown dependencies")
+        || text.contains("dependencies unknown")
+        || text.contains("dependency unknown")
+        || text.contains("unclear")
+        || text.contains("potential dependency")
+        || text.contains("requires operator confirmation")
+}
+
+fn unresolved_tracker_blocker(
+    issue: &TrackerIssue,
+    terminal_states: &std::collections::BTreeSet<String>,
+) -> Option<String> {
+    issue.blocked_by.iter().find_map(|blocker| {
+        let state = blocker.state.as_deref().map(crate::model::normalize_state);
+        let resolved = state
+            .as_ref()
+            .map(|state| terminal_states.contains(state))
+            .unwrap_or(false);
+        (!resolved).then(|| {
+            blocker
+                .identifier
+                .clone()
+                .or_else(|| blocker.id.clone())
+                .unwrap_or_else(|| "unknown blocker".into())
+        })
+    })
+}
+
 fn uat_required_value(line: &str) -> Option<String> {
     let line = line.trim().trim_start_matches('-').trim();
     let (label, value) = line.split_once(':')?;
@@ -597,6 +691,8 @@ mod tests {
             "It blocks the next slice.",
             "## Issue Context",
             "Context.",
+            "## Dependencies",
+            "- No blocking dependencies.",
             "## Non-Negotiable Guardrails",
             "- Keep tracker abstraction.",
             "## Scope",
@@ -653,6 +749,8 @@ mod tests {
             "It is needed before blocked downstream work can proceed.",
             "## Issue Context",
             "Context.",
+            "## Dependencies",
+            "- No blocking dependencies.",
             "## Non-Negotiable Guardrails",
             "- Guard.",
             "## Scope",
@@ -681,6 +779,8 @@ mod tests {
             "Now.",
             "## Issue Context",
             "Context.",
+            "## Dependencies",
+            "- No blocking dependencies.",
             "## Non-Negotiable Guardrails",
             "- Guard.",
             "## Scope",
@@ -698,6 +798,86 @@ mod tests {
 
         let decision = evaluate_issue(&issue(Some(body)));
         assert_eq!(decision.kind, GateDecisionKind::Blocked);
+    }
+
+    #[test]
+    fn missing_dependency_semantics_needs_clarification() {
+        let body = [
+            "## Issue Setup",
+            "- UAT Required: No",
+            "## Issue Goal",
+            "Ship a thing.",
+            "## Why Now",
+            "Now.",
+            "## Issue Context",
+            "Context.",
+            "## Non-Negotiable Guardrails",
+            "- Guard.",
+            "## Scope",
+            "### In Scope",
+            "- Code.",
+            "## Canonical References",
+            "### Target Repository / Package",
+            "- Alive24/jade-symphony",
+            "## Verification",
+            "### Completion Criteria",
+            "- Tests pass.",
+        ]
+        .join("\n");
+
+        let decision = evaluate_issue(&issue(Some(body)));
+
+        assert_eq!(decision.kind, GateDecisionKind::NeedToClarify);
+        assert!(decision
+            .missing
+            .contains(&"dependency semantics".to_string()));
+    }
+
+    #[test]
+    fn ambiguous_dependency_semantics_needs_clarification() {
+        let mut body = aligned_body_with_uat("No");
+        body = body.replace(
+            "## Dependencies\n- No blocking dependencies.",
+            "## Dependencies\n\n- Potential dependency requires operator confirmation: maybe #44.",
+        );
+
+        let decision = evaluate_issue(&issue(Some(body)));
+
+        assert_eq!(decision.kind, GateDecisionKind::NeedToClarify);
+        assert!(decision
+            .missing
+            .contains(&"resolved dependency semantics".to_string()));
+    }
+
+    #[test]
+    fn dependency_preflight_blocks_non_terminal_tracker_blocker() {
+        let mut issue = issue(Some(aligned_body_with_uat("No")));
+        issue.blocked_by.push(crate::model::BlockerRef {
+            id: None,
+            identifier: Some("#99".into()),
+            state: Some("In Progress".into()),
+        });
+        let terminal_states = std::collections::BTreeSet::from(["done".to_string()]);
+
+        let decision = evaluate_issue_with_dependency_preflight(&issue, &terminal_states);
+
+        assert_eq!(decision.kind, GateDecisionKind::Blocked);
+        assert!(decision.missing[0].contains("#99"));
+    }
+
+    #[test]
+    fn dependency_preflight_allows_terminal_tracker_blocker() {
+        let mut issue = issue(Some(aligned_body_with_uat("No")));
+        issue.blocked_by.push(crate::model::BlockerRef {
+            id: None,
+            identifier: Some("#99".into()),
+            state: Some("Done".into()),
+        });
+        let terminal_states = std::collections::BTreeSet::from(["done".to_string()]);
+
+        let decision = evaluate_issue_with_dependency_preflight(&issue, &terminal_states);
+
+        assert!(decision.is_dispatchable(), "{decision:?}");
     }
 
     #[test]
@@ -990,6 +1170,8 @@ mod tests {
                 "Now.",
                 "## Issue Context",
                 "Context.",
+                "## Dependencies",
+                "- No blocking dependencies.",
                 "## Decisions / Assumptions",
                 "### Assumptions",
                 "- Deterministic source checks are enough.",

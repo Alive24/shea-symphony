@@ -57,6 +57,16 @@ target/debug/jade-symphony inspect examples/github-project-workflow.md
 target/debug/jade-symphony run-loop examples/github-project-workflow.md --max-iterations 1 --write
 ```
 
+For supervised parallel operators, pass `--pool N` to preview or claim multiple
+eligible slots. Main work uses the `Main Agent` Project field and merge work
+uses the `Merging Agent` Project field as soft claim-lock hints, so separate
+Codex sessions can avoid selecting work already claimed by another session.
+
+```bash
+target/debug/jade-symphony run-loop examples/github-project-workflow.md --max-iterations 1 --pool 2 --dry-run
+target/debug/jade-symphony merge-loop examples/github-project-workflow.md --max-iterations 1 --pool 2 --dry-run
+```
+
 ## Cleanup Planning
 
 Cleanup planning is read-only:

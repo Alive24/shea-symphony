@@ -612,29 +612,44 @@ impl GithubProjectV2GhClient {
                 assignment.name
             ))
         })?;
-        if field.kind != ProjectFieldKind::SingleSelect {
-            return Err(TrackerError::IntegrationUnavailable(format!(
-                "ProjectV2 field {:?} is {:?}; only single-select field assignment is currently supported",
-                assignment.name, field.kind
-            )));
-        }
-        let option_id = field.option_id(&assignment.value).ok_or_else(|| {
-            TrackerError::IntegrationUnavailable(format!(
-                "option {:?} was not found in ProjectV2 field {:?}",
-                assignment.value, assignment.name
-            ))
-        })?;
         let project_id = metadata.project_id.clone();
         let field_id = field.id.clone();
-        self.graphql(
-            GITHUB_UPDATE_PROJECT_ITEM_FIELD_MUTATION,
-            &[
-                ("projectId", project_id),
-                ("itemId", item_id),
-                ("fieldId", field_id),
-                ("optionId", option_id),
-            ],
-        )?;
+        match field.kind {
+            ProjectFieldKind::SingleSelect => {
+                let option_id = field.option_id(&assignment.value).ok_or_else(|| {
+                    TrackerError::IntegrationUnavailable(format!(
+                        "option {:?} was not found in ProjectV2 field {:?}",
+                        assignment.value, assignment.name
+                    ))
+                })?;
+                self.graphql(
+                    GITHUB_UPDATE_PROJECT_ITEM_FIELD_MUTATION,
+                    &[
+                        ("projectId", project_id),
+                        ("itemId", item_id),
+                        ("fieldId", field_id),
+                        ("optionId", option_id),
+                    ],
+                )?;
+            }
+            ProjectFieldKind::Text => {
+                self.graphql(
+                    GITHUB_UPDATE_PROJECT_ITEM_TEXT_FIELD_MUTATION,
+                    &[
+                        ("projectId", project_id),
+                        ("itemId", item_id),
+                        ("fieldId", field_id),
+                        ("text", assignment.value.clone()),
+                    ],
+                )?;
+            }
+            _ => {
+                return Err(TrackerError::IntegrationUnavailable(format!(
+                    "ProjectV2 field {:?} is {:?}; only single-select and text field assignment are currently supported",
+                    assignment.name, field.kind
+                )));
+            }
+        }
         Ok(())
     }
 
@@ -1174,6 +1189,21 @@ mutation JadeSymphonyUpdateProjectStatus($projectId: ID!, $itemId: ID!, $fieldId
     itemId: $itemId,
     fieldId: $fieldId,
     value: { singleSelectOptionId: $optionId }
+  }) {
+    projectV2Item {
+      id
+    }
+  }
+}
+"#;
+
+const GITHUB_UPDATE_PROJECT_ITEM_TEXT_FIELD_MUTATION: &str = r#"
+mutation JadeSymphonyUpdateProjectTextField($projectId: ID!, $itemId: ID!, $fieldId: ID!, $text: String!) {
+  updateProjectV2ItemFieldValue(input: {
+    projectId: $projectId,
+    itemId: $itemId,
+    fieldId: $fieldId,
+    value: { text: $text }
   }) {
     projectV2Item {
       id
@@ -2940,6 +2970,11 @@ Prompt
                                         {"id": "OPT_CLI", "name": "CLI"},
                                         {"id": "OPT_TRACKER", "name": "Tracker"}
                                     ]
+                                },
+                                {
+                                    "id": "FIELD_MAIN_AGENT",
+                                    "name": "Main Agent",
+                                    "__typename": "ProjectV2Field"
                                 }
                             ]
                         }
@@ -2961,6 +2996,8 @@ Prompt
         let capability = metadata.field("Capability").unwrap();
         assert_eq!(capability.kind, ProjectFieldKind::SingleSelect);
         assert_eq!(capability.option_id("CLI").as_deref(), Some("OPT_CLI"));
+        let main_agent = metadata.field("Main Agent").unwrap();
+        assert_eq!(main_agent.kind, ProjectFieldKind::Text);
     }
 
     #[test]

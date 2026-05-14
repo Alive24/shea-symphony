@@ -81,7 +81,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let command = Command::parse(args)?;
 
     match command {
-        Command::Plan { workflow_path } => plan(workflow_path),
+        Command::Plan {
+            workflow_path,
+            json,
+        } => plan(workflow_path, json),
         Command::Validate { workflow_path } => validate(workflow_path),
         Command::Inspect { workflow_path } => inspect(workflow_path),
         Command::Doctor { options } => doctor(options),
@@ -214,7 +217,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-fn plan(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+fn plan(workflow_path: PathBuf, json: bool) -> Result<(), Box<dyn std::error::Error>> {
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
@@ -234,9 +237,20 @@ fn plan(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     plan.snapshot.integration_gaps = plan.integration_gaps.clone();
     plan.snapshot.event_log_path = Some(event_log_path);
 
-    println!("{}", render_snapshot(&plan.snapshot));
+    println!("{}", render_plan_snapshot(&plan.snapshot, json)?);
 
     Ok(())
+}
+
+fn render_plan_snapshot(
+    snapshot: &jade_symphony::model::RuntimeSnapshot,
+    json: bool,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if json {
+        Ok(serde_json::to_string_pretty(snapshot)?)
+    } else {
+        Ok(render_snapshot(snapshot))
+    }
 }
 
 fn quality_gate(
@@ -2883,6 +2897,7 @@ fn run_loop_usage_limit_pause_workpad(
 enum Command {
     Plan {
         workflow_path: PathBuf,
+        json: bool,
     },
     Validate {
         workflow_path: PathBuf,
@@ -3169,6 +3184,8 @@ enum CliCommand {
 struct WorkflowPathArgs {
     #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
     workflow_path: PathBuf,
+    #[arg(long)]
+    json: bool,
     #[arg(long = "dry-run")]
     _dry_run: bool,
     #[arg(long = "write")]
@@ -3526,6 +3543,7 @@ impl TryFrom<Cli> for Command {
         match cli.command {
             None => Ok(Self::Plan {
                 workflow_path: cli.workflow_path.unwrap_or_else(default_workflow),
+                json: false,
             }),
             Some(command) => {
                 if cli.workflow_path.is_some() {
@@ -3535,6 +3553,7 @@ impl TryFrom<Cli> for Command {
                 match command {
                     CliCommand::Plan(args) => Ok(Self::Plan {
                         workflow_path: args.workflow_path,
+                        json: args.json,
                     }),
                     CliCommand::Validate(args) => Ok(Self::Validate {
                         workflow_path: args.workflow_path,
@@ -4067,13 +4086,15 @@ mod tests {
         assert_eq!(
             parse(&[]),
             Command::Plan {
-                workflow_path: PathBuf::from("WORKFLOW.md")
+                workflow_path: PathBuf::from("WORKFLOW.md"),
+                json: false,
             }
         );
         assert_eq!(
             parse(&["examples/dry-run-workflow.md"]),
             Command::Plan {
-                workflow_path: PathBuf::from("examples/dry-run-workflow.md")
+                workflow_path: PathBuf::from("examples/dry-run-workflow.md"),
+                json: false,
             }
         );
     }
@@ -4083,7 +4104,8 @@ mod tests {
         assert_eq!(
             parse(&["status", "examples/dry-run-workflow.md"]),
             Command::Plan {
-                workflow_path: PathBuf::from("examples/dry-run-workflow.md")
+                workflow_path: PathBuf::from("examples/dry-run-workflow.md"),
+                json: false,
             }
         );
         assert_eq!(
@@ -4111,6 +4133,17 @@ mod tests {
     }
 
     #[test]
+    fn parses_status_json_flag() {
+        assert_eq!(
+            parse(&["status", "examples/dry-run-workflow.md", "--json"]),
+            Command::Plan {
+                workflow_path: PathBuf::from("examples/dry-run-workflow.md"),
+                json: true,
+            }
+        );
+    }
+
+    #[test]
     fn parses_doctor_repair_human_review_command() {
         assert_eq!(
             parse(&[
@@ -4133,6 +4166,31 @@ mod tests {
                 workflow_path: PathBuf::from("examples/github-project-workflow.md"),
                 write: true
             }
+        );
+    }
+
+    #[test]
+    fn renders_plan_snapshot_as_json_when_requested() {
+        let snapshot = jade_symphony::model::RuntimeSnapshot {
+            event_log_path: Some("/tmp/jade-symphony.jsonl".into()),
+            integration_gaps: vec!["gap".into()],
+            ..Default::default()
+        };
+
+        let rendered = render_plan_snapshot(&snapshot, true).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+
+        assert_eq!(
+            value
+                .get("event_log_path")
+                .and_then(serde_json::Value::as_str),
+            Some("/tmp/jade-symphony.jsonl")
+        );
+        assert_eq!(
+            value
+                .pointer("/integration_gaps/0")
+                .and_then(serde_json::Value::as_str),
+            Some("gap")
         );
     }
 

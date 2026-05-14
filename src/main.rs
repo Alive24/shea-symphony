@@ -64,8 +64,8 @@ use jade_symphony::runtime_state::{
 };
 use jade_symphony::status_surface::render_snapshot;
 use jade_symphony::tracker::{
-    adapter_from_config, claim_decision, ClaimDecision, FollowUpIssueInput, ProjectFieldAssignment,
-    TrackerAdapter, TrackerError,
+    adapter_from_config, claim_decision, classify_project_state_error, ClaimDecision,
+    FollowUpIssueInput, ProjectFieldAssignment, TrackerAdapter, TrackerError,
 };
 use jade_symphony::workflow::WorkflowDefinition;
 use jade_symphony::workspace::{
@@ -101,6 +101,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             workflow_path,
             states,
         } => inspect(workflow_path, states),
+        Command::ProjectState { workflow_path } => project_state(workflow_path),
         Command::Doctor { options } => doctor(options),
         Command::DoctorRepairHumanReview {
             workflow_path,
@@ -1474,6 +1475,39 @@ fn inspect(
     }
 
     Ok(())
+}
+
+fn project_state(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let workflow = WorkflowDefinition::load(&workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
+    config.validate()?;
+
+    let adapter = adapter_from_config(&config);
+    match adapter.list_dispatchable_issues() {
+        Ok(issues) => {
+            println!("project_state_access=ok");
+            println!("trusted=true");
+            println!("issues={}", issues.len());
+            println!("empty_queue={}", issues.is_empty());
+            println!("{}", render_state_summary(&issues));
+            for gap in adapter.integration_gaps() {
+                println!("integration_gap={gap}");
+            }
+            Ok(())
+        }
+        Err(error) => {
+            let kind = classify_project_state_error(&error);
+            println!("project_state_access=blocked");
+            println!("trusted=false");
+            println!("failure_kind={}", kind.as_str());
+            println!("failure={error}");
+            Err(format!(
+                "project state access is not trustworthy: kind={} error={error}",
+                kind.as_str()
+            )
+            .into())
+        }
+    }
 }
 
 fn filter_issues_by_state(
@@ -3572,6 +3606,9 @@ enum Command {
         workflow_path: PathBuf,
         states: Vec<String>,
     },
+    ProjectState {
+        workflow_path: PathBuf,
+    },
     Doctor {
         options: DoctorOptions,
     },
@@ -3818,6 +3855,8 @@ enum CliCommand {
     #[command(alias = "validate-workflow")]
     Validate(WorkflowPathArgs),
     Inspect(InspectArgs),
+    #[command(name = "project-state", alias = "project-state-health")]
+    ProjectState(WorkflowPathArgs),
     #[command(alias = "audit-project")]
     Doctor(DoctorArgs),
     #[command(name = "doctor-repair-human-review")]
@@ -4301,6 +4340,9 @@ impl TryFrom<Cli> for Command {
                     CliCommand::Inspect(args) => Ok(Self::Inspect {
                         workflow_path: args.workflow_path,
                         states: args.states,
+                    }),
+                    CliCommand::ProjectState(args) => Ok(Self::ProjectState {
+                        workflow_path: args.workflow_path,
                     }),
                     CliCommand::Doctor(args) => Ok(Self::Doctor {
                         options: DoctorOptions {
@@ -4922,6 +4964,19 @@ mod tests {
             Command::Inspect {
                 workflow_path: PathBuf::from("examples/github-project-workflow.md"),
                 states: vec!["Merging".into(), "Rework".into()]
+            }
+        );
+    }
+
+    #[test]
+    fn parses_project_state_health_alias() {
+        assert_eq!(
+            parse(&[
+                "project-state-health",
+                "examples/github-project-workflow.md"
+            ]),
+            Command::ProjectState {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md")
             }
         );
     }

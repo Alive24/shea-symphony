@@ -52,6 +52,11 @@ Project v2 issues:
 1. Harden read-only GitHub Project v2 adapter.
    - Keep loading ProjectV2 items through `gh api graphql` or replace it with a
      direct HTTP client behind the same adapter.
+   - Use `project-state` as the canonical dogfood diagnostic before claim or
+     merge work; failed reads print a classified blocker instead of looking like
+     an empty queue.
+   - Retry transient network and rate-limit failures, and fail partial Project
+     payloads loudly when required item fields are missing.
    - Filter to real GitHub Issues, not draft items or PR items.
    - Resolve configured status field and option IDs.
    - Normalize issue body, labels, assignees, linked PRs, project fields, and

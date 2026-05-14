@@ -1094,16 +1094,13 @@ fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::Error>> {
 
     let adapter = adapter_from_config(&config);
     let issues = adapter.list_dispatchable_issues()?;
-    let report = audit_project_issues(&issues);
+    let mut report = audit_project_issues(&issues);
+    report.integration_gaps = adapter.integration_gaps();
 
     if options.json {
         println!("{}", render_project_audit_report_json(&report)?);
     } else {
         println!("{}", render_project_audit_report(&report));
-    }
-
-    for gap in adapter.integration_gaps() {
-        println!("integration_gap={gap}");
     }
 
     if options.strict && report.blocker_count() > 0 {

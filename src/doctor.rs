@@ -23,6 +23,8 @@ pub struct ProjectAuditViolation {
 pub struct ProjectAuditReport {
     pub total_issues: usize,
     pub violations: Vec<ProjectAuditViolation>,
+    #[serde(default)]
+    pub integration_gaps: Vec<String>,
 }
 
 impl ProjectAuditReport {
@@ -110,6 +112,7 @@ pub fn audit_project_issues(issues: &[TrackerIssue]) -> ProjectAuditReport {
     ProjectAuditReport {
         total_issues: issues.len(),
         violations,
+        integration_gaps: Vec::new(),
     }
 }
 
@@ -136,6 +139,10 @@ pub fn render_project_audit_report(report: &ProjectAuditReport) -> String {
             ));
             lines.push(format!("  suggestion={}", violation.suggestion));
         }
+    }
+
+    for gap in &report.integration_gaps {
+        lines.push(format!("integration_gap={gap}"));
     }
 
     lines.join("\n")
@@ -317,7 +324,8 @@ mod tests {
 
     #[test]
     fn renders_json_report() {
-        let report = audit_project_issues(&[issue("#57", "Agent Review")]);
+        let mut report = audit_project_issues(&[issue("#57", "Agent Review")]);
+        report.integration_gaps.push("missing scope".into());
 
         let rendered = render_project_audit_report_json(&report).unwrap();
         let parsed: ProjectAuditReport = serde_json::from_str(&rendered).unwrap();
@@ -325,5 +333,7 @@ mod tests {
         assert_eq!(parsed.total_issues, 1);
         assert_eq!(parsed.blocker_count(), 1);
         assert_eq!(parsed.violations[0].code, "agent_review_missing_pr_handoff");
+        assert_eq!(parsed.integration_gaps, vec!["missing scope"]);
+        assert!(!rendered.contains("\nintegration_gap="));
     }
 }

@@ -994,33 +994,48 @@ fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::error::Error
     let max = options
         .iteration_limit()
         .ok_or("merge-loop requires --max-iterations or --once")?;
+    let pool = options.pool_size();
     let mut stopped = false;
 
     for iteration in 1..=max {
         println!(
-            "merge_loop_iteration={} mode={}",
+            "merge_loop_iteration={} mode={} pool={pool}",
             iteration,
             if options.write { "write" } else { "dry-run" }
         );
-        match merge_once_tick(options.workflow_path.clone(), options.write)? {
-            MergeOnceOutcome::NoMergingIssue => {
-                println!("merge_loop=stopped reason=no_merging_issue iterations={iteration}");
-                stopped = true;
-                break;
+        for slot in 1..=pool {
+            match merge_once_tick(options.workflow_path.clone(), options.write)? {
+                MergeOnceOutcome::NoMergingIssue => {
+                    println!(
+                        "merge_loop=stopped reason=no_merging_issue iterations={iteration} slot={slot}"
+                    );
+                    stopped = true;
+                    break;
+                }
+                MergeOnceOutcome::DryRun if !options.write => {
+                    println!("merge_loop_action=dry_run_tick iterations={iteration} slot={slot}");
+                    if pool > 1 {
+                        println!(
+                            "merge_loop=stopped reason=dry_run_would_repeat_without_mutation iterations={iteration}"
+                        );
+                        stopped = true;
+                        break;
+                    }
+                }
+                MergeOnceOutcome::Merged => {
+                    println!("merge_loop_action=merged iterations={iteration} slot={slot}");
+                }
+                MergeOnceOutcome::Routed => {
+                    println!("merge_loop_action=routed iterations={iteration} slot={slot}");
+                }
+                MergeOnceOutcome::Skipped => {
+                    println!("merge_loop_action=skipped iterations={iteration} slot={slot}");
+                }
+                MergeOnceOutcome::DryRun => {}
             }
-            MergeOnceOutcome::DryRun if !options.write => {
-                println!("merge_loop_action=dry_run_tick iterations={iteration}");
-            }
-            MergeOnceOutcome::Merged => {
-                println!("merge_loop_action=merged iterations={iteration}");
-            }
-            MergeOnceOutcome::Routed => {
-                println!("merge_loop_action=routed iterations={iteration}");
-            }
-            MergeOnceOutcome::Skipped => {
-                println!("merge_loop_action=skipped iterations={iteration}");
-            }
-            MergeOnceOutcome::DryRun => {}
+        }
+        if stopped {
+            break;
         }
     }
 
@@ -1048,10 +1063,34 @@ fn merge_once_tick(
     }
 
     issues.sort_by_key(|issue| issue.priority.unwrap_or(i64::MAX));
-    let selected = issues.remove(0);
+    let worker_id = worker_identity(&config, WorkerLane::Merging);
+    let Some(selected) =
+        select_pool_worker_issues(&issues, WorkerLane::Merging, &worker_id, 1, &config)
+            .into_iter()
+            .next()
+    else {
+        println!("merge_once=stopped reason=no_unclaimed_merging_issue");
+        return Ok(MergeOnceOutcome::NoMergingIssue);
+    };
     let issue = adapter
         .get_issue(&selected.identifier)?
         .unwrap_or(selected.clone());
+    let eligibility = pool_claim_eligibility(&issue, WorkerLane::Merging, &worker_id, &config);
+    if !eligibility.is_claimable() {
+        println!(
+            "merge_once_action=skipped issue={} reason={}",
+            issue.identifier,
+            eligibility.skip_reason()
+        );
+        return Ok(MergeOnceOutcome::Skipped);
+    }
+    write_lane_claim_field(
+        adapter.as_ref(),
+        &issue,
+        WorkerLane::Merging,
+        &worker_id,
+        write,
+    )?;
     let linked_pull_requests = adapter.list_linked_pull_requests(&issue.identifier)?;
     let runner = ProcessHandoffCommandRunner;
     let expected_base = expected_merge_base_branch(&config);
@@ -2150,7 +2189,12 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 .to_string(),
         );
 
-        let Some(issue) = plan.selected.first().cloned() else {
+        let pool = options.pool_size(&config);
+        let worker_id = worker_identity(&config, WorkerLane::Main);
+        let selected =
+            select_pool_worker_issues(&plan.selected, WorkerLane::Main, &worker_id, pool, &config);
+
+        let Some(issue) = selected.first().cloned() else {
             println!("{}", render_snapshot(&plan.snapshot));
             match no_dispatch_action(&options, limit, config.polling.interval_ms) {
                 NoDispatchAction::Stop { reason } => {
@@ -2174,11 +2218,13 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         }
 
         println!(
-            "run_loop_iteration={} issue={} title={:?} mode={}",
+            "run_loop_iteration={} issue={} title={:?} mode={} pool={} selected_pool={}",
             iterations,
             issue.identifier,
             issue.title,
-            if options.write { "write" } else { "dry-run" }
+            if options.write { "write" } else { "dry-run" },
+            pool,
+            selected.len()
         );
 
         let handoff = match run_loop_handoff_plan(&config, &issue) {
@@ -2190,6 +2236,15 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         };
 
         if !options.write {
+            for candidate in &selected {
+                write_lane_claim_field(
+                    adapter.as_ref(),
+                    candidate,
+                    WorkerLane::Main,
+                    &worker_id,
+                    false,
+                )?;
+            }
             print_run_loop_dry_run_actions(&issue, &handoff, &config)?;
             if limit.is_none() {
                 println!(
@@ -2203,6 +2258,15 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         let latest = adapter
             .get_issue(&issue.identifier)?
             .ok_or_else(|| format!("issue disappeared before claim: {}", issue.identifier))?;
+        let eligibility = pool_claim_eligibility(&latest, WorkerLane::Main, &worker_id, &config);
+        if !eligibility.is_claimable() {
+            println!(
+                "run_loop_action=skip issue={} reason={}",
+                latest.identifier,
+                eligibility.skip_reason()
+            );
+            continue;
+        }
         let latest_gate = evaluate_issue_for_current_source(&config, &latest)?;
         if !latest_gate.is_dispatchable() {
             handle_run_loop_gate_failure(adapter.as_ref(), &latest, &latest_gate, &options)?;
@@ -2267,6 +2331,13 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
 
         let event = match claim_action {
             RunLoopClaimAction::Claim => {
+                write_lane_claim_field(
+                    adapter.as_ref(),
+                    &latest,
+                    WorkerLane::Main,
+                    &worker_id,
+                    true,
+                )?;
                 adapter.set_state(&latest.identifier, "in_progress")?;
                 println!(
                     "run_loop_action=claim issue={} target_state=in_progress",
@@ -2275,6 +2346,13 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 "Claimed"
             }
             RunLoopClaimAction::Resume => {
+                write_lane_claim_field(
+                    adapter.as_ref(),
+                    &latest,
+                    WorkerLane::Main,
+                    &worker_id,
+                    true,
+                )?;
                 println!("run_loop_action=resume issue={}", latest.identifier);
                 "Resumed"
             }
@@ -2512,6 +2590,148 @@ enum RunLoopClaimAction {
     Claim,
     Resume,
     StopAndReplan { current_state: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkerLane {
+    Main,
+    Merging,
+}
+
+impl WorkerLane {
+    fn claim_field(self) -> &'static str {
+        match self {
+            Self::Main => "Main Agent",
+            Self::Merging => "Merging Agent",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Main => "main",
+            Self::Merging => "merging",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PoolClaimEligibility {
+    Claimable,
+    OwnedBySelf,
+    ClaimedByOther { owner: String },
+    WrongLaneState { state: String },
+}
+
+impl PoolClaimEligibility {
+    fn is_claimable(&self) -> bool {
+        matches!(self, Self::Claimable | Self::OwnedBySelf)
+    }
+
+    fn skip_reason(&self) -> String {
+        match self {
+            Self::Claimable | Self::OwnedBySelf => "claimable".into(),
+            Self::ClaimedByOther { owner } => format!("claimed_by_other:{owner}"),
+            Self::WrongLaneState { state } => format!("wrong_lane_state:{state}"),
+        }
+    }
+}
+
+fn worker_identity(config: &RuntimeConfig, lane: WorkerLane) -> String {
+    let label = config.identity.actor_label.trim();
+    if label.is_empty() {
+        format!("jade-symphony-{}", lane.label())
+    } else {
+        label.to_string()
+    }
+}
+
+fn project_text_field(issue: &TrackerIssue, name: &str) -> Option<String> {
+    issue
+        .project_fields
+        .get(name)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn pool_claim_eligibility(
+    issue: &TrackerIssue,
+    lane: WorkerLane,
+    worker_id: &str,
+    config: &RuntimeConfig,
+) -> PoolClaimEligibility {
+    let normalized_state = issue.normalized_state();
+    let state_map = &config.tracker.state_map;
+    let eligible_state = match lane {
+        WorkerLane::Main => {
+            normalized_state == normalize_state(&state_map.todo)
+                || normalized_state == normalize_state(&state_map.rework)
+                || normalized_state == normalize_state(&state_map.in_progress)
+        }
+        WorkerLane::Merging => normalized_state == normalize_state(&state_map.merging),
+    };
+    if !eligible_state {
+        return PoolClaimEligibility::WrongLaneState {
+            state: issue.state.clone(),
+        };
+    }
+
+    match project_text_field(issue, lane.claim_field()) {
+        Some(owner) if owner == worker_id => PoolClaimEligibility::OwnedBySelf,
+        Some(owner) => PoolClaimEligibility::ClaimedByOther { owner },
+        None => PoolClaimEligibility::Claimable,
+    }
+}
+
+fn select_pool_worker_issues(
+    issues: &[TrackerIssue],
+    lane: WorkerLane,
+    worker_id: &str,
+    pool: usize,
+    config: &RuntimeConfig,
+) -> Vec<TrackerIssue> {
+    let mut selected = issues
+        .iter()
+        .filter(|issue| pool_claim_eligibility(issue, lane, worker_id, config).is_claimable())
+        .cloned()
+        .collect::<Vec<_>>();
+    selected.sort_by_key(|issue| issue.priority.unwrap_or(i64::MAX));
+    selected.truncate(pool.max(1));
+    selected
+}
+
+fn write_lane_claim_field(
+    adapter: &dyn TrackerAdapter,
+    issue: &TrackerIssue,
+    lane: WorkerLane,
+    worker_id: &str,
+    write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !write {
+        println!(
+            "{}_pool_dry_run action=claim_field issue={} field={:?} value={:?}",
+            lane.label(),
+            issue.identifier,
+            lane.claim_field(),
+            worker_id
+        );
+        return Ok(());
+    }
+    adapter.set_project_field(
+        &issue.identifier,
+        &ProjectFieldAssignment {
+            name: lane.claim_field().into(),
+            value: worker_id.into(),
+        },
+    )?;
+    println!(
+        "{}_pool_action=claim_field issue={} field={:?}",
+        lane.label(),
+        issue.identifier,
+        lane.claim_field()
+    );
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3425,6 +3645,7 @@ struct RunLoopOptions {
     max_iterations: Option<usize>,
     once: bool,
     write: bool,
+    pool: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3450,6 +3671,7 @@ struct MergeLoopOptions {
     max_iterations: Option<usize>,
     once: bool,
     write: bool,
+    pool: Option<usize>,
 }
 
 impl ReviewLoopOptions {
@@ -3476,6 +3698,10 @@ impl MergeLoopOptions {
             self.max_iterations
         }
     }
+
+    fn pool_size(&self) -> usize {
+        self.pool.unwrap_or(1).max(1)
+    }
 }
 
 impl RunLoopOptions {
@@ -3485,6 +3711,10 @@ impl RunLoopOptions {
         } else {
             self.max_iterations
         }
+    }
+
+    fn pool_size(&self, _config: &RuntimeConfig) -> usize {
+        self.pool.unwrap_or(1).max(1)
     }
 }
 
@@ -3653,6 +3883,8 @@ struct RunLoopArgs {
     once: bool,
     #[arg(long)]
     write: bool,
+    #[arg(long)]
+    pool: Option<usize>,
     #[arg(long = "dry-run")]
     _dry_run: bool,
 }
@@ -3697,6 +3929,8 @@ struct MergeLoopArgs {
     once: bool,
     #[arg(long)]
     write: bool,
+    #[arg(long)]
+    pool: Option<usize>,
     #[arg(long = "dry-run")]
     _dry_run: bool,
 }
@@ -4035,7 +4269,7 @@ impl TryFrom<Cli> for Command {
                         workflow_path: args.workflow_path,
                     }),
                     CliCommand::RunLoop(args) => {
-                        if args.max_iterations == Some(0) {
+                        if args.max_iterations == Some(0) || args.pool == Some(0) {
                             return Err(usage());
                         }
                         Ok(Self::RunLoop {
@@ -4044,6 +4278,7 @@ impl TryFrom<Cli> for Command {
                                 max_iterations: args.max_iterations,
                                 once: args.once,
                                 write: args.write,
+                                pool: args.pool,
                             },
                         })
                     }
@@ -4057,6 +4292,7 @@ impl TryFrom<Cli> for Command {
                     }),
                     CliCommand::MergeLoop(args) => {
                         if args.max_iterations == Some(0)
+                            || args.pool == Some(0)
                             || (!args.once && args.max_iterations.is_none())
                         {
                             return Err(usage());
@@ -4067,6 +4303,7 @@ impl TryFrom<Cli> for Command {
                                 max_iterations: args.max_iterations,
                                 once: args.once,
                                 write: args.write,
+                                pool: args.pool,
                             },
                         })
                     }
@@ -5069,6 +5306,8 @@ mod tests {
             "examples/github-project-workflow.md".into(),
             "--max-iterations".into(),
             "3".into(),
+            "--pool".into(),
+            "2".into(),
             "--write".into(),
         ])
         .unwrap();
@@ -5082,6 +5321,8 @@ mod tests {
             PathBuf::from("examples/github-project-workflow.md")
         );
         assert_eq!(options.max_iterations, Some(3));
+        assert_eq!(options.pool, Some(2));
+        assert_eq!(options.pool_size(), 2);
         assert!(options.write);
     }
 
@@ -5114,6 +5355,19 @@ mod tests {
             "merge-loop".into(),
             "WORKFLOW.md".into(),
             "--max-iterations".into(),
+            "0".into(),
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn rejects_zero_merge_loop_pool() {
+        assert!(Command::parse(vec![
+            "merge-loop".into(),
+            "WORKFLOW.md".into(),
+            "--max-iterations".into(),
+            "1".into(),
+            "--pool".into(),
             "0".into(),
         ])
         .is_err());
@@ -5175,6 +5429,8 @@ mod tests {
             "examples/dry-run-workflow.md".into(),
             "--max-iterations".into(),
             "3".into(),
+            "--pool".into(),
+            "4".into(),
             "--dry-run".into(),
         ])
         .unwrap();
@@ -5188,6 +5444,8 @@ mod tests {
             PathBuf::from("examples/dry-run-workflow.md")
         );
         assert_eq!(options.max_iterations, Some(3));
+        assert_eq!(options.pool, Some(4));
+        assert_eq!(options.pool_size(&test_config()), 4);
         assert!(!options.once);
         assert!(!options.write);
     }
@@ -5256,6 +5514,100 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("Usage:"));
+    }
+
+    #[test]
+    fn rejects_zero_run_loop_pool() {
+        let error = Command::parse(vec![
+            "run-loop".into(),
+            "WORKFLOW.md".into(),
+            "--max-iterations".into(),
+            "1".into(),
+            "--pool".into(),
+            "0".into(),
+        ])
+        .unwrap_err();
+
+        assert!(error.contains("Usage:"));
+    }
+
+    #[test]
+    fn pool_worker_selection_respects_lane_priority_and_claim_owner() {
+        let config = test_config();
+        let worker = "Jade Main";
+        let mut first = tracker_issue_with_ref("#1", "First", "Todo");
+        first.priority = Some(20);
+        let mut second = tracker_issue_with_ref("#2", "Second", "Rework");
+        second.priority = Some(10);
+        let mut owned_by_other = tracker_issue_with_ref("#3", "Other owned", "Todo");
+        owned_by_other.project_fields.insert(
+            "Main Agent".into(),
+            serde_json::Value::String("Another Main".into()),
+        );
+        let mut owned_by_self = tracker_issue_with_ref("#4", "Self owned", "In Progress");
+        owned_by_self.priority = Some(5);
+        owned_by_self.project_fields.insert(
+            "Main Agent".into(),
+            serde_json::Value::String(worker.into()),
+        );
+        let merging = tracker_issue_with_ref("#5", "Merging", "Merging");
+
+        let selected = select_pool_worker_issues(
+            &[first, second, owned_by_other, owned_by_self, merging],
+            WorkerLane::Main,
+            worker,
+            2,
+            &config,
+        );
+
+        assert_eq!(
+            selected
+                .iter()
+                .map(|issue| issue.identifier.as_str())
+                .collect::<Vec<_>>(),
+            vec!["#4", "#2"]
+        );
+    }
+
+    #[test]
+    fn merge_pool_selection_only_accepts_merging_lane() {
+        let config = test_config();
+        let mut claimed = tracker_issue_with_ref("#6", "Claimed merge", "Merging");
+        claimed.project_fields.insert(
+            "Merging Agent".into(),
+            serde_json::Value::String("other merger".into()),
+        );
+        let mut unclaimed = tracker_issue_with_ref("#7", "Ready merge", "Merging");
+        unclaimed.priority = Some(1);
+        let todo = tracker_issue_with_ref("#8", "Main work", "Todo");
+
+        let selected = select_pool_worker_issues(
+            &[claimed, unclaimed, todo],
+            WorkerLane::Merging,
+            "this merger",
+            4,
+            &config,
+        );
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].identifier, "#7");
+    }
+
+    #[test]
+    fn pool_claim_eligibility_reports_existing_owner() {
+        let config = test_config();
+        let mut issue = tracker_issue("Todo");
+        issue.project_fields.insert(
+            "Main Agent".into(),
+            serde_json::Value::String("someone else".into()),
+        );
+
+        assert_eq!(
+            pool_claim_eligibility(&issue, WorkerLane::Main, "this worker", &config),
+            PoolClaimEligibility::ClaimedByOther {
+                owner: "someone else".into()
+            }
+        );
     }
 
     #[test]
@@ -6277,6 +6629,7 @@ mod tests {
             workflow_path: PathBuf::from("WORKFLOW.md"),
             max_iterations: None,
             once: false,
+            pool: None,
             write: false,
         };
 
@@ -6294,6 +6647,7 @@ mod tests {
             workflow_path: PathBuf::from("WORKFLOW.md"),
             max_iterations: Some(2),
             once: false,
+            pool: None,
             write: true,
         };
 
@@ -6311,6 +6665,7 @@ mod tests {
             workflow_path: PathBuf::from("WORKFLOW.md"),
             max_iterations: None,
             once: false,
+            pool: None,
             write: true,
         };
 

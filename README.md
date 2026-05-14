@@ -182,8 +182,14 @@ For a compact source-linked view of what is landed, what is waiting in
   claim/resume/skip externally changed issues, and in explicit `--write` mode
   run one issue at a time, record handoff evidence, create a live PR handoff in
   non-fixture GitHub Project v2 mode, link that PR through the tracker adapter,
-  and stop main-agent completion at `Agent Review`;
-  unbounded write mode sleeps on idle polls using the workflow polling interval.
+  and stop main-agent completion at `Agent Review`.
+- `run-loop --pool N` and `merge-loop --pool N` add first-slice supervised pool
+  planning: eligible issues are filtered by lane and by the tracker-visible
+  `Main Agent` / `Merging Agent` claim fields before work is selected, and
+  write-mode ticks stamp the appropriate claim field before mutation. This is a
+  soft project-board lock, not a distributed lock or full daemon supervisor.
+  Unbounded `run-loop --write` sleeps on idle polls using the workflow polling
+  interval.
 - `cleanup-plan` reports terminal worktree cleanup candidates in dry-run mode
   only; it does not delete files.
 

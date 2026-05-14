@@ -27,7 +27,7 @@ remain the preferred rehearsal path for local development.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `run-once` | Execute one selected issue through the configured backend. | Fixture-safe by default when the workflow has `tracker.fixture_path`. |
-| `run-loop` | Poll/select/claim/run/handoff in bounded or idle-loop modes. | Live write mode requires `--write`; main-agent completion stops at `Agent Review`. |
+| `run-loop` | Poll/select/claim/run/handoff in bounded or idle-loop modes. | Live write mode requires `--write`; `--pool N` filters by `Main Agent`; main-agent completion stops at `Agent Review`. |
 | `dogfood-smoke` | Supervised preflight for one controlled dogfood issue. | Dry-run inspection by default; live readiness does not bypass review or merge gates. |
 
 Examples:
@@ -35,8 +35,16 @@ Examples:
 ```bash
 cargo run -- run-once examples/dry-run-workflow.md
 cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
+cargo run -- run-loop examples/github-project-workflow.md --max-iterations 1 --pool 2 --dry-run
 cargo run -- dogfood-smoke examples/github-project-workflow.md --dry-run
 ```
+
+`run-loop --pool N` is a supervised planning and claim-locking slice. Dry-run
+mode previews up to `N` eligible main-lane issues after skipping items whose
+`Main Agent` Project field is already owned by another worker. Write mode still
+processes one main work item at a time because the runtime state tracks one
+active issue, but it uses the same lane claim check and stamps `Main Agent`
+before tracker mutation.
 
 ## Tracker Writes
 

@@ -50,8 +50,9 @@ For a compact source-linked view of what is landed, what is waiting in
   concurrency limits.
 - Issue Quality Gate classifies executable versus underspecified issue bodies
   and, where workflow/repo context is available, runs deterministic
-  source-alignment checks for target repository, referenced local paths, and
-  verification command shapes. An optional command-backed LLM gate can run in
+  checks for the template `UAT Required` field, source alignment checks for
+  target repository, referenced local paths, and verification command shapes.
+  An optional command-backed LLM gate can run in
   `disabled`, `advisory`, or `required` mode after deterministic checks.
 - review freshness helpers can classify Merging-to-Rework repairs as
   mechanical, semantic, or unknown and render workpad evidence for whether prior

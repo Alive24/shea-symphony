@@ -34,6 +34,9 @@ pub fn evaluate_issue(issue: &TrackerIssue) -> GateDecision {
             missing.push((*label).to_string());
         }
     }
+    if let Err(missing_uat) = validate_uat_required(description) {
+        missing.push(missing_uat);
+    }
 
     if has_explicit_blocked_decision(description) && missing.is_empty() {
         return GateDecision {
@@ -346,6 +349,30 @@ fn has_explicit_blocked_decision(markdown: &str) -> bool {
     })
 }
 
+fn validate_uat_required(markdown: &str) -> Result<(), String> {
+    let Some(value) = section_lines(markdown, "Issue Setup")
+        .into_iter()
+        .find_map(|line| uat_required_value(&line))
+    else {
+        return Err("UAT Required field".into());
+    };
+
+    match value.to_ascii_lowercase().as_str() {
+        "yes" | "no" => Ok(()),
+        _ => Err("UAT Required field must be `Yes` or `No`".into()),
+    }
+}
+
+fn uat_required_value(line: &str) -> Option<String> {
+    let line = line.trim().trim_start_matches('-').trim();
+    let (label, value) = line.split_once(':')?;
+    if label.trim().eq_ignore_ascii_case("UAT Required") {
+        Some(clean_markdown_value(value))
+    } else {
+        None
+    }
+}
+
 fn contains_heading(markdown: &str, heading: &str) -> bool {
     markdown.lines().any(|line| {
         let line = line.trim_start_matches('#').trim();
@@ -562,6 +589,8 @@ mod tests {
     #[test]
     fn template_shaped_issue_is_ready() {
         let body = [
+            "## Issue Setup",
+            "- UAT Required: No",
             "## Issue Goal",
             "Ship a thing.",
             "## Why Now",
@@ -586,8 +615,38 @@ mod tests {
     }
 
     #[test]
+    fn uat_required_accepts_yes_or_no_values() {
+        for value in ["Yes", "No", "yes", "no"] {
+            let body = aligned_body_with_uat(value);
+            assert!(
+                evaluate_issue(&issue(Some(body))).is_dispatchable(),
+                "expected UAT Required: {value} to pass"
+            );
+        }
+    }
+
+    #[test]
+    fn uat_required_missing_or_malformed_needs_clarification() {
+        let missing = evaluate_issue(&issue(Some(aligned_body_without_uat())));
+        assert_eq!(missing.kind, GateDecisionKind::NeedToClarify);
+        assert!(missing
+            .missing
+            .iter()
+            .any(|item| item == "UAT Required field"));
+
+        let malformed = evaluate_issue(&issue(Some(aligned_body_with_uat("Maybe"))));
+        assert_eq!(malformed.kind, GateDecisionKind::NeedToClarify);
+        assert!(malformed
+            .missing
+            .iter()
+            .any(|item| item == "UAT Required field must be `Yes` or `No`"));
+    }
+
+    #[test]
     fn incidental_blocked_word_does_not_block_ready_issue() {
         let body = [
+            "## Issue Setup",
+            "- UAT Required: No",
             "## Issue Goal",
             "Ship a thing.",
             "## Why Now",
@@ -614,6 +673,8 @@ mod tests {
     #[test]
     fn explicit_blocked_decision_blocks_issue() {
         let body = [
+            "## Issue Setup",
+            "- UAT Required: No",
             "## Issue Goal",
             "Ship a thing.",
             "## Why Now",
@@ -872,6 +933,36 @@ mod tests {
         paths: &[&str],
         commands: &[&str],
     ) -> String {
+        aligned_body_with_target_line_and_uat(target_line, Some("No"), docs, paths, commands)
+    }
+
+    fn aligned_body_with_uat(uat: &str) -> String {
+        aligned_body_with_target_line_and_uat(
+            "- `Alive24/jade-symphony`",
+            Some(uat),
+            &[],
+            &[],
+            &["cargo test"],
+        )
+    }
+
+    fn aligned_body_without_uat() -> String {
+        aligned_body_with_target_line_and_uat(
+            "- `Alive24/jade-symphony`",
+            None,
+            &[],
+            &[],
+            &["cargo test"],
+        )
+    }
+
+    fn aligned_body_with_target_line_and_uat(
+        target_line: &str,
+        uat: Option<&str>,
+        docs: &[&str],
+        paths: &[&str],
+        commands: &[&str],
+    ) -> String {
         let docs = docs
             .iter()
             .map(|path| format!("- `{path}`"))
@@ -887,34 +978,42 @@ mod tests {
             .map(|command| format!("- `{command}`"))
             .collect::<Vec<_>>()
             .join("\n");
-        [
-            "## Issue Goal",
-            "Ship a thing.",
-            "## Why Now",
-            "Now.",
-            "## Issue Context",
-            "Context.",
-            "## Decisions / Assumptions",
-            "### Assumptions",
-            "- Deterministic source checks are enough.",
-            "## Non-Negotiable Guardrails",
-            "- Guard.",
-            "## Scope",
-            "### In Scope",
-            "- Code.",
-            "## Canonical References",
-            "### Target Repository / Package",
-            target_line,
-            "### Relevant Knowledge Sources",
-            &docs,
-            "### Relevant Code Paths",
-            &paths,
-            "## Verification",
-            "### Completion Criteria",
-            "- Pass.",
-            "### Functional Verification",
-            &commands,
-        ]
-        .join("\n")
+        let mut lines = vec!["## Issue Setup".to_string()];
+        if let Some(uat) = uat {
+            lines.push(format!("- UAT Required: {uat}"));
+        }
+        lines.extend(
+            [
+                "## Issue Goal",
+                "Ship a thing.",
+                "## Why Now",
+                "Now.",
+                "## Issue Context",
+                "Context.",
+                "## Decisions / Assumptions",
+                "### Assumptions",
+                "- Deterministic source checks are enough.",
+                "## Non-Negotiable Guardrails",
+                "- Guard.",
+                "## Scope",
+                "### In Scope",
+                "- Code.",
+                "## Canonical References",
+                "### Target Repository / Package",
+                target_line,
+                "### Relevant Knowledge Sources",
+                &docs,
+                "### Relevant Code Paths",
+                &paths,
+                "## Verification",
+                "### Completion Criteria",
+                "- Pass.",
+                "### Functional Verification",
+                &commands,
+            ]
+            .into_iter()
+            .map(ToString::to_string),
+        );
+        lines.join("\n")
     }
 }

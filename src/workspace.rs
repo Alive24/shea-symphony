@@ -197,6 +197,15 @@ pub fn run_after_run(path: &Path, hooks: &HooksConfig) {
     }
 }
 
+pub fn run_workspace_command(
+    label: &str,
+    command: &str,
+    path: &Path,
+    timeout_ms: u64,
+) -> Result<HookResult, WorkspaceError> {
+    run_hook(label, command, path, timeout_ms)
+}
+
 pub fn remove_issue_workspace(
     root: &Path,
     identifier: &str,

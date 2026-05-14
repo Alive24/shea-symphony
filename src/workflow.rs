@@ -11,6 +11,13 @@ pub struct WorkflowDefinition {
     pub prompt_template: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkflowStore {
+    path: PathBuf,
+    active: WorkflowDefinition,
+    last_reload_error: Option<String>,
+}
+
 #[derive(Debug, Error)]
 pub enum WorkflowError {
     #[error("missing WORKFLOW.md at {path}: {source}")]
@@ -44,6 +51,45 @@ impl WorkflowDefinition {
             config,
             prompt_template: prompt.trim().to_string(),
         })
+    }
+}
+
+impl WorkflowStore {
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, WorkflowError> {
+        let path = path.as_ref().to_path_buf();
+        let active = WorkflowDefinition::load(&path)?;
+
+        Ok(Self {
+            path,
+            active,
+            last_reload_error: None,
+        })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn active(&self) -> &WorkflowDefinition {
+        &self.active
+    }
+
+    pub fn last_reload_error(&self) -> Option<&str> {
+        self.last_reload_error.as_deref()
+    }
+
+    pub fn reload(&mut self) -> Result<&WorkflowDefinition, WorkflowError> {
+        match WorkflowDefinition::load(&self.path) {
+            Ok(workflow) => {
+                self.active = workflow;
+                self.last_reload_error = None;
+                Ok(&self.active)
+            }
+            Err(error) => {
+                self.last_reload_error = Some(error.to_string());
+                Err(error)
+            }
+        }
     }
 }
 
@@ -109,6 +155,43 @@ mod tests {
         let workflow = WorkflowDefinition::parse("WORKFLOW.md", "Only prompt").unwrap();
         assert!(workflow.config.as_object().unwrap().is_empty());
         assert_eq!(workflow.prompt_template, "Only prompt");
+    }
+
+    #[test]
+    fn workflow_store_successful_reload_replaces_active_workflow() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("WORKFLOW.md");
+        fs::write(&path, "---\ntracker:\n  kind: memory\n---\nOld prompt").unwrap();
+
+        let mut store = WorkflowStore::load(&path).unwrap();
+        assert_eq!(store.path(), path.as_path());
+        assert_eq!(store.active().prompt_template, "Old prompt");
+
+        fs::write(&path, "---\ntracker:\n  kind: memory\n---\nNew prompt").unwrap();
+
+        let reloaded = store.reload().unwrap();
+        assert_eq!(reloaded.prompt_template, "New prompt");
+        assert_eq!(store.active().prompt_template, "New prompt");
+        assert_eq!(store.last_reload_error(), None);
+    }
+
+    #[test]
+    fn workflow_store_failed_reload_keeps_last_known_good_workflow() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("WORKFLOW.md");
+        fs::write(&path, "---\ntracker:\n  kind: memory\n---\nStable prompt").unwrap();
+
+        let mut store = WorkflowStore::load(&path).unwrap();
+
+        fs::write(&path, "---\ntracker: [").unwrap();
+
+        let error = store.reload().unwrap_err();
+        assert!(matches!(error, WorkflowError::Parse(_)));
+        assert_eq!(store.active().prompt_template, "Stable prompt");
+        assert!(store
+            .last_reload_error()
+            .unwrap()
+            .contains("failed to parse WORKFLOW.md front matter"));
     }
 
     fn fixture_issue() -> TrackerIssue {

@@ -62,7 +62,8 @@ worker supervision are still future work.
 - Issue Forge can discover local candidates from intent, ask one focused
   clarification question, draft from the quality template, validate Markdown,
   repair rough Markdown into an executable issue contract shape, and create a
-  tracker issue from a quality-gated contract with explicit `--write`.
+  tracker issue from a quality-gated, duplicate-title-checked contract with
+  explicit `--write`.
 - Issue Forge also has a CLI-first interactive mode that selects a lightweight
   issue skill/template (`runtime`, `tracker`, `backend`, `review`, `docs`, or
   `integration-test`), emits one focused clarification question for thin intent,

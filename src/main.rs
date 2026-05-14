@@ -355,6 +355,16 @@ fn forge_create(
         })?;
 
     let adapter = adapter_from_config(&config);
+    let existing_issues = adapter.list_dispatchable_issues()?;
+    if let Some(duplicate) = find_duplicate_issue_title(&existing_issues, &report.title) {
+        return Err(format!(
+            "duplicate tracker issue title detected: {} {}",
+            duplicate.identifier,
+            duplicate.url.as_deref().unwrap_or(&duplicate.title)
+        )
+        .into());
+    }
+
     let issue_id = adapter.create_follow_up_issue(FollowUpIssueInput {
         title: report.title,
         body: markdown,
@@ -369,6 +379,24 @@ fn forge_create(
 
     println!("forge_create=ok issue_id={issue_id} added_to_project={add_to_project}");
     Ok(())
+}
+
+fn find_duplicate_issue_title<'a>(
+    issues: &'a [TrackerIssue],
+    title: &str,
+) -> Option<&'a TrackerIssue> {
+    let title_key = normalized_issue_title_key(title);
+    issues
+        .iter()
+        .find(|issue| normalized_issue_title_key(&issue.title) == title_key)
+}
+
+fn normalized_issue_title_key(title: &str) -> String {
+    title
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3988,6 +4016,60 @@ mod tests {
         let error =
             validate_forge_create_contract("Thin issue", "make it better", &config).unwrap_err();
         assert!(error.contains("tracker issue was not created"));
+    }
+
+    #[test]
+    fn forge_create_duplicate_title_match_normalizes_case_and_spacing() {
+        let mut issue = tracker_issue("Todo");
+        issue.identifier = "#143".into();
+        issue.title = "Guard Issue Forge against duplicate tracker titles".into();
+        let issues = [issue];
+
+        let duplicate = find_duplicate_issue_title(
+            &issues,
+            "  guard   issue forge AGAINST duplicate tracker titles  ",
+        )
+        .unwrap();
+
+        assert_eq!(duplicate.identifier, "#143");
+    }
+
+    #[test]
+    fn forge_create_blocks_duplicate_tracker_title_before_mutation() {
+        let temp = tempfile::tempdir().unwrap();
+        let fixture_path = temp.path().join("issues.json");
+        let workflow_path = temp.path().join("WORKFLOW.md");
+        let mut existing = tracker_issue("Todo");
+        existing.identifier = "#143".into();
+        existing.title = "Create issue".into();
+        existing.url = Some("https://github.com/Alive24/jade-symphony/issues/143".into());
+        std::fs::write(
+            &fixture_path,
+            serde_json::to_string(&vec![existing]).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            &workflow_path,
+            format!(
+                "---\ntracker:\n  kind: memory\n  fixture_path: {}\nobservability:\n  logs_root: log\n---\nPrompt",
+                fixture_path.display()
+            ),
+        )
+        .unwrap();
+
+        let error = forge_create(
+            workflow_path,
+            "Create issue".into(),
+            forge_contract(),
+            true,
+            true,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("duplicate tracker issue title detected"));
+        assert!(error.contains("#143"));
+        assert!(error.contains("https://github.com/Alive24/jade-symphony/issues/143"));
     }
 
     #[test]

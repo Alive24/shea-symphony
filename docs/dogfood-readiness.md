@@ -11,7 +11,7 @@ yet.
 | Capability | Current Status |
 | --- | --- |
 | Workflow loader | Implemented for explicit workflow path and optional YAML front matter. A first-slice `WorkflowStore` can explicitly reload a workflow while preserving the last known good definition after load/parse failures. Long-running runtime reload wiring is not implemented. |
-| Dogfood workflow prompt | `examples/github-project-workflow.md` includes the Jade operating loop, issue quality gate expectation, workpad discipline, role boundaries, stop conditions, and one issue / one branch / one PR handoff rules. Tests guard against reverting to a placeholder-thin prompt. |
+| Dogfood workflow prompt | `workflows/jade-symphony.md` is the canonical normal operator workflow and includes the Jade operating loop, issue quality gate expectation, workpad discipline, role boundaries, stop conditions, and one issue / one branch / one PR handoff rules. Tests guard against reverting to a placeholder-thin prompt. |
 | Typed config | Implemented for the current skeleton, including GitHub Project v2-shaped settings, operator/agent identity metadata, first-slice execution profiles, and optional SSH worker host settings for future remote scheduling. |
 | Normalized issue model | Implemented as `TrackerIssue`, including ProjectV2 item ID, labels, assignees, blockers, linked PRs, and project fields. |
 | GitHub Project v2 tracker | Fixture-backed mode plus live loading and explicit write operations through `gh api graphql`. `run-loop` can coordinate existing primitives, idle-poll in unbounded write mode, and use claim decision helpers before write-mode dispatch; auth diagnostics distinguish fixture mode, env-token auth, usable `gh api graphql` auth, missing `gh`, and unusable auth. Same-state status writes are skipped, Project item addition initializes the configured `Status` field to `Todo`, marker workpad upsert is idempotent for the canonical marker, and claim decision helpers distinguish claimable, active, and externally changed states. Full claim reconciliation is not implemented yet. |
@@ -35,11 +35,11 @@ The operator launcher runbook is in `docs/operator-dogfood.md`; it keeps write
 mode explicit through `scripts/jade-dogfood --write --confirm-write` and runs
 the controlled dogfood smoke preflight before a mutating tick.
 
-Live dogfood workflow definitions live in `examples/github-project-workflow.md`
-and `examples/github-project-gemini-review-workflow.md`. Temp Markdown files can
-still be useful for drafts, but reusable workflow config and operator prompts
-should be promoted into `examples/` or `docs/` before they become the canonical
-run path.
+The live dogfood workflow definition lives in `workflows/jade-symphony.md`.
+Temp Markdown files can still be useful for drafts, but reusable workflow config
+and operator prompts should be promoted into `workflows/`, `examples/`, or
+`docs/` before they become the canonical run path. Normal operator workflow
+config belongs in `workflows/`; `examples/` is fixture/reference material.
 
 The controlled live smoke runbook is in `docs/dogfood-smoke.md`. It keeps the
 first dogfood acceptance path supervised and bounded to one controlled issue;
@@ -444,13 +444,12 @@ These commands should remain credential-free and deterministic. They are the
 local smoke tests for dispatch planning and bounded loop behavior until live
 GitHub Project v2 execution is hardened.
 
-## Live Project Template
+## Live Project Workflow
 
-`examples/github-project-workflow.md` is a non-fixture workflow template for
-manual live Project v2 reads and explicit tracker writes through `gh`. It still
-uses the `dry-run` backend by default, but the prompt body is now the real Jade
-dogfood operating prompt rather than a placeholder. `run-loop --write` is
-available only as a bounded runtime skeleton and should not be treated as full
-autonomous agent execution until claim reconciliation, full runtime resume
-reconciliation, configured verification commands, and worker supervision are
-hardened.
+`workflows/jade-symphony.md` is the canonical non-fixture workflow for manual
+live Project v2 reads and explicit tracker writes through `gh`. It still uses
+the `dry-run` backend by default, but the prompt body is the real Jade dogfood
+operating prompt rather than a placeholder. `run-loop --write` is available only
+as a bounded runtime skeleton and should not be treated as full autonomous agent
+execution until claim reconciliation, full runtime resume reconciliation,
+configured verification commands, and worker supervision are hardened.

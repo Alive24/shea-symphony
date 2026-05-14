@@ -97,9 +97,10 @@ For a compact source-linked view of what is landed, what is waiting in
 - basic strict prompt rendering supports known `issue.*` fields, `attempt`, and
   simple `{% if %}` / `{% else %}` blocks. The supported subset is documented
   in `docs/prompt-template-contract.md`.
-- `examples/github-project-workflow.md` now contains an inline Jade execution
-  prompt with the operating loop, workpad discipline, review boundary, stop
-  conditions, and one issue / one branch / one PR handoff rules.
+- `workflows/jade-symphony.md` is the canonical self-dogfood workflow and
+  contains an inline Jade execution prompt with the operating loop, workpad
+  discipline, review boundary, stop conditions, and one issue / one branch /
+  one PR handoff rules.
 - `scripts/jade-dogfood` provides a bounded operator launcher for the GitHub
   Project workflow with explicit dry-run/write modes and preflight checks for
   the built binary, git, `gh`, auth, workflow validation, and controlled
@@ -211,8 +212,9 @@ Run the bundled dry-run example:
 cargo run -- examples/dry-run-workflow.md
 ```
 
-The workflow catalog in `examples/README.md` groups fixture workflows, live
-workflow templates, backend fixtures, review fixtures, and their safe commands.
+The normal Jade Symphony dogfood workflow is `workflows/jade-symphony.md`. The
+workflow catalog in `examples/README.md` groups fixture workflows, compatibility
+templates, backend fixtures, review fixtures, and their safe commands.
 
 Expected shape:
 
@@ -231,8 +233,8 @@ boundaries, and role-specific lanes.
 cargo run -- validate examples/dry-run-workflow.md
 cargo run -- validate-workflow examples/dry-run-workflow.md
 cargo run -- inspect examples/dry-run-workflow.md
-cargo run -- cleanup-plan examples/github-project-workflow.md
-cargo run -- inspect examples/github-project-workflow.md --state Merging --state Rework
+cargo run -- cleanup-plan workflows/jade-symphony.md
+cargo run -- inspect workflows/jade-symphony.md --state Merging --state Rework
 cargo run -- doctor examples/dry-run-workflow.md
 cargo run -- doctor-repair-human-review examples/dry-run-workflow.md --dry-run
 cargo run -- doctor examples/dry-run-workflow.md --json
@@ -247,7 +249,7 @@ cargo run -- run-once examples/git-identity-workflow.md
 cargo run -- run-once examples/codex-subprocess-workflow.md
 cargo run -- run-once examples/claude-subprocess-workflow.md
 cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
-cargo run -- review-loop examples/github-project-workflow.md --max-iterations 1 --dry-run
+cargo run -- review-loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 cargo run -- profiles examples/cockpit-profiles-workflow.md
 cargo run -- plan examples/linear-fixture-workflow.md
 cargo run -- gate examples/dry-run-workflow.md '#3'
@@ -259,7 +261,7 @@ cargo run -- forge-validate --title "Repaired Forge issue" --file examples/fixtu
 cargo run -- forge-draft --title "Implement read-only Project v2 adapter" --goal "Load Project v2 issues into TrackerIssue records."
 cargo run -- forge-interactive --title "Add resume preflight" --intent "run-loop should inspect runtime state before claiming new work" --skill runtime
 cargo run -- forge-reflect --context-file docs/dogfood-readiness.md --limit 1
-cargo run -- forge-create --workflow path/to/WORKFLOW.md --title "Follow-up title" --file path/to/issue.md --assignee Alive24 --add-to-project --project-field Capability=CLI --write
+cargo run -- forge-create --workflow workflows/jade-symphony.md --title "Follow-up title" --file path/to/issue.md --assignee Alive24 --add-to-project --project-field Capability=CLI --write
 ```
 
 `run-once` defaults to dry-run examples, but the Codex and Claude subprocess
@@ -441,13 +443,13 @@ cargo run -- run-once examples/dry-run-workflow.md
 cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
 scripts/jade-dogfood --dry-run
 cargo run -- dogfood-smoke examples/dogfood-smoke-workflow.md --dry-run
-cargo run -- dogfood-smoke examples/github-project-workflow.md --dry-run
+cargo run -- dogfood-smoke workflows/jade-symphony.md --dry-run
 cargo run -- merge-once examples/merge-fixture-workflow.md --dry-run
 scripts/jade-dogfood --write --confirm-write --max-iterations 1
 cargo run -- run-loop examples/usage-limit-workflow.md --max-iterations 1 --write
-cargo run -- merge-once examples/github-project-workflow.md --dry-run
-cargo run -- merge-loop examples/github-project-workflow.md --max-iterations 3 --dry-run
-cargo run -- cleanup-workspaces examples/github-project-workflow.md --dry-run
+cargo run -- merge-once workflows/jade-symphony.md --dry-run
+cargo run -- merge-loop workflows/jade-symphony.md --max-iterations 3 --dry-run
+cargo run -- cleanup-workspaces workflows/jade-symphony.md --dry-run
 cargo run -- gate examples/llm-gate-workflow.md '#1'
 ```
 
@@ -468,14 +470,26 @@ The dry-run workflow uses:
 - `examples/fixtures/llm-gate-clarify.sh`
 - `examples/fixtures/llm-gate-malformed.sh`
 
-For a real GitHub Project v2 read/write workflow template, copy and edit:
+For normal Jade Symphony Project #9 dogfood, use:
 
-- `examples/github-project-workflow.md`
+- `workflows/jade-symphony.md`
 
-Update `owner`, `repo`, `project_owner`, `project_number`, and `state_map` before
-using it with a live project. The prompt body is the current Jade dogfood
-operator prompt; keep it aligned with `docs/bootstrap/JADE_WORKFLOW.md` when
-the workflow contract changes.
+The intended operator spelling is one loop plus one forge:
+
+```bash
+jade-symphony loop workflows/jade-symphony.md --write
+jade-symphony forge workflows/jade-symphony.md --interactive
+```
+
+Until those aliases land, use the explicit command names:
+
+```bash
+cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --write
+cargo run -- forge-interactive --workflow workflows/jade-symphony.md
+```
+
+The legacy `examples/github-project-*.md` files are compatibility/reference
+templates, not the normal operator workflow.
 
 ## Bootstrap Sources
 

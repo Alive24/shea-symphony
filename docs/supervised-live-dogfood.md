@@ -30,26 +30,25 @@ cargo clippy --all-targets --all-features -- -D warnings
 Stop before live dogfood if the worktree is dirty, GitHub auth is unavailable,
 or verification is failing for an unexplained reason.
 
-The repo-owned live workflows are:
+The repo-owned live workflow is:
 
-- `examples/github-project-workflow.md` for implementation, merge, smoke,
-  inspect, and project-state commands.
-- `examples/github-project-gemini-review-workflow.md` for supervised Gemini
-  Review Agent commands.
+- `workflows/jade-symphony.md` for implementation, review, merge, smoke,
+  inspect, project-state, and Issue Forge commands.
 
-Both workflows default durable artifacts to `~/.jade-symphony/artifacts` when
+It defaults durable artifacts to `~/.jade-symphony/artifacts` when
 `JADE_SYMPHONY_ARTIFACT_ROOT` is unset. Set that variable to migrate worktrees,
 logs, runtime state, review prompts, and review ledgers to another local root.
 If a command points at `/tmp/*.md` or `/private/tmp/*.md`, promote the reusable
-workflow or prompt into `examples/` or `docs/` before treating it as canonical.
+workflow or prompt into `workflows/`, `examples/`, or `docs/` before treating it
+as canonical. Normal dogfood workflow config belongs in `workflows/`.
 
 ## Inspect The Project
 
 Use the live workflow as the source of tracker state:
 
 ```bash
-cargo run -- inspect examples/github-project-workflow.md
-cargo run -- doctor examples/github-project-workflow.md
+cargo run -- inspect workflows/jade-symphony.md
+cargo run -- doctor workflows/jade-symphony.md
 ```
 
 Review the output before mutating anything. In particular, check for:
@@ -66,7 +65,7 @@ Review the output before mutating anything. In particular, check for:
 Before the first write tick, run the controlled smoke preflight:
 
 ```bash
-cargo run -- dogfood-smoke examples/github-project-workflow.md --dry-run
+cargo run -- dogfood-smoke workflows/jade-symphony.md --dry-run
 ```
 
 Proceed only when there is exactly one executable controlled smoke candidate,
@@ -78,13 +77,13 @@ gaps.
 Preview the same bounded implementation tick without tracker mutation:
 
 ```bash
-cargo run -- run-loop examples/github-project-workflow.md --max-iterations 1 --dry-run
+cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 
 Use one bounded write tick:
 
 ```bash
-cargo run -- run-loop examples/github-project-workflow.md --max-iterations 1 --write
+cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
 The operator launcher wraps the same workflow with local preflight checks:
@@ -114,7 +113,7 @@ For a bounded Review Agent pass, run:
 
 ```bash
 export JADE_GEMINI_COMMAND="$(command -v gemini)"
-cargo run -- review-loop examples/github-project-gemini-review-workflow.md --max-iterations 1 --write
+cargo run -- review-loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
 Expected outcomes:
@@ -139,8 +138,8 @@ After a human accepts work and moves the issue to `Merging`, use the guarded
 merge lane:
 
 ```bash
-cargo run -- merge-once examples/github-project-workflow.md --dry-run
-cargo run -- merge-once examples/github-project-workflow.md --write
+cargo run -- merge-once workflows/jade-symphony.md --dry-run
+cargo run -- merge-once workflows/jade-symphony.md --write
 ```
 
 The merge lane should:
@@ -167,17 +166,17 @@ cargo clippy --all-targets --all-features -- -D warnings
 Then refresh the tracker and project invariants:
 
 ```bash
-cargo run -- inspect examples/github-project-workflow.md
-cargo run -- doctor examples/github-project-workflow.md
+cargo run -- inspect workflows/jade-symphony.md
+cargo run -- doctor workflows/jade-symphony.md
 ```
 
 ## Recovery
 
 When something goes wrong:
 
-- use `cargo run -- inspect examples/github-project-workflow.md` to refresh
+- use `cargo run -- inspect workflows/jade-symphony.md` to refresh
   tracker state;
-- use `cargo run -- doctor examples/github-project-workflow.md` to find project
+- use `cargo run -- doctor workflows/jade-symphony.md` to find project
   invariant violations;
 - inspect runtime state under the configured logs root;
 - continue existing issue branches/PRs for rework rather than creating duplicate

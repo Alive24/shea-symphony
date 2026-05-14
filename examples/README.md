@@ -1,9 +1,13 @@
 # Jade Symphony Example Workflows
 
-This directory contains local workflows and fixtures for rehearsing Jade
-Symphony behavior. Most examples are fixture-backed and credential-free. The
-live GitHub workflow is explicit about tracker writes and should be used only
-with the documented `--write` commands.
+This directory contains fixture, demo, and compatibility workflows for
+rehearsing Jade Symphony behavior. Most examples are fixture-backed and
+credential-free.
+
+The normal repo dogfood workflow is not in this directory. Use
+`workflows/jade-symphony.md` for live Project #9 operator runs. The live GitHub
+Project examples remain as compatibility/reference material for debugging older
+commands and testing specific lanes.
 
 ## Fixture Dispatch
 
@@ -22,8 +26,8 @@ memory-backed. They do not mutate live GitHub Project v2 state.
 | Workflow | Purpose | Notes |
 | --- | --- | --- |
 | `linear-fixture-workflow.md` | Linear adapter fixture backed by `fixtures/linear-issues.json`. | Credential-free; does not prove live Linear readiness. |
-| `github-project-workflow.md` | Live GitHub Project v2 template for Project #9. | Non-fixture; read/write operations use `gh` or token auth and require explicit `--write` for mutation. |
-| `github-project-gemini-review-workflow.md` | Live GitHub Project v2 Review Agent template for Project #9. | Uses `$JADE_GEMINI_COMMAND` and durable review artifacts under `$JADE_SYMPHONY_ARTIFACT_ROOT`. |
+| `github-project-workflow.md` | Legacy live GitHub Project v2 template for Project #9. | Compatibility/reference workflow; prefer `workflows/jade-symphony.md` for normal operator runs. |
+| `github-project-gemini-review-workflow.md` | Legacy live GitHub Project v2 Review Agent template for Project #9. | Compatibility/reference workflow; `workflows/jade-symphony.md` carries the normal review config. |
 
 ## Agent Backend Fixtures
 
@@ -61,15 +65,15 @@ Issue Forge examples:
 
 ## Live Boundary
 
-Use `github-project-workflow.md` for live Project #9 implementation reads and
-explicit writes. Use `github-project-gemini-review-workflow.md` for supervised
-Review Agent passes. Both live workflows default to
-`~/.jade-symphony/artifacts` when `JADE_SYMPHONY_ARTIFACT_ROOT` is unset, and
-support setting that environment variable to move durable worktrees, logs, and
-review artifacts together.
+Use `../workflows/jade-symphony.md` for normal live Project #9 implementation,
+review, merge, smoke, inspect, and Issue Forge commands. The legacy live
+examples default to `~/.jade-symphony/artifacts` when
+`JADE_SYMPHONY_ARTIFACT_ROOT` is unset, and support setting that environment
+variable to move durable worktrees, logs, and review artifacts together.
 
 Do not treat fixture success as live readiness. Before any live write, inspect
 the Project state, confirm the issue contract, and use the workflow-specific
 commands documented in the root README and dogfood docs. If an operator has a
 workflow file under `/tmp` or `/private/tmp`, promote the reusable config or
-prompt into `examples/` or `docs/` before relying on it for dogfood.
+prompt into `workflows/`, `examples/`, or `docs/` before relying on it for
+dogfood. Normal operator workflow config belongs in `workflows/`.

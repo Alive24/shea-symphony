@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::process::Command;
+use std::thread;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -91,6 +93,89 @@ pub enum TrackerError {
     IntegrationUnavailable(String),
     #[error("tracker operation is not implemented yet: {0}")]
     NotImplemented(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectStateFailureKind {
+    Auth,
+    Network,
+    RateLimit,
+    Schema,
+    PartialResponse,
+    Payload,
+    Unknown,
+}
+
+impl ProjectStateFailureKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auth => "auth",
+            Self::Network => "network",
+            Self::RateLimit => "rate_limit",
+            Self::Schema => "schema",
+            Self::PartialResponse => "partial_response",
+            Self::Payload => "payload",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+pub fn classify_project_state_error(error: &TrackerError) -> ProjectStateFailureKind {
+    match error {
+        TrackerError::Fixture(_) => ProjectStateFailureKind::Payload,
+        TrackerError::Payload(message) => classify_project_state_failure_message(message),
+        TrackerError::IntegrationUnavailable(message) => {
+            classify_project_state_failure_message(message)
+        }
+        TrackerError::NotImplemented(_) => ProjectStateFailureKind::Unknown,
+    }
+}
+
+pub fn classify_project_state_failure_message(message: &str) -> ProjectStateFailureKind {
+    let normalized = message.to_ascii_lowercase();
+    if normalized.contains("rate limit")
+        || normalized.contains("secondary rate")
+        || normalized.contains("too many requests")
+        || normalized.contains("http 429")
+    {
+        ProjectStateFailureKind::RateLimit
+    } else if normalized.contains("authentication")
+        || normalized.contains("authenticate")
+        || normalized.contains("auth login")
+        || normalized.contains("bad credentials")
+        || normalized.contains("unauthorized")
+        || normalized.contains("http 401")
+        || normalized.contains("http 403")
+    {
+        ProjectStateFailureKind::Auth
+    } else if normalized.contains("could not resolve host")
+        || normalized.contains("failed to connect")
+        || normalized.contains("connection timed out")
+        || normalized.contains("connection reset")
+        || normalized.contains("network")
+        || normalized.contains("tls")
+    {
+        ProjectStateFailureKind::Network
+    } else if normalized.contains("missing projectv2")
+        || normalized.contains("partial projectv2")
+        || normalized.contains("missing status field")
+        || normalized.contains("missing fieldvalues")
+        || normalized.contains("missing pageinfo")
+    {
+        ProjectStateFailureKind::PartialResponse
+    } else if normalized.contains("could not resolve to a projectv2")
+        || normalized.contains("field ")
+        || normalized.contains("doesn't exist")
+        || normalized.contains("schema")
+    {
+        ProjectStateFailureKind::Schema
+    } else if normalized.contains("invalid gh graphql json")
+        || normalized.contains("invalid github graphql json")
+    {
+        ProjectStateFailureKind::Payload
+    } else {
+        ProjectStateFailureKind::Unknown
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1097,6 +1182,35 @@ fn github_auth_gap(mode: GithubAuthMode) -> Option<String> {
 }
 
 fn run_gh_graphql(args: Vec<String>) -> Result<serde_json::Value, TrackerError> {
+    const MAX_ATTEMPTS: usize = 3;
+    let mut last_error = None;
+
+    for attempt in 1..=MAX_ATTEMPTS {
+        match run_gh_graphql_once(&args) {
+            Ok(response) => return Ok(response),
+            Err(error) if project_state_error_is_retryable(&error) => {
+                last_error = Some(error);
+                if attempt < MAX_ATTEMPTS {
+                    thread::sleep(project_state_retry_delay(attempt));
+                } else {
+                    break;
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    let error = last_error.unwrap_or_else(|| {
+        TrackerError::IntegrationUnavailable("GitHub GraphQL operation failed".into())
+    });
+    let kind = classify_project_state_error(&error);
+    Err(TrackerError::IntegrationUnavailable(format!(
+        "GitHub GraphQL operation failed after {MAX_ATTEMPTS} attempts kind={}: {error}",
+        kind.as_str()
+    )))
+}
+
+fn run_gh_graphql_once(args: &[String]) -> Result<serde_json::Value, TrackerError> {
     let output = Command::new("gh")
         .args(args)
         .output()
@@ -1116,6 +1230,21 @@ fn run_gh_graphql(args: Vec<String>) -> Result<serde_json::Value, TrackerError> 
     }
 
     Ok(response)
+}
+
+fn project_state_error_is_retryable(error: &TrackerError) -> bool {
+    matches!(
+        classify_project_state_error(error),
+        ProjectStateFailureKind::Network | ProjectStateFailureKind::RateLimit
+    )
+}
+
+fn project_state_retry_delay(attempt: usize) -> Duration {
+    Duration::from_millis(match attempt {
+        0 | 1 => 250,
+        2 => 1_000,
+        _ => 2_000,
+    })
 }
 
 fn github_project_query(owner_field: &str) -> String {
@@ -1358,22 +1487,29 @@ fn issues_from_project_response(
 
     let mut issues = Vec::new();
     for item in items {
-        if let Some(issue) = issue_from_project_item(item, config) {
+        if let Some(issue) = issue_from_project_item(item, config)? {
             issues.push(issue);
         }
     }
 
-    let page_info = project
-        .pointer("/items/pageInfo")
-        .unwrap_or(&serde_json::Value::Null);
+    let page_info = project.pointer("/items/pageInfo").ok_or_else(|| {
+        TrackerError::Payload("partial ProjectV2 response missing pageInfo".into())
+    })?;
     let has_next_page = page_info
         .get("hasNextPage")
         .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
+        .ok_or_else(|| {
+            TrackerError::Payload("partial ProjectV2 response missing pageInfo.hasNextPage".into())
+        })?;
     let next_cursor = page_info
         .get("endCursor")
         .and_then(serde_json::Value::as_str)
         .map(ToOwned::to_owned);
+    if has_next_page && next_cursor.is_none() {
+        return Err(TrackerError::Payload(
+            "partial ProjectV2 response missing pageInfo.endCursor".into(),
+        ));
+    }
 
     Ok((issues, next_cursor, has_next_page))
 }
@@ -1552,14 +1688,28 @@ fn graphql_error_message(response: &serde_json::Value) -> Option<String> {
 fn issue_from_project_item(
     item: &serde_json::Value,
     config: &RuntimeConfig,
-) -> Option<TrackerIssue> {
-    let content = item.get("content")?;
-    if content.get("__typename")?.as_str()? != "Issue" {
-        return None;
+) -> Result<Option<TrackerIssue>, TrackerError> {
+    let Some(content) = item.get("content") else {
+        return Ok(None);
+    };
+    if content
+        .get("__typename")
+        .and_then(serde_json::Value::as_str)
+        != Some("Issue")
+    {
+        return Ok(None);
     }
 
-    let state = project_status(item, &config.tracker.status_field)?;
-    let number = content.get("number")?.as_u64()?;
+    let number = content
+        .get("number")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| TrackerError::Payload("partial ProjectV2 issue missing number".into()))?;
+    let state = project_status(item, &config.tracker.status_field).ok_or_else(|| {
+        TrackerError::Payload(format!(
+            "partial ProjectV2 response missing status field {:?} for issue #{number}",
+            config.tracker.status_field
+        ))
+    })?;
     let mut project_fields = project_fields(item);
     project_fields.insert(
         config.tracker.status_field.clone(),
@@ -1573,15 +1723,27 @@ fn issue_from_project_item(
     }
     let blocked_by = blocker_refs_from_project_fields(&project_fields);
 
-    Some(TrackerIssue {
+    Ok(Some(TrackerIssue {
         tracker_kind: "github_project_v2".into(),
-        id: content.get("id")?.as_str()?.to_string(),
+        id: content
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                TrackerError::Payload(format!("partial ProjectV2 issue #{number} missing id"))
+            })?
+            .to_string(),
         item_id: item
             .get("id")
             .and_then(serde_json::Value::as_str)
             .map(ToOwned::to_owned),
         identifier: format!("#{number}"),
-        title: content.get("title")?.as_str()?.to_string(),
+        title: content
+            .get("title")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                TrackerError::Payload(format!("partial ProjectV2 issue #{number} missing title"))
+            })?
+            .to_string(),
         description: github_issue_description_with_workpad(content, &config.tracker.workpad.marker),
         url: content
             .get("url")
@@ -1606,7 +1768,7 @@ fn issue_from_project_item(
             .get("updatedAt")
             .and_then(serde_json::Value::as_str)
             .map(ToOwned::to_owned),
-    })
+    }))
 }
 
 fn github_issue_description_with_workpad(
@@ -3308,5 +3470,72 @@ Prompt
             Some("GitHub GraphQL returned errors: Could not resolve to a ProjectV2")
         );
         assert!(graphql_error_message(&serde_json::json!({"data": {}})).is_none());
+    }
+
+    #[test]
+    fn classifies_project_state_failures() {
+        assert_eq!(
+            classify_project_state_failure_message("API rate limit exceeded"),
+            ProjectStateFailureKind::RateLimit
+        );
+        assert_eq!(
+            classify_project_state_failure_message("could not resolve host api.github.com"),
+            ProjectStateFailureKind::Network
+        );
+        assert_eq!(
+            classify_project_state_failure_message(
+                "GitHub GraphQL returned errors: Field 'foo' doesn't exist on type ProjectV2"
+            ),
+            ProjectStateFailureKind::Schema
+        );
+        assert_eq!(
+            classify_project_state_error(&TrackerError::Payload(
+                "partial ProjectV2 response missing status field \"Status\" for issue #7".into()
+            )),
+            ProjectStateFailureKind::PartialResponse
+        );
+    }
+
+    #[test]
+    fn project_issue_missing_status_is_partial_response_error() {
+        let config = github_config(
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
+        );
+        let response = serde_json::json!({
+            "data": {
+                "organization": {
+                    "projectV2": {
+                        "items": {
+                            "nodes": [
+                                {
+                                    "id": "PVTI_1",
+                                    "content": {
+                                        "__typename": "Issue",
+                                        "id": "I_1",
+                                        "number": 7,
+                                        "title": "Project read hardening"
+                                    },
+                                    "fieldValues": {
+                                        "nodes": []
+                                    }
+                                }
+                            ],
+                            "pageInfo": {
+                                "hasNextPage": false,
+                                "endCursor": null
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        let error = issues_from_project_response(&response, &config).unwrap_err();
+
+        assert_eq!(
+            classify_project_state_error(&error),
+            ProjectStateFailureKind::PartialResponse
+        );
+        assert!(error.to_string().contains("missing status field"));
     }
 }

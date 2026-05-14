@@ -18,6 +18,7 @@ remain the preferred rehearsal path for local development.
 | `validate` | Validate workflow loading/configuration. | `cargo run -- validate examples/dry-run-workflow.md` |
 | `validate-workflow` | Compatibility alias for `validate`. | `cargo run -- validate-workflow examples/dry-run-workflow.md` |
 | `inspect` | Read tracker issues and print gate/status information. | `cargo run -- inspect examples/github-project-workflow.md` |
+| `project-state` | Diagnose whether the canonical Project read path is trustworthy. | `cargo run -- project-state examples/github-project-workflow.md` |
 | `doctor` | Audit Project/workflow invariants. | `cargo run -- doctor examples/github-project-workflow.md` |
 | `audit-project` | Compatibility alias for `doctor`. | `cargo run -- audit-project examples/github-project-workflow.md` |
 | `profiles` | List configured/discovered execution profiles. | `cargo run -- profiles examples/cockpit-profiles-workflow.md` |

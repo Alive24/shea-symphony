@@ -84,8 +84,16 @@ actually records passing review evidence.
 
 ```bash
 target/debug/jade-symphony inspect examples/github-project-workflow.md
+target/debug/jade-symphony project-state examples/github-project-workflow.md
 target/debug/jade-symphony run-loop examples/github-project-workflow.md --max-iterations 1 --write
 ```
+
+Use `project-state` before claiming work when multiple operators are active. A
+healthy read prints `project_state_access=ok`, `trusted=true`, the issue count,
+and a state summary. A failed read prints `project_state_access=blocked`,
+`trusted=false`, and a `failure_kind` such as `auth`, `network`, `rate_limit`,
+`schema`, `partial_response`, or `payload`; treat that as a blocker, not as an
+empty queue.
 
 For supervised parallel operators, pass `--pool N` to preview eligible slots and
 apply lane-specific claim checks. Main work uses the `Main Agent` Project field

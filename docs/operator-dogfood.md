@@ -50,6 +50,36 @@ target/debug/jade-symphony dogfood-smoke examples/github-project-workflow.md --d
 
 If the smoke preflight fails, the launcher exits before claiming tracker work.
 
+## Review Backend Setup
+
+For live Agent Review, make the Gemini command visible to the worker process.
+`review.gemini_command` is launched directly, so `gemini` is resolved from the
+worker `PATH`, not from an interactive shell profile.
+
+Prefer an absolute path when supervising review workers:
+
+```bash
+command -v gemini
+```
+
+Then configure the workflow or operator environment with that path before
+running review automation:
+
+```yaml
+review:
+  backend: gemini-cli
+  gemini_command: /opt/homebrew/bin/gemini
+```
+
+```bash
+target/debug/jade-symphony review-loop examples/github-project-workflow.md --max-iterations 1 --write
+```
+
+If Gemini cannot start, the review workpad should name the configured command,
+whether worker `PATH` could resolve it, the required operator action, and the
+retry command. Do not move an issue to `Human Review` unless the Review Agent
+actually records passing review evidence.
+
 ## Inspect And Resume
 
 ```bash

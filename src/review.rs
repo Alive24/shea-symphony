@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -325,7 +325,9 @@ impl ReviewBackend for GeminiCliReviewBackend {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|error| ReviewError::Backend(error.to_string()))?;
+            .map_err(|error| {
+                ReviewError::Backend(diagnose_gemini_spawn_failure(&self.command, &error))
+            })?;
 
         if let Some(stdin) = child.stdin.as_mut() {
             stdin
@@ -398,11 +400,43 @@ impl ReviewBackend for GeminiCliReviewBackend {
             });
         } else {
             job.state = ReviewJobState::Failed;
-            job.error = Some(stderr.trim().to_string());
+            let status = output
+                .status
+                .code()
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "terminated by signal".into());
+            let detail = stderr.trim();
+            job.error = Some(if detail.is_empty() {
+                format!("Gemini review command exited with status {status} and no stderr.")
+            } else {
+                format!("Gemini review command exited with status {status}: {detail}")
+            });
         }
 
         Ok(job)
     }
+}
+
+fn diagnose_gemini_spawn_failure(command: &str, error: &std::io::Error) -> String {
+    match error.kind() {
+        ErrorKind::NotFound if command_uses_path_lookup(command) => format!(
+            "review backend startup failed: configured command: `{command}`; resolved executable: not found in worker PATH; suggested fix: configure `review.gemini_command` with an absolute Gemini path such as `/opt/homebrew/bin/gemini`, or export a worker PATH that can resolve `{command}`; retry: rerun `review-loop` after updating the workflow or environment."
+        ),
+        ErrorKind::NotFound => format!(
+            "review backend startup failed: configured command: `{command}`; resolved executable: path was not found or could not be executed; suggested fix: verify the configured Gemini path exists and is executable; retry: rerun `review-loop` after updating the workflow or environment."
+        ),
+        ErrorKind::PermissionDenied => format!(
+            "review backend startup failed: configured command: `{command}`; resolved executable: permission denied; suggested fix: make the Gemini command executable or configure `review.gemini_command` to an executable path; retry: rerun `review-loop` after fixing permissions."
+        ),
+        _ => format!(
+            "review backend startup failed: configured command: `{command}`; spawn error: {error}; suggested fix: inspect the Gemini CLI installation, auth/configuration, and worker environment; retry: rerun `review-loop` after fixing the backend."
+        ),
+    }
+}
+
+fn command_uses_path_lookup(command: &str) -> bool {
+    let path = Path::new(command);
+    !path.is_absolute() && !command.contains(std::path::MAIN_SEPARATOR)
 }
 
 pub fn classify_findings(output: &str) -> Vec<ReviewFinding> {
@@ -460,6 +494,17 @@ pub fn review_gate_decision_for_actor(job: &ReviewJob, actor: ReviewActor) -> Re
                 message: "Agent review completed without a report.".into(),
             },
         },
+        ReviewJobState::Failed | ReviewJobState::TimedOut
+            if review_required_operator_actions(job).is_some() =>
+        {
+            ReviewGateDecision {
+                outcome: ReviewOutcome::StillRunning,
+                target_state: Some("agent_review"),
+                message:
+                    "Agent Review backend is blocked by required operator action; issue remains in Agent Review."
+                        .into(),
+            }
+        }
         ReviewJobState::Failed | ReviewJobState::TimedOut => ReviewGateDecision {
             outcome: ReviewOutcome::NeedsHumanInput,
             target_state: Some("need_human_input"),
@@ -545,6 +590,11 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
     if let Some(error) = &job.error {
         lines.push(format!("- Error: {error}"));
     }
+    if let Some(actions) = review_required_operator_actions(job) {
+        lines.push(String::new());
+        lines.push("### Required Operator Action".into());
+        lines.extend(actions);
+    }
     if let Some(pause) = review_usage_limit_pause(job) {
         lines.push(format!("- Usage-limit classifier: `{}`", pause.classifier));
         lines.push(format!("- Usage-limit evidence: {}", pause.evidence));
@@ -574,6 +624,44 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
     }
 
     lines.join("\n")
+}
+
+fn review_required_operator_actions(job: &ReviewJob) -> Option<Vec<String>> {
+    let error = job.error.as_deref().unwrap_or_default();
+    if job.state == ReviewJobState::TimedOut {
+        return Some(vec![
+            "- Review backend timed out before producing evidence.".into(),
+            "- Check Gemini auth/configuration and increase `review.timeout_ms` only if the backend is healthy but slow.".into(),
+            "- Retry: rerun `review-loop` for this issue after fixing the backend.".into(),
+        ]);
+    }
+
+    if job.state != ReviewJobState::Failed {
+        return None;
+    }
+
+    if error.contains("review backend startup failed")
+        || error.contains("not found in worker PATH")
+        || error.contains("permission denied")
+    {
+        return Some(vec![
+            "- Fix the Review Agent backend command or worker PATH shown in the error above.".into(),
+            "- For Gemini CLI, prefer an absolute `review.gemini_command` path or export a worker PATH that resolves `gemini`.".into(),
+            "- This issue must not move to `Human Review` until an independent Review Agent records passing review evidence.".into(),
+            "- Retry: rerun `review-loop` for this issue after updating the workflow or environment.".into(),
+        ]);
+    }
+
+    if error.contains("exited with status") {
+        return Some(vec![
+            "- The Review Agent backend started but exited unsuccessfully.".into(),
+            "- Inspect stderr/auth/configuration from the error above; do not move to Human Review until a review pass is recorded.".into(),
+            "- This issue must not move to `Human Review` until an independent Review Agent records passing review evidence.".into(),
+            "- Retry: rerun `review-loop` for this issue after fixing the backend.".into(),
+        ]);
+    }
+
+    None
 }
 
 pub fn write_review_job_ledger_record(
@@ -833,6 +921,76 @@ mod tests {
             created_at: None,
             updated_at: None,
         }
+    }
+
+    #[test]
+    fn gemini_backend_missing_path_command_has_actionable_startup_diagnostic() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let backend = GeminiCliReviewBackend::new("jade-missing-gemini-command");
+        let request = ReviewRequest {
+            issue: issue(),
+            prompt: "Review this".into(),
+            workspace,
+            artifact_root: temp.path().join("reviews"),
+        };
+
+        let error = backend.start(request).unwrap_err().to_string();
+
+        assert!(error.contains("review backend startup failed"));
+        assert!(error.contains("configured command: `jade-missing-gemini-command`"));
+        assert!(error.contains("resolved executable: not found in worker PATH"));
+        assert!(error.contains("absolute Gemini path"));
+        assert!(error.contains("retry: rerun `review-loop`"));
+    }
+
+    #[test]
+    fn review_workpad_includes_required_operator_action_for_backend_startup_failure() {
+        let job = ReviewJob::failed_unavailable(
+            "#1",
+            "gemini-cli",
+            "review backend failed: review backend startup failed: configured command: `gemini`; resolved executable: not found in worker PATH; suggested fix: configure `review.gemini_command` with an absolute Gemini path; retry: rerun `review-loop` after updating the workflow or environment.",
+        );
+
+        let workpad = render_review_workpad(&issue(), &job);
+
+        assert!(workpad.contains("### Required Operator Action"));
+        assert!(workpad.contains("Fix the Review Agent backend command or worker PATH"));
+        assert!(workpad.contains("absolute `review.gemini_command` path"));
+        assert!(workpad.contains("Retry: rerun `review-loop`"));
+        assert!(workpad.contains("must not"));
+    }
+
+    #[test]
+    fn actionable_backend_startup_failure_remains_in_agent_review() {
+        let job = ReviewJob::failed_unavailable(
+            "#1",
+            "gemini-cli",
+            "review backend failed: review backend startup failed: configured command: `gemini`; resolved executable: not found in worker PATH",
+        );
+
+        let decision = review_gate_decision(&job);
+
+        assert_eq!(decision.outcome, ReviewOutcome::StillRunning);
+        assert_eq!(decision.target_state, Some("agent_review"));
+        assert!(decision.message.contains("required operator action"));
+    }
+
+    #[test]
+    fn review_workpad_includes_operator_action_for_nonzero_backend_exit() {
+        let mut job = ReviewJob::failed_unavailable(
+            "#1",
+            "gemini-cli",
+            "Gemini review command exited with status 1: auth required",
+        );
+        job.id = "gemini-1".into();
+
+        let workpad = render_review_workpad(&issue(), &job);
+
+        assert!(workpad.contains("### Required Operator Action"));
+        assert!(workpad.contains("started but exited unsuccessfully"));
+        assert!(workpad.contains("Inspect stderr/auth/configuration"));
     }
 
     #[test]

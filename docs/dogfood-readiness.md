@@ -33,7 +33,9 @@ The operator launcher runbook is in `docs/operator-dogfood.md`; it keeps write
 mode explicit through `scripts/jade-dogfood --write --confirm-write`.
 
 The controlled live smoke runbook is in `docs/dogfood-smoke.md`. It keeps the
-first dogfood acceptance path supervised and bounded to one controlled issue.
+first dogfood acceptance path supervised and bounded to one controlled issue;
+`examples/dogfood-smoke-workflow.md` provides a credential-free fixture
+rehearsal of the same candidate filtering path.
 
 ## Before Executing GitHub Project Issues
 

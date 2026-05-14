@@ -88,8 +88,8 @@ For a compact source-linked view of what is landed, what is waiting in
   creating tracker issues.
 - `dogfood-smoke` can run a non-mutating preflight for a controlled live
   dogfood issue, report tracker/auth gaps, runtime state and event log paths,
-  and print the bounded `run-loop --max-iterations 1 --write` next step when the
-  smoke is ready.
+  classify blocking vs warning-level integration gaps, and print the bounded
+  `run-loop --max-iterations 1 --write` next step when the smoke is ready.
 - basic strict prompt rendering supports known `issue.*` fields, `attempt`, and
   simple `{% if %}` / `{% else %}` blocks.
 - `examples/github-project-workflow.md` now contains an inline Jade execution

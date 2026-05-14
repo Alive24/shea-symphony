@@ -116,9 +116,10 @@ For a compact source-linked view of what is landed, what is waiting in
 - live GitHub `run-loop --write` can create or reuse the planned issue
   worktree/branch, run the configured backend inside that worktree, push the
   branch, run optional configured verification commands, and create or reuse
-  one GitHub PR after successful execution and verification; the handoff helper
-  blocks dirty worktrees and branches with no commits ahead of the configured
-  base before publishing.
+  one GitHub PR after successful execution and verification, then record that
+  PR through the normalized tracker adapter before Agent Review handoff. The
+  handoff helper blocks dirty worktrees and branches with no commits ahead of
+  the configured base before publishing.
 - live GitHub `run-loop --write` checks assignee ownership before claim:
   unassigned issues require an explicit workflow override, and assigned issues
   must match the current `gh` login or a selected profile login exposed through
@@ -168,8 +169,8 @@ For a compact source-linked view of what is landed, what is waiting in
   workspace/branch/PR handoff plans, use tracker claim helpers to
   claim/resume/skip externally changed issues, and in explicit `--write` mode
   run one issue at a time, record handoff evidence, create a live PR handoff in
-  non-fixture GitHub Project v2 mode, and stop main-agent completion at
-  `Agent Review`;
+  non-fixture GitHub Project v2 mode, link that PR through the tracker adapter,
+  and stop main-agent completion at `Agent Review`;
   unbounded write mode sleeps on idle polls using the workflow polling interval.
 
 ## Dry-Run Only

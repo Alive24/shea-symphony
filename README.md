@@ -58,9 +58,10 @@ worker supervision are still future work.
   validation failures, and runtime failures before a transition to `Rework`.
 - `review-loop` can discover `Agent Review` issues, avoid duplicate review
   worker markers, select a bounded set of one-issue review worker jobs, run each
-  configured independent review backend from the issue workspace, and reconcile
-  pass/rework/inconclusive transitions through the Review Agent authority
-  boundary.
+  configured independent review backend from the issue workspace, persist a JSON
+  review job ledger under the configured logs root, and
+  reconcile pass/rework/inconclusive transitions through the Review Agent
+  authority boundary.
 - Issue Forge can discover local candidates from intent, ask one focused
   clarification question, draft from the quality template, validate Markdown,
   repair rough Markdown into an executable issue contract shape, and create a
@@ -188,6 +189,7 @@ cargo run -- run-once examples/git-identity-workflow.md
 cargo run -- run-once examples/codex-subprocess-workflow.md
 cargo run -- run-once examples/claude-subprocess-workflow.md
 cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
+cargo run -- review-loop examples/github-project-workflow.md --max-iterations 1 --dry-run
 cargo run -- profiles examples/cockpit-profiles-workflow.md
 cargo run -- plan examples/linear-fixture-workflow.md
 cargo run -- gate examples/dry-run-workflow.md '#3'
@@ -206,6 +208,12 @@ cargo run -- forge-create --workflow path/to/WORKFLOW.md --title "Follow-up titl
 fixtures show controlled real-backend paths without invoking live hosted
 services. They write `JADE_SYMPHONY_PROMPT.md` into the prepared workspace and
 append JSONL events for the selected workflow.
+
+`review-loop --write` is a bounded Review Agent operator command, not a
+background supervisor. When it runs a review job, Jade persists a JSON ledger
+record at `logs_root/reviews/jobs/*.json` with the issue, worker key, backend,
+artifact path, decision, summary/error, and finding count. Review and Rework
+workpads include that ledger path when available.
 
 `profiles` lists execution profiles discovered from workflow config. For
 cockpit-tools, Jade currently reads the Codex instance store shape inspected in

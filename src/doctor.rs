@@ -65,6 +65,24 @@ pub fn audit_project_issues(issues: &[TrackerIssue]) -> ProjectAuditReport {
                     "Return to Agent Review until Review Agent pass evidence is recorded.",
                 ));
             }
+            "merging" if reliable_pr_targets(issue).is_empty() => {
+                violations.push(violation(
+                    issue,
+                    AuditSeverity::Blocker,
+                    "merging_missing_pr_target",
+                    "Merging issue has no reliable PR target.",
+                    "Record exactly one PR link in the Project field, issue closing reference, or Jade workpad before attempting to land.",
+                ));
+            }
+            "merging" if reliable_pr_targets(issue).len() > 1 => {
+                violations.push(violation(
+                    issue,
+                    AuditSeverity::Blocker,
+                    "merging_ambiguous_pr_target",
+                    "Merging issue has multiple candidate PR targets.",
+                    "Choose the correct PR and remove or supersede stale PR evidence before attempting to land.",
+                ));
+            }
             "merging" if has_dirty_or_conflicted_pr(issue) => {
                 violations.push(violation(
                     issue,
@@ -208,6 +226,24 @@ fn has_pr_url(issue: &TrackerIssue) -> bool {
         .linked_pull_requests
         .iter()
         .any(|pr| pr.url.as_deref().is_some_and(|url| !url.trim().is_empty()))
+}
+
+fn reliable_pr_targets(issue: &TrackerIssue) -> Vec<String> {
+    let mut targets = Vec::new();
+    for pr in &issue.linked_pull_requests {
+        let target = pr
+            .url
+            .as_deref()
+            .filter(|url| !url.trim().is_empty())
+            .map(str::to_string)
+            .or_else(|| pr.number.map(|number| format!("#{number}")));
+        if let Some(target) = target {
+            if !targets.contains(&target) {
+                targets.push(target);
+            }
+        }
+    }
+    targets
 }
 
 fn has_open_pr(issue: &TrackerIssue) -> bool {
@@ -354,6 +390,10 @@ mod tests {
     #[test]
     fn reports_dirty_merging_pr() {
         let mut issue = issue("#60", "Merging");
+        issue.linked_pull_requests.push(linked_pr(
+            "https://github.com/Alive24/jade-symphony/pull/60",
+            "OPEN",
+        ));
         issue.project_fields.insert(
             "pr_merge_state".into(),
             serde_json::Value::String("DIRTY".into()),
@@ -362,6 +402,45 @@ mod tests {
         let report = audit_project_issues(&[issue]);
 
         assert_eq!(report.violations[0].code, "merging_pr_not_clean");
+    }
+
+    #[test]
+    fn reports_merging_missing_pr_target() {
+        let report = audit_project_issues(&[issue("#60", "Merging")]);
+
+        assert_eq!(report.blocker_count(), 1);
+        assert_eq!(report.violations[0].code, "merging_missing_pr_target");
+    }
+
+    #[test]
+    fn reports_merging_ambiguous_pr_target() {
+        let mut issue = issue("#60", "Merging");
+        issue.linked_pull_requests.push(linked_pr(
+            "https://github.com/Alive24/jade-symphony/pull/60",
+            "OPEN",
+        ));
+        issue.linked_pull_requests.push(linked_pr(
+            "https://github.com/Alive24/jade-symphony/pull/61",
+            "OPEN",
+        ));
+
+        let report = audit_project_issues(&[issue]);
+
+        assert_eq!(report.blocker_count(), 1);
+        assert_eq!(report.violations[0].code, "merging_ambiguous_pr_target");
+    }
+
+    #[test]
+    fn accepts_merging_with_one_pr_target() {
+        let mut issue = issue("#60", "Merging");
+        issue.linked_pull_requests.push(linked_pr(
+            "https://github.com/Alive24/jade-symphony/pull/60",
+            "OPEN",
+        ));
+
+        let report = audit_project_issues(&[issue]);
+
+        assert!(report.is_clean());
     }
 
     #[test]

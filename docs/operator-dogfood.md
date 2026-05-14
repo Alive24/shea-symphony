@@ -28,6 +28,12 @@ The launcher checks:
 - the workflow validates.
 - in write mode, the controlled dogfood smoke preflight passes.
 
+The canonical supervised implementation workflow is
+`examples/github-project-workflow.md`. It defaults durable worktrees, logs, and
+runtime artifacts under `~/.jade-symphony/artifacts`; set
+`JADE_SYMPHONY_ARTIFACT_ROOT` before running commands to move the whole local
+artifact tree.
+
 After preflight, dry-run mode executes:
 
 ```bash
@@ -72,13 +78,18 @@ review:
 ```
 
 ```bash
-target/debug/jade-symphony review-loop examples/github-project-workflow.md --max-iterations 1 --write
+target/debug/jade-symphony review-loop examples/github-project-gemini-review-workflow.md --max-iterations 1 --write
 ```
 
 If Gemini cannot start, the review workpad should name the configured command,
 whether worker `PATH` could resolve it, the required operator action, and the
 retry command. Do not move an issue to `Human Review` unless the Review Agent
 actually records passing review evidence.
+
+Use `examples/github-project-gemini-review-workflow.md` for supervised review
+workers. Do not keep the active review workflow only under `/tmp` or
+`/private/tmp`; the CLI prints `workflow_warning=temporary_path` for those
+workflow files so operators can promote reusable config into the repo.
 
 ## Inspect And Resume
 
@@ -94,6 +105,22 @@ and a state summary. A failed read prints `project_state_access=blocked`,
 `trusted=false`, and a `failure_kind` such as `auth`, `network`, `rate_limit`,
 `schema`, `partial_response`, or `payload`; treat that as a blocker, not as an
 empty queue.
+
+## Artifact Root Migration
+
+To move local runtime artifacts without changing repo-owned workflow files, set
+one environment variable before launching dogfood commands:
+
+```bash
+export JADE_SYMPHONY_ARTIFACT_ROOT="$HOME/.jade-symphony/artifacts"
+```
+
+The live implementation and Gemini review workflows derive their worktree and
+log paths from that root. Existing temp Markdown files should be classified
+before cleanup: workflow config belongs in `examples/`, reusable operator
+prompts belong in `docs/`, issue and PR drafts belong in tracker/workpad or log
+artifacts, and disposable scratch can be removed only through a separate
+cleanup decision.
 
 For supervised parallel operators, pass `--pool N` to preview eligible slots and
 apply lane-specific claim checks. Main work uses the `Main Agent` Project field

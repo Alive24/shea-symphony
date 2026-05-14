@@ -117,6 +117,7 @@ Example:
 
 ```bash
 cargo run -- review-loop examples/review-fixture-workflow.md --max-iterations 1 --dry-run
+cargo run -- review-loop examples/github-project-gemini-review-workflow.md --max-iterations 1 --write
 ```
 
 ## Merge Lane

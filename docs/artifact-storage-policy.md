@@ -21,8 +21,19 @@ The default artifact root is `~/.jade-symphony/artifacts`. Workflows may set:
 
 ```yaml
 artifacts:
-  root: ~/.jade-symphony/artifacts
+  root: $JADE_SYMPHONY_ARTIFACT_ROOT
   namespace: Alive24/jade-symphony
+```
+
+When `JADE_SYMPHONY_ARTIFACT_ROOT` is unset, Jade Symphony resolves that token
+to the default artifact root. Path suffixes are supported, so workflow roots can
+derive related locations from one operator override:
+
+```yaml
+workspace:
+  root: $JADE_SYMPHONY_ARTIFACT_ROOT/Alive24/jade-symphony/default/worktrees
+observability:
+  logs_root: $JADE_SYMPHONY_ARTIFACT_ROOT/Alive24/jade-symphony/default/logs
 ```
 
 If `namespace` is omitted, Jade Symphony derives one from `tracker.owner` and

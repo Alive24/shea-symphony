@@ -23,6 +23,7 @@ memory-backed. They do not mutate live GitHub Project v2 state.
 | --- | --- | --- |
 | `linear-fixture-workflow.md` | Linear adapter fixture backed by `fixtures/linear-issues.json`. | Credential-free; does not prove live Linear readiness. |
 | `github-project-workflow.md` | Live GitHub Project v2 template for Project #9. | Non-fixture; read/write operations use `gh` or token auth and require explicit `--write` for mutation. |
+| `github-project-gemini-review-workflow.md` | Live GitHub Project v2 Review Agent template for Project #9. | Uses `$JADE_GEMINI_COMMAND` and durable review artifacts under `$JADE_SYMPHONY_ARTIFACT_ROOT`. |
 
 ## Agent Backend Fixtures
 
@@ -60,7 +61,15 @@ Issue Forge examples:
 
 ## Live Boundary
 
-Use `github-project-workflow.md` for live Project #9 reads and explicit writes.
+Use `github-project-workflow.md` for live Project #9 implementation reads and
+explicit writes. Use `github-project-gemini-review-workflow.md` for supervised
+Review Agent passes. Both live workflows default to
+`~/.jade-symphony/artifacts` when `JADE_SYMPHONY_ARTIFACT_ROOT` is unset, and
+support setting that environment variable to move durable worktrees, logs, and
+review artifacts together.
+
 Do not treat fixture success as live readiness. Before any live write, inspect
 the Project state, confirm the issue contract, and use the workflow-specific
-commands documented in the root README and dogfood docs.
+commands documented in the root README and dogfood docs. If an operator has a
+workflow file under `/tmp` or `/private/tmp`, promote the reusable config or
+prompt into `examples/` or `docs/` before relying on it for dogfood.

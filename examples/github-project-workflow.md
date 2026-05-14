@@ -36,9 +36,9 @@ tracker:
 polling:
   interval_ms: 5000
 artifacts:
-  root: ~/.jade-symphony/artifacts
+  root: $JADE_SYMPHONY_ARTIFACT_ROOT
 workspace:
-  root: ~/.jade-symphony/artifacts/Alive24/jade-symphony/default/worktrees
+  root: $JADE_SYMPHONY_ARTIFACT_ROOT/Alive24/jade-symphony/default/worktrees
 agent:
   backend: dry-run
   max_concurrent_agents: 1
@@ -56,7 +56,7 @@ verification:
   timeout_ms: 600000
   commands: []
 observability:
-  logs_root: ~/.jade-symphony/artifacts/Alive24/jade-symphony/default/logs
+  logs_root: $JADE_SYMPHONY_ARTIFACT_ROOT/Alive24/jade-symphony/default/logs
 ---
 
 You are working on Jade Symphony issue {{ issue.identifier }}.

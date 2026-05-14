@@ -741,13 +741,30 @@ fn resolve_path_token(raw: &str) -> Option<PathBuf> {
     if raw.is_empty() {
         return None;
     }
-    if let Some(env_name) = raw.strip_prefix('$') {
-        return env::var(env_name)
-            .ok()
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from);
+    if let Some(env_path) = raw.strip_prefix('$') {
+        return resolve_env_path_token(env_path);
     }
     Some(PathBuf::from(raw))
+}
+
+fn resolve_env_path_token(raw: &str) -> Option<PathBuf> {
+    let (env_name, suffix) = raw.split_once('/').unwrap_or((raw, ""));
+    if env_name.is_empty() {
+        return None;
+    }
+
+    let base = env::var(env_name)
+        .ok()
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| (env_name == "JADE_SYMPHONY_ARTIFACT_ROOT").then(default_artifact_root))?;
+
+    let base = expand_tilde(base);
+    if suffix.is_empty() {
+        Some(base)
+    } else {
+        Some(base.join(suffix))
+    }
 }
 
 fn expand_tilde(path: PathBuf) -> PathBuf {
@@ -766,8 +783,11 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 fn default_artifact_root() -> PathBuf {
-    home_dir()
-        .map(|home| home.join(".jade-symphony").join("artifacts"))
+    env::var_os("JADE_SYMPHONY_ARTIFACT_ROOT")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .map(expand_tilde)
+        .or_else(|| home_dir().map(|home| home.join(".jade-symphony").join("artifacts")))
         .unwrap_or_else(|| env::temp_dir().join("jade-symphony-artifacts"))
 }
 
@@ -863,6 +883,53 @@ mod tests {
             config.artifacts.namespace.as_deref(),
             Some("custom/project")
         );
+    }
+
+    #[test]
+    fn expands_environment_path_prefixes_with_suffixes() {
+        let previous = std::env::var_os("JADE_TEST_ARTIFACT_ROOT");
+        std::env::set_var("JADE_TEST_ARTIFACT_ROOT", "/tmp/jade-artifacts");
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/config/WORKFLOW.md",
+            "---\nartifacts:\n  root: $JADE_TEST_ARTIFACT_ROOT\nworkspace:\n  root: $JADE_TEST_ARTIFACT_ROOT/worktrees\nobservability:\n  logs_root: $JADE_TEST_ARTIFACT_ROOT/logs\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/config/WORKFLOW.md")).unwrap();
+        match previous {
+            Some(value) => std::env::set_var("JADE_TEST_ARTIFACT_ROOT", value),
+            None => std::env::remove_var("JADE_TEST_ARTIFACT_ROOT"),
+        }
+
+        assert_eq!(config.artifacts.root, PathBuf::from("/tmp/jade-artifacts"));
+        assert_eq!(
+            config.workspace.root,
+            PathBuf::from("/tmp/jade-artifacts/worktrees")
+        );
+        assert_eq!(
+            config.observability.logs_root,
+            PathBuf::from("/tmp/jade-artifacts/logs")
+        );
+    }
+
+    #[test]
+    fn jade_artifact_env_token_falls_back_to_default_root() {
+        let previous = std::env::var_os("JADE_SYMPHONY_ARTIFACT_ROOT");
+        std::env::remove_var("JADE_SYMPHONY_ARTIFACT_ROOT");
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/config/WORKFLOW.md",
+            "---\nworkspace:\n  root: $JADE_SYMPHONY_ARTIFACT_ROOT/worktrees\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/config/WORKFLOW.md")).unwrap();
+        let expected = default_artifact_root().join("worktrees");
+        match previous {
+            Some(value) => std::env::set_var("JADE_SYMPHONY_ARTIFACT_ROOT", value),
+            None => std::env::remove_var("JADE_SYMPHONY_ARTIFACT_ROOT"),
+        }
+
+        assert_eq!(config.workspace.root, expected);
     }
 
     #[test]

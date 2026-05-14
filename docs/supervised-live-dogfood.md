@@ -30,6 +30,19 @@ cargo clippy --all-targets --all-features -- -D warnings
 Stop before live dogfood if the worktree is dirty, GitHub auth is unavailable,
 or verification is failing for an unexplained reason.
 
+The repo-owned live workflows are:
+
+- `examples/github-project-workflow.md` for implementation, merge, smoke,
+  inspect, and project-state commands.
+- `examples/github-project-gemini-review-workflow.md` for supervised Gemini
+  Review Agent commands.
+
+Both workflows default durable artifacts to `~/.jade-symphony/artifacts` when
+`JADE_SYMPHONY_ARTIFACT_ROOT` is unset. Set that variable to migrate worktrees,
+logs, runtime state, review prompts, and review ledgers to another local root.
+If a command points at `/tmp/*.md` or `/private/tmp/*.md`, promote the reusable
+workflow or prompt into `examples/` or `docs/` before treating it as canonical.
+
 ## Inspect The Project
 
 Use the live workflow as the source of tracker state:
@@ -101,7 +114,7 @@ For a bounded Review Agent pass, run:
 
 ```bash
 export JADE_GEMINI_COMMAND="$(command -v gemini)"
-cargo run -- review-loop examples/github-project-workflow.md --max-iterations 1 --write
+cargo run -- review-loop examples/github-project-gemini-review-workflow.md --max-iterations 1 --write
 ```
 
 Expected outcomes:

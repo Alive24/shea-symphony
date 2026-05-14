@@ -4,7 +4,8 @@ use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -216,6 +217,51 @@ pub trait ReviewBackend {
     fn kind(&self) -> &'static str;
     fn start(&self, request: ReviewRequest) -> Result<ReviewJob, ReviewError>;
     fn poll(&self, job: ReviewJob) -> Result<ReviewJob, ReviewError>;
+    fn cancel(&self, _job: &ReviewJob) -> Result<(), ReviewError> {
+        Ok(())
+    }
+}
+
+pub fn review_job_is_terminal(job: &ReviewJob) -> bool {
+    matches!(
+        job.state,
+        ReviewJobState::Completed
+            | ReviewJobState::Failed
+            | ReviewJobState::TimedOut
+            | ReviewJobState::Cancelled
+    )
+}
+
+pub fn poll_review_job_until_terminal(
+    backend: &dyn ReviewBackend,
+    mut job: ReviewJob,
+    timeout: Duration,
+    poll_interval: Duration,
+) -> Result<ReviewJob, ReviewError> {
+    let started = Instant::now();
+
+    loop {
+        job = backend.poll(job)?;
+        if review_job_is_terminal(&job) {
+            return Ok(job);
+        }
+
+        if started.elapsed() >= timeout {
+            backend.cancel(&job)?;
+            job.state = ReviewJobState::TimedOut;
+            job.error = Some(format!(
+                "Review backend timed out after {}ms.",
+                timeout.as_millis()
+            ));
+            return Ok(job);
+        }
+
+        if poll_interval.is_zero() {
+            thread::yield_now();
+        } else {
+            thread::sleep(poll_interval);
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -414,6 +460,18 @@ impl ReviewBackend for GeminiCliReviewBackend {
         }
 
         Ok(job)
+    }
+
+    fn cancel(&self, job: &ReviewJob) -> Result<(), ReviewError> {
+        let mut children = self
+            .children
+            .lock()
+            .map_err(|error| ReviewError::Backend(error.to_string()))?;
+        if let Some(mut child) = children.remove(&job.id) {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        Ok(())
     }
 }
 
@@ -921,6 +979,129 @@ mod tests {
             created_at: None,
             updated_at: None,
         }
+    }
+
+    #[derive(Clone)]
+    struct DelayedBackend {
+        polls: Arc<Mutex<usize>>,
+        cancels: Arc<Mutex<usize>>,
+        complete_after: usize,
+    }
+
+    impl DelayedBackend {
+        fn new(complete_after: usize) -> Self {
+            Self {
+                polls: Arc::new(Mutex::new(0)),
+                cancels: Arc::new(Mutex::new(0)),
+                complete_after,
+            }
+        }
+
+        fn poll_count(&self) -> usize {
+            *self.polls.lock().unwrap()
+        }
+
+        fn cancel_count(&self) -> usize {
+            *self.cancels.lock().unwrap()
+        }
+    }
+
+    impl ReviewBackend for DelayedBackend {
+        fn kind(&self) -> &'static str {
+            "delayed"
+        }
+
+        fn start(&self, request: ReviewRequest) -> Result<ReviewJob, ReviewError> {
+            Ok(ReviewJob {
+                id: "delayed-1".into(),
+                issue_ref: request.issue.identifier,
+                backend: self.kind().into(),
+                state: ReviewJobState::Running,
+                artifact_path: None,
+                ledger_path: None,
+                report: None,
+                error: None,
+            })
+        }
+
+        fn poll(&self, mut job: ReviewJob) -> Result<ReviewJob, ReviewError> {
+            let mut polls = self.polls.lock().unwrap();
+            *polls += 1;
+            if *polls >= self.complete_after {
+                job.state = ReviewJobState::Completed;
+                job.report = Some(AgentReviewReport {
+                    reviewer_backend: self.kind().into(),
+                    findings: Vec::new(),
+                    summary: Some("Delayed review completed.".into()),
+                    stdout: Some("Delayed review completed.".into()),
+                    stderr: Some(String::new()),
+                });
+            }
+            Ok(job)
+        }
+
+        fn cancel(&self, _job: &ReviewJob) -> Result<(), ReviewError> {
+            *self.cancels.lock().unwrap() += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn poll_review_job_until_terminal_waits_for_delayed_completion() {
+        let backend = DelayedBackend::new(3);
+        let request = ReviewRequest {
+            issue: issue(),
+            prompt: "review".into(),
+            workspace: PathBuf::from("/tmp/review-workspace"),
+            artifact_root: PathBuf::from("/tmp/review-artifacts"),
+        };
+        let job = backend.start(request).unwrap();
+
+        let job = poll_review_job_until_terminal(
+            &backend,
+            job,
+            Duration::from_secs(1),
+            Duration::from_millis(0),
+        )
+        .unwrap();
+
+        assert_eq!(job.state, ReviewJobState::Completed);
+        assert_eq!(backend.poll_count(), 3);
+        assert_eq!(backend.cancel_count(), 0);
+        assert_eq!(
+            job.report
+                .as_ref()
+                .and_then(|report| report.summary.as_deref()),
+            Some("Delayed review completed.")
+        );
+    }
+
+    #[test]
+    fn poll_review_job_until_terminal_times_out_and_cancels_running_job() {
+        let backend = DelayedBackend::new(usize::MAX);
+        let request = ReviewRequest {
+            issue: issue(),
+            prompt: "review".into(),
+            workspace: PathBuf::from("/tmp/review-workspace"),
+            artifact_root: PathBuf::from("/tmp/review-artifacts"),
+        };
+        let job = backend.start(request).unwrap();
+
+        let job = poll_review_job_until_terminal(
+            &backend,
+            job,
+            Duration::from_millis(0),
+            Duration::from_millis(0),
+        )
+        .unwrap();
+
+        assert_eq!(job.state, ReviewJobState::TimedOut);
+        assert_eq!(backend.poll_count(), 1);
+        assert_eq!(backend.cancel_count(), 1);
+        assert_eq!(
+            job.error.as_deref(),
+            Some("Review backend timed out after 0ms.")
+        );
     }
 
     #[test]

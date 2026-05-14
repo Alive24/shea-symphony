@@ -85,10 +85,11 @@ For a compact source-linked view of what is landed, what is waiting in
 - Issue Forge also has a CLI-first interactive mode that selects a lightweight
   issue skill/template (`runtime`, `tracker`, `backend`, `review`, `docs`, or
   `integration-test`), emits one focused clarification question for thin intent,
-  and prints a quality-gated issue draft before any tracker write.
+  includes explicit dependency semantics, and prints a quality-gated issue draft
+  before any tracker write.
 - Issue Forge reflective mode can scan a local context file for conservative
-  follow-up signals and print quality-gated candidate issue drafts without
-  creating tracker issues.
+  follow-up signals, surface likely dependency/overlap signals, and print
+  candidate issue drafts without creating tracker issues.
 - `dogfood-smoke` can run a non-mutating preflight for a controlled live
   dogfood issue, report tracker/auth gaps, runtime state and event log paths,
   classify blocking vs warning-level integration gaps, and print the bounded
@@ -136,6 +137,9 @@ For a compact source-linked view of what is landed, what is waiting in
   unassigned issues require an explicit workflow override, and assigned issues
   must match the current `gh` login or a selected profile login exposed through
   profile environment config.
+- main-agent dispatch requires dependency semantics in the issue body and skips
+  `Todo` / `Rework` issues whose tracker blockers are not terminal before
+  claim.
 - terminal status output reports polling state, planned running/skipped/retrying
   issues, token counters, event-log path, gate details, and integration gaps.
   `status WORKFLOW --json` prints the same `RuntimeSnapshot` as JSON for

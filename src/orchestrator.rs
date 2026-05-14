@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::RuntimeConfig;
 use crate::model::{normalize_state, RunningSnapshot, RuntimeSnapshot, SkippedIssue, TrackerIssue};
-use crate::quality_gate::evaluate_issue;
+use crate::quality_gate::evaluate_issue_with_dependency_preflight;
 
 #[derive(Debug, Clone)]
 pub struct Orchestrator {
@@ -38,12 +38,12 @@ impl Orchestrator {
                 continue;
             }
 
-            if todo_blocked_by_non_terminal(&issue, &terminal_states) {
-                skipped.push(skip(&issue, "Todo issue has non-terminal blockers"));
+            if issue_blocked_by_non_terminal(&issue, &terminal_states) {
+                skipped.push(skip(&issue, "issue has unresolved tracker dependencies"));
                 continue;
             }
 
-            let gate = evaluate_issue(&issue);
+            let gate = evaluate_issue_with_dependency_preflight(&issue, &terminal_states);
             if !gate.is_dispatchable() {
                 skipped.push(SkippedIssue {
                     issue_id: issue.id.clone(),
@@ -143,8 +143,8 @@ fn created_sort_key(issue: &TrackerIssue) -> &str {
         .unwrap_or("9999-12-31T23:59:59Z")
 }
 
-fn todo_blocked_by_non_terminal(issue: &TrackerIssue, terminal_states: &BTreeSet<String>) -> bool {
-    issue.normalized_state() == "todo"
+fn issue_blocked_by_non_terminal(issue: &TrackerIssue, terminal_states: &BTreeSet<String>) -> bool {
+    matches!(issue.normalized_state().as_str(), "todo" | "rework")
         && issue.blocked_by.iter().any(|blocker| {
             blocker
                 .state
@@ -189,6 +189,8 @@ mod tests {
             "Now.",
             "## Issue Context",
             "Context.",
+            "## Dependencies",
+            "- No blocking dependencies.",
             "## Non-Negotiable Guardrails",
             "- Guard.",
             "## Scope",
@@ -238,5 +240,38 @@ mod tests {
         let orchestrator = Orchestrator::new(config());
         assert_eq!(orchestrator.retry_delay_ms(1, true), 1_000);
         assert_eq!(orchestrator.retry_delay_ms(2, false), 20_000);
+    }
+
+    #[test]
+    fn skips_blocked_todo_issue_before_claim() {
+        let mut blocked = issue("1", 1);
+        blocked.blocked_by = vec![crate::model::BlockerRef {
+            id: None,
+            identifier: Some("#parent".into()),
+            state: Some("In Progress".into()),
+        }];
+
+        let plan = Orchestrator::new(config()).plan_dispatch(vec![blocked]);
+
+        assert!(plan.selected.is_empty());
+        assert_eq!(plan.snapshot.skipped[0].identifier, "#1");
+        assert!(plan.snapshot.skipped[0].reason.contains("dependencies"));
+    }
+
+    #[test]
+    fn skips_blocked_rework_issue_before_claim() {
+        let mut blocked = issue("1", 1);
+        blocked.state = "Rework".into();
+        blocked.blocked_by = vec![crate::model::BlockerRef {
+            id: None,
+            identifier: Some("#parent".into()),
+            state: Some("In Progress".into()),
+        }];
+
+        let plan = Orchestrator::new(config()).plan_dispatch(vec![blocked]);
+
+        assert!(plan.selected.is_empty());
+        assert_eq!(plan.snapshot.skipped[0].identifier, "#1");
+        assert!(plan.snapshot.skipped[0].reason.contains("dependencies"));
     }
 }

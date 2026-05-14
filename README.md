@@ -195,6 +195,10 @@ fixtures show controlled real-backend paths without invoking live hosted
 services. They write `JADE_SYMPHONY_PROMPT.md` into the prepared workspace and
 append JSONL events for the selected workflow.
 
+`inspect` prints the total issue count, a state summary, per-issue gate status,
+and configured integration gaps. It is the quickest read-only check for whether
+the Project still has `Merging`, `Rework`, `Todo`, or `In Progress` work.
+
 `profiles` lists execution profiles discovered from workflow config. For
 cockpit-tools, Jade currently reads the Codex instance store shape inspected in
 `https://github.com/jlcodes99/cockpit-tools`: a local `codex_instances.json` with camelCase

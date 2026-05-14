@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -971,6 +972,7 @@ fn inspect(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let issues = adapter.list_dispatchable_issues()?;
 
     println!("issues={}", issues.len());
+    println!("{}", render_state_summary(&issues));
     for issue in issues {
         let gate = evaluate_issue_for_current_source(&config, &issue)?;
         println!(
@@ -990,6 +992,27 @@ fn inspect(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn render_state_summary(issues: &[TrackerIssue]) -> String {
+    let mut counts = BTreeMap::new();
+    for issue in issues {
+        let state = issue.state.trim();
+        let state = if state.is_empty() { "(unknown)" } else { state };
+        *counts.entry(state.to_string()).or_insert(0usize) += 1;
+    }
+
+    let summary = if counts.is_empty() {
+        "(none)".to_string()
+    } else {
+        counts
+            .into_iter()
+            .map(|(state, count)| format!("{state}:{count}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    format!("state_summary={summary}")
 }
 
 fn doctor(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
@@ -3185,6 +3208,26 @@ mod tests {
                 workflow_path: PathBuf::from("examples/dry-run-workflow.md")
             }
         );
+    }
+
+    #[test]
+    fn render_state_summary_counts_states_in_stable_order() {
+        let issues = vec![
+            tracker_issue("Rework"),
+            tracker_issue("Agent Review"),
+            tracker_issue("Rework"),
+            tracker_issue(""),
+        ];
+
+        assert_eq!(
+            render_state_summary(&issues),
+            "state_summary=(unknown):1, Agent Review:1, Rework:2"
+        );
+    }
+
+    #[test]
+    fn render_state_summary_handles_empty_issue_list() {
+        assert_eq!(render_state_summary(&[]), "state_summary=(none)");
     }
 
     #[test]

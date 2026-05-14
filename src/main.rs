@@ -90,6 +90,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             workflow_path,
             write,
         } => merge_once(workflow_path, write),
+        Command::MergeLoop { options } => merge_loop(options),
         Command::SetState {
             workflow_path,
             issue_ref,
@@ -787,7 +788,64 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MergeOnceOutcome {
+    NoMergingIssue,
+    DryRun,
+    Merged,
+    Routed,
+    Skipped,
+}
+
 fn merge_once(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std::error::Error>> {
+    merge_once_tick(workflow_path, write).map(|_| ())
+}
+
+fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let max = options
+        .iteration_limit()
+        .ok_or("merge-loop requires --max-iterations or --once")?;
+    let mut stopped = false;
+
+    for iteration in 1..=max {
+        println!(
+            "merge_loop_iteration={} mode={}",
+            iteration,
+            if options.write { "write" } else { "dry-run" }
+        );
+        match merge_once_tick(options.workflow_path.clone(), options.write)? {
+            MergeOnceOutcome::NoMergingIssue => {
+                println!("merge_loop=stopped reason=no_merging_issue iterations={iteration}");
+                stopped = true;
+                break;
+            }
+            MergeOnceOutcome::DryRun if !options.write => {
+                println!("merge_loop_action=dry_run_tick iterations={iteration}");
+            }
+            MergeOnceOutcome::Merged => {
+                println!("merge_loop_action=merged iterations={iteration}");
+            }
+            MergeOnceOutcome::Routed => {
+                println!("merge_loop_action=routed iterations={iteration}");
+            }
+            MergeOnceOutcome::Skipped => {
+                println!("merge_loop_action=skipped iterations={iteration}");
+            }
+            MergeOnceOutcome::DryRun => {}
+        }
+    }
+
+    if !stopped {
+        println!("merge_loop=stopped reason=max_iterations iterations={max}");
+    }
+
+    Ok(())
+}
+
+fn merge_once_tick(
+    workflow_path: PathBuf,
+    write: bool,
+) -> Result<MergeOnceOutcome, Box<dyn std::error::Error>> {
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
@@ -797,7 +855,7 @@ fn merge_once(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std::er
     let mut issues = adapter.fetch_issues_by_states(std::slice::from_ref(&merging_state))?;
     if issues.is_empty() {
         println!("merge_once=stopped reason=no_merging_issue");
-        return Ok(());
+        return Ok(MergeOnceOutcome::NoMergingIssue);
     }
 
     issues.sort_by_key(|issue| issue.priority.unwrap_or(i64::MAX));
@@ -831,7 +889,7 @@ fn merge_once(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std::er
 
     if !write {
         print_merge_dry_run_actions(&decision);
-        return Ok(());
+        return Ok(MergeOnceOutcome::DryRun);
     }
 
     if decision.kind.is_merge_ready() {
@@ -847,7 +905,7 @@ fn merge_once(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std::er
             "merge_once_action=merged issue={} target_state=done",
             issue.identifier
         );
-        return Ok(());
+        return Ok(MergeOnceOutcome::Merged);
     }
 
     let workpad = merge_lane_workpad(&issue, &decision, None);
@@ -858,11 +916,12 @@ fn merge_once(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std::er
             "merge_once_action=routed issue={} target_state={target_state}",
             issue.identifier
         );
+        return Ok(MergeOnceOutcome::Routed);
     } else {
         println!("merge_once_action=skipped issue={}", issue.identifier);
     }
 
-    Ok(())
+    Ok(MergeOnceOutcome::Skipped)
 }
 
 fn merge_preflight_status(
@@ -2457,6 +2516,9 @@ enum Command {
     ReviewLoop {
         options: ReviewLoopOptions,
     },
+    MergeLoop {
+        options: MergeLoopOptions,
+    },
     Gate {
         workflow_path: PathBuf,
         issue_ref: String,
@@ -2525,6 +2587,14 @@ struct DoctorOptions {
     strict: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MergeLoopOptions {
+    workflow_path: PathBuf,
+    max_iterations: Option<usize>,
+    once: bool,
+    write: bool,
+}
+
 impl ReviewLoopOptions {
     fn iteration_limit(&self) -> Option<usize> {
         if self.once {
@@ -2538,6 +2608,16 @@ impl ReviewLoopOptions {
         self.max_concurrent
             .unwrap_or(config.review.max_concurrent_workers)
             .max(1)
+    }
+}
+
+impl MergeLoopOptions {
+    fn iteration_limit(&self) -> Option<usize> {
+        if self.once {
+            Some(1)
+        } else {
+            self.max_iterations
+        }
     }
 }
 
@@ -2600,6 +2680,8 @@ enum CliCommand {
     RunLoop(RunLoopArgs),
     #[command(name = "merge-once", alias = "land")]
     MergeOnce(MergeOnceArgs),
+    #[command(name = "merge-loop")]
+    MergeLoop(MergeLoopArgs),
     #[command(name = "set-state")]
     SetState(SetStateArgs),
     Workpad(WorkpadArgs),
@@ -2688,6 +2770,20 @@ struct DogfoodSmokeArgs {
 struct MergeOnceArgs {
     #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
     workflow_path: PathBuf,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct MergeLoopArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long)]
+    max_iterations: Option<usize>,
+    #[arg(long)]
+    once: bool,
     #[arg(long)]
     write: bool,
     #[arg(long = "dry-run")]
@@ -3011,6 +3107,21 @@ impl TryFrom<Cli> for Command {
                         workflow_path: args.workflow_path,
                         write: args.write,
                     }),
+                    CliCommand::MergeLoop(args) => {
+                        if args.max_iterations == Some(0)
+                            || (!args.once && args.max_iterations.is_none())
+                        {
+                            return Err(usage());
+                        }
+                        Ok(Self::MergeLoop {
+                            options: MergeLoopOptions {
+                                workflow_path: args.workflow_path,
+                                max_iterations: args.max_iterations,
+                                once: args.once,
+                                write: args.write,
+                            },
+                        })
+                    }
                     CliCommand::SetState(args) => Ok(Self::SetState {
                         workflow_path: args.workflow_path,
                         issue_ref: args.issue_ref,
@@ -3690,6 +3801,63 @@ mod tests {
         };
 
         assert_eq!(options.iteration_limit(), Some(1));
+    }
+
+    #[test]
+    fn parses_merge_loop_flags() {
+        let command = Command::parse(vec![
+            "merge-loop".into(),
+            "examples/github-project-workflow.md".into(),
+            "--max-iterations".into(),
+            "3".into(),
+            "--write".into(),
+        ])
+        .unwrap();
+
+        let Command::MergeLoop { options } = command else {
+            panic!("expected merge-loop command");
+        };
+
+        assert_eq!(
+            options.workflow_path,
+            PathBuf::from("examples/github-project-workflow.md")
+        );
+        assert_eq!(options.max_iterations, Some(3));
+        assert!(options.write);
+    }
+
+    #[test]
+    fn merge_loop_once_overrides_max_iterations() {
+        let command = Command::parse(vec![
+            "merge-loop".into(),
+            "WORKFLOW.md".into(),
+            "--max-iterations".into(),
+            "4".into(),
+            "--once".into(),
+        ])
+        .unwrap();
+
+        let Command::MergeLoop { options } = command else {
+            panic!("expected merge-loop command");
+        };
+
+        assert_eq!(options.iteration_limit(), Some(1));
+    }
+
+    #[test]
+    fn rejects_unbounded_merge_loop_for_now() {
+        assert!(Command::parse(vec!["merge-loop".into(), "WORKFLOW.md".into()]).is_err());
+    }
+
+    #[test]
+    fn rejects_zero_merge_loop_iterations() {
+        assert!(Command::parse(vec![
+            "merge-loop".into(),
+            "WORKFLOW.md".into(),
+            "--max-iterations".into(),
+            "0".into(),
+        ])
+        .is_err());
     }
 
     #[test]

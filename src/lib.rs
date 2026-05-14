@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod codex_app_server;
 pub mod config;
 pub mod doctor;
 pub mod dynamic_tool;

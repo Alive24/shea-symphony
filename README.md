@@ -322,7 +322,8 @@ Merging role separation.
 - Linear live adapter credential-gated smoke coverage.
 - Codex app-server transport.
 - Claude Code full protocol transport beyond the subprocess fixture path.
-- dynamic tool registry such as `linear_graphql`.
+- dynamic tool execution such as `linear_graphql`; a first-slice registry
+  descriptor exists, but no tool calls are run yet.
 - long-running runtime workflow reload wiring and worker supervision.
 - persistent/remote web observability beyond the local one-request
   `status-api` endpoint.

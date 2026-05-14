@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod config;
 pub mod doctor;
+pub mod dynamic_tool;
 pub mod event_log;
 pub mod git_handoff;
 pub mod handoff;

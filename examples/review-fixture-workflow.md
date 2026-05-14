@@ -38,6 +38,7 @@ review:
   backend: fake
   gemini_command: gemini
   timeout_ms: 600000
+  max_concurrent_workers: 2
 observability:
   logs_root: /tmp/jade-symphony-review-log
 ---

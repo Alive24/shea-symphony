@@ -11,6 +11,7 @@ use thiserror::Error;
 
 use crate::agent::{classify_usage_limit_text, UsageLimitPause};
 use crate::model::{normalize_state, TrackerIssue};
+use crate::workspace::safe_identifier;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReviewFindingClass {
@@ -72,11 +73,30 @@ pub struct ReviewJob {
     pub backend: String,
     pub state: ReviewJobState,
     pub artifact_path: Option<PathBuf>,
+    #[serde(default)]
+    pub ledger_path: Option<PathBuf>,
     pub report: Option<AgentReviewReport>,
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReviewJobLedgerRecord {
+    pub issue_ref: String,
+    pub issue_title: String,
+    pub job_id: String,
+    pub worker_key: String,
+    pub backend: String,
+    pub state: ReviewJobState,
+    pub artifact_path: Option<PathBuf>,
+    pub ledger_path: PathBuf,
+    pub decision_outcome: ReviewOutcome,
+    pub decision_target_state: Option<String>,
+    pub summary: Option<String>,
+    pub error: Option<String>,
+    pub finding_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReviewOutcome {
     PassedToHumanReview,
     NeedsRework,
@@ -185,6 +205,7 @@ impl ReviewJob {
             backend: backend.into(),
             state: ReviewJobState::Failed,
             artifact_path: None,
+            ledger_path: None,
             report: None,
             error: Some(error.into()),
         }
@@ -227,6 +248,7 @@ impl ReviewBackend for FakeReviewBackend {
             backend: self.kind().into(),
             state: ReviewJobState::Queued,
             artifact_path: None,
+            ledger_path: None,
             report: None,
             error: None,
         })
@@ -320,6 +342,7 @@ impl ReviewBackend for GeminiCliReviewBackend {
             backend: self.kind().into(),
             state: ReviewJobState::Running,
             artifact_path: Some(prompt_path),
+            ledger_path: None,
             report: None,
             error: None,
         })
@@ -514,6 +537,9 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
     if let Some(path) = &job.artifact_path {
         lines.push(format!("- Artifact: {}", path.display()));
     }
+    if let Some(path) = &job.ledger_path {
+        lines.push(format!("- Review job ledger: {}", path.display()));
+    }
     if let Some(error) = &job.error {
         lines.push(format!("- Error: {error}"));
     }
@@ -546,6 +572,54 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
     }
 
     lines.join("\n")
+}
+
+pub fn write_review_job_ledger_record(
+    logs_root: &Path,
+    issue: &TrackerIssue,
+    job: &ReviewJob,
+) -> Result<PathBuf, ReviewError> {
+    let job_root = logs_root.join("reviews").join("jobs");
+    fs::create_dir_all(&job_root).map_err(|error| ReviewError::Artifact(error.to_string()))?;
+    let path = job_root.join(format!(
+        "{}.json",
+        safe_identifier(&format!("{}-{}", issue.identifier, job.id))
+    ));
+    let record = review_job_ledger_record(issue, job, path.clone());
+    let body = serde_json::to_string_pretty(&record)
+        .map_err(|error| ReviewError::Artifact(error.to_string()))?;
+    fs::write(&path, body).map_err(|error| ReviewError::Artifact(error.to_string()))?;
+    Ok(path)
+}
+
+pub fn review_job_ledger_record(
+    issue: &TrackerIssue,
+    job: &ReviewJob,
+    ledger_path: PathBuf,
+) -> ReviewJobLedgerRecord {
+    let decision = review_gate_decision_for_actor(job, ReviewActor::IndependentReviewAgent);
+    ReviewJobLedgerRecord {
+        issue_ref: issue.identifier.clone(),
+        issue_title: issue.title.clone(),
+        job_id: job.id.clone(),
+        worker_key: review_worker_key(issue, &job.backend),
+        backend: job.backend.clone(),
+        state: job.state.clone(),
+        artifact_path: job.artifact_path.clone(),
+        ledger_path,
+        decision_outcome: decision.outcome,
+        decision_target_state: decision.target_state.map(str::to_string),
+        summary: job
+            .report
+            .as_ref()
+            .and_then(|report| report.summary.clone()),
+        error: job.error.clone(),
+        finding_count: job
+            .report
+            .as_ref()
+            .map(|report| report.findings.len())
+            .unwrap_or_default(),
+    }
 }
 
 pub fn review_usage_limit_pause(job: &ReviewJob) -> Option<UsageLimitPause> {
@@ -830,6 +904,7 @@ mod tests {
                 backend: "fake-reviewer".into(),
                 state: ReviewJobState::Completed,
                 artifact_path: None,
+                ledger_path: None,
                 report: Some(AgentReviewReport {
                     reviewer_backend: "fake-reviewer".into(),
                     findings: Vec::new(),
@@ -862,6 +937,7 @@ mod tests {
             backend: "fake-reviewer".into(),
             state: ReviewJobState::Completed,
             artifact_path: None,
+            ledger_path: None,
             report: Some(AgentReviewReport {
                 reviewer_backend: "fake-reviewer".into(),
                 findings: Vec::new(),
@@ -876,6 +952,95 @@ mod tests {
         assert!(body.contains("Evidence recorded"));
         assert!(body.contains("Independent Review Agent may move this issue to Human Review"));
         assert!(body.contains("main implementation agent must not"));
+    }
+
+    #[test]
+    fn review_job_ledger_record_captures_decision_and_paths() {
+        let job = ReviewJob {
+            id: "job".into(),
+            issue_ref: "#1".into(),
+            backend: "fake-reviewer".into(),
+            state: ReviewJobState::Completed,
+            artifact_path: Some("/tmp/review-artifact.json".into()),
+            ledger_path: None,
+            report: Some(AgentReviewReport {
+                reviewer_backend: "fake-reviewer".into(),
+                findings: Vec::new(),
+                summary: Some("Review passed.".into()),
+                stdout: None,
+                stderr: None,
+            }),
+            error: None,
+        };
+
+        let record = review_job_ledger_record(&issue(), &job, "/tmp/review-ledger.json".into());
+
+        assert_eq!(record.issue_ref, "#1");
+        assert_eq!(record.job_id, "job");
+        assert_eq!(record.worker_key, "review:#1:fake-reviewer");
+        assert_eq!(record.decision_outcome, ReviewOutcome::PassedToHumanReview);
+        assert_eq!(
+            record.decision_target_state.as_deref(),
+            Some("human_review")
+        );
+        assert_eq!(record.summary.as_deref(), Some("Review passed."));
+        assert_eq!(record.finding_count, 0);
+    }
+
+    #[test]
+    fn writes_review_job_ledger_record_json() {
+        let temp = tempfile::tempdir().unwrap();
+        let job = ReviewJob {
+            id: "job".into(),
+            issue_ref: "#1".into(),
+            backend: "fake-reviewer".into(),
+            state: ReviewJobState::Completed,
+            artifact_path: None,
+            ledger_path: None,
+            report: Some(AgentReviewReport {
+                reviewer_backend: "fake-reviewer".into(),
+                findings: Vec::new(),
+                summary: Some("Review passed.".into()),
+                stdout: None,
+                stderr: None,
+            }),
+            error: None,
+        };
+
+        let path = write_review_job_ledger_record(temp.path(), &issue(), &job).unwrap();
+        let body = fs::read_to_string(&path).unwrap();
+        let record: ReviewJobLedgerRecord = serde_json::from_str(&body).unwrap();
+
+        assert_eq!(path, temp.path().join("reviews/jobs/_1-job.json"));
+        assert_eq!(record.ledger_path, path);
+        assert_eq!(
+            record.decision_target_state.as_deref(),
+            Some("human_review")
+        );
+    }
+
+    #[test]
+    fn review_workpad_includes_ledger_path_when_available() {
+        let job = ReviewJob {
+            id: "job".into(),
+            issue_ref: "#1".into(),
+            backend: "fake-reviewer".into(),
+            state: ReviewJobState::Completed,
+            artifact_path: None,
+            ledger_path: Some("/tmp/reviews/jobs/1-job.json".into()),
+            report: Some(AgentReviewReport {
+                reviewer_backend: "fake-reviewer".into(),
+                findings: Vec::new(),
+                summary: None,
+                stdout: None,
+                stderr: None,
+            }),
+            error: None,
+        };
+
+        let body = render_review_workpad(&issue(), &job);
+
+        assert!(body.contains("Review job ledger: /tmp/reviews/jobs/1-job.json"));
     }
 
     #[test]
@@ -895,6 +1060,7 @@ mod tests {
             backend: "fake-reviewer".into(),
             state: ReviewJobState::Completed,
             artifact_path: None,
+            ledger_path: None,
             report: Some(AgentReviewReport {
                 reviewer_backend: "fake-reviewer".into(),
                 findings: vec![ReviewFinding {
@@ -1051,6 +1217,7 @@ mod tests {
             backend: "gemini-cli".into(),
             state: ReviewJobState::Failed,
             artifact_path: None,
+            ledger_path: None,
             report: None,
             error: Some("rate limit exceeded; retry later".into()),
         };

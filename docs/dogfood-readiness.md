@@ -10,32 +10,38 @@ yet.
 
 | Capability | Current Status |
 | --- | --- |
-| Workflow loader | Implemented for explicit workflow path and optional YAML front matter. Runtime reload is not implemented. |
+| Workflow loader | Implemented for explicit workflow path and optional YAML front matter. A first-slice `WorkflowStore` can explicitly reload a workflow while preserving the last known good definition after load/parse failures. Long-running runtime reload wiring is not implemented. |
 | Dogfood workflow prompt | `examples/github-project-workflow.md` includes the Jade operating loop, issue quality gate expectation, workpad discipline, role boundaries, stop conditions, and one issue / one branch / one PR handoff rules. Tests guard against reverting to a placeholder-thin prompt. |
-| Typed config | Implemented for the current skeleton, including GitHub Project v2-shaped settings, operator/agent identity metadata, and first-slice execution profiles. |
+| Typed config | Implemented for the current skeleton, including GitHub Project v2-shaped settings, operator/agent identity metadata, first-slice execution profiles, and optional SSH worker host settings for future remote scheduling. |
 | Normalized issue model | Implemented as `TrackerIssue`, including ProjectV2 item ID, labels, assignees, blockers, linked PRs, and project fields. |
 | GitHub Project v2 tracker | Fixture-backed mode plus live loading and explicit write operations through `gh api graphql`. `run-loop` can coordinate existing primitives, idle-poll in unbounded write mode, and use claim decision helpers before write-mode dispatch; auth diagnostics distinguish fixture mode, env-token auth, usable `gh api graphql` auth, missing `gh`, and unusable auth. Same-state status writes are skipped, Project item addition initializes the configured `Status` field to `Todo`, marker workpad upsert is idempotent for the canonical marker, and claim decision helpers distinguish claimable, active, and externally changed states. Full claim reconciliation is not implemented yet. |
 | Linear tracker | Implemented behind the same trait for fixture-backed planning plus live GraphQL reads, state updates, marker workpad comments, follow-up issue creation, and project assignment. Credential-gated smoke coverage is still missing. |
-| Issue Quality Gate | Implemented as a Markdown contract check plus deterministic source-alignment preflight where workflow/repo context is available. It verifies target repository, referenced local paths, and supported verification command shapes. Optional local command-backed LLM gate mode exists as disabled/advisory/required; richer semantic validation and hosted providers are still follow-ups. |
-| Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, repair, CLI-first interactive issue shaping, conservative reflective follow-up candidate generation, and explicit `forge-create` tracker issue creation from quality-gated Markdown. Interactive creation requires `--write` and `--confirm-create`; reflective mode only prints candidates. Initial Project `Status` setup is available through the GitHub add-to-project path; arbitrary Project field setup after creation is not implemented yet. |
-| Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes, idle polling, claim-helper use, runtime-state persistence, resume preflight, retry backoff records, stall detection, live PR handoff in non-fixture GitHub mode, a guarded one-shot `merge-once` lane for `Merging` issues, a controlled `dogfood-smoke` preflight report, and a bounded operator launcher script exist. No long-running worker supervision, automated stall restart, full multi-worker runtime resume reconciliation, `merge-loop`, or full state reconciliation yet. |
-| Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, repository-local git identity application, workspace/branch/PR handoff planning, live git worktree/branch creation, branch push, PR create-or-reuse, run-loop handoff evidence, profile-scoped workspace keys, and an Agent Review handoff invariant that blocks missing PR evidence before `Agent Review` exist. Runtime reconciliation cleanup is not wired yet. |
+| Issue Quality Gate | Implemented as a Markdown contract check plus deterministic source-alignment preflight where workflow/repo context is available. It verifies the template `UAT Required` field, target repository, referenced local paths, and supported verification command shapes. Optional local command-backed LLM gate mode exists as disabled/advisory/required; richer semantic validation and hosted providers are still follow-ups. |
+| Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, repair, CLI-first interactive issue shaping, conservative reflective follow-up candidate generation, and explicit `forge-create` tracker issue creation from quality-gated Markdown with duplicate-title guarding. Interactive creation requires `--write` and `--confirm-create`; reflective mode only prints candidates. Initial Project `Status` setup is available through the GitHub add-to-project path, and `forge-create --add-to-project` can set GitHub Project v2 single-select fields such as `Capability` with repeatable `--project-field NAME=VALUE` flags. Text/number/date field setup is not implemented yet. |
+| Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes, idle polling, claim-helper use, runtime-state persistence, tracker-visible advisory ownership markers, resume preflight, retry backoff records, stall detection, live PR handoff plus tracker PR link recording in non-fixture GitHub mode, guarded `merge-once` and bounded `merge-loop` lanes for `Merging` issues, a controlled `dogfood-smoke` preflight report with blocking-vs-warning integration gap severity, and a bounded operator launcher script exist. No long-running worker supervision, automated stall restart, full multi-worker runtime resume reconciliation, unbounded merge idle polling, or full state reconciliation yet. |
+| Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, guarded terminal cleanup planning, repository-local git identity application, workspace/branch/PR handoff planning, live git worktree/branch creation, dirty/no-op guards before branch push, optional configured verification commands before PR handoff, branch push, PR create-or-reuse, tracker PR link recording, run-loop handoff evidence, profile-scoped workspace keys, parsed-but-unused SSH worker host config, and an Agent Review handoff invariant that blocks missing PR evidence before `Agent Review` exist. Automatic runtime cleanup and live SSH execution are not wired yet. |
 | Execution profiles | First-slice profile discovery exists. Workflow config can point to a cockpit-tools Codex `codex_instances.json` file, and Jade treats each instance `name` as a profile/worker identity while ignoring account binding fields. If the cockpit-tools file is missing, explicit `profiles.entries` are used. This is not a full account manager. |
-| Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Prepared runs include selected profile/instance metadata and profile environment context. Full Codex app-server and Claude Code protocol parity are not implemented yet. |
-| Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, evidence-first Rework diagnostics for confirmed findings, review-freshness evidence for Merging conflict repair, bounded `review-loop` selection/reconciliation, and workpad/status evidence helpers exist. Persistent background review worker supervision is not implemented yet. |
-| Merging | `merge-once` can inspect issues already in `Merging`, require one linked PR, check live GitHub PR state/review/check/mergeability data where available, merge clean approved PRs only with explicit `--write`, and route blockers to `Rework` or `Need Human Input` with workpad evidence. Continuous merge polling and issue closing beyond Project `Done` are not implemented yet. |
-| Project doctor | Read-only `doctor` / `audit-project` reports workflow invariant violations from normalized tracker issues, including missing PR handoff evidence, missing review pass evidence, dirty Merging PRs, missing runtime ownership hints, and queued issues with PRs. Repair mode is not implemented yet. |
-| Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. JSONL event-log primitives exist and `run-once` writes dry-run events with actor and profile metadata. Runtime state files are written during write-mode `run-loop` issue execution, including actor role/label, git author, and optional profile/instance identity when configured; resume, retry, usage-limit pause, and stall supervision events are also recorded. No web/API surface yet. |
+| Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Prepared runs include selected profile/instance metadata and profile environment context. The Codex subprocess backend safely refuses `codex app-server` commands because that transport is not implemented yet. A first-slice Codex app-server event normalizer maps fixture JSON-RPC stream lines into Jade `AgentEvent` values, including completion, failure, cancellation, input-required, token usage, notification, and malformed events. Full Codex app-server transport and Claude Code protocol parity remain follow-ups. |
+| Dynamic tools | A first-slice dynamic-tool registry can describe planned backend-specific tools such as Codex `linear_graphql` without coupling them to the orchestrator. Tool execution and Codex app-server dynamic-tool protocol wiring are not implemented yet. |
+| Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, evidence-first Rework diagnostics for confirmed findings, review-freshness evidence for Merging conflict repair, bounded `review-loop` worker selection/reconciliation with one issue per worker slot, durable JSON review job ledger records, and workpad/status evidence helpers exist. Persistent background review worker supervision is not implemented yet. |
+| Merging | `merge-once` can inspect issues already in `Merging`, require one linked PR, treat Project `Merging` as the approval signal, check live GitHub PR state/review/check/mergeability data where available, merge clean PRs only with explicit `--write`, record workpad evidence, set Project `Done`, close the linked GitHub issue when supported by the tracker, and route blockers to `Rework` or `Need Human Input`. Bounded `merge-loop` can repeat that guarded tick for an explicit iteration count. Unbounded continuous merge polling is not implemented yet. |
+| Project doctor | Read-only `doctor` / `audit-project` reports workflow invariant violations from normalized tracker issues, including missing PR handoff evidence, missing review pass evidence, dirty Merging PRs, missing runtime ownership hints, and queued issues with PRs. JSON output and strict blocker failure modes exist. `doctor-repair-human-review` can repair the specific invalid Human Review-without-pass-evidence case with explicit `--write`; broader repair mode is not implemented yet. |
+| Observability | Operator-readable terminal snapshots report polling, running, retrying, skipped issues, gate details, token counters, event-log path, and integration gaps. `status WORKFLOW --json` prints the same `RuntimeSnapshot` shape for dogfood scripts, and `status-api WORKFLOW --once` serves that snapshot on local `GET /status.json` / `GET /status` for one request. JSONL event-log primitives exist, can read back records, and can produce compact summaries by event, issue, and session; `run-once` writes dry-run events with actor and profile metadata. `TokenTotals::from_agent_events` provides a first aggregation helper for normalized token events, but live runtime/app-server wiring is still pending. Runtime state files are written during write-mode `run-loop` issue execution, including actor role/label, git author, and optional profile/instance identity when configured; resume, retry, usage-limit pause, and stall supervision events are also recorded. Persistent/remote web/API service mode is not implemented yet. |
 | Usage-limit pause/resume | Conservative usage-limit/rate-limit/resource-exhausted classification exists for subprocess agent events and review job output. `run-loop` records usage-limit pauses in workpad/runtime retry state and does not advance to `Agent Review`; review workpads surface usage-limit failures without moving to `Human Review`. Vendor-specific quota management is not implemented. |
-| Tests | Unit tests cover the dry-run skeleton. No credential-gated integration tests yet. |
+| Tests | Unit tests cover the dry-run skeleton. Read-only / dry-run live GitHub smoke tests exist behind explicit `JADE_LIVE_GITHUB_SMOKE=1` opt-in; mutation and Linear credential-gated smoke coverage are still missing. |
 
 The operator launcher runbook is in `docs/operator-dogfood.md`; it keeps write
-mode explicit through `scripts/jade-dogfood --write --confirm-write`.
+mode explicit through `scripts/jade-dogfood --write --confirm-write` and runs
+the controlled dogfood smoke preflight before a mutating tick.
 
 The controlled live smoke runbook is in `docs/dogfood-smoke.md`. It keeps the
 first dogfood acceptance path supervised and bounded to one controlled issue;
 `examples/dogfood-smoke-workflow.md` provides a credential-free fixture
 rehearsal of the same candidate filtering path.
+
+The bootstrap completion audit is in `docs/bootstrap-parity-audit.md`. It
+separates landed mainline capability from open `Agent Review` coverage and
+deferred parity work.
 
 ## Before Executing GitHub Project Issues
 
@@ -59,12 +65,16 @@ Project v2 issues:
    - Mutating commands require `--write`.
    - Same-state status updates are treated as no-ops before mutation.
    - PR linking currently uses an issue comment/autolink strategy instead of a
-     first-class relationship.
+     first-class relationship; linked PR discovery can read closing references
+     and PR URLs recorded in canonical Jade workpad comments.
    - Remaining work: idempotency checks around project-item addition and richer
      reconciliation after writes.
 
 3. Dispatch safety.
    - Enforce assignee filter from live GitHub issue assignees.
+   - Live GitHub `run-loop --write` requires unassigned issue execution to be
+     explicitly allowed, and otherwise compares issue assignees against the
+     current `gh` login or selected profile login before claim.
    - `run-loop` reuses tracker claim helpers to claim only `Todo` / `Rework`,
      resume active `In Progress`, and stop/replan on externally changed states.
    - Revalidate issue state immediately before dispatch.
@@ -80,8 +90,13 @@ Project v2 issues:
    - Independent Review Agent commands can set `Human Review` only after a
      passed review with evidence.
    - Bounded `review-loop` can discover eligible `Agent Review` issues, skip
-     existing review-worker markers, and apply the same independent Review Agent
-     transition rules as `review-once`.
+     existing review-worker markers, select up to the configured concurrent
+     worker limit, and apply the same independent Review Agent transition rules
+     as `review-once`.
+   - Write-mode review jobs persist a JSON ledger record under the configured
+     logs root with issue, worker, backend, artifact, decision, summary/error,
+     and finding count; review and Rework workpads link to that ledger when
+     available.
    - Confirmed findings route to `Rework`.
    - Failed, timed out, inconclusive, or unavailable reviews remain out of
      `Human Review` and route to `Need Human Input` or stay in `Agent Review`.
@@ -113,6 +128,10 @@ Project v2 issues:
      bootstrap contract evolves.
    - Harden the Codex and Claude Code subprocess backends, then implement full
      protocol transports.
+   - Keep refusing `codex app-server` in the subprocess backend until the
+     dedicated app-server transport exists.
+   - Use the app-server event normalizer as the first protocol boundary for
+     future Codex app-server transport wiring.
    - Preserve selected profile identity in prepared runs, logs, runtime state,
      and backend environment context without logging secrets.
    - Keep Claude Code as a peer backend path.
@@ -131,24 +150,32 @@ Project v2 issues:
      final transition intent. Resume preflight now blocks conflicting stale
      active state, honors retry backoff, and reports stalls; full multi-worker
      reconciliation remains pending.
+   - Write-mode `run-loop` now writes a tracker-visible runtime ownership marker
+     before backend execution and skips active `In Progress` work when the
+     marker points at a different profile, workspace key, or branch. This is an
+     advisory coordination surface, not a distributed lock.
    - workspace/branch/PR handoff is recorded by `run-loop`; in live
      non-fixture GitHub mode the runtime can create/reuse the issue worktree and
-     branch, push the branch, and create/reuse one PR after successful backend
-     execution. Remaining work: cleanup, richer reconciliation, and stronger
-     verification command modeling.
+     branch, run optional configured verification commands, push the branch, and
+     create/reuse one PR after successful backend execution, while blocking
+     dirty or no-op branch handoff. It records the PR link through the tracker
+     adapter before Agent Review handoff. Remaining work: cleanup, richer
+     reconciliation, and richer verification modeling.
    - Local git identity application exists for prepared git repositories; the
      live worktree path must continue to apply it before commits and preserve the
      distinction between agent actors and human operators.
    - Existing `Agent Review` items with stale or missing PR evidence still need
      a reconciliation/repair command; the current handoff invariant prevents
      new silent transitions from passing without PR evidence.
-   - profile-scoped workspace keys exist, but tracker claim ownership still
-     needs profile-aware reconciliation before parallel worker dogfooding.
+   - profile-scoped workspace keys and login-based claim checks exist, but full
+     profile-specific account/token switching still needs reconciliation before
+     parallel worker dogfooding.
    - continuation retry after normal active-state exits.
    - exponential backoff for failures.
    - stall detection.
    - terminal/non-active reconciliation.
-- terminal workspace cleanup wiring in the runtime loop.
+- terminal workspace cleanup planning exists as an explicit dry-run/write
+  command; automatic cleanup wiring in the runtime loop remains pending.
 
 8. Observability.
    - Structured logs for dispatch, retry, state transition, backend session, and
@@ -158,7 +185,10 @@ Project v2 issues:
    - Clear integration-gap reporting when credentials are missing or unusable
      while avoiding false missing-token warnings when `gh api graphql` works.
    - `doctor` / `audit-project` is available as a read-only project invariant
-     audit. Explicit-write repair mode remains a follow-up.
+     audit with human-readable output, JSON output, and explicit strict failure
+     signaling for blocker violations. Explicit-write repair currently covers
+     only invalid `Human Review` issues that lack independent Review Agent pass
+     evidence; broader repair mode remains a follow-up.
 
 9. Integration profile.
    - Credential-gated GitHub Project v2 smoke test.
@@ -182,9 +212,11 @@ Project v2 issues:
      issue draft before any live tracker write.
    - `forge-reflect` can scan local context for conservative follow-up signals
      and print quality-gated draft candidates without creating live issues.
-   - Remaining work: set capability and arbitrary Project fields through a
-     tracker-neutral field operation or tracker-specific adapter method, plus a
-     richer TUI or multi-step conversation surface if CLI steps become too thin.
+   - `forge-create --add-to-project` can set GitHub Project v2 single-select
+     fields by name with repeatable `--project-field NAME=VALUE` flags, covering
+     the immediate `Capability` classification need.
+   - Remaining work: text/number/date field writes and a richer TUI or
+     multi-step conversation surface if CLI steps become too thin.
 
 ## Recommended Next GitHub Issues
 
@@ -289,7 +321,8 @@ Acceptance:
 - hook timeout is enforced.
 - `after_create`, `before_run`, `after_run`, and `before_remove` behavior match
   the parity roadmap.
-- terminal cleanup is tied to tracker reconciliation.
+- terminal cleanup can be planned from tracker reconciliation; automatic runtime
+  cleanup remains pending.
 - path escape tests cover symlink and non-directory cases.
 
 ### 6. Harden Workspace Branch And PR Handoff Reconciliation
@@ -301,8 +334,10 @@ Acceptance:
 
 - reconciles existing worktrees with tracker state before reuse.
 - records PR URL and branch evidence in the tracker workpad.
-- detects missing remote commits or no-op branches before PR creation.
-- adds configured verification command execution before push/PR handoff.
+- detects missing remote commits or no-op branches before PR creation. (First
+  dirty/no-op guard exists.)
+- adds configured verification command execution before push/PR handoff. (First
+  workflow-level command-list slice exists.)
 - cleans terminal worktrees after tracker reconciliation.
 - keeps main implementation completion at `Agent Review`.
 
@@ -313,8 +348,8 @@ Goal: evolve the bounded `review-loop` into persistent worker supervision.
 Acceptance:
 
 - reviewer backend is selected through config.
-- one review worker per issue/PR is started and reconciled without blocking the
-  main run-loop.
+- one review worker per issue/PR is started and reconciled without batching
+  unrelated issues into one prompt or blocking the main run-loop.
 - review job identity, backend, artifact path, and result evidence are persisted
   in workpad/runtime state.
 - duplicate review workers are prevented across repeated loop ticks.

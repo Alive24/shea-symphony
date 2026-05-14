@@ -42,12 +42,12 @@ The report includes:
 - executable controlled candidate count;
 - runtime state path;
 - event log root;
-- integration gaps.
+- blocking integration gaps and warning-level integration gaps.
 
 ## Supervised Live Tick
 
-When the preflight reports one executable controlled candidate, no integration
-gaps, and a non-fixture tracker mode, run one bounded live tick:
+When the preflight reports one executable controlled candidate, no blocking
+integration gaps, and a non-fixture tracker mode, run one bounded live tick:
 
 ```bash
 cargo run -- run-loop examples/github-project-workflow.md --max-iterations 1 --write
@@ -65,12 +65,18 @@ Expected result:
 Do not run the merge lane for this smoke unless a human has separately approved
 the issue for `Merging`.
 
+In `--write` mode, `dogfood-smoke` exits non-zero when those readiness
+conditions are not met. The command still prints `dogfood_smoke_blocked=true`
+and the blocker before exiting, so scripts can treat it as a gate without
+losing the operator-readable reason.
+
 ## Skip Conditions
 
 Skip the live tick and keep the smoke at preflight-only if:
 
 - `gh auth status` is not healthy;
 - required Project fields are unavailable;
+- the preflight reports blocking integration gaps;
 - there is not exactly one controlled smoke candidate;
 - the candidate does not pass the Issue Quality Gate;
 - the backend would consume a real operator session unexpectedly;

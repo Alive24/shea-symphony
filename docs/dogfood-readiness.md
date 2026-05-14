@@ -19,7 +19,7 @@ yet.
 | Issue Quality Gate | Implemented as a Markdown contract check plus deterministic source-alignment preflight where workflow/repo context is available. It verifies target repository, referenced local paths, and supported verification command shapes. Optional local command-backed LLM gate mode exists as disabled/advisory/required; richer semantic validation and hosted providers are still follow-ups. |
 | Issue Forge | Local CLI flows exist for discover, discuss, draft, validate, repair, CLI-first interactive issue shaping, conservative reflective follow-up candidate generation, and explicit `forge-create` tracker issue creation from quality-gated Markdown. Interactive creation requires `--write` and `--confirm-create`; reflective mode only prints candidates. Initial Project `Status` setup is available through the GitHub add-to-project path; arbitrary Project field setup after creation is not implemented yet. |
 | Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes, idle polling, claim-helper use, runtime-state persistence, resume preflight, retry backoff records, stall detection, live PR handoff in non-fixture GitHub mode, guarded `merge-once` and bounded `merge-loop` lanes for `Merging` issues, a controlled `dogfood-smoke` preflight report, and a bounded operator launcher script exist. No long-running worker supervision, automated stall restart, full multi-worker runtime resume reconciliation, unbounded merge idle polling, or full state reconciliation yet. |
-| Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, guarded terminal cleanup planning, repository-local git identity application, workspace/branch/PR handoff planning, live git worktree/branch creation, branch push, optional configured verification commands before PR handoff, PR create-or-reuse, run-loop handoff evidence, profile-scoped workspace keys, and an Agent Review handoff invariant that blocks missing PR evidence before `Agent Review` exist. Automatic runtime cleanup is not wired yet. |
+| Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, guarded terminal cleanup planning, repository-local git identity application, workspace/branch/PR handoff planning, live git worktree/branch creation, dirty/no-op guards before branch push, optional configured verification commands before PR handoff, PR create-or-reuse, run-loop handoff evidence, profile-scoped workspace keys, and an Agent Review handoff invariant that blocks missing PR evidence before `Agent Review` exist. Automatic runtime cleanup is not wired yet. |
 | Execution profiles | First-slice profile discovery exists. Workflow config can point to a cockpit-tools Codex `codex_instances.json` file, and Jade treats each instance `name` as a profile/worker identity while ignoring account binding fields. If the cockpit-tools file is missing, explicit `profiles.entries` are used. This is not a full account manager. |
 | Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Prepared runs include selected profile/instance metadata and profile environment context. Full Codex app-server and Claude Code protocol parity are not implemented yet. |
 | Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, evidence-first Rework diagnostics for confirmed findings, review-freshness evidence for Merging conflict repair, bounded `review-loop` worker selection/reconciliation with one issue per worker slot, durable JSON review job ledger records, and workpad/status evidence helpers exist. Persistent background review worker supervision is not implemented yet. |
@@ -141,8 +141,9 @@ Project v2 issues:
    - workspace/branch/PR handoff is recorded by `run-loop`; in live
      non-fixture GitHub mode the runtime can create/reuse the issue worktree and
      branch, run optional configured verification commands, push the branch, and
-     create/reuse one PR after successful backend execution. Remaining work:
-     cleanup, richer reconciliation, and richer verification modeling.
+     create/reuse one PR after successful backend execution, while blocking
+     dirty or no-op branch handoff. Remaining work: cleanup, richer
+     reconciliation, and richer verification modeling.
    - Local git identity application exists for prepared git repositories; the
      live worktree path must continue to apply it before commits and preserve the
      distinction between agent actors and human operators.
@@ -313,7 +314,8 @@ Acceptance:
 
 - reconciles existing worktrees with tracker state before reuse.
 - records PR URL and branch evidence in the tracker workpad.
-- detects missing remote commits or no-op branches before PR creation.
+- detects missing remote commits or no-op branches before PR creation. (First
+  dirty/no-op guard exists.)
 - adds configured verification command execution before push/PR handoff. (First
   workflow-level command-list slice exists.)
 - cleans terminal worktrees after tracker reconciliation.

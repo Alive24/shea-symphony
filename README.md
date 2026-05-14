@@ -107,7 +107,9 @@ worker supervision are still future work.
 - live GitHub `run-loop --write` can create or reuse the planned issue
   worktree/branch, run the configured backend inside that worktree, push the
   branch, run optional configured verification commands, and create or reuse
-  one GitHub PR after successful execution and verification.
+  one GitHub PR after successful execution and verification; the handoff helper
+  blocks dirty worktrees and branches with no commits ahead of the configured
+  base before publishing.
 - live GitHub `run-loop --write` checks assignee ownership before claim:
   unassigned issues require an explicit workflow override, and assigned issues
   must match the current `gh` login or a selected profile login exposed through
@@ -308,7 +310,7 @@ Merging role separation.
   current claim helper and resume preflight.
 - full multi-worker runtime-state resume reconciliation after interruption.
 - richer workspace-per-issue branch and PR reconciliation beyond current
-  create-or-reuse handoff.
+  dirty/no-op guarded create-or-reuse handoff.
 - richer verification modeling beyond the current workflow-level command list.
 - continuation retries and automated stall restart.
 - richer vendor-specific quota handling beyond conservative usage-limit

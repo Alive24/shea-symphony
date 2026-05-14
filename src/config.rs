@@ -13,6 +13,7 @@ pub struct RuntimeConfig {
     pub tracker: TrackerConfig,
     pub polling: PollingConfig,
     pub workspace: WorkspaceConfig,
+    pub worker: WorkerConfig,
     pub hooks: HooksConfig,
     pub agent: AgentConfig,
     pub backend: BackendConfig,
@@ -83,6 +84,13 @@ pub struct PollingConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceConfig {
     pub root: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct WorkerConfig {
+    #[serde(default)]
+    pub ssh_hosts: Vec<String>,
+    pub max_concurrent_agents_per_host: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -253,6 +261,7 @@ impl RuntimeConfig {
                 &env::temp_dir().join("symphony_workspaces"),
             ),
         };
+        let worker = parse_worker(root.get("worker"));
         let hooks = HooksConfig {
             after_create: get_string(root.get("hooks"), "after_create"),
             before_run: get_string(root.get("hooks"), "before_run"),
@@ -330,6 +339,7 @@ impl RuntimeConfig {
             tracker,
             polling,
             workspace,
+            worker,
             hooks,
             agent,
             backend,
@@ -377,6 +387,13 @@ impl RuntimeConfig {
 
         require_positive("polling.interval_ms", self.polling.interval_ms)?;
         require_positive("hooks.timeout_ms", self.hooks.timeout_ms)?;
+        if let Some(limit) = self.worker.max_concurrent_agents_per_host {
+            if limit <= 0 {
+                return Err(ConfigError::Invalid(
+                    "worker.max_concurrent_agents_per_host must be positive".into(),
+                ));
+            }
+        }
         require_positive(
             "agent.max_concurrent_agents",
             self.agent.max_concurrent_agents as u64,
@@ -510,6 +527,18 @@ fn parse_workpad(value: Option<&Value>) -> WorkpadConfig {
     }
 }
 
+fn parse_worker(value: Option<&Value>) -> WorkerConfig {
+    WorkerConfig {
+        ssh_hosts: get_string_vec(value, "ssh_hosts")
+            .unwrap_or_default()
+            .into_iter()
+            .map(|host| host.trim().to_string())
+            .filter(|host| !host.is_empty())
+            .collect(),
+        max_concurrent_agents_per_host: get_i64(value, "max_concurrent_agents_per_host"),
+    }
+}
+
 fn parse_profiles(value: Option<&Value>, workflow_dir: &Path) -> ProfilesConfig {
     ProfilesConfig {
         default: get_string(value, "default"),
@@ -630,6 +659,10 @@ fn value_string(root: Option<&Value>, key: &str, default: &str) -> String {
 
 fn get_u64(root: Option<&Value>, key: &str) -> Option<u64> {
     get_value(root, key).and_then(Value::as_u64)
+}
+
+fn get_i64(root: Option<&Value>, key: &str) -> Option<i64> {
+    get_value(root, key).and_then(Value::as_i64)
 }
 
 fn get_bool(root: Option<&Value>, key: &str) -> Option<bool> {
@@ -851,6 +884,38 @@ mod tests {
             config.profiles.entries[0].user_data_dir.as_deref(),
             Some(Path::new("/tmp/config/profiles/fallback"))
         );
+    }
+
+    #[test]
+    fn parses_optional_ssh_worker_config_without_enabling_remote_execution() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nworker:\n  ssh_hosts:\n    - worker-a.example\n    - ' worker-b.example '\n    - ''\n  max_concurrent_agents_per_host: 2\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(
+            config.worker.ssh_hosts,
+            vec!["worker-a.example", "worker-b.example"]
+        );
+        assert_eq!(config.worker.max_concurrent_agents_per_host, Some(2));
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_non_positive_ssh_worker_host_limit() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nworker:\n  ssh_hosts:\n    - worker-a.example\n  max_concurrent_agents_per_host: 0\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        let error = config.validate().unwrap_err().to_string();
+        assert!(error.contains("worker.max_concurrent_agents_per_host must be positive"));
     }
 
     #[test]

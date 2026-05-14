@@ -87,14 +87,14 @@ cargo run -- gate-apply examples/github-project-workflow.md '#123' --write
 | `forge-repair` | Repair thin Markdown into an executable issue shape. | Read-only. |
 | `forge-interactive` | CLI-first guided issue shaping. | Creation requires `--write --confirm-create`. |
 | `forge-reflect` | Reflect over local context and print candidate issues. | Read-only. |
-| `forge-create` | Create a quality-gated tracker issue. | Requires explicit `--write`; can add to Project with `--add-to-project`. |
+| `forge-create` | Create a quality-gated tracker issue. | Requires explicit `--write`; live GitHub creation requires `--assignee`; can add to Project with `--add-to-project`. |
 
 Examples:
 
 ```bash
 cargo run -- forge-validate --title "Thin Forge issue" --file examples/fixtures/thin-issue.md
 cargo run -- forge-reflect --context-file docs/dogfood-readiness.md --limit 1
-cargo run -- forge-create --workflow examples/github-project-workflow.md --title "Follow-up title" --file /tmp/issue.md --add-to-project --write
+cargo run -- forge-create --workflow examples/github-project-workflow.md --title "Follow-up title" --file /tmp/issue.md --assignee Alive24 --add-to-project --write
 ```
 
 ## Review Agent Lane

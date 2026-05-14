@@ -6629,6 +6629,7 @@ mod tests {
             workflow_path: PathBuf::from("WORKFLOW.md"),
             max_iterations: None,
             once: false,
+            pool: None,
             write: false,
         };
 
@@ -6646,6 +6647,7 @@ mod tests {
             workflow_path: PathBuf::from("WORKFLOW.md"),
             max_iterations: Some(2),
             once: false,
+            pool: None,
             write: true,
         };
 
@@ -6663,6 +6665,7 @@ mod tests {
             workflow_path: PathBuf::from("WORKFLOW.md"),
             max_iterations: None,
             once: false,
+            pool: None,
             write: true,
         };
 

@@ -46,11 +46,12 @@ use jade_symphony::quality_gate::{
     evaluate_issue_with_source_alignment, LlmGateMode, LlmGateOptions,
 };
 use jade_symphony::review::{
-    classify_review_freshness, render_review_freshness_workpad, render_review_workpad,
-    review_gate_decision, review_run_eligibility, transition_allowed_for_main_agent,
-    transition_allowed_for_review_agent, write_review_job_ledger_record, FakeReviewBackend,
-    FakeReviewOutcome, GeminiCliReviewBackend, ReviewBackend, ReviewFreshnessInput, ReviewJob,
-    ReviewRequest, ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
+    classify_review_freshness, poll_review_job_until_terminal, render_review_freshness_workpad,
+    render_review_workpad, review_gate_decision, review_run_eligibility,
+    transition_allowed_for_main_agent, transition_allowed_for_review_agent,
+    write_review_job_ledger_record, FakeReviewBackend, FakeReviewOutcome, GeminiCliReviewBackend,
+    ReviewBackend, ReviewFreshnessInput, ReviewJob, ReviewRequest, ReviewReworkClass,
+    ReviewRunEligibility, ReviewStaleReason,
 };
 use jade_symphony::rework::{
     render_rework_diagnostic_workpad, rework_diagnostic_from_review, rework_transition_expected,
@@ -1299,14 +1300,25 @@ fn run_review_job(
 
     if let Some(outcome) = fake_outcome {
         let backend = FakeReviewBackend::new(outcome);
-        return Ok(backend.poll(backend.start(request)?)?);
+        let job = backend.start(request)?;
+        return Ok(poll_review_job_until_terminal(
+            &backend,
+            job,
+            Duration::from_millis(config.review.timeout_ms),
+            Duration::from_millis(250),
+        )?);
     }
 
     match config.review.backend.as_str() {
         "gemini-cli" => {
             let backend = GeminiCliReviewBackend::new(config.review.gemini_command.clone());
             match backend.start(request) {
-                Ok(job) => Ok(backend.poll(job)?),
+                Ok(job) => Ok(poll_review_job_until_terminal(
+                    &backend,
+                    job,
+                    Duration::from_millis(config.review.timeout_ms),
+                    Duration::from_millis(500),
+                )?),
                 Err(error) => Ok(ReviewJob::failed_unavailable(
                     issue.identifier.clone(),
                     "gemini-cli",

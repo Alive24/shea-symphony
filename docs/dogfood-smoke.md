@@ -53,6 +53,11 @@ Expected result:
 Do not run the merge lane for this smoke unless a human has separately approved
 the issue for `Merging`.
 
+In `--write` mode, `dogfood-smoke` exits non-zero when those readiness
+conditions are not met. The command still prints `dogfood_smoke_blocked=true`
+and the blocker before exiting, so scripts can treat it as a gate without
+losing the operator-readable reason.
+
 ## Skip Conditions
 
 Skip the live tick and keep the smoke at preflight-only if:

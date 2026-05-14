@@ -1440,7 +1440,7 @@ fn dogfood_smoke(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std:
         .count();
     let fixture_mode = config.tracker.fixture_path.is_some();
     let write_ready =
-        !fixture_mode && integration_gaps.is_empty() && executable_candidates == 1 && write;
+        dogfood_smoke_write_ready(fixture_mode, integration_gaps.len(), executable_candidates);
 
     println!("dogfood_smoke=ok");
     println!("workflow={}", workflow_path.display());
@@ -1464,7 +1464,7 @@ fn dogfood_smoke(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std:
             println!("integration_gap={gap}");
         }
     }
-    println!("write_ready={write_ready}");
+    println!("write_ready={}", write && write_ready);
 
     if !write {
         println!("dogfood_smoke_dry_run action=inspect_project");
@@ -1480,7 +1480,8 @@ fn dogfood_smoke(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std:
         );
     } else {
         println!("dogfood_smoke_blocked=true");
-        println!("dogfood_smoke_blocker=requires exactly one executable controlled smoke issue, non-fixture tracker mode, and no integration gaps");
+        println!("dogfood_smoke_blocker={DOGFOOD_SMOKE_WRITE_BLOCKER}");
+        return Err(DOGFOOD_SMOKE_WRITE_BLOCKER.into());
     }
 
     Ok(())
@@ -1627,6 +1628,17 @@ fn workspace_cleanup_plan(
     }
 
     Ok(entries)
+}
+
+const DOGFOOD_SMOKE_WRITE_BLOCKER: &str =
+    "requires exactly one executable controlled smoke issue, non-fixture tracker mode, and no integration gaps";
+
+fn dogfood_smoke_write_ready(
+    fixture_mode: bool,
+    integration_gap_count: usize,
+    executable_candidates: usize,
+) -> bool {
+    !fixture_mode && integration_gap_count == 0 && executable_candidates == 1
 }
 
 fn is_controlled_dogfood_smoke_issue(issue: &TrackerIssue) -> bool {
@@ -4520,6 +4532,15 @@ mod tests {
         issue.labels.clear();
         issue.title = "[dogfood-smoke] controlled run".into();
         assert!(is_controlled_dogfood_smoke_issue(&issue));
+    }
+
+    #[test]
+    fn dogfood_smoke_write_ready_requires_one_live_gap_free_candidate() {
+        assert!(dogfood_smoke_write_ready(false, 0, 1));
+        assert!(!dogfood_smoke_write_ready(true, 0, 1));
+        assert!(!dogfood_smoke_write_ready(false, 1, 1));
+        assert!(!dogfood_smoke_write_ready(false, 0, 0));
+        assert!(!dogfood_smoke_write_ready(false, 0, 2));
     }
 
     #[test]

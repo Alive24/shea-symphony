@@ -75,6 +75,12 @@ pub enum GitHandoffError {
     },
     #[error("pull request command did not return a URL")]
     MissingPullRequestUrl,
+    #[error("worktree {path} has uncommitted changes before PR handoff: {status}")]
+    DirtyWorktree { path: PathBuf, status: String },
+    #[error("branch {branch} has no commits ahead of base {base} before PR handoff")]
+    NoCommitsAhead { branch: String, base: String },
+    #[error("git rev-list returned an invalid ahead count: {value}")]
+    InvalidAheadCount { value: String },
 }
 
 pub fn prepare_issue_worktree(
@@ -152,6 +158,8 @@ pub fn publish_issue_pull_request(
     plan: &IssueHandoffPlan,
     runner: &dyn HandoffCommandRunner,
 ) -> Result<PullRequestPublication, GitHandoffError> {
+    ensure_publishable_branch(plan, runner)?;
+
     require_success(
         "git",
         runner.run(
@@ -213,6 +221,48 @@ pub fn publish_issue_pull_request(
     })
 }
 
+fn ensure_publishable_branch(
+    plan: &IssueHandoffPlan,
+    runner: &dyn HandoffCommandRunner,
+) -> Result<(), GitHandoffError> {
+    let status = runner.run(
+        "git",
+        &["status".into(), "--porcelain".into()],
+        &plan.workspace_path,
+    )?;
+    require_success("git", status.clone())?;
+    if !status.stdout.trim().is_empty() {
+        return Err(GitHandoffError::DirtyWorktree {
+            path: plan.workspace_path.clone(),
+            status: compact_git_evidence(&status.stdout),
+        });
+    }
+
+    let range = format!("{}..HEAD", plan.pull_request.base_branch);
+    let ahead = runner.run(
+        "git",
+        &["rev-list".into(), "--count".into(), range],
+        &plan.workspace_path,
+    )?;
+    require_success("git", ahead.clone())?;
+    let count =
+        ahead
+            .stdout
+            .trim()
+            .parse::<u32>()
+            .map_err(|_| GitHandoffError::InvalidAheadCount {
+                value: ahead.stdout.trim().to_string(),
+            })?;
+    if count == 0 {
+        return Err(GitHandoffError::NoCommitsAhead {
+            branch: plan.branch_name.clone(),
+            base: plan.pull_request.base_branch.clone(),
+        });
+    }
+
+    Ok(())
+}
+
 fn current_branch(
     workspace_path: &Path,
     runner: &dyn HandoffCommandRunner,
@@ -257,6 +307,17 @@ fn extract_url(stdout: &str) -> Result<String, GitHandoffError> {
         .ok_or(GitHandoffError::MissingPullRequestUrl)
 }
 
+fn compact_git_evidence(value: &str) -> String {
+    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    const LIMIT: usize = 240;
+    let truncated = compact.chars().take(LIMIT).collect::<String>();
+    if truncated.len() < compact.len() {
+        format!("{truncated}...")
+    } else {
+        compact
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,6 +331,17 @@ mod tests {
         existing_branch: bool,
         existing_pr_url: Option<String>,
         worktree_branch: Option<String>,
+        dirty_status: Option<String>,
+        ahead_count: u32,
+    }
+
+    impl FakeRunner {
+        fn clean_with_commits() -> Self {
+            Self {
+                ahead_count: 1,
+                ..Default::default()
+            }
+        }
     }
 
     impl HandoffCommandRunner for FakeRunner {
@@ -293,6 +365,20 @@ mod tests {
                 return Ok(CommandOutput {
                     status: 0,
                     stdout: self.worktree_branch.clone().unwrap_or_default(),
+                    stderr: String::new(),
+                });
+            }
+            if command.contains("status --porcelain") {
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: self.dirty_status.clone().unwrap_or_default(),
+                    stderr: String::new(),
+                });
+            }
+            if command.contains("rev-list --count") {
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: format!("{}\n", self.ahead_count),
                     stderr: String::new(),
                 });
             }
@@ -387,6 +473,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let plan = plan_issue_handoff(temp.path(), &issue(), "main").unwrap();
         let runner = FakeRunner {
+            ahead_count: 1,
             existing_pr_url: Some("https://github.com/Alive24/jade-symphony/pull/45".into()),
             ..Default::default()
         };
@@ -408,7 +495,7 @@ mod tests {
     fn creates_pull_request_when_none_exists() {
         let temp = tempfile::tempdir().unwrap();
         let plan = plan_issue_handoff(temp.path(), &issue(), "main").unwrap();
-        let runner = FakeRunner::default();
+        let runner = FakeRunner::clean_with_commits();
 
         let result = publish_issue_pull_request(&plan, &runner).unwrap();
 
@@ -419,6 +506,43 @@ mod tests {
             "https://github.com/Alive24/jade-symphony/pull/99"
         );
         let commands = runner.commands.borrow().join("\n");
+        assert!(commands.contains("git status --porcelain"));
+        assert!(commands.contains("git rev-list --count main..HEAD"));
         assert!(commands.contains("gh pr create"));
+    }
+
+    #[test]
+    fn blocks_dirty_worktree_before_push() {
+        let temp = tempfile::tempdir().unwrap();
+        let plan = plan_issue_handoff(temp.path(), &issue(), "main").unwrap();
+        let runner = FakeRunner {
+            dirty_status: Some(" M src/main.rs\n".into()),
+            ahead_count: 1,
+            ..Default::default()
+        };
+
+        let error = publish_issue_pull_request(&plan, &runner).unwrap_err();
+
+        assert!(matches!(error, GitHandoffError::DirtyWorktree { .. }));
+        let commands = runner.commands.borrow().join("\n");
+        assert!(commands.contains("git status --porcelain"));
+        assert!(!commands.contains("git push -u origin"));
+    }
+
+    #[test]
+    fn blocks_noop_branch_before_push() {
+        let temp = tempfile::tempdir().unwrap();
+        let plan = plan_issue_handoff(temp.path(), &issue(), "main").unwrap();
+        let runner = FakeRunner {
+            ahead_count: 0,
+            ..Default::default()
+        };
+
+        let error = publish_issue_pull_request(&plan, &runner).unwrap_err();
+
+        assert!(matches!(error, GitHandoffError::NoCommitsAhead { .. }));
+        let commands = runner.commands.borrow().join("\n");
+        assert!(commands.contains("git rev-list --count main..HEAD"));
+        assert!(!commands.contains("git push -u origin"));
     }
 }

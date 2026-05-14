@@ -10,13 +10,18 @@ parsing, typed config, normalized tracker issues, fixture-backed and `gh`-backed
 read-only GitHub Project v2 issue loading, dispatch planning, quality-gate
 checks, backend abstractions, workspace safety helpers, event-log primitives,
 an operator-readable status snapshot with event-log and integration-gap links,
-and a real dogfood workflow prompt for GitHub Project v2 runs.
+machine-readable JSON status output, a local one-request observability API
+endpoint, and a real dogfood workflow prompt for GitHub Project v2 runs.
 
 It does **not** yet fully autonomously execute GitHub Project v2 issues,
 run Codex/Claude through the final app-server flow, or supervise long-running
 workers. A `run-loop` skeleton now exists and can idle-poll in unbounded
 write mode, but full claim reconciliation, runtime resume, and
 worker supervision are still future work.
+
+For a compact source-linked view of what is landed, what is waiting in
+`Agent Review`, and what remains deferred, see
+`docs/bootstrap-parity-audit.md`.
 
 ## What Works Now
 
@@ -50,19 +55,26 @@ worker supervision are still future work.
   Human Review remains valid.
 - `merge-once` can consume issues already in `Merging`, resolve a single linked
   PR, run guarded GitHub PR preflight checks, write durable workpad evidence,
-  merge clean approved PRs with explicit `--write`, and route blockers to
-  `Rework` or `Need Human Input` without ever setting `Human Review`.
+  treat Project `Merging` as the approval signal for clean PRs, merge with
+  explicit `--write`, set Project `Done`, close the linked GitHub issue when
+  supported by the tracker, and route blockers to `Rework` or `Need Human Input`
+  without ever setting `Human Review`.
 - structured Rework diagnostics can render compact, durable issue workpad
   evidence for confirmed review findings, merge conflicts, dirty PRs,
   validation failures, and runtime failures before a transition to `Rework`.
 - `review-loop` can discover `Agent Review` issues, avoid duplicate review
-  worker markers, run a configured independent review backend in bounded mode,
-  and reconcile pass/rework/inconclusive transitions through the Review Agent
+  worker markers, select a bounded set of one-issue review worker jobs, run each
+  configured independent review backend from the issue workspace, persist a JSON
+  review job ledger under the configured logs root, and
+  reconcile pass/rework/inconclusive transitions through the Review Agent
   authority boundary.
 - Issue Forge can discover local candidates from intent, ask one focused
   clarification question, draft from the quality template, validate Markdown,
   repair rough Markdown into an executable issue contract shape, and create a
   tracker issue from a quality-gated contract with explicit `--write`.
+  `forge-create --add-to-project` can also set GitHub Project v2 single-select
+  fields by name with repeatable `--project-field NAME=VALUE` flags, for
+  example `--project-field Capability=CLI`.
 - Issue Forge also has a CLI-first interactive mode that selects a lightweight
   issue skill/template (`runtime`, `tracker`, `backend`, `review`, `docs`, or
   `integration-test`), emits one focused clarification question for thin intent,
@@ -84,7 +96,8 @@ worker supervision are still future work.
   the built binary, git, `gh`, auth, and workflow validation.
 - workspace identifiers are sanitized; local workspace paths stay under the
   configured root; hooks support timeouts, stdout/stderr capture,
-  `before_remove`, and safe cleanup helpers.
+  `before_remove`, safe cleanup helpers, and a guarded terminal workspace
+  cleanup planner.
 - workflow identity config can distinguish the acting role/label from the human
   operator and can apply configured git author metadata with repository-local
   `git config --local` only.
@@ -102,13 +115,28 @@ worker supervision are still future work.
   `Need Human Input` with a workpad diagnostic.
 - live GitHub `run-loop --write` can create or reuse the planned issue
   worktree/branch, run the configured backend inside that worktree, push the
-  branch, and create or reuse one GitHub PR after successful execution.
+  branch, run optional configured verification commands, and create or reuse
+  one GitHub PR after successful execution and verification; the handoff helper
+  blocks dirty worktrees and branches with no commits ahead of the configured
+  base before publishing.
+- live GitHub `run-loop --write` checks assignee ownership before claim:
+  unassigned issues require an explicit workflow override, and assigned issues
+  must match the current `gh` login or a selected profile login exposed through
+  profile environment config.
 - terminal status output reports polling state, planned running/skipped/retrying
   issues, token counters, event-log path, gate details, and integration gaps.
+  `status WORKFLOW --json` prints the same `RuntimeSnapshot` as JSON for
+  dogfood scripts.
+- `status-api WORKFLOW --once` serves the current runtime snapshot at local
+  `GET /status.json` or `GET /status` for one request, then exits.
 - `doctor` / `audit-project` can read the configured tracker and report
   workflow invariant violations such as Agent Review without PR evidence, Human
   Review without review pass evidence, dirty Merging PRs, stale-looking In
-  Progress work, and queued issues with attached PRs.
+  Progress work, and queued issues with attached PRs. `--json` emits the same
+  report as structured data, and `--strict` exits nonzero when blocker
+  violations are present. A guarded `doctor-repair-human-review` command can
+  repair the specific invalid Human Review-without-pass-evidence case by
+  writing workpad evidence and moving the issue back to `Agent Review`.
 - JSONL event-log primitives exist and can record selected profile identity.
 - runtime state helpers can write, read, and clear a tracker-neutral
   `runtime/runtime-state.json` file under the configured logs root, including
@@ -117,6 +145,9 @@ worker supervision are still future work.
   active runtime state must reconcile with tracker state, retry backoff is
   honored, and stale active work is reported as stalled instead of being
   silently overwritten.
+- write-mode `run-loop` writes a tracker-visible runtime ownership marker before
+  backend execution and skips active `In Progress` work when the marker points
+  at a different profile/workspace/branch.
 - write-mode `run-loop` saves active issue runtime state, updates it with
   backend result evidence, records final transition intent, and clears it after
   successful handoff/block transition.
@@ -170,14 +201,20 @@ cargo run -- validate examples/dry-run-workflow.md
 cargo run -- validate-workflow examples/dry-run-workflow.md
 cargo run -- inspect examples/dry-run-workflow.md
 cargo run -- doctor examples/dry-run-workflow.md
+cargo run -- doctor-repair-human-review examples/dry-run-workflow.md --dry-run
+cargo run -- doctor examples/dry-run-workflow.md --json
+cargo run -- doctor examples/dry-run-workflow.md --strict
 cargo run -- plan examples/dry-run-workflow.md
 cargo run -- plan-dispatch examples/dry-run-workflow.md
 cargo run -- status examples/dry-run-workflow.md
+cargo run -- status examples/dry-run-workflow.md --json
+cargo run -- status-api examples/dry-run-workflow.md --bind 127.0.0.1:8787 --once
 cargo run -- run-once examples/dry-run-workflow.md
 cargo run -- run-once examples/git-identity-workflow.md
 cargo run -- run-once examples/codex-subprocess-workflow.md
 cargo run -- run-once examples/claude-subprocess-workflow.md
 cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
+cargo run -- review-loop examples/github-project-workflow.md --max-iterations 1 --dry-run
 cargo run -- profiles examples/cockpit-profiles-workflow.md
 cargo run -- plan examples/linear-fixture-workflow.md
 cargo run -- gate examples/dry-run-workflow.md '#3'
@@ -189,7 +226,7 @@ cargo run -- forge-validate --title "Repaired Forge issue" --file examples/fixtu
 cargo run -- forge-draft --title "Implement read-only Project v2 adapter" --goal "Load Project v2 issues into TrackerIssue records."
 cargo run -- forge-interactive --title "Add resume preflight" --intent "run-loop should inspect runtime state before claiming new work" --skill runtime
 cargo run -- forge-reflect --context-file docs/dogfood-readiness.md --limit 1
-cargo run -- forge-create --workflow path/to/WORKFLOW.md --title "Follow-up title" --file path/to/issue.md --add-to-project --write
+cargo run -- forge-create --workflow path/to/WORKFLOW.md --title "Follow-up title" --file path/to/issue.md --add-to-project --project-field Capability=CLI --write
 ```
 
 `run-once` defaults to dry-run examples, but the Codex and Claude subprocess
@@ -199,6 +236,12 @@ append JSONL events for the selected workflow. The Codex subprocess path is not
 the app-server protocol; if configured with `codex app-server`, Jade records an
 actionable failed backend event instead of launching it through the wrong
 transport.
+
+`review-loop --write` is a bounded Review Agent operator command, not a
+background supervisor. When it runs a review job, Jade persists a JSON ledger
+record at `logs_root/reviews/jobs/*.json` with the issue, worker key, backend,
+artifact path, decision, summary/error, and finding count. Review and Rework
+workpads include that ledger path when available.
 
 `profiles` lists execution profiles discovered from workflow config. For
 cockpit-tools, Jade currently reads the Codex instance store shape inspected in
@@ -235,8 +278,10 @@ required for that write path, and `--add-to-project` remains explicit.
 
 `add-to-project` initializes the configured ProjectV2 `Status` field to the
 workflow's mapped `Todo` option so newly added issues are visible to the
-normalized tracker state machine. Arbitrary Project field setup, such as
-Capability, is still a follow-up.
+normalized tracker state machine. `forge-create --add-to-project` can set
+additional GitHub Project v2 single-select fields by name with repeatable
+`--project-field NAME=VALUE` flags. Text, number, date, and multi-step field
+editing remain follow-ups.
 
 `set-state` is a main-implementation-agent command and refuses `Human Review`.
 `review-once` / `review-fake` are independent Review Agent commands: a passing
@@ -245,7 +290,8 @@ review can move `Agent Review` to `Human Review`, confirmed findings move to
 `review-loop` is the first runtime-style Review Agent command: it selects
 eligible `Agent Review` issues, prints intended review work in dry-run mode, and
 in write mode records review evidence plus the allowed review transition. It is
-bounded by `--max-iterations` or `--once` and is not a persistent daemon yet.
+bounded by `--max-iterations` or `--once`, supports `--max-concurrent`, and is
+not a persistent daemon yet.
 `review-freshness` is an evidence command for Merging conflict repair: it does
 not mutate tracker state, does not approve a PR, and does not authorize the main
 implementation agent to set `Human Review`. Mechanical conflict repair can
@@ -273,16 +319,19 @@ Merging role separation.
   is currently read-only fixture/path parsing for Codex instance names.
 - automatic repair of existing `Agent Review` items with missing PR evidence;
   the current slice prevents new silent handoffs and records diagnostics.
-- robust cleanup for live git worktrees after terminal tracker reconciliation.
+- automatic cleanup for live git worktrees after terminal tracker
+  reconciliation.
 - profile-specific account/token routing for git hosts or agent backends.
 - rich interactive Issue Forge TUI; the current flow is CLI-first and
   command-step based.
 - Linear live adapter credential-gated smoke coverage.
 - Codex app-server transport.
 - Claude Code full protocol transport beyond the subprocess fixture path.
-- dynamic tool registry such as `linear_graphql`.
-- runtime workflow reload and long-running worker supervision.
-- web/API observability surface.
+- dynamic tool execution such as `linear_graphql`; a first-slice registry
+  descriptor exists, but no tool calls are run yet.
+- long-running runtime workflow reload wiring and worker supervision.
+- persistent/remote web observability beyond the local one-request
+  `status-api` endpoint.
 
 ## Not Implemented Yet
 
@@ -291,17 +340,18 @@ Merging role separation.
   current claim helper and resume preflight.
 - full multi-worker runtime-state resume reconciliation after interruption.
 - richer workspace-per-issue branch and PR reconciliation beyond current
-  create-or-reuse handoff.
+  dirty/no-op guarded create-or-reuse handoff.
+- richer verification modeling beyond the current workflow-level command list.
 - continuation retries and automated stall restart.
 - richer vendor-specific quota handling beyond conservative usage-limit
   pattern matching.
-- terminal workspace cleanup tied to tracker state.
+- automatic terminal workspace cleanup inside the runtime loop.
 - profile-aware tracker claim ownership beyond namespaced runtime/log/workspace
   metadata.
 - live token/rate-limit accounting beyond the current snapshot counters.
 - persistent background Agent Review worker supervision beyond bounded
   `review-loop` ticks.
-- long-running `merge-loop` polling beyond one guarded `merge-once` tick.
+- unbounded idle `merge-loop` polling beyond bounded guarded merge ticks.
 - Issue Forge Project field setup after issue creation.
 - autonomous Issue Forge issue creation from reflective mode without explicit
   operator confirmation.
@@ -325,7 +375,8 @@ This path can read ProjectV2 items and normalize GitHub Issue content for
 planning. Explicit `--write` commands can update ProjectV2 status, write workpad
 comments, create follow-up issues, and add issues to the project with initial
 `Todo` status. PR linking uses an issue comment/autolink strategy rather than a
-first-class relationship. Jade
+first-class relationship; linked PR discovery reads closing references and PR
+URLs recorded in canonical Jade workpad comments. Jade
 Symphony can idle-poll in unbounded write mode, but still cannot fully reconcile
 state or supervise live agents.
 
@@ -347,6 +398,8 @@ scripts/jade-dogfood --dry-run
 cargo run -- run-loop examples/usage-limit-workflow.md --max-iterations 1 --write
 cargo run -- dogfood-smoke examples/github-project-workflow.md --dry-run
 cargo run -- merge-once examples/github-project-workflow.md --dry-run
+cargo run -- merge-loop examples/github-project-workflow.md --max-iterations 3 --dry-run
+cargo run -- cleanup-workspaces examples/github-project-workflow.md --dry-run
 cargo run -- gate examples/llm-gate-workflow.md '#1'
 ```
 

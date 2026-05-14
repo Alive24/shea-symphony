@@ -57,7 +57,8 @@ Project v2 issues:
    - Mutating commands require `--write`.
    - Same-state status updates are treated as no-ops before mutation.
    - PR linking currently uses an issue comment/autolink strategy instead of a
-     first-class relationship.
+     first-class relationship; linked PR discovery can read closing references
+     and PR URLs recorded in canonical Jade workpad comments.
    - Remaining work: idempotency checks around project-item addition and richer
      reconciliation after writes.
 

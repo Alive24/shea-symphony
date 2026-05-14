@@ -4034,6 +4034,8 @@ mod tests {
 
     fn forge_contract() -> String {
         [
+            "## Issue Setup",
+            "- UAT Required: No",
             "## Issue Goal",
             "Create a validated tracker issue.",
             "## Why Now",

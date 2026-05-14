@@ -104,6 +104,10 @@ worker supervision are still future work.
 - live GitHub `run-loop --write` can create or reuse the planned issue
   worktree/branch, run the configured backend inside that worktree, push the
   branch, and create or reuse one GitHub PR after successful execution.
+- live GitHub `run-loop --write` checks assignee ownership before claim:
+  unassigned issues require an explicit workflow override, and assigned issues
+  must match the current `gh` login or a selected profile login exposed through
+  profile environment config.
 - terminal status output reports polling state, planned running/skipped/retrying
   issues, token counters, event-log path, gate details, and integration gaps.
 - `doctor` / `audit-project` can read the configured tracker and report
@@ -292,8 +296,8 @@ Merging role separation.
 - richer vendor-specific quota handling beyond conservative usage-limit
   pattern matching.
 - terminal workspace cleanup tied to tracker state.
-- profile-aware tracker claim ownership beyond namespaced runtime/log/workspace
-  metadata.
+- full profile-specific account/token switching for tracker claim ownership
+  beyond login comparison.
 - live token/rate-limit accounting beyond the current snapshot counters.
 - persistent background Agent Review worker supervision beyond bounded
   `review-loop` ticks.

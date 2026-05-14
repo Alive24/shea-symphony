@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -262,6 +263,14 @@ fn evaluate_issue_for_current_source(
     let expected_target = expected_target_repository(config);
     let deterministic =
         evaluate_issue_with_source_alignment(issue, &repo_root, expected_target.as_deref());
+    if let Some(blocker) = live_missing_assignee_gate_blocker(config, issue) {
+        return Ok(GateDecision {
+            kind: GateDecisionKind::NeedToClarify,
+            missing: vec![blocker],
+            assumptions: deterministic.assumptions,
+            notes: vec!["Live GitHub dispatch requires explicit issue ownership.".into()],
+        });
+    }
     Ok(evaluate_issue_with_llm_gate(
         issue,
         deterministic,
@@ -271,6 +280,16 @@ fn evaluate_issue_for_current_source(
             timeout_ms: config.quality_gate.llm.timeout_ms,
         },
     ))
+}
+
+fn live_missing_assignee_gate_blocker(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+) -> Option<String> {
+    (live_github_tracker(config)
+        && !config.tracker.assignee_filter.allow_unassigned
+        && issue.assignees.is_empty())
+    .then(|| "live GitHub issue assignee".into())
 }
 
 fn expected_target_repository(config: &RuntimeConfig) -> Option<String> {
@@ -1411,6 +1430,30 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
+        let profile_login = selected_profile_github_login(&config)?;
+        let active_login = if live_github_tracker(&config) && profile_login.is_none() {
+            current_gh_login()?
+        } else {
+            None
+        };
+        match run_loop_assignee_ownership_decision(
+            &latest,
+            &config,
+            active_login.as_deref(),
+            profile_login.as_deref(),
+        ) {
+            AssigneeOwnershipDecision::Allowed => {}
+            AssigneeOwnershipDecision::Block { reason } => {
+                let workpad = run_loop_assignee_ownership_workpad(&latest, &reason);
+                adapter.upsert_workpad(&latest.identifier, &workpad)?;
+                println!(
+                    "run_loop_action=skip issue={} reason=assignee_ownership detail={}",
+                    latest.identifier, reason
+                );
+                continue;
+            }
+        }
+
         let existing_runtime_state = load_runtime_state(&config)?;
         if let Some(state) = &existing_runtime_state {
             if let Some(active_issue) = &state.active_issue {
@@ -1668,6 +1711,107 @@ fn run_loop_claim_action(issue: &TrackerIssue, config: &RuntimeConfig) -> RunLoo
             RunLoopClaimAction::StopAndReplan { current_state }
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AssigneeOwnershipDecision {
+    Allowed,
+    Block { reason: String },
+}
+
+fn run_loop_assignee_ownership_decision(
+    issue: &TrackerIssue,
+    config: &RuntimeConfig,
+    active_login: Option<&str>,
+    profile_login: Option<&str>,
+) -> AssigneeOwnershipDecision {
+    if !live_github_tracker(config) {
+        return AssigneeOwnershipDecision::Allowed;
+    }
+
+    if issue.assignees.is_empty() {
+        return if config.tracker.assignee_filter.allow_unassigned {
+            AssigneeOwnershipDecision::Allowed
+        } else {
+            AssigneeOwnershipDecision::Block {
+                reason: "live GitHub issue has no assignee".into(),
+            }
+        };
+    }
+
+    let identities = [profile_login, active_login]
+        .into_iter()
+        .flatten()
+        .map(normalized_login)
+        .filter(|login| !login.is_empty())
+        .collect::<Vec<_>>();
+
+    if identities.is_empty() {
+        return AssigneeOwnershipDecision::Block {
+            reason: "active GitHub identity unavailable for assignee ownership check".into(),
+        };
+    }
+
+    let assigned = issue
+        .assignees
+        .iter()
+        .map(|assignee| normalized_login(assignee))
+        .collect::<Vec<_>>();
+
+    if assigned
+        .iter()
+        .any(|assignee| identities.iter().any(|identity| identity == assignee))
+    {
+        AssigneeOwnershipDecision::Allowed
+    } else {
+        AssigneeOwnershipDecision::Block {
+            reason: format!(
+                "active identity {:?} does not match issue assignees {:?}",
+                identities, issue.assignees
+            ),
+        }
+    }
+}
+
+fn live_github_tracker(config: &RuntimeConfig) -> bool {
+    config.tracker.kind == "github_project_v2" && config.tracker.fixture_path.is_none()
+}
+
+fn normalized_login(value: &str) -> String {
+    value.trim().trim_start_matches('@').to_ascii_lowercase()
+}
+
+fn selected_profile_github_login(
+    config: &RuntimeConfig,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    Ok(
+        selected_execution_profile(&config.profiles)?.and_then(|profile| {
+            profile
+                .env
+                .get("GITHUB_LOGIN")
+                .cloned()
+                .or_else(|| profile.env.get("GH_LOGIN").cloned())
+                .or_else(|| profile.env.get("JADE_GITHUB_LOGIN").cloned())
+        }),
+    )
+}
+
+fn current_gh_login() -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let output = ProcessCommand::new("gh")
+        .args(["api", "user", "--jq", ".login"])
+        .output();
+    let output = match output {
+        Ok(output) => output,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let login = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok((!login.is_empty()).then_some(login))
 }
 
 fn run_loop_resume_preflight(
@@ -2111,6 +2255,22 @@ fn run_loop_handoff_failure_workpad(issue: &TrackerIssue, error: &HandoffError) 
         String::new(),
         "### Required Human Decision".to_string(),
         "- Confirm the correct branch/workspace ownership before retrying.".to_string(),
+    ]
+    .join("\n")
+}
+
+fn run_loop_assignee_ownership_workpad(issue: &TrackerIssue, reason: &str) -> String {
+    [
+        "## Jade Symphony Workpad".to_string(),
+        String::new(),
+        "### Assignee Ownership Blocker".to_string(),
+        format!("- Issue: {} {}", issue.identifier, issue.title),
+        format!("- Reason: {reason}"),
+        format!("- Issue assignees: `{}`", issue.assignees.join(", ")),
+        String::new(),
+        "### Boundary".to_string(),
+        "- Jade Symphony did not claim this issue or move it to `In Progress`.".to_string(),
+        "- Assign the issue to the active GitHub identity or selected execution profile before retrying.".to_string(),
     ]
     .join("\n")
 }
@@ -3009,6 +3169,27 @@ mod tests {
         RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap()
     }
 
+    fn live_github_config(allow_unassigned: bool) -> RuntimeConfig {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            &format!(
+                "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 9\n  assignee_filter:\n    allow_unassigned: {}\n---\nPrompt",
+                allow_unassigned
+            ),
+        )
+        .unwrap();
+        RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap()
+    }
+
+    fn fixture_github_config() -> RuntimeConfig {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 9\n  fixture_path: fixtures/dry-run-issues.json\n---\nPrompt",
+        )
+        .unwrap();
+        RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap()
+    }
+
     fn tracker_issue(state: &str) -> TrackerIssue {
         TrackerIssue {
             tracker_kind: "memory".into(),
@@ -3480,6 +3661,85 @@ mod tests {
             run_loop_claim_action(&tracker_issue("Agent Review"), &config),
             RunLoopClaimAction::StopAndReplan {
                 current_state: "Agent Review".into()
+            }
+        );
+    }
+
+    #[test]
+    fn live_gate_blocks_missing_assignee_without_override() {
+        let config = live_github_config(false);
+        let issue = tracker_issue("Todo");
+
+        assert_eq!(
+            live_missing_assignee_gate_blocker(&config, &issue).as_deref(),
+            Some("live GitHub issue assignee")
+        );
+    }
+
+    #[test]
+    fn fixture_mode_does_not_require_live_assignee() {
+        let config = fixture_github_config();
+        let issue = tracker_issue("Todo");
+
+        assert_eq!(live_missing_assignee_gate_blocker(&config, &issue), None);
+        assert_eq!(
+            run_loop_assignee_ownership_decision(&issue, &config, None, None),
+            AssigneeOwnershipDecision::Allowed
+        );
+    }
+
+    #[test]
+    fn assignee_ownership_allows_matching_active_login() {
+        let config = live_github_config(false);
+        let mut issue = tracker_issue("Todo");
+        issue.assignees = vec!["CodexUser".into()];
+
+        assert_eq!(
+            run_loop_assignee_ownership_decision(&issue, &config, Some("codexuser"), None),
+            AssigneeOwnershipDecision::Allowed
+        );
+    }
+
+    #[test]
+    fn assignee_ownership_blocks_mismatched_active_login() {
+        let config = live_github_config(false);
+        let mut issue = tracker_issue("Todo");
+        issue.assignees = vec!["owner-a".into()];
+
+        let decision = run_loop_assignee_ownership_decision(&issue, &config, Some("owner-b"), None);
+
+        assert!(matches!(decision, AssigneeOwnershipDecision::Block { .. }));
+    }
+
+    #[test]
+    fn assignee_ownership_allows_matching_profile_login() {
+        let config = live_github_config(false);
+        let mut issue = tracker_issue("Todo");
+        issue.assignees = vec!["profile-owner".into()];
+
+        assert_eq!(
+            run_loop_assignee_ownership_decision(
+                &issue,
+                &config,
+                Some("different-gh-user"),
+                Some("profile-owner"),
+            ),
+            AssigneeOwnershipDecision::Allowed
+        );
+    }
+
+    #[test]
+    fn assignee_ownership_blocks_missing_active_identity() {
+        let config = live_github_config(false);
+        let mut issue = tracker_issue("Todo");
+        issue.assignees = vec!["owner-a".into()];
+
+        let decision = run_loop_assignee_ownership_decision(&issue, &config, None, None);
+
+        assert_eq!(
+            decision,
+            AssigneeOwnershipDecision::Block {
+                reason: "active GitHub identity unavailable for assignee ownership check".into(),
             }
         );
     }

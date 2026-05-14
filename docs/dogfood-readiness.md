@@ -63,6 +63,9 @@ Project v2 issues:
 
 3. Dispatch safety.
    - Enforce assignee filter from live GitHub issue assignees.
+   - Live GitHub `run-loop --write` requires unassigned issue execution to be
+     explicitly allowed, and otherwise compares issue assignees against the
+     current `gh` login or selected profile login before claim.
    - `run-loop` reuses tracker claim helpers to claim only `Todo` / `Rework`,
      resume active `In Progress`, and stop/replan on externally changed states.
    - Revalidate issue state immediately before dispatch.
@@ -140,8 +143,9 @@ Project v2 issues:
    - Existing `Agent Review` items with stale or missing PR evidence still need
      a reconciliation/repair command; the current handoff invariant prevents
      new silent transitions from passing without PR evidence.
-   - profile-scoped workspace keys exist, but tracker claim ownership still
-     needs profile-aware reconciliation before parallel worker dogfooding.
+   - profile-scoped workspace keys and login-based claim checks exist, but full
+     profile-specific account/token switching still needs reconciliation before
+     parallel worker dogfooding.
    - continuation retry after normal active-state exits.
    - exponential backoff for failures.
    - stall detection.

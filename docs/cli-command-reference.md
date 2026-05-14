@@ -39,10 +39,12 @@ cargo run -- run-loop examples/github-project-workflow.md --max-iterations 1 --p
 cargo run -- dogfood-smoke examples/github-project-workflow.md --dry-run
 ```
 
-`run-loop --pool N` is a supervised planning and claim-locking slice. It
-selects up to `N` eligible main-lane issues after skipping items whose
-`Main Agent` Project field is already owned by another worker. Write mode stamps
-that field before tracker mutation.
+`run-loop --pool N` is a supervised planning and claim-locking slice. Dry-run
+mode previews up to `N` eligible main-lane issues after skipping items whose
+`Main Agent` Project field is already owned by another worker. Write mode still
+processes one main work item at a time because the runtime state tracks one
+active issue, but it uses the same lane claim check and stamps `Main Agent`
+before tracker mutation.
 
 ## Tracker Writes
 

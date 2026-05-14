@@ -153,6 +153,9 @@ Run the bundled dry-run example:
 cargo run -- examples/dry-run-workflow.md
 ```
 
+The workflow catalog in `examples/README.md` groups fixture workflows, live
+workflow templates, backend fixtures, review fixtures, and their safe commands.
+
 Expected shape:
 
 - ready fixture issues appear under `running issues`.

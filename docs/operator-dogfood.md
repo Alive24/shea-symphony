@@ -40,6 +40,24 @@ After preflight, dry-run mode executes:
 target/debug/jade-symphony run-loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 
+For a more scannable operator view, keep the same dry-run boundary and opt into
+the terminal panel:
+
+```bash
+target/debug/jade-symphony run-loop workflows/jade-symphony.md --max-iterations 1 --dry-run --display tui
+```
+
+The panel view is not a full-screen dashboard. It keeps plain text and JSON/log
+evidence available by default, and only changes output when `--display tui` is
+passed. The same opt-in display flag is available on `project-state` and
+`doctor`.
+
+The first slice follows the current OpenAI Codex CLI terminal direction checked
+against `openai/codex` on 2026-05-15: the Codex TUI crate depends on `ratatui`
+and `crossterm`, with workspace versions `ratatui 0.29.0` and `crossterm
+0.28.1`. Jade Symphony uses that stack for the presentation foundation while
+deliberately avoiding full-screen interaction in this issue.
+
 ## Supervised Write Tick
 
 ```bash
@@ -96,6 +114,8 @@ promote reusable config into the repo.
 ```bash
 target/debug/jade-symphony inspect workflows/jade-symphony.md
 target/debug/jade-symphony project-state workflows/jade-symphony.md
+target/debug/jade-symphony project-state workflows/jade-symphony.md --display tui
+target/debug/jade-symphony doctor workflows/jade-symphony.md --display tui
 target/debug/jade-symphony run-loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 

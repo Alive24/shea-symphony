@@ -13,6 +13,7 @@ pub mod model;
 pub mod observability_api;
 pub mod orchestrator;
 pub mod ownership;
+pub mod presentation;
 pub mod profiles;
 pub mod prompt;
 pub mod quality_gate;

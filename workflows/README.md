@@ -25,8 +25,10 @@ cargo run -- agent-session list workflows/jade-symphony.md
 
 Main Agent execution uses the local `tmux` backend. A bounded write tick creates
 an attachable session, prints `tmux attach-session -t ...`, records the session
-log path, and leaves the issue active until real implementation evidence is
-available for the normal handoff path.
+log path, persists a session registry record, and leaves the issue active until
+real implementation evidence is available for the normal handoff path. Status
+commands classify registered tmux sessions from bounded pane/log evidence while
+keeping full scrollback out of routine output.
 The `agent-session` command is the manual tmux recovery path for all lanes:
 `main`, `review`, and `merge` each render their own lane prompt, claim the
 matching Project field, and leave workflow state unchanged until the lane's

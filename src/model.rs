@@ -117,6 +117,24 @@ pub struct RunningSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionStatusSnapshot {
+    pub session_id: String,
+    pub lane: String,
+    pub status: String,
+    pub evidence_source: String,
+    pub evidence: String,
+    #[serde(default)]
+    pub issue_identifier: Option<String>,
+    #[serde(default)]
+    pub issue_title: Option<String>,
+    #[serde(default)]
+    pub attach_command: Option<String>,
+    #[serde(default)]
+    pub log_path: Option<String>,
+    pub updated_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RetrySnapshot {
     pub issue_id: String,
     pub identifier: String,
@@ -187,6 +205,8 @@ pub struct RuntimeSnapshot {
     pub retrying: Vec<RetrySnapshot>,
     pub codex_totals: TokenTotals,
     pub polling: PollingSnapshot,
+    #[serde(default)]
+    pub sessions: Vec<SessionStatusSnapshot>,
     #[serde(default)]
     pub skipped: Vec<SkippedIssue>,
     #[serde(default)]

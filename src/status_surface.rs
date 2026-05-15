@@ -36,6 +36,7 @@ pub fn render_snapshot(snapshot: &RuntimeSnapshot) -> String {
     }
 
     render_running(snapshot, &mut lines);
+    render_sessions(snapshot, &mut lines);
     render_retrying(snapshot, &mut lines);
     render_skipped(snapshot, &mut lines);
     render_integration_gaps(snapshot, &mut lines);
@@ -89,6 +90,27 @@ fn render_running(snapshot: &RuntimeSnapshot, lines: &mut Vec<String>) {
             entry.profile_id.as_deref().unwrap_or("n/a"),
             entry.workspace_path.as_deref().unwrap_or("n/a"),
             entry.session_id.as_deref().unwrap_or("n/a"),
+        ));
+    }
+}
+
+fn render_sessions(snapshot: &RuntimeSnapshot, lines: &mut Vec<String>) {
+    if snapshot.sessions.is_empty() {
+        return;
+    }
+
+    lines.push("tmux sessions:".into());
+    for entry in &snapshot.sessions {
+        lines.push(format!(
+            "- {} lane={} issue={} status={} source={} evidence=\"{}\" attach={} log={}",
+            entry.session_id,
+            entry.lane,
+            entry.issue_identifier.as_deref().unwrap_or("n/a"),
+            entry.status,
+            entry.evidence_source,
+            entry.evidence,
+            entry.attach_command.as_deref().unwrap_or("n/a"),
+            entry.log_path.as_deref().unwrap_or("n/a"),
         ));
     }
 }
@@ -154,7 +176,7 @@ mod tests {
     use super::*;
     use crate::model::{
         GateDecision, GateDecisionKind, LatestStatus, PollingSnapshot, RetrySnapshot,
-        RunningSnapshot, RuntimeSnapshot, SkippedIssue, TokenTotals,
+        RunningSnapshot, RuntimeSnapshot, SessionStatusSnapshot, SkippedIssue, TokenTotals,
     };
 
     #[test]
@@ -196,6 +218,18 @@ mod tests {
                 next_poll_in_ms: Some(1000),
                 poll_interval_ms: 5000,
             },
+            sessions: vec![SessionStatusSnapshot {
+                session_id: "jade-main-1-attempt-1".into(),
+                lane: "main".into(),
+                status: "waiting_for_approval".into(),
+                evidence_source: "pane".into(),
+                evidence: "Approval required: allow this command?".into(),
+                issue_identifier: Some("#1".into()),
+                issue_title: Some("Wire runtime".into()),
+                attach_command: Some("tmux attach-session -t jade-main-1-attempt-1".into()),
+                log_path: Some("/tmp/jade-main-1.log".into()),
+                updated_at_ms: 10,
+            }],
             skipped: vec![SkippedIssue {
                 issue_id: "GHI_3".into(),
                 identifier: "#3".into(),
@@ -225,6 +259,8 @@ mod tests {
 
         assert!(rendered.contains("Latest: main | #1 | handoff | pr_created"));
         assert!(rendered.contains("running issues:"));
+        assert!(rendered.contains("tmux sessions:"));
+        assert!(rendered.contains("status=waiting_for_approval"));
         assert!(rendered.contains("profile=codex-alpha"));
         assert!(rendered.contains("retrying issues:"));
         assert!(rendered.contains("skipped issues:"));

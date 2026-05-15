@@ -41,7 +41,8 @@ use jade_symphony::merge_lane::{
     merge_lane_workpad, merge_pull_request, pull_request_status_from_linked, MergeLaneDecisionKind,
 };
 use jade_symphony::model::{
-    normalize_state, GateDecision, GateDecisionKind, LatestStatus, TrackerIssue,
+    normalize_state, GateDecision, GateDecisionKind, LatestStatus, SessionStatusSnapshot,
+    TrackerIssue,
 };
 use jade_symphony::observability_api::serve_once;
 use jade_symphony::orchestrator::Orchestrator;
@@ -75,6 +76,10 @@ use jade_symphony::runtime_state::{
     record_runtime_retry, runtime_state_path, save_runtime_state, RuntimeIssueState,
     RuntimeRetryState, RuntimeStallState, RuntimeState, RuntimeTransition,
 };
+use jade_symphony::session_registry::{
+    capture_tmux_pane_tail, classify_session_record, load_session_registry, read_log_tail,
+    session_registry_path, unix_timestamp_ms,
+};
 use jade_symphony::status_surface::{render_latest_status_bar, render_snapshot};
 use jade_symphony::tracker::{
     adapter_from_config, claim_decision, classify_project_state_error, ClaimDecision,
@@ -87,6 +92,8 @@ use jade_symphony::workspace::{
 };
 
 const DEFAULT_RUN_LOOP_BASE_BRANCH: &str = "main";
+const DEFAULT_SESSION_STATUS_LINES: usize = 80;
+const DEFAULT_SESSION_STALE_AFTER_MS: u64 = 15 * 60 * 1000;
 
 fn main() {
     if let Err(error) = run() {
@@ -334,6 +341,7 @@ fn build_plan_snapshot(
     let adapter = adapter_from_config(&config);
     let integration_gaps = adapter.integration_gaps();
     let issues = adapter.list_dispatchable_issues()?;
+    let session_statuses = session_status_snapshots(&config);
     let event_log_path = config
         .observability
         .logs_root
@@ -343,9 +351,54 @@ fn build_plan_snapshot(
     let orchestrator = Orchestrator::new(config);
     let mut plan = orchestrator.plan_dispatch(issues);
     plan.integration_gaps.extend(integration_gaps);
+    match session_statuses {
+        Ok(sessions) => plan.snapshot.sessions = sessions,
+        Err(error) => plan
+            .integration_gaps
+            .push(format!("tmux session status unavailable: {error}")),
+    }
     plan.snapshot.integration_gaps = plan.integration_gaps.clone();
     plan.snapshot.event_log_path = Some(event_log_path);
     Ok(plan.snapshot)
+}
+
+fn session_status_snapshots(
+    config: &RuntimeConfig,
+) -> Result<Vec<SessionStatusSnapshot>, Box<dyn std::error::Error>> {
+    let registry = load_session_registry(&session_registry_path(config))?;
+    let now_ms = unix_timestamp_ms();
+    let mut snapshots = Vec::new();
+
+    for record in registry.sessions.iter().rev().take(20).rev() {
+        let pane_tail = capture_tmux_pane_tail(
+            &config.tmux.command,
+            &record.pane_target,
+            DEFAULT_SESSION_STATUS_LINES,
+        )
+        .ok();
+        let log_tail = read_log_tail(&record.log_path, DEFAULT_SESSION_STATUS_LINES)?;
+        let probe = classify_session_record(
+            record,
+            pane_tail.as_deref(),
+            log_tail.as_deref(),
+            now_ms,
+            DEFAULT_SESSION_STALE_AFTER_MS,
+        );
+        snapshots.push(SessionStatusSnapshot {
+            session_id: record.session_name.clone(),
+            lane: record.lane.clone(),
+            status: probe.status.as_str().into(),
+            evidence_source: probe.source.as_str().into(),
+            evidence: probe.evidence,
+            issue_identifier: record.issue_identifier.clone(),
+            issue_title: record.issue_title.clone(),
+            attach_command: Some(record.attach_command.clone()),
+            log_path: Some(record.log_path.display().to_string()),
+            updated_at_ms: record.updated_at_ms,
+        });
+    }
+
+    Ok(snapshots)
 }
 
 fn render_plan_snapshot(

@@ -16,6 +16,8 @@ use crate::session_registry::{
     AgentSessionRecord, SessionStatus,
 };
 
+const DEFAULT_TMUX_CAPTURE_LINES: usize = 200;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreparedRun {
     pub backend: String,
@@ -717,7 +719,7 @@ fn wait_for_codex_tmux_readiness(
     let mut last_capture = String::new();
 
     for _ in 0..20 {
-        let capture = capture_tmux_pane(prepared, tmux, target)?;
+        let capture = capture_tmux_pane(prepared, tmux, target, DEFAULT_TMUX_CAPTURE_LINES)?;
         if codex_viewport_ready(&capture) {
             return Ok(());
         }
@@ -758,7 +760,7 @@ fn wait_for_codex_tmux_readiness(
     }
 
     for _ in 0..20 {
-        let capture = capture_tmux_pane(prepared, tmux, target)?;
+        let capture = capture_tmux_pane(prepared, tmux, target, DEFAULT_TMUX_CAPTURE_LINES)?;
         if codex_viewport_ready(&capture) {
             return Ok(());
         }
@@ -772,7 +774,13 @@ fn wait_for_codex_tmux_readiness(
     ))
 }
 
-fn capture_tmux_pane(prepared: &PreparedRun, tmux: &str, target: &str) -> Result<String, String> {
+fn capture_tmux_pane(
+    prepared: &PreparedRun,
+    tmux: &str,
+    target: &str,
+    max_lines: usize,
+) -> Result<String, String> {
+    let start = format!("-{}", max_lines.clamp(1, 500));
     tmux_command_output(
         Command::new(tmux).envs(prepared.env.iter()).args([
             "capture-pane",
@@ -780,7 +788,7 @@ fn capture_tmux_pane(prepared: &PreparedRun, tmux: &str, target: &str) -> Result
             "-t",
             target,
             "-S",
-            "-200",
+            &start,
         ]),
         "capture-pane",
     )

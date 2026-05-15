@@ -95,6 +95,12 @@ only then pastes the rendered issue prompt. Set
 `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to opt out; when disabled, or when readiness
 cannot be confirmed, the tick fails closed with attach/log evidence and does not
 hand off to `Agent Review`.
+Routine status output reads the durable session registry, probes bounded pane
+and log tails, and reports a conservative session classification such as
+`running`, `waiting_for_trust`, `waiting_for_approval`, `usage_limited`,
+`failed`, `completed`, `stale`, or `unknown`. The status surface includes only
+compact evidence snippets plus attach/log locations; attach manually when raw
+scrollback is needed.
 If an operator switches the workflow back to `agent.backend: dry-run`, the
 mutating tick exits before runtime-state writes, worktree creation, Project
 claims, or workpad mutation.

@@ -215,8 +215,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             target_state,
             write,
         } => review_manual_reject(workflow_path, issue_ref, evidence, target_state, write),
+        Command::ReviewSession {
+            workflow_path,
+            issue_ref,
+            write,
+        } => agent_session_start(workflow_path, issue_ref, AgentSessionLaneArg::Review, write),
         Command::ReviewFreshness { input } => review_freshness(input),
         Command::ReviewLoop { options } => review_loop(options),
+        Command::MergeSession {
+            workflow_path,
+            issue_ref,
+            write,
+        } => agent_session_start(workflow_path, issue_ref, AgentSessionLaneArg::Merge, write),
         Command::AgentSessionStart {
             workflow_path,
             issue_ref,
@@ -6073,11 +6083,21 @@ enum Command {
         target_state: String,
         write: bool,
     },
+    ReviewSession {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        write: bool,
+    },
     ReviewFreshness {
         input: ReviewFreshnessInput,
     },
     ReviewLoop {
         options: ReviewLoopOptions,
+    },
+    MergeSession {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        write: bool,
     },
     AgentSessionStart {
         workflow_path: PathBuf,
@@ -6311,6 +6331,8 @@ enum CliCommand {
     MergeOnce(MergeOnceArgs),
     #[command(name = "merge-loop")]
     MergeLoop(MergeLoopArgs),
+    #[command(name = "merge-session")]
+    MergeSession(LaneSessionAliasArgs),
     #[command(name = "set-state")]
     SetState(SetStateArgs),
     Workpad(WorkpadArgs),
@@ -6332,6 +6354,8 @@ enum CliCommand {
     ReviewPass(ReviewEvidenceArgs),
     #[command(name = "review-reject")]
     ReviewReject(ReviewRejectArgs),
+    #[command(name = "review-session")]
+    ReviewSession(LaneSessionAliasArgs),
     #[command(name = "review-freshness")]
     ReviewFreshness(ReviewFreshnessArgs),
     #[command(name = "review-loop")]
@@ -6604,6 +6628,17 @@ struct AgentSessionAttachArgs {
     session: String,
     #[arg(long)]
     exec: bool,
+}
+
+#[derive(Debug, Args)]
+struct LaneSessionAliasArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    issue_ref: String,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -7066,6 +7101,11 @@ impl TryFrom<Cli> for Command {
                             },
                         })
                     }
+                    CliCommand::MergeSession(args) => Ok(Self::MergeSession {
+                        workflow_path: args.workflow_path,
+                        issue_ref: args.issue_ref,
+                        write: args.write,
+                    }),
                     CliCommand::SetState(args) => Ok(Self::SetState {
                         workflow_path: args.workflow_path,
                         issue_ref: args.issue_ref,
@@ -7128,6 +7168,11 @@ impl TryFrom<Cli> for Command {
                         issue_ref: args.issue_ref,
                         evidence: read_required_file(args.evidence_file)?,
                         target_state: args.target_state,
+                        write: args.write,
+                    }),
+                    CliCommand::ReviewSession(args) => Ok(Self::ReviewSession {
+                        workflow_path: args.workflow_path,
+                        issue_ref: args.issue_ref,
                         write: args.write,
                     }),
                     CliCommand::ReviewFreshness(args) => Ok(Self::ReviewFreshness {
@@ -8070,6 +8115,32 @@ mod tests {
                 workflow_path: PathBuf::from("workflows/jade-symphony.md"),
                 session: "jade-review-220".into(),
                 exec: false,
+            }
+        );
+        assert_eq!(
+            parse(&[
+                "review-session",
+                "workflows/jade-symphony.md",
+                "#227",
+                "--write"
+            ]),
+            Command::ReviewSession {
+                workflow_path: PathBuf::from("workflows/jade-symphony.md"),
+                issue_ref: "#227".into(),
+                write: true,
+            }
+        );
+        assert_eq!(
+            parse(&[
+                "merge-session",
+                "workflows/jade-symphony.md",
+                "#227",
+                "--write"
+            ]),
+            Command::MergeSession {
+                workflow_path: PathBuf::from("workflows/jade-symphony.md"),
+                issue_ref: "#227".into(),
+                write: true,
             }
         );
     }

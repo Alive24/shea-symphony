@@ -36,9 +36,13 @@ Examples:
 ```bash
 cargo run -- run-once examples/dry-run-workflow.md
 cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
+cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run --display tui
 cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --pool 2 --dry-run
 cargo run -- dogfood-smoke workflows/jade-symphony.md --dry-run
 ```
+
+Use `--display tui` for an opt-in operator panel on `run-loop`, `project-state`,
+and `doctor`. The default output stays line-oriented for logs and scripts.
 
 `run-loop --pool N` is a supervised planning and claim-locking slice. Dry-run
 mode previews up to `N` eligible main-lane issues after skipping items whose

@@ -41,6 +41,9 @@ use jade_symphony::ownership::{
     render_runtime_ownership_marker, runtime_ownership_decision, RuntimeOwnershipDecision,
     RuntimeOwnershipMarker,
 };
+use jade_symphony::presentation::{
+    render_doctor_panel, render_project_state_panel, render_run_loop_panel, RunLoopPanel,
+};
 use jade_symphony::profiles::{discover_execution_profiles, selected_execution_profile};
 use jade_symphony::prompt::render_prompt;
 use jade_symphony::quality_gate::{
@@ -103,7 +106,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             workflow_path,
             states,
         } => inspect(workflow_path, states),
-        Command::ProjectState { workflow_path } => project_state(workflow_path),
+        Command::ProjectState { options } => project_state(options),
         Command::Doctor { options } => doctor(options),
         Command::DoctorRepairHumanReview {
             workflow_path,
@@ -1772,7 +1775,8 @@ fn inspect(
     Ok(())
 }
 
-fn project_state(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+fn project_state(options: ProjectStateOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let workflow_path = options.workflow_path;
     warn_if_temporary_workflow_path(&workflow_path);
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
@@ -1781,12 +1785,17 @@ fn project_state(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error
     let adapter = adapter_from_config(&config);
     match adapter.list_dispatchable_issues() {
         Ok(issues) => {
+            let integration_gaps = adapter.integration_gaps();
+            if options.display == DisplayMode::Tui {
+                println!("{}", render_project_state_panel(&issues, &integration_gaps));
+                return Ok(());
+            }
             println!("project_state_access=ok");
             println!("trusted=true");
             println!("issues={}", issues.len());
             println!("empty_queue={}", issues.is_empty());
             println!("{}", render_state_summary(&issues));
-            for gap in adapter.integration_gaps() {
+            for gap in integration_gaps {
                 println!("integration_gap={gap}");
             }
             Ok(())
@@ -1852,6 +1861,9 @@ fn render_state_summary(issues: &[TrackerIssue]) -> String {
 
 fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::Error>> {
     let workflow_path = options.workflow_path;
+    if options.json && options.display == DisplayMode::Tui {
+        return Err("doctor --json cannot be combined with --display tui".into());
+    }
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
@@ -1863,6 +1875,8 @@ fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::Error>> {
 
     if options.json {
         println!("{}", render_project_audit_report_json(&report)?);
+    } else if options.display == DisplayMode::Tui {
+        println!("{}", render_doctor_panel(&report));
     } else {
         println!("{}", render_project_audit_report(&report));
     }
@@ -2609,7 +2623,22 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             select_pool_worker_issues(&plan.selected, WorkerLane::Main, &worker_id, pool, &config);
 
         let Some(issue) = selected.first().cloned() else {
-            println!("{}", render_snapshot(&plan.snapshot));
+            if options.display == DisplayMode::Tui {
+                println!(
+                    "{}",
+                    render_run_loop_panel(RunLoopPanel {
+                        snapshot: &plan.snapshot,
+                        issue: None,
+                        handoff: None,
+                        actor_role: "Main Agent",
+                        mode: if options.write { "write" } else { "dry-run" },
+                        pool,
+                        selected_pool: 0,
+                    })
+                );
+            } else {
+                println!("{}", render_snapshot(&plan.snapshot));
+            }
             match no_dispatch_action(&options, limit, config.polling.interval_ms) {
                 NoDispatchAction::Stop { reason } => {
                     println!("run_loop=stopped reason={reason} iterations={iterations}");
@@ -2627,6 +2656,20 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
 
         let decision = evaluate_issue_for_current_source(&config, &issue)?;
         if !decision.is_dispatchable() {
+            if options.display == DisplayMode::Tui {
+                println!(
+                    "{}",
+                    render_run_loop_panel(RunLoopPanel {
+                        snapshot: &plan.snapshot,
+                        issue: Some(&issue),
+                        handoff: None,
+                        actor_role: "Main Agent",
+                        mode: if options.write { "write" } else { "dry-run" },
+                        pool,
+                        selected_pool: selected.len(),
+                    })
+                );
+            }
             handle_run_loop_gate_failure(adapter.as_ref(), &issue, &decision, &options)?;
             continue;
         }
@@ -2659,6 +2702,20 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     &worker_id,
                     false,
                 )?;
+            }
+            if options.display == DisplayMode::Tui {
+                println!(
+                    "{}",
+                    render_run_loop_panel(RunLoopPanel {
+                        snapshot: &plan.snapshot,
+                        issue: Some(&issue),
+                        handoff: Some(&handoff),
+                        actor_role: "Main Agent",
+                        mode: "dry-run",
+                        pool,
+                        selected_pool: selected.len(),
+                    })
+                );
             }
             print_run_loop_dry_run_actions(&issue, &handoff, &config)?;
             if limit.is_none() {
@@ -4106,7 +4163,7 @@ enum Command {
         states: Vec<String>,
     },
     ProjectState {
-        workflow_path: PathBuf,
+        options: ProjectStateOptions,
     },
     Doctor {
         options: DoctorOptions,
@@ -4240,6 +4297,13 @@ struct RunLoopOptions {
     once: bool,
     write: bool,
     pool: Option<usize>,
+    display: DisplayMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProjectStateOptions {
+    workflow_path: PathBuf,
+    display: DisplayMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4257,6 +4321,7 @@ struct DoctorOptions {
     workflow_path: PathBuf,
     json: bool,
     strict: bool,
+    display: DisplayMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4355,7 +4420,7 @@ enum CliCommand {
     Validate(WorkflowPathArgs),
     Inspect(InspectArgs),
     #[command(name = "project-state", alias = "project-state-health")]
-    ProjectState(WorkflowPathArgs),
+    ProjectState(ProjectStateArgs),
     #[command(alias = "audit-project")]
     Doctor(DoctorArgs),
     #[command(name = "doctor-repair-human-review")]
@@ -4426,6 +4491,18 @@ struct WorkflowPathArgs {
 }
 
 #[derive(Debug, Args)]
+struct ProjectStateArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long, value_enum, default_value_t = CliDisplayMode::Plain)]
+    display: CliDisplayMode,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+    #[arg(long = "write")]
+    _write: bool,
+}
+
+#[derive(Debug, Args)]
 struct InspectArgs {
     #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
     workflow_path: PathBuf,
@@ -4455,6 +4532,8 @@ struct DoctorArgs {
     json: bool,
     #[arg(long)]
     strict: bool,
+    #[arg(long, value_enum, default_value_t = CliDisplayMode::Plain)]
+    display: CliDisplayMode,
     #[arg(long = "dry-run")]
     _dry_run: bool,
     #[arg(long = "write")]
@@ -4483,8 +4562,31 @@ struct RunLoopArgs {
     write: bool,
     #[arg(long)]
     pool: Option<usize>,
+    #[arg(long, value_enum, default_value_t = CliDisplayMode::Plain)]
+    display: CliDisplayMode,
     #[arg(long = "dry-run")]
     _dry_run: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DisplayMode {
+    Plain,
+    Tui,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CliDisplayMode {
+    Plain,
+    Tui,
+}
+
+impl From<CliDisplayMode> for DisplayMode {
+    fn from(value: CliDisplayMode) -> Self {
+        match value {
+            CliDisplayMode::Plain => Self::Plain,
+            CliDisplayMode::Tui => Self::Tui,
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -4841,13 +4943,17 @@ impl TryFrom<Cli> for Command {
                         states: args.states,
                     }),
                     CliCommand::ProjectState(args) => Ok(Self::ProjectState {
-                        workflow_path: args.workflow_path,
+                        options: ProjectStateOptions {
+                            workflow_path: args.workflow_path,
+                            display: args.display.into(),
+                        },
                     }),
                     CliCommand::Doctor(args) => Ok(Self::Doctor {
                         options: DoctorOptions {
                             workflow_path: args.workflow_path,
                             json: args.json,
                             strict: args.strict,
+                            display: args.display.into(),
                         },
                     }),
                     CliCommand::DoctorRepairHumanReview(args) => {
@@ -4880,6 +4986,7 @@ impl TryFrom<Cli> for Command {
                                 once: args.once,
                                 write: args.write,
                                 pool: args.pool,
+                                display: args.display.into(),
                             },
                         })
                     }
@@ -5488,6 +5595,7 @@ mod tests {
                     workflow_path: PathBuf::from("examples/dry-run-workflow.md"),
                     json: false,
                     strict: false,
+                    display: DisplayMode::Plain,
                 }
             }
         );
@@ -5525,7 +5633,28 @@ mod tests {
                 "examples/github-project-workflow.md"
             ]),
             Command::ProjectState {
-                workflow_path: PathBuf::from("examples/github-project-workflow.md")
+                options: ProjectStateOptions {
+                    workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                    display: DisplayMode::Plain,
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn parses_project_state_tui_display() {
+        assert_eq!(
+            parse(&[
+                "project-state",
+                "examples/github-project-workflow.md",
+                "--display",
+                "tui"
+            ]),
+            Command::ProjectState {
+                options: ProjectStateOptions {
+                    workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                    display: DisplayMode::Tui,
+                }
             }
         );
     }
@@ -5652,6 +5781,7 @@ mod tests {
                     workflow_path: PathBuf::from("examples/github-project-workflow.md"),
                     json: true,
                     strict: true,
+                    display: DisplayMode::Plain,
                 }
             }
         );
@@ -6137,6 +6267,8 @@ mod tests {
             "3".into(),
             "--pool".into(),
             "4".into(),
+            "--display".into(),
+            "tui".into(),
             "--dry-run".into(),
         ])
         .unwrap();
@@ -6152,6 +6284,7 @@ mod tests {
         assert_eq!(options.max_iterations, Some(3));
         assert_eq!(options.pool, Some(4));
         assert_eq!(options.pool_size(&test_config()), 4);
+        assert_eq!(options.display, DisplayMode::Tui);
         assert!(!options.once);
         assert!(!options.write);
     }
@@ -7343,6 +7476,7 @@ mod tests {
             once: false,
             pool: None,
             write: false,
+            display: DisplayMode::Plain,
         };
 
         assert_eq!(
@@ -7361,6 +7495,7 @@ mod tests {
             once: false,
             pool: None,
             write: true,
+            display: DisplayMode::Plain,
         };
 
         assert_eq!(
@@ -7379,6 +7514,7 @@ mod tests {
             once: false,
             pool: None,
             write: true,
+            display: DisplayMode::Plain,
         };
 
         assert_eq!(

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::model::{normalize_state, LinkedPullRequest, TrackerIssue};
+use crate::model::{normalize_state, LinkedPullRequest, SessionStatusSnapshot, TrackerIssue};
 use crate::runtime_state::{detect_runtime_stall, RuntimeState};
 
 pub const HUMAN_REVIEW_MISSING_REVIEW_EVIDENCE: &str = "human_review_missing_review_evidence";
@@ -46,6 +46,7 @@ impl ProjectAuditReport {
 #[derive(Debug, Clone)]
 pub struct ProjectDoctorContext {
     pub runtime_state: Option<RuntimeState>,
+    pub sessions: Vec<SessionStatusSnapshot>,
     pub now_ms: u64,
     pub stale_after_ms: u64,
 }
@@ -163,6 +164,10 @@ pub fn audit_project_issues_with_context(
         if let Some(context) = context {
             audit_runtime_consistency(issue, &state, context, &mut violations);
         }
+    }
+
+    if let Some(context) = context {
+        audit_session_consistency(issues, context, &mut violations);
     }
 
     ProjectAuditReport {
@@ -459,6 +464,174 @@ fn audit_runtime_consistency(
     }
 }
 
+fn audit_session_consistency(
+    issues: &[TrackerIssue],
+    context: &ProjectDoctorContext,
+    violations: &mut Vec<ProjectAuditViolation>,
+) {
+    for session in &context.sessions {
+        let status = session.status.trim();
+        let issue = session
+            .issue_identifier
+            .as_deref()
+            .and_then(|identifier| find_issue_by_ref(issues, identifier));
+
+        if session
+            .issue_identifier
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .is_empty()
+        {
+            violations.push(session_violation(
+                session,
+                "tmux_session_missing_issue",
+                "Registered tmux session has no issue identifier.",
+                "Inspect the session registry and attach/log evidence before cleaning or reusing the session.",
+            ));
+            continue;
+        }
+
+        let Some(issue) = issue else {
+            violations.push(session_violation(
+                session,
+                "tmux_session_orphaned_issue",
+                "Registered tmux session points at an issue that is not present in the current Project read.",
+                "Inspect the registry entry, tracker state, and worktree before cleaning or reassigning the session.",
+            ));
+            continue;
+        };
+
+        if status == "stale" {
+            violations.push(violation(
+                issue,
+                AuditSeverity::Warning,
+                "tmux_session_stale",
+                &format!(
+                    "Registered tmux session `{}` is stale: {}.",
+                    session.session_id, session.evidence
+                ),
+                "Attach to the session or inspect its log before clearing runtime state or cleaning artifacts.",
+            ));
+        } else if session_status_needs_operator(status) {
+            violations.push(violation(
+                issue,
+                AuditSeverity::Warning,
+                "tmux_session_needs_operator_attention",
+                &format!(
+                    "Registered tmux session `{}` is `{}` from {} evidence.",
+                    session.session_id, session.status, session.evidence_source
+                ),
+                "Use the recorded attach command or log path to decide whether to resume, retry, or route the issue with evidence.",
+            ));
+        }
+
+        if session_status_active(status) && normalize_state(&issue.state) == "done" {
+            violations.push(violation(
+                issue,
+                AuditSeverity::Warning,
+                "tmux_session_active_for_terminal_issue",
+                &format!(
+                    "Registered tmux session `{}` still appears active for a Done issue.",
+                    session.session_id
+                ),
+                "Confirm the session is finished and evidence is preserved before cleanup.",
+            ));
+        }
+    }
+
+    let Some(runtime_state) = context.runtime_state.as_ref() else {
+        return;
+    };
+    let Some(active_issue) = runtime_state.active_issue.as_ref() else {
+        return;
+    };
+    let Some(runtime_session_id) = runtime_state.backend_session_id.as_deref() else {
+        return;
+    };
+    let Some(issue) = find_issue_by_ref(issues, &active_issue.identifier) else {
+        return;
+    };
+    let matching_session = context
+        .sessions
+        .iter()
+        .find(|session| session.session_id == runtime_session_id);
+    let Some(session) = matching_session else {
+        violations.push(violation(
+            issue,
+            AuditSeverity::Warning,
+            "runtime_session_missing_registry",
+            "Runtime state references a tmux session that is missing from the session registry.",
+            "Inspect runtime-state.json and tmux sessions before clearing or retrying the run.",
+        ));
+        return;
+    };
+    if session
+        .issue_identifier
+        .as_deref()
+        .is_some_and(|identifier| !issue_refs_match(identifier, &active_issue.identifier))
+    {
+        violations.push(violation(
+            issue,
+            AuditSeverity::Warning,
+            "runtime_session_issue_mismatch",
+            "Runtime state active issue and registered tmux session issue do not match.",
+            "Inspect both records before dispatching another worker or cleaning artifacts.",
+        ));
+    }
+}
+
+fn session_status_active(status: &str) -> bool {
+    matches!(
+        status,
+        "starting"
+            | "running"
+            | "waiting_for_trust"
+            | "waiting_for_approval"
+            | "waiting_for_human_input"
+            | "usage_limited"
+            | "unknown"
+    )
+}
+
+fn session_status_needs_operator(status: &str) -> bool {
+    matches!(
+        status,
+        "waiting_for_trust"
+            | "waiting_for_approval"
+            | "waiting_for_human_input"
+            | "usage_limited"
+            | "failed"
+            | "unknown"
+    )
+}
+
+fn session_violation(
+    session: &SessionStatusSnapshot,
+    code: &str,
+    message: &str,
+    suggestion: &str,
+) -> ProjectAuditViolation {
+    ProjectAuditViolation {
+        issue_ref: format!("session:{}", session.session_id),
+        title: session
+            .issue_title
+            .clone()
+            .unwrap_or_else(|| "Unattributed tmux session".into()),
+        state: session.status.clone(),
+        severity: AuditSeverity::Warning,
+        code: code.into(),
+        message: message.into(),
+        suggestion: suggestion.into(),
+    }
+}
+
+fn find_issue_by_ref<'a>(issues: &'a [TrackerIssue], issue_ref: &str) -> Option<&'a TrackerIssue> {
+    issues
+        .iter()
+        .find(|issue| issue_refs_match(&issue.identifier, issue_ref))
+}
+
 fn bool_project_field(issue: &TrackerIssue, key: &str) -> bool {
     issue
         .project_fields
@@ -565,8 +738,24 @@ mod tests {
         runtime_state.updated_at_ms = Some(updated_at_ms);
         ProjectDoctorContext {
             runtime_state: Some(runtime_state),
+            sessions: Vec::new(),
             now_ms: 20_000,
             stale_after_ms: 10_000,
+        }
+    }
+
+    fn session(identifier: Option<&str>, status: &str) -> SessionStatusSnapshot {
+        SessionStatusSnapshot {
+            session_id: "jade-main-202-attempt-1-runtime".into(),
+            lane: "main".into(),
+            status: status.into(),
+            evidence_source: "registry".into(),
+            evidence: "registry record has not updated for 19000ms".into(),
+            issue_identifier: identifier.map(str::to_string),
+            issue_title: Some("Runtime session".into()),
+            attach_command: Some("tmux attach-session -t jade-main-202-attempt-1-runtime".into()),
+            log_path: Some("/tmp/jade/logs/tmux/jade-main-202-attempt-1-runtime.log".into()),
+            updated_at_ms: 1_000,
         }
     }
 
@@ -825,5 +1014,47 @@ mod tests {
             .violations
             .iter()
             .any(|violation| violation.code == "runtime_active_issue_disagrees"));
+    }
+
+    #[test]
+    fn reports_stale_tmux_session_for_matching_issue() {
+        let issue = issue("#202", "In Progress");
+        let mut context = runtime_context("#202", 19_000);
+        context.sessions = vec![session(Some("#202"), "stale")];
+
+        let report = audit_project_issues_with_context(&[issue], Some(&context));
+
+        assert!(report
+            .violations
+            .iter()
+            .any(|violation| violation.code == "tmux_session_stale"));
+    }
+
+    #[test]
+    fn reports_runtime_session_missing_registry() {
+        let issue = issue("#202", "In Progress");
+        let mut context = runtime_context("#202", 19_000);
+        context.runtime_state.as_mut().unwrap().backend_session_id = Some("missing-session".into());
+
+        let report = audit_project_issues_with_context(&[issue], Some(&context));
+
+        assert!(report
+            .violations
+            .iter()
+            .any(|violation| violation.code == "runtime_session_missing_registry"));
+    }
+
+    #[test]
+    fn reports_unattributed_tmux_session() {
+        let context = ProjectDoctorContext {
+            runtime_state: None,
+            sessions: vec![session(None, "running")],
+            now_ms: 20_000,
+            stale_after_ms: 10_000,
+        };
+
+        let report = audit_project_issues_with_context(&[], Some(&context));
+
+        assert_eq!(report.violations[0].code, "tmux_session_missing_issue");
     }
 }

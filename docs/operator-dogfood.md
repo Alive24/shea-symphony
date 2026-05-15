@@ -101,6 +101,10 @@ and log tails, and reports a conservative session classification such as
 `failed`, `completed`, `stale`, or `unknown`. The status surface includes only
 compact evidence snippets plus attach/log locations; attach manually when raw
 scrollback is needed.
+`doctor` reads the same registry and reports stale, orphaned, or attention
+requiring sessions next to tracker/runtime findings. `clean audit` treats the
+session registry, rendered prompts, and tmux logs as recovery evidence, and only
+classifies completed sessions as cleanup candidates.
 If an operator switches the workflow back to `agent.backend: dry-run`, the
 mutating tick exits before runtime-state writes, worktree creation, Project
 claims, or workpad mutation.
@@ -243,6 +247,18 @@ target/debug/jade-symphony clean audit workflows/jade-symphony.md
 `promote_to_repo`, `attach_to_tracker`, `safe_to_keep`, `cleanup_candidate`, or
 `needs_human_decision`. Keep `doctor` for tracker/runtime invariants and stuck
 workflow states.
+
+Interrupted tmux recovery flow:
+
+1. Run `target/debug/jade-symphony status workflows/jade-symphony.md` and read
+   the `tmux sessions` section for the session status, attach command, and log.
+2. Run `target/debug/jade-symphony doctor workflows/jade-symphony.md` before
+   retrying or clearing runtime state; stale, failed, usage-limited, or
+   unattributed sessions require operator inspection.
+3. Run `target/debug/jade-symphony clean audit workflows/jade-symphony.md` only
+   after evidence is preserved. Active or uncertain sessions stay
+   `needs_human_decision`; completed sessions and terminal clean worktrees may
+   become cleanup candidates.
 
 For supervised parallel operators, pass `--pool N` to preview eligible slots and
 apply lane-specific claim checks. Main work uses the `Main Agent` Project field

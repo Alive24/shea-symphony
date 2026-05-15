@@ -110,6 +110,10 @@ Agent`, or `Merging Agent`), and records session evidence in the workpad.
 `agent-session list WORKFLOW` shows active tmux sessions with attach commands,
 and `agent-session attach WORKFLOW SESSION` prints the exact attach command
 without joining the terminal unless `--exec` is provided.
+`status` and `status-api` include registered tmux session summaries from the
+durable session registry. `doctor` flags stale, failed, orphaned, usage-limited,
+or runtime/session mismatch cases, while `clean audit` classifies the registry,
+rendered prompts, tmux logs, and individual sessions without deleting them.
 
 ## Tracker Writes
 

@@ -2833,8 +2833,16 @@ fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::Error>> {
             None
         }
     };
+    let sessions = match session_status_snapshots(&config) {
+        Ok(sessions) => sessions,
+        Err(error) => {
+            integration_gaps.push(format!("tmux_session_status_unavailable: {error}"));
+            Vec::new()
+        }
+    };
     let context = ProjectDoctorContext {
         runtime_state,
+        sessions,
         now_ms: current_time_ms(),
         stale_after_ms: options.stale_after_ms,
     };
@@ -3338,10 +3346,20 @@ fn clean_audit_command(workflow_path: PathBuf) -> Result<(), Box<dyn std::error:
     let terminal_issues = adapter.fetch_issues_by_states(&config.tracker.terminal_states)?;
     let layout = artifact_layout(&config);
     let plan = cleanup_plan(&config, &terminal_issues);
+    let sessions = session_status_snapshots(&config).unwrap_or_else(|error| {
+        println!("clean_audit_warning kind=tmux_session_status reason={error}");
+        Vec::new()
+    });
 
     println!("clean_audit=read_only");
     println!("artifact_root={}", layout.root.display());
     println!("workspace_root={}", config.workspace.root.display());
+    print_clean_audit_path(
+        "safe_to_keep",
+        "session_registry",
+        session_registry_path(&config),
+        "durable tmux session evidence until session state is reconciled",
+    );
     print_clean_audit_path(
         "safe_to_keep",
         "runtime_state",
@@ -3353,6 +3371,18 @@ fn clean_audit_command(workflow_path: PathBuf) -> Result<(), Box<dyn std::error:
         "event_log",
         layout.class_path(ArtifactClass::EventLog),
         "local execution evidence",
+    );
+    print_clean_audit_path(
+        "attach_to_tracker",
+        "rendered_agent_prompt",
+        config.observability.logs_root.join("prompts"),
+        "prompt artifacts should stay available until tracker evidence names the run",
+    );
+    print_clean_audit_path(
+        "safe_to_keep",
+        "tmux_log",
+        config.observability.logs_root.join("tmux"),
+        "tmux logs are operator recovery evidence for interrupted sessions",
     );
     print_clean_audit_path(
         "safe_to_keep",
@@ -3405,6 +3435,27 @@ fn clean_audit_command(workflow_path: PathBuf) -> Result<(), Box<dyn std::error:
                 candidate.issue_identifier,
                 candidate.path.display(),
                 clean_audit_blocker_summary(candidate)
+            );
+        }
+    }
+    for session in &sessions {
+        if session.status == "completed" {
+            cleanup_candidates += 1;
+            println!(
+                "clean_audit_item category=cleanup_candidate kind=tmux_session issue={} session={} log={} prompt=unknown reason=session_completed_and_registry_evidence_present",
+                session.issue_identifier.as_deref().unwrap_or("n/a"),
+                session.session_id,
+                session.log_path.as_deref().unwrap_or("n/a")
+            );
+        } else {
+            human_decisions += 1;
+            println!(
+                "clean_audit_item category=needs_human_decision kind=tmux_session issue={} session={} status={} attach={} log={} reason=session_not_completed",
+                session.issue_identifier.as_deref().unwrap_or("n/a"),
+                session.session_id,
+                session.status,
+                session.attach_command.as_deref().unwrap_or("n/a"),
+                session.log_path.as_deref().unwrap_or("n/a")
             );
         }
     }

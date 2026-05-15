@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::io::{self, Read};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
@@ -26,9 +27,9 @@ use jade_symphony::handoff::{
     IssueHandoffPlan,
 };
 use jade_symphony::issue_forge::{
-    discover_candidates, draft_from_template, find_issue_skill, interactive_forge,
-    next_clarification_question, reflective_candidates_from_context, repair_markdown,
-    validate_markdown, InteractiveForgeInput,
+    conversational_title_from_intent, discover_candidates, draft_from_template, find_issue_skill,
+    interactive_forge, next_clarification_question, reflective_candidates_from_context,
+    repair_markdown, validate_markdown, InteractiveForgeInput,
 };
 use jade_symphony::merge_lane::{
     expected_merge_base_branch, fetch_pull_request_status_with_recheck, merge_lane_decision,
@@ -699,43 +700,89 @@ fn normalized_issue_title_key(title: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ForgeInteractiveOptions {
     workflow_path: Option<PathBuf>,
-    title: String,
-    intent: String,
+    title: Option<String>,
+    intent: Option<String>,
+    file: Option<PathBuf>,
     skill: Option<String>,
     context: Option<String>,
+    assignees: Vec<String>,
     add_to_project: bool,
     write: bool,
     confirm_create: bool,
 }
 
 fn forge_interactive(options: ForgeInteractiveOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let intent = resolve_interactive_intent(options.intent, options.file)?;
+    let title = options
+        .title
+        .unwrap_or_else(|| conversational_title_from_intent(&intent));
     let report = interactive_forge(InteractiveForgeInput {
-        title: options.title.clone(),
-        intent: options.intent,
+        title: title.clone(),
+        intent,
         skill: options.skill,
         context: options.context,
+        assignees: options.assignees.clone(),
     });
+    println!("forge_interactive_session=conversation");
+    println!("transcript_summary=operator_intent_captured");
     print_interactive_forge_report(&report);
 
     if options.write {
         if !options.confirm_create {
             return Err("forge-interactive --write requires --confirm-create".into());
         }
+        if !report.validation.decision.is_dispatchable() {
+            return Err(
+                "forge-interactive refuses to create because the Issue Quality Gate failed".into(),
+            );
+        }
+        if report.question.is_some() {
+            return Err(
+                "forge-interactive refuses to create while clarification questions remain".into(),
+            );
+        }
+        if options.assignees.is_empty() {
+            return Err("forge-interactive --write requires --assignee".into());
+        }
         let workflow_path = options
             .workflow_path
             .ok_or("forge-interactive --write requires --workflow")?;
         forge_create(
             workflow_path,
-            options.title,
+            title,
             report.issue_markdown,
             options.add_to_project,
             Vec::new(),
-            Vec::new(),
+            options.assignees,
             true,
         )?;
     }
 
     Ok(())
+}
+
+fn resolve_interactive_intent(
+    inline: Option<String>,
+    file: Option<PathBuf>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    match (inline, file) {
+        (Some(value), None) if !value.trim().is_empty() => Ok(value),
+        (None, Some(path)) => Ok(std::fs::read_to_string(&path)
+            .map_err(|error| format!("failed to read {}: {error}", path.display()))?),
+        (None, None) => {
+            eprintln!("Describe the work you want Issue Forge to shape, then press Ctrl-D:");
+            let mut input = String::new();
+            io::stdin().read_to_string(&mut input)?;
+            if input.trim().is_empty() {
+                return Err(
+                    "forge-interactive requires operator intent from stdin, --intent, or --file"
+                        .into(),
+                );
+            }
+            Ok(input)
+        }
+        _ => Err(usage().into()),
+    }
 }
 
 fn forge_reflect(
@@ -4779,7 +4826,7 @@ struct ForgeInteractiveArgs {
     #[arg(long)]
     workflow: Option<PathBuf>,
     #[arg(long)]
-    title: String,
+    title: Option<String>,
     #[arg(long)]
     intent: Option<String>,
     #[arg(long)]
@@ -4788,6 +4835,8 @@ struct ForgeInteractiveArgs {
     skill: Option<String>,
     #[arg(long = "context-file")]
     context_file: Option<PathBuf>,
+    #[arg(long = "assignee")]
+    assignees: Vec<String>,
     #[arg(long = "add-to-project")]
     add_to_project: bool,
     #[arg(long)]
@@ -5020,9 +5069,11 @@ impl TryFrom<Cli> for Command {
                         options: ForgeInteractiveOptions {
                             workflow_path: args.workflow,
                             title: args.title,
-                            intent: read_source_arg(args.intent, args.file)?,
+                            intent: args.intent,
+                            file: args.file,
                             skill: validate_optional_forge_skill(args.skill)?,
                             context: read_optional_file(args.context_file)?,
+                            assignees: args.assignees,
                             add_to_project: args.add_to_project,
                             write: args.write,
                             confirm_create: args.confirm_create,
@@ -7134,6 +7185,8 @@ mod tests {
             "run-loop should inspect runtime state before claiming new work".into(),
             "--skill".into(),
             "runtime".into(),
+            "--assignee".into(),
+            "Alive24".into(),
             "--add-to-project".into(),
             "--write".into(),
             "--confirm-create".into(),
@@ -7148,12 +7201,35 @@ mod tests {
             options.workflow_path,
             Some(PathBuf::from("examples/github-project-workflow.md"))
         );
-        assert_eq!(options.title, "Add resume preflight");
-        assert!(options.intent.contains("runtime state"));
+        assert_eq!(options.title.as_deref(), Some("Add resume preflight"));
+        assert!(options.intent.as_deref().unwrap().contains("runtime state"));
         assert_eq!(options.skill.as_deref(), Some("runtime"));
+        assert_eq!(options.assignees, vec!["Alive24".to_string()]);
         assert!(options.add_to_project);
         assert!(options.write);
         assert!(options.confirm_create);
+    }
+
+    #[test]
+    fn parses_forge_interactive_without_title_for_conversational_path() {
+        let command = Command::parse(vec![
+            "forge-interactive".into(),
+            "--workflow".into(),
+            "workflows/jade-symphony.md".into(),
+        ])
+        .unwrap();
+
+        let Command::ForgeInteractive { options } = command else {
+            panic!("expected forge-interactive command");
+        };
+
+        assert_eq!(
+            options.workflow_path,
+            Some(PathBuf::from("workflows/jade-symphony.md"))
+        );
+        assert!(options.title.is_none());
+        assert!(options.intent.is_none());
+        assert!(options.assignees.is_empty());
     }
 
     #[test]

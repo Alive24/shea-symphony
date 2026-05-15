@@ -88,7 +88,7 @@ cargo run -- gate-apply workflows/jade-symphony.md '#123' --write
 | `forge-draft` | Build a quality-template issue draft from title/goal. | Read-only. |
 | `forge-validate` | Validate an issue body against the quality gate. | Read-only. |
 | `forge-repair` | Repair thin Markdown into an executable issue shape. | Read-only. |
-| `forge-interactive` | CLI-first guided issue shaping. | Creation requires `--write --confirm-create`. |
+| `forge-interactive` | Conversation-first issue shaping from natural-language intent. | Starts with only `--workflow`; creation requires `--write --confirm-create --assignee`. |
 | `forge-reflect` | Reflect over local context and print candidate issues. | Read-only. |
 | `forge-create` | Create a quality-gated tracker issue. | Requires explicit `--write`; live GitHub creation requires `--assignee`; can add to Project with `--add-to-project`. |
 
@@ -96,6 +96,8 @@ Examples:
 
 ```bash
 cargo run -- forge-validate --title "Thin Forge issue" --file examples/fixtures/thin-issue.md
+cargo run -- forge-interactive --workflow workflows/jade-symphony.md
+cargo run -- forge-interactive --workflow workflows/jade-symphony.md --intent "make run-loop explain retry backoff better"
 cargo run -- forge-reflect --context-file docs/dogfood-readiness.md --limit 1
 cargo run -- forge-create --workflow workflows/jade-symphony.md --title "Follow-up title" --file /tmp/issue.md --assignee Alive24 --add-to-project --write
 ```

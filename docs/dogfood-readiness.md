@@ -235,9 +235,11 @@ Project v2 issues:
    - `forge-create` can create a tracker issue and optionally add it to the
      configured project through the normalized adapter with initial `Todo`
      status in GitHub ProjectV2 mode.
-   - `forge-interactive` can select a lightweight issue skill/template, ask a
-     focused clarification question for thin intent, and print a quality-gated
-     issue draft before any live tracker write.
+   - `forge-interactive` can start from only the canonical workflow path, read
+     natural-language intent from stdin or `--intent`, infer a title, select a
+     lightweight issue skill/template, ask a focused clarification question for
+     thin intent, and print a quality-gated issue draft before any live tracker
+     write.
    - `forge-reflect` can scan local context for conservative follow-up signals
      and print quality-gated draft candidates without creating live issues.
    - `forge-create --add-to-project` can set GitHub Project v2 single-select

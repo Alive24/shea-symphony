@@ -19,6 +19,8 @@ cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --write
 cargo run -- forge-interactive --workflow workflows/jade-symphony.md
 cargo run -- review-loop workflows/jade-symphony.md --max-iterations 1 --write
 cargo run -- merge-once workflows/jade-symphony.md --write
+cargo run -- review-session workflows/jade-symphony.md '#123' --write
+cargo run -- merge-session workflows/jade-symphony.md '#123' --write
 cargo run -- agent-session start workflows/jade-symphony.md '#220' --lane review --write
 cargo run -- agent-session list workflows/jade-symphony.md
 ```
@@ -33,6 +35,9 @@ The `agent-session` command is the manual tmux recovery path for all lanes:
 `main`, `review`, and `merge` each render their own lane prompt, claim the
 matching Project field, and leave workflow state unchanged until the lane's
 normal evidence path is ready.
+`review-session` and `merge-session` are lane-specific shortcuts for the same
+session path. They write attach/log evidence without approving reviews, merging
+PRs, or closing issues.
 
 Lane prompt files:
 

@@ -131,6 +131,12 @@ export GEMINI_CLI_TRUST_WORKSPACE=true
 target/debug/jade-symphony review-loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
+For supervised manual review terminals, use
+`review-session WORKFLOW '#issue' --write` on an `Agent Review` issue. It uses
+the shared `agent-session` lane path to claim the Review Agent field, start the
+lane-specific review prompt in tmux, and write attach/log evidence without
+moving the issue to `Human Review`.
+
 If Gemini cannot start, the review workpad should name the configured command,
 whether worker `PATH` could resolve it, the required operator action, and the
 retry command. Do not move an issue to `Human Review` unless the Review Agent
@@ -243,6 +249,10 @@ apply lane-specific claim checks. Main work uses the `Main Agent` Project field
 as a soft claim-lock hint while still processing one active runtime issue per
 loop tick. Merge work uses the `Merging Agent` Project field and can process
 multiple guarded merge slots in one bounded loop.
+For supervised merge terminals, use `merge-session WORKFLOW '#issue' --write`
+on a `Merging` issue. It uses the shared `agent-session` lane path to claim the
+`Merging Agent` field, start the merge prompt in tmux, and write attach/log
+evidence without merging the PR or closing the issue.
 
 Operator commands also print compact `Latest:` lines for the current lane,
 issue, category, action, actor, workspace/branch when known, and next expected

@@ -72,7 +72,8 @@ mode previews up to `N` eligible main-lane issues after skipping items whose
 `Main Agent` Project field is already owned by another worker. Write mode still
 processes one main work item at a time because the runtime state tracks one
 active issue, but it uses the same lane claim check and stamps `Main Agent`
-before tracker mutation.
+before tracker mutation. `run-loop`, `review-loop`, and `merge-once` print
+compact `Latest:` status bars in addition to their detailed line logs.
 
 ## Tracker Writes
 

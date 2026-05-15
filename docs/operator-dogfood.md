@@ -159,6 +159,11 @@ as a soft claim-lock hint while still processing one active runtime issue per
 loop tick. Merge work uses the `Merging Agent` Project field and can process
 multiple guarded merge slots in one bounded loop.
 
+Operator commands also print compact `Latest:` lines for the current lane,
+issue, category, action, actor, workspace/branch when known, and next expected
+step. Treat these as the glanceable status bar; detailed line logs and JSONL
+events remain the durable audit trail.
+
 ```bash
 target/debug/jade-symphony run-loop workflows/jade-symphony.md --max-iterations 1 --pool 2 --dry-run
 target/debug/jade-symphony merge-loop workflows/jade-symphony.md --max-iterations 1 --pool 2 --dry-run

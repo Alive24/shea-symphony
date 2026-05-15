@@ -11,6 +11,7 @@ operator inspection, but not a substitute for tracker evidence.
 | Per-issue worktree | Recoverable until PR merge and tracker terminal state | `artifacts/<namespace>/<profile>/worktrees/` |
 | Runtime state | Resume-critical while an issue is active | `artifacts/<namespace>/<profile>/runtime/` or configured `observability.logs_root/runtime/` |
 | Event log | Durable local evidence | `artifacts/<namespace>/<profile>/logs/` |
+| Rendered agent prompt | Durable local evidence for backend runs | `artifacts/<namespace>/<profile>/logs/prompts/` or configured `observability.logs_root/prompts/` |
 | Review job artifact | Durable until review evidence is in the workpad | `artifacts/<namespace>/<profile>/reviews/` |
 | PR body draft | Recoverable after PR creation | `artifacts/<namespace>/<profile>/drafts/pr-bodies/` |
 | Workpad draft | Recoverable after tracker workpad upsert | `artifacts/<namespace>/<profile>/drafts/workpads/` |
@@ -51,6 +52,11 @@ share worktrees, logs, or runtime state by accident.
 - Workpad drafts are temporary once the marker workpad has been upserted.
 - Runtime state needed for resume must live under the configured logs/runtime
   root and should be referenced from the issue workpad when an active run pauses.
+- Rendered agent prompts are runtime artifacts. They must not be written into
+  issue worktrees by default, because prompt scratch files make PR handoff look
+  dirty before source changes are ready. Backends receive the rendered prompt on
+  stdin and, when a path is needed, through `JADE_SYMPHONY_PROMPT_PATH` pointing
+  at the logs prompt artifact.
 - Secrets must not be promoted into repo docs or logged artifacts.
 
 ## Cleanup Planning

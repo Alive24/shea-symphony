@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{fs, io::Write};
 
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,8 @@ pub struct PreparedRun {
     pub backend: String,
     pub workspace: PathBuf,
     pub prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_artifact_path: Option<PathBuf>,
     pub command: Option<String>,
     pub timeout_ms: u64,
     pub approval_policy: Option<String>,
@@ -85,6 +87,7 @@ impl AgentBackend for DryRunBackend {
             backend: self.name().into(),
             workspace,
             prompt: rendered_prompt,
+            prompt_artifact_path: None,
             command: None,
             timeout_ms: 0,
             approval_policy: None,
@@ -155,6 +158,7 @@ impl AgentBackend for CodexBackend {
             backend: self.name().into(),
             workspace,
             prompt: rendered_prompt,
+            prompt_artifact_path: None,
             command: Some(config.codex.command.clone()),
             timeout_ms: config.codex.turn_timeout_ms,
             approval_policy: Some(config.codex.approval_policy.to_string()),
@@ -221,6 +225,7 @@ impl AgentBackend for ClaudeCodeBackend {
             backend: self.name().into(),
             workspace,
             prompt: rendered_prompt,
+            prompt_artifact_path: None,
             command: Some(config.claude.command.clone()),
             timeout_ms: config.claude.turn_timeout_ms,
             approval_policy: None,
@@ -276,15 +281,12 @@ fn run_subprocess_backend(
         return Ok(events);
     };
 
-    fs::write(
-        prepared.workspace.join("JADE_SYMPHONY_PROMPT.md"),
-        &prepared.prompt,
-    )?;
+    let prompt_artifact_path = persist_prompt_artifact(&prepared)?;
     let mut child = Command::new("sh")
         .arg("-lc")
         .arg(command)
         .current_dir(&prepared.workspace)
-        .env("JADE_SYMPHONY_PROMPT_PATH", "JADE_SYMPHONY_PROMPT.md")
+        .env("JADE_SYMPHONY_PROMPT_PATH", &prompt_artifact_path)
         .env(
             "JADE_SYMPHONY_APPROVAL_POLICY",
             prepared.approval_policy.as_deref().unwrap_or_default(),
@@ -369,6 +371,64 @@ fn run_subprocess_backend(
 
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+pub fn persist_prompt_artifact(prepared: &PreparedRun) -> Result<PathBuf, AgentError> {
+    let path = prepared
+        .prompt_artifact_path
+        .clone()
+        .unwrap_or_else(|| fallback_prompt_artifact_path(prepared));
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&path, &prepared.prompt)?;
+    Ok(path)
+}
+
+fn fallback_prompt_artifact_path(prepared: &PreparedRun) -> PathBuf {
+    std::env::temp_dir()
+        .join("jade-symphony")
+        .join("prompts")
+        .join(format!(
+            "{}-{}-{}.prompt.md",
+            safe_path_component(
+                prepared
+                    .workspace
+                    .file_name()
+                    .and_then(|name| name.to_str())
+            ),
+            safe_path_component(Some(&prepared.backend)),
+            current_time_ms()
+        ))
+}
+
+fn safe_path_component(value: Option<&str>) -> String {
+    let safe = value
+        .unwrap_or("run")
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+
+    if safe.is_empty() {
+        "run".into()
+    } else {
+        safe
+    }
+}
+
+fn current_time_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default()
 }
 
 fn profile_environment(
@@ -614,6 +674,44 @@ mod tests {
             std::fs::read_to_string(temp.path().join("response.txt")).unwrap(),
             "hello prompt"
         );
+        assert!(!temp.path().join("JADE_SYMPHONY_PROMPT.md").exists());
+    }
+
+    #[test]
+    fn subprocess_backend_uses_external_prompt_artifact_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let prompt_path = temp.path().join("logs").join("prompts").join("prompt.md");
+        let config = codex_config(
+            "printf '%s' \"$JADE_SYMPHONY_PROMPT_PATH\" > prompt_path.txt",
+            5_000,
+        );
+        let backend = CodexBackend;
+        let mut prepared = backend
+            .prepare(
+                temp.path().join("workspace"),
+                "hello prompt".into(),
+                &config,
+            )
+            .unwrap();
+        std::fs::create_dir_all(&prepared.workspace).unwrap();
+        prepared.prompt_artifact_path = Some(prompt_path.clone());
+        let events = backend.run(prepared).unwrap();
+        let summary = backend.summarize(&events);
+
+        assert!(summary.success);
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("workspace").join("prompt_path.txt")).unwrap(),
+            prompt_path.display().to_string()
+        );
+        assert_eq!(
+            std::fs::read_to_string(&prompt_path).unwrap(),
+            "hello prompt"
+        );
+        assert!(!temp
+            .path()
+            .join("workspace")
+            .join("JADE_SYMPHONY_PROMPT.md")
+            .exists());
     }
 
     #[test]

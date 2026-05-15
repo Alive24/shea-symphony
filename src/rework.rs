@@ -6,6 +6,7 @@ use crate::review::{ReviewFindingClass, ReviewGateDecision, ReviewJob, ReviewOut
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReworkDiagnosticKind {
     ReviewFinding,
+    InconclusiveReview,
     MergeConflict,
     DirtyPullRequest,
     ValidationFailure,
@@ -116,14 +117,24 @@ pub fn rework_diagnostic_from_review(
             .collect();
     }
 
+    let (kind, next_action) = if decision.outcome == ReviewOutcome::InconclusiveNeedsRework {
+        (
+            ReworkDiagnosticKind::InconclusiveReview,
+            "Restore the missing PR/workspace/review evidence, rerun required verification, and hand back to Agent Review.",
+        )
+    } else {
+        (
+            ReworkDiagnosticKind::ReviewFinding,
+            "Address confirmed review findings, rerun required verification, and hand back to Agent Review.",
+        )
+    };
+
     ReworkDiagnostic {
         issue_ref: issue.identifier.clone(),
         source: format!("agent_review:{}", job.backend),
-        kind: ReworkDiagnosticKind::ReviewFinding,
+        kind,
         summary,
-        next_action:
-            "Address confirmed review findings, rerun required verification, and hand back to Agent Review."
-                .into(),
+        next_action: next_action.into(),
         command: None,
         stdout,
         stderr,
@@ -236,7 +247,10 @@ fn truncate_log(content: &str) -> String {
 }
 
 pub fn rework_transition_expected(decision: &ReviewGateDecision) -> bool {
-    decision.outcome == ReviewOutcome::NeedsRework && decision.target_state == Some("rework")
+    matches!(
+        decision.outcome,
+        ReviewOutcome::NeedsRework | ReviewOutcome::InconclusiveNeedsRework
+    ) && decision.target_state == Some("rework")
 }
 
 #[cfg(test)]
@@ -312,6 +326,40 @@ mod tests {
     }
 
     #[test]
+    fn review_diagnostic_names_inconclusive_review_rework() {
+        let issue = issue();
+        let job = ReviewJob {
+            id: "review-1".into(),
+            issue_ref: "#50".into(),
+            backend: "gemini-cli".into(),
+            state: ReviewJobState::Completed,
+            artifact_path: Some("/tmp/review-artifact.md".into()),
+            ledger_path: Some("/tmp/reviews/jobs/50-review-1.json".into()),
+            report: Some(AgentReviewReport {
+                reviewer_backend: "gemini-cli".into(),
+                findings: Vec::new(),
+                summary: Some("Could not complete review: missing PR evidence.".into()),
+                stdout: Some("Could not complete review: missing PR evidence.".into()),
+                stderr: None,
+            }),
+            error: None,
+        };
+        let decision = ReviewGateDecision {
+            outcome: ReviewOutcome::InconclusiveNeedsRework,
+            target_state: Some("rework"),
+            message: "Agent Review was inconclusive and requires Rework.".into(),
+        };
+
+        let diagnostic = rework_diagnostic_from_review(&issue, &job, &decision);
+        let workpad = render_rework_diagnostic_workpad(&issue, &diagnostic);
+
+        assert_eq!(diagnostic.kind, ReworkDiagnosticKind::InconclusiveReview);
+        assert!(workpad.contains("Kind: `InconclusiveReview`"));
+        assert!(workpad.contains("Restore the missing PR/workspace/review evidence"));
+        assert!(workpad.contains("Could not complete review"));
+    }
+
+    #[test]
     fn merge_conflict_diagnostic_records_pr_specific_context() {
         let issue = issue();
         let diagnostic = ReworkDiagnostic::merge_conflict(
@@ -349,6 +397,13 @@ mod tests {
             outcome: ReviewOutcome::NeedsRework,
             target_state: Some("rework"),
             message: "confirmed".into(),
+        };
+        assert!(rework_transition_expected(&decision));
+
+        let decision = ReviewGateDecision {
+            outcome: ReviewOutcome::InconclusiveNeedsRework,
+            target_state: Some("rework"),
+            message: "inconclusive".into(),
         };
         assert!(rework_transition_expected(&decision));
     }

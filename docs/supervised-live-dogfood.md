@@ -131,9 +131,11 @@ Expected outcomes:
   before launching the backend;
 - passed independent review may move the issue to `Human Review`;
 - confirmed findings move the issue to `Rework`;
-- failed, inconclusive, timed-out, or unavailable review stays out of
-  `Human Review`, records evidence, clears stale `Review Agent` claims, and
-  remains retryable after the backend environment is fixed.
+- completed but inconclusive automatic review moves to `Rework` with a missing
+  evidence diagnostic;
+- failed, timed-out, or unavailable review stays out of `Human Review`, records
+  evidence, clears stale `Review Agent` claims, and remains retryable after the
+  backend environment is fixed.
 
 If the review workflow uses `review.gemini_command: $JADE_GEMINI_COMMAND`,
 set that environment variable to an absolute Gemini CLI path before starting
@@ -149,6 +151,9 @@ For GitHub Project #9, do not assume the `Review Agent` claim field is enough:
 doctor expects the canonical review workpad pass marker in the issue comment
 stream, or an explicit review-pass Project field if a future tracker schema adds
 one.
+Manual Gemini or operator-supplied review notes must be labeled as manual
+evidence, for example with `## Manual Agent Review Evidence`, so operators can
+distinguish them from automatic `review-loop` pass evidence.
 
 After a human accepts work and moves the issue to `Merging`, use the guarded
 merge lane:

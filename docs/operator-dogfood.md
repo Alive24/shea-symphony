@@ -129,6 +129,17 @@ evidence, clears the `Review Agent` Project claim, and leaves the issue in
 The Gemini subprocess receives the rendered prompt on stdin and Jade closes
 stdin after writing so headless commands that wait for EOF can proceed.
 
+If Gemini returns successfully but says it could not inspect the PR, workspace,
+diff, code changes, or required handoff evidence, treat that as an automatic
+Review Agent inconclusive result, not a pass. `review-loop` records the
+inconclusive reason in the ledger/workpad and routes the issue to `Rework` so
+the missing evidence can be repaired before another independent review pass.
+
+Manual Gemini or operator-supplied review notes must use an explicit manual
+evidence marker such as `## Manual Agent Review Evidence`. They are not the same
+thing as automatic `review-loop` pass evidence and should not be used to satisfy
+the automatic Review Agent boundary unless the workflow explicitly says so.
+
 Use `workflows/jade-symphony.md` for supervised review workers. Do not keep the
 active review workflow only under `/tmp` or `/private/tmp`; the CLI prints
 `workflow_warning=temporary_path` for those workflow files so operators can

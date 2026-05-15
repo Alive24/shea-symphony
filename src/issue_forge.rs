@@ -66,6 +66,8 @@ pub struct InteractiveForgeInput {
     pub intent: String,
     pub skill: Option<String>,
     pub context: Option<String>,
+    #[serde(default)]
+    pub assignees: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -255,6 +257,10 @@ pub fn select_issue_skill(intent: &str, explicit: Option<&str>) -> IssueForgeSki
     find_issue_skill(selected).expect("built-in issue forge skill exists")
 }
 
+pub fn conversational_title_from_intent(intent: &str) -> String {
+    title_from_intent(intent)
+}
+
 pub fn interactive_forge(input: InteractiveForgeInput) -> InteractiveForgeReport {
     let selected_skill = select_issue_skill(&input.intent, input.skill.as_deref());
     let issue_markdown = issue_markdown_from_interactive_input(&input, &selected_skill);
@@ -289,6 +295,7 @@ pub fn reflective_candidates_from_context(
                 intent,
                 skill: Some(skill.key.clone()),
                 context: Some(line.to_string()),
+                assignees: Vec::new(),
             };
             let report = interactive_forge(input);
             ReflectiveForgeCandidate {
@@ -460,6 +467,13 @@ fn issue_markdown_from_interactive_input(
 ) -> String {
     let mut draft = draft_from_template(&input.title, input.intent.trim());
     draft = draft.replace(
+        "- UAT Required: No",
+        &format!(
+            "- UAT Required: No\n- Assignee: {}",
+            format_interactive_assignee(input)
+        ),
+    );
+    draft = draft.replace(
         "## Why Now\n\nTBD",
         "## Why Now\n\nThis follow-up is needed to continue turning Jade Symphony from a dry-run skeleton into a usable orchestration binary.",
     );
@@ -558,6 +572,15 @@ fn issue_markdown_from_interactive_input(
         "### Context Verification\n\n- Confirm the issue still matches canonical sources and Project #9 state before dispatch.",
     );
     draft
+}
+
+fn format_interactive_assignee(input: &InteractiveForgeInput) -> String {
+    input
+        .assignees
+        .first()
+        .map(|assignee| assignee.trim().trim_start_matches('@').to_string())
+        .filter(|assignee| !assignee.is_empty())
+        .unwrap_or_else(|| "Alive24".into())
 }
 
 fn format_interactive_context(input: &InteractiveForgeInput, skill: &IssueForgeSkill) -> String {
@@ -896,14 +919,28 @@ mod tests {
             intent: "run-loop should inspect runtime state before claiming new work".into(),
             skill: Some("runtime".into()),
             context: None,
+            assignees: vec!["Alive24".into()],
         });
 
         assert_eq!(report.selected_skill.key, "runtime");
         assert!(report.validation.decision.is_dispatchable());
         assert!(report.issue_markdown.contains("## Issue Goal"));
+        assert!(report.issue_markdown.contains("- Assignee: Alive24"));
         assert!(report.issue_markdown.contains("## Dependencies"));
         assert!(report.issue_markdown.contains("src/runtime_state.rs"));
         assert!(report.question.is_none());
+    }
+
+    #[test]
+    fn conversational_title_is_inferred_from_operator_intent() {
+        let title = conversational_title_from_intent(
+            "make forge interactive accept natural language issue intent",
+        );
+
+        assert_eq!(
+            title,
+            "Issue candidate: make forge interactive accept natural language issue intent"
+        );
     }
 
     #[test]
@@ -913,6 +950,7 @@ mod tests {
             intent: "fix tracker".into(),
             skill: Some("tracker".into()),
             context: None,
+            assignees: Vec::new(),
         });
 
         assert!(report.validation.decision.is_dispatchable());

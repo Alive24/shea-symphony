@@ -312,9 +312,19 @@ cargo run -- review-loop examples/review-fixture-workflow.md --max-iterations 1 
 cargo run -- review-freshness --issue '#123' --prior-head old --current-head new --prior-base old-base --current-base new-base --changed-file docs/dogfood-readiness.md --stale-reason merge-conflict --rework-class mechanical-conflict-resolution --patch-summary "Resolved merge conflict without semantic changes."
 ```
 
-`forge-interactive` is dry-run by default. If it is used to create a tracker
-issue, it requires both `--write` and `--confirm-create`; `--workflow` is also
-required for that write path, and `--add-to-project` remains explicit.
+`forge-interactive` is dry-run by default and can start as a conversational
+Issue Forge Agent with only the canonical workflow path:
+
+```bash
+cargo run -- forge-interactive --workflow workflows/jade-symphony.md
+```
+
+It reads natural-language intent from stdin when `--intent` or `--file` is not
+provided, infers a draft title, prints focused clarification questions for thin
+intent, and shows the final quality-gated issue draft before any tracker
+mutation. If it is used to create a tracker issue, it requires `--write`,
+`--confirm-create`, and `--assignee`; `--workflow` is also required for that
+write path, and `--add-to-project` remains explicit.
 
 `add-to-project` initializes the configured ProjectV2 `Status` field to the
 workflow's mapped `Todo` option so newly added issues are visible to the

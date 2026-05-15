@@ -252,38 +252,12 @@ Project v2 issues:
 
 ## Recommended Next GitHub Issues
 
-### 1. Harden Read-Only GitHub Project v2 Adapter
+Create new Project #9 issues from this list only after checking the live queue
+with `gh project item-list`, `project-state`, and `doctor`. Earlier first-slice
+read/write, review, merge, workflow, and docs items have landed; do not recreate
+that historical backlog unless the live audit shows a regression.
 
-Goal: make the current `gh`-backed read adapter reliable enough for daily
-planning, without adding writes yet.
-
-Acceptance:
-
-- loads ProjectV2 field metadata and configured Status field.
-- lists only dispatchable GitHub Issue project items.
-- normalizes issues into `TrackerIssue`.
-- respects assignee filter and status mappings.
-- has fixture tests for ProjectV2 payload shapes and a skipped live smoke test
-  when no token is present.
-- documents blocker-source limitations.
-
-### 2. Harden GitHub Workpad And Status Writes
-
-Goal: make the current explicit GitHub write commands safe enough for routine
-operator use and ready for the future orchestrator loop.
-
-Acceptance:
-
-- updates ProjectV2 Status through option IDs.
-- treats same-state status writes as no-ops.
-- creates/reuses `<!-- jade-symphony-workpad -->` issue comments.
-- records gate assumptions or missing context before dispatch or clarification.
-- keeps write methods inside the GitHub adapter.
-- has credential-gated smoke tests for status update and workpad upsert.
-- add-project is idempotent or reports already-present items clearly.
-- mutating CLI commands require explicit `--write`.
-
-### 3. Turn Dispatch Plan Into Polling Runtime
+### 1. Turn Dispatch Plan Into Polling Runtime
 
 Goal: evolve the bounded `run-loop` skeleton and `Orchestrator::plan_dispatch`
 into a long-running runtime while preserving deterministic planning tests.
@@ -305,7 +279,7 @@ Acceptance:
   be overwritten, retry backoff must be visible, and stalled work must stop the
   loop safely.
 
-### 3b. Harden LLM-Assisted Issue Quality Gate
+### 1b. Harden LLM-Assisted Issue Quality Gate
 
 Goal: evolve the optional local command-backed LLM gate into a stronger
 dogfood path without weakening deterministic checks.
@@ -317,7 +291,7 @@ Acceptance:
 - add hosted-provider adapters only behind explicit configuration.
 - preserve required-mode blocking for malformed or unavailable model output.
 
-### 4. Implement Full Codex App-Server Backend
+### 2. Implement Full Codex App-Server Backend
 
 Goal: evolve the conservative Codex subprocess path into full Codex app-server
 protocol execution inside the workspace.
@@ -331,7 +305,7 @@ Acceptance:
 - handles failures without stalling the orchestrator.
 - keeps live tests credential/tool gated.
 
-### 4b. Implement Full Claude Code Protocol Backend
+### 2b. Implement Full Claude Code Protocol Backend
 
 Goal: evolve the conservative Claude Code subprocess path into the configured
 Claude Code protocol flow while preserving the normalized backend interface.
@@ -344,7 +318,7 @@ Acceptance:
 - handles failures without stalling the orchestrator.
 - keeps live tests credential/tool gated.
 
-### 5. Harden Workspace Hooks And Cleanup
+### 3. Harden Workspace Hooks And Cleanup
 
 Goal: make workspace lifecycle credible for unattended runs.
 
@@ -357,7 +331,7 @@ Acceptance:
   cleanup remains pending.
 - path escape tests cover symlink and non-directory cases.
 
-### 6. Harden Workspace Branch And PR Handoff Reconciliation
+### 4. Harden Workspace Branch And PR Handoff Reconciliation
 
 Goal: strengthen the current live handoff path without mixing multiple issue
 scopes in one branch.
@@ -373,7 +347,7 @@ Acceptance:
 - cleans terminal worktrees after tracker reconciliation.
 - keeps main implementation completion at `Agent Review`.
 
-### 7. Add Persistent Agent Review Worker Supervision
+### 5. Add Persistent Agent Review Worker Supervision
 
 Goal: evolve the bounded `review-loop` into persistent worker supervision.
 
@@ -389,7 +363,7 @@ Acceptance:
   failed, timed out, inconclusive, or unavailable reviews must not set
   `Human Review`.
 
-### 7b. Preserve Review Freshness During Merging Rework
+### 5b. Preserve Review Freshness During Merging Rework
 
 Goal: reduce repeated human review for mechanical Merging conflict repair
 without weakening the review boundary.
@@ -405,7 +379,7 @@ Acceptance:
 - keeps `Human Review` out of the main implementation agent authority boundary.
 - does not auto-approve or merge PRs.
 
-### 8. Add Linear Credential-Gated Smoke Tests
+### 6. Add Linear Credential-Gated Smoke Tests
 
 Goal: prove the Linear adapter against a real workspace without making local
 development depend on credentials.
@@ -418,7 +392,7 @@ Acceptance:
 - creates or updates a marker workpad comment.
 - records exact schema gaps for any unsupported Linear mutation shape.
 
-### 9. Expand Issue Forge Interaction Surface
+### 7. Expand Issue Forge Interaction Surface
 
 Goal: turn the current CLI-first interactive and reflective flows into a richer
 operator workflow only after the dry-run command-step path proves useful.

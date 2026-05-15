@@ -53,8 +53,9 @@ cargo run -- doctor workflows/jade-symphony.md
 
 Review the output before mutating anything. In particular, check for:
 
+- `Rework` items produced by failed merge attempts;
 - issues in `Merging`;
-- issues in `Rework`;
+- other issues in `Rework`;
 - active `In Progress` work;
 - Agent Review issues missing PR evidence;
 - dirty Merging PRs;
@@ -199,3 +200,6 @@ Stop the live dogfood loop when:
 - usage limits require backoff.
 
 Stopping at these boundaries is part of the safety model, not a failure.
+When the queue is empty and the bootstrap audit still shows incomplete parity
+obligations, create one focused Project issue from the audit rather than
+starting untracked implementation work.

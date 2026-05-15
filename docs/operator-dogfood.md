@@ -153,6 +153,19 @@ reference examples belong in `examples/`, reusable operator prompts belong in
 `docs/`, issue and PR drafts belong in tracker/workpad or log artifacts, and
 disposable scratch can be removed only through a separate cleanup decision.
 
+Use the grouped `clean` surface for local cleanup and persistence questions:
+
+```bash
+target/debug/jade-symphony clean plan workflows/jade-symphony.md
+target/debug/jade-symphony clean audit workflows/jade-symphony.md
+```
+
+`clean plan` is the grouped form of the existing read-only cleanup plan, while
+`clean audit` classifies configured artifact/workspace residue as
+`promote_to_repo`, `attach_to_tracker`, `safe_to_keep`, `cleanup_candidate`, or
+`needs_human_decision`. Keep `doctor` for tracker/runtime invariants and stuck
+workflow states.
+
 For supervised parallel operators, pass `--pool N` to preview eligible slots and
 apply lane-specific claim checks. Main work uses the `Main Agent` Project field
 as a soft claim-lock hint while still processing one active runtime issue per
@@ -187,12 +200,18 @@ or authorization-shaped text is redacted before serialization.
 Cleanup planning is read-only:
 
 ```bash
+target/debug/jade-symphony clean plan workflows/jade-symphony.md
+target/debug/jade-symphony clean audit workflows/jade-symphony.md
 target/debug/jade-symphony cleanup-plan workflows/jade-symphony.md
 ```
 
-It reports terminal worktrees that appear removable only when tracker state is
-terminal, the linked PR is merged or closed, the local worktree branch matches
-the issue branch, and the worktree is clean. It never deletes files.
+`clean plan` reports terminal worktrees that appear removable only when tracker
+state is terminal, the linked PR is merged or closed, the local worktree branch
+matches the issue branch, and the worktree is clean. `cleanup-plan` remains a
+compatibility path for the same read-only behavior.
+
+`clean audit` classifies local artifact and workspace residue by persistence
+need. It never deletes files.
 
 Do not use this launcher to bypass Agent Review, Human Review, or Merging role
 boundaries.

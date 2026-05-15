@@ -62,6 +62,8 @@ cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
 cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run --display tui
 cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --pool 2 --dry-run
 cargo run -- dogfood-smoke workflows/jade-symphony.md --dry-run
+cargo run -- clean plan workflows/jade-symphony.md
+cargo run -- clean audit workflows/jade-symphony.md
 ```
 
 Use `--display tui` for an opt-in operator panel on `run-loop`, `project-state`,
@@ -91,6 +93,25 @@ Examples:
 ```bash
 cargo run -- set-state workflows/jade-symphony.md '#123' need_to_clarify --write
 cargo run -- workpad workflows/jade-symphony.md '#123' /tmp/workpad.md --write
+```
+
+## Clean Lane
+
+`clean` owns local cleanup and persistence-audit concerns. `doctor` remains
+focused on tracker/runtime health, stuck workflow states, PR/review/merge
+invariants, and repair evidence.
+
+| Command | Purpose | Boundary |
+| --- | --- | --- |
+| `clean plan` | Grouped read-only alias for `cleanup-plan`. | Reports terminal clean worktrees that are cleanup candidates; never deletes. |
+| `cleanup-plan` | Compatibility path for existing scripts. | Same output and read-only boundary as `clean plan`. |
+| `clean audit` | Classify configured artifact/workspace residue by persistence action. | Read-only; categories include `promote_to_repo`, `attach_to_tracker`, `safe_to_keep`, `cleanup_candidate`, and `needs_human_decision`. |
+
+Examples:
+
+```bash
+cargo run -- clean plan workflows/jade-symphony.md
+cargo run -- clean audit workflows/jade-symphony.md
 ```
 
 ## Issue Quality Gate

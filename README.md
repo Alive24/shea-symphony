@@ -1,450 +1,213 @@
 # Jade Symphony
 
-Jade Symphony is a Rust implementation of an OpenAI Symphony-style orchestration
-harness with Jade-specific workflow extensions.
+Jade Symphony is a supervised orchestration harness for local coding agents.
+It helps an operator turn tracked engineering work into isolated agent
+workspaces, pull requests, independent review passes, and guarded merge
+decisions without losing the human control points that make the process safe.
 
-Current status: **dry-run skeleton, not a live orchestrator**.
+The project is an OpenAI Symphony-style Rust implementation with Jade-specific
+extensions for tracker-driven team workflows. It is inspired by the official
+OpenAI Symphony specification and reference implementation, and extends that
+lineage with GitHub Project v2 / Linear state machines, issue quality gates,
+agent role lanes, durable evidence, and supervised dogfood workflows.
 
-The repo currently proves the core shape and has a small operator CLI: workflow
-parsing, typed config, normalized tracker issues, fixture-backed and `gh`-backed
-read-only GitHub Project v2 issue loading, dispatch planning, quality-gate
-checks, backend abstractions, workspace safety helpers, event-log primitives,
-an operator-readable status snapshot with event-log and integration-gap links,
-machine-readable JSON status output, a local one-request observability API
-endpoint, and a real dogfood workflow prompt for GitHub Project v2 runs.
+Current maturity: **supervised dogfood, not unattended production
+orchestration**. Jade Symphony can run bounded implementation, review, and merge
+ticks against a live tracker, but it is still intentionally operator-led.
 
-It does **not** yet fully autonomously execute GitHub Project v2 issues,
-run Codex/Claude through the final app-server flow, or supervise long-running
-workers. A `run-loop` skeleton now exists and can idle-poll in unbounded
-write mode, but full claim reconciliation, runtime resume, and
-worker supervision are still future work.
+## Why It Exists
 
-For a compact source-linked view of what is landed, what is waiting in
-`Agent Review`, and what remains deferred, see
-`docs/bootstrap-parity-audit.md`.
+Local coding agents are powerful, but team work needs more than a prompt and a
+terminal. Real engineering flow needs scoped issues, ownership, branch hygiene,
+review evidence, merge gates, restart behavior, and a clear answer to "what is
+happening right now?"
 
-## What Works Now
+Jade Symphony is built around that gap. It treats the tracker as the source of
+truth, then gives agents a narrow lane:
 
-- Rust crate builds and tests locally.
-- operator CLI parsing is backed by `clap` while preserving the existing safe
-  command aliases.
-- `WORKFLOW.md` style files load from an explicit path or default CLI path.
-- YAML front matter is parsed into typed runtime config.
-- optional `worker.ssh_hosts` and `worker.max_concurrent_agents_per_host`
-  config is parsed and validated for future SSH worker scheduling, but remote
-  execution is not implemented.
-- normalized `TrackerIssue` records can be loaded from JSON fixtures.
-- GitHub Project v2 read-only issue loading can use the `gh` CLI when no fixture
-  path is configured.
-- GitHub Project v2 integration-gap reporting distinguishes fixture mode,
-  env-token auth, usable `gh api graphql` auth, missing `gh`, and unusable auth.
-- Linear tracker reads and explicit write operations are implemented behind the
-  same adapter trait; fixture mode remains the credential-free path.
-- explicit live GitHub write commands exist for ProjectV2 status updates,
-  workpad comments, follow-up issue creation, and adding issues to a project when
-  not in fixture mode.
-- GitHub Project v2 status writes skip same-state mutations, and tracker claim
-  helpers distinguish claimable `Todo`/`Rework`, already active
-  `In Progress`, and externally changed states.
-- dry-run dispatch planning sorts by priority and respects global/state
-  concurrency limits.
-- Issue Quality Gate classifies executable versus underspecified issue bodies
-  and, where workflow/repo context is available, runs deterministic
-  checks for the template `UAT Required` field, source alignment checks for
-  target repository, referenced local paths, and verification command shapes.
-  An optional command-backed LLM gate can run in
-  `disabled`, `advisory`, or `required` mode after deterministic checks.
-- review freshness helpers can classify Merging-to-Rework repairs as
-  mechanical, semantic, or unknown and render workpad evidence for whether prior
-  Human Review remains valid.
-- `merge-once` can consume issues already in `Merging`, resolve a single linked
-  PR, run guarded GitHub PR preflight checks, write durable workpad evidence,
-  treat Project `Merging` as the approval signal for clean PRs, merge with
-  explicit `--write`, set Project `Done`, close the linked GitHub issue when
-  supported by the tracker, and route blockers to `Rework` or `Need Human Input`
-  without ever setting `Human Review`.
-- structured Rework diagnostics can render compact, durable issue workpad
-  evidence for confirmed review findings, merge conflicts, dirty PRs,
-  validation failures, and runtime failures before a transition to `Rework`.
-- `review-loop` can discover `Agent Review` issues, avoid duplicate review
-  worker markers, select a bounded set of one-issue review worker jobs, run each
-  configured independent review backend from the issue workspace, persist a JSON
-  review job ledger under the configured logs root, and
-  reconcile pass/rework/inconclusive transitions through the Review Agent
-  authority boundary.
-- Issue Forge can discover local candidates from intent, ask one focused
-  clarification question, draft from the quality template, validate Markdown,
-  repair rough Markdown into an executable issue contract shape, and create a
-  tracker issue from a quality-gated, duplicate-title-checked contract with
-  explicit `--write`.
-  `forge-create --add-to-project` can also set GitHub Project v2 single-select
-  fields by name with repeatable `--project-field NAME=VALUE` flags, for
-  example `--project-field Capability=CLI`; live GitHub creation requires an
-  explicit `--assignee` so the created issue can pass the live assignee gate
-  before executable Project dispatch.
-- Issue Forge also has a CLI-first interactive mode that selects a lightweight
-  issue skill/template (`runtime`, `tracker`, `backend`, `review`, `docs`, or
-  `integration-test`), emits one focused clarification question for thin intent,
-  includes explicit dependency semantics, and prints a quality-gated issue draft
-  before any tracker write.
-- Issue Forge reflective mode can scan a local context file for conservative
-  follow-up signals, surface likely dependency/overlap signals, and print
-  candidate issue drafts without creating tracker issues.
-- `dogfood-smoke` can run a non-mutating preflight for a controlled live
-  dogfood issue, report tracker/auth gaps, runtime state and event log paths,
-  classify blocking vs warning-level integration gaps, and print the bounded
-  `run-loop --max-iterations 1 --write` next step when the smoke is ready.
-- basic strict prompt rendering supports known `issue.*` fields, `attempt`, and
-  simple `{% if %}` / `{% else %}` blocks. The supported subset is documented
-  in `docs/prompt-template-contract.md`.
-- `workflows/jade-symphony.md` is the canonical self-dogfood workflow and
-  contains an inline Jade execution prompt with the operating loop, workpad
-  discipline, review boundary, stop conditions, and one issue / one branch /
-  one PR handoff rules.
-- `scripts/jade-dogfood` provides a bounded operator launcher for the GitHub
-  Project workflow with explicit dry-run/write modes and preflight checks for
-  the built binary, git, `gh`, auth, workflow validation, and controlled
-  dogfood smoke readiness before write-mode mutation.
-- workspace identifiers are sanitized; local workspace paths stay under the
-  configured root; hooks support timeouts, stdout/stderr capture,
-  `before_remove`, safe cleanup helpers, and a guarded terminal workspace
-  cleanup planner.
-- workflow identity config can distinguish the acting role/label from the human
-  operator and can apply configured git author metadata with repository-local
-  `git config --local` only.
-- runtime artifact policy defines durable/recoverable/disposable artifact
-  classes and derives a project/repo/profile namespaced layout under the
-  configured `artifacts.root`.
-- workspace/branch/PR handoff planning can derive a deterministic issue
-  workspace key, branch name, and PR handoff body, and can detect an existing
-  branch that appears to belong to a different issue; profile-scoped workspace
-  keys can avoid collisions between parallel worker identities.
-- execution profiles can be listed from workflow config. The first slice can
-  read cockpit-tools Codex instance stores (`codex_instances.json`) and treats
-  each instance name as a Jade worker profile without reading or logging account
-  bindings.
-- Agent Review handoff invariant helpers require durable issue, workspace,
-  branch, validation, transition, and PR URL evidence before the run-loop can
-  move completed work to `Agent Review`; missing PR evidence is routed to
-  `Need Human Input` with a workpad diagnostic.
-- live GitHub `run-loop --write` can create or reuse the planned issue
-  worktree/branch, run the configured backend inside that worktree, push the
-  branch, run optional configured verification commands, and create or reuse
-  one GitHub PR after successful execution and verification, then record that
-  PR through the normalized tracker adapter before Agent Review handoff. The
-  handoff helper blocks dirty worktrees and branches with no commits ahead of
-  the configured base before publishing.
-- live GitHub `run-loop --write` checks assignee ownership before claim:
-  unassigned issues require an explicit workflow override, and assigned issues
-  must match the current `gh` login or a selected profile login exposed through
-  profile environment config.
-- main-agent dispatch requires dependency semantics in the issue body and skips
-  `Todo` / `Rework` issues whose tracker blockers are not terminal before
-  claim.
-- terminal status output reports polling state, planned running/skipped/retrying
-  issues, token counters, event-log path, gate details, and integration gaps.
-  `status WORKFLOW --json` prints the same `RuntimeSnapshot` as JSON for
-  dogfood scripts.
-- `status-api WORKFLOW --once` serves the current runtime snapshot at local
-  `GET /status.json` or `GET /status` for one request, then exits.
-- `doctor` / `audit-project` can read the configured tracker and report
-  workflow invariant violations such as Agent Review without PR evidence, Human
-  Review without review pass evidence, dirty Merging PRs, partial `Todo` claim
-  states, stale runtime-state records, In Progress issues with PR evidence, and
-  queued issues with attached PRs. `doctor` defaults to
-  `JADE_SYMPHONY_WORKFLOW`, then `workflows/jade-symphony.md`, then
-  `WORKFLOW.md`; `--json` emits the same report as structured data, and
-  `--strict` exits nonzero when blocker violations are present. `doctor
-  --interactive` prints issue-specific repair entrypoints, `doctor repair 194`
-  starts a non-destructive repair plan, and `doctor --auto-fix --write` only
-  applies clearly safe repairs. A guarded `doctor-repair-human-review` command
-  remains for compatibility.
-- JSONL event-log primitives exist and can record selected profile identity.
-- runtime state helpers can write, read, and clear a tracker-neutral
-  `runtime/runtime-state.json` file under the configured logs root, including
-  optional profile and instance identity.
-- write-mode `run-loop` performs a resume preflight before claiming new work:
-  active runtime state must reconcile with tracker state, retry backoff is
-  honored, and stale active work is reported as stalled instead of being
-  silently overwritten.
-- write-mode `run-loop` writes a tracker-visible runtime ownership marker before
-  backend execution and skips active `In Progress` work when the marker points
-  at a different profile/workspace/branch.
-- write-mode `run-loop` saves active issue runtime state, updates it with
-  backend result evidence, records final transition intent, and clears it after
-  successful handoff/block transition.
-- write-mode `run-loop` classifies conservative usage-limit/rate-limit backend
-  failures, writes pause evidence to the workpad, records retry backoff in
-  runtime state, and does not advance the issue to `Agent Review`.
-- `run-once` can prepare one dry-run workspace, render a prompt file, run the
-  dry-run backend, apply local git identity when the prepared workspace is a git
-  repository, and append JSONL events with actor metadata.
-- `run-once` can execute the conservative Codex subprocess backend when a
-  workflow explicitly sets `agent.backend: codex`.
-- the Codex subprocess backend refuses `codex app-server` commands with a clear
-  failure event because the app-server protocol is not implemented yet.
-- `run-once` can execute the conservative Claude Code subprocess backend when a
-  workflow explicitly sets `agent.backend: claude-code`.
-- `run-loop` can re-read tracker state per iteration, select dispatchable work,
-  print dry-run claim/run/workpad/handoff actions, surface deterministic
-  workspace/branch/PR handoff plans, use tracker claim helpers to
-  claim/resume/skip externally changed issues, and in explicit `--write` mode
-  run one issue at a time, record handoff evidence, create a live PR handoff in
-  non-fixture GitHub Project v2 mode, link that PR through the tracker adapter,
-  and stop main-agent completion at `Agent Review`.
-- `run-loop --pool N` and `merge-loop --pool N` add first-slice supervised pool
-  planning: eligible issues are filtered by lane and by the tracker-visible
-  `Main Agent` / `Merging Agent` claim fields before work is selected, and
-  write-mode ticks stamp the appropriate claim field before mutation. This is a
-  soft project-board lock, not a distributed lock or full daemon supervisor.
-  Unbounded `run-loop --write` sleeps on idle polls using the workflow polling
-  interval.
-- `cleanup-plan` reports terminal worktree cleanup candidates in dry-run mode
-  only; it does not delete files.
+- Main Agent work starts from an executable issue contract and stops at
+  `Agent Review`.
+- Review Agent work independently inspects the PR and records pass or rework
+  evidence before anything can reach `Human Review`.
+- Merge Agent work handles the guarded `Merging` lane, including dirty PRs,
+  conflicts, failed checks, and durable diagnostics.
 
-## Dry-Run Only
+The goal is not to remove the operator. The goal is to make supervised agent
+work repeatable enough that a human can safely keep several pieces of work
+moving without turning the repo, tracker, or local machine into mystery state.
 
-- `github_project_v2` adapter is dry-run when `tracker.fixture_path` is set.
-- `memory` tracker reads fixture issues only.
-- `linear` adapter is dry-run when `tracker.fixture_path` is set.
-- CLI dispatch is a plan/status snapshot, not worker execution.
-- `dry-run` backend emits normalized fake events for tests only.
+## Relationship To OpenAI Symphony
 
-Run the bundled dry-run example:
+Jade Symphony does not compete with OpenAI Symphony. It uses the official
+Symphony specification and reference implementation as the baseline lineage for
+workflow loading, tracker normalization, agent execution, runtime state,
+workspace lifecycle, structured logs, and operator status surfaces.
+
+Jade Symphony adds a pragmatic layer for local, tracker-backed engineering
+teams:
+
+- GitHub Project v2 and Linear tracker state machines;
+- issue contracts and an Issue Quality Gate before dispatch;
+- separate Main Agent, Review Agent, and Merge Agent lanes;
+- isolated per-issue worktrees, branches, pull requests, and workpad evidence;
+- logical actor audit records without requiring separate GitHub accounts;
+- local backend orchestration for Codex, Claude Code, and Gemini review;
+- supervised dogfood commands for bounded live runs.
+
+The source references and parity expectations live in
+[`docs/bootstrap/`](docs/bootstrap/), including the pinned official reference
+material under
+[`docs/bootstrap/references/openai-symphony`](docs/bootstrap/references/openai-symphony/).
+
+## What You Can Do Today
+
+Jade Symphony can already support a supervised local dogfood loop:
+
+- read live GitHub Project v2 or Linear-backed tracker state through normalized
+  issue records;
+- validate workflow files and inspect executable queue state;
+- gate issues for required fields, dependency semantics, referenced paths, and
+  verification commands;
+- create or reuse isolated issue worktrees and branches;
+- run bounded `run-loop`, `review-loop`, and `merge-loop` ticks with explicit
+  write-mode confirmation;
+- write tracker-visible workpad evidence and local JSONL audit records;
+- create or reuse PR handoffs for completed Main Agent work;
+- route review failures, merge conflicts, dirty PRs, and runtime failures to
+  visible follow-up states instead of silently advancing them;
+- show operator status, latest-lane summaries, and doctor/audit diagnostics.
+
+It is still not a hands-off daemon. Long-running worker supervision, full Codex
+app-server transport, richer multi-worker resume reconciliation, automatic
+terminal workspace cleanup, and hosted/remote observability remain active
+follow-up work.
+
+For the current operator workflow, start with
+[`docs/operator-dogfood.md`](docs/operator-dogfood.md). For the command surface,
+see [`docs/cli-command-reference.md`](docs/cli-command-reference.md). The live
+self-dogfood workflow is
+[`workflows/jade-symphony.md`](workflows/jade-symphony.md). For the detailed
+capability inventory and parity status that used to dominate this README, see
+[`docs/dogfood-readiness.md`](docs/dogfood-readiness.md) and
+[`docs/bootstrap-parity-audit.md`](docs/bootstrap-parity-audit.md).
+
+## How The Loop Works
+
+Jade Symphony expects work to move through tracker state, not private terminal
+memory.
+
+1. An issue is drafted or repaired into an executable contract.
+2. The Issue Quality Gate decides whether it is safe to dispatch.
+3. The Main Agent claims the tracker lane, works in an isolated branch/worktree,
+   verifies locally, opens or reuses one PR, records evidence, and stops at
+   `Agent Review`.
+4. The Review Agent runs independently, writes a review ledger, and moves the
+   issue to `Human Review` only on passing evidence. Confirmed findings go to
+   `Rework`.
+5. Human approval moves the issue into `Merging`.
+6. The Merge Agent performs guarded merge handling and either lands the PR,
+   records a blocker, or routes the issue back to the correct state.
+
+This separation is deliberate. A Main Agent cannot approve its own work, and a
+merge repair does not erase the need for fresh review when the repair is
+semantic or uncertain.
+
+## Operator Quickstart
+
+Build and run the safe local checks:
 
 ```bash
-cargo run -- examples/dry-run-workflow.md
+cargo build
+cargo test
+cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-The normal Jade Symphony dogfood workflow is `workflows/jade-symphony.md`. The
-workflow catalog in `examples/README.md` groups fixture workflows, compatibility
-templates, backend fixtures, review fixtures, and their safe commands.
-
-Expected shape:
-
-- ready fixture issues appear under `running issues`.
-- underspecified, blocked, terminal, or over-limit fixture issues appear under
-  `skipped issues`.
-- `event_log=...` points at the configured JSONL event stream.
-- GitHub Project v2 integration gaps are printed honestly.
-
-## Operator Commands
-
-See `docs/cli-command-reference.md` for the grouped command reference, write
-boundaries, and role-specific lanes.
+Inspect the canonical dogfood workflow:
 
 ```bash
-cargo run -- validate examples/dry-run-workflow.md
-cargo run -- validate-workflow examples/dry-run-workflow.md
-cargo run -- inspect examples/dry-run-workflow.md
-cargo run -- cleanup-plan workflows/jade-symphony.md
-cargo run -- inspect workflows/jade-symphony.md --state Merging --state Rework
-cargo run -- doctor examples/dry-run-workflow.md
-cargo run -- doctor --interactive
-cargo run -- doctor repair 194
-cargo run -- doctor --auto-fix --dry-run
-cargo run -- doctor-repair-human-review examples/dry-run-workflow.md --dry-run
-cargo run -- doctor examples/dry-run-workflow.md --json
-cargo run -- doctor examples/dry-run-workflow.md --strict
-cargo run -- plan examples/dry-run-workflow.md
-cargo run -- plan-dispatch examples/dry-run-workflow.md
-cargo run -- status examples/dry-run-workflow.md
-cargo run -- status examples/dry-run-workflow.md --json
-cargo run -- status-api examples/dry-run-workflow.md --bind 127.0.0.1:8787 --once
-cargo run -- run-once examples/dry-run-workflow.md
-cargo run -- run-once examples/git-identity-workflow.md
-cargo run -- run-once examples/codex-subprocess-workflow.md
-cargo run -- run-once examples/claude-subprocess-workflow.md
-cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
+cargo run -- validate workflows/jade-symphony.md
+cargo run -- inspect workflows/jade-symphony.md
+cargo run -- project-state workflows/jade-symphony.md
+cargo run -- doctor workflows/jade-symphony.md
+```
+
+Run a bounded supervised preview:
+
+```bash
+scripts/jade-dogfood --dry-run
+cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 cargo run -- review-loop workflows/jade-symphony.md --max-iterations 1 --dry-run
-cargo run -- profiles examples/cockpit-profiles-workflow.md
-cargo run -- plan examples/linear-fixture-workflow.md
-cargo run -- gate examples/dry-run-workflow.md '#3'
-cargo run -- forge-discover --intent "Add Issue Forge validate and repair commands"
-cargo run -- forge-validate --title "Thin Forge issue" --file examples/fixtures/thin-issue.md
-cargo run -- forge-discuss --title "Thin Forge issue" --file examples/fixtures/thin-issue.md
-cargo run -- forge-repair --title "Thin Forge issue" --file examples/fixtures/thin-issue.md
-cargo run -- forge-validate --title "Repaired Forge issue" --file examples/fixtures/repaired-issue.md
-cargo run -- forge-draft --title "Implement read-only Project v2 adapter" --goal "Load Project v2 issues into TrackerIssue records."
-cargo run -- forge-interactive --title "Add resume preflight" --intent "run-loop should inspect runtime state before claiming new work" --skill runtime
-cargo run -- forge-reflect --context-file docs/dogfood-readiness.md --limit 1
-cargo run -- forge-create --workflow workflows/jade-symphony.md --title "Follow-up title" --file path/to/issue.md --assignee Alive24 --add-to-project --project-field Capability=CLI --write
+cargo run -- merge-loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 
-`run-once` defaults to dry-run examples, but the Codex and Claude subprocess
-fixtures show controlled real-backend paths without invoking live hosted
-services. They write `JADE_SYMPHONY_PROMPT.md` into the prepared workspace and
-append JSONL events for the selected workflow. The Codex subprocess path is not
-the app-server protocol; if configured with `codex app-server`, Jade records an
-actionable failed backend event instead of launching it through the wrong
-transport.
-
-`review-loop --write` is a bounded Review Agent operator command, not a
-background supervisor. When it runs a review job, Jade persists a JSON ledger
-record at `logs_root/reviews/jobs/*.json` with the issue, worker key, backend,
-artifact path, decision, summary/error, and finding count. Review and Rework
-workpads include that ledger path when available.
-
-`inspect` prints the total issue count, a state summary, per-issue gate status,
-and configured integration gaps. It is the quickest read-only check for whether
-the Project still has `Merging`, `Rework`, `Todo`, or `In Progress` work.
-
-`profiles` lists execution profiles discovered from workflow config. For
-cockpit-tools, Jade currently reads the Codex instance store shape inspected in
-`https://github.com/jlcodes99/cockpit-tools`: a local `codex_instances.json` with camelCase
-`instances[]` records such as `name`, `userDataDir`, `workingDir`, and
-`extraArgs`. Jade ignores account binding fields, uses the instance name as the
-worker identity, and falls back to explicit `profiles.entries` when the
-cockpit-tools file is not present. This is a small adapter boundary, not a full
-account manager.
-
-`examples/git-identity-workflow.md` is a fixture workflow that runs
-`after_create: git init`, applies the configured `identity.git` values with
-workspace-local git config, and prints actor/git identity evidence. Jade
-Symphony does not write global git identity config.
-
-Live GitHub write commands are explicit and require a non-fixture workflow plus
-usable GitHub auth through `GITHUB_TOKEN` / `GH_TOKEN` or `gh api graphql`:
+Live writes are explicit and should stay bounded:
 
 ```bash
-cargo run -- set-state path/to/WORKFLOW.md '#123' need_to_clarify --write
-cargo run -- workpad path/to/WORKFLOW.md '#123' path/to/workpad.md --write
-cargo run -- link-pr path/to/WORKFLOW.md '#123' https://github.com/OWNER/REPO/pull/456 --write
-cargo run -- create-follow-up --workflow path/to/WORKFLOW.md --title "Follow-up title" --body-file path/to/body.md --write
-cargo run -- add-to-project path/to/WORKFLOW.md <github-issue-node-id> --write
-cargo run -- gate-apply path/to/WORKFLOW.md '#123' --write
-cargo run -- review-once path/to/WORKFLOW.md '#123' --write
-cargo run -- review-fake path/to/WORKFLOW.md '#123' --outcome pass --write
-cargo run -- review-loop examples/review-fixture-workflow.md --max-iterations 1 --dry-run
-cargo run -- review-freshness --issue '#123' --prior-head old --current-head new --prior-base old-base --current-base new-base --changed-file docs/dogfood-readiness.md --stale-reason merge-conflict --rework-class mechanical-conflict-resolution --patch-summary "Resolved merge conflict without semantic changes."
+scripts/jade-dogfood --write --confirm-write --max-iterations 1
 ```
 
-`forge-interactive` is dry-run by default and can start as a conversational
-Issue Forge Agent with only the canonical workflow path:
+Use the CLI reference for detailed command behavior, write boundaries, and lane
+authority rules:
+[`docs/cli-command-reference.md`](docs/cli-command-reference.md).
+
+## Issue Forge
+
+Issue Forge helps turn rough operator intent into executable issue contracts.
+It can discover local candidates, ask focused clarification questions, validate
+Markdown against the issue template, repair thin drafts, and create tracker
+issues only when the operator explicitly confirms the write path.
+
+Typical dry-run entrypoints:
 
 ```bash
+cargo run -- forge-discover --intent "Add review timeout recovery"
 cargo run -- forge-interactive --workflow workflows/jade-symphony.md
+cargo run -- forge-validate --title "Thin issue" --file examples/fixtures/thin-issue.md
+cargo run -- forge-repair --title "Thin issue" --file examples/fixtures/thin-issue.md
 ```
 
-It reads natural-language intent from stdin when `--intent` or `--file` is not
-provided, infers a draft title, prints focused clarification questions for thin
-intent, and shows the final quality-gated issue draft before any tracker
-mutation. If it is used to create a tracker issue, it requires `--write`,
-`--confirm-create`, and `--assignee`; `--workflow` is also required for that
-write path, and `--add-to-project` remains explicit.
+Tracker creation requires explicit write flags, an assignee, and project
+selection. See the command reference before using live creation:
+[`docs/cli-command-reference.md`](docs/cli-command-reference.md).
 
-`add-to-project` initializes the configured ProjectV2 `Status` field to the
-workflow's mapped `Todo` option so newly added issues are visible to the
-normalized tracker state machine. `forge-create --add-to-project` can set
-additional GitHub Project v2 single-select fields by name with repeatable
-`--project-field NAME=VALUE` flags. Text, number, date, and multi-step field
-editing remain follow-ups.
+## Project Layout
 
-`link-pr` records issue-to-PR evidence through the normalized tracker adapter.
-In GitHub Project v2 mode this currently writes a tracker comment, matching the
-adapter boundary; richer first-class PR reconciliation remains a follow-up.
+- [`workflows/jade-symphony.md`](workflows/jade-symphony.md): canonical
+  self-dogfood workflow for Project #9.
+- [`workflows/prompts/`](workflows/prompts/): lane-specific Main, Review, and
+  Merge Agent prompt contracts.
+- [`docs/operator-dogfood.md`](docs/operator-dogfood.md): supervised operator
+  launcher and live-run guidance.
+- [`docs/cli-command-reference.md`](docs/cli-command-reference.md): command
+  behavior, write boundaries, and examples.
+- [`docs/dogfood-readiness.md`](docs/dogfood-readiness.md): current readiness
+  and known gaps.
+- [`docs/bootstrap-parity-audit.md`](docs/bootstrap-parity-audit.md): detailed
+  capability inventory and parity status.
+- [`docs/artifact-storage-policy.md`](docs/artifact-storage-policy.md):
+  durable, recoverable, and disposable artifact policy.
+- [`docs/bootstrap/`](docs/bootstrap/): Jade extension spec, workflow notes,
+  parity references, and official Symphony source index.
+- [`examples/`](examples/): fixture workflows and safe local examples.
 
-`set-state` is a main-implementation-agent command and refuses `Human Review`.
-`review-once` / `review-fake` are independent Review Agent commands: a passing
-review can move `Agent Review` to `Human Review`, confirmed findings move to
-`Rework`, and failed or inconclusive reviews do not advance to `Human Review`.
-`review-loop` is the first runtime-style Review Agent command: it selects
-eligible `Agent Review` issues, prints intended review work in dry-run mode, and
-in write mode records review evidence plus the allowed review transition. It is
-bounded by `--max-iterations` or `--once`, supports `--max-concurrent`, and is
-not a persistent daemon yet.
-`review-freshness` is an evidence command for Merging conflict repair: it does
-not mutate tracker state, does not approve a PR, and does not authorize the main
-implementation agent to set `Human Review`. Mechanical conflict repair can
-preserve prior Human Review evidence for an authorized merge/handoff flow;
-semantic or unknown rework requires the normal Agent Review and Human Review
-path.
-Confirmed Review Agent findings now route through an evidence-first Rework
-diagnostic path: Jade Symphony writes the structured diagnostic workpad before
-setting `Rework`, and it does not change state if the durable workpad write
-fails.
-These commands are adapter operations plus the first runtime-loop
-skeleton, not full autonomous orchestration. Use write mode carefully until
-claim reconciliation, resume state, and PR automation exist.
+## Design Boundaries
 
-The live GitHub Project workflow template includes the actual Jade operating
-prompt used for dogfooding. It is intentionally more than tracker config: the
-rendered prompt embeds the issue body, quality-gate expectation, workpad
-requirements, main-agent `Agent Review` boundary, Review Agent boundary, and
-Merging role separation.
+Jade Symphony is orchestration infrastructure. It should not contain downstream
+application business logic. Domain-specific work belongs in tracked issues and
+per-issue workspaces.
 
-## Stubbed
+The tracker remains the operating source of truth. Local runtime files are used
+for recovery and audit, but live status must be refreshed from the tracker
+before deciding what to claim, review, or merge.
 
-- linked PR attachment/linking as a first-class relationship.
-- full multi-account manager UI or account switching; cockpit-tools integration
-  is currently read-only fixture/path parsing for Codex instance names.
-- automatic repair of existing `Agent Review` items with missing PR evidence;
-  the current slice prevents new silent handoffs and records diagnostics.
-- write-mode artifact cleanup; the current cleanup command is a dry-run planner.
-- automatic cleanup for live git worktrees after terminal tracker
-  reconciliation.
-- SSH worker execution; the workflow config shape is preserved, but Jade still
-  runs workers locally.
-- profile-specific account/token routing for git hosts or agent backends.
-- rich interactive Issue Forge TUI; the current flow is CLI-first and
-  command-step based.
-- Linear live adapter credential-gated smoke coverage.
-- Codex app-server transport.
-- Claude Code full protocol transport beyond the subprocess fixture path.
-- dynamic tool execution such as `linear_graphql`; a first-slice registry
-  descriptor exists, but no tool calls are run yet.
-- long-running runtime workflow reload wiring and worker supervision.
-- persistent/remote web observability beyond the local one-request
-  `status-api` endpoint.
+Write-mode commands are intentionally explicit. Jade Symphony should record
+evidence before state transitions, preserve role boundaries, and prefer a
+visible blocked state over an unsafe silent advance.
 
-## Not Implemented Yet
+## Development
 
-- long-running worker supervision beyond idle polling in `run-loop`.
-- richer issue claiming, state transition, and reconciliation safety beyond the
-  current claim helper and resume preflight.
-- full multi-worker runtime-state resume reconciliation after interruption.
-- richer workspace-per-issue branch and PR reconciliation beyond current
-  dirty/no-op guarded create-or-reuse handoff.
-- richer verification modeling beyond the current workflow-level command list.
-- continuation retries and automated stall restart.
-- richer vendor-specific quota handling beyond conservative usage-limit
-  pattern matching.
-- automatic terminal workspace cleanup inside the runtime loop.
-- profile-aware tracker claim ownership beyond namespaced runtime/log/workspace
-  metadata.
-- live token/rate-limit accounting beyond the current snapshot counters.
-- persistent background Agent Review worker supervision beyond bounded
-  `review-loop` ticks.
-- unbounded idle `merge-loop` polling beyond bounded guarded merge ticks.
-- Issue Forge Project field setup after issue creation.
-- autonomous Issue Forge issue creation from reflective mode without explicit
-  operator confirmation.
-- hosted-provider LLM gate integrations beyond the local command adapter.
-- richer semantic Issue Quality Gate analysis beyond the structured LLM result.
-- full Liquid-compatible prompt renderer.
-- credential-gated integration tests.
-
-## Read-Only GitHub Project v2 Use
-
-Remove `tracker.fixture_path` from a workflow and make sure `gh` is installed and
-authenticated:
-
-```bash
-gh auth status
-cargo run -- inspect path/to/WORKFLOW.md
-cargo run -- plan path/to/WORKFLOW.md
-```
-
-This path can read ProjectV2 items and normalize GitHub Issue content for
-planning. Explicit `--write` commands can update ProjectV2 status, write workpad
-comments, create follow-up issues, and add issues to the project with initial
-`Todo` status. PR linking uses an issue comment/autolink strategy rather than a
-first-class relationship; linked PR discovery reads closing references and PR
-URLs recorded in canonical Jade workpad comments. Jade
-Symphony can idle-poll in unbounded write mode, but still cannot fully reconcile
-state or supervise live agents.
-
-## Development Commands
+The main verification commands are:
 
 ```bash
 cargo test
@@ -452,65 +215,17 @@ cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-Dry-run dispatch:
+Useful read-only commands:
 
 ```bash
+cargo run -- validate examples/dry-run-workflow.md
+cargo run -- inspect examples/dry-run-workflow.md
 cargo run -- plan examples/dry-run-workflow.md
-cargo run -- run-once examples/dry-run-workflow.md
-cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
-scripts/jade-dogfood --dry-run
-cargo run -- dogfood-smoke examples/dogfood-smoke-workflow.md --dry-run
-cargo run -- dogfood-smoke workflows/jade-symphony.md --dry-run
-cargo run -- merge-once examples/merge-fixture-workflow.md --dry-run
-scripts/jade-dogfood --write --confirm-write --max-iterations 1
-cargo run -- run-loop examples/usage-limit-workflow.md --max-iterations 1 --write
-cargo run -- merge-once workflows/jade-symphony.md --dry-run
-cargo run -- merge-loop workflows/jade-symphony.md --max-iterations 3 --dry-run
-cargo run -- cleanup-workspaces workflows/jade-symphony.md --dry-run
-cargo run -- gate examples/llm-gate-workflow.md '#1'
+cargo run -- status examples/dry-run-workflow.md --json
+cargo run -- cleanup-plan workflows/jade-symphony.md
 ```
-
-The dry-run workflow uses:
-
-- `examples/dry-run-workflow.md`
-- `examples/fixtures/dry-run-issues.json`
-- `examples/usage-limit-workflow.md`
-- `examples/fixtures/usage-limit-issues.json`
-- `examples/merge-fixture-workflow.md`
-- `examples/fixtures/merge-issues.json`
-- `examples/dogfood-smoke-workflow.md`
-- `examples/fixtures/dogfood-smoke-issues.json`
-- `examples/linear-fixture-workflow.md`
-- `examples/fixtures/linear-issues.json`
-- `examples/llm-gate-workflow.md`
-- `examples/fixtures/llm-gate-ready.sh`
-- `examples/fixtures/llm-gate-clarify.sh`
-- `examples/fixtures/llm-gate-malformed.sh`
-
-For normal Jade Symphony Project #9 dogfood, use:
-
-- `workflows/jade-symphony.md`
-
-The intended operator spelling is one loop plus one forge:
-
-```bash
-jade-symphony loop workflows/jade-symphony.md --write
-jade-symphony forge workflows/jade-symphony.md --interactive
-```
-
-Until those aliases land, use the explicit command names:
-
-```bash
-cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --write
-cargo run -- forge-interactive --workflow workflows/jade-symphony.md
-```
-
-The legacy `examples/github-project-*.md` files are compatibility/reference
-templates, not the normal operator workflow.
-
-## Bootstrap Sources
 
 The implementation is grounded in `docs/bootstrap/` and the pinned official
-reference under `docs/bootstrap/references/openai-symphony`.
+reference under `docs/bootstrap/references/openai-symphony/`.
 
-Do not edit files under `docs/bootstrap/references/openai-symphony`.
+Do not edit files under `docs/bootstrap/references/openai-symphony/`.

@@ -2531,11 +2531,39 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 current_time_ms(),
             )? {
                 ResumePreflightAction::Continue => {}
-                ResumePreflightAction::ClearCompleted { issue_identifier } => {
+                ResumePreflightAction::ArchiveStale {
+                    issue_identifier,
+                    tracker_state,
+                    archive_reason,
+                } => {
+                    let archive_path = match runtime_state.as_ref() {
+                        Some(state) => {
+                            Some(archive_runtime_state(&config, state, &archive_reason)?)
+                        }
+                        None => None,
+                    };
                     clear_runtime_state(&config)?;
+                    append_runtime_supervision_event(
+                        &config,
+                        runtime_state.as_ref(),
+                        "RuntimeStateArchived",
+                        &format!(
+                            "issue={issue_identifier} tracker_state={tracker_state} reason={archive_reason} archive_path={}",
+                            archive_path
+                                .as_ref()
+                                .map(|path| path.display().to_string())
+                                .unwrap_or_else(|| "n/a".into())
+                        ),
+                    )?;
                     println!(
-                        "run_loop_resume_preflight action=clear issue={} reason=tracker_state_terminal",
-                        issue_identifier
+                        "run_loop_resume_preflight action=archive issue={} tracker_state={:?} reason={} archive_path={}",
+                        issue_identifier,
+                        tracker_state,
+                        archive_reason,
+                        archive_path
+                            .as_ref()
+                            .map(|path| path.display().to_string())
+                            .unwrap_or_else(|| "n/a".into())
                     );
                 }
                 ResumePreflightAction::RetryLater {
@@ -3287,8 +3315,10 @@ fn write_lane_claim_field(
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ResumePreflightAction {
     Continue,
-    ClearCompleted {
+    ArchiveStale {
         issue_identifier: String,
+        tracker_state: String,
+        archive_reason: String,
     },
     RetryLater {
         issue_identifier: String,
@@ -3302,6 +3332,14 @@ enum ResumePreflightAction {
     Block {
         reason: String,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RuntimeWorkspaceStatus {
+    Absent,
+    Clean(PathBuf),
+    Dirty(PathBuf),
+    Unknown { path: PathBuf, reason: String },
 }
 
 fn run_loop_claim_action(issue: &TrackerIssue, config: &RuntimeConfig) -> RunLoopClaimAction {
@@ -3438,24 +3476,8 @@ fn run_loop_resume_preflight(
     };
     let normalized_state = normalize_state(&issue.state);
 
-    if config
-        .terminal_state_set()
-        .iter()
-        .any(|state| state == &normalized_state)
-        || matches!(normalized_state.as_str(), "agent review" | "human review")
-    {
-        return Ok(ResumePreflightAction::ClearCompleted {
-            issue_identifier: active_issue.identifier.clone(),
-        });
-    }
-
     if normalized_state != "in progress" {
-        return Ok(ResumePreflightAction::Block {
-            reason: format!(
-                "runtime state references {} but tracker state is {}",
-                active_issue.identifier, issue.state
-            ),
-        });
+        return stale_runtime_state_action(state, &issue, &normalized_state, config);
     }
 
     if let Some(retry) = state.retry.clone() {
@@ -3477,6 +3499,137 @@ fn run_loop_resume_preflight(
     }
 
     Ok(ResumePreflightAction::Continue)
+}
+
+fn stale_runtime_state_action(
+    state: &RuntimeState,
+    issue: &TrackerIssue,
+    normalized_state: &str,
+    config: &RuntimeConfig,
+) -> Result<ResumePreflightAction, Box<dyn std::error::Error>> {
+    let active_issue = state
+        .active_issue
+        .as_ref()
+        .ok_or("runtime state has no active issue")?;
+    let archive_reason = if config
+        .terminal_state_set()
+        .iter()
+        .any(|state| state == normalized_state)
+    {
+        "tracker_state_terminal"
+    } else if matches!(normalized_state, "agent review" | "human review") {
+        "tracker_state_handoff"
+    } else {
+        "tracker_state_non_active"
+    };
+
+    match runtime_workspace_status(state)? {
+        RuntimeWorkspaceStatus::Absent | RuntimeWorkspaceStatus::Clean(_) => {
+            Ok(ResumePreflightAction::ArchiveStale {
+                issue_identifier: active_issue.identifier.clone(),
+                tracker_state: issue.state.clone(),
+                archive_reason: archive_reason.into(),
+            })
+        }
+        RuntimeWorkspaceStatus::Dirty(path) => Ok(ResumePreflightAction::Block {
+            reason: format!(
+                "runtime state references {} but tracker state is {}; workspace is dirty at {}",
+                active_issue.identifier,
+                issue.state,
+                path.display()
+            ),
+        }),
+        RuntimeWorkspaceStatus::Unknown { path, reason } => Ok(ResumePreflightAction::Block {
+            reason: format!(
+                "runtime state references {} but tracker state is {}; workspace status is unknown at {}: {}",
+                active_issue.identifier,
+                issue.state,
+                path.display(),
+                reason
+            ),
+        }),
+    }
+}
+
+fn runtime_workspace_status(
+    state: &RuntimeState,
+) -> Result<RuntimeWorkspaceStatus, Box<dyn std::error::Error>> {
+    let Some(path) = state.workspace_path.as_ref() else {
+        return Ok(RuntimeWorkspaceStatus::Absent);
+    };
+    if !path.exists() {
+        return Ok(RuntimeWorkspaceStatus::Absent);
+    }
+    if !path.is_dir() {
+        return Ok(RuntimeWorkspaceStatus::Unknown {
+            path: path.clone(),
+            reason: "workspace path is not a directory".into(),
+        });
+    }
+
+    let output = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(path)
+        .arg("status")
+        .arg("--porcelain")
+        .output();
+    match output {
+        Ok(output) if output.status.success() => {
+            if output.stdout.is_empty() {
+                Ok(RuntimeWorkspaceStatus::Clean(path.clone()))
+            } else {
+                Ok(RuntimeWorkspaceStatus::Dirty(path.clone()))
+            }
+        }
+        Ok(output) => Ok(RuntimeWorkspaceStatus::Unknown {
+            path: path.clone(),
+            reason: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        }),
+        Err(error) => Ok(RuntimeWorkspaceStatus::Unknown {
+            path: path.clone(),
+            reason: error.to_string(),
+        }),
+    }
+}
+
+fn archive_runtime_state(
+    config: &RuntimeConfig,
+    state: &RuntimeState,
+    reason: &str,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let runtime_path = runtime_state_path(config);
+    let archive_dir = runtime_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("archive");
+    std::fs::create_dir_all(&archive_dir)?;
+    let issue_ref = state
+        .active_issue
+        .as_ref()
+        .map(|issue| issue.identifier.as_str())
+        .unwrap_or("unknown");
+    let archive_path = archive_dir.join(format!(
+        "runtime-state-{}-{}-{}.json",
+        current_time_ms(),
+        sanitize_archive_segment(issue_ref),
+        sanitize_archive_segment(reason)
+    ));
+    std::fs::write(&archive_path, serde_json::to_string_pretty(state)?)?;
+    Ok(archive_path)
+}
+
+fn sanitize_archive_segment(value: &str) -> String {
+    let sanitized = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    sanitized.trim_matches('-').to_string()
 }
 
 fn no_dispatch_action(
@@ -5264,6 +5417,15 @@ mod tests {
         RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap()
     }
 
+    fn main_loop_test_config() -> RuntimeConfig {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\n  active_states:\n    - Todo\n    - Rework\n  terminal_states:\n    - Done\n---\nPrompt",
+        )
+        .unwrap();
+        RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap()
+    }
+
     fn live_github_config(allow_unassigned: bool) -> RuntimeConfig {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
@@ -5446,6 +5608,19 @@ mod tests {
         );
         state.updated_at_ms = Some(1_000);
         state
+    }
+
+    fn init_clean_git_workspace(path: &Path) {
+        let output = ProcessCommand::new("git")
+            .arg("init")
+            .arg(path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]
@@ -6476,14 +6651,79 @@ mod tests {
     }
 
     #[test]
-    fn resume_preflight_blocks_conflicting_tracker_state() {
+    fn resume_preflight_archives_non_active_state_with_absent_worktree() {
         let config = test_config();
-        let tracker = MemoryTracker::new(vec![tracker_issue("Todo")]);
+        let tracker = MemoryTracker::new(vec![tracker_issue("Need to Clarify")]);
         let state = active_runtime_state("#29");
 
         let action = run_loop_resume_preflight(&tracker, &config, Some(&state), 2_000).unwrap();
 
-        assert!(matches!(action, ResumePreflightAction::Block { .. }));
+        assert_eq!(
+            action,
+            ResumePreflightAction::ArchiveStale {
+                issue_identifier: "#29".into(),
+                tracker_state: "Need to Clarify".into(),
+                archive_reason: "tracker_state_non_active".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn resume_preflight_archives_terminal_state_with_clean_worktree() {
+        let config = test_config();
+        let tracker = MemoryTracker::new(vec![tracker_issue("Done")]);
+        let temp = tempfile::tempdir().unwrap();
+        init_clean_git_workspace(temp.path());
+        let mut state = active_runtime_state("#29");
+        state.workspace_path = Some(temp.path().to_path_buf());
+
+        let action = run_loop_resume_preflight(&tracker, &config, Some(&state), 2_000).unwrap();
+
+        assert_eq!(
+            action,
+            ResumePreflightAction::ArchiveStale {
+                issue_identifier: "#29".into(),
+                tracker_state: "Done".into(),
+                archive_reason: "tracker_state_terminal".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn resume_preflight_blocks_non_active_state_with_dirty_worktree() {
+        let config = test_config();
+        let tracker = MemoryTracker::new(vec![tracker_issue("Need to Clarify")]);
+        let temp = tempfile::tempdir().unwrap();
+        init_clean_git_workspace(temp.path());
+        std::fs::write(temp.path().join("scratch.txt"), "dirty work").unwrap();
+        let mut state = active_runtime_state("#29");
+        state.workspace_path = Some(temp.path().to_path_buf());
+
+        let action = run_loop_resume_preflight(&tracker, &config, Some(&state), 2_000).unwrap();
+
+        assert!(
+            matches!(action, ResumePreflightAction::Block { reason } if reason.contains("workspace is dirty"))
+        );
+    }
+
+    #[test]
+    fn resume_preflight_archive_allows_unrelated_todo_selection() {
+        let config = main_loop_test_config();
+        let stale = tracker_issue_with_ref("#29", "Needs clarification", "Need to Clarify");
+        let mut todo = tracker_issue_with_ref("#30", "Ready next work", "Todo");
+        todo.description = Some(forge_contract());
+        let tracker = MemoryTracker::new(vec![stale, todo.clone()]);
+        let state = active_runtime_state("#29");
+
+        let action = run_loop_resume_preflight(&tracker, &config, Some(&state), 2_000).unwrap();
+        let plan =
+            Orchestrator::new(config).plan_dispatch(tracker.list_dispatchable_issues().unwrap());
+
+        assert!(matches!(action, ResumePreflightAction::ArchiveStale { .. }));
+        assert_eq!(
+            plan.selected.first().map(|issue| issue.identifier.as_str()),
+            Some("#30")
+        );
     }
 
     #[test]
@@ -6523,7 +6763,7 @@ mod tests {
     }
 
     #[test]
-    fn resume_preflight_clears_completed_tracker_state() {
+    fn resume_preflight_archives_completed_tracker_state() {
         let config = test_config();
         let tracker = MemoryTracker::new(vec![tracker_issue("Agent Review")]);
         let state = active_runtime_state("#29");
@@ -6532,8 +6772,10 @@ mod tests {
 
         assert_eq!(
             action,
-            ResumePreflightAction::ClearCompleted {
-                issue_identifier: "#29".into()
+            ResumePreflightAction::ArchiveStale {
+                issue_identifier: "#29".into(),
+                tracker_state: "Agent Review".into(),
+                archive_reason: "tracker_state_handoff".into(),
             }
         );
     }

@@ -75,7 +75,7 @@ use jade_symphony::tracker::{
     adapter_from_config, claim_decision, classify_project_state_error, ClaimDecision,
     FollowUpIssueInput, ProjectFieldAssignment, TrackerAdapter, TrackerError,
 };
-use jade_symphony::workflow::WorkflowDefinition;
+use jade_symphony::workflow::{AgentLane, WorkflowDefinition};
 use jade_symphony::workspace::{
     apply_local_git_identity, prepare_workspace, profile_scoped_identifier, remove_issue_workspace,
     run_after_run, run_before_run, run_workspace_command, safe_identifier, GitIdentityApplyResult,
@@ -898,19 +898,20 @@ fn review_fake(
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     require_write_intent(write)?;
-    let config = load_config(&workflow_path)?;
+    let workflow = WorkflowDefinition::load(&workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
+    config.validate()?;
     let adapter = adapter_from_config(&config);
     let issue = adapter
         .get_issue(&issue_ref)?
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
     let request = ReviewRequest {
         issue: issue.clone(),
-        prompt: format!(
-            "Review {} {}\n\n{}",
-            issue.identifier,
-            issue.title,
-            issue.description.as_deref().unwrap_or_default()
-        ),
+        prompt: render_prompt(
+            workflow.prompt_for_lane(AgentLane::ReviewAgent),
+            &issue,
+            None,
+        )?,
         workspace: config.workspace.root.clone(),
         artifact_root: config.observability.logs_root.join("reviews"),
     };
@@ -933,19 +934,20 @@ fn review_once(
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     require_write_intent(write)?;
-    let config = load_config(&workflow_path)?;
+    let workflow = WorkflowDefinition::load(&workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
+    config.validate()?;
     let adapter = adapter_from_config(&config);
     let issue = adapter
         .get_issue(&issue_ref)?
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
     let request = ReviewRequest {
         issue: issue.clone(),
-        prompt: format!(
-            "Review {} {}\n\n{}",
-            issue.identifier,
-            issue.title,
-            issue.description.as_deref().unwrap_or_default()
-        ),
+        prompt: render_prompt(
+            workflow.prompt_for_lane(AgentLane::ReviewAgent),
+            &issue,
+            None,
+        )?,
         workspace: config.workspace.root.clone(),
         artifact_root: config.observability.logs_root.join("reviews"),
     };
@@ -1019,7 +1021,9 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
         }
 
         iterations += 1;
-        let config = load_config(&options.workflow_path)?;
+        let workflow = WorkflowDefinition::load(&options.workflow_path)?;
+        let config = RuntimeConfig::from_workflow(&workflow, &options.workflow_path)?;
+        config.validate()?;
         let adapter = adapter_from_config(&config);
         let issues = adapter
             .fetch_issues_by_states(std::slice::from_ref(&config.tracker.state_map.agent_review))?;
@@ -1118,8 +1122,12 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                                 &worker_key,
                                 worker_slot,
                             )?;
-                            let mut job =
-                                run_review_job(&config, &latest, options.fake_outcome.clone())?;
+                            let mut job = run_review_job(
+                                &workflow,
+                                &config,
+                                &latest,
+                                options.fake_outcome.clone(),
+                            )?;
                             let ledger_path = write_review_job_ledger_record(
                                 &config.observability.logs_root,
                                 &latest,
@@ -1259,6 +1267,7 @@ fn merge_once_tick(
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
+    let _merge_prompt = workflow.prompt_for_lane(AgentLane::MergeAgent);
 
     let adapter = adapter_from_config(&config);
     let merging_state = config.tracker.state_map.merging.clone();
@@ -1586,18 +1595,18 @@ fn write_review_claim_field(
 }
 
 fn run_review_job(
+    workflow: &WorkflowDefinition,
     config: &RuntimeConfig,
     issue: &TrackerIssue,
     fake_outcome: Option<FakeReviewOutcome>,
 ) -> Result<ReviewJob, Box<dyn std::error::Error>> {
     let request = ReviewRequest {
         issue: issue.clone(),
-        prompt: format!(
-            "Review {} {}\n\n{}",
-            issue.identifier,
-            issue.title,
-            issue.description.as_deref().unwrap_or_default()
-        ),
+        prompt: render_prompt(
+            workflow.prompt_for_lane(AgentLane::ReviewAgent),
+            issue,
+            None,
+        )?,
         workspace: review_workspace_for_issue(config, issue),
         artifact_root: config.observability.logs_root.join("reviews"),
     };
@@ -2527,7 +2536,7 @@ fn execute_issue_once_with_workspace_key(
     let git_identity = apply_local_git_identity(&workspace.path, &config.identity.git)?;
     run_before_run(&workspace.path, &config.hooks)?;
 
-    let prompt = render_prompt(&workflow.prompt_template, issue, None)?;
+    let prompt = render_prompt(workflow.prompt_for_lane(AgentLane::MainAgent), issue, None)?;
     let backend = backend_from_config(config);
     let mut prepared = backend.prepare(workspace.path.clone(), prompt, config)?;
     prepared.prompt_artifact_path = Some(rendered_prompt_artifact_path(

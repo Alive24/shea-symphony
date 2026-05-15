@@ -34,6 +34,17 @@ defaults durable worktrees, logs, and runtime artifacts under
 `JADE_SYMPHONY_ARTIFACT_ROOT` before running commands to move the whole local
 artifact tree.
 
+The workflow file is an index/config, not a single prompt for every role. It
+references lane prompt contracts under `workflows/prompts/`:
+
+- `main-agent.md` for implementation ticks that stop at `Agent Review`;
+- `review-agent.md` for independent review and review evidence;
+- `merge-agent.md` for guarded `Merging` land/rework decisions.
+
+Fixture workflows can still use inline prompt bodies. If the canonical workflow
+declares lane prompts, all three lane paths must exist before agent
+initialization continues.
+
 After preflight, dry-run mode executes:
 
 ```bash

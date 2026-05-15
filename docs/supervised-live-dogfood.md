@@ -89,16 +89,21 @@ cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
 That write tick requires a real main-agent backend. The canonical workflow uses
-`agent.backend: tmux`, so a successful first slice starts an attachable local
-session, prints the `tmux attach-session` command, records the session log path,
-and keeps the issue active. A running tmux session alone is not completion
-evidence and must not move the issue to `Agent Review`.
+`agent.backend: tmux`, so a successful tick starts an attachable local session,
+prints the `tmux attach-session` command, records the prompt artifact, session
+registry entry, and log path, and keeps the issue active. A running tmux session
+alone is not completion evidence and must not move the issue to `Agent Review`.
 Codex tmux startup captures the pane before sending the issue prompt. By
 default, if a Jade-created issue worktree shows the Codex workspace trust
 prompt, Jade sends two `C-m` submissions and waits until the pane reaches a
 ready Codex viewport. Set `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to disable this
 auto-trust behavior. If the prompt cannot be cleared, the write tick stops with
 the tmux attach command and log path preserved for manual inspection.
+Use `cargo run -- status workflows/jade-symphony.md` for compact session
+classification and attach/log evidence, `cargo run -- doctor
+workflows/jade-symphony.md` for stale or mismatched runtime/session findings,
+and `cargo run -- clean audit workflows/jade-symphony.md` to classify session
+artifacts before cleanup.
 
 The operator launcher wraps the same workflow with local preflight checks:
 

@@ -2856,7 +2856,10 @@ struct IssueExecutionResult {
     profile_id: Option<String>,
     instance_name: Option<String>,
     success: bool,
+    pending_session: bool,
     session_id: Option<String>,
+    backend_log_path: Option<PathBuf>,
+    backend_attach_command: Option<String>,
     message: String,
     usage_limit_pause: Option<UsageLimitPause>,
     prompt_artifact_path: Option<PathBuf>,
@@ -2965,7 +2968,10 @@ fn execute_issue_once_with_workspace_key(
             .as_ref()
             .map(|profile| profile.instance_name.clone()),
         success: summary.success,
+        pending_session: summary.pending_session,
         session_id: summary.session_id,
+        backend_log_path: summary.log_path,
+        backend_attach_command: summary.attach_command,
         message: summary.message,
         usage_limit_pause,
         prompt_artifact_path: Some(prompt_artifact_path),
@@ -3507,6 +3513,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             &config,
             event,
         );
+        runtime_state.branch_name = Some(handoff.branch_name.clone());
         mark_runtime_state_updated(&mut runtime_state, current_time_ms());
         save_runtime_state(&config, &runtime_state)?;
         println!(
@@ -3670,6 +3677,53 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 reason: "main worker handoff evidence",
             },
         );
+
+        if result.pending_session {
+            append_runtime_supervision_event(
+                &config,
+                Some(&runtime_state),
+                "TmuxSessionRunning",
+                &format!(
+                    "issue={} session={} attach_command={} log_path={}",
+                    latest.identifier,
+                    result.session_id.as_deref().unwrap_or("n/a"),
+                    result.backend_attach_command.as_deref().unwrap_or("n/a"),
+                    result
+                        .backend_log_path
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| "n/a".into())
+                ),
+            )?;
+            println!(
+                "run_loop_action=session_started issue={} backend={} session={} attach_command=\"{}\" log_path={}",
+                latest.identifier,
+                result.backend,
+                result.session_id.as_deref().unwrap_or("n/a"),
+                result
+                    .backend_attach_command
+                    .as_deref()
+                    .unwrap_or("n/a"),
+                result
+                    .backend_log_path
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "n/a".into())
+            );
+            print_latest_status(&LatestStatus {
+                lane: "main".into(),
+                category: "running".into(),
+                action: "session_started".into(),
+                issue_identifier: Some(latest.identifier.clone()),
+                issue_title: Some(latest.title.clone()),
+                actor_label: Some(config.identity.actor_label.clone()),
+                workspace: Some(result.workspace_path.display().to_string()),
+                branch: runtime_state.branch_name.clone(),
+                session_id: result.session_id.clone(),
+                next: result.backend_attach_command.clone(),
+            });
+            break;
+        }
 
         if result.success {
             if !transition_allowed_for_main_agent("agent_review") {
@@ -4392,7 +4446,7 @@ fn ensure_write_mode_main_agent_backend(
     Err(io::Error::new(
         io::ErrorKind::InvalidInput,
         format!(
-            "write-mode {command} is blocked because workflow={} configures agent.backend=dry-run; configure a real main-agent backend such as codex or claude-code before using --write",
+            "write-mode {command} is blocked because workflow={} configures agent.backend=dry-run; configure a real main-agent backend such as tmux, codex, or claude-code before using --write",
             workflow_path.display()
         ),
     )
@@ -4502,6 +4556,7 @@ fn run_loop_runtime_state_for_issue(
     );
     state.attempt_count = next_runtime_attempt_count(existing, &issue.identifier);
     state.branch_name = issue.branch_name.clone();
+    state.lane = Some("main".into());
     state.profile_id = profile.as_ref().map(|profile| profile.profile_id.clone());
     state.instance_name = profile
         .as_ref()
@@ -4532,12 +4587,16 @@ fn run_loop_runtime_state_with_result(
     state.workspace_path = Some(result.workspace_path.clone());
     state.backend = result.backend.clone();
     state.backend_session_id = result.session_id.clone();
+    state.backend_log_path = result.backend_log_path.clone();
+    state.backend_attach_command = result.backend_attach_command.clone();
     state.profile_id = result.profile_id.clone();
     state.instance_name = result.instance_name.clone();
     state.actor_role = Some(result.actor_role.clone());
     state.actor_label = Some(result.actor_label.clone());
     state.git_author = result.git_author.clone();
-    state.last_event = Some(if result.success {
+    state.last_event = Some(if result.pending_session {
+        "SessionRunning".into()
+    } else if result.success {
         "Completed".into()
     } else {
         "Failed".into()
@@ -4845,6 +4904,26 @@ fn run_loop_handoff_workpad(
         format!(
             "- Session: `{}`",
             result.session_id.as_deref().unwrap_or("n/a")
+        ),
+        format!(
+            "- Session status: `{}`",
+            if result.pending_session {
+                "running"
+            } else {
+                "terminal"
+            }
+        ),
+        format!(
+            "- Attach command: `{}`",
+            result.backend_attach_command.as_deref().unwrap_or("n/a")
+        ),
+        format!(
+            "- Session log: `{}`",
+            result
+                .backend_log_path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "n/a".into())
         ),
         format!("- Message: {}", result.message),
         String::new(),
@@ -7905,7 +7984,10 @@ mod tests {
             profile_id: Some("codex-alpha".into()),
             instance_name: Some("Codex Alpha".into()),
             success: true,
+            pending_session: false,
             session_id: Some("session-29".into()),
+            backend_log_path: None,
+            backend_attach_command: None,
             message: "ok".into(),
             usage_limit_pause: None,
             prompt_artifact_path: None,
@@ -7946,6 +8028,54 @@ mod tests {
                 reason: "main agent completed".into(),
             })
         );
+    }
+
+    #[test]
+    fn run_loop_runtime_state_records_pending_tmux_session_metadata() {
+        let config = test_config();
+        let issue = tracker_issue("In Progress");
+        let state = run_loop_runtime_state_for_issue(None, &issue, &config, "Claimed");
+        let result = IssueExecutionResult {
+            workspace_path: PathBuf::from("/tmp/jade/issue-220"),
+            backend: "tmux".into(),
+            profile_id: None,
+            instance_name: None,
+            success: false,
+            pending_session: true,
+            session_id: Some("jade-main-220".into()),
+            backend_log_path: Some(PathBuf::from("/tmp/jade/logs/tmux/jade-main-220.log")),
+            backend_attach_command: Some("tmux attach-session -t jade-main-220".into()),
+            message: "tmux session running".into(),
+            usage_limit_pause: None,
+            prompt_artifact_path: None,
+            actor_role: "implementation_agent".into(),
+            actor_label: "Jade Symphony Agent".into(),
+            git_author: None,
+            git_identity: GitIdentityApplyResult {
+                status: jade_symphony::workspace::GitIdentityApplyStatus::NotGitRepository,
+                author: None,
+                applied_keys: Vec::new(),
+            },
+            live_handoff: None,
+            handoff_verification: None,
+        };
+
+        let state = run_loop_runtime_state_with_result(state, &result);
+        let workpad = run_loop_handoff_workpad(
+            &issue,
+            &result,
+            &run_loop_handoff_plan(&config, &issue).unwrap(),
+        );
+
+        assert_eq!(state.last_event.as_deref(), Some("SessionRunning"));
+        assert_eq!(state.backend_session_id.as_deref(), Some("jade-main-220"));
+        assert_eq!(
+            state.backend_attach_command.as_deref(),
+            Some("tmux attach-session -t jade-main-220")
+        );
+        assert!(workpad.contains("Session status: `running`"));
+        assert!(workpad.contains("Attach command: `tmux attach-session -t jade-main-220`"));
+        assert!(workpad.contains("Session log: `/tmp/jade/logs/tmux/jade-main-220.log`"));
     }
 
     #[test]
@@ -8002,7 +8132,10 @@ mod tests {
             profile_id: None,
             instance_name: None,
             success: true,
+            pending_session: false,
             session_id: Some("session-33".into()),
+            backend_log_path: None,
+            backend_attach_command: None,
             message: "ok".into(),
             usage_limit_pause: None,
             prompt_artifact_path: None,
@@ -8124,7 +8257,10 @@ mod tests {
             profile_id: None,
             instance_name: None,
             success: true,
+            pending_session: false,
             session_id: Some("session-33".into()),
+            backend_log_path: None,
+            backend_attach_command: None,
             message: "ok".into(),
             usage_limit_pause: None,
             prompt_artifact_path: None,
@@ -8176,7 +8312,10 @@ mod tests {
             profile_id: None,
             instance_name: None,
             success: false,
+            pending_session: false,
             session_id: Some("session-63".into()),
+            backend_log_path: None,
+            backend_attach_command: None,
             message: "Codex subprocess exited with status 1".into(),
             usage_limit_pause: Some(UsageLimitPause {
                 classifier: "usage_limit".into(),
@@ -8277,7 +8416,10 @@ mod tests {
             profile_id: None,
             instance_name: None,
             success: true,
+            pending_session: false,
             session_id: Some("session-57".into()),
+            backend_log_path: None,
+            backend_attach_command: None,
             message: "ok".into(),
             usage_limit_pause: None,
             prompt_artifact_path: None,
@@ -8324,7 +8466,10 @@ mod tests {
             profile_id: None,
             instance_name: None,
             success: true,
+            pending_session: false,
             session_id: Some("session-57".into()),
+            backend_log_path: None,
+            backend_attach_command: None,
             message: "ok".into(),
             usage_limit_pause: None,
             prompt_artifact_path: None,

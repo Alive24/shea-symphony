@@ -51,7 +51,7 @@ tracker state.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `run-once` | Execute one selected issue through the configured backend. | Fixture-safe by default when the workflow has `tracker.fixture_path`. |
-| `run-loop` | Poll/select/claim/run/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; `agent.backend: dry-run` is rejected before tracker/runtime mutation. |
+| `run-loop` | Poll/select/claim/run/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; tmux sessions stay active instead of auto-handing off. |
 | `dogfood-smoke` | Supervised preflight for one controlled dogfood issue. | Dry-run inspection by default; live readiness does not bypass review or merge gates. |
 
 Examples:
@@ -77,10 +77,14 @@ active issue, but it uses the same lane claim check and stamps `Main Agent`
 before tracker mutation. `run-loop`, `review-loop`, and `merge-once` print
 compact `Latest:` status bars in addition to their detailed line logs.
 
-The canonical `workflows/jade-symphony.md` file may still be configured with
-`agent.backend: dry-run` for preview-only operator checks. In that state,
-`run-loop --write` exits non-zero before loading runtime state, creating
-worktrees, claiming Project fields, or writing workpads.
+The canonical `workflows/jade-symphony.md` file uses the local `tmux` main-agent
+backend. A launched tmux session records its session name, log path, workspace,
+branch, and attach command in runtime/workpad evidence, then keeps the issue in
+the active main lane. It does not move to `Agent Review` until later completion
+evidence satisfies the existing handoff rules. If an operator overrides the
+workflow back to `agent.backend: dry-run`, `run-loop --write` exits non-zero
+before loading runtime state, creating worktrees, claiming Project fields, or
+writing workpads.
 
 ## Tracker Writes
 

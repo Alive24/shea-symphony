@@ -19,6 +19,7 @@ pub struct RuntimeConfig {
     pub backend: BackendConfig,
     pub codex: CodexConfig,
     pub claude: ClaudeConfig,
+    pub tmux: TmuxConfig,
     pub review: ReviewConfig,
     pub quality_gate: QualityGateConfig,
     pub verification: VerificationConfig,
@@ -132,6 +133,13 @@ pub struct CodexConfig {
 pub struct ClaudeConfig {
     pub command: String,
     pub turn_timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TmuxConfig {
+    pub command: String,
+    pub agent_command: String,
+    pub session_prefix: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -311,6 +319,13 @@ impl RuntimeConfig {
                 .unwrap_or_else(|| "claude".to_string()),
             turn_timeout_ms: get_u64(root.get("claude"), "turn_timeout_ms").unwrap_or(3_600_000),
         };
+        let tmux = TmuxConfig {
+            command: resolve_command_token(get_string(root.get("tmux"), "command"), "tmux"),
+            agent_command: get_string(root.get("tmux"), "agent_command")
+                .unwrap_or_else(|| "codex".to_string()),
+            session_prefix: get_string(root.get("tmux"), "session_prefix")
+                .unwrap_or_else(|| "jade".to_string()),
+        };
         let review = ReviewConfig {
             backend: get_string(root.get("review"), "backend")
                 .unwrap_or_else(|| "fake".to_string()),
@@ -355,6 +370,7 @@ impl RuntimeConfig {
             backend,
             codex,
             claude,
+            tmux,
             review,
             quality_gate,
             verification,
@@ -374,8 +390,18 @@ impl RuntimeConfig {
         }
 
         match self.backend.kind.as_str() {
-            "dry-run" | "codex" | "claude-code" => {}
+            "dry-run" | "codex" | "claude-code" | "tmux" => {}
             other => return Err(ConfigError::UnsupportedBackend(other.to_string())),
+        }
+        if self.backend.kind == "tmux" && self.tmux.session_prefix.trim().is_empty() {
+            return Err(ConfigError::Invalid(
+                "tmux.session_prefix must not be empty".into(),
+            ));
+        }
+        if self.backend.kind == "tmux" && self.tmux.agent_command.trim().is_empty() {
+            return Err(ConfigError::Invalid(
+                "tmux.agent_command must not be empty".into(),
+            ));
         }
         match self.review.backend.as_str() {
             "fake" | "gemini-cli" => {}
@@ -866,6 +892,23 @@ mod tests {
             .agent
             .max_concurrent_agents_by_state
             .contains_key("bad"));
+    }
+
+    #[test]
+    fn parses_tmux_backend_config() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nagent:\n  backend: tmux\ntmux:\n  command: /opt/homebrew/bin/tmux\n  agent_command: codex\n  session_prefix: jade-local\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.backend.kind, "tmux");
+        assert_eq!(config.tmux.command, "/opt/homebrew/bin/tmux");
+        assert_eq!(config.tmux.agent_command, "codex");
+        assert_eq!(config.tmux.session_prefix, "jade-local");
+        assert!(config.validate().is_ok());
     }
 
     #[test]

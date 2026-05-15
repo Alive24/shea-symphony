@@ -13,8 +13,9 @@ use jade_symphony::agent::{
 use jade_symphony::artifacts::{artifact_layout, cleanup_plan, ArtifactClass, CleanupPlan};
 use jade_symphony::config::RuntimeConfig;
 use jade_symphony::doctor::{
-    audit_project_issues, human_review_repair_candidates, render_human_review_repair_workpad,
-    render_project_audit_report, render_project_audit_report_json,
+    audit_project_issues, audit_project_issues_with_context, human_review_repair_candidates,
+    render_doctor_repair_workpad, render_human_review_repair_workpad, render_project_audit_report,
+    render_project_audit_report_json, ProjectAuditReport, ProjectDoctorContext,
 };
 use jade_symphony::event_log::{
     EventLog, EventRecord, TrackerMutationAuditInput, TrackerMutationAuditRecord,
@@ -1918,7 +1919,7 @@ fn render_state_summary(issues: &[TrackerIssue]) -> String {
 }
 
 fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::Error>> {
-    let workflow_path = options.workflow_path;
+    let workflow_path = resolve_doctor_workflow_path(options.workflow_path.clone());
     if options.json && options.display == DisplayMode::Tui {
         return Err("doctor --json cannot be combined with --display tui".into());
     }
@@ -1928,15 +1929,43 @@ fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::Error>> {
 
     let adapter = adapter_from_config(&config);
     let issues = adapter.fetch_issues_by_states(&all_mapped_tracker_states(&config))?;
-    let mut report = audit_project_issues(&issues);
-    report.integration_gaps = adapter.integration_gaps();
+    let mut integration_gaps = adapter.integration_gaps();
+    let runtime_state = match load_runtime_state(&config) {
+        Ok(state) => state,
+        Err(error) => {
+            integration_gaps.push(format!("runtime_state_load_error: {error}"));
+            None
+        }
+    };
+    let context = ProjectDoctorContext {
+        runtime_state,
+        now_ms: current_time_ms(),
+        stale_after_ms: options.stale_after_ms,
+    };
+    let mut report = audit_project_issues_with_context(&issues, Some(&context));
+    report.integration_gaps = integration_gaps;
 
-    if options.json {
-        println!("{}", render_project_audit_report_json(&report)?);
-    } else if options.display == DisplayMode::Tui {
-        println!("{}", render_doctor_panel(&report));
-    } else {
-        println!("{}", render_project_audit_report(&report));
+    match &options.action {
+        Some(DoctorAction::Repair(repair)) => {
+            doctor_repair_issue(&config, adapter.as_ref(), &issues, &report, repair)?;
+            return Ok(());
+        }
+        None if options.json => {
+            println!("{}", render_project_audit_report_json(&report)?);
+        }
+        None => {
+            if options.display == DisplayMode::Tui {
+                println!("{}", render_doctor_panel(&report));
+            } else {
+                println!("{}", render_project_audit_report(&report));
+            }
+            if options.interactive {
+                print_doctor_interactive_plan(&report);
+            }
+            if options.auto_fix {
+                apply_doctor_auto_fix(&config, adapter.as_ref(), &report, options.write)?;
+            }
+        }
     }
 
     if options.strict && report.blocker_count() > 0 {
@@ -1948,6 +1977,174 @@ fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn resolve_doctor_workflow_path(explicit: Option<PathBuf>) -> PathBuf {
+    if let Some(path) = explicit {
+        return path;
+    }
+    if let Some(path) = std::env::var_os("JADE_SYMPHONY_WORKFLOW")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+    {
+        return path;
+    }
+    let repo_default = PathBuf::from("workflows/jade-symphony.md");
+    if repo_default.exists() {
+        repo_default
+    } else {
+        PathBuf::from("WORKFLOW.md")
+    }
+}
+
+fn print_doctor_interactive_plan(report: &ProjectAuditReport) {
+    println!(
+        "doctor_interactive findings={} blockers={}",
+        report.violations.len(),
+        report.blocker_count()
+    );
+    if report.violations.is_empty() {
+        println!("doctor_interactive action=no_op reason=no_fixable_findings");
+        return;
+    }
+    for violation in &report.violations {
+        println!(
+            "doctor_interactive action=inspect issue={} code={} command=\"doctor repair {}\"",
+            violation.issue_ref,
+            violation.code,
+            violation.issue_ref.trim_start_matches('#')
+        );
+    }
+}
+
+fn apply_doctor_auto_fix(
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    report: &ProjectAuditReport,
+    write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let candidates = human_review_repair_candidates(report);
+    println!(
+        "doctor_auto_fix safe_candidates={} write={write}",
+        candidates.len()
+    );
+    for violation in candidates {
+        println!(
+            "doctor_auto_fix action=move issue={} from={:?} to=agent_review",
+            violation.issue_ref, violation.state
+        );
+        if write {
+            let workpad = render_human_review_repair_workpad(violation);
+            adapter.upsert_workpad(&violation.issue_ref, &workpad)?;
+            append_tracker_mutation_audit(
+                config,
+                TrackerMutationAudit {
+                    command: "doctor --auto-fix",
+                    mutation_type: "workpad_write",
+                    issue_ref: Some(&violation.issue_ref),
+                    target: None,
+                    from_state: Some(violation.state.clone()),
+                    to_state: Some("agent_review".into()),
+                    reason: "doctor auto-fix evidence",
+                },
+            );
+            adapter.set_state(&violation.issue_ref, "agent_review")?;
+            append_tracker_mutation_audit(
+                config,
+                TrackerMutationAudit {
+                    command: "doctor --auto-fix",
+                    mutation_type: "state_change",
+                    issue_ref: Some(&violation.issue_ref),
+                    target: None,
+                    from_state: Some(violation.state.clone()),
+                    to_state: Some("agent_review".into()),
+                    reason: "safe doctor auto-fix for invalid Human Review boundary",
+                },
+            );
+        } else {
+            println!(
+                "doctor_auto_fix_dry_run action=workpad issue={} evidence=human_review_missing_review_evidence",
+                violation.issue_ref
+            );
+            println!(
+                "doctor_auto_fix_dry_run action=set_state issue={} target_state=agent_review",
+                violation.issue_ref
+            );
+        }
+    }
+    Ok(())
+}
+
+fn doctor_repair_issue(
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    issues: &[TrackerIssue],
+    report: &ProjectAuditReport,
+    repair: &DoctorRepairIssueOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let issue = issues
+        .iter()
+        .find(|issue| issue_ref_matches(&issue.identifier, &repair.issue_ref))
+        .ok_or_else(|| format!("doctor repair could not find issue {}", repair.issue_ref))?;
+    println!(
+        "doctor_repair issue={} state={:?} write={} move_need_human_input={}",
+        issue.identifier, issue.state, repair.write, repair.move_need_human_input
+    );
+    println!(
+        "safe=no_op command=\"doctor repair {}\"",
+        issue.identifier.trim_start_matches('#')
+    );
+    println!("uncertain=resume command=\"run-loop <workflow> --write\" reason=requires operator confirmation and live workspace inspection");
+    println!("uncertain=reset reason=requires confirming no useful work would be discarded");
+    println!("uncertain=move_need_human_input command=\"doctor repair {} --move-need-human-input --write\" reason=records evidence before tracker mutation", issue.identifier.trim_start_matches('#'));
+    println!("dangerous=delete_worktree reason=out_of_scope_for_doctor_repair");
+
+    if repair.move_need_human_input {
+        let workpad = render_doctor_repair_workpad(issue, report, "move_need_human_input");
+        if repair.write {
+            adapter.upsert_workpad(&issue.identifier, &workpad)?;
+            append_tracker_mutation_audit(
+                config,
+                TrackerMutationAudit {
+                    command: "doctor repair",
+                    mutation_type: "workpad_write",
+                    issue_ref: Some(&issue.identifier),
+                    target: None,
+                    from_state: Some(issue.state.clone()),
+                    to_state: Some("need_human_input".into()),
+                    reason: "doctor repair evidence before human-input escalation",
+                },
+            );
+            adapter.set_state(&issue.identifier, "need_human_input")?;
+            append_tracker_mutation_audit(
+                config,
+                TrackerMutationAudit {
+                    command: "doctor repair",
+                    mutation_type: "state_change",
+                    issue_ref: Some(&issue.identifier),
+                    target: None,
+                    from_state: Some(issue.state.clone()),
+                    to_state: Some("need_human_input".into()),
+                    reason: "doctor repair escalated uncertain runtime state",
+                },
+            );
+        } else {
+            println!(
+                "doctor_repair_dry_run action=workpad issue={} evidence=doctor_repair",
+                issue.identifier
+            );
+            println!(
+                "doctor_repair_dry_run action=set_state issue={} target_state=need_human_input",
+                issue.identifier
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn issue_ref_matches(left: &str, right: &str) -> bool {
+    left.trim().trim_start_matches('#') == right.trim().trim_start_matches('#')
 }
 
 fn doctor_repair_human_review(
@@ -4422,10 +4619,27 @@ struct ReviewLoopOptions {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DoctorOptions {
-    workflow_path: PathBuf,
+    workflow_path: Option<PathBuf>,
     json: bool,
     strict: bool,
     display: DisplayMode,
+    interactive: bool,
+    auto_fix: bool,
+    write: bool,
+    stale_after_ms: u64,
+    action: Option<DoctorAction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DoctorAction {
+    Repair(DoctorRepairIssueOptions),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DoctorRepairIssueOptions {
+    issue_ref: String,
+    write: bool,
+    move_need_human_input: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4630,18 +4844,42 @@ struct DoctorRepairArgs {
 
 #[derive(Debug, Args)]
 struct DoctorArgs {
-    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
-    workflow_path: PathBuf,
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: Option<PathBuf>,
     #[arg(long)]
     json: bool,
     #[arg(long)]
     strict: bool,
     #[arg(long, value_enum, default_value_t = CliDisplayMode::Plain)]
     display: CliDisplayMode,
+    #[arg(long)]
+    interactive: bool,
+    #[arg(long = "auto-fix")]
+    auto_fix: bool,
+    #[arg(long = "stale-after-ms", default_value_t = 10_800_000)]
+    stale_after_ms: u64,
     #[arg(long = "dry-run")]
     _dry_run: bool,
     #[arg(long = "write")]
-    _write: bool,
+    write: bool,
+    #[command(subcommand)]
+    action: Option<DoctorSubcommandArgs>,
+}
+
+#[derive(Debug, Subcommand)]
+enum DoctorSubcommandArgs {
+    Repair(DoctorRepairIssueArgs),
+}
+
+#[derive(Debug, Args)]
+struct DoctorRepairIssueArgs {
+    issue_ref: String,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "move-need-human-input")]
+    move_need_human_input: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -5060,6 +5298,19 @@ impl TryFrom<Cli> for Command {
                             json: args.json,
                             strict: args.strict,
                             display: args.display.into(),
+                            interactive: args.interactive,
+                            auto_fix: args.auto_fix,
+                            write: args.write,
+                            stale_after_ms: args.stale_after_ms,
+                            action: args.action.map(|action| match action {
+                                DoctorSubcommandArgs::Repair(repair) => {
+                                    DoctorAction::Repair(DoctorRepairIssueOptions {
+                                        issue_ref: repair.issue_ref,
+                                        write: repair.write,
+                                        move_need_human_input: repair.move_need_human_input,
+                                    })
+                                }
+                            }),
                         },
                     }),
                     CliCommand::DoctorRepairHumanReview(args) => {
@@ -5748,10 +5999,15 @@ mod tests {
             parse(&["audit-project", "examples/dry-run-workflow.md"]),
             Command::Doctor {
                 options: DoctorOptions {
-                    workflow_path: PathBuf::from("examples/dry-run-workflow.md"),
+                    workflow_path: Some(PathBuf::from("examples/dry-run-workflow.md")),
                     json: false,
                     strict: false,
                     display: DisplayMode::Plain,
+                    interactive: false,
+                    auto_fix: false,
+                    write: false,
+                    stale_after_ms: 10_800_000,
+                    action: None,
                 }
             }
         );
@@ -5934,10 +6190,71 @@ mod tests {
             ]),
             Command::Doctor {
                 options: DoctorOptions {
-                    workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                    workflow_path: Some(PathBuf::from("examples/github-project-workflow.md")),
                     json: true,
                     strict: true,
                     display: DisplayMode::Plain,
+                    interactive: false,
+                    auto_fix: false,
+                    write: false,
+                    stale_after_ms: 10_800_000,
+                    action: None,
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn parses_short_doctor_commands() {
+        assert_eq!(
+            parse(&["doctor", "--interactive"]),
+            Command::Doctor {
+                options: DoctorOptions {
+                    workflow_path: None,
+                    json: false,
+                    strict: false,
+                    display: DisplayMode::Plain,
+                    interactive: true,
+                    auto_fix: false,
+                    write: false,
+                    stale_after_ms: 10_800_000,
+                    action: None,
+                }
+            }
+        );
+        assert_eq!(
+            parse(&["doctor", "--auto-fix", "--dry-run"]),
+            Command::Doctor {
+                options: DoctorOptions {
+                    workflow_path: None,
+                    json: false,
+                    strict: false,
+                    display: DisplayMode::Plain,
+                    interactive: false,
+                    auto_fix: true,
+                    write: false,
+                    stale_after_ms: 10_800_000,
+                    action: None,
+                }
+            }
+        );
+        assert_eq!(
+            parse(&["doctor", "repair", "194"]),
+            Command::Doctor {
+                options: DoctorOptions {
+                    workflow_path: None,
+                    json: false,
+                    strict: false,
+                    display: DisplayMode::Plain,
+                    interactive: false,
+                    auto_fix: false,
+                    write: false,
+                    stale_after_ms: 10_800_000,
+                    action: Some(DoctorAction::Repair(DoctorRepairIssueOptions {
+                        issue_ref: "194".into(),
+                        write: false,
+                        move_need_human_input: false,
+                    })),
                 }
             }
         );

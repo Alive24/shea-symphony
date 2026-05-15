@@ -48,7 +48,8 @@ Use the live workflow as the source of tracker state:
 
 ```bash
 cargo run -- inspect workflows/jade-symphony.md
-cargo run -- doctor workflows/jade-symphony.md
+cargo run -- doctor
+cargo run -- doctor --interactive
 ```
 
 Review the output before mutating anything. In particular, check for:
@@ -177,9 +178,12 @@ When something goes wrong:
 
 - use `cargo run -- inspect workflows/jade-symphony.md` to refresh
   tracker state;
-- use `cargo run -- doctor workflows/jade-symphony.md` to find project
+- use `cargo run -- doctor` to find project, claim, and runtime-state
   invariant violations;
-- inspect runtime state under the configured logs root;
+- use `cargo run -- doctor repair ISSUE` to inspect safe, uncertain, and
+  dangerous repair choices before mutating tracker state;
+- inspect runtime state under the configured logs root when the repair output
+  says resume or reset needs operator confirmation;
 - continue existing issue branches/PRs for rework rather than creating duplicate
   branches;
 - keep one issue, one branch, one PR.

@@ -7,6 +7,11 @@ order.
 All live tracker mutations require explicit `--write`. Fixture-backed workflows
 remain the preferred rehearsal path for local development.
 
+The canonical `workflows/jade-symphony.md` file is a workflow index/config. It
+references lane-specific prompts in `workflows/prompts/` so Main, Review, and
+Merge commands initialize with their own authority contracts. Older fixture
+workflows may still use an inline prompt body.
+
 ## Read-Only Planning And Inspection
 
 | Command | Purpose | Example |

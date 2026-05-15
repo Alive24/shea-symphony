@@ -8,7 +8,23 @@ use thiserror::Error;
 pub struct WorkflowDefinition {
     pub path: PathBuf,
     pub config: Value,
+    pub workflow_index: String,
     pub prompt_template: String,
+    pub lane_prompts: LanePromptTemplates,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LanePromptTemplates {
+    pub main_agent: String,
+    pub review_agent: String,
+    pub merge_agent: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentLane {
+    MainAgent,
+    ReviewAgent,
+    MergeAgent,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -29,6 +45,14 @@ pub enum WorkflowError {
     Parse(#[from] serde_yaml::Error),
     #[error("workflow front matter must decode to a map/object")]
     FrontMatterNotMap,
+    #[error("invalid lane prompt configuration: {0}")]
+    InvalidLanePromptConfig(String),
+    #[error("missing {lane} prompt at {path}: {source}")]
+    MissingLanePrompt {
+        lane: &'static str,
+        path: PathBuf,
+        source: std::io::Error,
+    },
 }
 
 impl WorkflowDefinition {
@@ -45,12 +69,24 @@ impl WorkflowDefinition {
     pub fn parse(path: impl AsRef<Path>, content: &str) -> Result<Self, WorkflowError> {
         let (front_matter, prompt) = split_front_matter(content);
         let config = parse_front_matter(&front_matter)?;
+        let workflow_index = prompt.trim().to_string();
+        let lane_prompts = load_lane_prompts(path.as_ref(), &config, &workflow_index)?;
 
         Ok(Self {
             path: path.as_ref().to_path_buf(),
             config,
-            prompt_template: prompt.trim().to_string(),
+            prompt_template: lane_prompts.main_agent.clone(),
+            workflow_index,
+            lane_prompts,
         })
+    }
+
+    pub fn prompt_for_lane(&self, lane: AgentLane) -> &str {
+        match lane {
+            AgentLane::MainAgent => &self.lane_prompts.main_agent,
+            AgentLane::ReviewAgent => &self.lane_prompts.review_agent,
+            AgentLane::MergeAgent => &self.lane_prompts.merge_agent,
+        }
     }
 }
 
@@ -132,6 +168,62 @@ fn parse_front_matter(front_matter: &str) -> Result<Value, WorkflowError> {
     }
 }
 
+fn load_lane_prompts(
+    workflow_path: &Path,
+    config: &Value,
+    inline_prompt: &str,
+) -> Result<LanePromptTemplates, WorkflowError> {
+    let Some(prompt_config) = config.get("prompts") else {
+        return Ok(LanePromptTemplates {
+            main_agent: inline_prompt.to_string(),
+            review_agent: inline_prompt.to_string(),
+            merge_agent: inline_prompt.to_string(),
+        });
+    };
+
+    let prompt_config = prompt_config.as_object().ok_or_else(|| {
+        WorkflowError::InvalidLanePromptConfig("prompts must be a map/object".into())
+    })?;
+
+    Ok(LanePromptTemplates {
+        main_agent: read_lane_prompt(workflow_path, prompt_config, "main_agent")?,
+        review_agent: read_lane_prompt(workflow_path, prompt_config, "review_agent")?,
+        merge_agent: read_lane_prompt(workflow_path, prompt_config, "merge_agent")?,
+    })
+}
+
+fn read_lane_prompt(
+    workflow_path: &Path,
+    prompt_config: &serde_json::Map<String, Value>,
+    lane: &'static str,
+) -> Result<String, WorkflowError> {
+    let relative_path = prompt_config
+        .get(lane)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            WorkflowError::InvalidLanePromptConfig(format!(
+                "prompts.{lane} is required when prompts is configured"
+            ))
+        })?;
+    let path = resolve_workflow_relative_path(workflow_path, relative_path);
+    fs::read_to_string(&path)
+        .map(|content| content.trim().to_string())
+        .map_err(|source| WorkflowError::MissingLanePrompt { lane, path, source })
+}
+
+fn resolve_workflow_relative_path(workflow_path: &Path, value: &str) -> PathBuf {
+    let path = PathBuf::from(value);
+    if path.is_absolute() {
+        path
+    } else {
+        workflow_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(path)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,6 +247,78 @@ mod tests {
         let workflow = WorkflowDefinition::parse("WORKFLOW.md", "Only prompt").unwrap();
         assert!(workflow.config.as_object().unwrap().is_empty());
         assert_eq!(workflow.prompt_template, "Only prompt");
+        assert_eq!(
+            workflow.prompt_for_lane(AgentLane::MainAgent),
+            "Only prompt"
+        );
+        assert_eq!(
+            workflow.prompt_for_lane(AgentLane::ReviewAgent),
+            "Only prompt"
+        );
+        assert_eq!(
+            workflow.prompt_for_lane(AgentLane::MergeAgent),
+            "Only prompt"
+        );
+    }
+
+    #[test]
+    fn loads_lane_prompts_from_workflow_relative_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let workflow_path = temp.path().join("WORKFLOW.md");
+        fs::create_dir(temp.path().join("prompts")).unwrap();
+        fs::write(
+            temp.path().join("prompts/main.md"),
+            "Main {{ issue.identifier }}",
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join("prompts/review.md"),
+            "Review {{ issue.identifier }}",
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join("prompts/merge.md"),
+            "Merge {{ issue.identifier }}",
+        )
+        .unwrap();
+
+        let workflow = WorkflowDefinition::parse(
+            &workflow_path,
+            "---\nprompts:\n  main_agent: prompts/main.md\n  review_agent: prompts/review.md\n  merge_agent: prompts/merge.md\n---\nWorkflow index",
+        )
+        .unwrap();
+
+        assert_eq!(workflow.workflow_index, "Workflow index");
+        assert_eq!(
+            workflow.prompt_for_lane(AgentLane::MainAgent),
+            "Main {{ issue.identifier }}"
+        );
+        assert_eq!(
+            workflow.prompt_for_lane(AgentLane::ReviewAgent),
+            "Review {{ issue.identifier }}"
+        );
+        assert_eq!(
+            workflow.prompt_for_lane(AgentLane::MergeAgent),
+            "Merge {{ issue.identifier }}"
+        );
+        assert_eq!(workflow.prompt_template, "Main {{ issue.identifier }}");
+    }
+
+    #[test]
+    fn lane_prompt_config_requires_all_lanes_when_configured() {
+        let temp = tempfile::tempdir().unwrap();
+        let workflow_path = temp.path().join("WORKFLOW.md");
+        fs::create_dir(temp.path().join("prompts")).unwrap();
+        fs::write(temp.path().join("prompts/main.md"), "Main").unwrap();
+
+        let error = WorkflowDefinition::parse(
+            &workflow_path,
+            "---\nprompts:\n  main_agent: prompts/main.md\n---\nWorkflow index",
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("prompts.review_agent is required"));
     }
 
     #[test]
@@ -233,6 +397,7 @@ mod tests {
     fn github_project_workflow_prompt_is_not_placeholder_thin() {
         let workflow = github_project_workflow();
 
+        assert!(workflow.workflow_index.contains("Workflow Index"));
         assert!(workflow.prompt_template.len() > 3_000);
         assert!(workflow.prompt_template.contains("## Operating Loop"));
         assert!(workflow.prompt_template.contains("## Workpad Discipline"));
@@ -244,6 +409,12 @@ mod tests {
         assert!(!workflow
             .prompt_template
             .contains("stop before\nmaking live agent changes"));
+        assert!(workflow
+            .prompt_for_lane(AgentLane::ReviewAgent)
+            .contains("independent Review Agent"));
+        assert!(workflow
+            .prompt_for_lane(AgentLane::MergeAgent)
+            .contains("Merge Agent"));
     }
 
     #[test]

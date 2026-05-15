@@ -883,7 +883,16 @@ fn tmux_session_name(prepared: &PreparedRun) -> String {
         .unwrap_or("jade");
     deterministic_session_name(
         prefix,
-        prepared.lane.as_deref().unwrap_or("main"),
+        prepared
+            .lane
+            .as_deref()
+            .or_else(|| {
+                prepared
+                    .env
+                    .get("JADE_SYMPHONY_AGENT_LANE")
+                    .map(String::as_str)
+            })
+            .unwrap_or("main"),
         prepared.issue_identifier.as_deref(),
         prepared.attempt,
         prepared.issue_title.as_deref().or_else(|| {
@@ -1381,6 +1390,45 @@ mod tests {
         assert_eq!(fake_log.matches(" C-m").count(), 2, "{fake_log}");
         assert!(!fake_log.contains("load-buffer"), "{fake_log}");
         assert!(!fake_log.contains("paste-buffer"), "{fake_log}");
+    }
+
+    #[test]
+    fn tmux_session_name_uses_lane_metadata_when_present() {
+        let mut prepared = PreparedRun {
+            backend: "tmux".into(),
+            workspace: PathBuf::from("/tmp/review-workspace"),
+            prompt: "prompt".into(),
+            prompt_artifact_path: None,
+            command: Some("codex".into()),
+            timeout_ms: 0,
+            approval_policy: None,
+            sandbox: None,
+            profile_id: None,
+            instance_name: None,
+            env: BTreeMap::from([(
+                "JADE_SYMPHONY_TMUX_SESSION_PREFIX".into(),
+                "jade-test".into(),
+            )]),
+            actor_role: None,
+            actor_label: None,
+            git_author: None,
+            issue_id: None,
+            issue_identifier: Some("#220".into()),
+            issue_title: Some("Add tmux-backed local agent runtime for all lanes".into()),
+            lane: Some("review".into()),
+            attempt: 2,
+            branch_name: None,
+            session_registry_path: None,
+        };
+
+        let session = tmux_session_name(&prepared);
+        assert!(session.starts_with("jade-test-review-220-attempt-2-"));
+        prepared.lane = None;
+        prepared
+            .env
+            .insert("JADE_SYMPHONY_AGENT_LANE".into(), "merge".into());
+        let session = tmux_session_name(&prepared);
+        assert!(session.starts_with("jade-test-merge-220-attempt-2-"));
     }
 
     #[test]

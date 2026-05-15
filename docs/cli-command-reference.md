@@ -95,6 +95,14 @@ rendered prompt after a ready viewport is observed. Set
 `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to opt out; a visible trust prompt or missing
 readiness then fails closed and preserves attach/log evidence for inspection.
 
+For manual lane recovery, `agent-session start WORKFLOW ISSUE --lane
+main|review|merge --write` starts the configured local tmux command with the
+lane-specific prompt, writes the lane claim field (`Main Agent`, `Review
+Agent`, or `Merging Agent`), and records session evidence in the workpad.
+`agent-session list WORKFLOW` shows active tmux sessions with attach commands,
+and `agent-session attach WORKFLOW SESSION` prints the exact attach command
+without joining the terminal unless `--exec` is provided.
+
 ## Tracker Writes
 
 These commands can mutate live tracker state and require `--write`.
@@ -181,12 +189,17 @@ changes.
 | `review-once` | Run one configured review backend for one issue. | Only Review Agent may advance passed reviews to `Human Review`. |
 | `review-loop` | Bounded review worker selection/reconciliation. | Prevents duplicate review workers where evidence exists. |
 | `review-freshness` | Record/inspect review freshness evidence. | Used around merging/rework conflict repair. |
+| `agent-session start` | Start an attachable local tmux session for a selected lane. | Manual recovery path; it claims only the chosen lane and does not advance workflow state. |
+| `agent-session list` | List active Jade tmux sessions by configured prefix. | Read-only operator summary. |
+| `agent-session attach` | Print or execute the tmux attach command for one session. | Defaults to printing the command; `--exec` enters tmux. |
 
 Example:
 
 ```bash
 cargo run -- review-loop examples/review-fixture-workflow.md --max-iterations 1 --dry-run
 cargo run -- review-loop workflows/jade-symphony.md --max-iterations 1 --write
+cargo run -- agent-session start workflows/jade-symphony.md '#220' --lane review --write
+cargo run -- agent-session list workflows/jade-symphony.md
 ```
 
 ## Merge Lane

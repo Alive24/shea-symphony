@@ -9,7 +9,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::{error::ErrorKind, Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use jade_symphony::agent::{
-    backend_from_config, persist_prompt_artifact, usage_limit_pause_from_events, UsageLimitPause,
+    backend_from_config, persist_prompt_artifact, usage_limit_pause_from_events, AgentBackend,
+    TmuxBackend, UsageLimitPause,
 };
 use jade_symphony::artifacts::{artifact_layout, cleanup_plan, ArtifactClass, CleanupPlan};
 use jade_symphony::config::RuntimeConfig;
@@ -180,6 +181,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         } => review_once(workflow_path, issue_ref, write),
         Command::ReviewFreshness { input } => review_freshness(input),
         Command::ReviewLoop { options } => review_loop(options),
+        Command::AgentSessionStart {
+            workflow_path,
+            issue_ref,
+            lane,
+            write,
+        } => agent_session_start(workflow_path, issue_ref, lane, write),
+        Command::AgentSessionList { workflow_path } => agent_session_list(workflow_path),
+        Command::AgentSessionAttach {
+            workflow_path,
+            session,
+            exec,
+        } => agent_session_attach(workflow_path, session, exec),
         Command::Gate {
             workflow_path,
             issue_ref,
@@ -1678,6 +1691,355 @@ fn review_workspace_for_issue(config: &RuntimeConfig, issue: &TrackerIssue) -> P
     run_loop_handoff_plan(config, issue)
         .map(|handoff| handoff.workspace_path)
         .unwrap_or_else(|_| config.workspace.root.clone())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum AgentSessionLaneArg {
+    Main,
+    Review,
+    Merge,
+}
+
+impl AgentSessionLaneArg {
+    fn workflow_lane(self) -> AgentLane {
+        match self {
+            Self::Main => AgentLane::MainAgent,
+            Self::Review => AgentLane::ReviewAgent,
+            Self::Merge => AgentLane::MergeAgent,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Main => "main",
+            Self::Review => "review",
+            Self::Merge => "merge",
+        }
+    }
+
+    fn claim_field(self) -> &'static str {
+        match self {
+            Self::Main => "Main Agent",
+            Self::Review => "Review Agent",
+            Self::Merge => "Merging Agent",
+        }
+    }
+}
+
+fn agent_session_start(
+    workflow_path: PathBuf,
+    issue_ref: String,
+    lane: AgentSessionLaneArg,
+    write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let workflow = WorkflowDefinition::load(&workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
+    config.validate()?;
+    validate_tmux_session_config(&config)?;
+
+    let adapter = adapter_from_config(&config);
+    let issue = adapter
+        .get_issue(&issue_ref)?
+        .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
+    let worker_id = agent_session_worker_id(&config, lane);
+    let workspace_key = agent_session_workspace_key(&config, &issue, lane)?;
+    let prompt_path = rendered_lane_prompt_artifact_path(&config, &issue, lane, 1);
+
+    if !write {
+        println!(
+            "agent_session_dry_run action=claim_field issue={} field={:?} value={:?}",
+            issue.identifier,
+            lane.claim_field(),
+            worker_id
+        );
+        println!(
+            "agent_session_dry_run action=start issue={} lane={} backend=tmux workspace_key={} prompt_artifact={}",
+            issue.identifier,
+            lane.label(),
+            workspace_key,
+            prompt_path.display()
+        );
+        return Ok(());
+    }
+
+    adapter.set_project_field(
+        &issue.identifier,
+        &ProjectFieldAssignment {
+            name: lane.claim_field().into(),
+            value: worker_id.clone(),
+        },
+    )?;
+    append_tracker_mutation_audit(
+        &config,
+        TrackerMutationAudit {
+            command: "agent-session",
+            mutation_type: "claim_field",
+            issue_ref: Some(&issue.identifier),
+            target: Some(format!("{}={worker_id}", lane.claim_field())),
+            from_state: Some(issue.state.clone()),
+            to_state: None,
+            reason: "manual tmux lane session claim",
+        },
+    );
+
+    let workspace = prepare_workspace(&config.workspace.root, &workspace_key, &config.hooks)?;
+    let git_identity = apply_local_git_identity(&workspace.path, &config.identity.git)?;
+    let prompt = render_prompt(workflow.prompt_for_lane(lane.workflow_lane()), &issue, None)?;
+    let backend = TmuxBackend;
+    let mut prepared = backend.prepare(workspace.path.clone(), prompt, &config)?;
+    prepared
+        .env
+        .insert("JADE_SYMPHONY_AGENT_LANE".into(), lane.label().to_string());
+    prepared.prompt_artifact_path = Some(prompt_path.clone());
+    prepared.issue_id = Some(issue.id.clone());
+    prepared.issue_identifier = Some(issue.identifier.clone());
+    prepared.issue_title = Some(issue.title.clone());
+    prepared.lane = Some(lane.label().into());
+    prepared.attempt = 1;
+    prepared.branch_name = current_git_branch(&workspace.path).ok().flatten();
+    let events = backend.run(prepared)?;
+    let summary = backend.summarize(&events);
+    record_agent_session_events(&config, &issue, lane, &summary, &events, &prompt_path)?;
+
+    let workpad = agent_session_workpad(
+        &issue,
+        lane,
+        &workspace.path,
+        &summary,
+        &prompt_path,
+        &worker_id,
+        &git_identity,
+    );
+    adapter.upsert_workpad(&issue.identifier, &workpad)?;
+    append_tracker_mutation_audit(
+        &config,
+        TrackerMutationAudit {
+            command: "agent-session",
+            mutation_type: "workpad_write",
+            issue_ref: Some(&issue.identifier),
+            target: summary.session_id.clone(),
+            from_state: Some(issue.state.clone()),
+            to_state: None,
+            reason: "manual tmux lane session evidence",
+        },
+    );
+
+    println!(
+        "agent_session_action=started issue={} lane={} backend={} session={} pending_session={} workspace={} prompt_artifact={}",
+        issue.identifier,
+        lane.label(),
+        summary.backend,
+        summary.session_id.as_deref().unwrap_or("n/a"),
+        summary.pending_session,
+        workspace.path.display(),
+        prompt_path.display()
+    );
+    if let Some(attach_command) = summary.attach_command.as_deref() {
+        println!("attach_command={attach_command}");
+    }
+    if let Some(log_path) = summary.log_path.as_ref() {
+        println!("log_path={}", log_path.display());
+    }
+    Ok(())
+}
+
+fn agent_session_list(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let workflow = WorkflowDefinition::load(&workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
+    config.validate()?;
+    validate_tmux_session_config(&config)?;
+
+    let output = ProcessCommand::new(&config.tmux.command)
+        .args(["list-sessions", "-F", "#{session_name}:#{session_attached}"])
+        .output();
+    let Ok(output) = output else {
+        println!("agent_session_list=unavailable reason=tmux_not_executable");
+        return Ok(());
+    };
+    if !output.status.success() {
+        println!("agent_session_list=none");
+        return Ok(());
+    }
+
+    let prefix = format!("{}-", safe_identifier(&config.tmux.session_prefix));
+    let mut found = false;
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let (session, attached) = line.split_once(':').unwrap_or((line, "0"));
+        if !session.starts_with(&prefix) {
+            continue;
+        }
+        found = true;
+        println!(
+            "agent_session session={} attached={} attach_command=\"{} attach-session -t {}\"",
+            session, attached, config.tmux.command, session
+        );
+    }
+    if !found {
+        println!("agent_session_list=none");
+    }
+    Ok(())
+}
+
+fn agent_session_attach(
+    workflow_path: PathBuf,
+    session: String,
+    exec: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let workflow = WorkflowDefinition::load(&workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
+    config.validate()?;
+    validate_tmux_session_config(&config)?;
+
+    let attach_command = format!("{} attach-session -t {}", config.tmux.command, session);
+    println!("attach_command={attach_command}");
+    if exec {
+        let status = ProcessCommand::new(&config.tmux.command)
+            .args(["attach-session", "-t", &session])
+            .status()?;
+        if !status.success() {
+            return Err(format!(
+                "tmux attach-session exited with status {}",
+                status.code().unwrap_or(-1)
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn validate_tmux_session_config(config: &RuntimeConfig) -> Result<(), Box<dyn std::error::Error>> {
+    if config.tmux.command.trim().is_empty() {
+        return Err("tmux.command must not be empty for agent-session".into());
+    }
+    if config.tmux.agent_command.trim().is_empty() {
+        return Err("tmux.agent_command must not be empty for agent-session".into());
+    }
+    if config.tmux.session_prefix.trim().is_empty() {
+        return Err("tmux.session_prefix must not be empty for agent-session".into());
+    }
+    Ok(())
+}
+
+fn agent_session_worker_id(config: &RuntimeConfig, lane: AgentSessionLaneArg) -> String {
+    let label = config.identity.actor_label.trim();
+    if label.is_empty() {
+        format!("jade-symphony-{}", lane.label())
+    } else {
+        label.to_string()
+    }
+}
+
+fn agent_session_workspace_key(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    lane: AgentSessionLaneArg,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let profile = selected_execution_profile(&config.profiles)?;
+    let base = format!("{}-{}-agent", issue.identifier, lane.label());
+    Ok(profile_scoped_identifier(
+        profile
+            .as_ref()
+            .map(|profile| profile.workspace_namespace.as_str()),
+        &base,
+    ))
+}
+
+fn rendered_lane_prompt_artifact_path(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    lane: AgentSessionLaneArg,
+    attempt: u32,
+) -> PathBuf {
+    config.observability.logs_root.join("prompts").join(format!(
+        "{}-{}-attempt-{}-tmux-{}.prompt.md",
+        safe_identifier(&issue.identifier),
+        lane.label(),
+        attempt,
+        current_time_ms()
+    ))
+}
+
+fn record_agent_session_events(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    lane: AgentSessionLaneArg,
+    summary: &jade_symphony::agent::AgentSummary,
+    events: &[jade_symphony::model::AgentEvent],
+    prompt_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let log = EventLog::new(config.observability.logs_root.join("jade-symphony.jsonl"));
+    log.append(&EventRecord {
+        event: "agent_session_prompt_artifact".into(),
+        issue_id: Some(issue.id.clone()),
+        issue_identifier: Some(issue.identifier.clone()),
+        session_id: summary.session_id.clone(),
+        profile_id: None,
+        instance_name: None,
+        actor_role: Some(config.identity.actor_role.clone()),
+        actor_label: Some(config.identity.actor_label.clone()),
+        git_author: config.identity.git.author(),
+        tracker_mutation: None,
+        message: format!(
+            "lane={} prompt_artifact={}",
+            lane.label(),
+            prompt_path.display()
+        ),
+    })?;
+    for event in events {
+        log.append(&EventRecord {
+            event: format!("agent_session_{event:?}"),
+            issue_id: Some(issue.id.clone()),
+            issue_identifier: Some(issue.identifier.clone()),
+            session_id: summary.session_id.clone(),
+            profile_id: None,
+            instance_name: None,
+            actor_role: Some(config.identity.actor_role.clone()),
+            actor_label: Some(config.identity.actor_label.clone()),
+            git_author: config.identity.git.author(),
+            tracker_mutation: None,
+            message: format!("lane={} {}", lane.label(), summary.message),
+        })?;
+    }
+    Ok(())
+}
+
+fn agent_session_workpad(
+    issue: &TrackerIssue,
+    lane: AgentSessionLaneArg,
+    workspace_path: &Path,
+    summary: &jade_symphony::agent::AgentSummary,
+    prompt_path: &Path,
+    worker_id: &str,
+    git_identity: &GitIdentityApplyResult,
+) -> String {
+    let attach_command = summary.attach_command.as_deref().unwrap_or("n/a");
+    let log_path = summary
+        .log_path
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "n/a".into());
+    [
+        "## Jade Symphony Workpad".to_string(),
+        String::new(),
+        "### Local tmux Agent Session".to_string(),
+        format!("- Issue: {} {}", issue.identifier, issue.title),
+        format!("- Lane: `{}`", lane.label()),
+        format!("- Claim field: `{}` = `{worker_id}`", lane.claim_field()),
+        format!("- Backend: `{}`", summary.backend),
+        format!(
+            "- Session: `{}`",
+            summary.session_id.as_deref().unwrap_or("n/a")
+        ),
+        format!("- Pending session: `{}`", summary.pending_session),
+        format!("- Workspace: `{}`", workspace_path.display()),
+        format!("- Prompt artifact: `{}`", prompt_path.display()),
+        format!("- Session log: `{log_path}`"),
+        format!("- Attach command: `{attach_command}`"),
+        format!("- Git identity: `{}`", git_identity.summary()),
+        String::new(),
+        summary.message.clone(),
+    ]
+    .join("\n")
 }
 
 fn apply_review_result(
@@ -5227,6 +5589,20 @@ enum Command {
     ReviewLoop {
         options: ReviewLoopOptions,
     },
+    AgentSessionStart {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        lane: AgentSessionLaneArg,
+        write: bool,
+    },
+    AgentSessionList {
+        workflow_path: PathBuf,
+    },
+    AgentSessionAttach {
+        workflow_path: PathBuf,
+        session: String,
+        exec: bool,
+    },
     MergeLoop {
         options: MergeLoopOptions,
     },
@@ -5460,6 +5836,8 @@ enum CliCommand {
     ReviewFreshness(ReviewFreshnessArgs),
     #[command(name = "review-loop")]
     ReviewLoop(ReviewLoopArgs),
+    #[command(name = "agent-session")]
+    AgentSession(AgentSessionArgs),
     Gate(GateArgs),
     #[command(name = "gate-apply")]
     GateApply(GateArgs),
@@ -5672,6 +6050,47 @@ struct MergeLoopArgs {
     pool: Option<usize>,
     #[arg(long = "dry-run")]
     _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct AgentSessionArgs {
+    #[command(subcommand)]
+    command: AgentSessionCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum AgentSessionCommand {
+    Start(AgentSessionStartArgs),
+    List(AgentSessionListArgs),
+    Attach(AgentSessionAttachArgs),
+}
+
+#[derive(Debug, Args)]
+struct AgentSessionStartArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    issue_ref: String,
+    #[arg(long, value_enum, default_value = "main")]
+    lane: AgentSessionLaneArg,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct AgentSessionListArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct AgentSessionAttachArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    session: String,
+    #[arg(long)]
+    exec: bool,
 }
 
 #[derive(Debug, Args)]
@@ -6145,6 +6564,22 @@ impl TryFrom<Cli> for Command {
                             },
                         })
                     }
+                    CliCommand::AgentSession(args) => match args.command {
+                        AgentSessionCommand::Start(start) => Ok(Self::AgentSessionStart {
+                            workflow_path: start.workflow_path,
+                            issue_ref: start.issue_ref,
+                            lane: start.lane,
+                            write: start.write,
+                        }),
+                        AgentSessionCommand::List(list) => Ok(Self::AgentSessionList {
+                            workflow_path: list.workflow_path,
+                        }),
+                        AgentSessionCommand::Attach(attach) => Ok(Self::AgentSessionAttach {
+                            workflow_path: attach.workflow_path,
+                            session: attach.session,
+                            exec: attach.exec,
+                        }),
+                    },
                     CliCommand::Gate(args) => Ok(Self::Gate {
                         workflow_path: args.workflow_path,
                         issue_ref: args.issue_ref,
@@ -7001,6 +7436,46 @@ mod tests {
                 workflow_path: PathBuf::from("examples/dry-run-workflow.md"),
                 bind: "127.0.0.1:0".parse().unwrap(),
                 once: true,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_agent_session_commands() {
+        assert_eq!(
+            parse(&[
+                "agent-session",
+                "start",
+                "workflows/jade-symphony.md",
+                "#220",
+                "--lane",
+                "review",
+                "--write"
+            ]),
+            Command::AgentSessionStart {
+                workflow_path: PathBuf::from("workflows/jade-symphony.md"),
+                issue_ref: "#220".into(),
+                lane: AgentSessionLaneArg::Review,
+                write: true,
+            }
+        );
+        assert_eq!(
+            parse(&["agent-session", "list", "workflows/jade-symphony.md"]),
+            Command::AgentSessionList {
+                workflow_path: PathBuf::from("workflows/jade-symphony.md"),
+            }
+        );
+        assert_eq!(
+            parse(&[
+                "agent-session",
+                "attach",
+                "workflows/jade-symphony.md",
+                "jade-review-220"
+            ]),
+            Command::AgentSessionAttach {
+                workflow_path: PathBuf::from("workflows/jade-symphony.md"),
+                session: "jade-review-220".into(),
+                exec: false,
             }
         );
     }

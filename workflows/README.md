@@ -19,12 +19,18 @@ cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --write
 cargo run -- forge-interactive --workflow workflows/jade-symphony.md
 cargo run -- review-loop workflows/jade-symphony.md --max-iterations 1 --write
 cargo run -- merge-once workflows/jade-symphony.md --write
+cargo run -- agent-session start workflows/jade-symphony.md '#220' --lane review --write
+cargo run -- agent-session list workflows/jade-symphony.md
 ```
 
 Main Agent execution uses the local `tmux` backend. A bounded write tick creates
 an attachable session, prints `tmux attach-session -t ...`, records the session
 log path, and leaves the issue active until real implementation evidence is
 available for the normal handoff path.
+The `agent-session` command is the manual tmux recovery path for all lanes:
+`main`, `review`, and `merge` each render their own lane prompt, claim the
+matching Project field, and leave workflow state unchanged until the lane's
+normal evidence path is ready.
 
 Lane prompt files:
 

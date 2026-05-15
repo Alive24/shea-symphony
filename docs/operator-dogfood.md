@@ -158,6 +158,7 @@ promote reusable config into the repo.
 ```bash
 target/debug/jade-symphony inspect workflows/jade-symphony.md
 target/debug/jade-symphony project-state workflows/jade-symphony.md
+target/debug/jade-symphony project-issue workflows/jade-symphony.md '#235' --json
 target/debug/jade-symphony project-state workflows/jade-symphony.md --display tui
 target/debug/jade-symphony doctor workflows/jade-symphony.md --display tui
 target/debug/jade-symphony run-loop workflows/jade-symphony.md --max-iterations 1 --write
@@ -169,6 +170,13 @@ and a state summary. A failed read prints `project_state_access=blocked`,
 `trusted=false`, and a `failure_kind` such as `auth`, `network`, `rate_limit`,
 `schema`, `partial_response`, or `payload`; treat that as a blocker, not as an
 empty queue.
+
+Use `project-issue` for per-issue Project status, Project fields, blocker
+relationships, claim locks, and linked PRs. Raw `gh issue view` and `gh pr view`
+remain acceptable for ordinary issue/PR body text, comments, and diff context,
+but normal dogfood should not read or mutate Project fields, status, claim locks,
+or relationships through raw Project GraphQL or the Project UI. Those are
+break-glass recovery paths.
 
 If `run-loop` finds runtime-state for an issue that has already moved out of
 active main-agent work, it reconciles tracker state first. Clean or absent
@@ -182,6 +190,18 @@ is durable. Project fields named `review_pass_evidence_recorded` or
 current GitHub Project #9 schema, the canonical source is the review workpad text
 written into the issue comment stream. A `Review Agent` claim by itself is not
 pass evidence.
+
+For a manual Gemini/operator review, claim and route through the CLI:
+
+```bash
+target/debug/jade-symphony review-claim workflows/jade-symphony.md '#226' --worker "Manual Gemini Review" --write
+target/debug/jade-symphony review-pass workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
+target/debug/jade-symphony review-reject workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --target-state rework --write
+```
+
+`review-pass` writes the review pass marker before moving to `Human Review`.
+`review-reject` refuses `Human Review` and may route only to `Agent Review`,
+`Rework`, or `Need Human Input`.
 
 ## Artifact Root Migration
 

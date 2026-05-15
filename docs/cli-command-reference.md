@@ -9,6 +9,13 @@ remain the preferred rehearsal path for local development. `doctor` can omit the
 workflow path when `JADE_SYMPHONY_WORKFLOW` is set, or when
 `workflows/jade-symphony.md` exists in the current repo checkout.
 
+For normal dogfood, Jade Symphony CLI is the authority for GitHub Project v2
+workflow reads and mutations. Direct `gh issue view` / `gh pr view` is still
+acceptable for raw issue or PR content, but Project status, Project fields,
+relationships, claim locks, workpads, and state transitions should go through
+the commands in this reference. Manual Project UI or raw Project GraphQL changes
+are break-glass recovery actions, not the standard path.
+
 The canonical `workflows/jade-symphony.md` file is a workflow index/config. It
 references lane-specific prompts in `workflows/prompts/` so Main, Review, and
 Merge commands initialize with their own authority contracts. Older fixture
@@ -26,6 +33,7 @@ workflows may still use an inline prompt body.
 | `validate-workflow` | Compatibility alias for `validate`. | `cargo run -- validate-workflow examples/dry-run-workflow.md` |
 | `inspect` | Read tracker issues and print gate/status information. | `cargo run -- inspect workflows/jade-symphony.md` |
 | `project-state` | Diagnose whether the canonical Project read path is trustworthy. | `cargo run -- project-state workflows/jade-symphony.md` |
+| `project-issue` | Read one issue's normalized Project state, fields, blockers, and linked PRs through Jade Symphony. | `cargo run -- project-issue workflows/jade-symphony.md '#235' --json` |
 | `doctor` | Audit Project/workflow/runtime invariants. | `cargo run -- doctor` |
 | `audit-project` | Compatibility alias for `doctor`. | `cargo run -- audit-project workflows/jade-symphony.md` |
 | `profiles` | List configured/discovered execution profiles. | `cargo run -- profiles examples/cockpit-profiles-workflow.md` |
@@ -188,6 +196,10 @@ changes.
 | `review-fake` | Fixture/fake review transition helper. | Local testing path. |
 | `review-once` | Run one configured review backend for one issue. | Only Review Agent may advance passed reviews to `Human Review`. |
 | `review-loop` | Bounded review worker selection/reconciliation. | Prevents duplicate review workers where evidence exists. |
+| `review-claim` | Claim one `Agent Review` item's `Review Agent` field for manual/operator review. | Requires `--write`; refuses non-`Agent Review` issues. |
+| `review-clear-claim` | Clear one issue's `Review Agent` claim through the tracker adapter. | Requires `--write`; use after terminal manual review routing. |
+| `review-pass` | Record manual independent review pass evidence and move to `Human Review`. | Requires `--write` and a durable evidence file; writes the doctor-recognized pass marker first. |
+| `review-reject` | Record failed/inconclusive manual review evidence and route to `Agent Review`, `Rework`, or `Need Human Input`. | Refuses `Human Review`. |
 | `review-freshness` | Record/inspect review freshness evidence. | Used around merging/rework conflict repair. |
 | `agent-session start` | Start an attachable local tmux session for a selected lane. | Manual recovery path; it claims only the chosen lane and does not advance workflow state. |
 | `agent-session list` | List active Jade tmux sessions by configured prefix. | Read-only operator summary. |
@@ -200,6 +212,9 @@ cargo run -- review-loop examples/review-fixture-workflow.md --max-iterations 1 
 cargo run -- review-loop workflows/jade-symphony.md --max-iterations 1 --write
 cargo run -- agent-session start workflows/jade-symphony.md '#220' --lane review --write
 cargo run -- agent-session list workflows/jade-symphony.md
+cargo run -- review-claim workflows/jade-symphony.md '#226' --worker "Manual Gemini Review" --write
+cargo run -- review-pass workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
+cargo run -- review-reject workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --target-state rework --write
 ```
 
 ## Merge Lane

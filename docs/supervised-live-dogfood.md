@@ -131,10 +131,21 @@ export GEMINI_CLI_TRUST_WORKSPACE=true
 cargo run -- review-loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
+For a manual/operator-supplied review, use the same CLI authority boundary
+instead of editing the Project board directly:
+
+```bash
+cargo run -- review-claim workflows/jade-symphony.md '#226' --worker "Manual Gemini Review" --write
+cargo run -- review-pass workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
+cargo run -- review-reject workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --target-state rework --write
+```
+
 Expected outcomes:
 
 - each write-mode Review Agent records a `Review Agent` Project field claim
   before launching the backend;
+- manual review claims use `review-claim`, and terminal manual review routing
+  clears the `Review Agent` claim through the tracker adapter;
 - passed independent review may move the issue to `Human Review`;
 - confirmed findings move the issue to `Rework`;
 - completed but inconclusive automatic review moves to `Rework` with a missing

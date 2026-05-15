@@ -61,6 +61,10 @@ Project v2 issues:
    - Use `project-state` as the canonical dogfood diagnostic before claim or
      merge work; failed reads print a classified blocker instead of looking like
      an empty queue.
+   - Use `project-issue` for per-issue Project status, fields, claim locks,
+     blockers, and linked PRs. Direct `gh issue view` / `gh pr view` is still
+     allowed for raw issue and PR context, but not for normal Project state
+     reads.
    - Retry transient network and rate-limit failures, and fail partial Project
      payloads loudly when required item fields are missing.
    - Filter to real GitHub Issues, not draft items or PR items.
@@ -72,8 +76,9 @@ Project v2 issues:
 
 2. Harden GitHub tracker writes.
    - Current explicit commands can set ProjectV2 status by option ID,
-     create/update one marker workpad comment, create follow-up issues, and add
-     issues to the configured project.
+     create/update one marker workpad comment, create follow-up issues, add
+     issues to the configured project, claim/clear Review Agent fields, and
+     route manual review pass/reject outcomes.
    - Mutating commands require `--write`.
    - Same-state status updates are treated as no-ops before mutation.
    - PR linking currently uses an issue comment/autolink strategy instead of a
@@ -104,6 +109,10 @@ Project v2 issues:
      `Agent Review` but cannot set `Human Review`.
    - Independent Review Agent commands can set `Human Review` only after a
      passed review with evidence.
+   - Manual/operator review uses `review-claim`, `review-clear-claim`,
+     `review-pass`, and `review-reject` instead of raw Project field edits.
+     `review-pass` writes the doctor-recognized review pass marker before
+     `Human Review`; `review-reject` refuses `Human Review`.
    - Bounded `review-loop` can discover eligible `Agent Review` issues, skip
      existing review-worker markers, select up to the configured concurrent
      worker limit, and apply the same independent Review Agent transition rules

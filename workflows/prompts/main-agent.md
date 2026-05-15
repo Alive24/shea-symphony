@@ -14,9 +14,10 @@ preserve prior evidence unless it is stale or incorrect.
 ## Mission
 
 You are the main implementation agent for Jade Symphony. Use GitHub Project v2
-project #9 as the tracker state machine and implement the current issue exactly
-as contracted. Jade Symphony is orchestration infrastructure, not downstream
-product business logic.
+project #9 as the tracker state machine, with Jade Symphony CLI as the authority
+for Project reads and mutations. Implement the current issue exactly as
+contracted. Jade Symphony is orchestration infrastructure, not downstream product
+business logic.
 
 This lane owns implementation only. It may claim `Todo` or `Rework`, create one
 workspace, one branch, and one PR, and then stop at `Agent Review`. It does not
@@ -42,8 +43,11 @@ question, but do not edit files under
 
 ## Operating Loop
 
-1. Refresh tracker state, linked PR state, local git state, and any existing
-   issue workpad before implementation.
+1. Refresh tracker state, Project fields, claim locks, linked PR state, local
+   git state, and any existing issue workpad through Jade Symphony CLI before
+   implementation. Direct `gh issue view` / `gh pr view` is acceptable for raw
+   issue and PR content, but do not use raw Project GraphQL or the Project UI
+   for normal Project state reads or mutations.
 2. Confirm the issue is still executable with the Issue Quality Gate. If the
    issue is not executable, leave a precise workpad note, move it to
    `Need to Clarify`, and stop this issue. The gate must include explicit

@@ -115,6 +115,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             states,
         } => inspect(workflow_path, states),
         Command::ProjectState { options } => project_state(options),
+        Command::ProjectIssue {
+            workflow_path,
+            issue_ref,
+            json,
+        } => project_issue(workflow_path, issue_ref, json),
         Command::Doctor { options } => doctor(options),
         Command::DoctorRepairHumanReview {
             workflow_path,
@@ -179,6 +184,30 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             issue_ref,
             write,
         } => review_once(workflow_path, issue_ref, write),
+        Command::ReviewClaim {
+            workflow_path,
+            issue_ref,
+            worker,
+            write,
+        } => review_claim(workflow_path, issue_ref, worker, write),
+        Command::ReviewClearClaim {
+            workflow_path,
+            issue_ref,
+            write,
+        } => review_clear_claim(workflow_path, issue_ref, write),
+        Command::ReviewPass {
+            workflow_path,
+            issue_ref,
+            evidence,
+            write,
+        } => review_manual_pass(workflow_path, issue_ref, evidence, write),
+        Command::ReviewReject {
+            workflow_path,
+            issue_ref,
+            evidence,
+            target_state,
+            write,
+        } => review_manual_reject(workflow_path, issue_ref, evidence, target_state, write),
         Command::ReviewFreshness { input } => review_freshness(input),
         Command::ReviewLoop { options } => review_loop(options),
         Command::AgentSessionStart {
@@ -995,6 +1024,308 @@ fn review_once(
         job.backend, decision.outcome, decision.target_state
     );
     println!("{}", decision.message);
+    Ok(())
+}
+
+fn review_claim(
+    workflow_path: PathBuf,
+    issue_ref: String,
+    worker: String,
+    write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    let issue = adapter
+        .get_issue(&issue_ref)?
+        .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
+    if issue.normalized_state() != "agent review" {
+        return Err(format!(
+            "review claim requires Agent Review state; {} is currently {}",
+            issue.identifier, issue.state
+        )
+        .into());
+    }
+    if !write {
+        println!(
+            "review_claim_dry_run action=claim_field issue_ref={} field=\"Review Agent\" value={worker}",
+            issue.identifier
+        );
+        return Ok(());
+    }
+    adapter.set_project_field(
+        &issue.identifier,
+        &ProjectFieldAssignment {
+            name: "Review Agent".into(),
+            value: worker.clone(),
+        },
+    )?;
+    append_tracker_mutation_audit(
+        &config,
+        TrackerMutationAudit {
+            command: "review-claim",
+            mutation_type: "claim_field",
+            issue_ref: Some(&issue.identifier),
+            target: Some(format!("Review Agent={worker}")),
+            from_state: Some(issue.state),
+            to_state: None,
+            reason: "manual review agent claim",
+        },
+    );
+    println!(
+        "review_claim=ok issue_ref={} field=\"Review Agent\" value={worker}",
+        issue.identifier
+    );
+    Ok(())
+}
+
+fn review_clear_claim(
+    workflow_path: PathBuf,
+    issue_ref: String,
+    write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    let issue = adapter
+        .get_issue(&issue_ref)?
+        .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
+    if !write {
+        println!(
+            "review_clear_claim_dry_run action=clear_claim_field issue_ref={} field=\"Review Agent\"",
+            issue.identifier
+        );
+        return Ok(());
+    }
+    adapter.clear_project_field(&issue.identifier, "Review Agent")?;
+    append_tracker_mutation_audit(
+        &config,
+        TrackerMutationAudit {
+            command: "review-clear-claim",
+            mutation_type: "claim_field_clear",
+            issue_ref: Some(&issue.identifier),
+            target: Some("Review Agent".into()),
+            from_state: Some(issue.state),
+            to_state: None,
+            reason: "manual review agent claim clear",
+        },
+    );
+    println!(
+        "review_clear_claim=ok issue_ref={} field=\"Review Agent\"",
+        issue.identifier
+    );
+    Ok(())
+}
+
+fn review_manual_pass(
+    workflow_path: PathBuf,
+    issue_ref: String,
+    evidence: String,
+    write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    let issue = adapter
+        .get_issue(&issue_ref)?
+        .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
+    if issue.normalized_state() != "agent review" {
+        return Err(format!(
+            "manual review pass requires Agent Review state; {} is currently {}",
+            issue.identifier, issue.state
+        )
+        .into());
+    }
+
+    let target_state = "human_review";
+    let workpad = render_manual_review_workpad(&issue, "passed", target_state, &evidence, true);
+    if !write {
+        println!(
+            "review_pass_dry_run action=workpad issue_ref={} evidence=manual_review_pass",
+            issue.identifier
+        );
+        println!(
+            "review_pass_dry_run action=clear_claim_field issue_ref={} field=\"Review Agent\"",
+            issue.identifier
+        );
+        println!(
+            "review_pass_dry_run action=set_state issue_ref={} target_state={target_state}",
+            issue.identifier
+        );
+        return Ok(());
+    }
+    adapter.upsert_workpad(&issue.identifier, &workpad)?;
+    append_tracker_mutation_audit(
+        &config,
+        TrackerMutationAudit {
+            command: "review-pass",
+            mutation_type: "workpad_write",
+            issue_ref: Some(&issue.identifier),
+            target: None,
+            from_state: Some(issue.state.clone()),
+            to_state: Some(target_state.into()),
+            reason: "manual review pass evidence",
+        },
+    );
+    clear_manual_review_claim(&config, adapter.as_ref(), &issue.identifier, &issue.state)?;
+    adapter.set_state(&issue.identifier, target_state)?;
+    append_tracker_mutation_audit(
+        &config,
+        TrackerMutationAudit {
+            command: "review-pass",
+            mutation_type: "state_change",
+            issue_ref: Some(&issue.identifier),
+            target: None,
+            from_state: Some(issue.state),
+            to_state: Some(target_state.into()),
+            reason: "manual review pass routing",
+        },
+    );
+    println!(
+        "review_pass=ok issue_ref={} target_state={target_state}",
+        issue.identifier
+    );
+    Ok(())
+}
+
+fn review_manual_reject(
+    workflow_path: PathBuf,
+    issue_ref: String,
+    evidence: String,
+    target_state: String,
+    write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let normalized_target = normalize_state(&target_state);
+    if normalized_target == "human_review" {
+        return Err("review-reject cannot target Human Review".into());
+    }
+    if !matches!(
+        normalized_target.as_str(),
+        "agent_review" | "agent review" | "rework" | "need_human_input" | "need human input"
+    ) {
+        return Err(
+            "review-reject target must be agent_review, rework, or need_human_input".into(),
+        );
+    }
+
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    let issue = adapter
+        .get_issue(&issue_ref)?
+        .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
+    if issue.normalized_state() != "agent review" {
+        return Err(format!(
+            "manual review reject requires Agent Review state; {} is currently {}",
+            issue.identifier, issue.state
+        )
+        .into());
+    }
+
+    let workpad =
+        render_manual_review_workpad(&issue, "not passed", &target_state, &evidence, false);
+    if !write {
+        println!(
+            "review_reject_dry_run action=workpad issue_ref={} evidence=manual_review_reject",
+            issue.identifier
+        );
+        println!(
+            "review_reject_dry_run action=clear_claim_field issue_ref={} field=\"Review Agent\"",
+            issue.identifier
+        );
+        println!(
+            "review_reject_dry_run action=set_state issue_ref={} target_state={target_state}",
+            issue.identifier
+        );
+        return Ok(());
+    }
+    adapter.upsert_workpad(&issue.identifier, &workpad)?;
+    append_tracker_mutation_audit(
+        &config,
+        TrackerMutationAudit {
+            command: "review-reject",
+            mutation_type: "workpad_write",
+            issue_ref: Some(&issue.identifier),
+            target: None,
+            from_state: Some(issue.state.clone()),
+            to_state: Some(target_state.clone()),
+            reason: "manual review reject evidence",
+        },
+    );
+    clear_manual_review_claim(&config, adapter.as_ref(), &issue.identifier, &issue.state)?;
+    adapter.set_state(&issue.identifier, &target_state)?;
+    append_tracker_mutation_audit(
+        &config,
+        TrackerMutationAudit {
+            command: "review-reject",
+            mutation_type: "state_change",
+            issue_ref: Some(&issue.identifier),
+            target: None,
+            from_state: Some(issue.state),
+            to_state: Some(target_state.clone()),
+            reason: "manual review reject routing",
+        },
+    );
+    println!(
+        "review_reject=ok issue_ref={} target_state={target_state}",
+        issue.identifier
+    );
+    Ok(())
+}
+
+fn render_manual_review_workpad(
+    issue: &TrackerIssue,
+    decision: &str,
+    target_state: &str,
+    evidence: &str,
+    pass: bool,
+) -> String {
+    let mut lines = vec![
+        "## Agent Review".to_string(),
+        String::new(),
+        format!("- Issue: {} {}", issue.identifier, issue.title),
+        "- Reviewer backend: manual-operator".into(),
+        format!("- Decision: Manual independent review {decision}."),
+        format!("- Target state: `{target_state}`"),
+        String::new(),
+        "### Manual Review Evidence".into(),
+    ];
+    lines.extend(
+        evidence
+            .trim()
+            .lines()
+            .map(|line| format!("- {}", line.trim()))
+            .collect::<Vec<_>>(),
+    );
+    if pass {
+        lines.push(String::new());
+        lines.push("- Review pass evidence: `recorded`".into());
+        lines.push("Evidence recorded. Independent Review Agent may move this issue to Human Review; the main implementation agent must not.".into());
+    } else {
+        lines.push(String::new());
+        lines.push(
+            "- Review did not pass; unavailable or inconclusive review must not move to Human Review."
+                .into(),
+        );
+    }
+    lines.join("\n")
+}
+
+fn clear_manual_review_claim(
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    issue_ref: &str,
+    from_state: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    adapter.clear_project_field(issue_ref, "Review Agent")?;
+    append_tracker_mutation_audit(
+        config,
+        TrackerMutationAudit {
+            command: "manual-review-routing",
+            mutation_type: "claim_field_clear",
+            issue_ref: Some(issue_ref),
+            target: Some("Review Agent".into()),
+            from_state: Some(from_state.into()),
+            to_state: None,
+            reason: "manual review terminal routing",
+        },
+    );
     Ok(())
 }
 
@@ -2296,6 +2627,83 @@ fn project_state(options: ProjectStateOptions) -> Result<(), Box<dyn std::error:
             )
             .into())
         }
+    }
+}
+
+fn project_issue(
+    workflow_path: PathBuf,
+    issue_ref: String,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    let mut issue = adapter
+        .get_issue(&issue_ref)?
+        .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
+    issue.linked_pull_requests = adapter
+        .list_linked_pull_requests(&issue.identifier)
+        .unwrap_or_else(|_| issue.linked_pull_requests.clone());
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&issue)?);
+        return Ok(());
+    }
+
+    println!("issue={}", issue.identifier);
+    println!("title={}", issue.title);
+    println!("state={}", issue.state);
+    println!("tracker={}", issue.tracker_kind);
+    if let Some(item_id) = &issue.item_id {
+        println!("project_item={item_id}");
+    }
+    if !issue.assignees.is_empty() {
+        println!("assignees={}", issue.assignees.join(","));
+    }
+    if !issue.blocked_by.is_empty() {
+        let blockers = issue
+            .blocked_by
+            .iter()
+            .map(|blocker| {
+                blocker
+                    .identifier
+                    .as_deref()
+                    .or(blocker.id.as_deref())
+                    .unwrap_or("unknown")
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        println!("blocked_by={blockers}");
+    } else {
+        println!("blocked_by=");
+    }
+    if !issue.linked_pull_requests.is_empty() {
+        for pr in &issue.linked_pull_requests {
+            let pr_ref = pr
+                .url
+                .clone()
+                .or_else(|| pr.number.map(|number| format!("#{number}")))
+                .unwrap_or_else(|| "unknown".into());
+            println!(
+                "linked_pr={} state={}",
+                pr_ref,
+                pr.state.as_deref().unwrap_or("unknown")
+            );
+        }
+    }
+    for (name, value) in &issue.project_fields {
+        println!("field.{name}={}", compact_json_value(value));
+    }
+    Ok(())
+}
+
+fn compact_json_value(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(value) => value.clone(),
+        serde_json::Value::Bool(value) => value.to_string(),
+        serde_json::Value::Number(value) => value.to_string(),
+        serde_json::Value::Null => "null".into(),
+        _ => serde_json::to_string(value).unwrap_or_else(|_| "<unprintable>".into()),
     }
 }
 
@@ -5506,6 +5914,11 @@ enum Command {
     ProjectState {
         options: ProjectStateOptions,
     },
+    ProjectIssue {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        json: bool,
+    },
     Doctor {
         options: DoctorOptions,
     },
@@ -5581,6 +5994,30 @@ enum Command {
     ReviewOnce {
         workflow_path: PathBuf,
         issue_ref: String,
+        write: bool,
+    },
+    ReviewClaim {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        worker: String,
+        write: bool,
+    },
+    ReviewClearClaim {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        write: bool,
+    },
+    ReviewPass {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        evidence: String,
+        write: bool,
+    },
+    ReviewReject {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        evidence: String,
+        target_state: String,
         write: bool,
     },
     ReviewFreshness {
@@ -5799,6 +6236,8 @@ enum CliCommand {
     Inspect(InspectArgs),
     #[command(name = "project-state", alias = "project-state-health")]
     ProjectState(ProjectStateArgs),
+    #[command(name = "project-issue")]
+    ProjectIssue(ProjectIssueArgs),
     #[command(alias = "audit-project")]
     Doctor(DoctorArgs),
     #[command(name = "doctor-repair-human-review")]
@@ -5832,6 +6271,14 @@ enum CliCommand {
     ReviewFake(ReviewFakeArgs),
     #[command(name = "review-once")]
     ReviewOnce(ReviewOnceArgs),
+    #[command(name = "review-claim")]
+    ReviewClaim(ReviewClaimArgs),
+    #[command(name = "review-clear-claim")]
+    ReviewClearClaim(ReviewClearClaimArgs),
+    #[command(name = "review-pass")]
+    ReviewPass(ReviewEvidenceArgs),
+    #[command(name = "review-reject")]
+    ReviewReject(ReviewRejectArgs),
     #[command(name = "review-freshness")]
     ReviewFreshness(ReviewFreshnessArgs),
     #[command(name = "review-loop")]
@@ -5877,6 +6324,19 @@ struct ProjectStateArgs {
     workflow_path: PathBuf,
     #[arg(long, value_enum, default_value_t = CliDisplayMode::Plain)]
     display: CliDisplayMode,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+    #[arg(long = "write")]
+    _write: bool,
+}
+
+#[derive(Debug, Args)]
+struct ProjectIssueArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    issue_ref: String,
+    #[arg(long)]
+    json: bool,
     #[arg(long = "dry-run")]
     _dry_run: bool,
     #[arg(long = "write")]
@@ -6190,6 +6650,58 @@ struct ReviewOnceArgs {
 }
 
 #[derive(Debug, Args)]
+struct ReviewClaimArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    issue_ref: String,
+    #[arg(long)]
+    worker: String,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct ReviewClearClaimArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    issue_ref: String,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct ReviewEvidenceArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    issue_ref: String,
+    #[arg(long = "evidence-file")]
+    evidence_file: PathBuf,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct ReviewRejectArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    issue_ref: String,
+    #[arg(long = "evidence-file")]
+    evidence_file: PathBuf,
+    #[arg(long = "target-state", default_value = "agent_review")]
+    target_state: String,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
 struct ReviewFreshnessArgs {
     #[arg(long = "issue")]
     issue_ref: String,
@@ -6408,6 +6920,11 @@ impl TryFrom<Cli> for Command {
                             display: args.display.into(),
                         },
                     }),
+                    CliCommand::ProjectIssue(args) => Ok(Self::ProjectIssue {
+                        workflow_path: args.workflow_path,
+                        issue_ref: args.issue_ref,
+                        json: args.json,
+                    }),
                     CliCommand::Doctor(args) => Ok(Self::Doctor {
                         options: DoctorOptions {
                             workflow_path: args.workflow_path,
@@ -6534,6 +7051,30 @@ impl TryFrom<Cli> for Command {
                     CliCommand::ReviewOnce(args) => Ok(Self::ReviewOnce {
                         workflow_path: args.workflow_path,
                         issue_ref: args.issue_ref,
+                        write: args.write,
+                    }),
+                    CliCommand::ReviewClaim(args) => Ok(Self::ReviewClaim {
+                        workflow_path: args.workflow_path,
+                        issue_ref: args.issue_ref,
+                        worker: args.worker,
+                        write: args.write,
+                    }),
+                    CliCommand::ReviewClearClaim(args) => Ok(Self::ReviewClearClaim {
+                        workflow_path: args.workflow_path,
+                        issue_ref: args.issue_ref,
+                        write: args.write,
+                    }),
+                    CliCommand::ReviewPass(args) => Ok(Self::ReviewPass {
+                        workflow_path: args.workflow_path,
+                        issue_ref: args.issue_ref,
+                        evidence: read_required_file(args.evidence_file)?,
+                        write: args.write,
+                    }),
+                    CliCommand::ReviewReject(args) => Ok(Self::ReviewReject {
+                        workflow_path: args.workflow_path,
+                        issue_ref: args.issue_ref,
+                        evidence: read_required_file(args.evidence_file)?,
+                        target_state: args.target_state,
                         write: args.write,
                     }),
                     CliCommand::ReviewFreshness(args) => Ok(Self::ReviewFreshness {
@@ -7735,6 +8276,83 @@ mod tests {
                 write: true
             }
         );
+    }
+
+    #[test]
+    fn parses_project_issue_read_surface() {
+        assert_eq!(
+            parse(&[
+                "project-issue",
+                "examples/github-project-workflow.md",
+                "#235",
+                "--json"
+            ]),
+            Command::ProjectIssue {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                issue_ref: "#235".into(),
+                json: true
+            }
+        );
+    }
+
+    #[test]
+    fn parses_manual_review_authority_commands() {
+        assert_eq!(
+            parse(&[
+                "review-claim",
+                "examples/github-project-workflow.md",
+                "#235",
+                "--worker",
+                "Gemini A",
+                "--write"
+            ]),
+            Command::ReviewClaim {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                issue_ref: "#235".into(),
+                worker: "Gemini A".into(),
+                write: true
+            }
+        );
+
+        assert_eq!(
+            parse(&[
+                "review-clear-claim",
+                "examples/github-project-workflow.md",
+                "#235",
+                "--write"
+            ]),
+            Command::ReviewClearClaim {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                issue_ref: "#235".into(),
+                write: true
+            }
+        );
+    }
+
+    #[test]
+    fn manual_review_pass_workpad_records_doctor_evidence_marker() {
+        let issue = tracker_issue("Agent Review");
+        let workpad =
+            render_manual_review_workpad(&issue, "passed", "human_review", "Gemini: pass", true);
+
+        assert!(workpad.contains("Reviewer backend: manual-operator"));
+        assert!(workpad.contains("Review pass evidence: `recorded`"));
+        assert!(workpad.contains("main implementation agent must not"));
+    }
+
+    #[test]
+    fn manual_review_reject_workpad_does_not_record_pass_marker() {
+        let issue = tracker_issue("Agent Review");
+        let workpad = render_manual_review_workpad(
+            &issue,
+            "not passed",
+            "agent_review",
+            "Gemini: inconclusive",
+            false,
+        );
+
+        assert!(!workpad.contains("Review pass evidence: `recorded`"));
+        assert!(workpad.contains("must not move to Human Review"));
     }
 
     #[test]

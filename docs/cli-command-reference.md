@@ -88,6 +88,13 @@ overrides the workflow back to `agent.backend: dry-run`, `run-loop --write`
 exits non-zero before loading runtime state, creating worktrees, claiming
 Project fields, or writing workpads.
 
+When the tmux agent command is Codex, `run-loop --write` captures the pane before
+prompt injection. The default behavior auto-advances the Codex workspace trust
+prompt only inside the configured Jade issue worktree root, then injects the
+rendered prompt after a ready viewport is observed. Set
+`JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to opt out; a visible trust prompt or missing
+readiness then fails closed and preserves attach/log evidence for inspection.
+
 ## Tracker Writes
 
 These commands can mutate live tracker state and require `--write`.

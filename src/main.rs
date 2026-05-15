@@ -2318,6 +2318,9 @@ fn dogfood_smoke(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std:
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
+    if write {
+        ensure_write_mode_main_agent_backend(&workflow_path, &config, "dogfood-smoke")?;
+    }
 
     let adapter = adapter_from_config(&config);
     let integration_gaps = adapter.integration_gaps();
@@ -3033,6 +3036,9 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         let workflow = WorkflowDefinition::load(&options.workflow_path)?;
         let config = RuntimeConfig::from_workflow(&workflow, &options.workflow_path)?;
         config.validate()?;
+        if options.write {
+            ensure_write_mode_main_agent_backend(&options.workflow_path, &config, "run-loop")?;
+        }
         let adapter = adapter_from_config(&config);
         if options.write {
             let runtime_state = load_runtime_state(&config)?;
@@ -4372,6 +4378,25 @@ fn sanitize_archive_segment(value: &str) -> String {
         })
         .collect::<String>();
     sanitized.trim_matches('-').to_string()
+}
+
+fn ensure_write_mode_main_agent_backend(
+    workflow_path: &Path,
+    config: &RuntimeConfig,
+    command: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if config.backend.kind != "dry-run" {
+        return Ok(());
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!(
+            "write-mode {command} is blocked because workflow={} configures agent.backend=dry-run; configure a real main-agent backend such as codex or claude-code before using --write",
+            workflow_path.display()
+        ),
+    )
+    .into())
 }
 
 fn no_dispatch_action(
@@ -7058,6 +7083,26 @@ mod tests {
     }
 
     #[test]
+    fn dogfood_smoke_write_rejects_dry_run_backend_before_tracker_reads() {
+        let temp = tempfile::tempdir().unwrap();
+        let workflow_path = temp.path().join("WORKFLOW.md");
+        let missing_fixture = temp.path().join("missing-issues.json");
+        std::fs::write(
+            &workflow_path,
+            format!(
+                "---\ntracker:\n  kind: memory\n  fixture_path: {}\nagent:\n  backend: dry-run\n---\nPrompt",
+                missing_fixture.display()
+            ),
+        )
+        .unwrap();
+
+        let error = dogfood_smoke(workflow_path, true).unwrap_err().to_string();
+
+        assert!(error.contains("write-mode dogfood-smoke is blocked"));
+        assert!(error.contains("agent.backend=dry-run"));
+    }
+
+    #[test]
     fn clap_parser_treats_help_flags_as_successful_help() {
         assert!(help_text(&["--help"]).contains("Usage: jade-symphony"));
         assert!(help_text(&["-h"]).contains("Usage: jade-symphony"));
@@ -8672,6 +8717,70 @@ mod tests {
                 reason: "no_dispatchable_issue"
             }
         );
+    }
+
+    #[test]
+    fn run_loop_write_mode_rejects_dry_run_backend_before_runtime_writes() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace_root = temp.path().join("workspaces");
+        let logs_root = temp.path().join("logs");
+        let workflow_path = temp.path().join("WORKFLOW.md");
+        std::fs::write(
+            &workflow_path,
+            format!(
+                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {}\nobservability:\n  logs_root: {}\nagent:\n  backend: dry-run\n---\nPrompt",
+                workspace_root.display(),
+                logs_root.display()
+            ),
+        )
+        .unwrap();
+
+        let error = run_loop(RunLoopOptions {
+            workflow_path: workflow_path.clone(),
+            max_iterations: Some(1),
+            once: false,
+            pool: None,
+            write: true,
+            display: DisplayMode::Plain,
+        })
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("write-mode run-loop is blocked"));
+        assert!(error.contains("agent.backend=dry-run"));
+        assert!(error.contains(workflow_path.to_string_lossy().as_ref()));
+        assert!(
+            !workspace_root.exists(),
+            "guard must fire before workspace creation"
+        );
+        assert!(!logs_root.exists(), "guard must fire before runtime writes");
+    }
+
+    #[test]
+    fn run_loop_dry_run_preview_allows_dry_run_backend() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace_root = temp.path().join("workspaces");
+        let logs_root = temp.path().join("logs");
+        let workflow_path = temp.path().join("WORKFLOW.md");
+        std::fs::write(
+            &workflow_path,
+            format!(
+                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {}\nobservability:\n  logs_root: {}\nagent:\n  backend: dry-run\n---\nPrompt",
+                workspace_root.display(),
+                logs_root.display()
+            ),
+        )
+        .unwrap();
+
+        run_loop(RunLoopOptions {
+            workflow_path,
+            max_iterations: Some(1),
+            once: false,
+            pool: None,
+            write: false,
+            display: DisplayMode::Plain,
+        })
+        .unwrap();
     }
 
     #[test]

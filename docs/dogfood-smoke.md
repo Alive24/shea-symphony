@@ -69,6 +69,9 @@ In `--write` mode, `dogfood-smoke` exits non-zero when those readiness
 conditions are not met. The command still prints `dogfood_smoke_blocked=true`
 and the blocker before exiting, so scripts can treat it as a gate without
 losing the operator-readable reason.
+If the workflow still uses `agent.backend: dry-run`, `dogfood-smoke --write`
+fails before tracker reads and before it can recommend a mutating `run-loop`
+command.
 
 ## Skip Conditions
 

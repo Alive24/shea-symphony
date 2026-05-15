@@ -51,7 +51,7 @@ tracker state.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `run-once` | Execute one selected issue through the configured backend. | Fixture-safe by default when the workflow has `tracker.fixture_path`. |
-| `run-loop` | Poll/select/claim/run/handoff in bounded or idle-loop modes. | Live write mode requires `--write`; `--pool N` filters by `Main Agent`; main-agent completion stops at `Agent Review`. |
+| `run-loop` | Poll/select/claim/run/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; `agent.backend: dry-run` is rejected before tracker/runtime mutation. |
 | `dogfood-smoke` | Supervised preflight for one controlled dogfood issue. | Dry-run inspection by default; live readiness does not bypass review or merge gates. |
 
 Examples:
@@ -76,6 +76,11 @@ processes one main work item at a time because the runtime state tracks one
 active issue, but it uses the same lane claim check and stamps `Main Agent`
 before tracker mutation. `run-loop`, `review-loop`, and `merge-once` print
 compact `Latest:` status bars in addition to their detailed line logs.
+
+The canonical `workflows/jade-symphony.md` file may still be configured with
+`agent.backend: dry-run` for preview-only operator checks. In that state,
+`run-loop --write` exits non-zero before loading runtime state, creating
+worktrees, claiming Project fields, or writing workpads.
 
 ## Tracker Writes
 

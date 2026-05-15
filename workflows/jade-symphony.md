@@ -45,10 +45,14 @@ artifacts:
 workspace:
   root: $JADE_SYMPHONY_ARTIFACT_ROOT/Alive24/jade-symphony/default/worktrees
 agent:
-  backend: dry-run
+  backend: tmux
   max_concurrent_agents: 1
   max_turns: 3
   max_retry_backoff_ms: 300000
+tmux:
+  command: tmux
+  agent_command: codex
+  session_prefix: jade
 codex:
   command: codex app-server
 claude:

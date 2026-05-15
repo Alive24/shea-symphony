@@ -21,6 +21,11 @@ cargo run -- review-loop workflows/jade-symphony.md --max-iterations 1 --write
 cargo run -- merge-once workflows/jade-symphony.md --write
 ```
 
+Main Agent execution uses the local `tmux` backend. A bounded write tick creates
+an attachable session, prints `tmux attach-session -t ...`, records the session
+log path, and leaves the issue active until real implementation evidence is
+available for the normal handoff path.
+
 Lane prompt files:
 
 - `workflows/prompts/main-agent.md`: implementation agent contract; stops at

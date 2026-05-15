@@ -1,10 +1,10 @@
 # Dogfood Readiness
 
-Status: dry-run dogfood baseline with read-only GitHub Project v2 loading through
-the `gh` CLI and a `run-loop` skeleton that can idle-poll in unbounded write
-mode. The live GitHub Project workflow now carries a real Jade operating prompt,
-but Jade Symphony is not ready for unattended live GitHub Project v2 execution
-yet.
+Status: local tmux main-agent dogfood baseline with read-only GitHub Project v2
+loading through the `gh` CLI and a `run-loop` skeleton that can launch an
+attachable Main Agent session without treating session creation as completion.
+The live GitHub Project workflow now carries a real Jade operating prompt, but
+Jade Symphony is not ready for unattended live GitHub Project v2 execution yet.
 
 ## Current Capability Status
 
@@ -21,7 +21,7 @@ yet.
 | Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes, idle polling, claim-helper use, dependency preflight for `Todo` / `Rework`, runtime-state persistence, tracker-visible advisory ownership markers, resume preflight, retry backoff records, stall detection, live PR handoff plus tracker PR link recording in non-fixture GitHub mode, guarded `merge-once` and bounded `merge-loop` lanes for `Merging` issues, first-slice `--pool` selection guarded by `Main Agent` / `Merging Agent` Project fields, a controlled `dogfood-smoke` preflight report with blocking-vs-warning integration gap severity, and a bounded operator launcher script exist. No long-running worker supervision, automated stall restart, full multi-worker runtime resume reconciliation, unbounded merge idle polling, or full state reconciliation yet. |
 | Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, grouped read-only `clean plan` / `clean audit` cleanup and persistence classification, guarded terminal cleanup planning, repository-local git identity application, workspace/branch/PR handoff planning, live git worktree/branch creation, dirty/no-op guards before branch push, optional configured verification commands before PR handoff, branch push, PR create-or-reuse, tracker PR link recording, run-loop handoff evidence, profile-scoped workspace keys, parsed-but-unused SSH worker host config, a namespaced artifact layout, and dry-run cleanup planning exist. Automatic runtime cleanup, write-mode artifact cleanup, and live SSH execution are not wired yet. |
 | Execution profiles | First-slice profile discovery exists. Workflow config can point to a cockpit-tools Codex `codex_instances.json` file, and Jade treats each instance `name` as a profile/worker identity while ignoring account binding fields. If the cockpit-tools file is missing, explicit `profiles.entries` are used. This is not a full account manager. |
-| Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. Prepared runs include selected profile/instance metadata and profile environment context. The Codex subprocess backend safely refuses `codex app-server` commands because that transport is not implemented yet. A first-slice Codex app-server event normalizer maps fixture JSON-RPC stream lines into Jade `AgentEvent` values, including completion, failure, cancellation, input-required, token usage, notification, and malformed events. Full Codex app-server transport and Claude Code protocol parity remain follow-ups. |
+| Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. A first-slice local `tmux` backend can launch an attachable Main Agent session, paste the rendered prompt, record the session name, attach command, and log path, and leave the issue active instead of handing off to review. Prepared runs include selected profile/instance metadata and profile environment context. The Codex subprocess backend safely refuses `codex app-server` commands because that transport is not implemented yet. A first-slice Codex app-server event normalizer maps fixture JSON-RPC stream lines into Jade `AgentEvent` values, including completion, failure, cancellation, input-required, token usage, notification, and malformed events. Review/Merging tmux lane support, full Codex app-server transport, and Claude Code protocol parity remain follow-ups. |
 | Prompt rendering | Strict prompt rendering supports `issue.*`, `attempt`, and basic `{% if %}` / `{% else %}` blocks. The supported subset is documented in `docs/prompt-template-contract.md`; full Liquid compatibility remains a parity gap. |
 | Dynamic tools | A first-slice dynamic-tool registry can describe planned backend-specific tools such as Codex `linear_graphql` without coupling them to the orchestrator. Tool execution and Codex app-server dynamic-tool protocol wiring are not implemented yet. |
 | Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, evidence-first Rework diagnostics for confirmed findings, review-freshness evidence for Merging conflict repair, bounded `review-loop` worker selection/reconciliation with one issue per worker slot, Project `Review Agent` claim markers before backend launch, terminal failure/timeout claim cleanup for retry, durable JSON review job ledger records, and workpad/status evidence helpers exist. Persistent background review worker supervision is not implemented yet. |
@@ -436,9 +436,8 @@ GitHub Project v2 execution is hardened.
 ## Live Project Workflow
 
 `workflows/jade-symphony.md` is the canonical non-fixture workflow for manual
-live Project v2 reads and explicit tracker writes through `gh`. It still uses
-the `dry-run` backend by default, but the prompt body is the real Jade dogfood
-operating prompt rather than a placeholder. With that default backend,
-`run-loop --write` is rejected before runtime-state writes, worktree creation,
-Project claim fields, or workpad mutation. Configure a real main-agent backend
-before using write-mode execution.
+live Project v2 reads and explicit tracker writes through `gh`. It uses the
+local `tmux` backend for Main Agent execution, while the prompt body remains the
+real Jade dogfood operating prompt. `run-loop --write` records attachable tmux
+session metadata and keeps the issue active until real implementation evidence
+is available for the existing handoff path.

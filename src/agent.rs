@@ -36,8 +36,14 @@ pub struct PreparedRun {
 pub struct AgentSummary {
     pub backend: String,
     pub success: bool,
+    #[serde(default)]
+    pub pending_session: bool,
     pub session_id: Option<String>,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attach_command: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,11 +135,14 @@ impl AgentBackend for DryRunBackend {
         AgentSummary {
             backend: self.name().into(),
             success,
+            pending_session: false,
             session_id: events.iter().find_map(|event| match event {
                 AgentEvent::SessionStarted { session_id, .. } => Some(session_id.clone()),
                 _ => None,
             }),
             message: "dry-run complete".into(),
+            log_path: None,
+            attach_command: None,
         }
     }
 }
@@ -254,6 +263,91 @@ impl AgentBackend for ClaudeCodeBackend {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct TmuxBackend;
+
+impl AgentBackend for TmuxBackend {
+    fn name(&self) -> &'static str {
+        "tmux"
+    }
+
+    fn prepare(
+        &self,
+        workspace: PathBuf,
+        rendered_prompt: String,
+        config: &RuntimeConfig,
+    ) -> Result<PreparedRun, AgentError> {
+        let profile = selected_execution_profile(&config.profiles)
+            .map_err(|error| AgentError::Unavailable(error.to_string()))?;
+        let mut env = profile_environment(profile.as_ref(), self.name());
+        env.insert(
+            "JADE_SYMPHONY_TMUX_COMMAND".into(),
+            config.tmux.command.clone(),
+        );
+        env.insert(
+            "JADE_SYMPHONY_TMUX_SESSION_PREFIX".into(),
+            config.tmux.session_prefix.clone(),
+        );
+        Ok(PreparedRun {
+            backend: self.name().into(),
+            workspace,
+            prompt: rendered_prompt,
+            prompt_artifact_path: None,
+            command: Some(config.tmux.agent_command.clone()),
+            timeout_ms: 0,
+            approval_policy: None,
+            sandbox: None,
+            profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
+            instance_name: profile
+                .as_ref()
+                .map(|profile| profile.instance_name.clone()),
+            env,
+            actor_role: Some(config.identity.actor_role.clone()),
+            actor_label: Some(config.identity.actor_label.clone()),
+            git_author: config.identity.git.author(),
+        })
+    }
+
+    fn run(&self, prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError> {
+        run_tmux_backend(prepared)
+    }
+
+    fn stop(&self, _reason: &str) -> Result<(), AgentError> {
+        Ok(())
+    }
+
+    fn summarize(&self, events: &[AgentEvent]) -> AgentSummary {
+        let session_id = events.iter().find_map(|event| match event {
+            AgentEvent::SessionStarted { session_id, .. } => Some(session_id.clone()),
+            _ => None,
+        });
+        let failure = events.iter().find_map(|event| match event {
+            AgentEvent::Failed { error, .. } => Some(error.clone()),
+            _ => None,
+        });
+        let log_path = message_field(events, "log_path=").map(PathBuf::from);
+        let attach_command = session_id
+            .as_ref()
+            .map(|session| format!("tmux attach-session -t {session}"));
+        let message = failure.clone().unwrap_or_else(|| {
+            format!(
+                "tmux session running; attach with `{}`",
+                attach_command.as_deref().unwrap_or("tmux attach-session")
+            )
+        });
+
+        AgentSummary {
+            backend: self.name().into(),
+            success: false,
+            pending_session: failure.is_none() && session_id.is_some(),
+            session_id,
+            message,
+            log_path,
+            attach_command,
+        }
+    }
+}
+
 fn run_subprocess_backend(
     prepared: PreparedRun,
     session_id: &str,
@@ -371,6 +465,187 @@ fn run_subprocess_backend(
 
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+fn run_tmux_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError> {
+    let mut events = Vec::new();
+
+    if !prepared.workspace.is_dir() {
+        events.push(AgentEvent::Failed {
+            backend: prepared.backend,
+            error: format!("workspace does not exist: {}", prepared.workspace.display()),
+        });
+        return Ok(events);
+    }
+
+    let Some(agent_command) = prepared.command.as_deref() else {
+        events.push(AgentEvent::Failed {
+            backend: prepared.backend,
+            error: "missing tmux agent command".into(),
+        });
+        return Ok(events);
+    };
+
+    let prompt_artifact_path = persist_prompt_artifact(&prepared)?;
+    let session_id = tmux_session_name(&prepared);
+    let log_path = tmux_log_path(&prepared, &session_id);
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let tmux = prepared
+        .env
+        .get("JADE_SYMPHONY_TMUX_COMMAND")
+        .cloned()
+        .or_else(|| std::env::var("JADE_SYMPHONY_TMUX_COMMAND").ok())
+        .unwrap_or_else(|| "tmux".into());
+    let target = session_id.as_str();
+    let shell_command = tmux_agent_shell_command(&prepared, agent_command, &prompt_artifact_path);
+    if let Err(error) = tmux_command_status(
+        Command::new(&tmux)
+            .envs(prepared.env.iter())
+            .args(["new-session", "-d", "-s", target, "-c"])
+            .arg(&prepared.workspace)
+            .arg(shell_command),
+        "new-session",
+    ) {
+        events.push(AgentEvent::Failed {
+            backend: prepared.backend,
+            error,
+        });
+        return Ok(events);
+    }
+    for (action, mut command) in [
+        ("pipe-pane", {
+            let mut command = Command::new(&tmux);
+            command
+                .envs(prepared.env.iter())
+                .args(["pipe-pane", "-o", "-t", target])
+                .arg(format!("cat >> {}", shell_quote_path(&log_path)));
+            command
+        }),
+        ("load-buffer", {
+            let mut command = Command::new(&tmux);
+            command
+                .envs(prepared.env.iter())
+                .args(["load-buffer", "-b", target])
+                .arg(&prompt_artifact_path);
+            command
+        }),
+        ("paste-buffer", {
+            let mut command = Command::new(&tmux);
+            command
+                .envs(prepared.env.iter())
+                .args(["paste-buffer", "-b", target, "-t", target]);
+            command
+        }),
+        ("send-keys", {
+            let mut command = Command::new(&tmux);
+            command
+                .envs(prepared.env.iter())
+                .args(["send-keys", "-t", target, "Enter"]);
+            command
+        }),
+    ] {
+        if let Err(error) = tmux_command_status(&mut command, action) {
+            events.push(AgentEvent::Failed {
+                backend: prepared.backend,
+                error,
+            });
+            return Ok(events);
+        }
+    }
+
+    events.push(AgentEvent::SessionStarted {
+        backend: prepared.backend.clone(),
+        session_id: session_id.clone(),
+    });
+    events.push(AgentEvent::Message {
+        backend: prepared.backend,
+        session_id: Some(session_id.clone()),
+        text: format!(
+            "tmux_session_started session={} attach_command=\"tmux attach-session -t {}\" log_path={} prompt_artifact={}",
+            session_id,
+            session_id,
+            log_path.display(),
+            prompt_artifact_path.display()
+        ),
+    });
+    Ok(events)
+}
+
+fn tmux_command_status(command: &mut Command, action: &str) -> Result<(), String> {
+    match command.status() {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(format!(
+            "tmux {action} exited with status {}",
+            status.code().unwrap_or(-1)
+        )),
+        Err(error) => Err(format!("tmux {action} failed: {error}")),
+    }
+}
+
+fn tmux_agent_shell_command(
+    prepared: &PreparedRun,
+    agent_command: &str,
+    prompt_artifact_path: &Path,
+) -> String {
+    format!(
+        "JADE_SYMPHONY_PROMPT_PATH={} JADE_SYMPHONY_ACTOR_ROLE={} JADE_SYMPHONY_ACTOR_LABEL={} JADE_SYMPHONY_GIT_AUTHOR={} sh -lc {}",
+        shell_quote_str(&prompt_artifact_path.display().to_string()),
+        shell_quote_str(prepared.actor_role.as_deref().unwrap_or_default()),
+        shell_quote_str(prepared.actor_label.as_deref().unwrap_or_default()),
+        shell_quote_str(prepared.git_author.as_deref().unwrap_or_default()),
+        shell_quote_str(agent_command)
+    )
+}
+
+fn tmux_session_name(prepared: &PreparedRun) -> String {
+    let prefix = prepared
+        .env
+        .get("JADE_SYMPHONY_TMUX_SESSION_PREFIX")
+        .map(String::as_str)
+        .unwrap_or("jade");
+    format!(
+        "{}-main-{}-{}",
+        safe_path_component(Some(prefix)),
+        safe_path_component(
+            prepared
+                .workspace
+                .file_name()
+                .and_then(|name| name.to_str())
+        ),
+        current_time_ms()
+    )
+}
+
+fn tmux_log_path(prepared: &PreparedRun, session_id: &str) -> PathBuf {
+    prepared
+        .prompt_artifact_path
+        .as_ref()
+        .and_then(|path| path.parent())
+        .and_then(|path| path.parent())
+        .unwrap_or_else(|| Path::new("/tmp"))
+        .join("tmux")
+        .join(format!("{}.log", safe_path_component(Some(session_id))))
+}
+
+fn shell_quote_path(path: &Path) -> String {
+    shell_quote_str(&path.display().to_string())
+}
+
+fn shell_quote_str(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn message_field(events: &[AgentEvent], prefix: &str) -> Option<String> {
+    events.iter().find_map(|event| {
+        let AgentEvent::Message { text, .. } = event else {
+            return None;
+        };
+        text.split_whitespace()
+            .find_map(|part| part.strip_prefix(prefix).map(str::to_string))
+    })
 }
 
 pub fn persist_prompt_artifact(prepared: &PreparedRun) -> Result<PathBuf, AgentError> {
@@ -512,10 +787,13 @@ fn summarize_events(backend: &str, events: &[AgentEvent]) -> AgentSummary {
     AgentSummary {
         backend: backend.into(),
         success: failure.is_none() && completed.is_some(),
+        pending_session: false,
         session_id,
         message: failure
             .or(completed)
             .unwrap_or_else(|| "no terminal event".into()),
+        log_path: None,
+        attach_command: None,
     }
 }
 
@@ -564,6 +842,7 @@ pub fn backend_from_config(config: &RuntimeConfig) -> Box<dyn AgentBackend> {
     match config.backend.kind.as_str() {
         "codex" => Box::<CodexBackend>::default(),
         "claude-code" => Box::<ClaudeCodeBackend>::default(),
+        "tmux" => Box::<TmuxBackend>::default(),
         _ => Box::<DryRunBackend>::default(),
     }
 }
@@ -586,6 +865,152 @@ mod tests {
             .unwrap();
         let events = backend.run(prepared).unwrap();
         assert!(matches!(events[0], AgentEvent::SessionStarted { .. }));
+    }
+
+    #[test]
+    fn tmux_backend_prepare_uses_local_session_config() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\nagent:\n  backend: tmux\ntmux:\n  command: /usr/local/bin/tmux\n  agent_command: codex\n  session_prefix: jade-test\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, std::path::Path::new("/tmp/WORKFLOW.md"))
+                .unwrap();
+        let backend = TmuxBackend;
+
+        let prepared = backend
+            .prepare(PathBuf::from("/tmp/ws"), "prompt".into(), &config)
+            .unwrap();
+
+        assert_eq!(prepared.backend, "tmux");
+        assert_eq!(prepared.command.as_deref(), Some("codex"));
+        assert_eq!(
+            prepared
+                .env
+                .get("JADE_SYMPHONY_TMUX_COMMAND")
+                .map(String::as_str),
+            Some("/usr/local/bin/tmux")
+        );
+        assert_eq!(
+            prepared
+                .env
+                .get("JADE_SYMPHONY_TMUX_SESSION_PREFIX")
+                .map(String::as_str),
+            Some("jade-test")
+        );
+    }
+
+    #[test]
+    fn tmux_summary_reports_pending_attachable_session() {
+        let events = vec![
+            AgentEvent::SessionStarted {
+                backend: "tmux".into(),
+                session_id: "jade-main-220".into(),
+            },
+            AgentEvent::Message {
+                backend: "tmux".into(),
+                session_id: Some("jade-main-220".into()),
+                text: "tmux_session_started session=jade-main-220 log_path=/tmp/jade.log".into(),
+            },
+        ];
+
+        let summary = TmuxBackend.summarize(&events);
+
+        assert!(!summary.success);
+        assert!(summary.pending_session);
+        assert_eq!(
+            summary.attach_command.as_deref(),
+            Some("tmux attach-session -t jade-main-220")
+        );
+        assert_eq!(summary.log_path, Some(PathBuf::from("/tmp/jade.log")));
+    }
+
+    #[test]
+    fn tmux_backend_launches_attachable_session_when_tmux_available() {
+        if Command::new("tmux")
+            .arg("-V")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_err()
+        {
+            eprintln!("skipping tmux smoke: tmux is unavailable");
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nagent:\n  backend: tmux\ntmux:\n  command: tmux\n  agent_command: cat > jade-prompt.txt\n  session_prefix: jade-test\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, std::path::Path::new("/tmp/WORKFLOW.md"))
+                .unwrap();
+        let backend = TmuxBackend;
+        let mut prepared = backend
+            .prepare(workspace.clone(), "echo tmux-smoke".into(), &config)
+            .unwrap();
+        prepared.prompt_artifact_path = Some(temp.path().join("logs/prompts/smoke.prompt.md"));
+        let tmux_tmp = temp.path().join("tmux-tmp");
+        fs::create_dir_all(&tmux_tmp).unwrap();
+        let probe_session = format!("jade-test-probe-{}", current_time_ms());
+        let probe = Command::new("tmux")
+            .env("TMUX_TMPDIR", &tmux_tmp)
+            .args(["new-session", "-d", "-s", &probe_session, "sleep 30"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let probe_available = probe.is_ok_and(|status| status.success())
+            && Command::new("tmux")
+                .env("TMUX_TMPDIR", &tmux_tmp)
+                .args(["has-session", "-t", &probe_session])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success());
+        if !probe_available {
+            eprintln!("skipping tmux smoke: tmux cannot create sessions in this sandbox");
+            return;
+        }
+        Command::new("tmux")
+            .env("TMUX_TMPDIR", &tmux_tmp)
+            .args(["kill-session", "-t", &probe_session])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .ok();
+        prepared
+            .env
+            .insert("TMUX_TMPDIR".into(), tmux_tmp.display().to_string());
+
+        let events = backend.run(prepared).unwrap();
+        let summary = backend.summarize(&events);
+
+        assert!(summary.pending_session);
+        assert!(summary
+            .attach_command
+            .as_deref()
+            .unwrap()
+            .contains("tmux attach-session -t jade-test-main-workspace"));
+        assert!(summary
+            .log_path
+            .as_ref()
+            .unwrap()
+            .display()
+            .to_string()
+            .ends_with(".log"));
+        if let Some(session) = summary.session_id.as_deref() {
+            Command::new("tmux")
+                .env("TMUX_TMPDIR", tmux_tmp)
+                .args(["kill-session", "-t", session])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .ok();
+        }
     }
 
     #[test]

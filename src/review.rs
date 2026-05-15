@@ -634,8 +634,22 @@ fn fixed_review_agent_claim_matches(value: &str, worker_key: &str) -> bool {
 
 fn active_review_marker_matches(value: &str, worker_key: &str) -> bool {
     let value = value.to_lowercase();
-    value.contains(&worker_key.to_lowercase())
-        && (value.contains("queued") || value.contains("running"))
+    if !value.contains(&worker_key.to_lowercase()) {
+        return false;
+    }
+    if value.contains("job state: failed")
+        || value.contains("job state: completed")
+        || value.contains("job state: cancelled")
+        || value.contains("job state: timedout")
+        || value.contains("job state: timed out")
+    {
+        return false;
+    }
+
+    value.contains("queued")
+        || value.contains("job state: running")
+        || value.contains("review worker running")
+        || value.contains("running review:")
 }
 
 pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
@@ -689,6 +703,7 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
 
     if decision.outcome == ReviewOutcome::PassedToHumanReview {
         lines.push(String::new());
+        lines.push("- Review pass evidence: `recorded`".into());
         lines.push("Evidence recorded. Independent Review Agent may move this issue to Human Review; the main implementation agent must not.".into());
     }
 
@@ -1342,6 +1357,7 @@ mod tests {
         let body = render_review_workpad(&issue(), &job);
 
         assert!(body.contains("Evidence recorded"));
+        assert!(body.contains("Review pass evidence: `recorded`"));
         assert!(body.contains("Independent Review Agent may move this issue to Human Review"));
         assert!(body.contains("main implementation agent must not"));
     }
@@ -1613,6 +1629,27 @@ mod tests {
             review_run_eligibility(&issue, "Agent Review", "fake"),
             ReviewRunEligibility::AlreadyQueued {
                 worker_key: "review:#1:fake".into()
+            }
+        );
+    }
+
+    #[test]
+    fn review_run_eligibility_ignores_failed_workpad_with_running_error_text() {
+        let mut issue = issue();
+        issue.description = Some(
+            [
+                "## Agent Review",
+                "- Worker key: review:#1:gemini-cli",
+                "- Job state: Failed",
+                "- Error: Gemini CLI is not running in a trusted directory.",
+            ]
+            .join("\n"),
+        );
+
+        assert_eq!(
+            review_run_eligibility(&issue, "Agent Review", "gemini-cli"),
+            ReviewRunEligibility::Eligible {
+                worker_key: "review:#1:gemini-cli".into()
             }
         );
     }

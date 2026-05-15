@@ -143,6 +143,13 @@ workspaces are archived under the configured runtime log directory and the loop
 continues; dirty or unknown workspaces still stop the loop with a repair
 diagnostic so local work is not discarded silently.
 
+`doctor` treats Human Review as valid only when independent review pass evidence
+is durable. Project fields named `review_pass_evidence_recorded` or
+`review_pass_evidence` satisfy that check when a tracker exposes them; in the
+current GitHub Project #9 schema, the canonical source is the review workpad text
+written into the issue comment stream. A `Review Agent` claim by itself is not
+pass evidence.
+
 ## Artifact Root Migration
 
 To move local runtime artifacts without changing repo-owned workflow files, set

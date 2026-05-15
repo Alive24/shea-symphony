@@ -136,6 +136,12 @@ Do not use review commands to bypass human acceptance.
 
 ## Human Review And Merging
 
+Human Review requires durable pass evidence from the independent Review Agent.
+For GitHub Project #9, do not assume the `Review Agent` claim field is enough:
+doctor expects the canonical review workpad pass marker in the issue comment
+stream, or an explicit review-pass Project field if a future tracker schema adds
+one.
+
 After a human accepts work and moves the issue to `Merging`, use the guarded
 merge lane:
 

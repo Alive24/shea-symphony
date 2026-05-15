@@ -212,11 +212,16 @@ Project v2 issues:
      endpoint is still needed.
    - Clear integration-gap reporting when credentials are missing or unusable
      while avoiding false missing-token warnings when `gh api graphql` works.
-   - `doctor` / `audit-project` is available as a read-only project invariant
-     audit with human-readable output, JSON output, and explicit strict failure
-     signaling for blocker violations. Explicit-write repair currently covers
-     only invalid `Human Review` issues that lack independent Review Agent pass
-     evidence; broader repair mode remains a follow-up.
+   - `doctor` / `audit-project` is available as a project/workflow/runtime
+     invariant audit with human-readable output, JSON output, explicit strict
+     failure signaling for blocker violations, repo/default workflow discovery,
+     stale runtime-state detection, partial `Todo` claim detection, and
+     `In Progress` PR-evidence detection. `doctor --interactive` and
+     `doctor repair ISSUE` provide non-destructive repair guidance, while
+     explicit-write repair can move uncertain work to `Need Human Input` after
+     writing workpad evidence. `doctor --auto-fix --write` is limited to clearly
+     safe repairs such as invalid `Human Review` issues without independent
+     Review Agent pass evidence.
 
 9. Integration profile.
    - Credential-gated GitHub Project v2 smoke test.

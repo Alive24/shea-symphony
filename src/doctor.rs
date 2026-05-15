@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::model::{normalize_state, LinkedPullRequest, TrackerIssue};
+use crate::runtime_state::{detect_runtime_stall, RuntimeState};
 
 pub const HUMAN_REVIEW_MISSING_REVIEW_EVIDENCE: &str = "human_review_missing_review_evidence";
 
@@ -42,7 +43,21 @@ impl ProjectAuditReport {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ProjectDoctorContext {
+    pub runtime_state: Option<RuntimeState>,
+    pub now_ms: u64,
+    pub stale_after_ms: u64,
+}
+
 pub fn audit_project_issues(issues: &[TrackerIssue]) -> ProjectAuditReport {
+    audit_project_issues_with_context(issues, None)
+}
+
+pub fn audit_project_issues_with_context(
+    issues: &[TrackerIssue],
+    context: Option<&ProjectDoctorContext>,
+) -> ProjectAuditReport {
     let mut violations = Vec::new();
     for issue in issues {
         let state = issue.normalized_state();
@@ -92,10 +107,7 @@ pub fn audit_project_issues(issues: &[TrackerIssue]) -> ProjectAuditReport {
                     "Move to Rework with review freshness evidence before attempting to land.",
                 ));
             }
-            "in progress"
-                if !issue.project_fields.contains_key("runtime_owner")
-                    && !issue.project_fields.contains_key("runtime_state") =>
-            {
+            "in progress" if !has_runtime_owner_metadata(issue) => {
                 violations.push(violation(
                     issue,
                     AuditSeverity::Warning,
@@ -127,6 +139,30 @@ pub fn audit_project_issues(issues: &[TrackerIssue]) -> ProjectAuditReport {
             }
             _ => {}
         }
+
+        if state == "todo" && claimed_main_agent(issue).is_some() {
+            violations.push(violation(
+                issue,
+                AuditSeverity::Warning,
+                "todo_main_agent_claimed",
+                "Todo issue already has a Main Agent claim marker.",
+                "Treat it as partially claimed or interrupted work; inspect with `doctor repair <issue>` before dispatching another worker.",
+            ));
+        }
+
+        if state == "in progress" && has_pr_url(issue) {
+            violations.push(violation(
+                issue,
+                AuditSeverity::Warning,
+                "in_progress_has_pr_evidence",
+                "In Progress issue already has PR evidence.",
+                "Inspect whether the work should be handed off to Agent Review or moved to Need Human Input with a workpad diagnostic.",
+            ));
+        }
+
+        if let Some(context) = context {
+            audit_runtime_consistency(issue, &state, context, &mut violations);
+        }
     }
 
     ProjectAuditReport {
@@ -134,6 +170,54 @@ pub fn audit_project_issues(issues: &[TrackerIssue]) -> ProjectAuditReport {
         violations,
         integration_gaps: Vec::new(),
     }
+}
+
+pub fn render_doctor_repair_workpad(
+    issue: &TrackerIssue,
+    report: &ProjectAuditReport,
+    action: &str,
+) -> String {
+    let related = related_violations(report, &issue.identifier);
+    let mut lines = vec![
+        "## Jade Symphony Workpad".to_string(),
+        String::new(),
+        "### Project Doctor Repair".to_string(),
+        format!("- Issue: {} {}", issue.identifier, issue.title),
+        format!("- Current state: `{}`", issue.state),
+        format!("- Requested action: `{action}`"),
+    ];
+
+    if let Some(main_agent) = claimed_main_agent(issue) {
+        lines.push(format!("- Main Agent: `{main_agent}`"));
+    }
+    if let Some(branch) = issue.branch_name.as_deref() {
+        lines.push(format!("- Tracker branch: `{branch}`"));
+    }
+    if has_pr_url(issue) {
+        let targets = reliable_pr_targets(issue).join(", ");
+        lines.push(format!("- PR evidence: `{targets}`"));
+    }
+
+    lines.extend([String::new(), "### Doctor Findings".to_string()]);
+    if related.is_empty() {
+        lines.push("- No issue-specific doctor violations were found.".to_string());
+    } else {
+        for violation in related {
+            lines.push(format!(
+                "- `{}` ({:?}): {}",
+                violation.code, violation.severity, violation.message
+            ));
+        }
+    }
+
+    lines.extend([
+        String::new(),
+        "### State Boundary".to_string(),
+        "- Doctor repair records evidence before any tracker mutation.".to_string(),
+        "- This repair does not delete worktrees, discard local work, or bypass review/merge lane authority.".to_string(),
+    ]);
+
+    lines.join("\n")
 }
 
 pub fn render_project_audit_report(report: &ProjectAuditReport) -> String {
@@ -279,6 +363,86 @@ fn has_dirty_or_conflicted_pr(issue: &TrackerIssue) -> bool {
         .unwrap_or(false)
 }
 
+fn audit_runtime_consistency(
+    issue: &TrackerIssue,
+    normalized_issue_state: &str,
+    context: &ProjectDoctorContext,
+    violations: &mut Vec<ProjectAuditViolation>,
+) {
+    let Some(runtime_state) = context.runtime_state.as_ref() else {
+        return;
+    };
+    let Some(active_issue) = runtime_state.active_issue.as_ref() else {
+        return;
+    };
+
+    let runtime_matches_issue = issue_refs_match(&active_issue.identifier, &issue.identifier);
+
+    if runtime_matches_issue && normalized_issue_state != "in progress" {
+        violations.push(violation(
+            issue,
+            AuditSeverity::Warning,
+            "runtime_state_tracker_mismatch",
+            "Runtime state still points at this issue, but the tracker state is not In Progress.",
+            "Inspect the runtime state and tracker evidence before clearing or resuming the active issue.",
+        ));
+    }
+
+    if runtime_matches_issue && normalized_issue_state == "in progress" {
+        if let Some(stall) =
+            detect_runtime_stall(runtime_state, context.now_ms, context.stale_after_ms)
+        {
+            violations.push(violation(
+                issue,
+                AuditSeverity::Warning,
+                "runtime_state_stale",
+                &format!("Runtime state is stale: {}.", stall.reason),
+                "Use `doctor repair <issue>` to choose resume, no-op, or escalation before another worker claims it.",
+            ));
+        }
+    }
+
+    if !runtime_matches_issue && normalized_issue_state == "in progress" {
+        violations.push(violation(
+            issue,
+            AuditSeverity::Warning,
+            "runtime_active_issue_disagrees",
+            "Issue is In Progress but runtime state points at a different active issue.",
+            "Inspect both issues before dispatching or resetting ownership metadata.",
+        ));
+    }
+
+    if runtime_matches_issue
+        && matches!(normalized_issue_state, "todo" | "need to clarify")
+        && runtime_state.workspace_path.is_some()
+    {
+        violations.push(violation(
+            issue,
+            AuditSeverity::Warning,
+            "runtime_worktree_tracker_mismatch",
+            "Runtime state has a workspace for this queued issue.",
+            "Inspect the worktree and either resume the active work or move the issue to Need Human Input with evidence.",
+        ));
+    }
+
+    if runtime_matches_issue {
+        if let (Some(runtime_branch), Some(tracker_branch)) = (
+            runtime_state.branch_name.as_deref(),
+            issue.branch_name.as_deref(),
+        ) {
+            if runtime_branch != tracker_branch {
+                violations.push(violation(
+                    issue,
+                    AuditSeverity::Warning,
+                    "runtime_branch_mismatch",
+                    "Runtime state branch and tracker branch disagree.",
+                    "Inspect the runtime workspace, tracker branch, and PR evidence before repairing state.",
+                ));
+            }
+        }
+    }
+}
+
 fn bool_project_field(issue: &TrackerIssue, key: &str) -> bool {
     issue
         .project_fields
@@ -293,6 +457,44 @@ fn string_project_field(issue: &TrackerIssue, key: &str) -> Option<String> {
         .get(key)
         .and_then(serde_json::Value::as_str)
         .map(str::to_string)
+}
+
+fn string_project_field_any(issue: &TrackerIssue, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| string_project_field(issue, key))
+}
+
+fn claimed_main_agent(issue: &TrackerIssue) -> Option<String> {
+    string_project_field_any(issue, &["Main Agent", "main_agent"])
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn has_runtime_owner_metadata(issue: &TrackerIssue) -> bool {
+    issue.project_fields.contains_key("runtime_owner")
+        || issue.project_fields.contains_key("runtime_state")
+        || claimed_main_agent(issue).is_some()
+        || string_project_field_any(issue, &["Merging Agent", "merging_agent"])
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
+}
+
+fn issue_refs_match(left: &str, right: &str) -> bool {
+    normalize_issue_ref(left) == normalize_issue_ref(right)
+}
+
+fn normalize_issue_ref(value: &str) -> String {
+    value.trim().trim_start_matches('#').to_string()
+}
+
+fn related_violations<'a>(
+    report: &'a ProjectAuditReport,
+    issue_ref: &str,
+) -> Vec<&'a ProjectAuditViolation> {
+    report
+        .violations
+        .iter()
+        .filter(|violation| issue_refs_match(&violation.issue_ref, issue_ref))
+        .collect()
 }
 
 fn pr_state(pr: &LinkedPullRequest) -> Option<String> {
@@ -333,6 +535,22 @@ mod tests {
             url: Some(url.into()),
             state: Some(state.into()),
             ..Default::default()
+        }
+    }
+
+    fn runtime_context(identifier: &str, updated_at_ms: u64) -> ProjectDoctorContext {
+        let mut runtime_state = RuntimeState::active(
+            crate::runtime_state::RuntimeIssueState {
+                id: format!("ISSUE_{identifier}"),
+                identifier: identifier.into(),
+            },
+            "dry-run",
+        );
+        runtime_state.updated_at_ms = Some(updated_at_ms);
+        ProjectDoctorContext {
+            runtime_state: Some(runtime_state),
+            now_ms: 20_000,
+            stale_after_ms: 10_000,
         }
     }
 
@@ -467,5 +685,73 @@ mod tests {
         assert_eq!(parsed.violations[0].code, "agent_review_missing_pr_handoff");
         assert_eq!(parsed.integration_gaps, vec!["missing scope"]);
         assert!(!rendered.contains("\nintegration_gap="));
+    }
+
+    #[test]
+    fn reports_todo_with_main_agent_claim() {
+        let mut issue = issue("#202", "Todo");
+        issue.project_fields.insert(
+            "Main Agent".into(),
+            serde_json::Value::String("codex-alpha".into()),
+        );
+
+        let report = audit_project_issues(&[issue]);
+
+        assert_eq!(report.violations[0].code, "todo_main_agent_claimed");
+    }
+
+    #[test]
+    fn reports_stale_runtime_state_for_in_progress_issue() {
+        let issue = issue("#202", "In Progress");
+        let context = runtime_context("#202", 1_000);
+
+        let report = audit_project_issues_with_context(&[issue], Some(&context));
+
+        assert!(report
+            .violations
+            .iter()
+            .any(|violation| violation.code == "runtime_state_stale"));
+    }
+
+    #[test]
+    fn reports_runtime_state_tracker_mismatch() {
+        let issue = issue("#202", "Agent Review");
+        let context = runtime_context("#202", 19_000);
+
+        let report = audit_project_issues_with_context(&[issue], Some(&context));
+
+        assert!(report
+            .violations
+            .iter()
+            .any(|violation| violation.code == "runtime_state_tracker_mismatch"));
+    }
+
+    #[test]
+    fn reports_in_progress_with_pr_evidence() {
+        let mut issue = issue("#202", "In Progress");
+        issue.linked_pull_requests.push(linked_pr(
+            "https://github.com/Alive24/jade-symphony/pull/202",
+            "OPEN",
+        ));
+
+        let report = audit_project_issues(&[issue]);
+
+        assert!(report
+            .violations
+            .iter()
+            .any(|violation| violation.code == "in_progress_has_pr_evidence"));
+    }
+
+    #[test]
+    fn reports_unsafe_runtime_active_issue_disagreement() {
+        let issue = issue("#203", "In Progress");
+        let context = runtime_context("#202", 19_000);
+
+        let report = audit_project_issues_with_context(&[issue], Some(&context));
+
+        assert!(report
+            .violations
+            .iter()
+            .any(|violation| violation.code == "runtime_active_issue_disagrees"));
     }
 }

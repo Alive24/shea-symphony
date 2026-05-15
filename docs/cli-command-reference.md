@@ -5,7 +5,9 @@ It is organized by operator task and safety boundary rather than by parser
 order.
 
 All live tracker mutations require explicit `--write`. Fixture-backed workflows
-remain the preferred rehearsal path for local development.
+remain the preferred rehearsal path for local development. `doctor` can omit the
+workflow path when `JADE_SYMPHONY_WORKFLOW` is set, or when
+`workflows/jade-symphony.md` exists in the current repo checkout.
 
 The canonical `workflows/jade-symphony.md` file is a workflow index/config. It
 references lane-specific prompts in `workflows/prompts/` so Main, Review, and
@@ -24,9 +26,25 @@ workflows may still use an inline prompt body.
 | `validate-workflow` | Compatibility alias for `validate`. | `cargo run -- validate-workflow examples/dry-run-workflow.md` |
 | `inspect` | Read tracker issues and print gate/status information. | `cargo run -- inspect workflows/jade-symphony.md` |
 | `project-state` | Diagnose whether the canonical Project read path is trustworthy. | `cargo run -- project-state workflows/jade-symphony.md` |
-| `doctor` | Audit Project/workflow invariants. | `cargo run -- doctor workflows/jade-symphony.md` |
+| `doctor` | Audit Project/workflow/runtime invariants. | `cargo run -- doctor` |
 | `audit-project` | Compatibility alias for `doctor`. | `cargo run -- audit-project workflows/jade-symphony.md` |
 | `profiles` | List configured/discovered execution profiles. | `cargo run -- profiles examples/cockpit-profiles-workflow.md` |
+
+Doctor repair helpers:
+
+```bash
+cargo run -- doctor --interactive
+cargo run -- doctor --auto-fix --dry-run
+cargo run -- doctor --auto-fix --write
+cargo run -- doctor repair 194
+cargo run -- doctor repair 194 --move-need-human-input --write
+```
+
+`doctor repair ISSUE` is non-destructive by default. It prints safe,
+uncertain, and dangerous actions for the issue using tracker state, Project
+fields, runtime-state evidence, branch/PR hints, and doctor findings. The
+`--move-need-human-input --write` path writes workpad evidence before changing
+tracker state.
 
 ## Main Implementation Runtime
 

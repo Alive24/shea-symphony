@@ -107,6 +107,7 @@ review:
 ```
 
 ```bash
+export GEMINI_CLI_TRUST_WORKSPACE=true
 target/debug/jade-symphony review-loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
@@ -114,6 +115,13 @@ If Gemini cannot start, the review workpad should name the configured command,
 whether worker `PATH` could resolve it, the required operator action, and the
 retry command. Do not move an issue to `Human Review` unless the Review Agent
 actually records passing review evidence.
+
+If Gemini exits, refuses the workspace trust check, or times out before
+returning a review report, `review-loop` records terminal workpad/ledger
+evidence, clears the `Review Agent` Project claim, and leaves the issue in
+`Agent Review` for retry after the operator fixes the backend environment.
+The Gemini subprocess receives the rendered prompt on stdin and Jade closes
+stdin after writing so headless commands that wait for EOF can proceed.
 
 Use `workflows/jade-symphony.md` for supervised review workers. Do not keep the
 active review workflow only under `/tmp` or `/private/tmp`; the CLI prints

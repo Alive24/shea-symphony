@@ -62,8 +62,8 @@ use jade_symphony::review::{
     render_review_workpad, review_gate_decision, review_run_eligibility,
     transition_allowed_for_main_agent, transition_allowed_for_review_agent,
     write_review_job_ledger_record, FakeReviewBackend, FakeReviewOutcome, GeminiCliReviewBackend,
-    ReviewBackend, ReviewFreshnessInput, ReviewJob, ReviewRequest, ReviewReworkClass,
-    ReviewRunEligibility, ReviewStaleReason,
+    ReviewBackend, ReviewFreshnessInput, ReviewJob, ReviewJobState, ReviewRequest,
+    ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
 };
 use jade_symphony::rework::{
     render_rework_diagnostic_workpad, rework_diagnostic_from_review, rework_transition_expected,
@@ -1716,6 +1716,9 @@ fn apply_review_result(
             reason: "review result workpad evidence",
         },
     );
+    if review_claim_should_be_released(job, decision.target_state) {
+        clear_review_claim_field(config, adapter, issue_ref, job)?;
+    }
     if let Some(target_state) = decision.target_state {
         adapter.set_state(issue_ref, target_state)?;
         append_tracker_mutation_audit(
@@ -1731,6 +1734,39 @@ fn apply_review_result(
             },
         );
     }
+    Ok(())
+}
+
+fn review_claim_should_be_released(
+    job: &jade_symphony::review::ReviewJob,
+    target_state: Option<&str>,
+) -> bool {
+    matches!(
+        job.state,
+        ReviewJobState::Failed | ReviewJobState::TimedOut | ReviewJobState::Cancelled
+    ) && target_state == Some("agent_review")
+}
+
+fn clear_review_claim_field(
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    issue_ref: &str,
+    job: &jade_symphony::review::ReviewJob,
+) -> Result<(), Box<dyn std::error::Error>> {
+    adapter.clear_project_field(issue_ref, "Review Agent")?;
+    append_tracker_mutation_audit(
+        config,
+        TrackerMutationAudit {
+            command: "review-loop",
+            mutation_type: "claim_field_clear",
+            issue_ref: Some(issue_ref),
+            target: Some("Review Agent".into()),
+            from_state: Some(format!("{:?}", job.state)),
+            to_state: None,
+            reason: "terminal review backend result",
+        },
+    );
+    println!("review_loop_action=clear_claim_field issue={issue_ref} field=\"Review Agent\"");
     Ok(())
 }
 

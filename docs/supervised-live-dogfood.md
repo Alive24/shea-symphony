@@ -115,6 +115,7 @@ For a bounded Review Agent pass, run:
 
 ```bash
 export JADE_GEMINI_COMMAND="$(command -v gemini)"
+export GEMINI_CLI_TRUST_WORKSPACE=true
 cargo run -- review-loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
@@ -125,7 +126,8 @@ Expected outcomes:
 - passed independent review may move the issue to `Human Review`;
 - confirmed findings move the issue to `Rework`;
 - failed, inconclusive, timed-out, or unavailable review stays out of
-  `Human Review` and records evidence.
+  `Human Review`, records evidence, clears stale `Review Agent` claims, and
+  remains retryable after the backend environment is fixed.
 
 If the review workflow uses `review.gemini_command: $JADE_GEMINI_COMMAND`,
 set that environment variable to an absolute Gemini CLI path before starting

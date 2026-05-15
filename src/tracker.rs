@@ -29,6 +29,12 @@ pub trait TrackerAdapter {
             self.kind()
         )))
     }
+    fn clear_project_field(&self, _issue_ref: &str, _field_name: &str) -> Result<(), TrackerError> {
+        Err(TrackerError::NotImplemented(format!(
+            "{} tracker does not support Project field clearing",
+            self.kind()
+        )))
+    }
     fn link_pull_request(&self, issue_ref: &str, pr_ref: &str) -> Result<(), TrackerError>;
     fn list_linked_pull_requests(
         &self,
@@ -277,6 +283,10 @@ impl TrackerAdapter for MemoryTracker {
         Ok(())
     }
 
+    fn clear_project_field(&self, _issue_ref: &str, _field_name: &str) -> Result<(), TrackerError> {
+        Ok(())
+    }
+
     fn link_pull_request(&self, _issue_ref: &str, _pr_ref: &str) -> Result<(), TrackerError> {
         Ok(())
     }
@@ -466,6 +476,16 @@ impl TrackerAdapter for GithubProjectV2Adapter {
         }
 
         GithubProjectV2GhClient::new(&self.config).set_project_field(issue_ref, assignment)
+    }
+
+    fn clear_project_field(&self, issue_ref: &str, field_name: &str) -> Result<(), TrackerError> {
+        if self.config.tracker.fixture_path.is_some() {
+            return Err(TrackerError::IntegrationUnavailable(
+                "GitHub Project v2 fixture mode cannot clear live project fields".into(),
+            ));
+        }
+
+        GithubProjectV2GhClient::new(&self.config).clear_project_field(issue_ref, field_name)
     }
 
     fn link_pull_request(&self, issue_ref: &str, pr_ref: &str) -> Result<(), TrackerError> {
@@ -788,6 +808,32 @@ impl GithubProjectV2GhClient {
                 )));
             }
         }
+        Ok(())
+    }
+
+    fn clear_project_field(&self, issue_ref: &str, field_name: &str) -> Result<(), TrackerError> {
+        let issue = self.resolve_issue(issue_ref)?;
+        let item_id = issue.item_id.ok_or_else(|| {
+            TrackerError::IntegrationUnavailable(format!(
+                "issue {issue_ref} is not a ProjectV2 item; add it to the project before clearing fields"
+            ))
+        })?;
+        let metadata = self.project_metadata()?;
+        let field = metadata.field(field_name).ok_or_else(|| {
+            TrackerError::IntegrationUnavailable(format!(
+                "ProjectV2 field {field_name:?} was not found"
+            ))
+        })?;
+        let project_id = metadata.project_id.clone();
+        let field_id = field.id.clone();
+        self.graphql(
+            GITHUB_CLEAR_PROJECT_ITEM_FIELD_MUTATION,
+            &[
+                ("projectId", project_id),
+                ("itemId", item_id),
+                ("fieldId", field_id),
+            ],
+        )?;
         Ok(())
     }
 
@@ -1386,6 +1432,20 @@ mutation JadeSymphonyUpdateProjectTextField($projectId: ID!, $itemId: ID!, $fiel
     itemId: $itemId,
     fieldId: $fieldId,
     value: { text: $text }
+  }) {
+    projectV2Item {
+      id
+    }
+  }
+}
+"#;
+
+const GITHUB_CLEAR_PROJECT_ITEM_FIELD_MUTATION: &str = r#"
+mutation JadeSymphonyClearProjectField($projectId: ID!, $itemId: ID!, $fieldId: ID!) {
+  clearProjectV2ItemFieldValue(input: {
+    projectId: $projectId,
+    itemId: $itemId,
+    fieldId: $fieldId
   }) {
     projectV2Item {
       id

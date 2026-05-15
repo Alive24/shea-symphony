@@ -375,7 +375,7 @@ impl ReviewBackend for GeminiCliReviewBackend {
                 ReviewError::Backend(diagnose_gemini_spawn_failure(&self.command, &error))
             })?;
 
-        if let Some(stdin) = child.stdin.as_mut() {
+        if let Some(mut stdin) = child.stdin.take() {
             stdin
                 .write_all(request.prompt.as_bytes())
                 .map_err(|error| ReviewError::Backend(error.to_string()))?;
@@ -604,6 +604,11 @@ pub fn review_run_eligibility(
 }
 
 fn has_active_review_worker(issue: &TrackerIssue, worker_key: &str) -> bool {
+    let terminal_failure_marker = issue
+        .description
+        .as_deref()
+        .is_some_and(|description| terminal_review_failure_marker_matches(description, worker_key));
+
     issue.project_fields.iter().any(|(key, value)| {
         let key = key.to_lowercase();
         if !key.contains("review") {
@@ -616,7 +621,9 @@ fn has_active_review_worker(issue: &TrackerIssue, worker_key: &str) -> bool {
             .map(str::to_string)
             .unwrap_or_else(|| value.to_string());
         active_review_marker_matches(&value, worker_key)
-            || (is_review_agent_field && fixed_review_agent_claim_matches(&value, worker_key))
+            || (is_review_agent_field
+                && !terminal_failure_marker
+                && fixed_review_agent_claim_matches(&value, worker_key))
     }) || issue
         .description
         .as_deref()
@@ -634,15 +641,11 @@ fn fixed_review_agent_claim_matches(value: &str, worker_key: &str) -> bool {
 
 fn active_review_marker_matches(value: &str, worker_key: &str) -> bool {
     let value = value.to_lowercase();
-    if !value.contains(&worker_key.to_lowercase()) {
+    let worker_key = worker_key.to_lowercase();
+    if !value.contains(&worker_key) {
         return false;
     }
-    if value.contains("job state: failed")
-        || value.contains("job state: completed")
-        || value.contains("job state: cancelled")
-        || value.contains("job state: timedout")
-        || value.contains("job state: timed out")
-    {
+    if terminal_review_failure_marker_matches(&value, &worker_key) {
         return false;
     }
 
@@ -650,6 +653,21 @@ fn active_review_marker_matches(value: &str, worker_key: &str) -> bool {
         || value.contains("job state: running")
         || value.contains("review worker running")
         || value.contains("running review:")
+}
+
+fn terminal_review_failure_marker_matches(value: &str, worker_key: &str) -> bool {
+    let value = value.to_lowercase();
+    let worker_key = worker_key.to_lowercase();
+    value.contains(&worker_key)
+        && (value.contains("job state: failed")
+            || value.contains("job state: timedout")
+            || value.contains("job state: timed out")
+            || value.contains("job state: cancelled"))
+        && (value.contains("required operator action")
+            || value.contains("review backend")
+            || value.contains("gemini review command")
+            || value.contains("retry: rerun `review-loop`")
+            || value.contains("retry: rerun review-loop"))
 }
 
 pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
@@ -1303,6 +1321,48 @@ mod tests {
     }
 
     #[test]
+    fn gemini_backend_closes_prompt_stdin_after_launch() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("review-workspace");
+        let artifact_root = temp.path().join("reviews");
+        let reviewer = temp.path().join("reviewer.sh");
+        fs::write(
+            &reviewer,
+            "#!/bin/sh\ncat >/dev/null\nprintf 'Review completed after EOF.\\n'\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&reviewer).unwrap().permissions();
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(0o755);
+        fs::set_permissions(&reviewer, permissions).unwrap();
+
+        let backend = GeminiCliReviewBackend::new(reviewer.display().to_string());
+        let request = ReviewRequest {
+            issue: issue(),
+            prompt: "Review this prompt.".into(),
+            workspace,
+            artifact_root,
+        };
+
+        let job = backend.start(request).unwrap();
+        let job = poll_review_job_until_terminal(
+            &backend,
+            job,
+            Duration::from_millis(750),
+            Duration::from_millis(10),
+        )
+        .unwrap();
+
+        assert_eq!(job.state, ReviewJobState::Completed);
+        assert_eq!(
+            job.report
+                .as_ref()
+                .and_then(|report| report.summary.as_deref()),
+            Some("Review completed after EOF.")
+        );
+    }
+
+    #[test]
     fn main_agent_completion_stops_at_agent_review() {
         let decision = review_gate_decision_for_actor(
             &ReviewJob {
@@ -1634,17 +1694,36 @@ mod tests {
     }
 
     #[test]
+    fn review_run_eligibility_ignores_terminal_failed_workpad_for_retry() {
+        let mut issue = issue();
+        issue.project_fields.insert(
+            "Review Agent".into(),
+            serde_json::Value::String("Gemini A".into()),
+        );
+        let job = ReviewJob::failed_unavailable(
+            "#1",
+            "gemini-cli",
+            "Gemini review command exited with status 1: workspace is not trusted",
+        );
+        issue.description = Some(render_review_workpad(&issue, &job));
+
+        assert_eq!(
+            review_run_eligibility(&issue, "Agent Review", "gemini-cli"),
+            ReviewRunEligibility::Eligible {
+                worker_key: "review:#1:gemini-cli".into()
+            }
+        );
+    }
+
+    #[test]
     fn review_run_eligibility_ignores_failed_workpad_with_running_error_text() {
         let mut issue = issue();
-        issue.description = Some(
-            [
-                "## Agent Review",
-                "- Worker key: review:#1:gemini-cli",
-                "- Job state: Failed",
-                "- Error: Gemini CLI is not running in a trusted directory.",
-            ]
-            .join("\n"),
+        let job = ReviewJob::failed_unavailable(
+            "#1",
+            "gemini-cli",
+            "Gemini review command exited with status 1: CLI is not running in a trusted directory",
         );
+        issue.description = Some(render_review_workpad(&issue, &job));
 
         assert_eq!(
             review_run_eligibility(&issue, "Agent Review", "gemini-cli"),

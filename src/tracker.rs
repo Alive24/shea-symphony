@@ -177,6 +177,8 @@ pub fn classify_project_state_failure_message(message: &str) -> ProjectStateFail
         ProjectStateFailureKind::Schema
     } else if normalized.contains("invalid gh graphql json")
         || normalized.contains("invalid github graphql json")
+        || normalized.contains("invalid gh api json")
+        || normalized.contains("invalid github api json")
     {
         ProjectStateFailureKind::Payload
     } else {
@@ -322,10 +324,9 @@ impl GithubProjectV2Adapter {
     }
 
     fn load_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError> {
-        Ok(apply_github_read_filters(
-            self.load_mapped_issues()?,
-            &self.config,
-        ))
+        let mut issues = apply_github_read_filters(self.load_mapped_issues()?, &self.config);
+        self.enrich_native_issue_blockers_for_claimable_issues(&mut issues)?;
+        Ok(issues)
     }
 
     fn load_mapped_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError> {
@@ -337,6 +338,25 @@ impl GithubProjectV2Adapter {
             };
 
         Ok(apply_github_status_filters(issues, &self.config))
+    }
+
+    fn enrich_native_issue_blockers_for_claimable_issues(
+        &self,
+        issues: &mut [TrackerIssue],
+    ) -> Result<(), TrackerError> {
+        if !self.fixture_issues.is_empty() || self.config.tracker.fixture_path.is_some() {
+            return Ok(());
+        }
+
+        let client = GithubProjectV2GhClient::new(&self.config);
+        for issue in issues
+            .iter_mut()
+            .filter(|issue| github_issue_needs_native_blocker_prefetch(issue, &self.config))
+        {
+            client.enrich_native_issue_blockers(std::slice::from_mut(issue))?;
+        }
+
+        Ok(())
     }
 }
 
@@ -381,6 +401,15 @@ fn issue_matches_assignee_filter(issue: &TrackerIssue, filter: &AssigneeFilter) 
         .any(|assignee| allowed.contains(&normalize_state(assignee)))
 }
 
+fn github_issue_needs_native_blocker_prefetch(
+    issue: &TrackerIssue,
+    config: &RuntimeConfig,
+) -> bool {
+    let state = tracker_state_key(&issue.state);
+    state == tracker_state_key(&config.tracker.state_map.todo)
+        || state == tracker_state_key(&config.tracker.state_map.rework)
+}
+
 fn status_is_mapped(status: &str, config: &RuntimeConfig) -> bool {
     mapped_status_names(config)
         .iter()
@@ -413,15 +442,27 @@ impl TrackerAdapter for GithubProjectV2Adapter {
     }
 
     fn get_issue(&self, issue_ref: &str) -> Result<Option<TrackerIssue>, TrackerError> {
-        Ok(self
+        let mut issue = self
             .load_mapped_issues()?
-            .iter()
+            .into_iter()
             .find(|issue| issue.id == issue_ref || issue.identifier == issue_ref)
-            .cloned())
+            .map(|mut issue| {
+                if self.fixture_issues.is_empty() && self.config.tracker.fixture_path.is_none() {
+                    GithubProjectV2GhClient::new(&self.config)
+                        .enrich_native_issue_blockers(std::slice::from_mut(&mut issue))?;
+                }
+                Ok(issue)
+            })
+            .transpose()?;
+
+        Ok(issue.take())
     }
 
     fn fetch_issues_by_states(&self, states: &[String]) -> Result<Vec<TrackerIssue>, TrackerError> {
-        MemoryTracker::new(self.load_mapped_issues()?).fetch_issues_by_states(states)
+        let mut issues =
+            MemoryTracker::new(self.load_mapped_issues()?).fetch_issues_by_states(states)?;
+        self.enrich_native_issue_blockers_for_claimable_issues(&mut issues)?;
+        Ok(issues)
     }
 
     fn set_state(&self, issue_ref: &str, normalized_state: &str) -> Result<(), TrackerError> {
@@ -596,6 +637,45 @@ impl GithubProjectV2GhClient {
         }
 
         Ok(issues)
+    }
+
+    fn enrich_native_issue_blockers(
+        &self,
+        issues: &mut [TrackerIssue],
+    ) -> Result<(), TrackerError> {
+        for issue in issues {
+            let Some(number) = github_issue_number(&issue.identifier) else {
+                continue;
+            };
+            let native_blockers = self.fetch_native_issue_blockers(number)?;
+            merge_blocker_refs(&mut issue.blocked_by, native_blockers);
+        }
+
+        Ok(())
+    }
+
+    fn fetch_native_issue_blockers(
+        &self,
+        issue_number: u64,
+    ) -> Result<Vec<BlockerRef>, TrackerError> {
+        let owner = self
+            .config
+            .tracker
+            .owner
+            .as_deref()
+            .ok_or_else(|| TrackerError::Payload("tracker.owner is required".into()))?;
+        let repo = self
+            .config
+            .tracker
+            .repo
+            .as_deref()
+            .ok_or_else(|| TrackerError::Payload("tracker.repo is required".into()))?;
+        let response = run_gh_api_json(vec![
+            "api".into(),
+            format!("repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocked_by"),
+        ])?;
+
+        github_native_blocker_refs_from_response(&response, issue_number)
     }
 
     fn set_state(&self, issue_ref: &str, normalized_state: &str) -> Result<(), TrackerError> {
@@ -1278,6 +1358,51 @@ fn run_gh_graphql_once(args: &[String]) -> Result<serde_json::Value, TrackerErro
     Ok(response)
 }
 
+fn run_gh_api_json(args: Vec<String>) -> Result<serde_json::Value, TrackerError> {
+    const MAX_ATTEMPTS: usize = 3;
+    let mut last_error = None;
+
+    for attempt in 1..=MAX_ATTEMPTS {
+        match run_gh_api_json_once(&args) {
+            Ok(response) => return Ok(response),
+            Err(error) if project_state_error_is_retryable(&error) => {
+                last_error = Some(error);
+                if attempt < MAX_ATTEMPTS {
+                    thread::sleep(project_state_retry_delay(attempt));
+                } else {
+                    break;
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    let error = last_error.unwrap_or_else(|| {
+        TrackerError::IntegrationUnavailable("GitHub API operation failed".into())
+    });
+    let kind = classify_project_state_error(&error);
+    Err(TrackerError::IntegrationUnavailable(format!(
+        "GitHub API operation failed after {MAX_ATTEMPTS} attempts kind={}: {error}",
+        kind.as_str()
+    )))
+}
+
+fn run_gh_api_json_once(args: &[String]) -> Result<serde_json::Value, TrackerError> {
+    let output = Command::new("gh")
+        .args(args)
+        .output()
+        .map_err(|error| TrackerError::IntegrationUnavailable(error.to_string()))?;
+
+    if !output.status.success() {
+        return Err(TrackerError::IntegrationUnavailable(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| TrackerError::Payload(format!("invalid gh API JSON: {error}")))
+}
+
 fn project_state_error_is_retryable(error: &TrackerError) -> bool {
     matches!(
         classify_project_state_error(error),
@@ -1870,6 +1995,97 @@ fn blocker_refs_from_project_fields(
         .filter(|(name, _)| is_blocker_field(name))
         .flat_map(|(_, value)| blocker_refs_from_value(value))
         .collect()
+}
+
+fn github_native_blocker_refs_from_response(
+    response: &serde_json::Value,
+    issue_number: u64,
+) -> Result<Vec<BlockerRef>, TrackerError> {
+    let blockers = response.as_array().ok_or_else(|| {
+        TrackerError::Payload(format!(
+            "GitHub issue #{issue_number} native dependency response was not an array"
+        ))
+    })?;
+
+    blockers
+        .iter()
+        .map(|blocker| {
+            let number = blocker
+                .get("number")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| {
+                    TrackerError::Payload(format!(
+                        "GitHub issue #{issue_number} native dependency response missing blocker number"
+                    ))
+                })?;
+            let id = blocker
+                .get("node_id")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned)
+                .or_else(|| {
+                    blocker
+                        .get("id")
+                        .and_then(serde_json::Value::as_u64)
+                        .map(|id| id.to_string())
+                });
+            let state = blocker
+                .get("state")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned);
+
+            Ok(BlockerRef {
+                id,
+                identifier: Some(format!("#{number}")),
+                state,
+            })
+        })
+        .collect()
+}
+
+fn merge_blocker_refs(existing: &mut Vec<BlockerRef>, incoming: Vec<BlockerRef>) {
+    for incoming_blocker in incoming {
+        if let Some(existing_blocker) = existing
+            .iter_mut()
+            .find(|existing_blocker| same_blocker_ref(existing_blocker, &incoming_blocker))
+        {
+            if existing_blocker.id.is_none() {
+                existing_blocker.id = incoming_blocker.id.clone();
+            }
+            if existing_blocker.identifier.is_none() {
+                existing_blocker.identifier = incoming_blocker.identifier.clone();
+            }
+            if existing_blocker.state.is_none() {
+                existing_blocker.state = incoming_blocker.state.clone();
+            }
+        } else {
+            existing.push(incoming_blocker);
+        }
+    }
+}
+
+fn same_blocker_ref(left: &BlockerRef, right: &BlockerRef) -> bool {
+    let same_identifier = match (&left.identifier, &right.identifier) {
+        (Some(left_identifier), Some(right_identifier)) => {
+            github_issue_number(left_identifier) == github_issue_number(right_identifier)
+                && github_issue_number(left_identifier).is_some()
+        }
+        _ => false,
+    };
+    let same_id = match (&left.id, &right.id) {
+        (Some(left_id), Some(right_id)) => left_id == right_id,
+        _ => false,
+    };
+
+    same_identifier || same_id
+}
+
+fn github_issue_number(identifier: &str) -> Option<u64> {
+    identifier
+        .trim()
+        .strip_prefix('#')
+        .unwrap_or(identifier.trim())
+        .parse()
+        .ok()
 }
 
 fn is_blocker_field(name: &str) -> bool {
@@ -3212,6 +3428,62 @@ Prompt
         assert_eq!(blockers[0].identifier.as_deref(), Some("#1"));
         assert_eq!(blockers[1].identifier.as_deref(), Some("#2"));
         assert_eq!(blockers[2].identifier.as_deref(), Some("GHI_3"));
+    }
+
+    #[test]
+    fn parses_github_native_blocker_refs_from_rest_response() {
+        let response = serde_json::json!([
+            {
+                "id": 4453853955u64,
+                "node_id": "I_kwDOSZP6c88AAAABCXhrAw",
+                "number": 225,
+                "state": "open"
+            },
+            {
+                "id": 4453858123u64,
+                "number": 226,
+                "state": "closed"
+            }
+        ]);
+
+        let blockers = github_native_blocker_refs_from_response(&response, 224).unwrap();
+
+        assert_eq!(blockers.len(), 2);
+        assert_eq!(blockers[0].id.as_deref(), Some("I_kwDOSZP6c88AAAABCXhrAw"));
+        assert_eq!(blockers[0].identifier.as_deref(), Some("#225"));
+        assert_eq!(blockers[0].state.as_deref(), Some("open"));
+        assert_eq!(blockers[1].id.as_deref(), Some("4453858123"));
+        assert_eq!(blockers[1].identifier.as_deref(), Some("#226"));
+        assert_eq!(blockers[1].state.as_deref(), Some("closed"));
+    }
+
+    #[test]
+    fn native_blocker_refs_enrich_project_field_blockers() {
+        let mut existing = vec![BlockerRef {
+            id: None,
+            identifier: Some("#225".into()),
+            state: None,
+        }];
+        let incoming = vec![
+            BlockerRef {
+                id: Some("I_225".into()),
+                identifier: Some("#225".into()),
+                state: Some("open".into()),
+            },
+            BlockerRef {
+                id: Some("I_226".into()),
+                identifier: Some("#226".into()),
+                state: Some("closed".into()),
+            },
+        ];
+
+        merge_blocker_refs(&mut existing, incoming);
+
+        assert_eq!(existing.len(), 2);
+        assert_eq!(existing[0].id.as_deref(), Some("I_225"));
+        assert_eq!(existing[0].identifier.as_deref(), Some("#225"));
+        assert_eq!(existing[0].state.as_deref(), Some("open"));
+        assert_eq!(existing[1].identifier.as_deref(), Some("#226"));
     }
 
     #[test]

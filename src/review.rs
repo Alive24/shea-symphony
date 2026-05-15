@@ -47,9 +47,29 @@ impl AgentReviewReport {
     }
 
     pub fn is_inconclusive(&self) -> bool {
-        self.findings
+        self.inconclusive_reason().is_some()
+    }
+
+    pub fn inconclusive_reason(&self) -> Option<String> {
+        if self
+            .findings
             .iter()
             .any(|finding| finding.class == ReviewFindingClass::NeedsContext)
+        {
+            return Some("review produced Needs Context findings".into());
+        }
+
+        let text = [
+            self.summary.as_deref(),
+            self.stdout.as_deref(),
+            self.stderr.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("\n");
+
+        inconclusive_review_text_reason(&text)
     }
 
     pub fn blocks_human_review(&self) -> bool {
@@ -101,6 +121,7 @@ pub struct ReviewJobLedgerRecord {
 pub enum ReviewOutcome {
     PassedToHumanReview,
     NeedsRework,
+    InconclusiveNeedsRework,
     NeedsHumanInput,
     StillRunning,
     Cancelled,
@@ -536,10 +557,14 @@ pub fn review_gate_decision_for_actor(job: &ReviewJob, actor: ReviewActor) -> Re
                 message: "Confirmed Agent Review findings require Rework.".into(),
             },
             Some(report) if report.is_inconclusive() => ReviewGateDecision {
-                outcome: ReviewOutcome::NeedsHumanInput,
-                target_state: Some("need_human_input"),
-                message: "Agent Review needs additional context; Human Review is not allowed yet."
-                    .into(),
+                outcome: ReviewOutcome::InconclusiveNeedsRework,
+                target_state: Some("rework"),
+                message: format!(
+                    "Agent Review was inconclusive and requires Rework: {}.",
+                    report
+                        .inconclusive_reason()
+                        .unwrap_or_else(|| "review could not complete with durable evidence".into())
+                ),
             },
             Some(_) => ReviewGateDecision {
                 outcome: ReviewOutcome::PassedToHumanReview,
@@ -700,6 +725,17 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
         lines.push(format!("- Usage-limit classifier: `{}`", pause.classifier));
         lines.push(format!("- Usage-limit evidence: {}", pause.evidence));
         lines.push("- Review did not pass; unavailable or inconclusive review must not move to Human Review.".into());
+    }
+    if let Some(report) = &job.report {
+        if let Some(reason) = report.inconclusive_reason() {
+            lines.push(String::new());
+            lines.push("### Inconclusive Review Diagnostic".into());
+            lines.push(format!("- Reason: {reason}"));
+            lines.push(
+                "- Automatic Review Agent output did not establish a conclusive pass.".into(),
+            );
+            lines.push("- Route to `Rework`; do not move to `Human Review`.".into());
+        }
     }
 
     lines.push(String::new());
@@ -939,7 +975,10 @@ pub fn transition_allowed_for_review_agent(
 ) -> bool {
     match normalized_state {
         "human_review" | "human review" => decision.outcome == ReviewOutcome::PassedToHumanReview,
-        "rework" => decision.outcome == ReviewOutcome::NeedsRework,
+        "rework" => matches!(
+            decision.outcome,
+            ReviewOutcome::NeedsRework | ReviewOutcome::InconclusiveNeedsRework
+        ),
         "need_human_input" | "need human input" => {
             decision.outcome == ReviewOutcome::NeedsHumanInput
         }
@@ -982,6 +1021,71 @@ fn parse_finding_line(line: &str) -> Option<ReviewFinding> {
     })
 }
 
+fn inconclusive_review_text_reason(text: &str) -> Option<String> {
+    let normalized = text
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if normalized.is_empty() {
+        return None;
+    }
+
+    let missing_evidence_patterns = [
+        "workspace is empty",
+        "empty workspace",
+        "missing workspace",
+        "workspace was missing",
+        "missing pr evidence",
+        "pr evidence was missing",
+        "pr evidence is missing",
+        "missing pull request evidence",
+        "pull request evidence was missing",
+        "pull request evidence is missing",
+        "missing handoff evidence",
+        "handoff evidence was missing",
+        "handoff evidence is missing",
+        "missing code changes",
+        "code changes were missing",
+        "code changes are missing",
+        "expected code changes were missing",
+        "expected code changes are missing",
+        "no code changes",
+        "no diff",
+        "no pull request evidence",
+    ];
+    if let Some(pattern) = missing_evidence_patterns
+        .iter()
+        .find(|pattern| normalized.contains(**pattern))
+    {
+        return Some(format!("automatic review reported {pattern}"));
+    }
+
+    let unable_to_review_patterns = [
+        "unable to complete",
+        "could not complete",
+        "cannot complete",
+        "could not be completed",
+        "unable to inspect",
+        "could not inspect",
+        "cannot inspect",
+        "unable to review",
+        "could not review",
+        "cannot review",
+        "inconclusive review",
+        "review is inconclusive",
+        "review was inconclusive",
+    ];
+    if let Some(pattern) = unable_to_review_patterns
+        .iter()
+        .find(|pattern| normalized.contains(**pattern))
+    {
+        return Some(format!("automatic review output said it was {pattern}"));
+    }
+
+    None
+}
+
 fn review_job_id(prefix: &str) -> String {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1022,6 +1126,25 @@ mod tests {
             project_fields: Default::default(),
             created_at: None,
             updated_at: None,
+        }
+    }
+
+    fn completed_gemini_review(output: &str) -> ReviewJob {
+        ReviewJob {
+            id: "gemini-1".into(),
+            issue_ref: "#1".into(),
+            backend: "gemini-cli".into(),
+            state: ReviewJobState::Completed,
+            artifact_path: Some("/tmp/reviews/gemini.prompt.md".into()),
+            ledger_path: None,
+            report: Some(AgentReviewReport {
+                reviewer_backend: "gemini-cli".into(),
+                findings: classify_findings(output),
+                summary: first_non_empty_line(output).map(str::to_string),
+                stdout: Some(output.into()),
+                stderr: Some(String::new()),
+            }),
+            error: None,
         }
     }
 
@@ -1545,9 +1668,61 @@ mod tests {
         let inconclusive_decision = review_gate_decision(&inconclusive);
         assert_eq!(
             inconclusive_decision.outcome,
-            ReviewOutcome::NeedsHumanInput
+            ReviewOutcome::InconclusiveNeedsRework
         );
+        assert_eq!(inconclusive_decision.target_state, Some("rework"));
         assert_ne!(inconclusive_decision.target_state, Some("human_review"));
+    }
+
+    #[test]
+    fn completed_review_with_missing_workspace_routes_to_rework() {
+        let job = completed_gemini_review(
+            "I could not complete the review because the workspace is empty.",
+        );
+
+        let decision = review_gate_decision(&job);
+        let record = review_job_ledger_record(&issue(), &job, "/tmp/review-ledger.json".into());
+        let workpad = render_review_workpad(&issue(), &job);
+
+        assert_eq!(decision.outcome, ReviewOutcome::InconclusiveNeedsRework);
+        assert_eq!(decision.target_state, Some("rework"));
+        assert_eq!(
+            record.decision_outcome,
+            ReviewOutcome::InconclusiveNeedsRework
+        );
+        assert_eq!(record.decision_target_state.as_deref(), Some("rework"));
+        assert!(workpad.contains("### Inconclusive Review Diagnostic"));
+        assert!(workpad.contains("workspace is empty"));
+        assert!(!workpad.contains("Review pass evidence: `recorded`"));
+    }
+
+    #[test]
+    fn completed_review_with_missing_pr_evidence_routes_to_rework() {
+        let job = completed_gemini_review(
+            "Review could not be completed: expected code changes and PR evidence were missing from the workspace.",
+        );
+
+        let decision = review_gate_decision(&job);
+
+        assert_eq!(decision.outcome, ReviewOutcome::InconclusiveNeedsRework);
+        assert_eq!(decision.target_state, Some("rework"));
+        assert!(transition_allowed_for_review_agent("rework", &decision));
+        assert!(!transition_allowed_for_review_agent(
+            "human_review",
+            &decision
+        ));
+    }
+
+    #[test]
+    fn completed_review_that_cannot_inspect_pr_routes_to_rework() {
+        let job = completed_gemini_review(
+            "Unable to inspect the PR or required handoff evidence, so this review is inconclusive.",
+        );
+
+        let decision = review_gate_decision(&job);
+
+        assert_eq!(decision.outcome, ReviewOutcome::InconclusiveNeedsRework);
+        assert_eq!(decision.target_state, Some("rework"));
     }
 
     #[test]

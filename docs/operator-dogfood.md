@@ -88,6 +88,13 @@ The canonical workflow now uses the local `tmux` main-agent backend. A write
 tick starts an attachable tmux session, records its attach command and log path,
 persists a session registry record under the configured artifact root, and
 leaves the issue active until real implementation/handoff evidence exists.
+For Codex-backed tmux sessions, Jade captures the pane before prompt injection.
+If the Codex workspace trust prompt is visible in a Jade-created issue worktree,
+the backend sends two `C-m` submissions, waits for a ready Codex viewport, and
+only then pastes the rendered issue prompt. Set
+`JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to opt out; when disabled, or when readiness
+cannot be confirmed, the tick fails closed with attach/log evidence and does not
+hand off to `Agent Review`.
 If an operator switches the workflow back to `agent.backend: dry-run`, the
 mutating tick exits before runtime-state writes, worktree creation, Project
 claims, or workpad mutation.

@@ -320,6 +320,10 @@ impl AgentBackend for TmuxBackend {
             "JADE_SYMPHONY_TMUX_SESSION_PREFIX".into(),
             config.tmux.session_prefix.clone(),
         );
+        env.insert(
+            "JADE_SYMPHONY_WORKSPACE_ROOT".into(),
+            config.workspace.root.display().to_string(),
+        );
         Ok(PreparedRun {
             backend: self.name().into(),
             workspace,
@@ -554,52 +558,26 @@ fn run_tmux_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError
         });
         return Ok(events);
     }
-    for (action, mut command) in [
-        ("pipe-pane", {
-            let mut command = Command::new(&tmux);
-            command
-                .envs(prepared.env.iter())
-                .args(["pipe-pane", "-o", "-t", target])
-                .arg(format!("cat >> {}", shell_quote_path(&log_path)));
-            command
-        }),
-        ("load-buffer", {
-            let mut command = Command::new(&tmux);
-            command
-                .envs(prepared.env.iter())
-                .args(["load-buffer", "-b", target])
-                .arg(&prompt_artifact_path);
-            command
-        }),
-        ("paste-buffer", {
-            let mut command = Command::new(&tmux);
-            command
-                .envs(prepared.env.iter())
-                .args(["paste-buffer", "-b", target, "-t", target]);
-            command
-        }),
-        ("send-keys", {
-            let mut command = Command::new(&tmux);
-            command
-                .envs(prepared.env.iter())
-                .args(["send-keys", "-t", target, "Enter"]);
-            command
-        }),
-    ] {
-        if let Err(error) = tmux_command_status(&mut command, action) {
-            events.push(AgentEvent::Failed {
-                backend: prepared.backend,
-                error,
-            });
-            return Ok(events);
-        }
-    }
 
     events.push(AgentEvent::SessionStarted {
         backend: prepared.backend.clone(),
         session_id: session_id.clone(),
     });
     let attach_command = format!("tmux attach-session -t {session_id}");
+
+    let mut pipe_pane = Command::new(&tmux);
+    pipe_pane
+        .envs(prepared.env.iter())
+        .args(["pipe-pane", "-o", "-t", target])
+        .arg(format!("cat >> {}", shell_quote_path(&log_path)));
+    if let Err(error) = tmux_command_status(&mut pipe_pane, "pipe-pane") {
+        events.push(AgentEvent::Failed {
+            backend: prepared.backend,
+            error,
+        });
+        return Ok(events);
+    }
+
     if let Some(registry_path) = prepared.session_registry_path.as_deref() {
         let now_ms = unix_timestamp_ms();
         let record = AgentSessionRecord {
@@ -633,6 +611,65 @@ fn run_tmux_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError
             return Ok(events);
         }
     }
+
+    events.push(AgentEvent::Message {
+        backend: prepared.backend.clone(),
+        session_id: Some(session_id.clone()),
+        text: format!(
+            "tmux_session_evidence session={} attach_command=\"{}\" log_path={} prompt_artifact={}",
+            session_id,
+            attach_command,
+            log_path.display(),
+            prompt_artifact_path.display()
+        ),
+    });
+
+    if is_codex_tmux_agent_command(agent_command) {
+        match wait_for_codex_tmux_readiness(&prepared, &tmux, target) {
+            Ok(()) => {}
+            Err(error) => {
+                events.push(AgentEvent::Failed {
+                    backend: prepared.backend,
+                    error,
+                });
+                return Ok(events);
+            }
+        }
+    }
+
+    for (action, mut command) in [
+        ("load-buffer", {
+            let mut command = Command::new(&tmux);
+            command
+                .envs(prepared.env.iter())
+                .args(["load-buffer", "-b", target])
+                .arg(&prompt_artifact_path);
+            command
+        }),
+        ("paste-buffer", {
+            let mut command = Command::new(&tmux);
+            command
+                .envs(prepared.env.iter())
+                .args(["paste-buffer", "-b", target, "-t", target]);
+            command
+        }),
+        ("send-keys", {
+            let mut command = Command::new(&tmux);
+            command
+                .envs(prepared.env.iter())
+                .args(["send-keys", "-t", target, "Enter"]);
+            command
+        }),
+    ] {
+        if let Err(error) = tmux_command_status(&mut command, action) {
+            events.push(AgentEvent::Failed {
+                backend: prepared.backend,
+                error,
+            });
+            return Ok(events);
+        }
+    }
+
     events.push(AgentEvent::Message {
         backend: prepared.backend,
         session_id: Some(session_id.clone()),
@@ -655,6 +692,171 @@ fn tmux_command_status(command: &mut Command, action: &str) -> Result<(), String
             status.code().unwrap_or(-1)
         )),
         Err(error) => Err(format!("tmux {action} failed: {error}")),
+    }
+}
+
+fn tmux_command_output(command: &mut Command, action: &str) -> Result<String, String> {
+    match command.output() {
+        Ok(output) if output.status.success() => {
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        }
+        Ok(output) => Err(format!(
+            "tmux {action} exited with status {}",
+            output.status.code().unwrap_or(-1)
+        )),
+        Err(error) => Err(format!("tmux {action} failed: {error}")),
+    }
+}
+
+fn wait_for_codex_tmux_readiness(
+    prepared: &PreparedRun,
+    tmux: &str,
+    target: &str,
+) -> Result<(), String> {
+    let mut saw_trust_prompt = false;
+    let mut last_capture = String::new();
+
+    for _ in 0..20 {
+        let capture = capture_tmux_pane(prepared, tmux, target)?;
+        if codex_viewport_ready(&capture) {
+            return Ok(());
+        }
+        if codex_workspace_trust_prompt_visible(&capture) {
+            saw_trust_prompt = true;
+            break;
+        }
+        last_capture = capture;
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    if !saw_trust_prompt {
+        return Err(format!(
+            "Codex tmux pane did not reach a ready viewport before prompt injection; last_capture={}",
+            compact_pane_capture(&last_capture)
+        ));
+    }
+
+    if !tmux_auto_trust_enabled(prepared) {
+        return Err("Codex workspace trust prompt is visible and JADE_SYMPHONY_TMUX_AUTO_TRUST=0 disabled auto-trust; prompt injection stopped".into());
+    }
+
+    if !workspace_is_jade_created_issue_worktree(prepared) {
+        return Err(format!(
+            "Codex workspace trust prompt is visible for a workspace outside the configured Jade Symphony worktree root: {}",
+            prepared.workspace.display()
+        ));
+    }
+
+    for key in ["C-m", "C-m"] {
+        tmux_command_status(
+            Command::new(tmux)
+                .envs(prepared.env.iter())
+                .args(["send-keys", "-t", target, key]),
+            "auto-trust send-keys",
+        )?;
+        thread::sleep(Duration::from_millis(150));
+    }
+
+    for _ in 0..20 {
+        let capture = capture_tmux_pane(prepared, tmux, target)?;
+        if codex_viewport_ready(&capture) {
+            return Ok(());
+        }
+        last_capture = capture;
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    Err(format!(
+        "Codex workspace trust prompt could not be cleared; prompt injection stopped last_capture={}",
+        compact_pane_capture(&last_capture)
+    ))
+}
+
+fn capture_tmux_pane(prepared: &PreparedRun, tmux: &str, target: &str) -> Result<String, String> {
+    tmux_command_output(
+        Command::new(tmux).envs(prepared.env.iter()).args([
+            "capture-pane",
+            "-p",
+            "-t",
+            target,
+            "-S",
+            "-200",
+        ]),
+        "capture-pane",
+    )
+}
+
+fn is_codex_tmux_agent_command(agent_command: &str) -> bool {
+    agent_command
+        .split_whitespace()
+        .next()
+        .is_some_and(|word| word.ends_with("codex") || word == "codex")
+}
+
+fn tmux_auto_trust_enabled(prepared: &PreparedRun) -> bool {
+    let value = prepared
+        .env
+        .get("JADE_SYMPHONY_TMUX_AUTO_TRUST")
+        .cloned()
+        .or_else(|| std::env::var("JADE_SYMPHONY_TMUX_AUTO_TRUST").ok());
+    !matches!(value.as_deref(), Some("0"))
+}
+
+fn workspace_is_jade_created_issue_worktree(prepared: &PreparedRun) -> bool {
+    let Some(root) = prepared
+        .env
+        .get("JADE_SYMPHONY_WORKSPACE_ROOT")
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return false;
+    };
+    let root = canonical_path_or_self(Path::new(root));
+    let workspace = canonical_path_or_self(&prepared.workspace);
+    workspace.starts_with(root)
+}
+
+fn canonical_path_or_self(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn codex_workspace_trust_prompt_visible(text: &str) -> bool {
+    let normalized = normalized_pane_text(text);
+    normalized.contains("do you trust the contents of this directory")
+        || normalized.contains("do you trust the files in this directory")
+        || normalized.contains("do you trust the files in this folder")
+        || (normalized.contains("trust")
+            && normalized.contains("directory")
+            && normalized.contains("codex"))
+}
+
+fn codex_viewport_ready(text: &str) -> bool {
+    let normalized = normalized_pane_text(text);
+    !normalized.is_empty()
+        && !codex_workspace_trust_prompt_visible(text)
+        && (normalized.contains("codex")
+            || normalized.contains("type a message")
+            || normalized.contains("send a message")
+            || normalized.contains("what can i help")
+            || normalized.contains("approval")
+            || normalized.contains("model")
+            || text.contains('›')
+            || text.contains('▌'))
+}
+
+fn normalized_pane_text(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+fn compact_pane_capture(text: &str) -> String {
+    let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    const MAX_LEN: usize = 180;
+    if compact.len() > MAX_LEN {
+        format!("{}...", &compact[..MAX_LEN])
+    } else {
+        compact
     }
 }
 
@@ -1001,6 +1203,187 @@ mod tests {
     }
 
     #[test]
+    fn detects_codex_workspace_trust_prompt_conservatively() {
+        assert!(codex_workspace_trust_prompt_visible(
+            "Codex\nDo you trust the contents of this directory?\n"
+        ));
+        assert!(codex_workspace_trust_prompt_visible(
+            "Codex asks: do you trust the files in this folder?"
+        ));
+        assert!(codex_viewport_ready("Codex\n› ready"));
+        assert!(!codex_viewport_ready(
+            "Codex\nDo you trust the contents of this directory?"
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tmux_backend_auto_advances_codex_trust_prompt_before_prompt_injection() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let fake_tmux = temp.path().join("fake-tmux.sh");
+        let log_path = temp.path().join("fake-tmux.log");
+        let state_path = temp.path().join("fake-tmux-state");
+        fs::write(&fake_tmux, fake_tmux_script(false)).unwrap();
+        let mut perms = fs::metadata(&fake_tmux).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&fake_tmux, perms).unwrap();
+        let workspace_root = temp.path().join("worktrees");
+        let workspace = workspace_root.join("issue-230-auto-trust");
+        fs::create_dir_all(&workspace).unwrap();
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            &format!(
+                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {:?}\nagent:\n  backend: tmux\ntmux:\n  command: {:?}\n  agent_command: codex\n  session_prefix: jade-test\n---\nPrompt",
+                workspace_root.display().to_string(),
+                fake_tmux.display().to_string()
+            ),
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, std::path::Path::new("/tmp/WORKFLOW.md"))
+                .unwrap();
+        let backend = TmuxBackend;
+        let mut prepared = backend
+            .prepare(workspace, "echo tmux-auto-trust".into(), &config)
+            .unwrap();
+        prepared.prompt_artifact_path = Some(temp.path().join("logs/prompts/smoke.prompt.md"));
+        prepared.session_registry_path = Some(temp.path().join("sessions/session-registry.json"));
+        prepared
+            .env
+            .insert("FAKE_TMUX_LOG".into(), log_path.display().to_string());
+        prepared
+            .env
+            .insert("FAKE_TMUX_STATE".into(), state_path.display().to_string());
+
+        let events = backend.run(prepared).unwrap();
+        let summary = backend.summarize(&events);
+        let fake_log = fs::read_to_string(log_path).unwrap();
+
+        assert!(summary.pending_session, "{fake_log}");
+        assert_before(&fake_log, "capture-pane", "load-buffer");
+        assert_before(&fake_log, "send-keys -t", "load-buffer");
+        assert_eq!(fake_log.matches(" C-m").count(), 2, "{fake_log}");
+        assert!(fake_log.contains("load-buffer"), "{fake_log}");
+        assert!(fake_log.contains("paste-buffer"), "{fake_log}");
+        assert!(fake_log.contains(" Enter"), "{fake_log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tmux_backend_fails_closed_when_auto_trust_is_disabled() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let fake_tmux = temp.path().join("fake-tmux.sh");
+        let log_path = temp.path().join("fake-tmux.log");
+        let state_path = temp.path().join("fake-tmux-state");
+        fs::write(&fake_tmux, fake_tmux_script(false)).unwrap();
+        let mut perms = fs::metadata(&fake_tmux).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&fake_tmux, perms).unwrap();
+        let workspace_root = temp.path().join("worktrees");
+        let workspace = workspace_root.join("issue-230-auto-trust-disabled");
+        fs::create_dir_all(&workspace).unwrap();
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            &format!(
+                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {:?}\nagent:\n  backend: tmux\ntmux:\n  command: {:?}\n  agent_command: codex\n  session_prefix: jade-test\n---\nPrompt",
+                workspace_root.display().to_string(),
+                fake_tmux.display().to_string()
+            ),
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, std::path::Path::new("/tmp/WORKFLOW.md"))
+                .unwrap();
+        let backend = TmuxBackend;
+        let mut prepared = backend
+            .prepare(workspace, "echo tmux-auto-trust".into(), &config)
+            .unwrap();
+        prepared.prompt_artifact_path = Some(temp.path().join("logs/prompts/smoke.prompt.md"));
+        prepared.session_registry_path = Some(temp.path().join("sessions/session-registry.json"));
+        prepared
+            .env
+            .insert("FAKE_TMUX_LOG".into(), log_path.display().to_string());
+        prepared
+            .env
+            .insert("FAKE_TMUX_STATE".into(), state_path.display().to_string());
+        prepared
+            .env
+            .insert("JADE_SYMPHONY_TMUX_AUTO_TRUST".into(), "0".into());
+
+        let events = backend.run(prepared).unwrap();
+        let summary = backend.summarize(&events);
+        let fake_log = fs::read_to_string(log_path).unwrap();
+
+        assert!(!summary.success);
+        assert!(!summary.pending_session);
+        assert!(summary.session_id.is_some());
+        assert!(summary.attach_command.is_some());
+        assert!(summary.log_path.is_some());
+        assert!(summary.message.contains("JADE_SYMPHONY_TMUX_AUTO_TRUST=0"));
+        assert!(!fake_log.contains("load-buffer"), "{fake_log}");
+        assert!(!fake_log.contains("paste-buffer"), "{fake_log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tmux_backend_fails_closed_when_trust_prompt_cannot_be_cleared() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let fake_tmux = temp.path().join("fake-tmux.sh");
+        let log_path = temp.path().join("fake-tmux.log");
+        let state_path = temp.path().join("fake-tmux-state");
+        fs::write(&fake_tmux, fake_tmux_script(true)).unwrap();
+        let mut perms = fs::metadata(&fake_tmux).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&fake_tmux, perms).unwrap();
+        let workspace_root = temp.path().join("worktrees");
+        let workspace = workspace_root.join("issue-230-auto-trust-stuck");
+        fs::create_dir_all(&workspace).unwrap();
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            &format!(
+                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {:?}\nagent:\n  backend: tmux\ntmux:\n  command: {:?}\n  agent_command: codex\n  session_prefix: jade-test\n---\nPrompt",
+                workspace_root.display().to_string(),
+                fake_tmux.display().to_string()
+            ),
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, std::path::Path::new("/tmp/WORKFLOW.md"))
+                .unwrap();
+        let backend = TmuxBackend;
+        let mut prepared = backend
+            .prepare(workspace, "echo tmux-auto-trust".into(), &config)
+            .unwrap();
+        prepared.prompt_artifact_path = Some(temp.path().join("logs/prompts/smoke.prompt.md"));
+        prepared.session_registry_path = Some(temp.path().join("sessions/session-registry.json"));
+        prepared
+            .env
+            .insert("FAKE_TMUX_LOG".into(), log_path.display().to_string());
+        prepared
+            .env
+            .insert("FAKE_TMUX_STATE".into(), state_path.display().to_string());
+
+        let events = backend.run(prepared).unwrap();
+        let summary = backend.summarize(&events);
+        let fake_log = fs::read_to_string(log_path).unwrap();
+
+        assert!(!summary.success);
+        assert!(!summary.pending_session);
+        assert!(summary.session_id.is_some());
+        assert!(summary.attach_command.is_some());
+        assert!(summary.message.contains("could not be cleared"));
+        assert_eq!(fake_log.matches(" C-m").count(), 2, "{fake_log}");
+        assert!(!fake_log.contains("load-buffer"), "{fake_log}");
+        assert!(!fake_log.contains("paste-buffer"), "{fake_log}");
+    }
+
+    #[test]
     fn tmux_backend_launches_attachable_session_when_tmux_available() {
         if Command::new("tmux")
             .arg("-V")
@@ -1109,6 +1492,62 @@ mod tests {
                 .status()
                 .ok();
         }
+    }
+
+    #[cfg(unix)]
+    fn fake_tmux_script(always_trust: bool) -> String {
+        let trust_condition = if always_trust {
+            "true"
+        } else {
+            "[ \"$count\" -lt 2 ]"
+        };
+        format!(
+            r#"#!/bin/sh
+set -eu
+log="${{FAKE_TMUX_LOG:?}}"
+state="${{FAKE_TMUX_STATE:?}}"
+printf '%s\n' "$*" >> "$log"
+cmd="${{1:-}}"
+case "$cmd" in
+  new-session|pipe-pane|load-buffer|paste-buffer)
+    exit 0
+    ;;
+  send-keys)
+    last=""
+    for arg in "$@"; do last="$arg"; done
+    if [ "$last" = "C-m" ]; then
+      count="$(cat "$state" 2>/dev/null || echo 0)"
+      count=$((count + 1))
+      printf '%s\n' "$count" > "$state"
+    fi
+    exit 0
+    ;;
+  capture-pane)
+    count="$(cat "$state" 2>/dev/null || echo 0)"
+    if {trust_condition}; then
+      printf '%s\n' 'Codex' 'Do you trust the contents of this directory?'
+    else
+      printf '%s\n' 'Codex' '› ready'
+    fi
+    exit 0
+    ;;
+esac
+exit 0
+"#
+        )
+    }
+
+    fn assert_before(haystack: &str, left: &str, right: &str) {
+        let left_index = haystack
+            .find(left)
+            .unwrap_or_else(|| panic!("missing {left:?} in {haystack}"));
+        let right_index = haystack
+            .find(right)
+            .unwrap_or_else(|| panic!("missing {right:?} in {haystack}"));
+        assert!(
+            left_index < right_index,
+            "expected {left:?} before {right:?} in {haystack}"
+        );
     }
 
     #[test]

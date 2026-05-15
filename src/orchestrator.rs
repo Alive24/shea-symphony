@@ -97,6 +97,7 @@ impl Orchestrator {
                 next_poll_in_ms: Some(self.config.polling.interval_ms),
                 poll_interval_ms: self.config.polling.interval_ms,
             },
+            sessions: Vec::new(),
             skipped,
             integration_gaps: Vec::new(),
             latest_status: None,

@@ -88,6 +88,11 @@ Use one bounded write tick:
 cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
+That write tick requires a real main-agent backend. When the workflow is still
+configured with `agent.backend: dry-run`, `run-loop --write` fails before
+runtime-state writes, workspace creation, Project claim fields, or workpad
+mutation; keep using the dry-run preview until a real backend is configured.
+
 The operator launcher wraps the same workflow with local preflight checks:
 
 ```bash

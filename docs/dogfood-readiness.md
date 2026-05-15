@@ -438,7 +438,7 @@ GitHub Project v2 execution is hardened.
 `workflows/jade-symphony.md` is the canonical non-fixture workflow for manual
 live Project v2 reads and explicit tracker writes through `gh`. It still uses
 the `dry-run` backend by default, but the prompt body is the real Jade dogfood
-operating prompt rather than a placeholder. `run-loop --write` is available only
-as a bounded runtime skeleton and should not be treated as full autonomous agent
-execution until claim reconciliation, full runtime resume reconciliation,
-configured verification commands, and worker supervision are hardened.
+operating prompt rather than a placeholder. With that default backend,
+`run-loop --write` is rejected before runtime-state writes, worktree creation,
+Project claim fields, or workpad mutation. Configure a real main-agent backend
+before using write-mode execution.

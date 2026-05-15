@@ -84,6 +84,10 @@ target/debug/jade-symphony dogfood-smoke workflows/jade-symphony.md --dry-run
 ```
 
 If the smoke preflight fails, the launcher exits before claiming tracker work.
+If `workflows/jade-symphony.md` still has `agent.backend: dry-run`, the
+mutating `run-loop` tick also exits before runtime-state writes, worktree
+creation, Project claims, or workpad mutation. Configure a real main-agent
+backend before using the supervised write tick.
 
 ## Review Backend Setup
 

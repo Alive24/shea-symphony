@@ -38,7 +38,9 @@ use jade_symphony::merge_lane::{
     expected_merge_base_branch, fetch_pull_request_status_with_recheck, merge_lane_decision,
     merge_lane_workpad, merge_pull_request, pull_request_status_from_linked, MergeLaneDecisionKind,
 };
-use jade_symphony::model::{normalize_state, GateDecision, GateDecisionKind, TrackerIssue};
+use jade_symphony::model::{
+    normalize_state, GateDecision, GateDecisionKind, LatestStatus, TrackerIssue,
+};
 use jade_symphony::observability_api::serve_once;
 use jade_symphony::orchestrator::Orchestrator;
 use jade_symphony::ownership::{
@@ -71,7 +73,7 @@ use jade_symphony::runtime_state::{
     record_runtime_retry, runtime_state_path, save_runtime_state, RuntimeIssueState,
     RuntimeRetryState, RuntimeStallState, RuntimeState, RuntimeTransition,
 };
-use jade_symphony::status_surface::render_snapshot;
+use jade_symphony::status_surface::{render_latest_status_bar, render_snapshot};
 use jade_symphony::tracker::{
     adapter_from_config, claim_decision, classify_project_state_error, ClaimDecision,
     FollowUpIssueInput, ProjectFieldAssignment, TrackerAdapter, TrackerError,
@@ -1075,6 +1077,14 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                 &backend_kind,
             ) {
                 ReviewRunEligibility::Eligible { worker_key } => {
+                    print_latest_status(&latest_status_for_issue(
+                        &config,
+                        &selected_issue,
+                        "review",
+                        if options.write { "running" } else { "waiting" },
+                        "review_selected",
+                        Some("review workpad and reconcile".into()),
+                    ));
                     println!(
                     "review_loop_iteration={iterations} worker_slot={worker_slot} issue={} worker_key={worker_key} mode={}",
                     selected_issue.identifier,
@@ -1327,6 +1337,20 @@ fn merge_once_tick(
         decision.target_state.unwrap_or("none"),
         write
     );
+    print_latest_status(&latest_status_for_issue(
+        &config,
+        &issue,
+        "merge",
+        if decision.kind.is_merge_ready() {
+            "handoff"
+        } else if decision.target_state.is_some() {
+            "blocked"
+        } else {
+            "waiting"
+        },
+        "merge_decision",
+        decision.target_state.map(str::to_string),
+    ));
     println!("reason={}", decision.reason);
     if let Some(pr_url) = decision.pr_url.as_deref() {
         println!("pull_request={pr_url}");
@@ -2818,6 +2842,32 @@ fn rendered_prompt_artifact_path(
     ))
 }
 
+fn latest_status_for_issue(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    lane: &str,
+    category: &str,
+    action: &str,
+    next: Option<String>,
+) -> LatestStatus {
+    LatestStatus {
+        lane: lane.into(),
+        category: category.into(),
+        action: action.into(),
+        issue_identifier: Some(issue.identifier.clone()),
+        issue_title: Some(issue.title.clone()),
+        actor_label: Some(config.identity.actor_label.clone()),
+        workspace: None,
+        branch: issue.branch_name.clone(),
+        session_id: None,
+        next,
+    }
+}
+
+fn print_latest_status(status: &LatestStatus) {
+    println!("{}", render_latest_status_bar(status));
+}
+
 fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
     let limit = options.iteration_limit();
     let mut iterations = 0usize;
@@ -2923,6 +2973,18 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             select_pool_worker_issues(&plan.selected, WorkerLane::Main, &worker_id, pool, &config);
 
         let Some(issue) = selected.first().cloned() else {
+            plan.snapshot.latest_status = Some(LatestStatus {
+                lane: "main".into(),
+                category: "idle".into(),
+                action: "no_dispatchable_issue".into(),
+                issue_identifier: None,
+                issue_title: None,
+                actor_label: Some(config.identity.actor_label.clone()),
+                workspace: None,
+                branch: None,
+                session_id: None,
+                next: Some("wait for Todo/Rework or stop".into()),
+            });
             if options.display == DisplayMode::Tui {
                 println!(
                     "{}",
@@ -2970,10 +3032,26 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     })
                 );
             }
-            handle_run_loop_gate_failure(adapter.as_ref(), &issue, &decision, &options)?;
+            handle_run_loop_gate_failure(adapter.as_ref(), &issue, &decision, &options, &config)?;
             continue;
         }
 
+        print_latest_status(&latest_status_for_issue(
+            &config,
+            &issue,
+            "main",
+            if options.write { "running" } else { "waiting" },
+            if options.write {
+                "selected"
+            } else {
+                "dry_run_plan"
+            },
+            Some(if options.write {
+                "claim or resume".into()
+            } else {
+                "would claim and hand off to Agent Review".into()
+            }),
+        ));
         println!(
             "run_loop_iteration={} issue={} title={:?} mode={} pool={} selected_pool={}",
             iterations,
@@ -2987,7 +3065,13 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         let handoff = match run_loop_handoff_plan(&config, &issue) {
             Ok(handoff) => handoff,
             Err(error) => {
-                handle_run_loop_handoff_failure(adapter.as_ref(), &issue, &error, &options)?;
+                handle_run_loop_handoff_failure(
+                    adapter.as_ref(),
+                    &issue,
+                    &error,
+                    &options,
+                    &config,
+                )?;
                 continue;
             }
         };
@@ -3003,6 +3087,18 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     false,
                 )?;
             }
+            print_latest_status(&LatestStatus {
+                lane: "main".into(),
+                category: "handoff".into(),
+                action: "dry_run_handoff_plan".into(),
+                issue_identifier: Some(issue.identifier.clone()),
+                issue_title: Some(issue.title.clone()),
+                actor_label: Some(config.identity.actor_label.clone()),
+                workspace: Some(handoff.workspace_path.display().to_string()),
+                branch: Some(handoff.branch_name.clone()),
+                session_id: None,
+                next: Some("Agent Review".into()),
+            });
             if options.display == DisplayMode::Tui {
                 println!(
                     "{}",
@@ -3041,14 +3137,26 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         }
         let latest_gate = evaluate_issue_for_current_source(&config, &latest)?;
         if !latest_gate.is_dispatchable() {
-            handle_run_loop_gate_failure(adapter.as_ref(), &latest, &latest_gate, &options)?;
+            handle_run_loop_gate_failure(
+                adapter.as_ref(),
+                &latest,
+                &latest_gate,
+                &options,
+                &config,
+            )?;
             continue;
         }
 
         let handoff = match run_loop_handoff_plan(&config, &latest) {
             Ok(handoff) => handoff,
             Err(error) => {
-                handle_run_loop_handoff_failure(adapter.as_ref(), &latest, &error, &options)?;
+                handle_run_loop_handoff_failure(
+                    adapter.as_ref(),
+                    &latest,
+                    &error,
+                    &options,
+                    &config,
+                )?;
                 continue;
             }
         };
@@ -3069,6 +3177,14 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             AssigneeOwnershipDecision::Block { reason } => {
                 let workpad = run_loop_assignee_ownership_workpad(&latest, &reason);
                 adapter.upsert_workpad(&latest.identifier, &workpad)?;
+                print_latest_status(&latest_status_for_issue(
+                    &config,
+                    &latest,
+                    "main",
+                    "blocked",
+                    "assignee_ownership",
+                    Some("operator intervention".into()),
+                ));
                 println!(
                     "run_loop_action=skip issue={} reason=assignee_ownership detail={}",
                     latest.identifier, reason
@@ -3097,6 +3213,14 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     "run_loop_action=skip issue={} reason=ownership_mismatch detail={reason}",
                     latest.identifier
                 );
+                print_latest_status(&latest_status_for_issue(
+                    &config,
+                    &latest,
+                    "main",
+                    "blocked",
+                    "ownership_mismatch",
+                    Some("inspect runtime owner".into()),
+                ));
                 continue;
             }
         }
@@ -3128,6 +3252,14 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     "run_loop_action=claim issue={} target_state=in_progress",
                     latest.identifier
                 );
+                print_latest_status(&latest_status_for_issue(
+                    &config,
+                    &latest,
+                    "main",
+                    "running",
+                    "claimed",
+                    Some("write runtime ownership".into()),
+                ));
                 "Claimed"
             }
             RunLoopClaimAction::Resume => {
@@ -3140,6 +3272,14 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     true,
                 )?;
                 println!("run_loop_action=resume issue={}", latest.identifier);
+                print_latest_status(&latest_status_for_issue(
+                    &config,
+                    &latest,
+                    "main",
+                    "running",
+                    "resumed",
+                    Some("continue backend work".into()),
+                ));
                 "Resumed"
             }
             RunLoopClaimAction::StopAndReplan { current_state } => {
@@ -3147,6 +3287,14 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     "run_loop_action=skip issue={} reason=external_state_change current_state={:?}",
                     latest.identifier, current_state
                 );
+                print_latest_status(&latest_status_for_issue(
+                    &config,
+                    &latest,
+                    "main",
+                    "waiting",
+                    "external_state_change",
+                    Some("replan".into()),
+                ));
                 continue;
             }
         };
@@ -3195,11 +3343,31 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 worktree.branch_name,
                 worktree.created
             );
+            print_latest_status(&LatestStatus {
+                lane: "main".into(),
+                category: "running".into(),
+                action: "worktree_ready".into(),
+                issue_identifier: Some(latest.identifier.clone()),
+                issue_title: Some(latest.title.clone()),
+                actor_label: Some(config.identity.actor_label.clone()),
+                workspace: Some(worktree.workspace_path.display().to_string()),
+                branch: Some(worktree.branch_name.clone()),
+                session_id: runtime_state.backend_session_id.clone(),
+                next: Some("run backend".into()),
+            });
             Some(worktree)
         } else {
             None
         };
 
+        print_latest_status(&latest_status_for_issue(
+            &config,
+            &latest,
+            "main",
+            "running",
+            "backend",
+            Some("save result".into()),
+        ));
         let mut result = execute_issue_once_with_workspace_key(
             &workflow,
             &config,
@@ -3215,6 +3383,22 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     "run_loop_action=verify issue={} success={} summary={}",
                     latest.identifier, verification.success, verification.summary
                 );
+                print_latest_status(&latest_status_for_issue(
+                    &config,
+                    &latest,
+                    "main",
+                    if verification.success {
+                        "handoff"
+                    } else {
+                        "failed"
+                    },
+                    "verify",
+                    Some(if verification.success {
+                        "publish PR".into()
+                    } else {
+                        "record failure".into()
+                    }),
+                ));
                 result.handoff_verification = Some(verification.summary.clone());
                 if verification.success {
                     match publish_issue_pull_request(&handoff, &runner) {
@@ -3223,6 +3407,18 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                                 "run_loop_action=pr issue={} url={} created={}",
                                 latest.identifier, publication.pr_url, publication.pr_created
                             );
+                            print_latest_status(&LatestStatus {
+                                lane: "main".into(),
+                                category: "handoff".into(),
+                                action: "pr_ready".into(),
+                                issue_identifier: Some(latest.identifier.clone()),
+                                issue_title: Some(latest.title.clone()),
+                                actor_label: Some(config.identity.actor_label.clone()),
+                                workspace: Some(worktree.workspace_path.display().to_string()),
+                                branch: Some(worktree.branch_name.clone()),
+                                session_id: result.session_id.clone(),
+                                next: Some("link PR".into()),
+                            });
                             result.live_handoff = Some(RunLoopLiveHandoff {
                                 worktree,
                                 publication,
@@ -3343,6 +3539,14 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     "run_loop_action=blocked issue={} target_state=need_human_input reason=handoff_invariant_failed",
                     latest.identifier
                 );
+                print_latest_status(&latest_status_for_issue(
+                    &config,
+                    &latest,
+                    "main",
+                    "blocked",
+                    "handoff_invariant_failed",
+                    Some("Need Human Input".into()),
+                ));
                 continue;
             }
             runtime_state = run_loop_runtime_state_with_transition(
@@ -3374,6 +3578,14 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 "run_loop_action=handoff issue={} target_state=agent_review",
                 latest.identifier
             );
+            print_latest_status(&latest_status_for_issue(
+                &config,
+                &latest,
+                "main",
+                "handoff",
+                "agent_review",
+                Some("Review Agent".into()),
+            ));
         } else {
             let retry_delay_ms = Orchestrator::new(config.clone())
                 .retry_delay_ms(runtime_state.attempt_count, false);
@@ -3413,6 +3625,14 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     "run_loop_action=usage_limit_paused issue={} classifier={} due_in_ms={}",
                     latest.identifier, pause.classifier, retry_delay_ms
                 );
+                print_latest_status(&latest_status_for_issue(
+                    &config,
+                    &latest,
+                    "main",
+                    "retrying",
+                    "usage_limit_paused",
+                    Some(format!("retry in {retry_delay_ms}ms")),
+                ));
                 break;
             }
             if runtime_state.attempt_count < config.agent.max_turns {
@@ -3439,6 +3659,14 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     "run_loop_action=retry_scheduled issue={} attempt={} due_in_ms={}",
                     latest.identifier, runtime_state.attempt_count, retry_delay_ms
                 );
+                print_latest_status(&latest_status_for_issue(
+                    &config,
+                    &latest,
+                    "main",
+                    "retrying",
+                    "retry_scheduled",
+                    Some(format!("retry in {retry_delay_ms}ms")),
+                ));
                 break;
             } else {
                 runtime_state = run_loop_runtime_state_with_transition(
@@ -3467,6 +3695,14 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     "run_loop_action=blocked issue={} target_state=need_human_input",
                     latest.identifier
                 );
+                print_latest_status(&latest_status_for_issue(
+                    &config,
+                    &latest,
+                    "main",
+                    "failed",
+                    "need_human_input",
+                    Some("operator repair".into()),
+                ));
             }
         }
     }
@@ -4110,7 +4346,16 @@ fn handle_run_loop_gate_failure(
     issue: &TrackerIssue,
     decision: &GateDecision,
     options: &RunLoopOptions,
+    config: &RuntimeConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    print_latest_status(&latest_status_for_issue(
+        config,
+        issue,
+        "main",
+        "blocked",
+        "quality_gate_failed",
+        Some(gate_target_state(decision).into()),
+    ));
     println!(
         "run_loop_gate=failed issue={} decision={:?}",
         issue.identifier, decision.kind
@@ -4137,7 +4382,16 @@ fn handle_run_loop_handoff_failure(
     issue: &TrackerIssue,
     error: &HandoffError,
     options: &RunLoopOptions,
+    config: &RuntimeConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    print_latest_status(&latest_status_for_issue(
+        config,
+        issue,
+        "main",
+        "blocked",
+        "handoff_plan_failed",
+        Some("Need Human Input".into()),
+    ));
     println!(
         "run_loop_handoff=failed issue={} error={}",
         issue.identifier, error

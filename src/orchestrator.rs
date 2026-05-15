@@ -99,6 +99,7 @@ impl Orchestrator {
             },
             skipped,
             integration_gaps: Vec::new(),
+            latest_status: None,
             event_log_path: None,
         };
 

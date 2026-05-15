@@ -125,6 +125,27 @@ pub struct RetrySnapshot {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LatestStatus {
+    pub lane: String,
+    pub category: String,
+    pub action: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue_identifier: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct TokenTotals {
     pub input_tokens: u64,
@@ -170,6 +191,8 @@ pub struct RuntimeSnapshot {
     pub skipped: Vec<SkippedIssue>,
     #[serde(default)]
     pub integration_gaps: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_status: Option<LatestStatus>,
     pub event_log_path: Option<String>,
 }
 

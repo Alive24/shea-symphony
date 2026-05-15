@@ -165,9 +165,11 @@ Project v2 issues:
      supervision is still pending.
    - claimed/running/retry state ownership.
    - Runtime state writes exist for claim/resume, backend result evidence, and
-     final transition intent. Resume preflight now blocks conflicting stale
-     active state, honors retry backoff, and reports stalls; full multi-worker
-     reconciliation remains pending.
+     final transition intent. Resume preflight now treats persisted runtime
+     state as recovery evidence: it archives and clears stale non-active state
+     when the referenced workspace is clean or absent, blocks dirty/unknown
+     workspaces with an actionable diagnostic, honors retry backoff, and
+     reports active stalls. Full multi-worker reconciliation remains pending.
    - Structured tracker blockers are the dependency source of truth. Missing
      body dependency boilerplate does not block otherwise independent work, but
      semantic dependency placeholders and body-only blocker claims stay in

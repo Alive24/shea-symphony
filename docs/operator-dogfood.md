@@ -137,6 +137,12 @@ and a state summary. A failed read prints `project_state_access=blocked`,
 `schema`, `partial_response`, or `payload`; treat that as a blocker, not as an
 empty queue.
 
+If `run-loop` finds runtime-state for an issue that has already moved out of
+active main-agent work, it reconciles tracker state first. Clean or absent
+workspaces are archived under the configured runtime log directory and the loop
+continues; dirty or unknown workspaces still stop the loop with a repair
+diagnostic so local work is not discarded silently.
+
 ## Artifact Root Migration
 
 To move local runtime artifacts without changing repo-owned workflow files, set

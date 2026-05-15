@@ -20,6 +20,7 @@ pub mod quality_gate;
 pub mod review;
 pub mod rework;
 pub mod runtime_state;
+pub mod session_registry;
 pub mod status_surface;
 pub mod tracker;
 pub mod workflow;

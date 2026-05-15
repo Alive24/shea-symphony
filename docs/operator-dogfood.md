@@ -86,7 +86,8 @@ target/debug/jade-symphony dogfood-smoke workflows/jade-symphony.md --dry-run
 If the smoke preflight fails, the launcher exits before claiming tracker work.
 The canonical workflow now uses the local `tmux` main-agent backend. A write
 tick starts an attachable tmux session, records its attach command and log path,
-and leaves the issue active until real implementation/handoff evidence exists.
+persists a session registry record under the configured artifact root, and
+leaves the issue active until real implementation/handoff evidence exists.
 If an operator switches the workflow back to `agent.backend: dry-run`, the
 mutating tick exits before runtime-state writes, worktree creation, Project
 claims, or workpad mutation.

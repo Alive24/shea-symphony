@@ -2920,6 +2920,12 @@ fn execute_issue_once_with_workspace_key(
         prepared.backend.as_str(),
         attempt,
     ));
+    prepared.issue_id = Some(issue.id.clone());
+    prepared.issue_identifier = Some(issue.identifier.clone());
+    prepared.issue_title = Some(issue.title.clone());
+    prepared.lane = Some("main".into());
+    prepared.attempt = attempt;
+    prepared.branch_name = current_git_branch(&workspace.path).ok().flatten();
     let prompt_artifact_path = persist_prompt_artifact(&prepared)?;
     let events = backend.run(prepared)?;
     let summary = backend.summarize(&events);
@@ -2997,6 +3003,19 @@ fn rendered_prompt_artifact_path(
         safe_identifier(backend),
         current_time_ms()
     ))
+}
+
+fn current_git_branch(workspace_path: &Path) -> Result<Option<String>, io::Error> {
+    let output = ProcessCommand::new("git")
+        .args(["branch", "--show-current"])
+        .current_dir(workspace_path)
+        .output()?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok((!branch.is_empty()).then_some(branch))
 }
 
 fn latest_status_for_issue(

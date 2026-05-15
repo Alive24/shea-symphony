@@ -6,7 +6,9 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::{error::ErrorKind, Args, CommandFactory, Parser, Subcommand, ValueEnum};
-use jade_symphony::agent::{backend_from_config, usage_limit_pause_from_events, UsageLimitPause};
+use jade_symphony::agent::{
+    backend_from_config, persist_prompt_artifact, usage_limit_pause_from_events, UsageLimitPause,
+};
 use jade_symphony::artifacts::{artifact_layout, cleanup_plan, ArtifactClass, CleanupPlan};
 use jade_symphony::config::RuntimeConfig;
 use jade_symphony::doctor::{
@@ -72,7 +74,7 @@ use jade_symphony::tracker::{
 use jade_symphony::workflow::WorkflowDefinition;
 use jade_symphony::workspace::{
     apply_local_git_identity, prepare_workspace, profile_scoped_identifier, remove_issue_workspace,
-    run_after_run, run_before_run, run_workspace_command, GitIdentityApplyResult,
+    run_after_run, run_before_run, run_workspace_command, safe_identifier, GitIdentityApplyResult,
 };
 
 const DEFAULT_RUN_LOOP_BASE_BRANCH: &str = "main";
@@ -2092,6 +2094,13 @@ fn cleanup_plan_command(workflow_path: PathBuf) -> Result<(), Box<dyn std::error
         layout.class_path(ArtifactClass::EventLog).display()
     );
     println!(
+        "artifact_class=rendered_agent_prompt path={}",
+        layout
+            .class_path(ArtifactClass::RenderedAgentPrompt)
+            .join("prompts")
+            .display()
+    );
+    println!(
         "artifact_class=review_job_artifact path={}",
         layout
             .class_path(ArtifactClass::ReviewJobArtifact)
@@ -2408,6 +2417,7 @@ struct IssueExecutionResult {
     session_id: Option<String>,
     message: String,
     usage_limit_pause: Option<UsageLimitPause>,
+    prompt_artifact_path: Option<PathBuf>,
     actor_role: String,
     actor_label: String,
     git_author: Option<String>,
@@ -2441,7 +2451,7 @@ fn execute_issue_once(
             .map(|profile| profile.workspace_namespace.as_str()),
         &issue.identifier,
     );
-    execute_issue_once_with_workspace_key(workflow, config, issue, &workspace_identifier)
+    execute_issue_once_with_workspace_key(workflow, config, issue, &workspace_identifier, 1)
 }
 
 fn execute_issue_once_with_workspace_key(
@@ -2449,6 +2459,7 @@ fn execute_issue_once_with_workspace_key(
     config: &RuntimeConfig,
     issue: &TrackerIssue,
     workspace_key: &str,
+    attempt: u32,
 ) -> Result<IssueExecutionResult, Box<dyn std::error::Error>> {
     let profile = selected_execution_profile(&config.profiles)?;
     let workspace = prepare_workspace(&config.workspace.root, workspace_key, &config.hooks)?;
@@ -2456,16 +2467,36 @@ fn execute_issue_once_with_workspace_key(
     run_before_run(&workspace.path, &config.hooks)?;
 
     let prompt = render_prompt(&workflow.prompt_template, issue, None)?;
-    std::fs::write(workspace.path.join("JADE_SYMPHONY_PROMPT.md"), &prompt)?;
-
     let backend = backend_from_config(config);
-    let prepared = backend.prepare(workspace.path.clone(), prompt, config)?;
+    let mut prepared = backend.prepare(workspace.path.clone(), prompt, config)?;
+    prepared.prompt_artifact_path = Some(rendered_prompt_artifact_path(
+        config,
+        issue,
+        prepared.backend.as_str(),
+        attempt,
+    ));
+    let prompt_artifact_path = persist_prompt_artifact(&prepared)?;
     let events = backend.run(prepared)?;
     let summary = backend.summarize(&events);
     let usage_limit_pause = usage_limit_pause_from_events(&events);
     run_after_run(&workspace.path, &config.hooks);
 
     let log = EventLog::new(config.observability.logs_root.join("jade-symphony.jsonl"));
+    log.append(&EventRecord {
+        event: "prompt_artifact".into(),
+        issue_id: Some(issue.id.clone()),
+        issue_identifier: Some(issue.identifier.clone()),
+        session_id: summary.session_id.clone(),
+        profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
+        instance_name: profile
+            .as_ref()
+            .map(|profile| profile.instance_name.clone()),
+        actor_role: Some(config.identity.actor_role.clone()),
+        actor_label: Some(config.identity.actor_label.clone()),
+        git_author: config.identity.git.author(),
+        tracker_mutation: None,
+        message: format!("prompt_artifact={}", prompt_artifact_path.display()),
+    })?;
     for event in &events {
         log.append(&EventRecord {
             event: format!("{event:?}"),
@@ -2495,6 +2526,7 @@ fn execute_issue_once_with_workspace_key(
         session_id: summary.session_id,
         message: summary.message,
         usage_limit_pause,
+        prompt_artifact_path: Some(prompt_artifact_path),
         actor_role: config.identity.actor_role.clone(),
         actor_label: config.identity.actor_label.clone(),
         git_author: config.identity.git.author(),
@@ -2502,6 +2534,21 @@ fn execute_issue_once_with_workspace_key(
         live_handoff: None,
         handoff_verification: None,
     })
+}
+
+fn rendered_prompt_artifact_path(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    backend: &str,
+    attempt: u32,
+) -> PathBuf {
+    config.observability.logs_root.join("prompts").join(format!(
+        "{}-attempt-{}-{}-{}.prompt.md",
+        safe_identifier(&issue.identifier),
+        attempt,
+        safe_identifier(backend),
+        current_time_ms()
+    ))
 }
 
 fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
@@ -2848,6 +2895,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             &config,
             &latest,
             &handoff.workspace_key,
+            runtime_state.attempt_count,
         )?;
         if result.success {
             if let Some(worktree) = live_worktree {
@@ -5236,6 +5284,54 @@ mod tests {
     }
 
     #[test]
+    fn execute_issue_stores_rendered_prompt_outside_workspace() {
+        let temp = tempfile::tempdir().unwrap();
+        let workflow_path = temp.path().join("WORKFLOW.md");
+        let workspace_root = temp.path().join("worktrees");
+        let logs_root = temp.path().join("logs");
+        let workflow = WorkflowDefinition::parse(
+            &workflow_path,
+            &format!(
+                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {:?}\nobservability:\n  logs_root: {:?}\n---\nPrompt for {{{{ issue.identifier }}}}",
+                workspace_root.display().to_string(),
+                logs_root.display().to_string()
+            ),
+        )
+        .unwrap();
+        let config = RuntimeConfig::from_workflow(&workflow, &workflow_path).unwrap();
+        let issue = tracker_issue("Todo");
+
+        let result =
+            execute_issue_once_with_workspace_key(&workflow, &config, &issue, "issue-29", 3)
+                .unwrap();
+
+        assert!(!result
+            .workspace_path
+            .join("JADE_SYMPHONY_PROMPT.md")
+            .exists());
+        let prompt_path = result
+            .prompt_artifact_path
+            .expect("expected prompt artifact path");
+        assert!(prompt_path.starts_with(logs_root.join("prompts")));
+        assert!(prompt_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.contains("29") && name.contains("attempt-3")));
+        assert_eq!(
+            std::fs::read_to_string(&prompt_path).unwrap(),
+            "Prompt for #29"
+        );
+
+        let records = EventLog::new(logs_root.join("jade-symphony.jsonl"))
+            .read_records()
+            .unwrap();
+        assert!(records.iter().any(|record| {
+            record.event == "prompt_artifact"
+                && record.message.contains(&prompt_path.display().to_string())
+        }));
+    }
+
+    #[test]
     fn temporary_workflow_paths_emit_operator_warning() {
         let warning =
             temporary_workflow_warning(Path::new("/private/tmp/jade-github-project-workflow.md"))
@@ -6574,6 +6670,7 @@ mod tests {
             session_id: Some("session-29".into()),
             message: "ok".into(),
             usage_limit_pause: None,
+            prompt_artifact_path: None,
             actor_role: "implementation_agent".into(),
             actor_label: "Jade Symphony Agent".into(),
             git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
@@ -6670,6 +6767,7 @@ mod tests {
             session_id: Some("session-33".into()),
             message: "ok".into(),
             usage_limit_pause: None,
+            prompt_artifact_path: None,
             actor_role: "implementation_agent".into(),
             actor_label: "Jade Symphony Agent".into(),
             git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
@@ -6791,6 +6889,7 @@ mod tests {
             session_id: Some("session-33".into()),
             message: "ok".into(),
             usage_limit_pause: None,
+            prompt_artifact_path: None,
             actor_role: "implementation_agent".into(),
             actor_label: "Jade Symphony Agent".into(),
             git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
@@ -6845,6 +6944,7 @@ mod tests {
                 classifier: "usage_limit".into(),
                 evidence: "usage limit reached".into(),
             }),
+            prompt_artifact_path: None,
             actor_role: "implementation_agent".into(),
             actor_label: "Jade Symphony Agent".into(),
             git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
@@ -6942,6 +7042,7 @@ mod tests {
             session_id: Some("session-57".into()),
             message: "ok".into(),
             usage_limit_pause: None,
+            prompt_artifact_path: None,
             actor_role: "implementation_agent".into(),
             actor_label: "Jade Symphony Agent".into(),
             git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
@@ -6988,6 +7089,7 @@ mod tests {
             session_id: Some("session-57".into()),
             message: "ok".into(),
             usage_limit_pause: None,
+            prompt_artifact_path: None,
             actor_role: "implementation_agent".into(),
             actor_label: "Jade Symphony Agent".into(),
             git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),

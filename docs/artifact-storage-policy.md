@@ -61,8 +61,10 @@ share worktrees, logs, or runtime state by accident.
 
 ## Cleanup Planning
 
-`cleanup-plan` is dry-run only. It reports worktrees that are safe candidates for
-operator removal when all of these are true:
+`clean plan` is the grouped cleanup-planning command, and `cleanup-plan` remains
+a compatibility path for existing scripts. Both are dry-run only. They report
+worktrees that are safe candidates for operator removal when all of these are
+true:
 
 - the tracker state is terminal;
 - the linked PR is merged or closed;
@@ -73,7 +75,26 @@ operator removal when all of these are true:
 The command never deletes files:
 
 ```bash
+cargo run -- clean plan workflows/jade-symphony.md
 cargo run -- cleanup-plan workflows/jade-symphony.md
+```
+
+`clean audit` is also read-only. It classifies configured local artifacts and
+workspaces by persistence action:
+
+- `promote_to_repo`: reusable workflow or prompt material that should live in
+  repo-owned docs, examples, or workflows.
+- `attach_to_tracker`: PR body or workpad drafts that should be represented by a
+  pull request, issue comment, or tracker workpad.
+- `safe_to_keep`: runtime state, event logs, and review artifacts that are local
+  evidence while work is active or recently reviewed.
+- `cleanup_candidate`: disposable scratch or terminal clean worktrees eligible
+  for a future guarded apply flow.
+- `needs_human_decision`: dirty, ambiguous, or non-terminal residue that should
+  not be deleted automatically.
+
+```bash
+cargo run -- clean audit workflows/jade-symphony.md
 ```
 
 Use the report to decide what to remove manually or in a future explicit

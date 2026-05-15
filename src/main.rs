@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fs;
 use std::io::{self, Read};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -124,6 +125,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             write,
         } => dogfood_smoke(workflow_path, write),
         Command::CleanupPlan { workflow_path } => cleanup_plan_command(workflow_path),
+        Command::CleanPlan { workflow_path } => cleanup_plan_command(workflow_path),
+        Command::CleanAudit { workflow_path } => clean_audit_command(workflow_path),
         Command::RunOnce { workflow_path } => run_once(workflow_path),
         Command::RunLoop { options } => run_loop(options),
         Command::CleanupWorkspaces {
@@ -2455,6 +2458,115 @@ fn render_cleanup_plan(plan: &CleanupPlan) -> String {
     }
 
     lines.join("\n")
+}
+
+fn clean_audit_command(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    let terminal_issues = adapter.fetch_issues_by_states(&config.tracker.terminal_states)?;
+    let layout = artifact_layout(&config);
+    let plan = cleanup_plan(&config, &terminal_issues);
+
+    println!("clean_audit=read_only");
+    println!("artifact_root={}", layout.root.display());
+    println!("workspace_root={}", config.workspace.root.display());
+    print_clean_audit_path(
+        "safe_to_keep",
+        "runtime_state",
+        layout.class_path(ArtifactClass::RuntimeState),
+        "resume-critical while an issue is active",
+    );
+    print_clean_audit_path(
+        "safe_to_keep",
+        "event_log",
+        layout.class_path(ArtifactClass::EventLog),
+        "local execution evidence",
+    );
+    print_clean_audit_path(
+        "safe_to_keep",
+        "review_job_artifact",
+        layout.class_path(ArtifactClass::ReviewJobArtifact),
+        "review evidence until tracker workpad records it",
+    );
+    print_clean_audit_path(
+        "attach_to_tracker",
+        "pr_body_draft",
+        layout.class_path(ArtifactClass::PullRequestBodyDraft),
+        "draft should be represented by a pull request or issue workpad",
+    );
+    print_clean_audit_path(
+        "attach_to_tracker",
+        "workpad_draft",
+        layout.class_path(ArtifactClass::WorkpadDraft),
+        "draft should be represented by tracker workpad evidence",
+    );
+    print_clean_audit_path(
+        "promote_to_repo",
+        "reusable_workflow_prompt",
+        layout.class_path(ArtifactClass::ReusableWorkflowPrompt),
+        "workflow and prompt material should live in repo docs, examples, or workflows",
+    );
+    print_clean_audit_path(
+        "cleanup_candidate",
+        "disposable_scratch",
+        layout.class_path(ArtifactClass::DisposableScratch),
+        "scratch files are disposable after operator review",
+    );
+
+    let mut cleanup_candidates = 0;
+    let mut human_decisions = 0;
+    for candidate in &plan.candidates {
+        if !candidate.path.exists() {
+            continue;
+        }
+        if candidate.removable {
+            cleanup_candidates += 1;
+            println!(
+                "clean_audit_item category=cleanup_candidate kind=worktree issue={} path={} reason=terminal_issue_clean_merged_or_closed",
+                candidate.issue_identifier,
+                candidate.path.display()
+            );
+        } else {
+            human_decisions += 1;
+            println!(
+                "clean_audit_item category=needs_human_decision kind=worktree issue={} path={} reason={}",
+                candidate.issue_identifier,
+                candidate.path.display(),
+                clean_audit_blocker_summary(candidate)
+            );
+        }
+    }
+    println!(
+        "clean_audit_summary cleanup_candidates={cleanup_candidates} needs_human_decision={human_decisions}"
+    );
+    println!("clean_audit_write_supported=false");
+    Ok(())
+}
+
+fn print_clean_audit_path(category: &str, kind: &str, path: impl AsRef<Path>, reason: &str) {
+    let path = path.as_ref();
+    let entries = read_dir_entry_count(path);
+    println!(
+        "clean_audit_item category={category} kind={kind} path={} exists={} entries={entries} reason={reason}",
+        path.display(),
+        path.exists()
+    );
+}
+
+fn read_dir_entry_count(path: &Path) -> usize {
+    fs::read_dir(path)
+        .map(|entries| entries.filter_map(Result::ok).count())
+        .unwrap_or(0)
+}
+
+fn clean_audit_blocker_summary(candidate: &jade_symphony::artifacts::CleanupCandidate) -> String {
+    if !candidate.blockers.is_empty() {
+        return candidate.blockers.join(",");
+    }
+    if !candidate.reasons.is_empty() {
+        return candidate.reasons.join(",");
+    }
+    "operator_review_required".into()
 }
 
 fn cleanup_workspaces(
@@ -4890,6 +5002,12 @@ enum Command {
     CleanupPlan {
         workflow_path: PathBuf,
     },
+    CleanPlan {
+        workflow_path: PathBuf,
+    },
+    CleanAudit {
+        workflow_path: PathBuf,
+    },
     RunOnce {
         workflow_path: PathBuf,
     },
@@ -5155,6 +5273,7 @@ enum CliCommand {
     DogfoodSmoke(DogfoodSmokeArgs),
     #[command(name = "cleanup-plan")]
     CleanupPlan(WorkflowPathArgs),
+    Clean(CleanArgs),
     #[command(name = "run-once")]
     RunOnce(WorkflowPathArgs),
     #[command(name = "run-loop")]
@@ -5346,6 +5465,18 @@ struct DogfoodSmokeArgs {
     write: bool,
     #[arg(long = "dry-run")]
     _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct CleanArgs {
+    #[command(subcommand)]
+    command: CleanCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum CleanCommand {
+    Plan(WorkflowPathArgs),
+    Audit(WorkflowPathArgs),
 }
 
 #[derive(Debug, Args)]
@@ -5736,6 +5867,14 @@ impl TryFrom<Cli> for Command {
                     CliCommand::CleanupPlan(args) => Ok(Self::CleanupPlan {
                         workflow_path: args.workflow_path,
                     }),
+                    CliCommand::Clean(args) => match args.command {
+                        CleanCommand::Plan(plan) => Ok(Self::CleanPlan {
+                            workflow_path: plan.workflow_path,
+                        }),
+                        CleanCommand::Audit(audit) => Ok(Self::CleanAudit {
+                            workflow_path: audit.workflow_path,
+                        }),
+                    },
                     CliCommand::RunOnce(args) => Ok(Self::RunOnce {
                         workflow_path: args.workflow_path,
                     }),
@@ -6738,6 +6877,18 @@ mod tests {
         assert_eq!(
             parse(&["cleanup-plan", "examples/github-project-workflow.md"]),
             Command::CleanupPlan {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md")
+            }
+        );
+        assert_eq!(
+            parse(&["clean", "plan", "examples/github-project-workflow.md"]),
+            Command::CleanPlan {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md")
+            }
+        );
+        assert_eq!(
+            parse(&["clean", "audit", "examples/github-project-workflow.md"]),
+            Command::CleanAudit {
                 workflow_path: PathBuf::from("examples/github-project-workflow.md")
             }
         );

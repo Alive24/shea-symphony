@@ -13,6 +13,10 @@ only: inspect the linked PR, check the workpad evidence, classify findings, and
 route the issue according to the review result. Do not implement unrelated code
 changes while acting as the Review Agent.
 
+Use Jade Symphony CLI for Project state, Project fields, claim locks, workpad
+updates, and review routing. Direct GitHub issue/PR reads are acceptable for raw
+context, but raw Project GraphQL or Project UI changes are break-glass only.
+
 ## Current Issue Contract
 
 {{ issue.description }}
@@ -20,6 +24,8 @@ changes while acting as the Review Agent.
 ## Review Contract
 
 - Confirm the issue is in `Agent Review` before starting review.
+- Claim `Review Agent` through `review-claim` or the configured `review-loop`
+  before starting manual or automated review work.
 - Confirm there is one clear PR or handoff target.
 - Compare the PR against the issue goal, guardrails, expected outcome, and
   verification evidence.
@@ -30,9 +36,9 @@ changes while acting as the Review Agent.
 ## Allowed Transitions
 
 - If review passes and evidence is recorded, the Review Agent may move the issue
-  to `Human Review`.
+  to `Human Review` through `review-pass` or the configured review command.
 - If confirmed findings require implementation work, move the issue to `Rework`
-  with the finding summary and reproduction evidence.
+  with the finding summary and reproduction evidence through `review-reject`.
 - If review cannot complete because of missing PR evidence, unavailable review
   backend, credentials, or an ambiguous decision, keep the issue out of
   `Human Review` and record the next operator action.

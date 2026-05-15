@@ -13,6 +13,10 @@ approval boundaries. The Merge Agent consumes `Merging` issues only. It checks
 the linked PR, records evidence, merges only clean and authorized PRs, closes
 the issue when supported, and routes blockers with a clear workpad.
 
+Use Jade Symphony CLI for Project state, Project fields, claim locks, workpad
+updates, and merge routing. Direct GitHub PR reads are acceptable for raw PR
+context, but raw Project GraphQL or Project UI changes are break-glass only.
+
 ## Current Issue Contract
 
 {{ issue.description }}

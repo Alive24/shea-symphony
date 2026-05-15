@@ -352,6 +352,22 @@ fn has_review_pass_evidence(issue: &TrackerIssue) -> bool {
         || string_project_field(issue, "review_pass_evidence")
             .map(|value| !value.trim().is_empty())
             .unwrap_or(false)
+        || issue
+            .description
+            .as_deref()
+            .is_some_and(has_review_pass_evidence_text)
+}
+
+fn has_review_pass_evidence_text(description: &str) -> bool {
+    let normalized = description.to_lowercase();
+    [
+        "review pass evidence: `recorded`",
+        "review pass evidence: recorded",
+        "evidence recorded. independent review agent may move this issue to human review; the main implementation agent must not.",
+        "independent agent review passed with recorded evidence; issue is ready for human review.",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker))
 }
 
 fn has_dirty_or_conflicted_pr(issue: &TrackerIssue) -> bool {
@@ -578,6 +594,62 @@ mod tests {
     #[test]
     fn reports_human_review_without_review_pass_evidence() {
         let report = audit_project_issues(&[issue("#41", "Human Review")]);
+
+        assert_eq!(
+            report.violations[0].code,
+            HUMAN_REVIEW_MISSING_REVIEW_EVIDENCE
+        );
+    }
+
+    #[test]
+    fn accepts_human_review_with_workpad_review_pass_evidence() {
+        let mut issue = issue("#41", "Human Review");
+        issue.description = Some(
+            [
+                "<!-- jade-symphony-workpad -->",
+                "## Agent Review",
+                "- Decision: Independent Agent Review passed with recorded evidence; issue is ready for Human Review.",
+                "- Review pass evidence: `recorded`",
+                "Evidence recorded. Independent Review Agent may move this issue to Human Review; the main implementation agent must not.",
+            ]
+            .join("\n"),
+        );
+
+        let report = audit_project_issues(&[issue]);
+
+        assert!(report.is_clean());
+    }
+
+    #[test]
+    fn review_agent_claim_alone_does_not_satisfy_human_review_evidence() {
+        let mut issue = issue("#41", "Human Review");
+        issue.project_fields.insert(
+            "Review Agent".into(),
+            serde_json::Value::String("Gemini A".into()),
+        );
+
+        let report = audit_project_issues(&[issue]);
+
+        assert_eq!(
+            report.violations[0].code,
+            HUMAN_REVIEW_MISSING_REVIEW_EVIDENCE
+        );
+    }
+
+    #[test]
+    fn failed_review_workpad_does_not_satisfy_human_review_evidence() {
+        let mut issue = issue("#41", "Human Review");
+        issue.description = Some(
+            [
+                "<!-- jade-symphony-workpad -->",
+                "## Agent Review",
+                "- Decision: Agent Review needs additional context; Human Review is not allowed yet.",
+                "- Review did not pass; unavailable or inconclusive review must not move to Human Review.",
+            ]
+            .join("\n"),
+        );
+
+        let report = audit_project_issues(&[issue]);
 
         assert_eq!(
             report.violations[0].code,

@@ -79,12 +79,14 @@ compact `Latest:` status bars in addition to their detailed line logs.
 
 The canonical `workflows/jade-symphony.md` file uses the local `tmux` main-agent
 backend. A launched tmux session records its session name, log path, workspace,
-branch, and attach command in runtime/workpad evidence, then keeps the issue in
-the active main lane. It does not move to `Agent Review` until later completion
-evidence satisfies the existing handoff rules. If an operator overrides the
-workflow back to `agent.backend: dry-run`, `run-loop --write` exits non-zero
-before loading runtime state, creating worktrees, claiming Project fields, or
-writing workpads.
+branch, attach command, prompt artifact, actor, lane, attempt, and running
+status in a durable session registry under the configured artifact root. The
+registry is terminal-session evidence only; tracker state remains the issue
+lifecycle source of truth. The issue stays in the active main lane until later
+completion evidence satisfies the existing handoff rules. If an operator
+overrides the workflow back to `agent.backend: dry-run`, `run-loop --write`
+exits non-zero before loading runtime state, creating worktrees, claiming
+Project fields, or writing workpads.
 
 ## Tracker Writes
 

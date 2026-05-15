@@ -11,6 +11,10 @@ use thiserror::Error;
 use crate::config::RuntimeConfig;
 use crate::model::AgentEvent;
 use crate::profiles::{selected_execution_profile, ExecutionProfile};
+use crate::session_registry::{
+    deterministic_session_name, save_session_record, session_registry_path, unix_timestamp_ms,
+    AgentSessionRecord, SessionStatus,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreparedRun {
@@ -30,6 +34,13 @@ pub struct PreparedRun {
     pub actor_role: Option<String>,
     pub actor_label: Option<String>,
     pub git_author: Option<String>,
+    pub issue_id: Option<String>,
+    pub issue_identifier: Option<String>,
+    pub issue_title: Option<String>,
+    pub lane: Option<String>,
+    pub attempt: u32,
+    pub branch_name: Option<String>,
+    pub session_registry_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +117,13 @@ impl AgentBackend for DryRunBackend {
             actor_role: Some(config.identity.actor_role.clone()),
             actor_label: Some(config.identity.actor_label.clone()),
             git_author: config.identity.git.author(),
+            issue_id: None,
+            issue_identifier: None,
+            issue_title: None,
+            lane: None,
+            attempt: 1,
+            branch_name: None,
+            session_registry_path: None,
         })
     }
 
@@ -180,6 +198,13 @@ impl AgentBackend for CodexBackend {
             actor_role: Some(config.identity.actor_role.clone()),
             actor_label: Some(config.identity.actor_label.clone()),
             git_author: config.identity.git.author(),
+            issue_id: None,
+            issue_identifier: None,
+            issue_title: None,
+            lane: None,
+            attempt: 1,
+            branch_name: None,
+            session_registry_path: None,
         })
     }
 
@@ -247,6 +272,13 @@ impl AgentBackend for ClaudeCodeBackend {
             actor_role: Some(config.identity.actor_role.clone()),
             actor_label: Some(config.identity.actor_label.clone()),
             git_author: config.identity.git.author(),
+            issue_id: None,
+            issue_identifier: None,
+            issue_title: None,
+            lane: None,
+            attempt: 1,
+            branch_name: None,
+            session_registry_path: None,
         })
     }
 
@@ -305,6 +337,13 @@ impl AgentBackend for TmuxBackend {
             actor_role: Some(config.identity.actor_role.clone()),
             actor_label: Some(config.identity.actor_label.clone()),
             git_author: config.identity.git.author(),
+            issue_id: None,
+            issue_identifier: None,
+            issue_title: None,
+            lane: None,
+            attempt: 1,
+            branch_name: None,
+            session_registry_path: Some(session_registry_path(config)),
         })
     }
 
@@ -560,13 +599,47 @@ fn run_tmux_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError
         backend: prepared.backend.clone(),
         session_id: session_id.clone(),
     });
+    let attach_command = format!("tmux attach-session -t {session_id}");
+    if let Some(registry_path) = prepared.session_registry_path.as_deref() {
+        let now_ms = unix_timestamp_ms();
+        let record = AgentSessionRecord {
+            issue_id: prepared.issue_id.clone(),
+            issue_identifier: prepared.issue_identifier.clone(),
+            issue_title: prepared.issue_title.clone(),
+            lane: prepared.lane.clone().unwrap_or_else(|| "main".into()),
+            actor_role: prepared.actor_role.clone(),
+            actor_label: prepared.actor_label.clone(),
+            git_author: prepared.git_author.clone(),
+            profile_id: prepared.profile_id.clone(),
+            instance_name: prepared.instance_name.clone(),
+            worktree: prepared.workspace.clone(),
+            branch: prepared.branch_name.clone(),
+            backend: prepared.backend.clone(),
+            session_name: session_id.clone(),
+            pane_target: target.to_string(),
+            prompt_artifact_path: prompt_artifact_path.clone(),
+            log_path: log_path.clone(),
+            attach_command: attach_command.clone(),
+            attempt: prepared.attempt.max(1),
+            status: SessionStatus::Running,
+            started_at_ms: now_ms,
+            updated_at_ms: now_ms,
+        };
+        if let Err(error) = save_session_record(registry_path, record) {
+            events.push(AgentEvent::Failed {
+                backend: prepared.backend,
+                error: format!("tmux session registry failed: {error}"),
+            });
+            return Ok(events);
+        }
+    }
     events.push(AgentEvent::Message {
         backend: prepared.backend,
         session_id: Some(session_id.clone()),
         text: format!(
-            "tmux_session_started session={} attach_command=\"tmux attach-session -t {}\" log_path={} prompt_artifact={}",
+            "tmux_session_started session={} attach_command=\"{}\" log_path={} prompt_artifact={}",
             session_id,
-            session_id,
+            attach_command,
             log_path.display(),
             prompt_artifact_path.display()
         ),
@@ -606,16 +679,17 @@ fn tmux_session_name(prepared: &PreparedRun) -> String {
         .get("JADE_SYMPHONY_TMUX_SESSION_PREFIX")
         .map(String::as_str)
         .unwrap_or("jade");
-    format!(
-        "{}-main-{}-{}",
-        safe_path_component(Some(prefix)),
-        safe_path_component(
+    deterministic_session_name(
+        prefix,
+        prepared.lane.as_deref().unwrap_or("main"),
+        prepared.issue_identifier.as_deref(),
+        prepared.attempt,
+        prepared.issue_title.as_deref().or_else(|| {
             prepared
                 .workspace
                 .file_name()
                 .and_then(|name| name.to_str())
-        ),
-        current_time_ms()
+        }),
     )
 }
 
@@ -941,9 +1015,13 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let workspace = temp.path().join("workspace");
         fs::create_dir_all(&workspace).unwrap();
+        let artifact_root = temp.path().join("artifacts");
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\ntracker:\n  kind: memory\nagent:\n  backend: tmux\ntmux:\n  command: tmux\n  agent_command: cat > jade-prompt.txt\n  session_prefix: jade-test\n---\nPrompt",
+            &format!(
+                "---\ntracker:\n  kind: memory\nagent:\n  backend: tmux\nartifacts:\n  root: {:?}\n  namespace: test/repo\ntmux:\n  command: tmux\n  agent_command: cat > jade-prompt.txt\n  session_prefix: jade-test\n---\nPrompt",
+                artifact_root.display().to_string()
+            ),
         )
         .unwrap();
         let config =
@@ -954,6 +1032,12 @@ mod tests {
             .prepare(workspace.clone(), "echo tmux-smoke".into(), &config)
             .unwrap();
         prepared.prompt_artifact_path = Some(temp.path().join("logs/prompts/smoke.prompt.md"));
+        prepared.issue_id = Some("I_225".into());
+        prepared.issue_identifier = Some("#225".into());
+        prepared.issue_title = Some("Add durable tmux session registry".into());
+        prepared.lane = Some("main".into());
+        prepared.attempt = 2;
+        prepared.branch_name = Some("feature/issue-225".into());
         let tmux_tmp = temp.path().join("tmux-tmp");
         fs::create_dir_all(&tmux_tmp).unwrap();
         let probe_session = format!("jade-test-probe-{}", current_time_ms());
@@ -994,7 +1078,7 @@ mod tests {
             .attach_command
             .as_deref()
             .unwrap()
-            .contains("tmux attach-session -t jade-test-main-workspace"));
+            .contains("tmux attach-session -t jade-test-main-225-attempt-2"));
         assert!(summary
             .log_path
             .as_ref()
@@ -1002,6 +1086,20 @@ mod tests {
             .display()
             .to_string()
             .ends_with(".log"));
+        let registry = crate::session_registry::load_session_registry(
+            &crate::session_registry::session_registry_path(&config),
+        )
+        .unwrap();
+        assert_eq!(registry.sessions.len(), 1);
+        assert_eq!(
+            registry.sessions[0].issue_identifier.as_deref(),
+            Some("#225")
+        );
+        assert_eq!(registry.sessions[0].lane, "main");
+        assert_eq!(
+            registry.sessions[0].branch.as_deref(),
+            Some("feature/issue-225")
+        );
         if let Some(session) = summary.session_id.as_deref() {
             Command::new("tmux")
                 .env("TMUX_TMPDIR", tmux_tmp)

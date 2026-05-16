@@ -43,6 +43,7 @@ pub struct AgentReviewHandoffEvidence {
     pub workspace_path: PathBuf,
     pub branch_name: String,
     pub pull_request_url: Option<String>,
+    pub pull_request_is_draft: Option<bool>,
     pub validation_summary: String,
     pub last_transition: String,
     pub no_pr_blocker: Option<String>,
@@ -115,6 +116,7 @@ impl AgentReviewHandoffEvidence {
             workspace_path: plan.workspace_path.clone(),
             branch_name: plan.branch_name.clone(),
             pull_request_url: None,
+            pull_request_is_draft: None,
             validation_summary: validation_summary.into(),
             last_transition: last_transition.into(),
             no_pr_blocker: None,
@@ -157,8 +159,15 @@ pub fn evaluate_agent_review_handoff(
     if !has_pr && !has_no_pr_blocker {
         missing.push("pull request url or explicit no-PR blocker".into());
     }
+    if has_pr {
+        match evidence.pull_request_is_draft {
+            Some(false) => {}
+            Some(true) => missing.push("non-draft pull request".into()),
+            None => missing.push("pull request draft status".into()),
+        }
+    }
 
-    if missing.is_empty() && has_pr {
+    if missing.is_empty() && has_pr && evidence.pull_request_is_draft == Some(false) {
         AgentReviewHandoffReport {
             status: AgentReviewHandoffStatus::Ready,
             missing,
@@ -199,6 +208,13 @@ pub fn render_agent_review_handoff_workpad(
         format!(
             "- Pull request: `{}`",
             evidence.pull_request_url.as_deref().unwrap_or("missing")
+        ),
+        format!(
+            "- Pull request draft: `{}`",
+            evidence
+                .pull_request_is_draft
+                .map(|is_draft| is_draft.to_string())
+                .unwrap_or_else(|| "unknown".into())
         ),
         format!("- Validation: {}", evidence.validation_summary),
         format!("- Last transition: {}", evidence.last_transition),
@@ -725,11 +741,39 @@ mod tests {
         let mut evidence =
             AgentReviewHandoffEvidence::from_plan(&plan, "cargo test passed", "completed");
         evidence.pull_request_url = Some("https://github.com/Alive24/jade-symphony/pull/21".into());
+        evidence.pull_request_is_draft = Some(false);
 
         let report = evaluate_agent_review_handoff(&evidence);
 
         assert!(report.is_ready());
         assert_eq!(report.target_state.as_deref(), Some("agent_review"));
+    }
+
+    #[test]
+    fn agent_review_handoff_blocks_draft_pr() {
+        let plan = plan_issue_handoff(Path::new("/tmp/jade-workspaces"), &issue(), "main").unwrap();
+        let mut evidence =
+            AgentReviewHandoffEvidence::from_plan(&plan, "cargo test passed", "completed");
+        evidence.pull_request_url = Some("https://github.com/Alive24/jade-symphony/pull/21".into());
+        evidence.pull_request_is_draft = Some(true);
+
+        let report = evaluate_agent_review_handoff(&evidence);
+
+        assert!(!report.is_ready());
+        assert!(report.missing.contains(&"non-draft pull request".into()));
+    }
+
+    #[test]
+    fn agent_review_handoff_blocks_unknown_draft_status() {
+        let plan = plan_issue_handoff(Path::new("/tmp/jade-workspaces"), &issue(), "main").unwrap();
+        let mut evidence =
+            AgentReviewHandoffEvidence::from_plan(&plan, "cargo test passed", "completed");
+        evidence.pull_request_url = Some("https://github.com/Alive24/jade-symphony/pull/21".into());
+
+        let report = evaluate_agent_review_handoff(&evidence);
+
+        assert!(!report.is_ready());
+        assert!(report.missing.contains(&"pull request draft status".into()));
     }
 
     #[test]

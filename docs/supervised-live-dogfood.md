@@ -119,12 +119,13 @@ Expected outcome for successful main-agent work:
 - the configured backend runs in that workspace;
 - runtime state and event logs are written;
 - a PR is created or reused;
+- the linked PR is ready, not draft;
 - the workpad records durable handoff evidence;
 - the issue moves to `Agent Review`, not `Human Review`.
 
-If the run reports usage limits, retry backoff, missing PR evidence, failed
-handoff, stale runtime state, or missing human input, stop and resolve that
-specific blocker before running another write tick.
+If the run reports usage limits, retry backoff, missing PR evidence, draft PR
+handoff, failed handoff, stale runtime state, or missing human input, stop and
+resolve that specific blocker before running another write tick.
 
 ## Agent Review
 

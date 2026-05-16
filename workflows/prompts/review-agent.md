@@ -29,6 +29,9 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
 - Preserve the assigned structured claim `run=` in review evidence, workpad
   notes, and any handoff summary.
 - Confirm there is one clear PR or handoff target.
+- Confirm the linked PR is ready, not draft. If the PR is draft, do not run a
+  normal review; record invalid handoff evidence and leave the issue out of
+  `Human Review`.
 - Compare the PR against the issue goal, guardrails, expected outcome, and
   verification evidence.
 - Prefer concrete findings with file paths, command output, or missing evidence.
@@ -42,8 +45,8 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
 - If confirmed findings require implementation work, move the issue to `Rework`
   with the finding summary and reproduction evidence through `review-reject`.
 - If review cannot complete because of missing PR evidence, unavailable review
-  backend, credentials, or an ambiguous decision, keep the issue out of
-  `Human Review` and record the next operator action.
+  backend, credentials, draft PR handoff, or an ambiguous decision, keep the
+  issue out of `Human Review` and record the next operator action.
 
 ## Non-Negotiable Boundaries
 

@@ -21,6 +21,13 @@ pub struct PullRequestPublication {
     pub pr_created: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PullRequestReadyStatus {
+    pub pr_url: String,
+    pub was_draft: bool,
+    pub marked_ready: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandOutput {
     pub status: i32,
@@ -75,6 +82,8 @@ pub enum GitHandoffError {
     },
     #[error("pull request command did not return a URL")]
     MissingPullRequestUrl,
+    #[error("pull request ready command returned invalid JSON: {0}")]
+    InvalidPullRequestReadyPayload(String),
     #[error("worktree {path} has uncommitted changes before PR handoff: {status}")]
     DirtyWorktree { path: PathBuf, status: String },
     #[error("branch {branch} has no commits ahead of base {base} before PR handoff")]
@@ -221,6 +230,48 @@ pub fn publish_issue_pull_request(
     })
 }
 
+pub fn ensure_pull_request_ready(
+    pr_ref: &str,
+    runner: &dyn HandoffCommandRunner,
+    cwd: &Path,
+) -> Result<PullRequestReadyStatus, GitHandoffError> {
+    let viewed = runner.run(
+        "gh",
+        &[
+            "pr".into(),
+            "view".into(),
+            pr_ref.into(),
+            "--json".into(),
+            "url,isDraft".into(),
+        ],
+        cwd,
+    )?;
+    require_success("gh", viewed.clone())?;
+    let value: serde_json::Value = serde_json::from_str(&viewed.stdout)
+        .map_err(|error| GitHandoffError::InvalidPullRequestReadyPayload(error.to_string()))?;
+    let pr_url = value
+        .get("url")
+        .and_then(serde_json::Value::as_str)
+        .filter(|url| !url.trim().is_empty())
+        .ok_or_else(|| GitHandoffError::InvalidPullRequestReadyPayload("missing url".into()))?
+        .to_string();
+    let was_draft = value
+        .get("isDraft")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| GitHandoffError::InvalidPullRequestReadyPayload("missing isDraft".into()))?;
+
+    if was_draft {
+        let ready = runner.run("gh", &["pr".into(), "ready".into(), pr_ref.into()], cwd)?;
+        require_success("gh", ready)?;
+    }
+
+    Ok(PullRequestReadyStatus {
+        pr_url,
+        was_draft,
+        marked_ready: was_draft,
+    })
+}
+
 fn ensure_publishable_branch(
     plan: &IssueHandoffPlan,
     runner: &dyn HandoffCommandRunner,
@@ -333,6 +384,7 @@ mod tests {
         worktree_branch: Option<String>,
         dirty_status: Option<String>,
         ahead_count: u32,
+        pr_is_draft: bool,
     }
 
     impl FakeRunner {
@@ -386,7 +438,11 @@ mod tests {
                 return Ok(match &self.existing_pr_url {
                     Some(url) => CommandOutput {
                         status: 0,
-                        stdout: format!("{url}\n"),
+                        stdout: if command.contains("url,isDraft") {
+                            format!("{{\"url\":\"{}\",\"isDraft\":{}}}\n", url, self.pr_is_draft)
+                        } else {
+                            format!("{url}\n")
+                        },
                         stderr: String::new(),
                     },
                     None => CommandOutput {
@@ -400,6 +456,13 @@ mod tests {
                 return Ok(CommandOutput {
                     status: 0,
                     stdout: "https://github.com/Alive24/jade-symphony/pull/99\n".into(),
+                    stderr: String::new(),
+                });
+            }
+            if command.starts_with("gh pr ready") {
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
                     stderr: String::new(),
                 });
             }
@@ -544,5 +607,51 @@ mod tests {
         let commands = runner.commands.borrow().join("\n");
         assert!(commands.contains("git rev-list --count main..HEAD"));
         assert!(!commands.contains("git push -u origin"));
+    }
+
+    #[test]
+    fn marks_existing_draft_pull_request_ready() {
+        let temp = tempfile::tempdir().unwrap();
+        let runner = FakeRunner {
+            existing_pr_url: Some("https://github.com/Alive24/jade-symphony/pull/45".into()),
+            pr_is_draft: true,
+            ..Default::default()
+        };
+
+        let status = ensure_pull_request_ready(
+            "https://github.com/Alive24/jade-symphony/pull/45",
+            &runner,
+            temp.path(),
+        )
+        .unwrap();
+
+        assert!(status.was_draft);
+        assert!(status.marked_ready);
+        let commands = runner.commands.borrow().join("\n");
+        assert!(commands.contains("gh pr view"));
+        assert!(commands.contains("gh pr ready"));
+    }
+
+    #[test]
+    fn leaves_ready_pull_request_unchanged() {
+        let temp = tempfile::tempdir().unwrap();
+        let runner = FakeRunner {
+            existing_pr_url: Some("https://github.com/Alive24/jade-symphony/pull/45".into()),
+            pr_is_draft: false,
+            ..Default::default()
+        };
+
+        let status = ensure_pull_request_ready(
+            "https://github.com/Alive24/jade-symphony/pull/45",
+            &runner,
+            temp.path(),
+        )
+        .unwrap();
+
+        assert!(!status.was_draft);
+        assert!(!status.marked_ready);
+        let commands = runner.commands.borrow().join("\n");
+        assert!(commands.contains("gh pr view"));
+        assert!(!commands.contains("gh pr ready"));
     }
 }

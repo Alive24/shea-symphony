@@ -67,8 +67,11 @@ question, but do not edit files under
    evidence, PR summaries, and workpad updates.
 8. Open or update exactly one PR for this issue with concise validation
    evidence.
-9. Move locally complete main-agent work to `Agent Review` only.
-10. Return to tracker selection only after this issue has a PR/workpad handoff
+9. Confirm the linked PR is ready, not draft. If every other handoff invariant
+   is satisfied and the PR is still draft, mark it ready before moving state;
+   if that fails, keep the issue out of `Agent Review` and record the blocker.
+10. Move locally complete main-agent work to `Agent Review` only.
+11. Return to tracker selection only after this issue has a PR/workpad handoff
     or a documented blocked state.
 
 ## State And Role Boundaries
@@ -103,6 +106,7 @@ workpad. Record:
 - plan and changed files.
 - verification commands and results.
 - PR URL and handoff summary.
+- PR draft/ready status at handoff.
 - any blocker and the exact next human or agent action needed.
 
 ## Git And PR Discipline
@@ -116,6 +120,8 @@ workpad. Record:
   to `Need Human Input` with evidence.
 - PR handoff must explain scope, validation, and the state boundary that main
   work stops at `Agent Review`.
+- Draft PRs must not be handed off to `Agent Review`. Mark the PR ready first,
+  or keep the issue in a blocked state with workpad evidence.
 
 ## Stop Conditions
 

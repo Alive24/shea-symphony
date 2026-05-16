@@ -15,16 +15,19 @@ use jade_symphony::agent::{
 use jade_symphony::artifacts::{artifact_layout, cleanup_plan, ArtifactClass, CleanupPlan};
 use jade_symphony::config::RuntimeConfig;
 use jade_symphony::doctor::{
-    audit_project_issues, audit_project_issues_with_context, human_review_repair_candidates,
-    render_doctor_repair_workpad, render_human_review_repair_workpad, render_project_audit_report,
+    audit_project_issues, audit_project_issues_with_context, draft_pr_repair_candidates,
+    human_review_repair_candidates, render_doctor_repair_workpad,
+    render_human_review_repair_workpad, render_project_audit_report,
     render_project_audit_report_json, ProjectAuditReport, ProjectDoctorContext,
+    AGENT_REVIEW_DRAFT_PR,
 };
 use jade_symphony::event_log::{
     EventLog, EventRecord, TrackerMutationAuditInput, TrackerMutationAuditRecord,
 };
 use jade_symphony::git_handoff::{
-    prepare_issue_worktree, publish_issue_pull_request, LiveWorktreeResult,
-    ProcessHandoffCommandRunner, PullRequestPublication,
+    ensure_pull_request_ready, prepare_issue_worktree, publish_issue_pull_request,
+    LiveWorktreeResult, ProcessHandoffCommandRunner, PullRequestPublication,
+    PullRequestReadyStatus,
 };
 use jade_symphony::handoff::{
     evaluate_agent_review_handoff, plan_issue_handoff_for_profile,
@@ -1616,6 +1619,19 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                             issue.identifier
                         );
                     }
+                    ReviewRunEligibility::InvalidHandoff { reason } => {
+                        println!(
+                            "review_loop_action=skip issue={} reason=invalid_handoff detail={reason:?}",
+                            issue.identifier
+                        );
+                        record_review_invalid_handoff(
+                            &config,
+                            adapter.as_ref(),
+                            &issue,
+                            &reason,
+                            options.write,
+                        )?;
+                    }
                     ReviewRunEligibility::Eligible { .. } => {}
                 }
             }
@@ -1722,6 +1738,19 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                             latest.identifier
                         );
                         }
+                        ReviewRunEligibility::InvalidHandoff { reason } => {
+                            println!(
+                            "review_loop_action=skip issue={} reason=invalid_handoff detail={reason:?}",
+                            latest.identifier
+                        );
+                            record_review_invalid_handoff(
+                                &config,
+                                adapter.as_ref(),
+                                &latest,
+                                &reason,
+                                options.write,
+                            )?;
+                        }
                     }
                 }
                 ReviewRunEligibility::AlreadyQueued { worker_key } => {
@@ -1735,6 +1764,19 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                     "review_loop_action=skip issue={} reason=state_changed current_state={current_state:?}",
                     selected_issue.identifier
                 );
+                }
+                ReviewRunEligibility::InvalidHandoff { reason } => {
+                    println!(
+                        "review_loop_action=skip issue={} reason=invalid_handoff detail={reason:?}",
+                        selected_issue.identifier
+                    );
+                    record_review_invalid_handoff(
+                        &config,
+                        adapter.as_ref(),
+                        &selected_issue,
+                        &reason,
+                        options.write,
+                    )?;
                 }
             }
         }
@@ -2098,6 +2140,50 @@ fn review_backend_kind(config: &RuntimeConfig, fake_outcome: Option<&FakeReviewO
     } else {
         "fake-reviewer".into()
     }
+}
+
+fn record_review_invalid_handoff(
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    issue: &TrackerIssue,
+    reason: &str,
+    write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let workpad = [
+        "## Jade Symphony Workpad".to_string(),
+        String::new(),
+        "### Agent Review Invalid Handoff".to_string(),
+        format!("- Issue: {} {}", issue.identifier, issue.title),
+        "- Actor role: `review_agent`".to_string(),
+        "- Decision: `inconclusive_invalid_handoff`".to_string(),
+        format!("- Reason: {reason}"),
+        "- Review did not start because the Main Agent handoff invariant is not satisfied.".to_string(),
+        "- Draft PRs must be marked ready by the Main Agent lane or an operator-confirmed doctor repair before normal Agent Review.".to_string(),
+    ]
+    .join("\n");
+
+    if write {
+        adapter.upsert_workpad(&issue.identifier, &workpad)?;
+        append_tracker_mutation_audit(
+            config,
+            TrackerMutationAudit {
+                command: "review-loop",
+                mutation_type: "workpad_write",
+                issue_ref: Some(&issue.identifier),
+                target: Some("invalid_handoff".into()),
+                from_state: Some(issue.state.clone()),
+                to_state: Some(issue.state.clone()),
+                reason: "review refused invalid Agent Review handoff",
+            },
+        );
+    } else {
+        println!(
+            "review_loop_dry_run action=workpad issue={} evidence=invalid_handoff",
+            issue.identifier
+        );
+    }
+
+    Ok(())
 }
 
 fn select_review_worker_issues(
@@ -3080,11 +3166,20 @@ fn print_doctor_interactive_plan(report: &ProjectAuditReport) {
         return;
     }
     for violation in &report.violations {
+        let command = if violation.code == AGENT_REVIEW_DRAFT_PR {
+            format!(
+                "doctor repair {} --mark-pr-ready --confirm-handoff-ready --write",
+                violation.issue_ref.trim_start_matches('#')
+            )
+        } else {
+            format!(
+                "doctor repair {}",
+                violation.issue_ref.trim_start_matches('#')
+            )
+        };
         println!(
-            "doctor_interactive action=inspect issue={} code={} command=\"doctor repair {}\"",
-            violation.issue_ref,
-            violation.code,
-            violation.issue_ref.trim_start_matches('#')
+            "doctor_interactive action=inspect issue={} code={} command=\"{}\"",
+            violation.issue_ref, violation.code, command
         );
     }
 }
@@ -3096,10 +3191,17 @@ fn apply_doctor_auto_fix(
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let candidates = human_review_repair_candidates(report);
+    let draft_pr_candidates = draft_pr_repair_candidates(report);
     println!(
         "doctor_auto_fix safe_candidates={} write={write}",
         candidates.len()
     );
+    for violation in draft_pr_candidates {
+        println!(
+            "doctor_auto_fix action=skip issue={} code={} reason=pr_ready_requires_operator_confirmation",
+            violation.issue_ref, violation.code
+        );
+    }
     for violation in candidates {
         println!(
             "doctor_auto_fix action=move issue={} from={:?} to=agent_review",
@@ -3159,8 +3261,13 @@ fn doctor_repair_issue(
         .find(|issue| issue_ref_matches(&issue.identifier, &repair.issue_ref))
         .ok_or_else(|| format!("doctor repair could not find issue {}", repair.issue_ref))?;
     println!(
-        "doctor_repair issue={} state={:?} write={} move_need_human_input={}",
-        issue.identifier, issue.state, repair.write, repair.move_need_human_input
+        "doctor_repair issue={} state={:?} write={} move_need_human_input={} mark_pr_ready={} confirm_handoff_ready={}",
+        issue.identifier,
+        issue.state,
+        repair.write,
+        repair.move_need_human_input,
+        repair.mark_pr_ready,
+        repair.confirm_handoff_ready
     );
     println!(
         "safe=no_op command=\"doctor repair {}\"",
@@ -3169,6 +3276,7 @@ fn doctor_repair_issue(
     println!("uncertain=resume command=\"run-loop <workflow> --write\" reason=requires operator confirmation and live workspace inspection");
     println!("uncertain=reset reason=requires confirming no useful work would be discarded");
     println!("uncertain=move_need_human_input command=\"doctor repair {} --move-need-human-input --write\" reason=records evidence before tracker mutation", issue.identifier.trim_start_matches('#'));
+    println!("uncertain=mark_pr_ready command=\"doctor repair {} --mark-pr-ready --confirm-handoff-ready --write\" reason=requires operator-confirmed handoff evidence", issue.identifier.trim_start_matches('#'));
     println!("dangerous=delete_worktree reason=out_of_scope_for_doctor_repair");
 
     if repair.move_need_human_input {
@@ -3212,7 +3320,90 @@ fn doctor_repair_issue(
         }
     }
 
+    if repair.mark_pr_ready {
+        if !repair.confirm_handoff_ready {
+            println!(
+                "doctor_repair_dry_run action=blocked issue={} reason=missing_confirm_handoff_ready",
+                issue.identifier
+            );
+            if repair.write {
+                return Err(
+                    "doctor repair --mark-pr-ready requires --confirm-handoff-ready".into(),
+                );
+            }
+            return Ok(());
+        }
+        let pr_ref = draft_pull_request_repair_target(issue)?;
+        let workpad = render_doctor_repair_workpad(issue, report, "mark_pr_ready");
+        if repair.write {
+            adapter.upsert_workpad(&issue.identifier, &workpad)?;
+            append_tracker_mutation_audit(
+                config,
+                TrackerMutationAudit {
+                    command: "doctor repair",
+                    mutation_type: "workpad_write",
+                    issue_ref: Some(&issue.identifier),
+                    target: Some(pr_ref.clone()),
+                    from_state: Some(issue.state.clone()),
+                    to_state: Some(issue.state.clone()),
+                    reason: "doctor repair evidence before PR ready mutation",
+                },
+            );
+            let ready = ensure_pull_request_ready(
+                &pr_ref,
+                &ProcessHandoffCommandRunner,
+                &std::env::current_dir()?,
+            )?;
+            append_tracker_mutation_audit(
+                config,
+                TrackerMutationAudit {
+                    command: "doctor repair",
+                    mutation_type: "pr_ready",
+                    issue_ref: Some(&issue.identifier),
+                    target: Some(ready.pr_url.clone()),
+                    from_state: Some(issue.state.clone()),
+                    to_state: Some(issue.state.clone()),
+                    reason: "operator-confirmed draft PR handoff repair",
+                },
+            );
+            println!(
+                "doctor_repair_action=mark_pr_ready issue={} url={} was_draft={} marked_ready={}",
+                issue.identifier, ready.pr_url, ready.was_draft, ready.marked_ready
+            );
+        } else {
+            println!(
+                "doctor_repair_dry_run action=workpad issue={} evidence=doctor_repair_mark_pr_ready",
+                issue.identifier
+            );
+            println!(
+                "doctor_repair_dry_run action=pr_ready issue={} pr_ref={} requires=confirm_handoff_ready",
+                issue.identifier, pr_ref
+            );
+        }
+    }
+
     Ok(())
+}
+
+fn draft_pull_request_repair_target(
+    issue: &TrackerIssue,
+) -> Result<String, Box<dyn std::error::Error>> {
+    issue
+        .linked_pull_requests
+        .iter()
+        .find(|pr| pr.is_draft == Some(true))
+        .and_then(|pr| {
+            pr.url
+                .clone()
+                .or_else(|| pr.number.map(|number| format!("#{number}")))
+        })
+        .ok_or_else(|| {
+            format!(
+                "doctor repair could not find a linked draft PR for {}",
+                issue.identifier
+            )
+            .into()
+        })
 }
 
 fn issue_ref_matches(left: &str, right: &str) -> bool {
@@ -3929,6 +4120,7 @@ struct RunLoopLiveHandoff {
     worktree: LiveWorktreeResult,
     publication: PullRequestPublication,
     verification: String,
+    pull_request_ready: Option<PullRequestReadyStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4716,6 +4908,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                                 worktree,
                                 publication,
                                 verification: verification.summary,
+                                pull_request_ready: None,
                             });
                         }
                         Err(error) => {
@@ -4752,6 +4945,34 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                         "run_loop_action=link_pr issue={} evidence=live_handoff",
                         latest.identifier
                     );
+                }
+            }
+            if result.success {
+                if let Some(handoff) = result.live_handoff.as_mut() {
+                    match ensure_pull_request_ready(
+                        &handoff.publication.pr_url,
+                        &ProcessHandoffCommandRunner,
+                        &handoff.worktree.workspace_path,
+                    ) {
+                        Ok(ready) => {
+                            println!(
+                                "run_loop_action=pr_ready issue={} url={} was_draft={} marked_ready={}",
+                                latest.identifier,
+                                ready.pr_url,
+                                ready.was_draft,
+                                ready.marked_ready
+                            );
+                            handoff.pull_request_ready = Some(ready);
+                        }
+                        Err(error) => {
+                            result.success = false;
+                            result.message = format!("handoff PR ready check failed: {error}");
+                            println!(
+                                "run_loop_action=blocked issue={} reason=pr_ready_check_failed error={}",
+                                latest.identifier, error
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -6077,6 +6298,10 @@ fn print_run_loop_dry_run_actions(
         issue.identifier, handoff.branch_name, handoff.pull_request.base_branch
     );
     println!(
+        "run_loop_dry_run action=pr_ready issue={} mode=if_draft command=\"gh pr ready <linked-pr>\"",
+        issue.identifier
+    );
+    println!(
         "run_loop_dry_run action=workpad issue={} evidence=run_summary",
         issue.identifier
     );
@@ -6184,13 +6409,26 @@ fn handoff_verification_workpad_line(result: &IssueExecutionResult) -> String {
 
 fn live_handoff_workpad_line(result: &IssueExecutionResult) -> String {
     match &result.live_handoff {
-        Some(handoff) => format!(
-            "- Live PR: `{}` (created: `{}`, branch pushed: `{}`, verification: `{}`)",
-            handoff.publication.pr_url,
-            handoff.publication.pr_created,
-            handoff.publication.branch_pushed,
-            handoff.verification
-        ),
+        Some(handoff) => {
+            let ready = handoff
+                .pull_request_ready
+                .as_ref()
+                .map(|status| {
+                    format!(
+                        "ready-check: `was_draft={} marked_ready={}`",
+                        status.was_draft, status.marked_ready
+                    )
+                })
+                .unwrap_or_else(|| "ready-check: `not-run`".into());
+            format!(
+                "- Live PR: `{}` (created: `{}`, branch pushed: `{}`, verification: `{}`, {})",
+                handoff.publication.pr_url,
+                handoff.publication.pr_created,
+                handoff.publication.branch_pushed,
+                handoff.verification,
+                ready
+            )
+        }
         None => "- Live PR: `not-created`".to_string(),
     }
 }
@@ -6253,6 +6491,23 @@ fn run_loop_agent_review_handoff_evidence(
                 .linked_pull_requests
                 .iter()
                 .find_map(|pr| pr.url.clone())
+        });
+    evidence.pull_request_is_draft = result
+        .live_handoff
+        .as_ref()
+        .and_then(|handoff| {
+            handoff
+                .pull_request_ready
+                .as_ref()
+                .map(|ready| ready.was_draft && !ready.marked_ready)
+        })
+        .or_else(|| {
+            let url = evidence.pull_request_url.as_deref()?;
+            issue
+                .linked_pull_requests
+                .iter()
+                .find(|pr| pr.url.as_deref() == Some(url))
+                .and_then(|pr| pr.is_draft)
         });
     if evidence.pull_request_url.is_none() {
         evidence.no_pr_blocker = Some(
@@ -6566,6 +6821,8 @@ struct DoctorRepairIssueOptions {
     issue_ref: String,
     write: bool,
     move_need_human_input: bool,
+    mark_pr_ready: bool,
+    confirm_handoff_ready: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6819,6 +7076,10 @@ struct DoctorRepairIssueArgs {
     write: bool,
     #[arg(long = "move-need-human-input")]
     move_need_human_input: bool,
+    #[arg(long = "mark-pr-ready")]
+    mark_pr_ready: bool,
+    #[arg(long = "confirm-handoff-ready")]
+    confirm_handoff_ready: bool,
     #[arg(long = "dry-run")]
     _dry_run: bool,
 }
@@ -7380,6 +7641,8 @@ impl TryFrom<Cli> for Command {
                                         issue_ref: repair.issue_ref,
                                         write: repair.write,
                                         move_need_human_input: repair.move_need_human_input,
+                                        mark_pr_ready: repair.mark_pr_ready,
+                                        confirm_handoff_ready: repair.confirm_handoff_ready,
                                     })
                                 }
                             }),
@@ -8397,6 +8660,8 @@ mod tests {
                         issue_ref: "194".into(),
                         write: false,
                         move_need_human_input: false,
+                        mark_pr_ready: false,
+                        confirm_handoff_ready: false,
                     })),
                 }
             }
@@ -9746,6 +10011,11 @@ mod tests {
                     pr_created: true,
                 },
                 verification: "skipped:not_configured".into(),
+                pull_request_ready: Some(PullRequestReadyStatus {
+                    pr_url: "https://github.com/Alive24/jade-symphony/pull/45".into(),
+                    was_draft: false,
+                    marked_ready: false,
+                }),
             }),
             handoff_verification: Some("skipped:not_configured".into()),
         };
@@ -9872,6 +10142,11 @@ mod tests {
                     pr_created: true,
                 },
                 verification: "skipped:not_configured".into(),
+                pull_request_ready: Some(PullRequestReadyStatus {
+                    pr_url: "https://github.com/Alive24/jade-symphony/pull/45".into(),
+                    was_draft: false,
+                    marked_ready: false,
+                }),
             }),
             handoff_verification: Some("skipped:not_configured".into()),
         }
@@ -10047,6 +10322,7 @@ mod tests {
                 number: Some(57),
                 url: Some("https://github.com/Alive24/jade-symphony/pull/57".into()),
                 state: Some("OPEN".into()),
+                is_draft: Some(false),
                 ..Default::default()
             });
         let handoff = run_loop_handoff_plan(&config, &issue).unwrap();

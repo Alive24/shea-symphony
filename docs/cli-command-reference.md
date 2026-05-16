@@ -46,6 +46,7 @@ cargo run -- doctor --auto-fix --dry-run
 cargo run -- doctor --auto-fix --write
 cargo run -- doctor repair 194
 cargo run -- doctor repair 194 --move-need-human-input --write
+cargo run -- doctor repair 194 --mark-pr-ready --confirm-handoff-ready --write
 ```
 
 `doctor repair ISSUE` is non-destructive by default. It prints safe,
@@ -53,13 +54,16 @@ uncertain, and dangerous actions for the issue using tracker state, Project
 fields, runtime-state evidence, branch/PR hints, and doctor findings. The
 `--move-need-human-input --write` path writes workpad evidence before changing
 tracker state.
+`--mark-pr-ready --confirm-handoff-ready --write` is an explicit operator repair
+for `Agent Review` issues whose linked PR is still draft. It writes repair
+evidence and runs `gh pr ready`; `doctor --auto-fix` never marks PRs ready.
 
 ## Main Implementation Runtime
 
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `run-once` | Execute one selected issue through the configured backend. | Fixture-safe by default when the workflow has `tracker.fixture_path`. |
-| `run-loop` | Poll/select/claim/run/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; tmux sessions stay active instead of auto-handing off. |
+| `run-loop` | Poll/select/claim/run/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; tmux sessions stay active instead of auto-handing off; Agent Review handoff requires a ready, non-draft PR. |
 | `dogfood-smoke` | Supervised preflight for one controlled dogfood issue. | Dry-run inspection by default; live readiness does not bypass review or merge gates. |
 
 Examples:

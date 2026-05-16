@@ -193,6 +193,7 @@ pub enum ReviewRunEligibility {
     Eligible { worker_key: String },
     AlreadyQueued { worker_key: String },
     NotInAgentReview { current_state: String },
+    InvalidHandoff { reason: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -618,6 +619,16 @@ pub fn review_run_eligibility(
     if issue.normalized_state() != normalize_state(agent_review_state) {
         return ReviewRunEligibility::NotInAgentReview {
             current_state: issue.state.clone(),
+        };
+    }
+
+    if issue
+        .linked_pull_requests
+        .iter()
+        .any(|pr| pr.is_draft == Some(true))
+    {
+        return ReviewRunEligibility::InvalidHandoff {
+            reason: "Agent Review handoff has a linked draft PR; Main Agent must mark it ready before normal review.".into(),
         };
     }
 
@@ -1830,6 +1841,25 @@ mod tests {
                 current_state: "Todo".into()
             }
         );
+    }
+
+    #[test]
+    fn review_run_eligibility_rejects_agent_review_draft_pr() {
+        let mut issue = issue();
+        issue
+            .linked_pull_requests
+            .push(crate::model::LinkedPullRequest {
+                url: Some("https://github.com/Alive24/jade-symphony/pull/1".into()),
+                state: Some("OPEN".into()),
+                is_draft: Some(true),
+                ..Default::default()
+            });
+
+        assert!(matches!(
+            review_run_eligibility(&issue, "Agent Review", "fake"),
+            ReviewRunEligibility::InvalidHandoff { reason }
+                if reason.contains("linked draft PR")
+        ));
     }
 
     #[test]

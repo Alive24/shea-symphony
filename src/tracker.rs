@@ -1581,6 +1581,7 @@ query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
                   number
                   url
                   state
+                  isDraft
                 }}
               }}
               comments(first: 20) {{
@@ -2288,6 +2289,7 @@ fn pull_requests_from_issue(issue: &serde_json::Value) -> Vec<LinkedPullRequest>
                 .get("state")
                 .and_then(serde_json::Value::as_str)
                 .map(ToOwned::to_owned),
+            is_draft: node.get("isDraft").and_then(serde_json::Value::as_bool),
             ..Default::default()
         })
         .collect()

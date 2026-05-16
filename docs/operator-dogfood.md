@@ -95,6 +95,10 @@ only then pastes the rendered issue prompt. Set
 `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to opt out; when disabled, or when readiness
 cannot be confirmed, the tick fails closed with attach/log evidence and does not
 hand off to `Agent Review`.
+Main handoff also requires the linked PR to be ready, not draft. When all other
+handoff evidence is valid, `run-loop --write` may run `gh pr ready` before
+moving the issue to `Agent Review`; if that readiness mutation fails, keep the
+issue out of `Agent Review` and preserve the blocker in the workpad.
 Routine status output reads the durable session registry, probes bounded pane
 and log tails, and reports a conservative session classification such as
 `running`, `waiting_for_trust`, `waiting_for_approval`, `usage_limited`,
@@ -145,6 +149,10 @@ If Gemini cannot start, the review workpad should name the configured command,
 whether worker `PATH` could resolve it, the required operator action, and the
 retry command. Do not move an issue to `Human Review` unless the Review Agent
 actually records passing review evidence.
+If the linked PR is still draft, do not run normal review. Record invalid
+handoff evidence and send the work back to Main/operator repair; `doctor repair
+<issue> --mark-pr-ready --confirm-handoff-ready --write` is the explicit repair
+path when the operator has confirmed the handoff is otherwise complete.
 
 If Gemini exits, refuses the workspace trust check, or times out before
 returning a review report, `review-loop` records terminal workpad/ledger

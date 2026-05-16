@@ -5,6 +5,7 @@ use crate::model::{normalize_state, LinkedPullRequest, SessionStatusSnapshot, Tr
 use crate::runtime_state::{detect_runtime_stall, RuntimeState};
 
 pub const HUMAN_REVIEW_MISSING_REVIEW_EVIDENCE: &str = "human_review_missing_review_evidence";
+pub const AGENT_REVIEW_DRAFT_PR: &str = "agent_review_draft_pr";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AuditSeverity {
@@ -71,6 +72,15 @@ pub fn audit_project_issues_with_context(
                     "agent_review_missing_pr_handoff",
                     "Agent Review issue has no linked PR URL or handoff evidence.",
                     "Move back to Rework or Need Human Input with a workpad diagnostic, or repair the missing PR link.",
+                ));
+            }
+            "agent review" if has_draft_pr(issue) => {
+                violations.push(violation(
+                    issue,
+                    AuditSeverity::Blocker,
+                    AGENT_REVIEW_DRAFT_PR,
+                    "Agent Review issue has a linked draft PR.",
+                    "Confirm handoff evidence, then run `doctor repair <issue> --mark-pr-ready --confirm-handoff-ready --write`; auto-fix will not mark PRs ready.",
                 ));
             }
             "human review" if !has_review_pass_evidence(issue) => {
@@ -271,6 +281,16 @@ pub fn human_review_repair_candidates(report: &ProjectAuditReport) -> Vec<&Proje
         .collect()
 }
 
+pub fn draft_pr_repair_candidates(report: &ProjectAuditReport) -> Vec<&ProjectAuditViolation> {
+    report
+        .violations
+        .iter()
+        .filter(|violation| {
+            violation.severity == AuditSeverity::Blocker && violation.code == AGENT_REVIEW_DRAFT_PR
+        })
+        .collect()
+}
+
 pub fn render_human_review_repair_workpad(violation: &ProjectAuditViolation) -> String {
     [
         "## Jade Symphony Workpad".to_string(),
@@ -346,6 +366,13 @@ fn has_open_pr(issue: &TrackerIssue) -> bool {
             Some(state) => state == "open",
             None => true,
         })
+}
+
+fn has_draft_pr(issue: &TrackerIssue) -> bool {
+    issue
+        .linked_pull_requests
+        .iter()
+        .any(|pr| pr.is_draft == Some(true))
 }
 
 fn has_handoff_evidence(issue: &TrackerIssue) -> bool {
@@ -888,6 +915,20 @@ mod tests {
         let report = audit_project_issues(&[issue]);
 
         assert!(report.is_clean());
+    }
+
+    #[test]
+    fn reports_agent_review_with_draft_pr() {
+        let mut issue = issue("#57", "Agent Review");
+        let mut pr = linked_pr("https://github.com/Alive24/jade-symphony/pull/57", "OPEN");
+        pr.is_draft = Some(true);
+        issue.linked_pull_requests.push(pr);
+
+        let report = audit_project_issues(&[issue]);
+
+        assert_eq!(report.blocker_count(), 1);
+        assert_eq!(report.violations[0].code, AGENT_REVIEW_DRAFT_PR);
+        assert_eq!(draft_pr_repair_candidates(&report).len(), 1);
     }
 
     #[test]

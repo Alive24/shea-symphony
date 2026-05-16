@@ -5,7 +5,7 @@ It helps an operator turn tracked engineering work into isolated agent
 workspaces, pull requests, independent review passes, and guarded merge
 decisions without losing the human control points that make the process safe.
 
-The project is an OpenAI Symphony-style Rust implementation with Jade-specific
+The project is an OpenAI Symphony-style Rust implementation with Jade Symphony-specific
 extensions for tracker-driven team workflows. It is inspired by the official
 OpenAI Symphony specification and reference implementation, and extends that
 lineage with GitHub Project v2 / Linear state machines, issue quality gates,
@@ -153,18 +153,15 @@ authority rules:
 
 ## Issue Forge
 
-Issue Forge helps turn rough operator intent into executable issue contracts.
-It can discover local candidates, ask focused clarification questions, validate
-Markdown against the issue template, repair thin drafts, and create tracker
-issues only when the operator explicitly confirms the write path.
+Issue Forge turns complete issue bodies into Project-aware tracker mutations.
+Conversation, reflection, and draft repair now live in Codex skills; the Jade Symphony CLI stays deterministic and scriptable.
 
 Typical dry-run entrypoints:
 
 ```bash
-cargo run -- forge-discover --intent "Add review timeout recovery"
-cargo run -- forge-interactive --workflow workflows/jade-symphony.md
-cargo run -- forge-validate --title "Thin issue" --file examples/fixtures/thin-issue.md
-cargo run -- forge-repair --title "Thin issue" --file examples/fixtures/thin-issue.md
+cargo run -- forge validate --status Backlog --title "Backlog seed" --body-file examples/fixtures/repaired-issue.md
+cargo run -- forge validate --status Todo --title "Executable issue" --body-file examples/fixtures/repaired-issue.md
+cargo run -- forge create --status Backlog --title "Backlog: follow-up" --body-file examples/fixtures/repaired-issue.md --dry-run
 ```
 
 Tracker creation requires explicit write flags, an assignee, and project
@@ -187,7 +184,7 @@ selection. See the command reference before using live creation:
   capability inventory and parity status.
 - [`docs/artifact-storage-policy.md`](docs/artifact-storage-policy.md):
   durable, recoverable, and disposable artifact policy.
-- [`docs/bootstrap/`](docs/bootstrap/): Jade extension spec, workflow notes,
+- [`docs/bootstrap/`](docs/bootstrap/): Jade Symphony extension spec, workflow notes,
   parity references, and official Symphony source index.
 - [`examples/`](examples/): fixture workflows and safe local examples.
 

@@ -8,15 +8,9 @@ contract under `workflows/prompts/`.
 Use it for live Project #9 operations:
 
 ```bash
-jade-symphony loop workflows/jade-symphony.md --write
-jade-symphony forge workflows/jade-symphony.md --interactive
-```
-
-The current CLI command names are still the explicit debug/runtime names:
-
-```bash
 cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --write
-cargo run -- forge-interactive --workflow workflows/jade-symphony.md
+cargo run -- forge validate --workflow workflows/jade-symphony.md --status Todo --title "<title>" --body-file /private/tmp/issue.md
+cargo run -- forge create --workflow workflows/jade-symphony.md --status Todo --title "<title>" --body-file /private/tmp/issue.md --assignee Alive24 --write
 cargo run -- review-loop workflows/jade-symphony.md --max-iterations 1 --write
 cargo run -- merge-once workflows/jade-symphony.md --write
 cargo run -- review-session workflows/jade-symphony.md '#123' --write

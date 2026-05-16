@@ -5,7 +5,7 @@
 
 ## Issue Goal
 
-Make Issue Forge validate rough ideas and repair them into executable Jade issue contracts.
+Make Issue Forge validate rough ideas and repair them into executable Jade Symphony issue contracts.
 
 ## Why Now
 
@@ -16,14 +16,14 @@ Operators need a local way to turn rough issue text into a dispatchable contract
 Source input captured by Issue Forge:
 
 ```md
-Make Issue Forge validate rough ideas and repair them into executable Jade issue contracts.
+Make Issue Forge validate rough ideas and repair them into executable Jade Symphony issue contracts.
 ```
 
 ## Decisions / Assumptions
 
 ### Decisions
 
-- Use Issue Forge repair to convert rough input into the Jade quality template.
+- Use Issue Forge repair to convert rough input into the Jade Symphony quality template.
 
 ### Assumptions
 
@@ -63,7 +63,7 @@ Make Issue Forge validate rough ideas and repair them into executable Jade issue
 
 ## Current State
 
-Rough issue input exists and has been repaired into the Jade issue contract shape.
+Rough issue input exists and has been repaired into the Jade Symphony issue contract shape.
 
 ## Deliverable Shape
 
@@ -85,7 +85,7 @@ An executable issue contract that can pass the Issue Quality Gate before dispatc
 
 ### Functional Verification
 
-- Run `jade-symphony forge-validate` on the repaired draft.
+- Run `jade-symphony forge validate` on the repaired draft.
 
 ### UAT
 

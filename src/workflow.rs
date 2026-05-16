@@ -364,7 +364,7 @@ mod tests {
             id: "ISSUE_48".into(),
             item_id: Some("PROJECT_ITEM_48".into()),
             identifier: "#48".into(),
-            title: "Replace placeholder dogfood workflow with real Jade prompt".into(),
+            title: "Replace placeholder dogfood workflow with real Jade Symphony prompt".into(),
             description: Some(
                 [
                     "## Issue Goal",

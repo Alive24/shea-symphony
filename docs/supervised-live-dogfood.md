@@ -94,8 +94,8 @@ prints the `tmux attach-session` command, records the prompt artifact, session
 registry entry, and log path, and keeps the issue active. A running tmux session
 alone is not completion evidence and must not move the issue to `Agent Review`.
 Codex tmux startup captures the pane before sending the issue prompt. By
-default, if a Jade-created issue worktree shows the Codex workspace trust
-prompt, Jade sends two `C-m` submissions and waits until the pane reaches a
+default, if a Jade Symphony-created issue worktree shows the Codex workspace trust
+prompt, Jade Symphony sends two `C-m` submissions and waits until the pane reaches a
 ready Codex viewport. Set `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to disable this
 auto-trust behavior. If the prompt cannot be cleared, the write tick stops with
 the tmux attach command and log path preserved for manual inspection.

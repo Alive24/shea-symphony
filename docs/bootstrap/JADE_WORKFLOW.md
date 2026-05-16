@@ -1,8 +1,8 @@
-# Jade Workflow
+# Jade Symphony Workflow
 
 Status: Bootstrap v0
 
-This file describes the Jade-specific workflow policy. It should be used after
+This file describes the Jade Symphony-specific workflow policy. It should be used after
 reading the official reference workflow at:
 
 `docs/bootstrap/references/openai-symphony/elixir/WORKFLOW.md`
@@ -18,7 +18,7 @@ Jade Symphony keeps the official Symphony shape:
 - update tracker/workpad.
 - reconcile state.
 
-Jade-specific additions are:
+Jade Symphony-specific additions are:
 
 - GitHub Project v2 as the first tracker.
 - assignee filtering for multiple owners.

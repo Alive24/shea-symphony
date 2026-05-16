@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{self, Read};
+use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
@@ -31,11 +31,7 @@ use jade_symphony::handoff::{
     render_agent_review_handoff_workpad, AgentReviewHandoffEvidence, HandoffError,
     IssueHandoffPlan,
 };
-use jade_symphony::issue_forge::{
-    conversational_title_from_intent, discover_candidates, draft_from_template, find_issue_skill,
-    interactive_forge, next_clarification_question, reflective_candidates_from_context,
-    repair_markdown, validate_markdown, InteractiveForgeInput,
-};
+use jade_symphony::issue_forge::{next_clarification_question, ForgeValidationReport};
 use jade_symphony::lane_claim::{
     LaneClaim, LaneClaimActor, LaneClaimLane, LaneClaimSource, LaneClaimState,
 };
@@ -248,68 +244,42 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             apply,
             write,
         } => quality_gate(workflow_path, issue_ref, apply, write),
-        Command::ForgeDiscover { source } => {
-            for (index, candidate) in discover_candidates(&source).iter().enumerate() {
-                println!(
-                    "{}. {:?}: {}",
-                    index + 1,
-                    candidate.classification,
-                    candidate.title
-                );
-                println!("   {}", candidate.rationale);
-            }
-            Ok(())
-        }
-        Command::ForgeDiscuss { title, markdown } => {
-            let report = validate_markdown(&title, &markdown);
-            if let Some(question) = report.question {
-                println!("question={}", question.question);
-                println!("why={}", question.why_it_matters);
-            } else {
-                println!("question=none");
-                println!("gate={:?}", report.decision.kind);
-            }
-            Ok(())
-        }
-        Command::ForgeDraft { title, goal } => {
-            println!("{}", draft_from_template(&title, &goal));
-            Ok(())
-        }
-        Command::ForgeValidate { title, markdown } => {
-            let report = validate_markdown(&title, &markdown);
-            print_forge_validation(&report);
-            Ok(())
-        }
-        Command::ForgeRepair { title, markdown } => {
-            let report = repair_markdown(&title, &markdown);
-            print_forge_validation(&report.validation);
-            println!("\n--- repaired draft ---\n");
-            println!("{}", report.repaired_markdown);
-            Ok(())
-        }
+        Command::ForgeValidate {
+            workflow_path,
+            status,
+            title,
+            markdown,
+            issue_ref,
+        } => forge_validate(workflow_path, status, title, markdown, issue_ref),
         Command::ForgeCreate {
             workflow_path,
             title,
             markdown,
-            add_to_project,
+            status,
+            project,
             project_fields,
             assignees,
             write,
-        } => forge_create(
+            dry_run,
+        } => forge_create(ForgeCreateOptions {
             workflow_path,
             title,
             markdown,
-            add_to_project,
+            status,
+            project,
             project_fields,
             assignees,
             write,
-        ),
-        Command::ForgeInteractive { options } => forge_interactive(options),
-        Command::ForgeReflect {
-            context,
-            skill,
-            limit,
-        } => forge_reflect(context, skill, limit),
+            dry_run,
+        }),
+        Command::ForgePromote {
+            workflow_path,
+            issue_ref,
+            title,
+            markdown,
+            write,
+            dry_run,
+        } => forge_promote(workflow_path, issue_ref, title, markdown, write, dry_run),
         Command::Help(text) => {
             print!("{text}");
             Ok(())
@@ -689,31 +659,63 @@ fn create_follow_up(
     Ok(())
 }
 
-fn forge_create(
+#[derive(Debug, Clone)]
+struct ForgeCreateOptions {
     workflow_path: PathBuf,
     title: String,
     markdown: String,
-    add_to_project: bool,
+    status: ForgeStatusArg,
+    project: Option<String>,
     project_fields: Vec<ProjectFieldAssignment>,
     assignees: Vec<String>,
     write: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    require_write_intent(write)?;
-    if !project_fields.is_empty() && !add_to_project {
-        return Err("forge-create --project-field requires --add-to-project".into());
+    dry_run: bool,
+}
+
+fn forge_create(options: ForgeCreateOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let ForgeCreateOptions {
+        workflow_path,
+        title,
+        markdown,
+        status,
+        project,
+        project_fields,
+        assignees,
+        write,
+        dry_run,
+    } = options;
+    if write && dry_run {
+        return Err("forge create cannot use --write and --dry-run together".into());
     }
+    let dry_run = !write || dry_run;
     let config = load_config(&workflow_path)?;
+    let project_label = validate_forge_project_selection(&config, project.as_deref())?;
     let assignees = normalize_forge_assignees(assignees);
-    if forge_create_requires_assignee(&config) && assignees.is_empty() {
-        return Err("forge-create requires --assignee for live GitHub issue creation".into());
+    if forge_create_requires_assignee(&config, status) && assignees.is_empty() {
+        return Err(
+            "forge create --status Todo requires --assignee for live GitHub issue creation".into(),
+        );
     }
-    let report = validate_forge_create_contract(&title, &markdown, &config, &assignees)
-        .inspect_err(|_message| {
-            let report =
-                validate_forge_create_report_with_assignees(&title, &markdown, &config, &assignees)
-                    .unwrap_or_else(|_| validate_markdown(&title, &markdown));
-            print_forge_validation(&report);
-        })?;
+    let report = forge_validation_report(status, &title, &markdown, &config, &assignees)?;
+    print_forge_validation(&report);
+    if !report.decision.is_dispatchable() {
+        return Err(format!(
+            "forge create validation failed for status {}; tracker issue was not created",
+            status.as_str()
+        )
+        .into());
+    }
+
+    if dry_run {
+        println!(
+            "forge_create_dry_run=ok status={} project={} title={:?} project_fields={}",
+            status.as_str(),
+            project_label,
+            report.title,
+            project_fields.len()
+        );
+        return Ok(());
+    }
 
     let adapter = adapter_from_config(&config);
     let existing_issues = adapter.list_dispatchable_issues()?;
@@ -737,7 +739,7 @@ fn forge_create(
     append_tracker_mutation_audit(
         &config,
         TrackerMutationAudit {
-            command: "forge-create",
+            command: "forge create",
             mutation_type: "issue_create",
             issue_ref: None,
             target: Some(issue_id.clone()),
@@ -747,42 +749,280 @@ fn forge_create(
         },
     );
 
-    if add_to_project {
-        adapter.add_issue_to_project(&issue_id)?;
+    adapter.add_issue_to_project(&issue_id)?;
+    append_tracker_mutation_audit(
+        &config,
+        TrackerMutationAudit {
+            command: "forge create",
+            mutation_type: "project_add",
+            issue_ref: Some(&issue_id),
+            target: Some(project_label),
+            from_state: None,
+            to_state: Some("todo".into()),
+            reason: "forge issue added to project",
+        },
+    );
+    if status != ForgeStatusArg::Todo {
+        adapter.set_state(&issue_id, status.normalized_state())?;
         append_tracker_mutation_audit(
             &config,
             TrackerMutationAudit {
-                command: "forge-create",
-                mutation_type: "project_add",
+                command: "forge create",
+                mutation_type: "status",
                 issue_ref: Some(&issue_id),
-                target: Some("Project item".into()),
-                from_state: None,
-                to_state: Some("todo".into()),
-                reason: "forge issue added to project",
+                target: Some(status.as_str().into()),
+                from_state: Some("todo".into()),
+                to_state: Some(status.normalized_state().into()),
+                reason: "forge issue initial status",
             },
         );
-        for assignment in &project_fields {
-            adapter.set_project_field(&issue_id, assignment)?;
-            append_tracker_mutation_audit(
-                &config,
-                TrackerMutationAudit {
-                    command: "forge-create",
-                    mutation_type: "project_field",
-                    issue_ref: Some(&issue_id),
-                    target: Some(format!("{}={}", assignment.name, assignment.value)),
-                    from_state: None,
-                    to_state: None,
-                    reason: "forge project field assignment",
-                },
-            );
-        }
+    }
+    for assignment in &project_fields {
+        adapter.set_project_field(&issue_id, assignment)?;
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: "forge create",
+                mutation_type: "project_field",
+                issue_ref: Some(&issue_id),
+                target: Some(format!("{}={}", assignment.name, assignment.value)),
+                from_state: None,
+                to_state: None,
+                reason: "forge project field assignment",
+            },
+        );
     }
 
     println!(
-        "forge_create=ok issue_id={issue_id} added_to_project={add_to_project} project_fields={}",
+        "forge_create=ok issue_id={issue_id} status={} project_fields={}",
+        status.as_str(),
         project_fields.len()
     );
     Ok(())
+}
+
+fn forge_promote(
+    workflow_path: PathBuf,
+    issue_ref: String,
+    title: String,
+    markdown: String,
+    write: bool,
+    dry_run: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if write && dry_run {
+        return Err("forge promote cannot use --write and --dry-run together".into());
+    }
+    let dry_run = !write || dry_run;
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    let source = adapter
+        .get_issue(&issue_ref)
+        .map_err(|error| format!("forge promote stopped at read_source: {error}"))?
+        .ok_or_else(|| {
+            format!("forge promote stopped at read_source: issue not found: {issue_ref}")
+        })?;
+    if normalize_state(&source.state) != normalize_state(&config.tracker.state_map.backlog) {
+        return Err(format!(
+            "forge promote stopped at preflight: {} is in {:?}, expected Backlog",
+            source.identifier, source.state
+        )
+        .into());
+    }
+
+    let report = forge_validation_report(
+        ForgeStatusArg::Todo,
+        &title,
+        &markdown,
+        &config,
+        &source.assignees,
+    )
+    .map_err(|error| format!("forge promote stopped at validate: {error}"))?;
+    print_forge_validation(&report);
+    if !report.decision.is_dispatchable() {
+        return Err("forge promote stopped at validate: promoted body failed Todo gate".into());
+    }
+
+    if dry_run {
+        println!(
+            "forge_promote_dry_run=ok issue={} from=Backlog to=Todo title={:?}",
+            source.identifier, report.title
+        );
+        return Ok(());
+    }
+
+    adapter
+        .update_issue_content(&source.identifier, &report.title, &markdown)
+        .map_err(|error| format!("forge promote stopped at edit_issue: {error}"))?;
+    append_tracker_mutation_audit(
+        &config,
+        TrackerMutationAudit {
+            command: "forge promote",
+            mutation_type: "issue_edit",
+            issue_ref: Some(&source.identifier),
+            target: Some(report.title.clone()),
+            from_state: Some(source.state.clone()),
+            to_state: None,
+            reason: "forge backlog promotion content update",
+        },
+    );
+
+    adapter
+        .set_state(&source.identifier, "todo")
+        .map_err(|error| format!("forge promote stopped at set_status: {error}"))?;
+    append_tracker_mutation_audit(
+        &config,
+        TrackerMutationAudit {
+            command: "forge promote",
+            mutation_type: "status",
+            issue_ref: Some(&source.identifier),
+            target: Some("Todo".into()),
+            from_state: Some(source.state.clone()),
+            to_state: Some("todo".into()),
+            reason: "forge backlog promotion status update",
+        },
+    );
+
+    let verified = adapter
+        .get_issue(&source.identifier)
+        .map_err(|error| format!("forge promote stopped at readback: {error}"))?
+        .ok_or_else(|| {
+            format!(
+                "forge promote stopped at readback: issue disappeared after update: {}",
+                source.identifier
+            )
+        })?;
+    let status_ok =
+        normalize_state(&verified.state) == normalize_state(&config.tracker.state_map.todo);
+    let title_ok = verified.title == report.title;
+    if !status_ok || !title_ok {
+        return Err(format!(
+            "forge promote stopped at readback: expected title {:?} and Todo, got title {:?} and state {:?}",
+            report.title, verified.title, verified.state
+        )
+        .into());
+    }
+
+    println!(
+        "forge_promote=ok issue={} status=Todo title={:?}",
+        verified.identifier, verified.title
+    );
+    Ok(())
+}
+
+fn forge_validate(
+    workflow_path: PathBuf,
+    status: Option<ForgeStatusArg>,
+    title: String,
+    markdown: String,
+    issue_ref: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_config(&workflow_path)?;
+    let (status, title, markdown, assignees) = if let Some(issue_ref) = issue_ref {
+        let adapter = adapter_from_config(&config);
+        let issue = adapter
+            .get_issue(&issue_ref)?
+            .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
+        let status = status.unwrap_or_else(|| forge_status_from_issue(&config, &issue));
+        (
+            status,
+            issue.title,
+            issue.description.unwrap_or_default(),
+            issue.assignees,
+        )
+    } else {
+        (
+            status.unwrap_or(ForgeStatusArg::Todo),
+            title,
+            markdown,
+            Vec::new(),
+        )
+    };
+    let report = forge_validation_report(status, &title, &markdown, &config, &assignees)?;
+    print_forge_validation(&report);
+    println!("status={}", status.as_str());
+    Ok(())
+}
+
+fn forge_validation_report(
+    status: ForgeStatusArg,
+    title: &str,
+    markdown: &str,
+    config: &RuntimeConfig,
+    intended_assignees: &[String],
+) -> Result<ForgeValidationReport, Box<dyn std::error::Error>> {
+    match status {
+        ForgeStatusArg::Backlog => Ok(validate_backlog_seed(title, markdown)),
+        ForgeStatusArg::Todo => {
+            validate_forge_create_report_with_assignees(title, markdown, config, intended_assignees)
+        }
+    }
+}
+
+fn validate_backlog_seed(title: &str, markdown: &str) -> ForgeValidationReport {
+    let mut missing = Vec::new();
+    if title.trim().is_empty() {
+        missing.push("title".into());
+    }
+    if markdown.trim().chars().count() < 40 {
+        missing.push("body with enough context to revisit later".into());
+    }
+    if !markdown.contains("## Issue Goal") && !markdown.contains("## Issue Context") {
+        missing.push("at least one Issue Goal or Issue Context section".into());
+    }
+    let decision = if missing.is_empty() {
+        GateDecision::ready()
+    } else {
+        GateDecision {
+            kind: GateDecisionKind::NeedToClarify,
+            missing,
+            assumptions: Vec::new(),
+            notes: vec![
+                "Backlog seed gate is intentionally lighter than the Todo Issue Quality Gate."
+                    .into(),
+            ],
+        }
+    };
+    ForgeValidationReport {
+        title: title.to_string(),
+        question: next_clarification_question(&decision),
+        decision,
+    }
+}
+
+fn validate_forge_project_selection(
+    config: &RuntimeConfig,
+    project: Option<&str>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let owner = config
+        .tracker
+        .project_owner
+        .as_deref()
+        .unwrap_or("workflow");
+    let number = config
+        .tracker
+        .project_number
+        .map(|number| number.to_string())
+        .unwrap_or_else(|| "configured".into());
+    let configured = format!("{owner}/{number}");
+    let Some(project) = project.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(configured);
+    };
+    if matches!(project, "default" | "workflow") || project == number || project == configured {
+        Ok(configured)
+    } else {
+        Err(format!(
+            "forge create --project currently supports the configured workflow Project only ({configured}); got {project:?}"
+        )
+        .into())
+    }
+}
+
+fn forge_status_from_issue(config: &RuntimeConfig, issue: &TrackerIssue) -> ForgeStatusArg {
+    if normalize_state(&issue.state) == normalize_state(&config.tracker.state_map.backlog) {
+        ForgeStatusArg::Backlog
+    } else {
+        ForgeStatusArg::Todo
+    }
 }
 
 fn normalize_forge_assignees(assignees: Vec<String>) -> Vec<String> {
@@ -793,8 +1033,9 @@ fn normalize_forge_assignees(assignees: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-fn forge_create_requires_assignee(config: &RuntimeConfig) -> bool {
-    config.tracker.kind == "github_project_v2"
+fn forge_create_requires_assignee(config: &RuntimeConfig, status: ForgeStatusArg) -> bool {
+    status == ForgeStatusArg::Todo
+        && config.tracker.kind == "github_project_v2"
         && config.tracker.fixture_path.is_none()
         && !config.tracker.assignee_filter.allow_unassigned
 }
@@ -817,121 +1058,7 @@ fn normalized_issue_title_key(title: &str) -> String {
         .to_ascii_lowercase()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ForgeInteractiveOptions {
-    workflow_path: Option<PathBuf>,
-    title: Option<String>,
-    intent: Option<String>,
-    file: Option<PathBuf>,
-    skill: Option<String>,
-    context: Option<String>,
-    assignees: Vec<String>,
-    add_to_project: bool,
-    write: bool,
-    confirm_create: bool,
-}
-
-fn forge_interactive(options: ForgeInteractiveOptions) -> Result<(), Box<dyn std::error::Error>> {
-    let intent = resolve_interactive_intent(options.intent, options.file)?;
-    let title = options
-        .title
-        .unwrap_or_else(|| conversational_title_from_intent(&intent));
-    let report = interactive_forge(InteractiveForgeInput {
-        title: title.clone(),
-        intent,
-        skill: options.skill,
-        context: options.context,
-        assignees: options.assignees.clone(),
-    });
-    println!("forge_interactive_session=conversation");
-    println!("transcript_summary=operator_intent_captured");
-    print_interactive_forge_report(&report);
-
-    if options.write {
-        if !options.confirm_create {
-            return Err("forge-interactive --write requires --confirm-create".into());
-        }
-        if !report.validation.decision.is_dispatchable() {
-            return Err(
-                "forge-interactive refuses to create because the Issue Quality Gate failed".into(),
-            );
-        }
-        if report.question.is_some() {
-            return Err(
-                "forge-interactive refuses to create while clarification questions remain".into(),
-            );
-        }
-        if options.assignees.is_empty() {
-            return Err("forge-interactive --write requires --assignee".into());
-        }
-        let workflow_path = options
-            .workflow_path
-            .ok_or("forge-interactive --write requires --workflow")?;
-        forge_create(
-            workflow_path,
-            title,
-            report.issue_markdown,
-            options.add_to_project,
-            Vec::new(),
-            options.assignees,
-            true,
-        )?;
-    }
-
-    Ok(())
-}
-
-fn resolve_interactive_intent(
-    inline: Option<String>,
-    file: Option<PathBuf>,
-) -> Result<String, Box<dyn std::error::Error>> {
-    match (inline, file) {
-        (Some(value), None) if !value.trim().is_empty() => Ok(value),
-        (None, Some(path)) => Ok(std::fs::read_to_string(&path)
-            .map_err(|error| format!("failed to read {}: {error}", path.display()))?),
-        (None, None) => {
-            eprintln!("Describe the work you want Issue Forge to shape, then press Ctrl-D:");
-            let mut input = String::new();
-            io::stdin().read_to_string(&mut input)?;
-            if input.trim().is_empty() {
-                return Err(
-                    "forge-interactive requires operator intent from stdin, --intent, or --file"
-                        .into(),
-                );
-            }
-            Ok(input)
-        }
-        _ => Err(usage().into()),
-    }
-}
-
-fn forge_reflect(
-    context: String,
-    skill: Option<String>,
-    limit: usize,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if limit == 0 {
-        return Err("forge-reflect --limit must be greater than 0".into());
-    }
-
-    let candidates = reflective_candidates_from_context(&context, skill.as_deref(), limit);
-    println!("candidates={}", candidates.len());
-    for (index, candidate) in candidates.iter().enumerate() {
-        println!("{}. {}", index + 1, candidate.title);
-        println!("skill={}", candidate.skill.key);
-        println!("gate={:?}", candidate.validation.decision.kind);
-        println!(
-            "dispatchable={}",
-            candidate.validation.decision.is_dispatchable()
-        );
-        println!("rationale={}", candidate.rationale);
-        println!("--- issue draft ---");
-        println!("{}", candidate.issue_markdown);
-    }
-
-    Ok(())
-}
-
+#[cfg(test)]
 fn validate_forge_create_contract(
     title: &str,
     markdown: &str,
@@ -956,7 +1083,7 @@ fn validate_forge_create_report_with_assignees(
 ) -> Result<jade_symphony::issue_forge::ForgeValidationReport, Box<dyn std::error::Error>> {
     let issue = TrackerIssue {
         tracker_kind: config.tracker.kind.clone(),
-        id: "forge-draft".into(),
+        id: "forge-issue-draft".into(),
         item_id: None,
         identifier: "#draft".into(),
         title: title.into(),
@@ -6361,41 +6488,31 @@ enum Command {
         apply: bool,
         write: bool,
     },
-    ForgeDraft {
-        title: String,
-        goal: String,
-    },
-    ForgeDiscover {
-        source: String,
-    },
-    ForgeDiscuss {
-        title: String,
-        markdown: String,
-    },
     ForgeValidate {
+        workflow_path: PathBuf,
+        status: Option<ForgeStatusArg>,
         title: String,
         markdown: String,
-    },
-    ForgeRepair {
-        title: String,
-        markdown: String,
+        issue_ref: Option<String>,
     },
     ForgeCreate {
         workflow_path: PathBuf,
         title: String,
         markdown: String,
-        add_to_project: bool,
+        status: ForgeStatusArg,
+        project: Option<String>,
         project_fields: Vec<ProjectFieldAssignment>,
         assignees: Vec<String>,
         write: bool,
+        dry_run: bool,
     },
-    ForgeInteractive {
-        options: ForgeInteractiveOptions,
-    },
-    ForgeReflect {
-        context: String,
-        skill: Option<String>,
-        limit: usize,
+    ForgePromote {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        title: String,
+        markdown: String,
+        write: bool,
+        dry_run: bool,
     },
     Help(String),
 }
@@ -6526,7 +6643,7 @@ impl Command {
 #[derive(Debug, Parser)]
 #[command(
     name = "jade-symphony",
-    about = "OpenAI Symphony-style orchestration harness with Jade extensions",
+    about = "OpenAI Symphony-style orchestration harness with Jade Symphony extensions",
     disable_help_subcommand = true,
     arg_required_else_help = false
 )]
@@ -6604,22 +6721,7 @@ enum CliCommand {
     Gate(GateArgs),
     #[command(name = "gate-apply")]
     GateApply(GateArgs),
-    #[command(name = "forge-discover")]
-    ForgeDiscover(ForgeDiscoverArgs),
-    #[command(name = "forge-discuss")]
-    ForgeDiscuss(ForgeMarkdownArgs),
-    #[command(name = "forge-draft")]
-    ForgeDraft(ForgeDraftArgs),
-    #[command(name = "forge-validate")]
-    ForgeValidate(ForgeMarkdownArgs),
-    #[command(name = "forge-repair")]
-    ForgeRepair(ForgeMarkdownArgs),
-    #[command(name = "forge-create")]
-    ForgeCreate(ForgeCreateArgs),
-    #[command(name = "forge-interactive")]
-    ForgeInteractive(ForgeInteractiveArgs),
-    #[command(name = "forge-reflect")]
-    ForgeReflect(ForgeReflectArgs),
+    Forge(ForgeArgs),
 }
 
 #[derive(Debug, Args)]
@@ -7126,43 +7228,38 @@ impl From<CliFakeReviewOutcome> for FakeReviewOutcome {
 }
 
 #[derive(Debug, Args)]
-struct ForgeDraftArgs {
-    #[arg(long)]
-    title: String,
-    #[arg(long)]
-    goal: String,
-}
-
-#[derive(Debug, Args)]
-struct ForgeDiscoverArgs {
-    #[arg(long)]
-    intent: Option<String>,
-    #[arg(long)]
-    file: Option<PathBuf>,
-}
-
-#[derive(Debug, Args)]
 struct ForgeMarkdownArgs {
     #[arg(long)]
-    title: String,
-    #[arg(long)]
-    file: Option<PathBuf>,
-    #[arg(long)]
     body: Option<String>,
+    #[arg(long = "body-file", alias = "file")]
+    body_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct ForgeArgs {
+    #[command(subcommand)]
+    command: ForgeCommandArgs,
+}
+
+#[derive(Debug, Subcommand)]
+enum ForgeCommandArgs {
+    Create(ForgeCreateArgs),
+    Promote(ForgePromoteArgs),
+    Validate(ForgeValidateArgs),
 }
 
 #[derive(Debug, Args)]
 struct ForgeCreateArgs {
-    #[arg(long)]
+    #[arg(long, default_value = "workflows/jade-symphony.md")]
     workflow: PathBuf,
     #[arg(long)]
     title: String,
+    #[command(flatten)]
+    markdown: ForgeMarkdownArgs,
+    #[arg(long, value_enum, ignore_case = true, default_value_t = ForgeStatusArg::Todo)]
+    status: ForgeStatusArg,
     #[arg(long)]
-    file: Option<PathBuf>,
-    #[arg(long)]
-    body: Option<String>,
-    #[arg(long = "add-to-project")]
-    add_to_project: bool,
+    project: Option<String>,
     #[arg(long = "project-field")]
     project_fields: Vec<String>,
     #[arg(long = "assignee")]
@@ -7170,43 +7267,58 @@ struct ForgeCreateArgs {
     #[arg(long)]
     write: bool,
     #[arg(long = "dry-run")]
-    _dry_run: bool,
+    dry_run: bool,
 }
 
 #[derive(Debug, Args)]
-struct ForgeInteractiveArgs {
+struct ForgePromoteArgs {
+    issue_ref: String,
+    #[arg(long, default_value = "workflows/jade-symphony.md")]
+    workflow: PathBuf,
     #[arg(long)]
-    workflow: Option<PathBuf>,
-    #[arg(long)]
-    title: Option<String>,
-    #[arg(long)]
-    intent: Option<String>,
-    #[arg(long)]
-    file: Option<PathBuf>,
-    #[arg(long)]
-    skill: Option<String>,
-    #[arg(long = "context-file")]
-    context_file: Option<PathBuf>,
-    #[arg(long = "assignee")]
-    assignees: Vec<String>,
-    #[arg(long = "add-to-project")]
-    add_to_project: bool,
+    title: String,
+    #[command(flatten)]
+    markdown: ForgeMarkdownArgs,
     #[arg(long)]
     write: bool,
-    #[arg(long = "confirm-create")]
-    confirm_create: bool,
     #[arg(long = "dry-run")]
-    _dry_run: bool,
+    dry_run: bool,
 }
 
 #[derive(Debug, Args)]
-struct ForgeReflectArgs {
-    #[arg(long = "context-file")]
-    context_file: PathBuf,
+struct ForgeValidateArgs {
+    #[arg(long, default_value = "workflows/jade-symphony.md")]
+    workflow: PathBuf,
+    #[arg(long, value_enum, ignore_case = true)]
+    status: Option<ForgeStatusArg>,
     #[arg(long)]
-    skill: Option<String>,
-    #[arg(long, default_value_t = 3)]
-    limit: usize,
+    title: Option<String>,
+    #[command(flatten)]
+    markdown: ForgeMarkdownArgs,
+    #[arg(long = "issue")]
+    issue_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ForgeStatusArg {
+    Backlog,
+    Todo,
+}
+
+impl ForgeStatusArg {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Backlog => "Backlog",
+            Self::Todo => "Todo",
+        }
+    }
+
+    fn normalized_state(self) -> &'static str {
+        match self {
+            Self::Backlog => "backlog",
+            Self::Todo => "todo",
+        }
+    }
 }
 
 impl TryFrom<Cli> for Command {
@@ -7470,53 +7582,57 @@ impl TryFrom<Cli> for Command {
                         apply: true,
                         write: args.write,
                     }),
-                    CliCommand::ForgeDiscover(args) => Ok(Self::ForgeDiscover {
-                        source: read_source_arg(args.intent, args.file)?,
-                    }),
-                    CliCommand::ForgeDiscuss(args) => Ok(Self::ForgeDiscuss {
-                        title: args.title,
-                        markdown: read_source_arg(args.body, args.file)?,
-                    }),
-                    CliCommand::ForgeDraft(args) => Ok(Self::ForgeDraft {
-                        title: args.title,
-                        goal: args.goal,
-                    }),
-                    CliCommand::ForgeValidate(args) => Ok(Self::ForgeValidate {
-                        title: args.title,
-                        markdown: read_source_arg(args.body, args.file)?,
-                    }),
-                    CliCommand::ForgeRepair(args) => Ok(Self::ForgeRepair {
-                        title: args.title,
-                        markdown: read_source_arg(args.body, args.file)?,
-                    }),
-                    CliCommand::ForgeCreate(args) => Ok(Self::ForgeCreate {
-                        workflow_path: args.workflow,
-                        title: args.title,
-                        markdown: read_source_arg(args.body, args.file)?,
-                        add_to_project: args.add_to_project,
-                        project_fields: parse_project_field_assignments(args.project_fields)?,
-                        assignees: args.assignees,
-                        write: args.write,
-                    }),
-                    CliCommand::ForgeInteractive(args) => Ok(Self::ForgeInteractive {
-                        options: ForgeInteractiveOptions {
+                    CliCommand::Forge(args) => match args.command {
+                        ForgeCommandArgs::Create(args) => Ok(Self::ForgeCreate {
                             workflow_path: args.workflow,
                             title: args.title,
-                            intent: args.intent,
-                            file: args.file,
-                            skill: validate_optional_forge_skill(args.skill)?,
-                            context: read_optional_file(args.context_file)?,
+                            markdown: read_forge_markdown_arg(args.markdown)?,
+                            status: args.status,
+                            project: args.project,
+                            project_fields: parse_project_field_assignments(args.project_fields)?,
                             assignees: args.assignees,
-                            add_to_project: args.add_to_project,
                             write: args.write,
-                            confirm_create: args.confirm_create,
-                        },
-                    }),
-                    CliCommand::ForgeReflect(args) => Ok(Self::ForgeReflect {
-                        context: read_required_file(args.context_file)?,
-                        skill: validate_optional_forge_skill(args.skill)?,
-                        limit: args.limit,
-                    }),
+                            dry_run: args.dry_run,
+                        }),
+                        ForgeCommandArgs::Promote(args) => Ok(Self::ForgePromote {
+                            workflow_path: args.workflow,
+                            issue_ref: args.issue_ref,
+                            title: args.title,
+                            markdown: read_forge_markdown_arg(args.markdown)?,
+                            write: args.write,
+                            dry_run: args.dry_run,
+                        }),
+                        ForgeCommandArgs::Validate(args) => {
+                            if let Some(issue_ref) = args.issue_ref {
+                                if args.title.is_some()
+                                    || args.markdown.body.is_some()
+                                    || args.markdown.body_file.is_some()
+                                {
+                                    return Err(
+                                        "forge validate --issue cannot be combined with --title, --body, or --body-file"
+                                            .into(),
+                                    );
+                                }
+                                Ok(Self::ForgeValidate {
+                                    workflow_path: args.workflow,
+                                    status: args.status,
+                                    title: String::new(),
+                                    markdown: String::new(),
+                                    issue_ref: Some(issue_ref),
+                                })
+                            } else {
+                                Ok(Self::ForgeValidate {
+                                    workflow_path: args.workflow,
+                                    status: args.status,
+                                    title: args.title.ok_or(
+                                        "forge validate requires --title when --issue is not used",
+                                    )?,
+                                    markdown: read_forge_markdown_arg(args.markdown)?,
+                                    issue_ref: None,
+                                })
+                            }
+                        }
+                    },
                 }
             }
         }
@@ -7574,17 +7690,13 @@ fn gate_target_state(decision: &GateDecision) -> &'static str {
     }
 }
 
-fn read_source_arg(inline: Option<String>, file: Option<PathBuf>) -> Result<String, String> {
-    match (inline, file) {
+fn read_forge_markdown_arg(args: ForgeMarkdownArgs) -> Result<String, String> {
+    match (args.body, args.body_file) {
         (Some(value), None) => Ok(value),
         (None, Some(path)) => std::fs::read_to_string(&path)
             .map_err(|error| format!("failed to read {}: {error}", path.display())),
         _ => Err(usage()),
     }
-}
-
-fn read_optional_file(file: Option<PathBuf>) -> Result<Option<String>, String> {
-    file.map(read_required_file).transpose()
 }
 
 fn read_required_file(path: PathBuf) -> Result<String, String> {
@@ -7601,16 +7713,7 @@ fn parse_project_field_assignments(
         .collect()
 }
 
-fn validate_optional_forge_skill(skill: Option<String>) -> Result<Option<String>, String> {
-    if let Some(key) = skill.as_deref() {
-        if find_issue_skill(key).is_none() {
-            return Err(format!("unknown Issue Forge skill: {key}"));
-        }
-    }
-    Ok(skill)
-}
-
-fn print_forge_validation(report: &jade_symphony::issue_forge::ForgeValidationReport) {
+fn print_forge_validation(report: &ForgeValidationReport) {
     println!("title={}", report.title);
     println!("gate={:?}", report.decision.kind);
     println!("dispatchable={}", report.decision.is_dispatchable());
@@ -7624,19 +7727,6 @@ fn print_forge_validation(report: &jade_symphony::issue_forge::ForgeValidationRe
         println!("question={}", question.question);
         println!("why={}", question.why_it_matters);
     }
-}
-
-fn print_interactive_forge_report(report: &jade_symphony::issue_forge::InteractiveForgeReport) {
-    println!("skill={}", report.selected_skill.key);
-    print_forge_validation(&report.validation);
-    if let Some(question) = &report.question {
-        println!("clarification_question={}", question.question);
-        println!("clarification_why={}", question.why_it_matters);
-    } else {
-        println!("clarification_question=none");
-    }
-    println!("\n--- issue draft ---\n");
-    println!("{}", report.issue_markdown);
 }
 
 fn usage() -> String {
@@ -7688,7 +7778,7 @@ mod tests {
         let mut config = test_config();
         config.observability.logs_root = temp.path().join("logs");
         config.identity.actor_role = "merge_agent".into();
-        config.identity.actor_label = "Jade Merge Worker".into();
+        config.identity.actor_label = "Jade Symphony Merge Worker".into();
 
         append_tracker_mutation_audit(
             &config,
@@ -7709,7 +7799,10 @@ mod tests {
         let record = records.first().expect("expected audit record");
         assert_eq!(record.event, "tracker_mutation");
         assert_eq!(record.actor_role.as_deref(), Some("merge_agent"));
-        assert_eq!(record.actor_label.as_deref(), Some("Jade Merge Worker"));
+        assert_eq!(
+            record.actor_label.as_deref(),
+            Some("Jade Symphony Merge Worker")
+        );
         assert_eq!(
             record
                 .tracker_mutation
@@ -9072,7 +9165,7 @@ mod tests {
     #[test]
     fn pool_worker_selection_respects_lane_priority_and_claim_owner() {
         let config = test_config();
-        let worker = "Jade Main";
+        let worker = "Jade Symphony Main";
         let mut first = tracker_issue_with_ref("#1", "First", "Todo");
         first.priority = Some(20);
         let mut second = tracker_issue_with_ref("#2", "Second", "Rework");
@@ -9997,14 +10090,18 @@ mod tests {
     #[test]
     fn parses_forge_create_flags() {
         let command = Command::parse(vec![
-            "forge-create".into(),
+            "forge".into(),
+            "create".into(),
             "--workflow".into(),
             "examples/dry-run-workflow.md".into(),
             "--title".into(),
             "Create issue".into(),
             "--body".into(),
             forge_contract(),
-            "--add-to-project".into(),
+            "--status".into(),
+            "todo".into(),
+            "--project".into(),
+            "workflow".into(),
             "--project-field".into(),
             "Capability=CLI".into(),
             "--assignee".into(),
@@ -10017,19 +10114,22 @@ mod tests {
             workflow_path,
             title,
             markdown,
-            add_to_project,
+            status,
+            project,
             project_fields,
             assignees,
             write,
+            dry_run,
         } = command
         else {
-            panic!("expected forge-create command");
+            panic!("expected forge create command");
         };
 
         assert_eq!(workflow_path, PathBuf::from("examples/dry-run-workflow.md"));
         assert_eq!(title, "Create issue");
         assert!(markdown.contains("## Issue Goal"));
-        assert!(add_to_project);
+        assert_eq!(status, ForgeStatusArg::Todo);
+        assert_eq!(project.as_deref(), Some("workflow"));
         assert_eq!(
             project_fields,
             vec![ProjectFieldAssignment {
@@ -10039,29 +10139,43 @@ mod tests {
         );
         assert_eq!(assignees, vec!["@Alive24".to_string()]);
         assert!(write);
+        assert!(!dry_run);
     }
 
     #[test]
-    fn forge_create_project_fields_require_project_add() {
-        let error = forge_create(
-            PathBuf::from("missing-workflow.md"),
-            "Create issue".into(),
+    fn parses_forge_promote_flags() {
+        let command = Command::parse(vec![
+            "forge".into(),
+            "promote".into(),
+            "#241".into(),
+            "--workflow".into(),
+            "examples/dry-run-workflow.md".into(),
+            "--title".into(),
+            "Promoted issue".into(),
+            "--body".into(),
             forge_contract(),
-            false,
-            vec![ProjectFieldAssignment {
-                name: "Capability".into(),
-                value: "CLI".into(),
-            }],
-            Vec::new(),
-            true,
-        )
-        .unwrap_err()
-        .to_string();
+            "--dry-run".into(),
+        ])
+        .unwrap();
 
-        assert_eq!(
-            error,
-            "forge-create --project-field requires --add-to-project"
-        );
+        let Command::ForgePromote {
+            workflow_path,
+            issue_ref,
+            title,
+            markdown,
+            write,
+            dry_run,
+        } = command
+        else {
+            panic!("expected forge promote command");
+        };
+
+        assert_eq!(workflow_path, PathBuf::from("examples/dry-run-workflow.md"));
+        assert_eq!(issue_ref, "#241");
+        assert_eq!(title, "Promoted issue");
+        assert!(markdown.contains("## Issue Goal"));
+        assert!(!write);
+        assert!(dry_run);
     }
 
     #[test]
@@ -10106,91 +10220,64 @@ mod tests {
     }
 
     #[test]
-    fn parses_forge_interactive_flags() {
+    fn parses_forge_validate_issue_flags() {
         let command = Command::parse(vec![
-            "forge-interactive".into(),
+            "forge".into(),
+            "validate".into(),
             "--workflow".into(),
             "examples/github-project-workflow.md".into(),
-            "--title".into(),
-            "Add resume preflight".into(),
-            "--intent".into(),
-            "run-loop should inspect runtime state before claiming new work".into(),
-            "--skill".into(),
-            "runtime".into(),
-            "--assignee".into(),
-            "Alive24".into(),
-            "--add-to-project".into(),
-            "--write".into(),
-            "--confirm-create".into(),
+            "--issue".into(),
+            "#248".into(),
+            "--status".into(),
+            "todo".into(),
         ])
         .unwrap();
 
-        let Command::ForgeInteractive { options } = command else {
-            panic!("expected forge-interactive command");
+        let Command::ForgeValidate {
+            workflow_path,
+            status,
+            title,
+            markdown,
+            issue_ref,
+        } = command
+        else {
+            panic!("expected forge validate command");
         };
 
         assert_eq!(
-            options.workflow_path,
-            Some(PathBuf::from("examples/github-project-workflow.md"))
+            workflow_path,
+            PathBuf::from("examples/github-project-workflow.md")
         );
-        assert_eq!(options.title.as_deref(), Some("Add resume preflight"));
-        assert!(options.intent.as_deref().unwrap().contains("runtime state"));
-        assert_eq!(options.skill.as_deref(), Some("runtime"));
-        assert_eq!(options.assignees, vec!["Alive24".to_string()]);
-        assert!(options.add_to_project);
-        assert!(options.write);
-        assert!(options.confirm_create);
+        assert_eq!(status, Some(ForgeStatusArg::Todo));
+        assert!(title.is_empty());
+        assert!(markdown.is_empty());
+        assert_eq!(issue_ref.as_deref(), Some("#248"));
     }
 
     #[test]
-    fn parses_forge_interactive_without_title_for_conversational_path() {
-        let command = Command::parse(vec![
-            "forge-interactive".into(),
+    fn rejects_removed_flat_forge_commands() {
+        let error = Command::parse(vec![
+            "forge-create".into(),
             "--workflow".into(),
             "workflows/jade-symphony.md".into(),
         ])
-        .unwrap();
-
-        let Command::ForgeInteractive { options } = command else {
-            panic!("expected forge-interactive command");
-        };
-
-        assert_eq!(
-            options.workflow_path,
-            Some(PathBuf::from("workflows/jade-symphony.md"))
-        );
-        assert!(options.title.is_none());
-        assert!(options.intent.is_none());
-        assert!(options.assignees.is_empty());
-    }
-
-    #[test]
-    fn rejects_unknown_forge_skill() {
-        let error = Command::parse(vec![
-            "forge-interactive".into(),
-            "--title".into(),
-            "Add a thing".into(),
-            "--intent".into(),
-            "make the runtime loop safer".into(),
-            "--skill".into(),
-            "product-roadmap".into(),
-        ])
         .unwrap_err();
 
-        assert!(error.contains("unknown Issue Forge skill"));
+        assert!(error.contains("Usage:"));
     }
 
     #[test]
     fn rejects_forge_create_with_both_body_and_file() {
         let error = Command::parse(vec![
-            "forge-create".into(),
+            "forge".into(),
+            "create".into(),
             "--workflow".into(),
             "WORKFLOW.md".into(),
             "--title".into(),
             "Create issue".into(),
             "--body".into(),
             forge_contract(),
-            "--file".into(),
+            "--body-file".into(),
             "issue.md".into(),
         ])
         .unwrap_err();
@@ -10234,7 +10321,14 @@ mod tests {
             .unwrap_err();
 
         assert!(error.contains("tracker issue was not created"));
-        assert!(forge_create_requires_assignee(&config));
+        assert!(forge_create_requires_assignee(
+            &config,
+            ForgeStatusArg::Todo
+        ));
+        assert!(!forge_create_requires_assignee(
+            &config,
+            ForgeStatusArg::Backlog
+        ));
     }
 
     #[test]
@@ -10247,21 +10341,23 @@ mod tests {
         )
         .unwrap();
 
-        let error = forge_create(
+        let error = forge_create(ForgeCreateOptions {
             workflow_path,
-            "Create issue".into(),
-            forge_contract(),
-            false,
-            Vec::new(),
-            Vec::new(),
-            true,
-        )
+            title: "Create issue".into(),
+            markdown: forge_contract(),
+            status: ForgeStatusArg::Todo,
+            project: None,
+            project_fields: Vec::new(),
+            assignees: Vec::new(),
+            write: true,
+            dry_run: false,
+        })
         .unwrap_err()
         .to_string();
 
         assert_eq!(
             error,
-            "forge-create requires --assignee for live GitHub issue creation"
+            "forge create --status Todo requires --assignee for live GitHub issue creation"
         );
     }
 
@@ -10304,15 +10400,17 @@ mod tests {
         )
         .unwrap();
 
-        let error = forge_create(
+        let error = forge_create(ForgeCreateOptions {
             workflow_path,
-            "Create issue".into(),
-            forge_contract(),
-            true,
-            Vec::new(),
-            Vec::new(),
-            true,
-        )
+            title: "Create issue".into(),
+            markdown: forge_contract(),
+            status: ForgeStatusArg::Todo,
+            project: None,
+            project_fields: Vec::new(),
+            assignees: Vec::new(),
+            write: true,
+            dry_run: false,
+        })
         .unwrap_err()
         .to_string();
 
@@ -10331,15 +10429,17 @@ mod tests {
         )
         .unwrap();
 
-        forge_create(
+        forge_create(ForgeCreateOptions {
             workflow_path,
-            "Create issue".into(),
-            forge_contract(),
-            true,
-            Vec::new(),
-            Vec::new(),
-            true,
-        )
+            title: "Create issue".into(),
+            markdown: forge_contract(),
+            status: ForgeStatusArg::Todo,
+            project: None,
+            project_fields: Vec::new(),
+            assignees: Vec::new(),
+            write: true,
+            dry_run: false,
+        })
         .unwrap();
     }
 

@@ -103,7 +103,7 @@ Project fields, or writing workpads.
 
 When the tmux agent command is Codex, `run-loop --write` captures the pane before
 prompt injection. The default behavior auto-advances the Codex workspace trust
-prompt only inside the configured Jade issue worktree root, then injects the
+prompt only inside the configured Jade Symphony issue worktree root, then injects the
 rendered prompt after a ready viewport is observed. Set
 `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to opt out; a visible trust prompt or missing
 readiness then fails closed and preserves attach/log evidence for inspection.
@@ -130,7 +130,7 @@ These commands can mutate live tracker state and require `--write`.
 | --- | --- | --- |
 | `set-state` | Move one issue to a normalized workflow state. | Refuses `Human Review` from the main implementation role. |
 | `workpad` | Upsert the canonical issue workpad comment. | Use for durable evidence before state transitions. |
-| `create-follow-up` | Create a follow-up issue from a body file. | Lower-level creation path; prefer `forge-create` for quality-gated issues. |
+| `create-follow-up` | Create a follow-up issue from a body file. | Lower-level creation path; prefer `forge create` for quality-gated issues. |
 | `add-to-project` | Add an existing GitHub issue node to the configured Project. | Initializes configured Project status where supported. |
 
 Examples:
@@ -177,23 +177,18 @@ cargo run -- gate-apply workflows/jade-symphony.md '#123' --write
 
 | Command | Purpose | Boundary |
 | --- | --- | --- |
-| `forge-discover` | Discover local candidate issue intent from free text. | Read-only. |
-| `forge-discuss` | Ask focused clarification for a draft issue. | Read-only. |
-| `forge-draft` | Build a quality-template issue draft from title/goal. | Read-only. |
-| `forge-validate` | Validate an issue body against the quality gate. | Read-only. |
-| `forge-repair` | Repair thin Markdown into an executable issue shape. | Read-only. |
-| `forge-interactive` | Conversation-first issue shaping from natural-language intent. | Starts with only `--workflow`; creation requires `--write --confirm-create --assignee`. |
-| `forge-reflect` | Reflect over local context and print candidate issues. | Read-only. |
-| `forge-create` | Create a quality-gated tracker issue. | Requires explicit `--write`; live GitHub creation requires `--assignee`; can add to Project with `--add-to-project`. |
+| `forge validate` | Validate a body file or existing issue for `Backlog` or `Todo`. | Read-only; `Todo` uses the full Issue Quality Gate, `Backlog` uses the lighter seed gate. |
+| `forge create` | Create a Project-backed issue in `Backlog` or `Todo`. | Dry-run by default unless `--write` is supplied; live `Todo` creation requires `--assignee`. |
+| `forge promote` | Promote one existing Backlog issue in place by editing title/body and moving it to `Todo`. | Dry-run by default unless `--write` is supplied; reports the checkpoint where any failure stopped. |
 
 Examples:
 
 ```bash
-cargo run -- forge-validate --title "Thin Forge issue" --file examples/fixtures/thin-issue.md
-cargo run -- forge-interactive --workflow workflows/jade-symphony.md
-cargo run -- forge-interactive --workflow workflows/jade-symphony.md --intent "make run-loop explain retry backoff better"
-cargo run -- forge-reflect --context-file docs/dogfood-readiness.md --limit 1
-cargo run -- forge-create --workflow workflows/jade-symphony.md --title "Follow-up title" --file /tmp/issue.md --assignee Alive24 --add-to-project --write
+cargo run -- forge validate --workflow workflows/jade-symphony.md --status Backlog --title "Backlog seed" --body-file /tmp/issue.md
+cargo run -- forge validate --workflow workflows/jade-symphony.md --status Todo --title "Executable issue" --body-file /tmp/issue.md
+cargo run -- forge create --workflow workflows/jade-symphony.md --status Backlog --title "Backlog: follow-up title" --body-file /tmp/issue.md --dry-run
+cargo run -- forge create --workflow workflows/jade-symphony.md --status Todo --title "Follow-up title" --body-file /tmp/issue.md --assignee Alive24 --write
+cargo run -- forge promote '#241' --workflow workflows/jade-symphony.md --title "Executable title" --body-file /tmp/issue.md --dry-run
 ```
 
 ## Review Agent Lane
@@ -213,7 +208,7 @@ changes.
 | `review-reject` | Record failed/inconclusive manual review evidence and route to `Agent Review`, `Rework`, or `Need Human Input`. | Refuses `Human Review`. |
 | `review-freshness` | Record/inspect review freshness evidence. | Used around merging/rework conflict repair. |
 | `agent-session start` | Start an attachable local tmux session for a selected lane. | Manual recovery path; it claims only the chosen lane and does not advance workflow state. |
-| `agent-session list` | List active Jade tmux sessions by configured prefix. | Read-only operator summary. |
+| `agent-session list` | List active Jade Symphony tmux sessions by configured prefix. | Read-only operator summary. |
 | `agent-session attach` | Print or execute the tmux attach command for one session. | Defaults to printing the command; `--exec` enters tmux. |
 
 Example:

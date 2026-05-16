@@ -29,6 +29,11 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
   notes, and final summaries.
 - Refresh the PR state, review decision, checks, mergeability, base branch, and
   linked issue evidence before merge.
+- Use `workspace show` before local merge repair. Prefer the canonical Main PR
+  worktree/branch, and do not create a replacement worktree when a usable
+  canonical candidate exists.
+- If multiple strong candidates exist, require an operator `workspace adopt`
+  choice before repairing local conflicts.
 - Merge only when the PR is clean, current, and approved by the Project state.
 - Record merge evidence, final commit/merge information, and tracker updates.
 

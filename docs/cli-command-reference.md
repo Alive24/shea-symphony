@@ -126,6 +126,32 @@ durable session registry. `doctor` flags stale, failed, orphaned, usage-limited,
 or runtime/session mismatch cases, while `clean audit` classifies the registry,
 rendered prompts, tmux logs, and individual sessions without deleting them.
 
+## Workspace Discovery
+
+Use `workspace` when a lane needs to find the local worktree for an issue before
+starting review or merge repair. Discovery combines Project issue/PR hints,
+session registry records, canonical workpad evidence, and local
+`git worktree list --porcelain` output.
+
+| Command | Purpose | Boundary |
+| --- | --- | --- |
+| `workspace list` | List issue worktrees and inferred orphan hints. | Read-only. |
+| `workspace show` | Show canonical and candidate worktrees for one issue. | Read-only; multiple strong candidates require operator choice. |
+| `workspace adopt` | Record an operator-selected local worktree in the issue workpad. | Validates the path is a worktree for this repository and the branch matches the issue. |
+
+Examples:
+
+```bash
+cargo run -- workspace list workflows/jade-symphony.md
+cargo run -- workspace show workflows/jade-symphony.md '#253'
+cargo run -- workspace adopt workflows/jade-symphony.md '#253' /tmp/jade-symphony-issue-253 --write
+```
+
+Review lane uses discovered worktrees for read-only inspection by default.
+Merge lane should prefer the canonical Main PR worktree/branch for merge-lane
+repair instead of creating a replacement workspace. `doctor` warns when multiple
+strong candidates exist for one active issue.
+
 ## Tracker Writes
 
 These commands can mutate live tracker state and require `--write`.

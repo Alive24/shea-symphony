@@ -32,6 +32,10 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
 - Confirm the linked PR is ready, not draft. If the PR is draft, do not run a
   normal review; record invalid handoff evidence and leave the issue out of
   `Human Review`.
+- Use `workspace show` to discover the issue worktree when local inspection is
+  needed. Treat discovered Main Agent worktrees as read-only by default.
+- If `workspace show` reports multiple strong candidates, stop and request an
+  operator `workspace adopt` choice before relying on local files.
 - Compare the PR against the issue goal, guardrails, expected outcome, and
   verification evidence.
 - Prefer concrete findings with file paths, command output, or missing evidence.

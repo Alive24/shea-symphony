@@ -116,6 +116,8 @@ Expected outcome for successful main-agent work:
 
 - the issue is claimed or resumed safely;
 - the issue workspace and branch are prepared;
+- `workspace show` can discover the issue workspace from registry, workpad, PR,
+  and local git worktree evidence;
 - the configured backend runs in that workspace;
 - runtime state and event logs are written;
 - a PR is created or reused;
@@ -126,6 +128,19 @@ Expected outcome for successful main-agent work:
 If the run reports usage limits, retry backoff, missing PR evidence, draft PR
 handoff, failed handoff, stale runtime state, or missing human input, stop and
 resolve that specific blocker before running another write tick.
+
+Before manual Review or Merge recovery, check the issue workspace first:
+
+```bash
+cargo run -- workspace show workflows/jade-symphony.md '#253'
+```
+
+If multiple strong candidates appear, choose the correct Main PR worktree and
+record it explicitly:
+
+```bash
+cargo run -- workspace adopt workflows/jade-symphony.md '#253' /path/to/worktree --write
+```
 
 ## Agent Review
 

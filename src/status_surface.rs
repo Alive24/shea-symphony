@@ -221,6 +221,7 @@ mod tests {
             sessions: vec![SessionStatusSnapshot {
                 session_id: "jade-main-1-attempt-1".into(),
                 lane: "main".into(),
+                run_id: None,
                 status: "waiting_for_approval".into(),
                 evidence_source: "pane".into(),
                 evidence: "Approval required: allow this command?".into(),

@@ -84,6 +84,11 @@ processes one main work item at a time because the runtime state tracks one
 active issue, but it uses the same lane claim check and stamps `Main Agent`
 before tracker mutation. `run-loop`, `review-loop`, and `merge-once` print
 compact `Latest:` status bars in addition to their detailed line logs.
+New lane claims are written as single-line `v=1` key/value audit pointers, for
+example `v=1 lane=main actor=codex source=loop issue=#244 run=... state=active
+thread=unknown registry=run/...`. The Project field stores the compact pointer;
+the session registry and workpad store the durable paths, logs, and handoff
+evidence for the same `run=`.
 
 The canonical `workflows/jade-symphony.md` file uses the local `tmux` main-agent
 backend. A launched tmux session records its session name, log path, workspace,
@@ -107,6 +112,8 @@ For manual lane recovery, `agent-session start WORKFLOW ISSUE --lane
 main|review|merge --write` starts the configured local tmux command with the
 lane-specific prompt, writes the lane claim field (`Main Agent`, `Review
 Agent`, or `Merging Agent`), and records session evidence in the workpad.
+The rendered prompt includes the assigned `run=` and registry pointer so the
+spawned agent can preserve that value in its handoff evidence.
 `agent-session list WORKFLOW` shows active tmux sessions with attach commands,
 and `agent-session attach WORKFLOW SESSION` prints the exact attach command
 without joining the terminal unless `--exec` is provided.

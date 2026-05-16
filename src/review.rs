@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::agent::{classify_usage_limit_text, UsageLimitPause};
+use crate::lane_claim::{LaneClaim, LaneClaimState};
 use crate::model::{normalize_state, TrackerIssue};
 use crate::workspace::safe_identifier;
 
@@ -648,11 +649,20 @@ fn has_active_review_worker(issue: &TrackerIssue, worker_key: &str) -> bool {
         active_review_marker_matches(&value, worker_key)
             || (is_review_agent_field
                 && !terminal_failure_marker
+                && structured_active_review_claim(&value))
+            || (is_review_agent_field
+                && !terminal_failure_marker
                 && fixed_review_agent_claim_matches(&value, worker_key))
     }) || issue
         .description
         .as_deref()
         .is_some_and(|description| active_review_marker_matches(description, worker_key))
+}
+
+fn structured_active_review_claim(value: &str) -> bool {
+    LaneClaim::parse(value)
+        .map(|claim| claim.lane.as_str() == "review" && claim.state == LaneClaimState::Active)
+        .unwrap_or(false)
 }
 
 fn fixed_review_agent_claim_matches(value: &str, worker_key: &str) -> bool {

@@ -18,6 +18,8 @@ pub struct RuntimeState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lane: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend_log_path: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend_attach_command: Option<String>,
@@ -51,6 +53,7 @@ impl RuntimeState {
             backend: backend.into(),
             backend_session_id: None,
             lane: None,
+            run_id: None,
             backend_log_path: None,
             backend_attach_command: None,
             profile_id: None,
@@ -229,6 +232,7 @@ mod tests {
             backend: "dry-run".into(),
             backend_session_id: Some("session".into()),
             lane: Some("main".into()),
+            run_id: None,
             backend_log_path: Some(PathBuf::from("/tmp/jade/logs/session.log")),
             backend_attach_command: Some("tmux attach-session -t session".into()),
             profile_id: Some("codex-alpha".into()),

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::lane_claim::{LaneClaim, LaneClaimState};
 use crate::model::{normalize_state, LinkedPullRequest, SessionStatusSnapshot, TrackerIssue};
 use crate::runtime_state::{detect_runtime_stall, RuntimeState};
 
@@ -141,7 +142,9 @@ pub fn audit_project_issues_with_context(
             _ => {}
         }
 
-        if state == "todo" && claimed_main_agent(issue).is_some() {
+        audit_lane_claim_fields(issue, &state, context, &mut violations);
+
+        if state == "todo" && active_claimed_main_agent(issue).is_some() {
             violations.push(violation(
                 issue,
                 AuditSeverity::Warning,
@@ -658,6 +661,112 @@ fn claimed_main_agent(issue: &TrackerIssue) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn active_claimed_main_agent(issue: &TrackerIssue) -> Option<String> {
+    claimed_main_agent(issue).filter(|value| match LaneClaim::parse(value) {
+        Ok(claim) => claim.state == LaneClaimState::Active,
+        Err(_) => true,
+    })
+}
+
+fn audit_lane_claim_fields(
+    issue: &TrackerIssue,
+    normalized_issue_state: &str,
+    context: Option<&ProjectDoctorContext>,
+    violations: &mut Vec<ProjectAuditViolation>,
+) {
+    for (field, expected_lane) in [
+        ("Main Agent", "main"),
+        ("Review Agent", "review"),
+        ("Merging Agent", "merge"),
+    ] {
+        let Some(value) = string_project_field(issue, field)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+
+        match LaneClaim::parse(&value) {
+            Ok(claim) => {
+                if claim.lane.as_str() != expected_lane {
+                    violations.push(violation(
+                        issue,
+                        AuditSeverity::Warning,
+                        "lane_claim_mismatched_lane",
+                        &format!(
+                            "{field} claim has lane `{}` instead of `{expected_lane}`.",
+                            claim.lane.as_str()
+                        ),
+                        "Rewrite the claim through the owning lane so the Project field matches its lane.",
+                    ));
+                }
+                if claim.issue != issue.identifier {
+                    violations.push(violation(
+                        issue,
+                        AuditSeverity::Warning,
+                        "lane_claim_mismatched_issue",
+                        &format!("{field} claim points at `{}`.", claim.issue),
+                        "Preserve the old evidence in the workpad, then write a fresh claim for this issue if work is still active.",
+                    ));
+                }
+                if matches!(normalized_issue_state, "done" | "closed")
+                    && claim.state == LaneClaimState::Active
+                {
+                    violations.push(violation(
+                        issue,
+                        AuditSeverity::Warning,
+                        "terminal_issue_active_lane_claim",
+                        &format!("{field} claim is still `state=active` on a terminal issue."),
+                        "Update the structured claim to `state=done` after preserving run evidence.",
+                    ));
+                }
+                if claim.state == LaneClaimState::Active
+                    && !matches!(normalized_issue_state, "done" | "closed")
+                    && context.is_some_and(|context| !context_has_run(context, &claim.run))
+                {
+                    violations.push(violation(
+                        issue,
+                        AuditSeverity::Warning,
+                        "active_lane_claim_missing_registry",
+                        &format!("{field} claim run `{}` has no matching runtime/session registry evidence.", claim.run),
+                        "Preserve any issue/worktree/PR context, then use doctor repair or a superseding lane claim before starting replacement work.",
+                    ));
+                }
+            }
+            Err(_) if matches!(normalized_issue_state, "done" | "closed") => {
+                violations.push(violation(
+                    issue,
+                    AuditSeverity::Warning,
+                    "terminal_issue_legacy_lane_claim",
+                    &format!("{field} retains a legacy claim value."),
+                    "Keep it as audit evidence for now; migrate it through a future doctor repair flow if needed.",
+                ));
+            }
+            Err(_) => {
+                violations.push(violation(
+                    issue,
+                    AuditSeverity::Warning,
+                    "active_issue_legacy_lane_claim",
+                    &format!("{field} contains a legacy claim value."),
+                    "Inspect the active workspace/session, then supersede it with a structured `v=1` claim before dispatching another worker.",
+                ));
+            }
+        }
+    }
+}
+
+fn context_has_run(context: &ProjectDoctorContext, run_id: &str) -> bool {
+    context
+        .runtime_state
+        .as_ref()
+        .and_then(|state| state.run_id.as_deref())
+        .is_some_and(|candidate| candidate == run_id)
+        || context
+            .sessions
+            .iter()
+            .any(|session| session.run_id.as_deref() == Some(run_id))
+}
+
 fn has_runtime_owner_metadata(issue: &TrackerIssue) -> bool {
     issue.project_fields.contains_key("runtime_owner")
         || issue.project_fields.contains_key("runtime_state")
@@ -748,6 +857,7 @@ mod tests {
         SessionStatusSnapshot {
             session_id: "jade-main-202-attempt-1-runtime".into(),
             lane: "main".into(),
+            run_id: None,
             status: status.into(),
             evidence_source: "registry".into(),
             evidence: "registry record has not updated for 19000ms".into(),
@@ -958,7 +1068,34 @@ mod tests {
 
         let report = audit_project_issues(&[issue]);
 
-        assert_eq!(report.violations[0].code, "todo_main_agent_claimed");
+        assert!(report
+            .violations
+            .iter()
+            .any(|violation| violation.code == "todo_main_agent_claimed"));
+    }
+
+    #[test]
+    fn reports_active_structured_claim_missing_registry_evidence() {
+        let mut issue = issue("#244", "In Progress");
+        issue.project_fields.insert(
+            "Main Agent".into(),
+            serde_json::Value::String(
+                "v=1 lane=main actor=codex source=manual issue=#244 run=20260516T0415Z-issue244-main-a7f3 state=active thread=unknown registry=run/20260516T0415Z-issue244-main-a7f3".into(),
+            ),
+        );
+        let context = ProjectDoctorContext {
+            runtime_state: None,
+            sessions: Vec::new(),
+            now_ms: 20_000,
+            stale_after_ms: 10_000,
+        };
+
+        let report = audit_project_issues_with_context(&[issue], Some(&context));
+
+        assert!(report
+            .violations
+            .iter()
+            .any(|violation| violation.code == "active_lane_claim_missing_registry"));
     }
 
     #[test]

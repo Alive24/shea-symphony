@@ -228,7 +228,10 @@ Project v2 issues:
      marker points at a different profile, workspace key, or branch. `run-loop`
      and `merge-loop` also use the Project text fields `Main Agent` and
      `Merging Agent` as lane-specific claim hints before selecting work. These
-     are advisory coordination surfaces, not distributed locks.
+     are advisory coordination surfaces, not distributed locks. New lane claims
+     use the structured `v=1` key/value audit-pointer format and preserve the
+     same `run=` in Project fields, session registry records, prompt context,
+     and workpad handoffs.
    - workspace/branch/PR handoff is recorded by `run-loop`; in live
      non-fixture GitHub mode the runtime can create/reuse the issue worktree and
      branch, run optional configured verification commands, push the branch, and

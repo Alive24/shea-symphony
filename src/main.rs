@@ -36,6 +36,9 @@ use jade_symphony::issue_forge::{
     interactive_forge, next_clarification_question, reflective_candidates_from_context,
     repair_markdown, validate_markdown, InteractiveForgeInput,
 };
+use jade_symphony::lane_claim::{
+    LaneClaim, LaneClaimActor, LaneClaimLane, LaneClaimSource, LaneClaimState,
+};
 use jade_symphony::merge_lane::{
     expected_merge_base_branch, fetch_pull_request_status_with_recheck, merge_lane_decision,
     merge_lane_workpad, merge_pull_request, pull_request_status_from_linked, MergeLaneDecisionKind,
@@ -397,6 +400,7 @@ fn session_status_snapshots(
         snapshots.push(SessionStatusSnapshot {
             session_id: record.session_name.clone(),
             lane: record.lane.clone(),
+            run_id: record.run_id.clone(),
             status: probe.status.as_str().into(),
             evidence_source: probe.source.as_str().into(),
             evidence: probe.evidence,
@@ -1108,9 +1112,21 @@ fn review_claim(
         )
         .into());
     }
+    let claim = lane_claim_for_issue(
+        &issue,
+        LaneClaimLane::Review,
+        if worker.to_ascii_lowercase().contains("gemini") {
+            LaneClaimActor::Gemini
+        } else {
+            LaneClaimActor::Codex
+        },
+        LaneClaimSource::Manual,
+        project_text_field(&issue, "Review Agent").as_deref(),
+    );
+    let claim_value = claim.render();
     if !write {
         println!(
-            "review_claim_dry_run action=claim_field issue_ref={} field=\"Review Agent\" value={worker}",
+            "review_claim_dry_run action=claim_field issue_ref={} field=\"Review Agent\" value={claim_value}",
             issue.identifier
         );
         return Ok(());
@@ -1119,7 +1135,7 @@ fn review_claim(
         &issue.identifier,
         &ProjectFieldAssignment {
             name: "Review Agent".into(),
-            value: worker.clone(),
+            value: claim_value.clone(),
         },
     )?;
     append_tracker_mutation_audit(
@@ -1128,15 +1144,15 @@ fn review_claim(
             command: "review-claim",
             mutation_type: "claim_field",
             issue_ref: Some(&issue.identifier),
-            target: Some(format!("Review Agent={worker}")),
+            target: Some(format!("Review Agent={claim_value}")),
             from_state: Some(issue.state),
             to_state: None,
             reason: "manual review agent claim",
         },
     );
     println!(
-        "review_claim=ok issue_ref={} field=\"Review Agent\" value={worker}",
-        issue.identifier
+        "review_claim=ok issue_ref={} field=\"Review Agent\" run={} value={claim_value}",
+        issue.identifier, claim.run
     );
     Ok(())
 }
@@ -1505,11 +1521,7 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                             "review_loop_dry_run action=start issue={} backend={backend_kind}",
                             selected_issue.identifier
                         );
-                        print_review_claim_field_dry_run(
-                            &selected_issue.identifier,
-                            &worker_key,
-                            worker_slot,
-                        );
+                        print_review_claim_field_dry_run(&selected_issue, &worker_key);
                         println!(
                             "review_loop_dry_run action=workpad issue={} evidence=review_job",
                             selected_issue.identifier
@@ -1539,9 +1551,8 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                             write_review_claim_field(
                                 &config,
                                 adapter.as_ref(),
-                                &latest.identifier,
+                                &latest,
                                 &worker_key,
-                                worker_slot,
                             )?;
                             let mut job = run_review_job(
                                 &workflow,
@@ -1720,12 +1731,19 @@ fn merge_once_tick(
         );
         return Ok(MergeOnceOutcome::Skipped);
     }
+    let merge_claim = lane_claim_for_issue(
+        &issue,
+        WorkerLane::Merging.claim_lane(),
+        LaneClaimActor::Codex,
+        LaneClaimSource::Loop,
+        project_text_field(&issue, WorkerLane::Merging.claim_field()).as_deref(),
+    );
     write_lane_claim_field(
         &config,
         adapter.as_ref(),
         &issue,
         WorkerLane::Merging,
-        &worker_id,
+        &merge_claim,
         write,
     )?;
     let linked_pull_requests = adapter.list_linked_pull_requests(&issue.identifier)?;
@@ -1974,40 +1992,40 @@ fn select_review_worker_issues(
         .collect()
 }
 
-fn review_claim_field_value(worker_key: &str) -> String {
-    format!("running {worker_key}")
+fn review_claim_for_issue(issue: &TrackerIssue, worker_key: &str) -> LaneClaim {
+    lane_claim_for_issue(
+        issue,
+        LaneClaimLane::Review,
+        if worker_key.to_ascii_lowercase().contains("gemini") {
+            LaneClaimActor::Gemini
+        } else {
+            LaneClaimActor::Codex
+        },
+        LaneClaimSource::Loop,
+        project_text_field(issue, "Review Agent").as_deref(),
+    )
 }
 
-fn review_claim_field_value_for_slot(worker_key: &str, worker_slot: usize) -> String {
-    if worker_key.to_ascii_lowercase().contains(":gemini-cli") {
-        match worker_slot {
-            1 => "Gemini A".into(),
-            2 => "Gemini B".into(),
-            _ => "Hold".into(),
-        }
-    } else {
-        review_claim_field_value(worker_key)
-    }
-}
-
-fn print_review_claim_field_dry_run(issue_ref: &str, worker_key: &str, worker_slot: usize) {
+fn print_review_claim_field_dry_run(issue: &TrackerIssue, worker_key: &str) {
+    let claim = review_claim_for_issue(issue, worker_key);
     println!(
-        "review_loop_dry_run action=claim_field issue={issue_ref} field={:?} value={:?}",
+        "review_loop_dry_run action=claim_field issue={} field={:?} value={:?}",
+        issue.identifier,
         "Review Agent",
-        review_claim_field_value_for_slot(worker_key, worker_slot)
+        claim.render()
     );
 }
 
 fn write_review_claim_field(
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
-    issue_ref: &str,
+    issue: &TrackerIssue,
     worker_key: &str,
-    worker_slot: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let claim_value = review_claim_field_value_for_slot(worker_key, worker_slot);
+    let claim = review_claim_for_issue(issue, worker_key);
+    let claim_value = claim.render();
     adapter.set_project_field(
-        issue_ref,
+        &issue.identifier,
         &ProjectFieldAssignment {
             name: "Review Agent".into(),
             value: claim_value.clone(),
@@ -2018,14 +2036,17 @@ fn write_review_claim_field(
         TrackerMutationAudit {
             command: "review-loop",
             mutation_type: "claim_field",
-            issue_ref: Some(issue_ref),
+            issue_ref: Some(&issue.identifier),
             target: Some(format!("Review Agent={claim_value}")),
             from_state: None,
             to_state: None,
             reason: "review worker claim",
         },
     );
-    println!("review_loop_action=claim_field issue={issue_ref} field=\"Review Agent\"");
+    println!(
+        "review_loop_action=claim_field issue={} field=\"Review Agent\" run={}",
+        issue.identifier, claim.run
+    );
     Ok(())
 }
 
@@ -2118,6 +2139,14 @@ impl AgentSessionLaneArg {
             Self::Merge => "Merging Agent",
         }
     }
+
+    fn claim_lane(self) -> LaneClaimLane {
+        match self {
+            Self::Main => LaneClaimLane::Main,
+            Self::Review => LaneClaimLane::Review,
+            Self::Merge => LaneClaimLane::Merge,
+        }
+    }
 }
 
 fn agent_session_start(
@@ -2135,21 +2164,29 @@ fn agent_session_start(
     let issue = adapter
         .get_issue(&issue_ref)?
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
-    let worker_id = agent_session_worker_id(&config, lane);
     let workspace_key = agent_session_workspace_key(&config, &issue, lane)?;
     let prompt_path = rendered_lane_prompt_artifact_path(&config, &issue, lane, 1);
+    let claim = lane_claim_for_issue(
+        &issue,
+        lane.claim_lane(),
+        LaneClaimActor::Codex,
+        LaneClaimSource::Manual,
+        None,
+    );
+    let claim_value = claim.render();
 
     if !write {
         println!(
             "agent_session_dry_run action=claim_field issue={} field={:?} value={:?}",
             issue.identifier,
             lane.claim_field(),
-            worker_id
+            claim_value
         );
         println!(
-            "agent_session_dry_run action=start issue={} lane={} backend=tmux workspace_key={} prompt_artifact={}",
+            "agent_session_dry_run action=start issue={} lane={} run={} backend=tmux workspace_key={} prompt_artifact={}",
             issue.identifier,
             lane.label(),
+            claim.run,
             workspace_key,
             prompt_path.display()
         );
@@ -2160,7 +2197,7 @@ fn agent_session_start(
         &issue.identifier,
         &ProjectFieldAssignment {
             name: lane.claim_field().into(),
-            value: worker_id.clone(),
+            value: claim_value.clone(),
         },
     )?;
     append_tracker_mutation_audit(
@@ -2169,7 +2206,7 @@ fn agent_session_start(
             command: "agent-session",
             mutation_type: "claim_field",
             issue_ref: Some(&issue.identifier),
-            target: Some(format!("{}={worker_id}", lane.claim_field())),
+            target: Some(format!("{}={claim_value}", lane.claim_field())),
             from_state: Some(issue.state.clone()),
             to_state: None,
             reason: "manual tmux lane session claim",
@@ -2178,7 +2215,12 @@ fn agent_session_start(
 
     let workspace = prepare_workspace(&config.workspace.root, &workspace_key, &config.hooks)?;
     let git_identity = apply_local_git_identity(&workspace.path, &config.identity.git)?;
-    let prompt = render_prompt(workflow.prompt_for_lane(lane.workflow_lane()), &issue, None)?;
+    let prompt = render_prompt_with_claim(
+        workflow.prompt_for_lane(lane.workflow_lane()),
+        &issue,
+        None,
+        Some(&claim),
+    )?;
     let backend = TmuxBackend;
     let mut prepared = backend.prepare(workspace.path.clone(), prompt, &config)?;
     prepared
@@ -2189,6 +2231,13 @@ fn agent_session_start(
     prepared.issue_identifier = Some(issue.identifier.clone());
     prepared.issue_title = Some(issue.title.clone());
     prepared.lane = Some(lane.label().into());
+    prepared.run_id = Some(claim.run.clone());
+    prepared
+        .env
+        .insert("JADE_SYMPHONY_RUN_ID".into(), claim.run.clone());
+    prepared
+        .env
+        .insert("JADE_SYMPHONY_CLAIM".into(), claim_value.clone());
     prepared.attempt = 1;
     prepared.branch_name = current_git_branch(&workspace.path).ok().flatten();
     let events = backend.run(prepared)?;
@@ -2201,7 +2250,7 @@ fn agent_session_start(
         &workspace.path,
         &summary,
         &prompt_path,
-        &worker_id,
+        &claim_value,
         &git_identity,
     );
     adapter.upsert_workpad(&issue.identifier, &workpad)?;
@@ -2219,9 +2268,10 @@ fn agent_session_start(
     );
 
     println!(
-        "agent_session_action=started issue={} lane={} backend={} session={} pending_session={} workspace={} prompt_artifact={}",
+        "agent_session_action=started issue={} lane={} run={} backend={} session={} pending_session={} workspace={} prompt_artifact={}",
         issue.identifier,
         lane.label(),
+        claim.run,
         summary.backend,
         summary.session_id.as_deref().unwrap_or("n/a"),
         summary.pending_session,
@@ -2314,15 +2364,6 @@ fn validate_tmux_session_config(config: &RuntimeConfig) -> Result<(), Box<dyn st
     Ok(())
 }
 
-fn agent_session_worker_id(config: &RuntimeConfig, lane: AgentSessionLaneArg) -> String {
-    let label = config.identity.actor_label.trim();
-    if label.is_empty() {
-        format!("jade-symphony-{}", lane.label())
-    } else {
-        label.to_string()
-    }
-}
-
 fn agent_session_workspace_key(
     config: &RuntimeConfig,
     issue: &TrackerIssue,
@@ -2403,7 +2444,7 @@ fn agent_session_workpad(
     workspace_path: &Path,
     summary: &jade_symphony::agent::AgentSummary,
     prompt_path: &Path,
-    worker_id: &str,
+    claim_value: &str,
     git_identity: &GitIdentityApplyResult,
 ) -> String {
     let attach_command = summary.attach_command.as_deref().unwrap_or("n/a");
@@ -2418,7 +2459,7 @@ fn agent_session_workpad(
         "### Local tmux Agent Session".to_string(),
         format!("- Issue: {} {}", issue.identifier, issue.title),
         format!("- Lane: `{}`", lane.label()),
-        format!("- Claim field: `{}` = `{worker_id}`", lane.claim_field()),
+        format!("- Claim field: `{}` = `{claim_value}`", lane.claim_field()),
         format!("- Backend: `{}`", summary.backend),
         format!(
             "- Session: `{}`",
@@ -3742,6 +3783,7 @@ struct IssueExecutionResult {
     success: bool,
     pending_session: bool,
     session_id: Option<String>,
+    run_id: Option<String>,
     backend_log_path: Option<PathBuf>,
     backend_attach_command: Option<String>,
     message: String,
@@ -3780,7 +3822,7 @@ fn execute_issue_once(
             .map(|profile| profile.workspace_namespace.as_str()),
         &issue.identifier,
     );
-    execute_issue_once_with_workspace_key(workflow, config, issue, &workspace_identifier, 1)
+    execute_issue_once_with_workspace_key(workflow, config, issue, &workspace_identifier, 1, None)
 }
 
 fn execute_issue_once_with_workspace_key(
@@ -3789,13 +3831,19 @@ fn execute_issue_once_with_workspace_key(
     issue: &TrackerIssue,
     workspace_key: &str,
     attempt: u32,
+    claim: Option<&LaneClaim>,
 ) -> Result<IssueExecutionResult, Box<dyn std::error::Error>> {
     let profile = selected_execution_profile(&config.profiles)?;
     let workspace = prepare_workspace(&config.workspace.root, workspace_key, &config.hooks)?;
     let git_identity = apply_local_git_identity(&workspace.path, &config.identity.git)?;
     run_before_run(&workspace.path, &config.hooks)?;
 
-    let prompt = render_prompt(workflow.prompt_for_lane(AgentLane::MainAgent), issue, None)?;
+    let prompt = render_prompt_with_claim(
+        workflow.prompt_for_lane(AgentLane::MainAgent),
+        issue,
+        None,
+        claim,
+    )?;
     let backend = backend_from_config(config);
     let mut prepared = backend.prepare(workspace.path.clone(), prompt, config)?;
     prepared.prompt_artifact_path = Some(rendered_prompt_artifact_path(
@@ -3808,6 +3856,15 @@ fn execute_issue_once_with_workspace_key(
     prepared.issue_identifier = Some(issue.identifier.clone());
     prepared.issue_title = Some(issue.title.clone());
     prepared.lane = Some("main".into());
+    if let Some(claim) = claim {
+        prepared.run_id = Some(claim.run.clone());
+        prepared
+            .env
+            .insert("JADE_SYMPHONY_RUN_ID".into(), claim.run.clone());
+        prepared
+            .env
+            .insert("JADE_SYMPHONY_CLAIM".into(), claim.render());
+    }
     prepared.attempt = attempt;
     prepared.branch_name = current_git_branch(&workspace.path).ok().flatten();
     let prompt_artifact_path = persist_prompt_artifact(&prepared)?;
@@ -3860,6 +3917,7 @@ fn execute_issue_once_with_workspace_key(
         success: summary.success,
         pending_session: summary.pending_session,
         session_id: summary.session_id,
+        run_id: claim.map(|claim| claim.run.clone()),
         backend_log_path: summary.log_path,
         backend_attach_command: summary.attach_command,
         message: summary.message,
@@ -4169,12 +4227,19 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
 
         if !options.write {
             for candidate in &selected {
+                let claim = lane_claim_for_issue(
+                    candidate,
+                    WorkerLane::Main.claim_lane(),
+                    LaneClaimActor::Codex,
+                    LaneClaimSource::Loop,
+                    project_text_field(candidate, WorkerLane::Main.claim_field()).as_deref(),
+                );
                 write_lane_claim_field(
                     &config,
                     adapter.as_ref(),
                     candidate,
                     WorkerLane::Main,
-                    &worker_id,
+                    &claim,
                     false,
                 )?;
             }
@@ -4296,6 +4361,13 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
 
         let ownership = run_loop_runtime_ownership(&latest, &config, &handoff)?;
         let claim_action = run_loop_claim_action(&latest, &config);
+        let main_claim = lane_claim_for_issue(
+            &latest,
+            WorkerLane::Main.claim_lane(),
+            LaneClaimActor::Codex,
+            LaneClaimSource::Loop,
+            project_text_field(&latest, WorkerLane::Main.claim_field()).as_deref(),
+        );
         if matches!(claim_action, RunLoopClaimAction::Resume) {
             if let RuntimeOwnershipDecision::Mismatched { reason, .. } =
                 runtime_ownership_decision(latest.description.as_deref(), &ownership)
@@ -4323,7 +4395,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     adapter.as_ref(),
                     &latest,
                     WorkerLane::Main,
-                    &worker_id,
+                    &main_claim,
                     true,
                 )?;
                 adapter.set_state(&latest.identifier, "in_progress")?;
@@ -4359,7 +4431,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     adapter.as_ref(),
                     &latest,
                     WorkerLane::Main,
-                    &worker_id,
+                    &main_claim,
                     true,
                 )?;
                 println!("run_loop_action=resume issue={}", latest.identifier);
@@ -4389,7 +4461,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
         };
-        let ownership_workpad = run_loop_ownership_workpad(&latest, &ownership, event);
+        let ownership_workpad = run_loop_ownership_workpad(&latest, &ownership, event, &main_claim);
         adapter.upsert_workpad(&latest.identifier, &ownership_workpad)?;
         append_tracker_mutation_audit(
             &config,
@@ -4415,6 +4487,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             &latest,
             &config,
             event,
+            &main_claim,
         );
         runtime_state.branch_name = Some(handoff.branch_name.clone());
         mark_runtime_state_updated(&mut runtime_state, current_time_ms());
@@ -4466,6 +4539,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             &latest,
             &handoff.workspace_key,
             runtime_state.attempt_count,
+            Some(&main_claim),
         )?;
         if result.success {
             if let Some(worktree) = live_worktree {
@@ -4660,6 +4734,14 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     "agent review handoff invariant failed",
                 );
                 save_runtime_state(&config, &runtime_state)?;
+                write_lane_claim_state(
+                    &config,
+                    adapter.as_ref(),
+                    &latest,
+                    WorkerLane::Main,
+                    &main_claim,
+                    LaneClaimState::Failed,
+                )?;
                 adapter.set_state(&latest.identifier, "need_human_input")?;
                 append_tracker_mutation_audit(
                     &config,
@@ -4696,6 +4778,14 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             );
             mark_runtime_state_updated(&mut runtime_state, current_time_ms());
             save_runtime_state(&config, &runtime_state)?;
+            write_lane_claim_state(
+                &config,
+                adapter.as_ref(),
+                &latest,
+                WorkerLane::Main,
+                &main_claim,
+                LaneClaimState::Done,
+            )?;
             adapter.set_state(&latest.identifier, "agent_review")?;
             append_tracker_mutation_audit(
                 &config,
@@ -4882,6 +4972,13 @@ impl WorkerLane {
             Self::Merging => "merging",
         }
     }
+
+    fn claim_lane(self) -> LaneClaimLane {
+        match self {
+            Self::Main => LaneClaimLane::Main,
+            Self::Merging => LaneClaimLane::Merge,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4949,7 +5046,17 @@ fn pool_claim_eligibility(
 
     match project_text_field(issue, lane.claim_field()) {
         Some(owner) if owner == worker_id => PoolClaimEligibility::OwnedBySelf,
-        Some(owner) => PoolClaimEligibility::ClaimedByOther { owner },
+        Some(owner) => match LaneClaim::parse(&owner) {
+            Ok(claim)
+                if claim.lane == lane.claim_lane() && claim.state.is_terminal_audit_pointer() =>
+            {
+                PoolClaimEligibility::Claimable
+            }
+            Ok(claim) if claim.lane == lane.claim_lane() => {
+                PoolClaimEligibility::ClaimedByOther { owner: claim.run }
+            }
+            _ => PoolClaimEligibility::ClaimedByOther { owner },
+        },
         None => PoolClaimEligibility::Claimable,
     }
 }
@@ -4976,16 +5083,17 @@ fn write_lane_claim_field(
     adapter: &dyn TrackerAdapter,
     issue: &TrackerIssue,
     lane: WorkerLane,
-    worker_id: &str,
+    claim: &LaneClaim,
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let claim_value = claim.render();
     if !write {
         println!(
             "{}_pool_dry_run action=claim_field issue={} field={:?} value={:?}",
             lane.label(),
             issue.identifier,
             lane.claim_field(),
-            worker_id
+            claim_value
         );
         return Ok(());
     }
@@ -4993,7 +5101,7 @@ fn write_lane_claim_field(
         &issue.identifier,
         &ProjectFieldAssignment {
             name: lane.claim_field().into(),
-            value: worker_id.into(),
+            value: claim_value.clone(),
         },
     )?;
     append_tracker_mutation_audit(
@@ -5002,17 +5110,58 @@ fn write_lane_claim_field(
             command: lane.label(),
             mutation_type: "claim_field",
             issue_ref: Some(&issue.identifier),
-            target: Some(format!("{}={worker_id}", lane.claim_field())),
+            target: Some(format!("{}={claim_value}", lane.claim_field())),
             from_state: Some(issue.state.clone()),
             to_state: None,
             reason: "lane worker claim",
         },
     );
     println!(
-        "{}_pool_action=claim_field issue={} field={:?}",
+        "{}_pool_action=claim_field issue={} field={:?} run={}",
         lane.label(),
         issue.identifier,
-        lane.claim_field()
+        lane.claim_field(),
+        claim.run
+    );
+    Ok(())
+}
+
+fn write_lane_claim_state(
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    issue: &TrackerIssue,
+    lane: WorkerLane,
+    claim: &LaneClaim,
+    state: LaneClaimState,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let updated = claim.with_state(state);
+    let value = updated.render();
+    adapter.set_project_field(
+        &issue.identifier,
+        &ProjectFieldAssignment {
+            name: lane.claim_field().into(),
+            value: value.clone(),
+        },
+    )?;
+    append_tracker_mutation_audit(
+        config,
+        TrackerMutationAudit {
+            command: lane.label(),
+            mutation_type: "claim_field",
+            issue_ref: Some(&issue.identifier),
+            target: Some(format!("{}={value}", lane.claim_field())),
+            from_state: Some(issue.state.clone()),
+            to_state: None,
+            reason: "lane worker claim state update",
+        },
+    );
+    println!(
+        "{}_pool_action=claim_field_state issue={} field={:?} run={} state={}",
+        lane.label(),
+        issue.identifier,
+        lane.claim_field(),
+        claim.run,
+        state.as_str()
     );
     Ok(())
 }
@@ -5379,6 +5528,38 @@ fn current_time_ms() -> u64 {
         .unwrap_or(0)
 }
 
+fn lane_claim_for_issue(
+    issue: &TrackerIssue,
+    lane: LaneClaimLane,
+    actor: LaneClaimActor,
+    source: LaneClaimSource,
+    existing: Option<&str>,
+) -> LaneClaim {
+    existing
+        .and_then(|value| LaneClaim::parse(value).ok())
+        .filter(|claim| claim.lane == lane && claim.issue == issue.identifier)
+        .unwrap_or_else(|| {
+            LaneClaim::active(&issue.identifier, lane, actor, source, current_time_ms())
+        })
+}
+
+fn render_prompt_with_claim(
+    template: &str,
+    issue: &TrackerIssue,
+    attempt: Option<u32>,
+    claim: Option<&LaneClaim>,
+) -> Result<String, jade_symphony::prompt::PromptError> {
+    let mut prompt = render_prompt(template, issue, attempt)?;
+    if let Some(claim) = claim {
+        prompt.push_str("\n\n## Assigned Lane Claim\n\n");
+        prompt.push_str("- Preserve this `run=` value in handoff evidence and summaries.\n");
+        prompt.push_str(&format!("- Run: `{}`\n", claim.run));
+        prompt.push_str(&format!("- Claim: `{}`\n", claim.render()));
+        prompt.push_str(&format!("- Registry pointer: `{}`\n", claim.registry));
+    }
+    Ok(prompt)
+}
+
 fn append_runtime_supervision_event(
     config: &RuntimeConfig,
     state: Option<&RuntimeState>,
@@ -5448,6 +5629,7 @@ fn run_loop_runtime_state_for_issue(
     issue: &TrackerIssue,
     config: &RuntimeConfig,
     event: &str,
+    claim: &LaneClaim,
 ) -> RuntimeState {
     let profile = selected_execution_profile(&config.profiles).ok().flatten();
     let mut state = RuntimeState::active(
@@ -5460,6 +5642,7 @@ fn run_loop_runtime_state_for_issue(
     state.attempt_count = next_runtime_attempt_count(existing, &issue.identifier);
     state.branch_name = issue.branch_name.clone();
     state.lane = Some("main".into());
+    state.run_id = Some(claim.run.clone());
     state.profile_id = profile.as_ref().map(|profile| profile.profile_id.clone());
     state.instance_name = profile
         .as_ref()
@@ -5490,6 +5673,7 @@ fn run_loop_runtime_state_with_result(
     state.workspace_path = Some(result.workspace_path.clone());
     state.backend = result.backend.clone();
     state.backend_session_id = result.session_id.clone();
+    state.run_id = result.run_id.clone();
     state.backend_log_path = result.backend_log_path.clone();
     state.backend_attach_command = result.backend_attach_command.clone();
     state.profile_id = result.profile_id.clone();
@@ -5560,6 +5744,7 @@ fn run_loop_ownership_workpad(
     issue: &TrackerIssue,
     ownership: &RuntimeOwnershipMarker,
     event: &str,
+    claim: &LaneClaim,
 ) -> String {
     [
         "## Jade Symphony Workpad".to_string(),
@@ -5567,6 +5752,8 @@ fn run_loop_ownership_workpad(
         "### Runtime Ownership".to_string(),
         format!("- Issue: {} {}", issue.identifier, issue.title),
         format!("- Event: `{event}`"),
+        format!("- Run: `{}`", claim.run),
+        format!("- Claim: `{}`", claim.render()),
         "- This marker is advisory tracker-visible ownership for active `In Progress` work.".into(),
         "- Another run-loop profile should not resume this issue when the marker differs.".into(),
         String::new(),
@@ -5786,6 +5973,7 @@ fn run_loop_handoff_workpad(
         "- Source: `jade-symphony run-loop`".to_string(),
         String::new(),
         "### Run Evidence".to_string(),
+        format!("- Run: `{}`", result.run_id.as_deref().unwrap_or("n/a")),
         format!("- Workspace: `{}`", result.workspace_path.display()),
         format!("- Backend: `{}`", result.backend),
         format!(
@@ -7550,7 +7738,7 @@ mod tests {
         let issue = tracker_issue("Todo");
 
         let result =
-            execute_issue_once_with_workspace_key(&workflow, &config, &issue, "issue-29", 3)
+            execute_issue_once_with_workspace_key(&workflow, &config, &issue, "issue-29", 3, None)
                 .unwrap();
 
         assert!(!result
@@ -7658,6 +7846,16 @@ mod tests {
             created_at: None,
             updated_at: None,
         }
+    }
+
+    fn test_claim(issue: &TrackerIssue) -> LaneClaim {
+        LaneClaim::active(
+            &issue.identifier,
+            LaneClaimLane::Main,
+            LaneClaimActor::Codex,
+            LaneClaimSource::Loop,
+            1_779_000_900_123,
+        )
     }
 
     fn tracker_issue_with_ref(identifier: &str, title: &str, state: &str) -> TrackerIssue {
@@ -8734,9 +8932,10 @@ mod tests {
     #[test]
     fn review_worker_selection_skips_review_agent_field_claim() {
         let mut queued = tracker_issue_with_ref("#67", "Queued review", "Agent Review");
+        let claim = review_claim_for_issue(&queued, "review:#67:fake-reviewer");
         queued.project_fields.insert(
             "Review Agent".into(),
-            serde_json::Value::String(review_claim_field_value("review:#67:fake-reviewer")),
+            serde_json::Value::String(claim.render()),
         );
         let ready = tracker_issue_with_ref("#68", "Ready review", "Agent Review");
 
@@ -9071,8 +9270,9 @@ mod tests {
         let issue = tracker_issue("In Progress");
         let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
         let ownership = run_loop_runtime_ownership(&issue, &config, &handoff).unwrap();
+        let claim = test_claim(&issue);
 
-        let workpad = run_loop_ownership_workpad(&issue, &ownership, "Resumed");
+        let workpad = run_loop_ownership_workpad(&issue, &ownership, "Resumed", &claim);
 
         assert!(workpad.contains("jade-symphony-runtime-ownership"));
         assert_eq!(
@@ -9242,9 +9442,11 @@ mod tests {
     fn run_loop_runtime_state_increments_same_issue_attempts() {
         let config = test_config();
         let issue = tracker_issue("In Progress");
-        let existing = run_loop_runtime_state_for_issue(None, &issue, &config, "Claimed");
+        let claim = test_claim(&issue);
+        let existing = run_loop_runtime_state_for_issue(None, &issue, &config, "Claimed", &claim);
 
-        let state = run_loop_runtime_state_for_issue(Some(&existing), &issue, &config, "Resumed");
+        let state =
+            run_loop_runtime_state_for_issue(Some(&existing), &issue, &config, "Resumed", &claim);
 
         assert_eq!(state.attempt_count, 2);
         assert_eq!(
@@ -9264,7 +9466,8 @@ mod tests {
     fn run_loop_runtime_state_records_result_and_transition() {
         let config = test_config();
         let issue = tracker_issue("In Progress");
-        let state = run_loop_runtime_state_for_issue(None, &issue, &config, "Claimed");
+        let claim = test_claim(&issue);
+        let state = run_loop_runtime_state_for_issue(None, &issue, &config, "Claimed", &claim);
         let result = IssueExecutionResult {
             workspace_path: PathBuf::from("/tmp/jade/issue-29"),
             backend: "dry-run".into(),
@@ -9273,6 +9476,7 @@ mod tests {
             success: true,
             pending_session: false,
             session_id: Some("session-29".into()),
+            run_id: Some(claim.run.clone()),
             backend_log_path: None,
             backend_attach_command: None,
             message: "ok".into(),
@@ -9321,7 +9525,8 @@ mod tests {
     fn run_loop_runtime_state_records_pending_tmux_session_metadata() {
         let config = test_config();
         let issue = tracker_issue("In Progress");
-        let state = run_loop_runtime_state_for_issue(None, &issue, &config, "Claimed");
+        let claim = test_claim(&issue);
+        let state = run_loop_runtime_state_for_issue(None, &issue, &config, "Claimed", &claim);
         let result = IssueExecutionResult {
             workspace_path: PathBuf::from("/tmp/jade/issue-220"),
             backend: "tmux".into(),
@@ -9330,6 +9535,7 @@ mod tests {
             success: false,
             pending_session: true,
             session_id: Some("jade-main-220".into()),
+            run_id: Some(claim.run.clone()),
             backend_log_path: Some(PathBuf::from("/tmp/jade/logs/tmux/jade-main-220.log")),
             backend_attach_command: Some("tmux attach-session -t jade-main-220".into()),
             message: "tmux session running".into(),
@@ -9421,6 +9627,7 @@ mod tests {
             success: true,
             pending_session: false,
             session_id: Some("session-33".into()),
+            run_id: None,
             backend_log_path: None,
             backend_attach_command: None,
             message: "ok".into(),
@@ -9546,6 +9753,7 @@ mod tests {
             success: true,
             pending_session: false,
             session_id: Some("session-33".into()),
+            run_id: None,
             backend_log_path: None,
             backend_attach_command: None,
             message: "ok".into(),
@@ -9601,6 +9809,7 @@ mod tests {
             success: false,
             pending_session: false,
             session_id: Some("session-63".into()),
+            run_id: None,
             backend_log_path: None,
             backend_attach_command: None,
             message: "Codex subprocess exited with status 1".into(),
@@ -9705,6 +9914,7 @@ mod tests {
             success: true,
             pending_session: false,
             session_id: Some("session-57".into()),
+            run_id: None,
             backend_log_path: None,
             backend_attach_command: None,
             message: "ok".into(),
@@ -9755,6 +9965,7 @@ mod tests {
             success: true,
             pending_session: false,
             session_id: Some("session-57".into()),
+            run_id: None,
             backend_log_path: None,
             backend_attach_command: None,
             message: "ok".into(),

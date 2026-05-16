@@ -265,6 +265,12 @@ apply lane-specific claim checks. Main work uses the `Main Agent` Project field
 as a soft claim-lock hint while still processing one active runtime issue per
 loop tick. Merge work uses the `Merging Agent` Project field and can process
 multiple guarded merge slots in one bounded loop.
+Lane claim fields are latest-run audit pointers, not append-only logs. New
+values use `v=1 lane=<main|review|merge> actor=<codex|gemini|claude|human>
+source=<loop|manual|goal> issue=#N run=<id> state=<active|done|stale|failed|superseded>
+thread=<codex-link|unknown> registry=run/<id>`. Keep full paths and terminal
+logs in the session registry or workpad, and update terminal completed work to
+`state=done` instead of clearing useful claim evidence by default.
 For supervised merge terminals, use `merge-session WORKFLOW '#issue' --write`
 on a `Merging` issue. It uses the shared `agent-session` lane path to claim the
 `Merging Agent` field, start the merge prompt in tmux, and write attach/log

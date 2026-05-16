@@ -63,6 +63,8 @@ question, but do not edit files under
    scope, then rerun the relevant checks.
 7. Update the workpad with context, decisions or assumptions, changed surfaces,
    verification evidence, and handoff notes.
+   Preserve the assigned `run=` value from the lane claim in all handoff
+   evidence, PR summaries, and workpad updates.
 8. Open or update exactly one PR for this issue with concise validation
    evidence.
 9. Move locally complete main-agent work to `Agent Review` only.

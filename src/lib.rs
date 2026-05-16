@@ -8,6 +8,7 @@ pub mod event_log;
 pub mod git_handoff;
 pub mod handoff;
 pub mod issue_forge;
+pub mod lane_claim;
 pub mod merge_lane;
 pub mod model;
 pub mod observability_api;

@@ -26,6 +26,8 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
 - Confirm the issue is in `Agent Review` before starting review.
 - Claim `Review Agent` through `review-claim` or the configured `review-loop`
   before starting manual or automated review work.
+- Preserve the assigned structured claim `run=` in review evidence, workpad
+  notes, and any handoff summary.
 - Confirm there is one clear PR or handoff target.
 - Compare the PR against the issue goal, guardrails, expected outcome, and
   verification evidence.

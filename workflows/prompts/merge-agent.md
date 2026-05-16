@@ -25,6 +25,8 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
 
 - Confirm the issue is in `Merging` before attempting to land.
 - Confirm exactly one reliable PR target exists.
+- Preserve the assigned structured claim `run=` in merge evidence, workpad
+  notes, and final summaries.
 - Refresh the PR state, review decision, checks, mergeability, base branch, and
   linked issue evidence before merge.
 - Merge only when the PR is clean, current, and approved by the Project state.

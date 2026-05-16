@@ -16,13 +16,13 @@ submodule for source-faithful bootstrap work.
 - `docs/bootstrap/references/openai-symphony/SPEC.md`
 
 Use this as the protocol baseline. If Jade Symphony diverges, document the
-divergence explicitly in Jade-specific docs.
+divergence explicitly in Jade Symphony-specific docs.
 
 ## Official Reference Workflow
 
 - `docs/bootstrap/references/openai-symphony/elixir/WORKFLOW.md`
 
-Use this as the source-faithful workflow reference. Jade-specific workflow
+Use this as the source-faithful workflow reference. Jade Symphony-specific workflow
 changes belong in `docs/bootstrap/JADE_WORKFLOW.md`, not inside the upstream
 file.
 

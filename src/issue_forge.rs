@@ -561,7 +561,7 @@ fn issue_markdown_from_interactive_input(
     );
     draft = draft.replace(
         "### Completion Criteria\n\n- TBD",
-        "### Completion Criteria\n\n- The issue contract passes `jade-symphony forge-validate`.\n- Implementation and documentation are limited to the issue scope.",
+        "### Completion Criteria\n\n- The issue contract passes `jade-symphony forge validate`.\n- Implementation and documentation are limited to the issue scope.",
     );
     draft = draft.replace(
         "### Functional Verification\n\n- TBD",
@@ -788,7 +788,7 @@ fn repaired_draft(title: &str, markdown: &str, decision: &GateDecision) -> Strin
     );
     draft = draft.replace(
         "### Decisions\n\n- TBD",
-        "### Decisions\n\n- Use Issue Forge repair to convert rough input into the Jade quality template.",
+        "### Decisions\n\n- Use Issue Forge repair to convert rough input into the Jade Symphony quality template.",
     );
     let assumptions = if decision.missing.is_empty() {
         "- Existing source input is sufficient for an initial executable draft.".to_string()
@@ -816,7 +816,7 @@ fn repaired_draft(title: &str, markdown: &str, decision: &GateDecision) -> Strin
     );
     draft = draft.replace(
         "## Current State\n\nTBD",
-        "## Current State\n\nRough issue input exists and has been repaired into the Jade issue contract shape.",
+        "## Current State\n\nRough issue input exists and has been repaired into the Jade Symphony issue contract shape.",
     );
     draft = draft.replace(
         "## Deliverable Shape\n\nTBD",
@@ -836,7 +836,7 @@ fn repaired_draft(title: &str, markdown: &str, decision: &GateDecision) -> Strin
     );
     draft = draft.replace(
         "### Functional Verification\n\n- TBD",
-        "### Functional Verification\n\n- Run `jade-symphony forge-validate` on the repaired draft.",
+        "### Functional Verification\n\n- Run `jade-symphony forge validate` on the repaired draft.",
     );
     draft
 }

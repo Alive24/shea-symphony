@@ -979,7 +979,7 @@ mod tests {
     fn parses_actor_and_git_identity_config() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\nidentity:\n  actor_role: review_agent\n  actor_label: Gemini Review Runner\n  git:\n    name: Jade Review Bot\n    email: jade-review@example.invalid\n    signing_key: ABC123\n    extra:\n      jade.actorRole: review_agent\n---\nPrompt",
+            "---\nidentity:\n  actor_role: review_agent\n  actor_label: Gemini Review Runner\n  git:\n    name: Jade Symphony Review Bot\n    email: jade-review@example.invalid\n    signing_key: ABC123\n    extra:\n      jade.actorRole: review_agent\n---\nPrompt",
         )
         .unwrap();
         let config =
@@ -989,7 +989,7 @@ mod tests {
         assert_eq!(config.identity.actor_label, "Gemini Review Runner");
         assert_eq!(
             config.identity.git.author().as_deref(),
-            Some("Jade Review Bot <jade-review@example.invalid>")
+            Some("Jade Symphony Review Bot <jade-review@example.invalid>")
         );
         assert_eq!(
             config

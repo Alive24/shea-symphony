@@ -88,8 +88,8 @@ The canonical workflow now uses the local `tmux` main-agent backend. A write
 tick starts an attachable tmux session, records its attach command and log path,
 persists a session registry record under the configured artifact root, and
 leaves the issue active until real implementation/handoff evidence exists.
-For Codex-backed tmux sessions, Jade captures the pane before prompt injection.
-If the Codex workspace trust prompt is visible in a Jade-created issue worktree,
+For Codex-backed tmux sessions, Jade Symphony captures the pane before prompt injection.
+If the Codex workspace trust prompt is visible in a Jade Symphony-created issue worktree,
 the backend sends two `C-m` submissions, waits for a ready Codex viewport, and
 only then pastes the rendered issue prompt. Set
 `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to opt out; when disabled, or when readiness
@@ -150,7 +150,7 @@ If Gemini exits, refuses the workspace trust check, or times out before
 returning a review report, `review-loop` records terminal workpad/ledger
 evidence, clears the `Review Agent` Project claim, and leaves the issue in
 `Agent Review` for retry after the operator fixes the backend environment.
-The Gemini subprocess receives the rendered prompt on stdin and Jade closes
+The Gemini subprocess receives the rendered prompt on stdin and Jade Symphony closes
 stdin after writing so headless commands that wait for EOF can proceed.
 
 If Gemini returns successfully but says it could not inspect the PR, workspace,

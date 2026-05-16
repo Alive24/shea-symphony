@@ -6,7 +6,7 @@ Status: Bootstrap v0
 
 Jade Symphony is a private-first team harness for orchestrating coding agents
 against tracked engineering work. It is a Rust implementation of an
-OpenAI-Symphony-style orchestration system with Jade-specific workflow
+OpenAI-Symphony-style orchestration system with Jade Symphony-specific workflow
 extensions.
 
 This document is an extension spec. It does not replace the official OpenAI
@@ -23,7 +23,7 @@ Source order:
 2. `docs/bootstrap/references/openai-symphony/elixir/README.md`
 3. `docs/bootstrap/references/openai-symphony/elixir/WORKFLOW.md`
 4. `docs/bootstrap/references/openai-symphony/elixir/lib/`
-5. Jade-specific bootstrap docs in `docs/bootstrap/`
+5. Jade Symphony-specific bootstrap docs in `docs/bootstrap/`
 
 `SPEC.md` is the normative protocol baseline. The Elixir implementation is the
 feature-parity baseline. Jade Symphony may use different Rust architecture, but
@@ -62,7 +62,7 @@ Jade Symphony does not need to copy Elixir module structure or Phoenix
 implementation details. It does need to preserve the operational capability
 unless the parity roadmap records a deliberate difference.
 
-## Jade Extensions
+## Jade Symphony Extensions
 
 Jade Symphony adds these workflow capabilities on top of the official baseline:
 

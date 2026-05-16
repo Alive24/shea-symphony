@@ -11,7 +11,7 @@ without credentials.
 - `JADE_LINEAR_PROJECT_SLUG` names a Linear project visible to that token.
 
 No tokens or secrets are written to the generated workflow file. The workflow
-uses `$LINEAR_API_KEY`, which Jade resolves at runtime.
+uses `$LINEAR_API_KEY`, which Jade Symphony resolves at runtime.
 
 ## Run
 

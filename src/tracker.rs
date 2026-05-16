@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::process::Command;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -17,6 +17,17 @@ pub trait TrackerAdapter {
     fn fetch_issues_by_states(&self, states: &[String]) -> Result<Vec<TrackerIssue>, TrackerError>;
     fn set_state(&self, issue_ref: &str, normalized_state: &str) -> Result<(), TrackerError>;
     fn upsert_workpad(&self, issue_ref: &str, markdown: &str) -> Result<(), TrackerError>;
+    fn update_issue_content(
+        &self,
+        _issue_ref: &str,
+        _title: &str,
+        _body: &str,
+    ) -> Result<(), TrackerError> {
+        Err(TrackerError::NotImplemented(format!(
+            "{} tracker does not support issue content updates",
+            self.kind()
+        )))
+    }
     fn create_follow_up_issue(&self, input: FollowUpIssueInput) -> Result<String, TrackerError>;
     fn add_issue_to_project(&self, issue_id: &str) -> Result<(), TrackerError>;
     fn set_project_field(
@@ -269,6 +280,15 @@ impl TrackerAdapter for MemoryTracker {
         Ok(())
     }
 
+    fn update_issue_content(
+        &self,
+        _issue_ref: &str,
+        _title: &str,
+        _body: &str,
+    ) -> Result<(), TrackerError> {
+        Ok(())
+    }
+
     fn create_follow_up_issue(&self, input: FollowUpIssueInput) -> Result<String, TrackerError> {
         Ok(format!("dry-run:{}", input.title))
     }
@@ -483,6 +503,21 @@ impl TrackerAdapter for GithubProjectV2Adapter {
         }
 
         GithubProjectV2GhClient::new(&self.config).upsert_workpad(issue_ref, markdown)
+    }
+
+    fn update_issue_content(
+        &self,
+        issue_ref: &str,
+        title: &str,
+        body: &str,
+    ) -> Result<(), TrackerError> {
+        if self.config.tracker.fixture_path.is_some() {
+            return Err(TrackerError::IntegrationUnavailable(
+                "GitHub Project v2 fixture mode cannot update live issue content".into(),
+            ));
+        }
+
+        GithubProjectV2GhClient::new(&self.config).update_issue_content(issue_ref, title, body)
     }
 
     fn create_follow_up_issue(&self, input: FollowUpIssueInput) -> Result<String, TrackerError> {
@@ -802,6 +837,66 @@ impl GithubProjectV2GhClient {
                     String::from_utf8_lossy(&output.stderr).trim().to_string(),
                 ));
             }
+        }
+
+        Ok(())
+    }
+
+    fn update_issue_content(
+        &self,
+        issue_ref: &str,
+        title: &str,
+        body: &str,
+    ) -> Result<(), TrackerError> {
+        if !gh_available() {
+            return Err(TrackerError::IntegrationUnavailable(
+                "GitHub issue editing requires the `gh` CLI on PATH".into(),
+            ));
+        }
+        let owner = self
+            .config
+            .tracker
+            .owner
+            .as_deref()
+            .ok_or_else(|| TrackerError::Payload("tracker.owner is required".into()))?;
+        let repo = self
+            .config
+            .tracker
+            .repo
+            .as_deref()
+            .ok_or_else(|| TrackerError::Payload("tracker.repo is required".into()))?;
+        let number = github_issue_number(issue_ref).ok_or_else(|| {
+            TrackerError::Payload(format!(
+                "issue ref {issue_ref:?} is not a GitHub issue number"
+            ))
+        })?;
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis())
+            .unwrap_or_default();
+        let body_path =
+            std::env::temp_dir().join(format!("jade-symphony-issue-body-{number}-{nonce}.md"));
+        fs::write(&body_path, body)
+            .map_err(|error| TrackerError::IntegrationUnavailable(error.to_string()))?;
+        let output = Command::new("gh")
+            .args([
+                "issue",
+                "edit",
+                &number.to_string(),
+                "--repo",
+                &format!("{owner}/{repo}"),
+                "--title",
+                title,
+                "--body-file",
+            ])
+            .arg(&body_path)
+            .output()
+            .map_err(|error| TrackerError::IntegrationUnavailable(error.to_string()))?;
+        let _ = fs::remove_file(&body_path);
+        if !output.status.success() {
+            return Err(TrackerError::IntegrationUnavailable(
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ));
         }
 
         Ok(())

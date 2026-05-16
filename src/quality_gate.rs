@@ -55,7 +55,9 @@ pub fn evaluate_issue(issue: &TrackerIssue) -> GateDecision {
             kind: GateDecisionKind::NeedToClarify,
             missing,
             assumptions: Vec::new(),
-            notes: vec!["Issue contract does not yet match the Jade quality template.".into()],
+            notes: vec![
+                "Issue contract does not yet match the Jade Symphony quality template.".into(),
+            ],
         };
     }
 

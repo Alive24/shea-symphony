@@ -8,7 +8,7 @@ private-first team harness for orchestrating coding agents.
 - Official OpenAI Symphony material lives under
   `docs/bootstrap/references/openai-symphony` as a Git submodule.
 - Do not edit the official submodule directly.
-- Jade-specific interpretation and implementation decisions live in this
+- Jade Symphony-specific interpretation and implementation decisions live in this
   directory.
 - Future implementation code should live outside `docs/bootstrap`.
 

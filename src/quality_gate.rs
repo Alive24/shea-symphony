@@ -571,9 +571,14 @@ fn verification_commands(markdown: &str) -> Vec<String> {
             let Some(raw) = line.trim().strip_prefix('-') else {
                 return Vec::new();
             };
-            let value = clean_markdown_value(raw);
-            if looks_like_command(&value) {
+            let value = strip_checkbox_marker(&clean_markdown_value(raw));
+            let inline_commands = inline_code_commands(&value);
+            if !inline_commands.is_empty() {
+                inline_commands
+            } else if looks_like_command(&value) {
                 vec![value]
+            } else if let Some(command) = verification_command_after_run_prefix(&value) {
+                vec![command]
             } else if is_standard_rust_verification_phrase(&value) {
                 standard_rust_verification_commands()
             } else {
@@ -635,6 +640,37 @@ fn looks_like_command(value: &str) -> bool {
         value.split_whitespace().next(),
         Some("cargo" | "gh" | "git" | "pnpm" | "npm" | "node")
     )
+}
+
+fn strip_checkbox_marker(value: &str) -> String {
+    let trimmed = value.trim();
+    for marker in ["[ ]", "[x]", "[X]"] {
+        if let Some(rest) = trimmed.strip_prefix(marker) {
+            return rest.trim().to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+fn inline_code_commands(value: &str) -> Vec<String> {
+    value
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .map(str::trim)
+        .filter(|candidate| looks_like_command(candidate))
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn verification_command_after_run_prefix(value: &str) -> Option<String> {
+    let rest = value
+        .strip_prefix("Run ")
+        .or_else(|| value.strip_prefix("run "))
+        .or_else(|| value.strip_prefix("Execute "))
+        .or_else(|| value.strip_prefix("execute "))?
+        .trim();
+    looks_like_command(rest).then(|| clean_markdown_value(rest))
 }
 
 fn is_standard_rust_verification_phrase(value: &str) -> bool {
@@ -980,6 +1016,28 @@ mod tests {
             &["src/quality_gate.rs"],
             &["Run the standard Rust verification suite."],
         );
+
+        let decision = evaluate_issue_with_source_alignment(
+            &issue(Some(body)),
+            temp.path(),
+            Some("Alive24/jade-symphony"),
+        );
+
+        assert!(decision.is_dispatchable(), "{decision:?}");
+    }
+
+    #[test]
+    fn source_alignment_accepts_checkbox_run_verification_commands() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("src")).unwrap();
+        std::fs::write(temp.path().join("src/quality_gate.rs"), "").unwrap();
+        let body = aligned_body(
+            "Alive24/jade-symphony",
+            &[],
+            &["src/quality_gate.rs"],
+            &["cargo test"],
+        )
+        .replace("- `cargo test`", "- [ ] Run `cargo test`");
 
         let decision = evaluate_issue_with_source_alignment(
             &issue(Some(body)),

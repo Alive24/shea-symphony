@@ -284,6 +284,7 @@ mod tests {
                     merge_state_status: None,
                     review_decision: None,
                     base_ref_name: None,
+                    head_ref_name: None,
                 })
                 .into_iter()
                 .collect(),

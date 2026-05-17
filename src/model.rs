@@ -22,6 +22,8 @@ pub struct LinkedPullRequest {
     pub review_decision: Option<String>,
     #[serde(default)]
     pub base_ref_name: Option<String>,
+    #[serde(default)]
+    pub head_ref_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

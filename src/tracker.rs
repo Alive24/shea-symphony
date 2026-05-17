@@ -1582,6 +1582,8 @@ query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
                   url
                   state
                   isDraft
+                  baseRefName
+                  headRefName
                 }}
               }}
               comments(first: 20) {{
@@ -2290,6 +2292,14 @@ fn pull_requests_from_issue(issue: &serde_json::Value) -> Vec<LinkedPullRequest>
                 .and_then(serde_json::Value::as_str)
                 .map(ToOwned::to_owned),
             is_draft: node.get("isDraft").and_then(serde_json::Value::as_bool),
+            base_ref_name: node
+                .get("baseRefName")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned),
+            head_ref_name: node
+                .get("headRefName")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned),
             ..Default::default()
         })
         .collect()
@@ -2365,6 +2375,7 @@ fn linked_pull_request_from_url(url: &str) -> LinkedPullRequest {
         merge_state_status: None,
         review_decision: None,
         base_ref_name: None,
+        head_ref_name: None,
     }
 }
 
@@ -3393,6 +3404,7 @@ mod tests {
             merge_state_status: None,
             review_decision: None,
             base_ref_name: None,
+            head_ref_name: None,
         };
         let discovered_duplicate =
             linked_pull_request_from_url("https://github.com/Alive24/jade-symphony/pull/98");

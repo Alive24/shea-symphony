@@ -587,6 +587,7 @@ mod tests {
             merge_state_status: Some("CLEAN".into()),
             review_decision: Some("APPROVED".into()),
             base_ref_name: Some("main".into()),
+            head_ref_name: None,
         }
     }
 

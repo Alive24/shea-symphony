@@ -18,8 +18,8 @@ use jade_symphony::doctor::{
     audit_project_issues, audit_project_issues_with_context, draft_pr_repair_candidates,
     human_review_repair_candidates, render_doctor_repair_workpad,
     render_human_review_repair_workpad, render_project_audit_report,
-    render_project_audit_report_json, ProjectAuditReport, ProjectDoctorContext,
-    AGENT_REVIEW_DRAFT_PR,
+    render_project_audit_report_json, AuditSeverity, ProjectAuditReport, ProjectAuditViolation,
+    ProjectDoctorContext, AGENT_REVIEW_DRAFT_PR,
 };
 use jade_symphony::event_log::{
     EventLog, EventRecord, TrackerMutationAuditInput, TrackerMutationAuditRecord,
@@ -35,6 +35,11 @@ use jade_symphony::handoff::{
     IssueHandoffPlan,
 };
 use jade_symphony::issue_forge::{next_clarification_question, ForgeValidationReport};
+use jade_symphony::issue_workspace::{
+    discover_issue_workspaces_from_parts, git_worktree_list, infer_issue_ref_from_branch_or_path,
+    render_workspace_adoption_workpad, validate_workspace_adoption, IssueWorkspaceCandidate,
+    IssueWorkspaceReport,
+};
 use jade_symphony::lane_claim::{
     LaneClaim, LaneClaimActor, LaneClaimLane, LaneClaimSource, LaneClaimState,
 };
@@ -148,6 +153,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             workflow_path,
             write,
         } => cleanup_workspaces(workflow_path, write),
+        Command::WorkspaceList { workflow_path } => workspace_list(workflow_path),
+        Command::WorkspaceShow {
+            workflow_path,
+            issue_ref,
+        } => workspace_show(workflow_path, issue_ref),
+        Command::WorkspaceAdopt {
+            workflow_path,
+            issue_ref,
+            path,
+            write,
+        } => workspace_adopt(workflow_path, issue_ref, path, write),
         Command::MergeOnce {
             workflow_path,
             write,
@@ -3102,6 +3118,7 @@ fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut report = audit_project_issues_with_context(&issues, Some(&context));
     report.integration_gaps = integration_gaps;
+    append_workspace_doctor_violations(&mut report, &config, &issues);
 
     match &options.action {
         Some(DoctorAction::Repair(repair)) => {
@@ -3247,6 +3264,74 @@ fn apply_doctor_auto_fix(
         }
     }
     Ok(())
+}
+
+fn append_workspace_doctor_violations(
+    report: &mut ProjectAuditReport,
+    config: &RuntimeConfig,
+    issues: &[TrackerIssue],
+) {
+    let registry = match load_session_registry(&session_registry_path(config)) {
+        Ok(registry) => registry,
+        Err(error) => {
+            report
+                .integration_gaps
+                .push(format!("workspace_session_registry_unavailable: {error}"));
+            return;
+        }
+    };
+    let worktrees = match std::env::current_dir()
+        .ok()
+        .and_then(|cwd| git_worktree_list(&cwd).ok())
+    {
+        Some(worktrees) => worktrees,
+        None => {
+            report
+                .integration_gaps
+                .push("workspace_git_worktree_scan_unavailable".into());
+            return;
+        }
+    };
+
+    for issue in issues {
+        if !matches!(
+            issue.normalized_state().as_str(),
+            "in progress" | "agent review" | "rework" | "merging"
+        ) {
+            continue;
+        }
+        let workspace_report = discover_issue_workspaces_from_parts(
+            issue,
+            &registry.sessions,
+            &worktrees,
+            &config.tracker.workpad.marker,
+        );
+        if workspace_report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("multiple strong"))
+        {
+            report.violations.push(ProjectAuditViolation {
+                issue_ref: issue.identifier.clone(),
+                title: issue.title.clone(),
+                state: issue.state.clone(),
+                severity: AuditSeverity::Warning,
+                code: "workspace_ambiguous_candidates".into(),
+                message: format!(
+                    "Issue has {} strong workspace candidates.",
+                    workspace_report
+                        .candidates
+                        .iter()
+                        .filter(|candidate| {
+                            candidate.strength
+                                == jade_symphony::issue_workspace::WorkspaceMatchStrength::Strong
+                        })
+                        .count()
+                ),
+                suggestion: "Run `workspace show <workflow> <issue>` and then `workspace adopt <workflow> <issue> <path> --write` before lane repair uses a worktree.".into(),
+            });
+        }
+    }
 }
 
 fn doctor_repair_issue(
@@ -3902,6 +3987,180 @@ fn cleanup_workspaces(
     }
 
     Ok(())
+}
+
+fn workspace_list(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    let issues = adapter.fetch_issues_by_states(&all_mapped_tracker_states(&config))?;
+    let registry = load_session_registry(&session_registry_path(&config))?;
+    let worktrees = git_worktree_list(&std::env::current_dir()?)?;
+    let mut shown = 0usize;
+
+    for issue in &issues {
+        let report = discover_issue_workspaces_from_parts(
+            issue,
+            &registry.sessions,
+            &worktrees,
+            &config.tracker.workpad.marker,
+        );
+        if report.candidates.is_empty() {
+            continue;
+        }
+        shown += 1;
+        println!(
+            "workspace_list issue={} state={:?} candidates={} canonical={}",
+            issue.identifier,
+            issue.state,
+            report.candidates.len(),
+            report
+                .canonical_index
+                .and_then(|index| report.candidates.get(index))
+                .map(|candidate| candidate.path.display().to_string())
+                .unwrap_or_else(|| "none".into())
+        );
+        for candidate in &report.candidates {
+            println!(
+                "workspace_candidate issue={} strength={} branch={} path={} evidence={}",
+                issue.identifier,
+                candidate.strength.as_str(),
+                candidate.branch.as_deref().unwrap_or("unknown"),
+                candidate.path.display(),
+                evidence_summary(candidate)
+            );
+        }
+    }
+
+    for worktree in worktrees {
+        if let Some(issue_ref) =
+            infer_issue_ref_from_branch_or_path(worktree.branch.as_deref(), &worktree.path)
+        {
+            if !issues.iter().any(|issue| issue.identifier == issue_ref) {
+                println!(
+                    "workspace_orphan_hint issue={} branch={} path={}",
+                    issue_ref,
+                    worktree.branch.as_deref().unwrap_or("unknown"),
+                    worktree.path.display()
+                );
+            }
+        }
+    }
+
+    if shown == 0 {
+        println!("workspace_list=empty");
+    }
+    Ok(())
+}
+
+fn workspace_show(
+    workflow_path: PathBuf,
+    issue_ref: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    let issue = adapter
+        .get_issue(&issue_ref)?
+        .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
+    let registry = load_session_registry(&session_registry_path(&config))?;
+    let worktrees = git_worktree_list(&std::env::current_dir()?)?;
+    let report = discover_issue_workspaces_from_parts(
+        &issue,
+        &registry.sessions,
+        &worktrees,
+        &config.tracker.workpad.marker,
+    );
+    print_workspace_report(&report);
+    Ok(())
+}
+
+fn workspace_adopt(
+    workflow_path: PathBuf,
+    issue_ref: String,
+    path: PathBuf,
+    write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    let issue = adapter
+        .get_issue(&issue_ref)?
+        .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
+    let worktrees = git_worktree_list(&std::env::current_dir()?)?;
+    let candidate = validate_workspace_adoption(&issue, &path, &worktrees)?;
+    let workpad =
+        render_workspace_adoption_workpad(&issue, &config.tracker.workpad.marker, &candidate);
+
+    if !write {
+        println!(
+            "workspace_adopt_dry_run issue={} branch={} path={}",
+            issue.identifier,
+            candidate.branch.as_deref().unwrap_or("unknown"),
+            candidate.path.display()
+        );
+        return Ok(());
+    }
+
+    adapter.upsert_workpad(&issue.identifier, &workpad)?;
+    append_tracker_mutation_audit(
+        &config,
+        TrackerMutationAudit {
+            command: "workspace-adopt",
+            mutation_type: "workpad",
+            issue_ref: Some(&issue.identifier),
+            target: Some(format!("workspace={}", candidate.path.display())),
+            from_state: Some(issue.state.clone()),
+            to_state: None,
+            reason: "operator selected canonical issue worktree",
+        },
+    );
+    println!(
+        "workspace_adopt=ok issue={} branch={} path={}",
+        issue.identifier,
+        candidate.branch.as_deref().unwrap_or("unknown"),
+        candidate.path.display()
+    );
+    Ok(())
+}
+
+fn print_workspace_report(report: &IssueWorkspaceReport) {
+    println!(
+        "workspace_show issue={} candidates={} canonical={}",
+        report.issue_ref,
+        report.candidates.len(),
+        report
+            .canonical_index
+            .and_then(|index| report.candidates.get(index))
+            .map(|candidate| candidate.path.display().to_string())
+            .unwrap_or_else(|| "none".into())
+    );
+    if !report.branch_hints.is_empty() {
+        println!("workspace_branch_hints {}", report.branch_hints.join(","));
+    }
+    for warning in &report.warnings {
+        println!(
+            "workspace_warning issue={} message={}",
+            report.issue_ref, warning
+        );
+    }
+    for candidate in &report.candidates {
+        println!(
+            "workspace_candidate issue={} strength={} branch={} head={} path={} evidence={}",
+            report.issue_ref,
+            candidate.strength.as_str(),
+            candidate.branch.as_deref().unwrap_or("unknown"),
+            candidate.head.as_deref().unwrap_or("unknown"),
+            candidate.path.display(),
+            evidence_summary(candidate)
+        );
+    }
+}
+
+fn evidence_summary(candidate: &IssueWorkspaceCandidate) -> String {
+    candidate
+        .evidence
+        .iter()
+        .map(|evidence| format!("{}:{}", evidence.source, evidence.detail.replace(' ', "_")))
+        .collect::<Vec<_>>()
+        .join("|")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6636,6 +6895,19 @@ enum Command {
         workflow_path: PathBuf,
         write: bool,
     },
+    WorkspaceList {
+        workflow_path: PathBuf,
+    },
+    WorkspaceShow {
+        workflow_path: PathBuf,
+        issue_ref: String,
+    },
+    WorkspaceAdopt {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        path: PathBuf,
+        write: bool,
+    },
     MergeOnce {
         workflow_path: PathBuf,
         write: bool,
@@ -6940,6 +7212,7 @@ enum CliCommand {
     RunLoop(RunLoopArgs),
     #[command(name = "cleanup-workspaces", alias = "workspace-cleanup")]
     CleanupWorkspaces(CleanupWorkspacesArgs),
+    Workspace(WorkspaceArgs),
     #[command(name = "merge-once", alias = "land")]
     MergeOnce(MergeOnceArgs),
     #[command(name = "merge-loop")]
@@ -7159,6 +7432,44 @@ enum CleanCommand {
 struct CleanupWorkspacesArgs {
     #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
     workflow_path: PathBuf,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct WorkspaceArgs {
+    #[command(subcommand)]
+    command: WorkspaceCommandArgs,
+}
+
+#[derive(Debug, Subcommand)]
+enum WorkspaceCommandArgs {
+    List(WorkspaceListArgs),
+    Show(WorkspaceShowArgs),
+    Adopt(WorkspaceAdoptArgs),
+}
+
+#[derive(Debug, Args)]
+struct WorkspaceListArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct WorkspaceShowArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    issue_ref: String,
+}
+
+#[derive(Debug, Args)]
+struct WorkspaceAdoptArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    issue_ref: String,
+    path: PathBuf,
     #[arg(long)]
     write: bool,
     #[arg(long = "dry-run")]
@@ -7694,6 +8005,21 @@ impl TryFrom<Cli> for Command {
                         workflow_path: args.workflow_path,
                         write: args.write,
                     }),
+                    CliCommand::Workspace(args) => match args.command {
+                        WorkspaceCommandArgs::List(list) => Ok(Self::WorkspaceList {
+                            workflow_path: list.workflow_path,
+                        }),
+                        WorkspaceCommandArgs::Show(show) => Ok(Self::WorkspaceShow {
+                            workflow_path: show.workflow_path,
+                            issue_ref: show.issue_ref,
+                        }),
+                        WorkspaceCommandArgs::Adopt(adopt) => Ok(Self::WorkspaceAdopt {
+                            workflow_path: adopt.workflow_path,
+                            issue_ref: adopt.issue_ref,
+                            path: adopt.path,
+                            write: adopt.write,
+                        }),
+                    },
                     CliCommand::MergeOnce(args) => Ok(Self::MergeOnce {
                         workflow_path: args.workflow_path,
                         write: args.write,
@@ -8818,6 +9144,39 @@ mod tests {
             Command::CleanupWorkspaces {
                 workflow_path: PathBuf::from("examples/github-project-workflow.md"),
                 write: false,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_workspace_discovery_commands() {
+        assert_eq!(
+            parse(&["workspace", "list", "workflows/jade-symphony.md"]),
+            Command::WorkspaceList {
+                workflow_path: PathBuf::from("workflows/jade-symphony.md")
+            }
+        );
+        assert_eq!(
+            parse(&["workspace", "show", "workflows/jade-symphony.md", "#253"]),
+            Command::WorkspaceShow {
+                workflow_path: PathBuf::from("workflows/jade-symphony.md"),
+                issue_ref: "#253".into(),
+            }
+        );
+        assert_eq!(
+            parse(&[
+                "workspace",
+                "adopt",
+                "workflows/jade-symphony.md",
+                "#253",
+                "/tmp/issue-253",
+                "--write"
+            ]),
+            Command::WorkspaceAdopt {
+                workflow_path: PathBuf::from("workflows/jade-symphony.md"),
+                issue_ref: "#253".into(),
+                path: PathBuf::from("/tmp/issue-253"),
+                write: true,
             }
         );
     }

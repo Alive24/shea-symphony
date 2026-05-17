@@ -55,23 +55,26 @@ question, but do not edit files under
    blockers/overlaps with the condition that makes the issue claimable.
 3. Work in exactly one isolated workspace and branch for this issue. Do not mix
    unrelated issue scopes in this branch or PR.
-4. Capture a short implementation plan in the workpad before significant edits.
-5. Implement only the accepted issue scope. Keep tracker, backend,
+4. Use `workspace show` when resuming or handoff evidence is ambiguous, and use
+   `workspace adopt` only for an operator-selected worktree that matches the
+   issue branch.
+5. Capture a short implementation plan in the workpad before significant edits.
+6. Implement only the accepted issue scope. Keep tracker, backend,
    observability, Issue Forge, quality gate, and review boundaries normalized
    and traceable to the bootstrap docs.
-6. Run the verification required by the issue. Repair failures that are within
+7. Run the verification required by the issue. Repair failures that are within
    scope, then rerun the relevant checks.
-7. Update the workpad with context, decisions or assumptions, changed surfaces,
+8. Update the workpad with context, decisions or assumptions, changed surfaces,
    verification evidence, and handoff notes.
    Preserve the assigned `run=` value from the lane claim in all handoff
    evidence, PR summaries, and workpad updates.
-8. Open or update exactly one PR for this issue with concise validation
+9. Open or update exactly one PR for this issue with concise validation
    evidence.
-9. Confirm the linked PR is ready, not draft. If every other handoff invariant
+10. Confirm the linked PR is ready, not draft. If every other handoff invariant
    is satisfied and the PR is still draft, mark it ready before moving state;
    if that fails, keep the issue out of `Agent Review` and record the blocker.
-10. Move locally complete main-agent work to `Agent Review` only.
-11. Return to tracker selection only after this issue has a PR/workpad handoff
+11. Move locally complete main-agent work to `Agent Review` only.
+12. Return to tracker selection only after this issue has a PR/workpad handoff
     or a documented blocked state.
 
 ## State And Role Boundaries

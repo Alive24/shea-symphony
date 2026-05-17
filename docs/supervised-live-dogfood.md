@@ -154,24 +154,25 @@ For a bounded Review Agent pass, run:
 ```bash
 export JADE_GEMINI_COMMAND="$(command -v gemini)"
 export GEMINI_CLI_TRUST_WORKSPACE=true
-cargo run -- review-loop workflows/jade-symphony.md --max-iterations 1 --write
+cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
 For a manual/operator-supplied review, use the same CLI authority boundary
 instead of editing the Project board directly:
 
 ```bash
-cargo run -- review-claim workflows/jade-symphony.md '#226' --worker "Manual Gemini Review" --write
-cargo run -- review-pass workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
-cargo run -- review-reject workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --target-state rework --write
+cargo run -- review claim workflows/jade-symphony.md '#226' --worker "Manual Gemini Review" --write
+cargo run -- review pass workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
+cargo run -- review reject workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --target-state rework --write
 ```
 
 Expected outcomes:
 
 - each write-mode Review Agent records a `Review Agent` Project field claim
   before launching the backend;
-- manual review claims use `review-claim`, and terminal manual review routing
-  clears the `Review Agent` claim through the tracker adapter;
+- manual review claims use `review claim`, and terminal manual review routing
+  validates the exact evidence claim before preserving the `Review Agent` field
+  as a terminal structured audit pointer;
 - passed independent review may move the issue to `Human Review`;
 - confirmed findings move the issue to `Rework`;
 - completed but inconclusive automatic review moves to `Rework` with a missing
@@ -192,11 +193,11 @@ Do not use review commands to bypass human acceptance.
 Human Review requires durable pass evidence from the independent Review Agent.
 For GitHub Project #9, do not assume the `Review Agent` claim field is enough:
 doctor expects the canonical review workpad pass marker in the issue comment
-stream, or an explicit review-pass Project field if a future tracker schema adds
+stream, or an explicit manual review pass Project field if a future tracker schema adds
 one.
 Manual Gemini or operator-supplied review notes must be labeled as manual
 evidence, for example with `## Manual Agent Review Evidence`, so operators can
-distinguish them from automatic `review-loop` pass evidence.
+distinguish them from automatic `review loop` pass evidence.
 
 After a human accepts work and moves the issue to `Merging`, use the guarded
 merge lane:

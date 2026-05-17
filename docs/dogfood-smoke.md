@@ -3,7 +3,7 @@
 This is a legacy supervised smoke helper for checking whether Jade Symphony is
 ready to operate against GitHub Project v2 without manual per-issue prompting.
 It is not the canonical dogfood entrypoint; prefer normal lane surfaces such as
-`project-state`, `run-loop`, `review-loop`, `merge-loop`, and `doctor`.
+`project-state`, `run-loop`, `review loop`, `merge-loop`, and `doctor`.
 
 The smoke is intentionally opt-in. It does not create or merge production work
 by itself.

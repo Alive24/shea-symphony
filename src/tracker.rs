@@ -38,6 +38,11 @@ pub trait TrackerAdapter {
     }
     fn create_follow_up_issue(&self, input: FollowUpIssueInput) -> Result<String, TrackerError>;
     fn add_issue_to_project(&self, issue_id: &str) -> Result<(), TrackerError>;
+    fn add_issue_to_project_with_state(
+        &self,
+        issue_id: &str,
+        normalized_state: &str,
+    ) -> Result<(), TrackerError>;
     fn set_project_field(
         &self,
         _issue_ref: &str,
@@ -309,6 +314,14 @@ impl TrackerAdapter for MemoryTracker {
         Ok(())
     }
 
+    fn add_issue_to_project_with_state(
+        &self,
+        _issue_id: &str,
+        _normalized_state: &str,
+    ) -> Result<(), TrackerError> {
+        Ok(())
+    }
+
     fn set_project_field(
         &self,
         _issue_ref: &str,
@@ -560,6 +573,21 @@ impl TrackerAdapter for GithubProjectV2Adapter {
         }
 
         GithubProjectV2GhClient::new(&self.config).add_issue_to_project(issue_id)
+    }
+
+    fn add_issue_to_project_with_state(
+        &self,
+        issue_id: &str,
+        normalized_state: &str,
+    ) -> Result<(), TrackerError> {
+        if self.config.tracker.fixture_path.is_some() {
+            return Err(TrackerError::IntegrationUnavailable(
+                "GitHub Project v2 fixture mode cannot add live project items".into(),
+            ));
+        }
+
+        GithubProjectV2GhClient::new(&self.config)
+            .add_issue_to_project_with_state(issue_id, normalized_state)
     }
 
     fn set_project_field(
@@ -935,8 +963,16 @@ impl GithubProjectV2GhClient {
     }
 
     fn add_issue_to_project(&self, issue_id: &str) -> Result<(), TrackerError> {
+        self.add_issue_to_project_with_state(issue_id, "todo")
+    }
+
+    fn add_issue_to_project_with_state(
+        &self,
+        issue_id: &str,
+        normalized_state: &str,
+    ) -> Result<(), TrackerError> {
         let metadata = self.project_metadata()?;
-        let option_name = self.state_option_name("todo")?;
+        let option_name = self.state_option_name(normalized_state)?;
         let option_id =
             status_option_id(&metadata, &option_name, &self.config.tracker.status_field)?;
         let response = self.graphql(
@@ -2557,6 +2593,24 @@ impl TrackerAdapter for LinearAdapter {
         }
 
         LinearGraphqlClient::new(&self.config).add_issue_to_project(issue_id)
+    }
+
+    fn add_issue_to_project_with_state(
+        &self,
+        issue_id: &str,
+        normalized_state: &str,
+    ) -> Result<(), TrackerError> {
+        if self.fixture_mode() {
+            return Err(TrackerError::IntegrationUnavailable(
+                "Linear fixture mode cannot add live project issues".into(),
+            ));
+        }
+
+        self.add_issue_to_project(issue_id)?;
+        if normalize_state(normalized_state) != "todo" {
+            LinearGraphqlClient::new(&self.config).set_state(issue_id, normalized_state)?;
+        }
+        Ok(())
     }
 
     fn link_pull_request(&self, issue_ref: &str, pr_ref: &str) -> Result<(), TrackerError> {

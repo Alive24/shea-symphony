@@ -777,8 +777,43 @@ fn forge_create(options: ForgeCreateOptions) -> Result<(), Box<dyn std::error::E
     }
 
     let adapter = adapter_from_config(&config);
+    let issue_id = write_forge_created_issue(
+        &config,
+        adapter.as_ref(),
+        ForgeCreateWriteInput {
+            title: report.title,
+            markdown,
+            assignees,
+            status,
+            project_label: &project_label,
+            project_fields: &project_fields,
+        },
+    )?;
+
+    println!(
+        "forge_create=ok issue_id={issue_id} status={} project_fields={}",
+        status.as_str(),
+        project_fields.len()
+    );
+    Ok(())
+}
+
+struct ForgeCreateWriteInput<'a> {
+    title: String,
+    markdown: String,
+    assignees: Vec<String>,
+    status: ForgeStatusArg,
+    project_label: &'a str,
+    project_fields: &'a [ProjectFieldAssignment],
+}
+
+fn write_forge_created_issue(
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    input: ForgeCreateWriteInput<'_>,
+) -> Result<String, Box<dyn std::error::Error>> {
     let existing_issues = adapter.list_dispatchable_issues()?;
-    if let Some(duplicate) = find_duplicate_issue_title(&existing_issues, &report.title) {
+    if let Some(duplicate) = find_duplicate_issue_title(&existing_issues, &input.title) {
         return Err(format!(
             "duplicate tracker issue title detected: {} {}",
             duplicate.identifier,
@@ -788,15 +823,15 @@ fn forge_create(options: ForgeCreateOptions) -> Result<(), Box<dyn std::error::E
     }
 
     let issue_id = adapter.create_follow_up_issue(FollowUpIssueInput {
-        title: report.title,
-        body: markdown,
-        assignees: assignees.clone(),
+        title: input.title,
+        body: input.markdown,
+        assignees: input.assignees,
         project_id: None,
         related_issue_ref: None,
         blocked_by_issue_ref: None,
     })?;
     append_tracker_mutation_audit(
-        &config,
+        config,
         TrackerMutationAudit {
             command: "forge create",
             mutation_type: "issue_create",
@@ -808,38 +843,23 @@ fn forge_create(options: ForgeCreateOptions) -> Result<(), Box<dyn std::error::E
         },
     );
 
-    adapter.add_issue_to_project(&issue_id)?;
+    adapter.add_issue_to_project_with_state(&issue_id, input.status.normalized_state())?;
     append_tracker_mutation_audit(
-        &config,
+        config,
         TrackerMutationAudit {
             command: "forge create",
             mutation_type: "project_add",
             issue_ref: Some(&issue_id),
-            target: Some(project_label),
+            target: Some(input.project_label.into()),
             from_state: None,
-            to_state: Some("todo".into()),
-            reason: "forge issue added to project",
+            to_state: Some(input.status.normalized_state().into()),
+            reason: "forge issue added to project with requested initial status",
         },
     );
-    if status != ForgeStatusArg::Todo {
-        adapter.set_state(&issue_id, status.normalized_state())?;
-        append_tracker_mutation_audit(
-            &config,
-            TrackerMutationAudit {
-                command: "forge create",
-                mutation_type: "status",
-                issue_ref: Some(&issue_id),
-                target: Some(status.as_str().into()),
-                from_state: Some("todo".into()),
-                to_state: Some(status.normalized_state().into()),
-                reason: "forge issue initial status",
-            },
-        );
-    }
-    for assignment in &project_fields {
+    for assignment in input.project_fields {
         adapter.set_project_field(&issue_id, assignment)?;
         append_tracker_mutation_audit(
-            &config,
+            config,
             TrackerMutationAudit {
                 command: "forge create",
                 mutation_type: "project_field",
@@ -852,12 +872,49 @@ fn forge_create(options: ForgeCreateOptions) -> Result<(), Box<dyn std::error::E
         );
     }
 
-    println!(
-        "forge_create=ok issue_id={issue_id} status={} project_fields={}",
-        status.as_str(),
-        project_fields.len()
-    );
-    Ok(())
+    verify_forge_created_issue_status(adapter, &issue_id, input.status)?;
+    Ok(issue_id)
+}
+
+fn verify_forge_created_issue_status(
+    adapter: &dyn TrackerAdapter,
+    issue_id: &str,
+    status: ForgeStatusArg,
+) -> Result<Option<TrackerIssue>, Box<dyn std::error::Error>> {
+    let expected = normalize_state(status.normalized_state());
+    let mut last_state = None;
+
+    for attempt in 0..3 {
+        if let Some(issue) = adapter.get_issue(issue_id)? {
+            let actual = issue.normalized_state();
+            if actual == expected {
+                return Ok(Some(issue));
+            }
+            last_state = Some(issue.state);
+        } else if adapter.kind() == "memory" {
+            return Ok(None);
+        }
+
+        if attempt < 2 {
+            thread::sleep(Duration::from_millis(500));
+        }
+    }
+
+    if let Some(actual) = last_state {
+        Err(format!(
+            "forge create stopped at readback: expected Project status {}, got {:?} for issue {}",
+            status.as_str(),
+            actual,
+            issue_id
+        )
+        .into())
+    } else {
+        Err(format!(
+            "forge create stopped at readback: issue {} was not found in the configured Project after creation",
+            issue_id
+        )
+        .into())
+    }
 }
 
 fn forge_promote(
@@ -10107,6 +10164,7 @@ mod tests {
 
     struct RecordingAdapter {
         operations: RefCell<Vec<String>>,
+        issues: RefCell<BTreeMap<String, TrackerIssue>>,
         linked_pull_requests: RefCell<Vec<jade_symphony::model::LinkedPullRequest>>,
         fail_workpad: bool,
         fail_link_pr: bool,
@@ -10117,6 +10175,7 @@ mod tests {
         fn default() -> Self {
             Self {
                 operations: RefCell::new(Vec::new()),
+                issues: RefCell::new(BTreeMap::new()),
                 linked_pull_requests: RefCell::new(Vec::new()),
                 fail_workpad: false,
                 fail_link_pr: false,
@@ -10144,9 +10203,9 @@ mod tests {
 
         fn get_issue(
             &self,
-            _issue_ref: &str,
+            issue_ref: &str,
         ) -> Result<Option<TrackerIssue>, jade_symphony::tracker::TrackerError> {
-            Ok(None)
+            Ok(self.issues.borrow().get(issue_ref).cloned())
         }
 
         fn fetch_issues_by_states(
@@ -10191,15 +10250,39 @@ mod tests {
 
         fn create_follow_up_issue(
             &self,
-            _input: FollowUpIssueInput,
+            input: FollowUpIssueInput,
         ) -> Result<String, jade_symphony::tracker::TrackerError> {
-            Ok("dry-run:follow-up".into())
+            let issue_id = format!("dry-run:{}", input.title);
+            let mut issue = tracker_issue_with_ref(&issue_id, &input.title, "untriaged");
+            issue.id = issue_id.clone();
+            issue.description = Some(input.body);
+            issue.assignees = input.assignees;
+            self.issues.borrow_mut().insert(issue_id.clone(), issue);
+            self.operations
+                .borrow_mut()
+                .push(format!("create_issue:{issue_id}"));
+            Ok(issue_id)
         }
 
         fn add_issue_to_project(
             &self,
-            _issue_id: &str,
+            issue_id: &str,
         ) -> Result<(), jade_symphony::tracker::TrackerError> {
+            self.add_issue_to_project_with_state(issue_id, "todo")
+        }
+
+        fn add_issue_to_project_with_state(
+            &self,
+            issue_id: &str,
+            normalized_state: &str,
+        ) -> Result<(), jade_symphony::tracker::TrackerError> {
+            let normalized_state = normalize_state(normalized_state);
+            if let Some(issue) = self.issues.borrow_mut().get_mut(issue_id) {
+                issue.state = normalized_state.clone();
+            }
+            self.operations
+                .borrow_mut()
+                .push(format!("add_project:{issue_id}:{normalized_state}"));
             Ok(())
         }
 
@@ -13013,6 +13096,45 @@ mod tests {
             dry_run: false,
         })
         .unwrap();
+    }
+
+    #[test]
+    fn forge_create_write_initializes_backlog_without_status_transition() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.observability.logs_root = temp.path().join("logs");
+        let adapter = RecordingAdapter::default();
+
+        let issue_id = write_forge_created_issue(
+            &config,
+            &adapter,
+            ForgeCreateWriteInput {
+                title: "Create Backlog seed".into(),
+                markdown: forge_contract(),
+                assignees: Vec::new(),
+                status: ForgeStatusArg::Backlog,
+                project_label: "test project",
+                project_fields: &[],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(issue_id, "dry-run:Create Backlog seed");
+        assert_eq!(
+            adapter.operations(),
+            vec![
+                "create_issue:dry-run:Create Backlog seed".to_string(),
+                "add_project:dry-run:Create Backlog seed:backlog".to_string(),
+            ]
+        );
+        assert_eq!(
+            adapter
+                .get_issue(&issue_id)
+                .unwrap()
+                .unwrap()
+                .normalized_state(),
+            "backlog"
+        );
     }
 
     #[test]

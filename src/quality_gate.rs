@@ -609,7 +609,14 @@ fn section_lines(markdown: &str, heading: &str) -> Vec<String> {
 }
 
 fn clean_markdown_value(raw: &str) -> String {
-    raw.trim()
+    let value = raw.trim();
+    let value = value
+        .strip_prefix("[ ]")
+        .or_else(|| value.strip_prefix("[x]"))
+        .or_else(|| value.strip_prefix("[X]"))
+        .unwrap_or(value);
+    value
+        .trim()
         .trim_matches('`')
         .trim()
         .trim_end_matches('.')
@@ -776,6 +783,34 @@ mod tests {
                 "expected UAT Required: {value} to pass"
             );
         }
+    }
+
+    #[test]
+    fn source_alignment_accepts_checkbox_verification_commands() {
+        let body = aligned_body(
+            "Alive24/jade-symphony",
+            &["README.md"],
+            &["src/main.rs"],
+            &[
+                "cargo test",
+                "cargo fmt --check",
+                "cargo clippy --all-targets --all-features -- -D warnings",
+            ],
+        )
+        .replace("- `cargo test`", "- [ ] `cargo test`")
+        .replace("- `cargo fmt --check`", "- [ ] `cargo fmt --check`")
+        .replace(
+            "- `cargo clippy --all-targets --all-features -- -D warnings`",
+            "- [ ] `cargo clippy --all-targets --all-features -- -D warnings`",
+        );
+
+        let decision = evaluate_issue_with_source_alignment(
+            &issue(Some(body)),
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+            Some("Alive24/jade-symphony"),
+        );
+
+        assert!(decision.is_dispatchable(), "{decision:?}");
     }
 
     #[test]

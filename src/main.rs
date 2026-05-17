@@ -903,11 +903,15 @@ fn forge_promote(
     }
 
     if dry_run {
+        let dry_run_readbacks = vec![
+            "`forge promote --dry-run` validated the promoted body and promotion note inputs."
+                .to_string(),
+        ];
         let note = render_promotion_note(
             &source.identifier,
             &report.title,
             &promotion_note,
-            "`forge promote --dry-run` validated the promoted body and promotion note inputs.",
+            &dry_run_readbacks,
         );
         println!(
             "forge_promote_dry_run=ok issue={} from=Backlog to=Todo title={:?}",
@@ -933,6 +937,49 @@ fn forge_promote(
         },
     );
 
+    let content_verified = adapter
+        .get_issue(&source.identifier)
+        .map_err(|error| format!("forge promote stopped at readback: {error}"))?
+        .ok_or_else(|| {
+            format!(
+                "forge promote stopped at readback: issue disappeared after update: {}",
+                source.identifier
+            )
+        })?;
+    if content_verified.title != report.title {
+        return Err(format!(
+            "forge promote stopped at readback: expected title {:?}, got title {:?}",
+            report.title, content_verified.title
+        )
+        .into());
+    }
+
+    let write_readbacks = vec![format!(
+        "`forge promote --write` updated the existing issue content; pre-status readback confirmed issue `{}` title `{}` before the final Project status mutation.",
+        content_verified.identifier, content_verified.title
+    )];
+    let note = render_promotion_note(
+        &source.identifier,
+        &content_verified.title,
+        &promotion_note,
+        &write_readbacks,
+    );
+    adapter
+        .add_issue_comment(&content_verified.identifier, &note)
+        .map_err(|error| format!("forge promote stopped at promotion_note: {error}"))?;
+    append_tracker_mutation_audit(
+        &config,
+        TrackerMutationAudit {
+            command: "forge promote",
+            mutation_type: "comment",
+            issue_ref: Some(&content_verified.identifier),
+            target: Some("Promotion Note".into()),
+            from_state: Some(source.state.clone()),
+            to_state: None,
+            reason: "forge backlog promotion note",
+        },
+    );
+
     adapter
         .set_state(&source.identifier, "todo")
         .map_err(|error| format!("forge promote stopped at set_status: {error}"))?;
@@ -945,16 +992,16 @@ fn forge_promote(
             target: Some("Todo".into()),
             from_state: Some(source.state.clone()),
             to_state: Some("todo".into()),
-            reason: "forge backlog promotion status update",
+            reason: "forge backlog promotion final status update",
         },
     );
 
     let verified = adapter
         .get_issue(&source.identifier)
-        .map_err(|error| format!("forge promote stopped at readback: {error}"))?
+        .map_err(|error| format!("forge promote stopped at final_readback: {error}"))?
         .ok_or_else(|| {
             format!(
-                "forge promote stopped at readback: issue disappeared after update: {}",
+                "forge promote stopped at final_readback: issue disappeared after update: {}",
                 source.identifier
             )
         })?;
@@ -963,39 +1010,14 @@ fn forge_promote(
     let title_ok = verified.title == report.title;
     if !status_ok || !title_ok {
         return Err(format!(
-            "forge promote stopped at readback: expected title {:?} and Todo, got title {:?} and state {:?}",
+            "forge promote stopped at final_readback: expected title {:?} and Todo, got title {:?} and state {:?}",
             report.title, verified.title, verified.state
         )
         .into());
     }
 
-    let note = render_promotion_note(
-        &source.identifier,
-        &verified.title,
-        &promotion_note,
-        &format!(
-            "`forge promote --write` updated the existing issue in place; readback confirmed issue `{}` title `{}` and Project status `Todo`.",
-            verified.identifier, verified.title
-        ),
-    );
-    adapter
-        .add_issue_comment(&verified.identifier, &note)
-        .map_err(|error| format!("forge promote stopped at promotion_note: {error}"))?;
-    append_tracker_mutation_audit(
-        &config,
-        TrackerMutationAudit {
-            command: "forge promote",
-            mutation_type: "comment",
-            issue_ref: Some(&verified.identifier),
-            target: Some("Promotion Note".into()),
-            from_state: Some(source.state.clone()),
-            to_state: Some("todo".into()),
-            reason: "forge backlog promotion note",
-        },
-    );
-
     println!(
-        "forge_promote=ok issue={} status=Todo title={:?} promotion_note=commented",
+        "forge_promote=ok issue={} status=Todo title={:?} promotion_note=commented final_status_mutation=true",
         verified.identifier, verified.title
     );
     Ok(())
@@ -1007,13 +1029,14 @@ struct PromotionNoteInput {
     decisions: Vec<String>,
     scope_changes: Vec<String>,
     dependencies_context: Vec<String>,
+    readback_summaries: Vec<String>,
 }
 
 fn render_promotion_note(
     source_issue: &str,
     promoted_title: &str,
     input: &PromotionNoteInput,
-    verification_readback: &str,
+    generated_readbacks: &[String],
 ) -> String {
     let mut lines = vec![
         "## Promotion Note".to_string(),
@@ -1045,8 +1068,9 @@ fn render_promotion_note(
         String::new(),
         "## Verification Readback".to_string(),
         String::new(),
-        format!("- {verification_readback}"),
     ]);
+    push_markdown_bullets(&mut lines, generated_readbacks);
+    push_markdown_bullets(&mut lines, &input.readback_summaries);
     lines.join("\n")
 }
 
@@ -9162,6 +9186,8 @@ struct PromotionNoteArgs {
     scope_changes: Vec<String>,
     #[arg(long = "dependency-context", required = true)]
     dependencies_context: Vec<String>,
+    #[arg(long = "readback-summary")]
+    readback_summaries: Vec<String>,
 }
 
 #[derive(Debug, Args)]
@@ -9698,6 +9724,11 @@ fn promotion_note_input(args: PromotionNoteArgs) -> Result<PromotionNoteInput, S
         decisions: clean_many(args.decisions, "--decision")?,
         scope_changes: clean_many(args.scope_changes, "--scope-change")?,
         dependencies_context: clean_many(args.dependencies_context, "--dependency-context")?,
+        readback_summaries: args
+            .readback_summaries
+            .into_iter()
+            .map(|value| clean_nonempty(value, "--readback-summary"))
+            .collect::<Result<Vec<_>, _>>()?,
     })
 }
 
@@ -11023,6 +11054,11 @@ mod tests {
         let set_state = help_text(&["set-state", "--help"]);
         assert!(set_state.contains("Usage: jade-symphony set-state"));
         assert!(set_state.contains("<STATE>"));
+
+        let forge_promote = help_text(&["forge", "promote", "--help"]);
+        assert!(forge_promote.contains("Usage: jade-symphony forge promote"));
+        assert!(forge_promote.contains("--operator-confirmation"));
+        assert!(forge_promote.contains("--readback-summary"));
     }
 
     #[test]
@@ -12646,6 +12682,8 @@ mod tests {
             "Promoted body is now executable.".into(),
             "--dependency-context".into(),
             "Dependencies: none.".into(),
+            "--readback-summary".into(),
+            "Operator confirmed the dry-run preview before write.".into(),
             "--dry-run".into(),
         ])
         .unwrap();
@@ -12672,6 +12710,10 @@ mod tests {
             promotion_note.decisions,
             vec!["Keep this as an in-place promotion.".to_string()]
         );
+        assert_eq!(
+            promotion_note.readback_summaries,
+            vec!["Operator confirmed the dry-run preview before write.".to_string()]
+        );
         assert!(!write);
         assert!(dry_run);
     }
@@ -12688,8 +12730,11 @@ mod tests {
                 dependencies_context: vec![
                     "Dependencies: none; related context is non-blocking.".into()
                 ],
+                readback_summaries: vec![
+                    "Operator confirmed the dry-run preview matched the promotion intent.".into(),
+                ],
             },
-            "Readback confirmed issue `#262` and Project status `Todo`.",
+            &["Readback confirmed issue `#262` and Project status `Todo`.".into()],
         );
 
         assert!(note.contains("## Promotion Note"));
@@ -12699,6 +12744,10 @@ mod tests {
         assert!(note.contains("## Major Scope Changes From Seed"));
         assert!(note.contains("## Dependencies and Context"));
         assert!(note.contains("## Verification Readback"));
+        assert!(note.contains("- Readback confirmed issue `#262` and Project status `Todo`."));
+        assert!(
+            note.contains("- Operator confirmed the dry-run preview matched the promotion intent.")
+        );
     }
 
     #[test]

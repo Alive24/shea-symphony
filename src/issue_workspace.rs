@@ -342,17 +342,6 @@ pub fn render_workspace_adoption_workpad(
     marker: &str,
     candidate: &IssueWorkspaceCandidate,
 ) -> String {
-    let mut workpad = issue
-        .description
-        .as_deref()
-        .and_then(|description| {
-            description
-                .find(marker)
-                .map(|index| description[index..].trim())
-        })
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("{marker}\n## Workpad"));
-
     let block = format!(
         "<!-- jade-symphony-workspace-adoption -->\n### Workspace Adoption\n- Issue: `{}`\n- Path: `{}`\n- Branch: `{}`\n- Head: `{}`\n- Source: operator-selected canonical worktree\n<!-- /jade-symphony-workspace-adoption -->",
         issue.identifier,
@@ -361,13 +350,7 @@ pub fn render_workspace_adoption_workpad(
         candidate.head.as_deref().unwrap_or("unknown")
     );
 
-    workpad = replace_or_append_block(
-        &workpad,
-        "<!-- jade-symphony-workspace-adoption -->",
-        "<!-- /jade-symphony-workspace-adoption -->",
-        &block,
-    );
-    workpad
+    format!("{marker}\n{block}")
 }
 
 fn upsert_candidate(
@@ -492,21 +475,6 @@ fn workpad_workspace_hints(description: &str, marker: &str) -> Vec<PathBuf> {
         }
     }
     paths.into_iter().collect()
-}
-
-fn replace_or_append_block(content: &str, start: &str, end: &str, block: &str) -> String {
-    if let Some(start_index) = content.find(start) {
-        if let Some(end_offset) = content[start_index..].find(end) {
-            let end_index = start_index + end_offset + end.len();
-            return format!(
-                "{}{}{}",
-                content[..start_index].trim_end(),
-                block,
-                content[end_index..].trim_start()
-            );
-        }
-    }
-    format!("{}\n\n{}", content.trim_end(), block)
 }
 
 pub fn infer_issue_ref_from_branch_or_path(branch: Option<&str>, path: &Path) -> Option<String> {
@@ -669,6 +637,7 @@ mod tests {
         assert!(body.starts_with("<!-- jade-symphony-workpad -->"));
         assert!(body.contains("Workspace Adoption"));
         assert!(body.contains("/tmp/issue-253"));
+        assert!(!body.contains("/tmp/manual-issue-253"));
     }
 
     #[test]

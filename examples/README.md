@@ -45,6 +45,12 @@ memory-backed. They do not mutate live GitHub Project v2 state.
 | `review-fake-workflow.md` | Fake review backend smoke path over dry-run issues. | Useful for role-bound transition checks. |
 | `llm-gate-workflow.md` | Optional command-backed LLM quality gate fixtures. | Uses shell fixtures in `fixtures/llm-gate-*.sh`; no hosted provider is called. |
 
+## Topology Fixtures
+
+| Fixture | Purpose | Verification |
+| --- | --- | --- |
+| `fixtures/parent-subissue-topology.json` | Dry parent/subissue integration branch topology examples for the documented `#243` parent flow. | `cargo test parent_subissue_topology` |
+
 ## Fixture Data
 
 | Fixture | Used by |
@@ -57,6 +63,7 @@ memory-backed. They do not mutate live GitHub Project v2 state.
 | `fixtures/review-issues.json` | `review-fixture-workflow.md` |
 | `fixtures/llm-gate-issues.json` | `llm-gate-workflow.md` |
 | `fixtures/cockpit-tools-codex-instances.json` | `cockpit-profiles-workflow.md` |
+| `fixtures/parent-subissue-topology.json` | `docs/parent-subissue-topology.md` and `tests/parent_subissue_topology.rs` |
 
 Issue Forge examples:
 

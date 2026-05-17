@@ -1,0 +1,99 @@
+{
+  "fixture": "parent-subissue-topology",
+  "source_of_truth": "github_native_subissues",
+  "happy_path": {
+    "parent_issue": "#243",
+    "native_subissues": ["#272", "#273", "#274"],
+    "parent_integration_branch": "integration/issue-243-parent-subissue-orchestration",
+    "parent_final_pr": {
+      "head": "integration/issue-243-parent-subissue-orchestration",
+      "base": "main",
+      "allowed_when": [
+        "all_native_subissues_done",
+        "all_subissue_prs_merged_into_parent_branch",
+        "parent_workpad_records_subissue_set"
+      ]
+    },
+    "subissues": [
+      {
+        "issue": "#272",
+        "native_parent": "#243",
+        "branch": "feature/issue-272-parent-subissue-topology",
+        "pr_base": "integration/issue-243-parent-subissue-orchestration",
+        "done_allowed_when": [
+          "agent_review_passed",
+          "pr_merged_into_parent_branch",
+          "workpad_records_review_and_merge_evidence"
+        ]
+      },
+      {
+        "issue": "#273",
+        "native_parent": "#243",
+        "branch": "feature/issue-273-parent-subissue-doctor-checks",
+        "pr_base": "integration/issue-243-parent-subissue-orchestration",
+        "done_allowed_when": [
+          "agent_review_passed",
+          "pr_merged_into_parent_branch",
+          "workpad_records_review_and_merge_evidence"
+        ]
+      },
+      {
+        "issue": "#274",
+        "native_parent": "#243",
+        "branch": "feature/issue-274-parent-branch-lane-flows",
+        "pr_base": "integration/issue-243-parent-subissue-orchestration",
+        "done_allowed_when": [
+          "agent_review_passed",
+          "pr_merged_into_parent_branch",
+          "workpad_records_review_and_merge_evidence"
+        ]
+      }
+    ],
+    "parent_human_review_gate": [
+      "all_native_subissues_done",
+      "all_subissue_prs_merged_into_parent_branch",
+      "parent_final_pr_targets_main",
+      "parent_workpad_records_subissue_set",
+      "independent_parent_review_passed"
+    ]
+  },
+  "unsafe_topologies": [
+    {
+      "name": "subissue-pr-targets-main",
+      "issue": "#273",
+      "native_parent": "#243",
+      "pr_base": "main",
+      "violates": "subissue PRs target the parent integration branch by default",
+      "recommended_doctor_invariant": "flag native subissue PRs whose base is main unless an explicit exception is recorded"
+    },
+    {
+      "name": "body-only-hierarchy",
+      "issue": "#274",
+      "claimed_parent": "#243",
+      "native_parent": null,
+      "violates": "GitHub native sub-issue links are the hierarchy source of truth",
+      "recommended_doctor_invariant": "flag parent membership that exists only in body text, workpad notes, or Project fields"
+    },
+    {
+      "name": "subissue-done-before-parent-merge",
+      "issue": "#272",
+      "native_parent": "#243",
+      "state": "Done",
+      "pr_merged_into": null,
+      "violates": "subissue Done means the slice has landed in the parent branch",
+      "recommended_doctor_invariant": "flag Done subissues without merge evidence into the parent integration branch"
+    },
+    {
+      "name": "parent-review-before-subissues-done",
+      "issue": "#243",
+      "state": "Human Review",
+      "native_subissues": [
+        { "issue": "#272", "state": "Done" },
+        { "issue": "#273", "state": "Agent Review" },
+        { "issue": "#274", "state": "Todo" }
+      ],
+      "violates": "parent Human Review waits for all native subissues to be Done",
+      "recommended_doctor_invariant": "flag parent Human Review when any native subissue is not Done"
+    }
+  ]
+}

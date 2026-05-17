@@ -220,6 +220,11 @@ but normal dogfood should not read or mutate Project fields, status, claim locks
 or relationships through raw Project GraphQL or the Project UI. Those are
 break-glass recovery paths.
 
+For parent tracking issues with native GitHub subissues, use
+`docs/parent-subissue-topology.md` as the design source. Native sub-issue links
+define hierarchy, subissue PRs target the parent integration branch by default,
+and the parent issue remains the final Human Review unit.
+
 ## Issue Forge Reflect
 
 Issue Forge Reflect is a Codex skill workflow, not a Jade Symphony CLI

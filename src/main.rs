@@ -1510,14 +1510,10 @@ fn render_manual_review_workpad(
         format!("- Target state: `{target_state}`"),
         String::new(),
         "### Manual Review Evidence".into(),
+        "````md".into(),
     ];
-    lines.extend(
-        evidence
-            .trim()
-            .lines()
-            .map(|line| format!("- {}", line.trim()))
-            .collect::<Vec<_>>(),
-    );
+    lines.extend(evidence.trim().lines().map(str::to_string));
+    lines.push("````".into());
     if pass {
         lines.push(String::new());
         lines.push("- Review pass evidence: `recorded`".into());
@@ -6633,6 +6629,24 @@ fn run_loop_handoff_workpad(
         format!("- Issue: {} {}", issue.identifier, issue.title),
         "- Source: `jade-symphony run-loop`".to_string(),
         String::new(),
+        "### Run-Loop Handoff Checklist".to_string(),
+        "- [x] Read the issue contract, Project state, and existing workpad evidence.".to_string(),
+        "- [x] Prepare or resume the isolated issue workspace and branch.".to_string(),
+        "- [x] Run the configured Main Agent backend for the implementation slice.".to_string(),
+        "- [x] Verify handoff evidence and prepare the PR for Agent Review.".to_string(),
+        String::new(),
+        "### Work Log".to_string(),
+        format!(
+            "- Run `{}` executed with backend `{}`.",
+            result.run_id.as_deref().unwrap_or("n/a"),
+            result.backend
+        ),
+        format!(
+            "- Workspace `{}` was used for implementation evidence.",
+            result.workspace_path.display()
+        ),
+        format!("- Backend message: {}", result.message),
+        String::new(),
         "### Run Evidence".to_string(),
         format!("- Run: `{}`", result.run_id.as_deref().unwrap_or("n/a")),
         format!("- Workspace: `{}`", result.workspace_path.display()),
@@ -10527,6 +10541,9 @@ mod tests {
 
         let workpad = run_loop_handoff_workpad(&issue, &result, &handoff);
 
+        assert!(workpad.contains("### Run-Loop Handoff Checklist"));
+        assert!(workpad.contains("### Work Log"));
+        assert!(workpad.contains("- [x] Read the issue contract"));
         assert!(workpad.contains("### Planned Handoff"));
         assert!(workpad.contains("Actor role: `implementation_agent`"));
         assert!(

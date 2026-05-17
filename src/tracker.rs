@@ -746,10 +746,11 @@ impl GithubProjectV2GhClient {
     fn upsert_workpad(&self, issue_ref: &str, markdown: &str) -> Result<(), TrackerError> {
         let issue = self.resolve_issue(issue_ref)?;
         let marker = &self.config.tracker.workpad.marker;
-        let comment_ids = self.find_workpad_comment_ids(&issue.id, marker)?;
+        let comments = self.find_workpad_comments(&issue.id, marker)?;
         let body = ensure_workpad_marker(markdown, marker);
 
-        if let Some(comment_id) = comment_ids.first() {
+        if let Some((comment_id, existing_body)) = comments.first() {
+            let body = merge_workpad_body(existing_body, &body, marker);
             self.graphql(
                 GITHUB_UPDATE_ISSUE_COMMENT_MUTATION,
                 &[("commentId", comment_id.clone()), ("body", body)],
@@ -761,7 +762,7 @@ impl GithubProjectV2GhClient {
             )?;
         }
 
-        for duplicate_id in comment_ids.iter().skip(1) {
+        for (duplicate_id, _) in comments.iter().skip(1) {
             self.graphql(
                 GITHUB_UPDATE_ISSUE_COMMENT_MUTATION,
                 &[
@@ -1085,11 +1086,11 @@ impl GithubProjectV2GhClient {
         Ok(())
     }
 
-    fn find_workpad_comment_ids(
+    fn find_workpad_comments(
         &self,
         issue_id: &str,
         marker: &str,
-    ) -> Result<Vec<String>, TrackerError> {
+    ) -> Result<Vec<(String, String)>, TrackerError> {
         let response = self.graphql(
             GITHUB_ISSUE_COMMENTS_QUERY,
             &[("issueId", issue_id.to_string())],
@@ -1102,10 +1103,8 @@ impl GithubProjectV2GhClient {
             .filter_map(|comment| {
                 let body = comment.get("body")?.as_str()?;
                 if body.contains(marker) {
-                    comment
-                        .get("id")
-                        .and_then(serde_json::Value::as_str)
-                        .map(ToOwned::to_owned)
+                    let id = comment.get("id")?.as_str()?;
+                    Some((id.to_string(), body.to_string()))
                 } else {
                     None
                 }
@@ -1852,6 +1851,63 @@ fn ensure_workpad_marker(markdown: &str, marker: &str) -> String {
     } else {
         format!("{marker}\n{markdown}")
     }
+}
+
+fn merge_workpad_body(existing: &str, incoming: &str, marker: &str) -> String {
+    let existing = ensure_workpad_marker(existing, marker);
+    let incoming = ensure_workpad_marker(incoming, marker);
+    let mut merged = replace_runtime_ownership_block(&existing, &incoming);
+    let incoming_without_ownership = strip_runtime_ownership_block(&incoming);
+    let incoming_content = strip_workpad_marker(&incoming_without_ownership, marker);
+
+    if incoming_content.trim().is_empty() || merged.contains(incoming_content.trim()) {
+        return merged;
+    }
+
+    if !merged.ends_with('\n') {
+        merged.push('\n');
+    }
+    merged.push_str("\n---\n\n");
+    merged.push_str(incoming_content.trim());
+    merged
+}
+
+fn strip_workpad_marker<'a>(markdown: &'a str, marker: &str) -> &'a str {
+    markdown
+        .strip_prefix(marker)
+        .map(str::trim_start)
+        .unwrap_or(markdown)
+}
+
+fn replace_runtime_ownership_block(existing: &str, incoming: &str) -> String {
+    const START: &str = "<!-- jade-symphony-runtime-ownership -->";
+    const END: &str = "<!-- /jade-symphony-runtime-ownership -->";
+
+    let Some(incoming_block) = marked_block(incoming, START, END) else {
+        return existing.to_string();
+    };
+    let Some(existing_block) = marked_block(existing, START, END) else {
+        return existing.to_string();
+    };
+    existing.replacen(existing_block, incoming_block, 1)
+}
+
+fn strip_runtime_ownership_block(markdown: &str) -> String {
+    const START: &str = "<!-- jade-symphony-runtime-ownership -->";
+    const END: &str = "<!-- /jade-symphony-runtime-ownership -->";
+
+    let Some(block) = marked_block(markdown, START, END) else {
+        return markdown.to_string();
+    };
+    markdown.replacen(block, "", 1)
+}
+
+fn marked_block<'a>(text: &'a str, start: &str, end: &str) -> Option<&'a str> {
+    let start_index = text.find(start)?;
+    let after_start = &text[start_index + start.len()..];
+    let end_offset = after_start.find(end)?;
+    let end_index = start_index + start.len() + end_offset + end.len();
+    Some(&text[start_index..end_index])
 }
 
 fn status_option_id(
@@ -3852,6 +3908,42 @@ Prompt
         let body = ensure_workpad_marker(&body, marker);
         let body = ensure_workpad_marker(&body, marker);
         assert_eq!(body.matches(marker).count(), 1);
+    }
+
+    #[test]
+    fn merge_workpad_body_appends_without_losing_existing_sections() {
+        let marker = "<!-- jade-symphony-workpad -->";
+        let existing =
+            format!("{marker}\n## Jade Symphony Workpad\n\n### Plan\n- [ ] inspect issue");
+        let incoming = "## Agent Review\n\n### Manual Review Evidence\n````md\npass\n````";
+
+        let body = merge_workpad_body(&existing, incoming, marker);
+
+        assert_eq!(body.matches(marker).count(), 1);
+        assert!(body.contains("### Plan"));
+        assert!(body.contains("## Agent Review"));
+        assert!(body.contains("pass"));
+    }
+
+    #[test]
+    fn merge_workpad_body_replaces_runtime_ownership_marker() {
+        let marker = "<!-- jade-symphony-workpad -->";
+        let existing = format!(
+            "{marker}\n## Jade Symphony Workpad\n\n<!-- jade-symphony-runtime-ownership -->\n### Runtime Ownership\n- Branch: `old`\n<!-- /jade-symphony-runtime-ownership -->\n\n### Plan\n- [ ] inspect issue"
+        );
+        let incoming = "<!-- jade-symphony-runtime-ownership -->\n### Runtime Ownership\n- Branch: `new`\n<!-- /jade-symphony-runtime-ownership -->\n\n### Runtime Ownership Note\nupdated";
+
+        let body = merge_workpad_body(&existing, incoming, marker);
+
+        assert_eq!(
+            body.matches("<!-- jade-symphony-runtime-ownership -->")
+                .count(),
+            1
+        );
+        assert!(body.contains("- Branch: `new`"));
+        assert!(!body.contains("- Branch: `old`"));
+        assert!(body.contains("### Plan"));
+        assert!(body.contains("### Runtime Ownership Note"));
     }
 
     #[test]

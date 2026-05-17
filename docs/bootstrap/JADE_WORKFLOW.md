@@ -172,7 +172,11 @@ Minimum behavior:
 7. Review Agent moves failed, timed out, inconclusive, or backend-unavailable
    reviews to `Need Human Input` or keeps them in `Agent Review` with explicit
    evidence.
-8. Review Agent moves to `Human Review` only after review passes and evidence
+8. Review Agent evaluates the issue body checkboxes under `Expected Outcome`,
+   `Completion Criteria`, `Functional Verification`, `UAT`, and
+   `Context Verification`, then checks only the items supported by PR/workpad
+   evidence.
+9. Review Agent moves to `Human Review` only after review passes and evidence
    is recorded.
 
 ## Workpad Outline
@@ -191,6 +195,9 @@ Environment: `<host>:<workspace>@<short-sha>`
 
 ### Plan
 - [ ] ...
+
+### Work Log
+- `<timestamp>` ...
 
 ### Validation
 - [ ] ...

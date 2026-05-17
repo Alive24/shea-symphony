@@ -426,7 +426,8 @@ mod tests {
         assert!(rendered.contains("Replace placeholder dogfood workflow"));
         assert!(rendered.contains("This is attempt 2."));
         assert!(rendered.contains("## Issue Goal\nReplace the placeholder live workflow prompt."));
-        assert!(rendered.contains("Move locally complete main-agent work to `Agent Review` only."));
+        assert!(rendered
+            .contains("Move locally complete main-agent work to `Agent Review` only as the final"));
         assert!(rendered.contains("Do not set `Human Review`."));
         assert!(!rendered.contains("{{"));
         assert!(!rendered.contains("{%"));

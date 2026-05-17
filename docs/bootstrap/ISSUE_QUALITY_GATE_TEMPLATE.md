@@ -124,29 +124,29 @@ Use this section to point at the minimum set of sources the assignee and coding 
 
 ## Expected Outcome
 
-[State what should exist when this issue is complete: artifact, implementation state, decision, or validated result.]
+- [ ] [State what should exist when this issue is complete: artifact, implementation state, decision, or validated result.]
 
 ## Verification
 
 ### Completion Criteria
 
-- ...
-- ...
+- [ ] ...
+- [ ] ...
 
 ### Functional Verification
 
-- ...
-- ...
+- [ ] ...
+- [ ] ...
 
 ### UAT
 
-- If `UAT Required` is `Yes`, run the configured human-facing UAT workflow before treating the issue as fully closed.
-- Use UAT only for issues with user-observable or operator-observable outcomes.
+- [ ] If `UAT Required` is `Yes`, run the configured human-facing UAT workflow before treating the issue as fully closed.
+- [ ] Use UAT only for issues with user-observable or operator-observable outcomes.
 
 ### Context Verification
 
-- Confirm that the issue still matches the latest relevant canonical sources.
-- Confirm that any new durable knowledge has been promoted to the relevant canonical document if needed.
+- [ ] Confirm that the issue still matches the latest relevant canonical sources.
+- [ ] Confirm that any new durable knowledge has been promoted to the relevant canonical document if needed.
 ```
 
 ## Gate Decision

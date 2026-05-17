@@ -75,8 +75,12 @@ question, but do not edit files under
    for verified Project/issue linked-PR state. If every other handoff invariant
    is satisfied but PR relationship verification or draft repair fails, keep
    the issue out of `Agent Review` and record the blocker.
-11. Move locally complete main-agent work to `Agent Review` only.
-12. Return to tracker selection only after this issue has a PR/workpad handoff
+11. Move locally complete main-agent work to `Agent Review` only as the final
+    mutating step for this issue.
+12. After the Project status changes, only perform readback verification such
+    as `project-issue` or `doctor`; do not continue implementation or claim
+    another issue in the same session.
+13. Return to tracker selection only after this issue has a PR/workpad handoff
     or a documented blocked state.
 
 ## State And Role Boundaries
@@ -103,12 +107,18 @@ question, but do not edit files under
 ## Workpad Discipline
 
 Use the configured workpad marker and keep durable evidence in the issue
-workpad. Record:
+workpad. Keep it close to the reference workpad shape and update it in place
+throughout execution. Record:
 
 - environment and workspace path.
 - issue status and linked PR status at start.
 - quality gate result and assumptions.
-- plan and changed files.
+- `### Plan` as issue-specific checkboxes before implementation. The plan must
+  name the concrete docs, modules, commands, PR/evidence tasks, and risk checks
+  implied by this issue. Do not use a generic lifecycle checklist as the plan.
+- changed files.
+- `### Work Log` with short timestamped progress notes for material actions,
+  blockers, decisions, and handoff-relevant observations.
 - verification commands and results.
 - PR URL and handoff summary.
 - PR draft/ready status at handoff.

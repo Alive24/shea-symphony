@@ -38,6 +38,15 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
   operator `workspace adopt` choice before relying on local files.
 - Compare the PR against the issue goal, guardrails, expected outcome, and
   verification evidence.
+- Evaluate every checkbox under the issue body's `Expected Outcome`,
+  `Completion Criteria`, `Functional Verification`, `UAT`, and
+  `Context Verification` sections.
+- When the review passes, update the issue body checklist in place so satisfied
+  items are checked. Leave unsatisfied, skipped, or unsupported items unchecked
+  and explain them in review evidence.
+- Do not check an item only because the Main Agent claimed it. Check it only
+  when PR diff, workpad evidence, command output, or operator evidence supports
+  it.
 - Prefer concrete findings with file paths, command output, or missing evidence.
 - Distinguish confirmed regressions from plausible concerns and questions.
 - Record review evidence in the workpad or review ledger before changing state.
@@ -45,12 +54,17 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
 ## Allowed Transitions
 
 - If review passes and evidence is recorded, the Review Agent may move the issue
-  to `Human Review` through `review-pass` or the configured review command.
+  to `Human Review` through `review-pass` or the configured review command as
+  the final mutating step of the review session.
 - If confirmed findings require implementation work, move the issue to `Rework`
-  with the finding summary and reproduction evidence through `review-reject`.
+  with the finding summary and reproduction evidence through `review-reject` as
+  the final mutating step of the review session.
 - If review cannot complete because of missing PR evidence, unavailable review
   backend, credentials, draft PR handoff, or an ambiguous decision, keep the
   issue out of `Human Review` and record the next operator action.
+- After changing Project status, only perform readback verification such as
+  `project-issue` or `doctor`; do not continue reviewing or claim another issue
+  in the same session.
 
 ## Non-Negotiable Boundaries
 
@@ -59,4 +73,7 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
 - Do not merge PRs.
 - Do not blur review into implementation. If the fix is required, route it to
   `Rework`.
+- Do not overwrite Main Agent workpad sections. Add review evidence as an
+  `Agent Review` section while preserving existing Main plan, work log, PR, and
+  verification evidence.
 - Preserve the authority boundary in `docs/bootstrap/JADE_WORKFLOW.md`.

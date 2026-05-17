@@ -424,25 +424,25 @@ TBD
 
 ## Expected Outcome
 
-TBD
+- [ ] TBD
 
 ## Verification
 
 ### Completion Criteria
 
-- TBD
+- [ ] TBD
 
 ### Functional Verification
 
-- TBD
+- [ ] TBD
 
 ### UAT
 
-- Not required unless the issue becomes operator-observable.
+- [ ] Not required unless the issue becomes operator-observable.
 
 ### Context Verification
 
-- Confirm the issue still matches canonical sources.
+- [ ] Confirm the issue still matches canonical sources.
 "#
     )
 }
@@ -557,19 +557,19 @@ fn issue_markdown_from_interactive_input(
     );
     draft = draft.replace(
         "## Expected Outcome\n\nTBD",
-        "## Expected Outcome\n\nA locally verifiable slice that can be handed from main implementation to Agent Review.",
+        "## Expected Outcome\n\n- [ ] A locally verifiable slice that can be handed from main implementation to Agent Review.",
     );
     draft = draft.replace(
         "### Completion Criteria\n\n- TBD",
-        "### Completion Criteria\n\n- The issue contract passes `jade-symphony forge validate`.\n- Implementation and documentation are limited to the issue scope.",
+        "### Completion Criteria\n\n- [ ] The issue contract passes `jade-symphony forge validate`.\n- [ ] Implementation and documentation are limited to the issue scope.",
     );
     draft = draft.replace(
         "### Functional Verification\n\n- TBD",
-        "### Functional Verification\n\n- Run `cargo test`.\n- Run `cargo fmt --check`.\n- Run `cargo clippy --all-targets --all-features -- -D warnings`.",
+        "### Functional Verification\n\n- [ ] Run `cargo test`.\n- [ ] Run `cargo fmt --check`.\n- [ ] Run `cargo clippy --all-targets --all-features -- -D warnings`.",
     );
     draft = draft.replace(
         "### Context Verification\n\n- Confirm the issue still matches canonical sources.",
-        "### Context Verification\n\n- Confirm the issue still matches canonical sources and Project #9 state before dispatch.",
+        "### Context Verification\n\n- [ ] Confirm the issue still matches canonical sources and Project #9 state before dispatch.",
     );
     draft
 }
@@ -828,15 +828,15 @@ fn repaired_draft(title: &str, markdown: &str, decision: &GateDecision) -> Strin
     );
     draft = draft.replace(
         "## Expected Outcome\n\nTBD",
-        "## Expected Outcome\n\nAn executable issue contract that can pass the Issue Quality Gate before dispatch.",
+        "## Expected Outcome\n\n- [ ] An executable issue contract that can pass the Issue Quality Gate before dispatch.",
     );
     draft = draft.replace(
         "### Completion Criteria\n\n- TBD",
-        "### Completion Criteria\n\n- Issue contract has goal, scope, guardrails, references, and validation requirements.",
+        "### Completion Criteria\n\n- [ ] Issue contract has goal, scope, guardrails, references, and validation requirements.",
     );
     draft = draft.replace(
         "### Functional Verification\n\n- TBD",
-        "### Functional Verification\n\n- Run `jade-symphony forge validate` on the repaired draft.",
+        "### Functional Verification\n\n- [ ] Run `jade-symphony forge validate` on the repaired draft.",
     );
     draft
 }

@@ -45,6 +45,12 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
   `Need Human Input` with one concrete question.
 - Transient unknown mergeability can remain in `Merging` for retry when the
   command can prove it is transient.
+- Any Project status change, including `Done`, `Rework`, or `Need Human Input`,
+  must be the final mutating step of the merge session. Finish merge evidence,
+  PR/issue reconciliation, branch cleanup that is safe and required, and workpad
+  updates first. After status changes, only perform readback verification such
+  as `project-issue`, `project-state`, or `doctor`; do not claim another issue
+  in the same session.
 
 ## Non-Negotiable Boundaries
 

@@ -249,7 +249,11 @@ break-glass recovery paths.
 For parent tracking issues with native GitHub subissues, use
 `docs/parent-subissue-topology.md` as the design source. Native sub-issue links
 define hierarchy, subissue PRs target the parent integration branch by default,
-and the parent issue remains the final Human Review unit.
+and the parent issue remains the final Human Review unit. `doctor` now reports
+read-only topology blockers for native subissue PRs targeting `main`, missing or
+ambiguous parent integration branch evidence, `Done` subissues without merge
+evidence into the parent branch, and parent `Human Review` before all native
+subissues are `Done` and merged.
 
 ## Issue Forge Reflect
 

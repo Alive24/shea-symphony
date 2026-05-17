@@ -193,6 +193,13 @@ for an operator-selected existing worktree; it must not be used as a shortcut
 for `gh pr checkout` in the canonical checkout. `doctor` warns when multiple
 strong candidates exist for one active issue.
 
+For native parent/subissue flows, `doctor` also checks the read-only integration
+branch topology from GitHub native parent/subissue links plus Jade-owned branch
+and merge evidence. It reports blockers for subissue PRs targeting `main`,
+missing or ambiguous parent integration branch evidence, `Done` subissues
+without parent-branch merge evidence, and parent `Human Review` before native
+subissues are complete.
+
 ## Tracker Writes
 
 These commands can mutate live tracker state and require `--write`.

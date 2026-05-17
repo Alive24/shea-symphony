@@ -132,6 +132,28 @@ Later doctor checks should flag these examples:
 Issue #273 should turn these into doctor invariants. Issue #274 should teach
 lane flows how to use the parent integration branch during live execution.
 
+## Doctor Diagnostics
+
+`doctor` is diagnostic-only for parent/subissue topology. It reads GitHub native
+parent and subissue links as hierarchy authority, then uses parent issue body or
+workpad branch evidence, linked PR base/merge state, and branch-name hints as
+supplemental execution evidence.
+
+Blocker findings cover unsafe execution states:
+
+- native subissue PRs targeting `main` instead of the parent integration branch;
+- missing or ambiguous parent integration branch evidence on a native parent;
+- `Done` subissues without linked PR or workpad evidence showing merge into the
+  parent integration branch;
+- parent issues in `Human Review` before every native subissue is `Done` and
+  merged into the parent integration branch.
+
+Warning findings cover repairable metadata inconsistencies, such as body-only
+parent membership or a subissue PR target that disagrees with the parent branch
+without directly targeting `main`. Doctor does not repair these states, retarget
+PRs, edit native GitHub relationships, move Project statuses, or replace the
+#274 lane-flow work.
+
 ## Dry Fixture Verification
 
 The credential-free topology fixture lives at:

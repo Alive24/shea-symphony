@@ -190,6 +190,7 @@ promote reusable config into the repo.
 target/debug/jade-symphony inspect workflows/jade-symphony.md
 target/debug/jade-symphony project-state workflows/jade-symphony.md
 target/debug/jade-symphony project-issue workflows/jade-symphony.md '#235' --json
+target/debug/jade-symphony debug workflows/jade-symphony.md
 target/debug/jade-symphony project-state workflows/jade-symphony.md --display tui
 target/debug/jade-symphony doctor workflows/jade-symphony.md --display tui
 target/debug/jade-symphony run-loop workflows/jade-symphony.md --max-iterations 1 --write
@@ -208,6 +209,12 @@ remain acceptable for ordinary issue/PR body text, comments, and diff context,
 but normal dogfood should not read or mutate Project fields, status, claim locks,
 or relationships through raw Project GraphQL or the Project UI. Those are
 break-glass recovery paths.
+
+Use `debug` when you need one read-only operator report before a supervised
+dogfood, repair, review, or merge session. It summarizes the current Project
+queue, doctor health, smoke readiness, runtime/session state, cleanup/audit
+status, and lane-specific next commands without claiming work, starting workers,
+repairing state, cleaning artifacts, or implying unattended readiness.
 
 If `run-loop` finds runtime-state for an issue that has already moved out of
 active main-agent work, it reconciles tracker state first. Clean or absent

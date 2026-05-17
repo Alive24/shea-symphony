@@ -37,6 +37,7 @@ workflows may still use an inline prompt body.
 | `doctor` | Audit Project/workflow/runtime invariants. | `cargo run -- doctor` |
 | `audit-project` | Compatibility alias for `doctor`. | `cargo run -- audit-project workflows/jade-symphony.md` |
 | `profiles` | List configured/discovered execution profiles. | `cargo run -- profiles examples/cockpit-profiles-workflow.md` |
+| `debug` | Read-only human report combining Project, doctor, smoke readiness, runtime/session, cleanup, and lane next-action signals. | `cargo run -- debug workflows/jade-symphony.md` |
 
 Doctor repair helpers:
 

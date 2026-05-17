@@ -17,6 +17,7 @@ operator inspection, but not a substitute for tracker evidence.
 | Workpad draft | Recoverable after tracker workpad upsert | `artifacts/<namespace>/<profile>/drafts/workpads/` |
 | Reusable workflow/operator prompt | Durable repo material | `artifacts/<namespace>/<profile>/workflows/` until promoted to `docs/` or `examples/` |
 | Disposable scratch file | Disposable | `artifacts/<namespace>/<profile>/scratch/` |
+| Canonical checkout quarantine | Operator decision required | `artifacts/<namespace>/<profile>/scratch/canonical-checkout-quarantine/` |
 
 The default artifact root is `~/.jade-symphony/artifacts`. Workflows may set:
 
@@ -41,6 +42,15 @@ If `namespace` is omitted, Jade Symphony derives one from `tracker.owner` and
 `tracker.repo`, or from `tracker.project_slug`, or falls back to `local`.
 Profiles add the final namespace segment so multiple worker identities do not
 share worktrees, logs, or runtime state by accident.
+
+The canonical checkout is not an artifact store. It is the trusted launch
+checkout for CLI and operator commands, while implementation, review, and merge
+edits belong in verified issue worktrees. Live write lanes inspect the canonical
+checkout before mutating tracker state. Tracked dirty files block the lane.
+Recognized untracked runtime/log/prompt/evidence/draft scratch files are moved
+under `scratch/canonical-checkout-quarantine/` with a manifest. Unclassified
+untracked files block the lane so the operator can choose the correct issue
+worktree, artifact location, or `.gitignore` rule.
 
 ## Promotion Rules
 

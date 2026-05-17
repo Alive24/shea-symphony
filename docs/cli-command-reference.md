@@ -85,8 +85,13 @@ mode previews up to `N` eligible main-lane issues after skipping items whose
 `Main Agent` Project field is already owned by another worker. Write mode still
 processes one main work item at a time because the runtime state tracks one
 active issue, but it uses the same lane claim check and stamps `Main Agent`
-before tracker mutation. `run-loop`, `review-loop`, and `merge-once` print
-compact `Latest:` status bars in addition to their detailed line logs.
+before tracker mutation. `run-loop --write`, `review-loop --write`, and
+`merge-loop --write` also enforce a clean canonical launch checkout before the
+first tracker mutation. Tracked dirty files block the lane; recognized
+untracked runtime/log/prompt/evidence/draft artifacts are moved to artifact
+quarantine with a warning; unclassified untracked files block for operator
+repair. `run-loop`, `review-loop`, and `merge-once` print compact `Latest:`
+status bars in addition to their detailed line logs.
 New lane claims are written as single-line `v=1` key/value audit pointers, for
 example `v=1 lane=main actor=codex source=loop issue=#244 run=... state=active
 thread=unknown registry=run/...`. The Project field stores the compact pointer;
@@ -186,7 +191,7 @@ invariants, and repair evidence.
 | --- | --- | --- |
 | `clean plan` | Grouped read-only alias for `cleanup-plan`. | Reports terminal clean worktrees that are cleanup candidates; never deletes. |
 | `cleanup-plan` | Compatibility path for existing scripts. | Same output and read-only boundary as `clean plan`. |
-| `clean audit` | Classify configured artifact/workspace residue by persistence action. | Read-only; categories include `promote_to_repo`, `attach_to_tracker`, `safe_to_keep`, `cleanup_candidate`, and `needs_human_decision`. |
+| `clean audit` | Classify configured artifact/workspace residue by persistence action. | Read-only; categories include `promote_to_repo`, `attach_to_tracker`, `safe_to_keep`, `cleanup_candidate`, `needs_human_decision`, and canonical checkout quarantine. |
 
 Examples:
 

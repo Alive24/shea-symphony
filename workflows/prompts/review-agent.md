@@ -24,10 +24,13 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
 ## Review Contract
 
 - Confirm the issue is in `Agent Review` before starting review.
-- Claim `Review Agent` through `review-claim` or the configured `review-loop`
+- Claim `Review Agent` through `review claim` or the configured `review loop`
   before starting manual or automated review work.
 - Preserve the assigned structured claim `run=` in review evidence, workpad
   notes, and any handoff summary.
+- `review session` may start or inspect a review runtime/session, but it does
+  not write the `Review Agent` claim. Use the claim value already assigned by
+  the CLI-owned review claim path.
 - Confirm there is one verified Project-visible linked PR.
 - Confirm the linked PR is ready, not draft. If the PR is draft, do not run a
   normal review; record invalid handoff evidence and leave the issue out of
@@ -54,10 +57,10 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
 ## Allowed Transitions
 
 - If review passes and evidence is recorded, the Review Agent may move the issue
-  to `Human Review` through `review-pass` or the configured review command as
+  to `Human Review` through `review pass` or the configured review command as
   the final mutating step of the review session.
 - If confirmed findings require implementation work, move the issue to `Rework`
-  with the finding summary and reproduction evidence through `review-reject` as
+  with the finding summary and reproduction evidence through `review reject` as
   the final mutating step of the review session.
 - If review cannot complete because of missing PR evidence, unavailable review
   backend, credentials, draft PR handoff, or an ambiguous decision, keep the

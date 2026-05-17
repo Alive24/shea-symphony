@@ -85,13 +85,13 @@ mode previews up to `N` eligible main-lane issues after skipping items whose
 `Main Agent` Project field is already owned by another worker. Write mode still
 processes one main work item at a time because the runtime state tracks one
 active issue, but it uses the same lane claim check and stamps `Main Agent`
-before tracker mutation. `run-loop --write`, `review-loop --write`, and
-`merge-loop --write` also enforce a clean canonical launch checkout before the
-first tracker mutation. Tracked dirty files block the lane; recognized
-untracked runtime/log/prompt/evidence/draft artifacts are moved to artifact
-quarantine with a warning; unclassified untracked files block for operator
-repair. `run-loop`, `review-loop`, and `merge-once` print compact `Latest:`
-status bars in addition to their detailed line logs.
+before tracker mutation. `run-loop`, `review loop`, and `merge-once` print
+compact `Latest:` status bars in addition to their detailed line logs.
+`run-loop --write`, `review loop --write`, and `merge-loop --write` also
+enforce a clean canonical launch checkout before the first tracker mutation.
+Tracked dirty files block the lane; recognized untracked
+runtime/log/prompt/evidence/draft artifacts are moved to artifact quarantine
+with a warning; unclassified untracked files block for operator repair.
 New lane claims are written as single-line `v=1` key/value audit pointers, for
 example `v=1 lane=main actor=codex source=loop issue=#244 run=... state=active
 thread=unknown registry=run/...`. The Project field stores the compact pointer;
@@ -269,14 +269,14 @@ changes.
 
 | Command | Purpose | Boundary |
 | --- | --- | --- |
-| `review-fake` | Fixture/fake review transition helper. | Local testing path. |
-| `review-once` | Run one configured review backend for one issue. | Only Review Agent may advance passed reviews to `Human Review`. |
-| `review-loop` | Bounded review worker selection/reconciliation. | Prevents duplicate review workers where evidence exists. |
-| `review-claim` | Claim one `Agent Review` item's `Review Agent` field for manual/operator review. | Requires `--write`; refuses non-`Agent Review` issues. |
-| `review-clear-claim` | Clear one issue's `Review Agent` claim through the tracker adapter. | Requires `--write`; use after terminal manual review routing. |
-| `review-pass` | Record manual independent review pass evidence and move to `Human Review`. | Requires `--write` and a durable evidence file; writes the doctor-recognized pass marker first. |
-| `review-reject` | Record failed/inconclusive manual review evidence and route to `Agent Review`, `Rework`, or `Need Human Input`. | Refuses `Human Review`. |
-| `review-freshness` | Record/inspect review freshness evidence. | Used around merging/rework conflict repair. |
+| `review fake` | Fixture/fake review transition helper. | Local testing path. |
+| `review once` | Run one configured review backend for one issue. | Only Review Agent may advance passed reviews to `Human Review`. |
+| `review loop` | Bounded review worker selection/reconciliation. | Prevents duplicate review workers where evidence exists. |
+| `review claim` | Claim one `Agent Review` item's `Review Agent` text field for manual/operator review. | Requires `--write`; refuses non-`Agent Review` issues and writes a structured claim pointer. |
+| `review pass` | Record manual independent review pass evidence and move to `Human Review`. | Requires `--write`, a durable evidence file containing the exact current `Review Agent` claim, and preserves the field as terminal pass evidence. |
+| `review reject` | Record failed/inconclusive manual review evidence and route to `Agent Review`, `Rework`, or `Need Human Input`. | Refuses `Human Review`, requires exact claim evidence, and preserves the field as terminal reject/failed evidence. |
+| `review session` | Start or inspect a review runtime/session. | Does not write the `Review Agent` claim; use `review claim` or `review loop` for claim ownership. |
+| `review freshness` | Record/inspect review freshness evidence. | Used around merging/rework conflict repair. |
 | `agent-session start` | Start an attachable local tmux session for a selected lane. | Manual recovery path; it claims only the chosen lane and does not advance workflow state. |
 | `agent-session list` | List active Jade Symphony tmux sessions by configured prefix. | Read-only operator summary. |
 | `agent-session attach` | Print or execute the tmux attach command for one session. | Defaults to printing the command; `--exec` enters tmux. |
@@ -284,14 +284,25 @@ changes.
 Example:
 
 ```bash
-cargo run -- review-loop examples/review-fixture-workflow.md --max-iterations 1 --dry-run
-cargo run -- review-loop workflows/jade-symphony.md --max-iterations 1 --write
+cargo run -- review loop examples/review-fixture-workflow.md --max-iterations 1 --dry-run
+cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --write
 cargo run -- agent-session start workflows/jade-symphony.md '#220' --lane review --write
 cargo run -- agent-session list workflows/jade-symphony.md
-cargo run -- review-claim workflows/jade-symphony.md '#226' --worker "Manual Gemini Review" --write
-cargo run -- review-pass workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
-cargo run -- review-reject workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --target-state rework --write
+cargo run -- review claim workflows/jade-symphony.md '#226' --worker "Manual Gemini Review" --write
+cargo run -- review pass workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
+cargo run -- review reject workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --target-state rework --write
 ```
+
+Manual review evidence files must include the exact structured `Review Agent`
+claim printed by `review claim` or recorded by `review loop`. Terminal routing
+updates that same field to an audit pointer such as `state=done result=passed`,
+`state=done result=rejected`, `state=failed result=inconclusive`, or
+`state=failed result=blocked`; it does not clear the field.
+
+Repo-packaged Jade Symphony skills, if added later, may overwrite same-name
+locally installed skills during install or update. Operators who manually edit
+local skills should preserve those edits intentionally before installing a
+repo-packaged replacement.
 
 ## Merge Lane
 

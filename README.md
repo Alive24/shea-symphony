@@ -69,7 +69,7 @@ Jade Symphony can already support a supervised local dogfood loop:
 - gate issues for required fields, dependency semantics, referenced paths, and
   verification commands;
 - create or reuse isolated issue worktrees and branches;
-- run bounded `run-loop`, `review-loop`, and `merge-loop` ticks with explicit
+- run bounded `run-loop`, `review loop`, and `merge-loop` ticks with explicit
   write-mode confirmation;
 - write tracker-visible workpad evidence and local JSONL audit records;
 - create or reuse PR handoffs for completed Main Agent work;
@@ -137,7 +137,7 @@ Run a bounded supervised preview:
 ```bash
 scripts/jade-dogfood --dry-run
 cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --dry-run
-cargo run -- review-loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 cargo run -- merge-loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 

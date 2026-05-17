@@ -242,7 +242,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             workflow_path,
             issue_ref,
             write,
-        } => agent_session_start(workflow_path, issue_ref, AgentSessionLaneArg::Review, write),
+        } => review_session(workflow_path, issue_ref, write),
         Command::ReviewFreshness { input } => review_freshness(input),
         Command::ReviewLoop { options } => review_loop(options),
         Command::MergeSession {
@@ -1389,7 +1389,7 @@ fn review_claim(
     append_tracker_mutation_audit(
         &config,
         TrackerMutationAudit {
-            command: "review-claim",
+            command: "review claim",
             mutation_type: "claim_field",
             issue_ref: Some(&issue.identifier),
             target: Some(format!("Review Agent={claim_value}")),
@@ -1461,16 +1461,27 @@ fn review_manual_pass(
         .into());
     }
 
+    let (current_claim_value, current_claim) = validate_manual_review_claim(&issue, &evidence)?;
+    let terminal_claim_value =
+        terminal_review_claim_value(&current_claim, LaneClaimState::Done, "passed");
     let target_state = "human_review";
-    let workpad = render_manual_review_workpad(&issue, "passed", target_state, &evidence, true);
+    let workpad = render_manual_review_workpad(
+        &issue,
+        "passed",
+        target_state,
+        &evidence,
+        true,
+        &current_claim_value,
+        &terminal_claim_value,
+    );
     if !write {
         println!(
             "review_pass_dry_run action=workpad issue_ref={} evidence=manual_review_pass",
             issue.identifier
         );
         println!(
-            "review_pass_dry_run action=clear_claim_field issue_ref={} field=\"Review Agent\"",
-            issue.identifier
+            "review_pass_dry_run action=update_claim_field issue_ref={} field=\"Review Agent\" value={terminal_claim_value}",
+            issue.identifier,
         );
         println!(
             "review_pass_dry_run action=set_state issue_ref={} target_state={target_state}",
@@ -1482,7 +1493,7 @@ fn review_manual_pass(
     append_tracker_mutation_audit(
         &config,
         TrackerMutationAudit {
-            command: "review-pass",
+            command: "review pass",
             mutation_type: "workpad_write",
             issue_ref: Some(&issue.identifier),
             target: None,
@@ -1491,12 +1502,19 @@ fn review_manual_pass(
             reason: "manual review pass evidence",
         },
     );
-    clear_manual_review_claim(&config, adapter.as_ref(), &issue.identifier, &issue.state)?;
+    write_terminal_review_claim(
+        &config,
+        adapter.as_ref(),
+        &issue.identifier,
+        &issue.state,
+        &terminal_claim_value,
+        "review pass terminal claim evidence",
+    )?;
     adapter.set_state(&issue.identifier, target_state)?;
     append_tracker_mutation_audit(
         &config,
         TrackerMutationAudit {
-            command: "review-pass",
+            command: "review pass",
             mutation_type: "state_change",
             issue_ref: Some(&issue.identifier),
             target: None,
@@ -1521,14 +1539,14 @@ fn review_manual_reject(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let normalized_target = normalize_state(&target_state);
     if normalized_target == "human_review" {
-        return Err("review-reject cannot target Human Review".into());
+        return Err("review reject cannot target Human Review".into());
     }
     if !matches!(
         normalized_target.as_str(),
         "agent_review" | "agent review" | "rework" | "need_human_input" | "need human input"
     ) {
         return Err(
-            "review-reject target must be agent_review, rework, or need_human_input".into(),
+            "review reject target must be agent_review, rework, or need_human_input".into(),
         );
     }
 
@@ -1545,16 +1563,27 @@ fn review_manual_reject(
         .into());
     }
 
-    let workpad =
-        render_manual_review_workpad(&issue, "not passed", &target_state, &evidence, false);
+    let (current_claim_value, current_claim) = validate_manual_review_claim(&issue, &evidence)?;
+    let (terminal_state, terminal_result) = reject_terminal_claim_outcome(&normalized_target);
+    let terminal_claim_value =
+        terminal_review_claim_value(&current_claim, terminal_state, terminal_result);
+    let workpad = render_manual_review_workpad(
+        &issue,
+        "not passed",
+        &target_state,
+        &evidence,
+        false,
+        &current_claim_value,
+        &terminal_claim_value,
+    );
     if !write {
         println!(
             "review_reject_dry_run action=workpad issue_ref={} evidence=manual_review_reject",
             issue.identifier
         );
         println!(
-            "review_reject_dry_run action=clear_claim_field issue_ref={} field=\"Review Agent\"",
-            issue.identifier
+            "review_reject_dry_run action=update_claim_field issue_ref={} field=\"Review Agent\" value={terminal_claim_value}",
+            issue.identifier,
         );
         println!(
             "review_reject_dry_run action=set_state issue_ref={} target_state={target_state}",
@@ -1566,7 +1595,7 @@ fn review_manual_reject(
     append_tracker_mutation_audit(
         &config,
         TrackerMutationAudit {
-            command: "review-reject",
+            command: "review reject",
             mutation_type: "workpad_write",
             issue_ref: Some(&issue.identifier),
             target: None,
@@ -1575,12 +1604,19 @@ fn review_manual_reject(
             reason: "manual review reject evidence",
         },
     );
-    clear_manual_review_claim(&config, adapter.as_ref(), &issue.identifier, &issue.state)?;
+    write_terminal_review_claim(
+        &config,
+        adapter.as_ref(),
+        &issue.identifier,
+        &issue.state,
+        &terminal_claim_value,
+        "review reject terminal claim evidence",
+    )?;
     adapter.set_state(&issue.identifier, &target_state)?;
     append_tracker_mutation_audit(
         &config,
         TrackerMutationAudit {
-            command: "review-reject",
+            command: "review reject",
             mutation_type: "state_change",
             issue_ref: Some(&issue.identifier),
             target: None,
@@ -1602,6 +1638,8 @@ fn render_manual_review_workpad(
     target_state: &str,
     evidence: &str,
     pass: bool,
+    current_claim_value: &str,
+    terminal_claim_value: &str,
 ) -> String {
     let mut lines = vec![
         "## Agent Review".to_string(),
@@ -1610,6 +1648,8 @@ fn render_manual_review_workpad(
         "- Reviewer backend: manual-operator".into(),
         format!("- Decision: Manual independent review {decision}."),
         format!("- Target state: `{target_state}`"),
+        format!("- Review Agent claim: `{current_claim_value}`"),
+        format!("- Terminal Review Agent claim: `{terminal_claim_value}`"),
         String::new(),
         "### Manual Review Evidence".into(),
         "````md".into(),
@@ -1630,23 +1670,77 @@ fn render_manual_review_workpad(
     lines.join("\n")
 }
 
-fn clear_manual_review_claim(
+fn validate_manual_review_claim(
+    issue: &TrackerIssue,
+    evidence: &str,
+) -> Result<(String, LaneClaim), Box<dyn std::error::Error>> {
+    let current = project_text_field(issue, "Review Agent")
+        .ok_or("manual review routing requires a current Review Agent claim")?;
+    let claim = LaneClaim::parse(&current).map_err(|error| {
+        format!("current Review Agent claim is not a structured lane claim: {error}")
+    })?;
+    if claim.lane != LaneClaimLane::Review {
+        return Err("current Review Agent claim is not for the review lane".into());
+    }
+    if claim.issue != issue.identifier {
+        return Err(format!(
+            "current Review Agent claim issue {} does not match {}",
+            claim.issue, issue.identifier
+        )
+        .into());
+    }
+    if claim.state != LaneClaimState::Active {
+        return Err(format!(
+            "current Review Agent claim must be active before routing, found state={}",
+            claim.state.as_str()
+        )
+        .into());
+    }
+    if !evidence.contains(&current) {
+        return Err(
+            "manual review evidence must include the exact current Review Agent claim value".into(),
+        );
+    }
+    Ok((current, claim))
+}
+
+fn terminal_review_claim_value(claim: &LaneClaim, state: LaneClaimState, result: &str) -> String {
+    format!("{} result={result}", claim.with_state(state).render())
+}
+
+fn reject_terminal_claim_outcome(normalized_target: &str) -> (LaneClaimState, &'static str) {
+    match normalized_target {
+        "rework" => (LaneClaimState::Done, "rejected"),
+        "need_human_input" | "need human input" => (LaneClaimState::Failed, "blocked"),
+        _ => (LaneClaimState::Failed, "inconclusive"),
+    }
+}
+
+fn write_terminal_review_claim(
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
     issue_ref: &str,
     from_state: &str,
+    value: &str,
+    reason: &'static str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    adapter.clear_project_field(issue_ref, "Review Agent")?;
+    adapter.set_project_field(
+        issue_ref,
+        &ProjectFieldAssignment {
+            name: "Review Agent".into(),
+            value: value.into(),
+        },
+    )?;
     append_tracker_mutation_audit(
         config,
         TrackerMutationAudit {
-            command: "manual-review-routing",
-            mutation_type: "claim_field_clear",
+            command: "manual review routing",
+            mutation_type: "claim_field",
             issue_ref: Some(issue_ref),
-            target: Some("Review Agent".into()),
+            target: Some(format!("Review Agent={value}")),
             from_state: Some(from_state.into()),
             to_state: None,
-            reason: "manual review terminal routing",
+            reason,
         },
     );
     Ok(())
@@ -2488,6 +2582,30 @@ fn agent_session_start(
     lane: AgentSessionLaneArg,
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    agent_session_start_inner(workflow_path, issue_ref, lane, write, true)
+}
+
+fn review_session(
+    workflow_path: PathBuf,
+    issue_ref: String,
+    write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    agent_session_start_inner(
+        workflow_path,
+        issue_ref,
+        AgentSessionLaneArg::Review,
+        write,
+        false,
+    )
+}
+
+fn agent_session_start_inner(
+    workflow_path: PathBuf,
+    issue_ref: String,
+    lane: AgentSessionLaneArg,
+    write: bool,
+    write_claim: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
@@ -2499,52 +2617,67 @@ fn agent_session_start(
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
     let workspace_key = agent_session_workspace_key(&config, &issue, lane)?;
     let prompt_path = rendered_lane_prompt_artifact_path(&config, &issue, lane, 1);
-    let claim = lane_claim_for_issue(
-        &issue,
-        lane.claim_lane(),
-        LaneClaimActor::Codex,
-        LaneClaimSource::Manual,
-        None,
-    );
-    let claim_value = claim.render();
+    let claim = write_claim.then(|| {
+        lane_claim_for_issue(
+            &issue,
+            lane.claim_lane(),
+            LaneClaimActor::Codex,
+            LaneClaimSource::Manual,
+            None,
+        )
+    });
+    let claim_value = claim.as_ref().map(LaneClaim::render);
 
     if !write {
-        println!(
-            "agent_session_dry_run action=claim_field issue={} field={:?} value={:?}",
-            issue.identifier,
-            lane.claim_field(),
-            claim_value
-        );
+        if let Some(claim_value) = claim_value.as_deref() {
+            println!(
+                "agent_session_dry_run action=claim_field issue={} field={:?} value={:?}",
+                issue.identifier,
+                lane.claim_field(),
+                claim_value
+            );
+        } else {
+            println!(
+                "agent_session_dry_run action=skip_claim_field issue={} field={:?}",
+                issue.identifier,
+                lane.claim_field()
+            );
+        }
         println!(
             "agent_session_dry_run action=start issue={} lane={} run={} backend=tmux workspace_key={} prompt_artifact={}",
             issue.identifier,
             lane.label(),
-            claim.run,
+            claim
+                .as_ref()
+                .map(|claim| claim.run.as_str())
+                .unwrap_or("unclaimed-session"),
             workspace_key,
             prompt_path.display()
         );
         return Ok(());
     }
 
-    adapter.set_project_field(
-        &issue.identifier,
-        &ProjectFieldAssignment {
-            name: lane.claim_field().into(),
-            value: claim_value.clone(),
-        },
-    )?;
-    append_tracker_mutation_audit(
-        &config,
-        TrackerMutationAudit {
-            command: "agent-session",
-            mutation_type: "claim_field",
-            issue_ref: Some(&issue.identifier),
-            target: Some(format!("{}={claim_value}", lane.claim_field())),
-            from_state: Some(issue.state.clone()),
-            to_state: None,
-            reason: "manual tmux lane session claim",
-        },
-    );
+    if let Some(claim_value) = claim_value.as_deref() {
+        adapter.set_project_field(
+            &issue.identifier,
+            &ProjectFieldAssignment {
+                name: lane.claim_field().into(),
+                value: claim_value.into(),
+            },
+        )?;
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: "agent-session",
+                mutation_type: "claim_field",
+                issue_ref: Some(&issue.identifier),
+                target: Some(format!("{}={claim_value}", lane.claim_field())),
+                from_state: Some(issue.state.clone()),
+                to_state: None,
+                reason: "manual tmux lane session claim",
+            },
+        );
+    }
 
     let workspace = prepare_workspace(&config.workspace.root, &workspace_key, &config.hooks)?;
     let git_identity = apply_local_git_identity(&workspace.path, &config.identity.git)?;
@@ -2552,7 +2685,7 @@ fn agent_session_start(
         workflow.prompt_for_lane(lane.workflow_lane()),
         &issue,
         None,
-        Some(&claim),
+        claim.as_ref(),
     )?;
     let backend = TmuxBackend;
     let mut prepared = backend.prepare(workspace.path.clone(), prompt, &config)?;
@@ -2564,13 +2697,15 @@ fn agent_session_start(
     prepared.issue_identifier = Some(issue.identifier.clone());
     prepared.issue_title = Some(issue.title.clone());
     prepared.lane = Some(lane.label().into());
-    prepared.run_id = Some(claim.run.clone());
-    prepared
-        .env
-        .insert("JADE_SYMPHONY_RUN_ID".into(), claim.run.clone());
-    prepared
-        .env
-        .insert("JADE_SYMPHONY_CLAIM".into(), claim_value.clone());
+    if let Some(claim) = claim.as_ref() {
+        prepared.run_id = Some(claim.run.clone());
+        prepared
+            .env
+            .insert("JADE_SYMPHONY_RUN_ID".into(), claim.run.clone());
+        prepared
+            .env
+            .insert("JADE_SYMPHONY_CLAIM".into(), claim.render());
+    }
     prepared.attempt = 1;
     prepared.branch_name = current_git_branch(&workspace.path).ok().flatten();
     let events = backend.run(prepared)?;
@@ -2583,7 +2718,9 @@ fn agent_session_start(
         &workspace.path,
         &summary,
         &prompt_path,
-        &claim_value,
+        claim_value
+            .as_deref()
+            .unwrap_or("not written by review session"),
         &git_identity,
     );
     adapter.upsert_workpad(&issue.identifier, &workpad)?;
@@ -2604,7 +2741,10 @@ fn agent_session_start(
         "agent_session_action=started issue={} lane={} run={} backend={} session={} pending_session={} workspace={} prompt_artifact={}",
         issue.identifier,
         lane.label(),
-        claim.run,
+        claim
+            .as_ref()
+            .map(|claim| claim.run.as_str())
+            .unwrap_or("unclaimed-session"),
         summary.backend,
         summary.session_id.as_deref().unwrap_or("n/a"),
         summary.pending_session,
@@ -7920,23 +8060,24 @@ enum CliCommand {
     CreateFollowUp(CreateFollowUpArgs),
     #[command(name = "add-to-project")]
     AddToProject(AddToProjectArgs),
-    #[command(name = "review-fake")]
+    Review(ReviewArgs),
+    #[command(name = "review-fake", hide = true)]
     ReviewFake(ReviewFakeArgs),
-    #[command(name = "review-once")]
+    #[command(name = "review-once", hide = true)]
     ReviewOnce(ReviewOnceArgs),
-    #[command(name = "review-claim")]
+    #[command(name = "review-claim", hide = true)]
     ReviewClaim(ReviewClaimArgs),
-    #[command(name = "review-clear-claim")]
+    #[command(name = "review-clear-claim", hide = true)]
     ReviewClearClaim(ReviewClearClaimArgs),
-    #[command(name = "review-pass")]
+    #[command(name = "review-pass", hide = true)]
     ReviewPass(ReviewEvidenceArgs),
-    #[command(name = "review-reject")]
+    #[command(name = "review-reject", hide = true)]
     ReviewReject(ReviewRejectArgs),
-    #[command(name = "review-session")]
+    #[command(name = "review-session", hide = true)]
     ReviewSession(LaneSessionAliasArgs),
-    #[command(name = "review-freshness")]
+    #[command(name = "review-freshness", hide = true)]
     ReviewFreshness(ReviewFreshnessArgs),
-    #[command(name = "review-loop")]
+    #[command(name = "review-loop", hide = true)]
     ReviewLoop(ReviewLoopArgs),
     #[command(name = "agent-session")]
     AgentSession(AgentSessionArgs),
@@ -8434,6 +8575,24 @@ struct ReviewLoopArgs {
     fake_outcome: Option<CliFakeReviewOutcome>,
 }
 
+#[derive(Debug, Args)]
+struct ReviewArgs {
+    #[command(subcommand)]
+    command: ReviewCommandArgs,
+}
+
+#[derive(Debug, Subcommand)]
+enum ReviewCommandArgs {
+    Fake(ReviewFakeArgs),
+    Once(ReviewOnceArgs),
+    Claim(ReviewClaimArgs),
+    Pass(ReviewEvidenceArgs),
+    Reject(ReviewRejectArgs),
+    Session(LaneSessionAliasArgs),
+    Freshness(ReviewFreshnessArgs),
+    Loop(ReviewLoopArgs),
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum CliReviewStaleReason {
     MergeConflict,
@@ -8784,73 +8943,35 @@ impl TryFrom<Cli> for Command {
                         issue_id: args.issue_id,
                         write: args.write,
                     }),
-                    CliCommand::ReviewFake(args) => Ok(Self::ReviewFake {
-                        workflow_path: args.workflow_path,
-                        issue_ref: args.issue_ref,
-                        outcome: args.outcome.into(),
-                        write: args.write,
-                    }),
-                    CliCommand::ReviewOnce(args) => Ok(Self::ReviewOnce {
-                        workflow_path: args.workflow_path,
-                        issue_ref: args.issue_ref,
-                        write: args.write,
-                    }),
-                    CliCommand::ReviewClaim(args) => Ok(Self::ReviewClaim {
-                        workflow_path: args.workflow_path,
-                        issue_ref: args.issue_ref,
-                        worker: args.worker,
-                        write: args.write,
-                    }),
+                    CliCommand::Review(args) => command_from_review_args(args.command),
+                    CliCommand::ReviewFake(args) => {
+                        command_from_review_args(ReviewCommandArgs::Fake(args))
+                    }
+                    CliCommand::ReviewOnce(args) => {
+                        command_from_review_args(ReviewCommandArgs::Once(args))
+                    }
+                    CliCommand::ReviewClaim(args) => {
+                        command_from_review_args(ReviewCommandArgs::Claim(args))
+                    }
                     CliCommand::ReviewClearClaim(args) => Ok(Self::ReviewClearClaim {
                         workflow_path: args.workflow_path,
                         issue_ref: args.issue_ref,
                         write: args.write,
                     }),
-                    CliCommand::ReviewPass(args) => Ok(Self::ReviewPass {
-                        workflow_path: args.workflow_path,
-                        issue_ref: args.issue_ref,
-                        evidence: read_required_file(args.evidence_file)?,
-                        write: args.write,
-                    }),
-                    CliCommand::ReviewReject(args) => Ok(Self::ReviewReject {
-                        workflow_path: args.workflow_path,
-                        issue_ref: args.issue_ref,
-                        evidence: read_required_file(args.evidence_file)?,
-                        target_state: args.target_state,
-                        write: args.write,
-                    }),
-                    CliCommand::ReviewSession(args) => Ok(Self::ReviewSession {
-                        workflow_path: args.workflow_path,
-                        issue_ref: args.issue_ref,
-                        write: args.write,
-                    }),
-                    CliCommand::ReviewFreshness(args) => Ok(Self::ReviewFreshness {
-                        input: ReviewFreshnessInput {
-                            issue_ref: args.issue_ref,
-                            prior_head_sha: args.prior_head_sha,
-                            current_head_sha: args.current_head_sha,
-                            prior_base_sha: args.prior_base_sha,
-                            current_base_sha: args.current_base_sha,
-                            changed_files: args.changed_files,
-                            stale_reason: args.stale_reason.into(),
-                            rework_class: args.rework_class.into(),
-                            patch_summary: args.patch_summary,
-                        },
-                    }),
+                    CliCommand::ReviewPass(args) => {
+                        command_from_review_args(ReviewCommandArgs::Pass(args))
+                    }
+                    CliCommand::ReviewReject(args) => {
+                        command_from_review_args(ReviewCommandArgs::Reject(args))
+                    }
+                    CliCommand::ReviewSession(args) => {
+                        command_from_review_args(ReviewCommandArgs::Session(args))
+                    }
+                    CliCommand::ReviewFreshness(args) => {
+                        command_from_review_args(ReviewCommandArgs::Freshness(args))
+                    }
                     CliCommand::ReviewLoop(args) => {
-                        if args.max_iterations == Some(0) || args.max_concurrent == Some(0) {
-                            return Err(usage());
-                        }
-                        Ok(Self::ReviewLoop {
-                            options: ReviewLoopOptions {
-                                workflow_path: args.workflow_path,
-                                max_iterations: args.max_iterations,
-                                once: args.once,
-                                write: args.write,
-                                fake_outcome: args.fake_outcome.map(Into::into),
-                                max_concurrent: args.max_concurrent,
-                            },
-                        })
+                        command_from_review_args(ReviewCommandArgs::Loop(args))
                     }
                     CliCommand::AgentSession(args) => match args.command {
                         AgentSessionCommand::Start(start) => Ok(Self::AgentSessionStart {
@@ -9001,6 +9122,74 @@ fn read_forge_markdown_arg(args: ForgeMarkdownArgs) -> Result<String, String> {
 fn read_required_file(path: PathBuf) -> Result<String, String> {
     std::fs::read_to_string(&path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))
+}
+
+fn command_from_review_args(command: ReviewCommandArgs) -> Result<Command, String> {
+    match command {
+        ReviewCommandArgs::Fake(args) => Ok(Command::ReviewFake {
+            workflow_path: args.workflow_path,
+            issue_ref: args.issue_ref,
+            outcome: args.outcome.into(),
+            write: args.write,
+        }),
+        ReviewCommandArgs::Once(args) => Ok(Command::ReviewOnce {
+            workflow_path: args.workflow_path,
+            issue_ref: args.issue_ref,
+            write: args.write,
+        }),
+        ReviewCommandArgs::Claim(args) => Ok(Command::ReviewClaim {
+            workflow_path: args.workflow_path,
+            issue_ref: args.issue_ref,
+            worker: args.worker,
+            write: args.write,
+        }),
+        ReviewCommandArgs::Pass(args) => Ok(Command::ReviewPass {
+            workflow_path: args.workflow_path,
+            issue_ref: args.issue_ref,
+            evidence: read_required_file(args.evidence_file)?,
+            write: args.write,
+        }),
+        ReviewCommandArgs::Reject(args) => Ok(Command::ReviewReject {
+            workflow_path: args.workflow_path,
+            issue_ref: args.issue_ref,
+            evidence: read_required_file(args.evidence_file)?,
+            target_state: args.target_state,
+            write: args.write,
+        }),
+        ReviewCommandArgs::Session(args) => Ok(Command::ReviewSession {
+            workflow_path: args.workflow_path,
+            issue_ref: args.issue_ref,
+            write: args.write,
+        }),
+        ReviewCommandArgs::Freshness(args) => Ok(Command::ReviewFreshness {
+            input: ReviewFreshnessInput {
+                issue_ref: args.issue_ref,
+                prior_head_sha: args.prior_head_sha,
+                current_head_sha: args.current_head_sha,
+                prior_base_sha: args.prior_base_sha,
+                current_base_sha: args.current_base_sha,
+                changed_files: args.changed_files,
+                stale_reason: args.stale_reason.into(),
+                rework_class: args.rework_class.into(),
+                patch_summary: args.patch_summary,
+            },
+        }),
+        ReviewCommandArgs::Loop(args) => {
+            if args.max_iterations == Some(0) || args.max_concurrent == Some(0) {
+                return Err(usage());
+            }
+            Ok(Command::ReviewLoop {
+                options: ReviewLoopOptions {
+                    workflow_path: args.workflow_path,
+                    max_iterations: args.max_iterations,
+                    once: args.once,
+                    write: args.write,
+                    fake_outcome: args.fake_outcome.map(Into::into),
+                    max_concurrent: args.max_concurrent,
+                },
+            })
+        }
+    }
 }
 
 fn parse_project_field_assignments(
@@ -9288,6 +9477,22 @@ mod tests {
         issue.identifier = identifier.into();
         issue.title = title.into();
         issue.branch_name = None;
+        issue
+    }
+
+    fn tracker_issue_with_review_claim() -> TrackerIssue {
+        let mut issue = tracker_issue("Agent Review");
+        let claim = LaneClaim::active(
+            &issue.identifier,
+            LaneClaimLane::Review,
+            LaneClaimActor::Gemini,
+            LaneClaimSource::Manual,
+            1_779_000_900_123,
+        );
+        issue.project_fields.insert(
+            "Review Agent".into(),
+            serde_json::Value::String(claim.render()),
+        );
         issue
     }
 
@@ -10245,7 +10450,8 @@ mod tests {
     fn parses_manual_review_authority_commands() {
         assert_eq!(
             parse(&[
-                "review-claim",
+                "review",
+                "claim",
                 "examples/github-project-workflow.md",
                 "#235",
                 "--worker",
@@ -10276,29 +10482,121 @@ mod tests {
     }
 
     #[test]
+    fn review_group_help_hides_legacy_flat_review_commands() {
+        let help = help_text(&["--help"]);
+
+        assert!(help.contains("review"));
+        assert!(!help.contains("review-claim"));
+        assert!(!help.contains("review-pass"));
+        assert!(!help.contains("review-reject"));
+        assert!(!help.contains("review-clear-claim"));
+    }
+
+    #[test]
+    fn parses_grouped_review_commands() {
+        let command = Command::parse(vec![
+            "review".into(),
+            "loop".into(),
+            "examples/review-fixture-workflow.md".into(),
+            "--once".into(),
+            "--fake-outcome".into(),
+            "confirmed".into(),
+        ])
+        .unwrap();
+
+        let Command::ReviewLoop { options } = command else {
+            panic!("expected grouped review loop command");
+        };
+        assert_eq!(
+            options.workflow_path,
+            PathBuf::from("examples/review-fixture-workflow.md")
+        );
+        assert!(options.once);
+        assert_eq!(
+            options.fake_outcome,
+            Some(FakeReviewOutcome::ConfirmedFinding)
+        );
+    }
+
+    #[test]
     fn manual_review_pass_workpad_records_doctor_evidence_marker() {
-        let issue = tracker_issue("Agent Review");
-        let workpad =
-            render_manual_review_workpad(&issue, "passed", "human_review", "Gemini: pass", true);
+        let issue = tracker_issue_with_review_claim();
+        let claim = project_text_field(&issue, "Review Agent").unwrap();
+        let terminal = format!(
+            "{} result=passed",
+            LaneClaim::parse(&claim)
+                .unwrap()
+                .with_state(LaneClaimState::Done)
+                .render()
+        );
+        let workpad = render_manual_review_workpad(
+            &issue,
+            "passed",
+            "human_review",
+            "Gemini: pass",
+            true,
+            &claim,
+            &terminal,
+        );
 
         assert!(workpad.contains("Reviewer backend: manual-operator"));
         assert!(workpad.contains("Review pass evidence: `recorded`"));
         assert!(workpad.contains("main implementation agent must not"));
+        assert!(workpad.contains("Terminal Review Agent claim"));
     }
 
     #[test]
     fn manual_review_reject_workpad_does_not_record_pass_marker() {
-        let issue = tracker_issue("Agent Review");
+        let issue = tracker_issue_with_review_claim();
+        let claim = project_text_field(&issue, "Review Agent").unwrap();
+        let terminal = format!(
+            "{} result=inconclusive",
+            LaneClaim::parse(&claim)
+                .unwrap()
+                .with_state(LaneClaimState::Failed)
+                .render()
+        );
         let workpad = render_manual_review_workpad(
             &issue,
             "not passed",
             "agent_review",
             "Gemini: inconclusive",
             false,
+            &claim,
+            &terminal,
         );
 
         assert!(!workpad.contains("Review pass evidence: `recorded`"));
         assert!(workpad.contains("must not move to Human Review"));
+    }
+
+    #[test]
+    fn manual_review_claim_validation_requires_exact_evidence_claim() {
+        let issue = tracker_issue_with_review_claim();
+        let claim = project_text_field(&issue, "Review Agent").unwrap();
+
+        assert!(validate_manual_review_claim(&issue, &format!("claim: {claim}")).is_ok());
+        let error = validate_manual_review_claim(&issue, "claim: Manual Gemini A")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("exact current Review Agent claim"));
+    }
+
+    #[test]
+    fn terminal_review_claim_records_result_without_losing_structured_claim() {
+        let issue = tracker_issue_with_review_claim();
+        let claim = LaneClaim::parse(&project_text_field(&issue, "Review Agent").unwrap()).unwrap();
+
+        let value = terminal_review_claim_value(&claim, LaneClaimState::Done, "passed");
+
+        assert!(value.contains("state=done"));
+        assert!(value.contains("result=passed"));
+        assert_eq!(
+            LaneClaim::parse(&value)
+                .unwrap()
+                .with_state(LaneClaimState::Active),
+            claim
+        );
     }
 
     #[test]

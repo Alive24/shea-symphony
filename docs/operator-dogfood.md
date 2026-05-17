@@ -143,14 +143,14 @@ review:
 
 ```bash
 export GEMINI_CLI_TRUST_WORKSPACE=true
-target/debug/jade-symphony review-loop workflows/jade-symphony.md --max-iterations 1 --write
+target/debug/jade-symphony review loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
 For supervised manual review terminals, use
-`review-session WORKFLOW '#issue' --write` on an `Agent Review` issue. It uses
-the shared `agent-session` lane path to claim the Review Agent field, start the
-lane-specific review prompt in tmux, and write attach/log evidence without
-moving the issue to `Human Review`.
+`review session WORKFLOW '#issue' --write` on an `Agent Review` issue. It starts
+the lane-specific review prompt in tmux and writes attach/log evidence without
+writing the `Review Agent` claim or moving the issue to `Human Review`. Use
+`review claim` or the configured `review loop` for claim ownership.
 
 If Gemini cannot start, the review workpad should name the configured command,
 whether worker `PATH` could resolve it, the required operator action, and the
@@ -162,7 +162,7 @@ handoff evidence and send the work back to Main/operator repair; `doctor repair
 path when the operator has confirmed the handoff is otherwise complete.
 
 If Gemini exits, refuses the workspace trust check, or times out before
-returning a review report, `review-loop` records terminal workpad/ledger
+returning a review report, `review loop` records terminal workpad/ledger
 evidence, clears the `Review Agent` Project claim, and leaves the issue in
 `Agent Review` for retry after the operator fixes the backend environment.
 The Gemini subprocess receives the rendered prompt on stdin and Jade Symphony closes
@@ -170,13 +170,13 @@ stdin after writing so headless commands that wait for EOF can proceed.
 
 If Gemini returns successfully but says it could not inspect the PR, workspace,
 diff, code changes, or required handoff evidence, treat that as an automatic
-Review Agent inconclusive result, not a pass. `review-loop` records the
+Review Agent inconclusive result, not a pass. `review loop` records the
 inconclusive reason in the ledger/workpad and routes the issue to `Rework` so
 the missing evidence can be repaired before another independent review pass.
 
 Manual Gemini or operator-supplied review notes must use an explicit manual
 evidence marker such as `## Manual Agent Review Evidence`. They are not the same
-thing as automatic `review-loop` pass evidence and should not be used to satisfy
+thing as automatic `review loop` pass evidence and should not be used to satisfy
 the automatic Review Agent boundary unless the workflow explicitly says so.
 
 Use `workflows/jade-symphony.md` for supervised review workers. Do not keep the
@@ -241,14 +241,17 @@ pass evidence.
 For a manual Gemini/operator review, claim and route through the CLI:
 
 ```bash
-target/debug/jade-symphony review-claim workflows/jade-symphony.md '#226' --worker "Manual Gemini Review" --write
-target/debug/jade-symphony review-pass workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
-target/debug/jade-symphony review-reject workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --target-state rework --write
+target/debug/jade-symphony review claim workflows/jade-symphony.md '#226' --worker "Manual Gemini Review" --write
+target/debug/jade-symphony review pass workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
+target/debug/jade-symphony review reject workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --target-state rework --write
 ```
 
-`review-pass` writes the review pass marker before moving to `Human Review`.
-`review-reject` refuses `Human Review` and may route only to `Agent Review`,
-`Rework`, or `Need Human Input`.
+The evidence file for `review pass` or `review reject` must include the exact
+structured `Review Agent` claim from `review claim`. `review pass` writes the
+review pass marker before moving to `Human Review`; `review reject` refuses
+`Human Review` and may route only to `Agent Review`, `Rework`, or
+`Need Human Input`. Both commands preserve the `Review Agent` field as terminal
+audit evidence instead of clearing it.
 
 ## Artifact Root Migration
 

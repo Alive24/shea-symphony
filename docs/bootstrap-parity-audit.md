@@ -50,7 +50,7 @@ must not be edited by Jade Symphony implementation work.
 | Workspace lifecycle | Partial | `src/workspace.rs`, `src/handoff.rs`, `src/git_handoff.rs`, `cleanup-plan` command | Terminal cleanup planning exists; automatic runtime cleanup and remote/SSH parity are not complete. |
 | Agent backend abstraction | Partial | `src/agent.rs`, Codex/Claude subprocess workflows | Full Codex app-server and Claude Code protocol parity are deferred. |
 | Run loop/orchestrator | Partial | `src/orchestrator.rs`, `src/main.rs`, `src/runtime_state.rs` | Long-running supervision, multi-worker reconciliation, and fully autonomous operation are not complete. |
-| Agent Review boundary | Partial | `src/review.rs`, `review-loop`, review job ledger docs | Bounded review-loop and durable review evidence exist; persistent background reviewer supervision is still incomplete. |
+| Agent Review boundary | Partial | `src/review.rs`, `review loop`, review job ledger docs | Bounded `review loop` and durable review evidence exist; persistent background reviewer supervision is still incomplete. |
 | Merging lane | Partial | `src/merge_lane.rs`, `merge-once`, `merge-loop` command | Guarded one-shot and bounded pool landing exist; unbounded continuous merge polling and richer reconciliation are not complete. |
 | Observability/status | Partial | `src/status_surface.rs`, `src/event_log.rs`, `src/runtime_state.rs`, `status-api` command | Terminal, JSONL, JSON snapshot, local one-shot API, and tracker mutation audit surfaces exist; persistent/remote web service mode remains incomplete. |
 | Usage-limit pause/resume | Partial | `src/agent.rs`, `src/runtime_state.rs`, `docs/dogfood-readiness.md` | Vendor-specific quota management and worker-level recovery remain future work. |

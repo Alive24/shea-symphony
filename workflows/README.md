@@ -11,9 +11,9 @@ Use it for live Project #9 operations:
 cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --write
 cargo run -- forge validate --workflow workflows/jade-symphony.md --status Todo --title "<title>" --body-file /private/tmp/issue.md
 cargo run -- forge create --workflow workflows/jade-symphony.md --status Todo --title "<title>" --body-file /private/tmp/issue.md --assignee Alive24 --write
-cargo run -- review-loop workflows/jade-symphony.md --max-iterations 1 --write
+cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --write
 cargo run -- merge-once workflows/jade-symphony.md --write
-cargo run -- review-session workflows/jade-symphony.md '#123' --write
+cargo run -- review session workflows/jade-symphony.md '#123' --write
 cargo run -- merge-session workflows/jade-symphony.md '#123' --write
 cargo run -- agent-session start workflows/jade-symphony.md '#220' --lane review --write
 cargo run -- agent-session list workflows/jade-symphony.md
@@ -29,9 +29,11 @@ The `agent-session` command is the manual tmux recovery path for all lanes:
 `main`, `review`, and `merge` each render their own lane prompt, claim the
 matching Project field, and leave workflow state unchanged until the lane's
 normal evidence path is ready.
-`review-session` and `merge-session` are lane-specific shortcuts for the same
-session path. They write attach/log evidence without approving reviews, merging
-PRs, or closing issues.
+`review session` starts a review runtime/session and writes attach/log evidence
+without writing the `Review Agent` claim; claim ownership stays with
+`review claim` or the configured `review loop`. `merge-session` remains the
+merge-lane shortcut for session recovery. Neither shortcut approves reviews,
+merges PRs, or closes issues.
 
 Lane prompt files:
 

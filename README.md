@@ -156,6 +156,11 @@ authority rules:
 Issue Forge turns complete issue bodies into Project-aware tracker mutations.
 Conversation, reflection, and draft repair now live in Codex skills; the Jade Symphony CLI stays deterministic and scriptable.
 
+Doctor triage for `Need Human Input` and operator-selected stuck states lives in
+the repo-owned skill `.codex/skills/jade-symphony-doctor/SKILL.md`, with the
+operator spec in `docs/operator-doctor.md`. It preserves evidence and recommends
+confirmation-gated repairs instead of mutating Project state by default.
+
 Typical dry-run entrypoints:
 
 ```bash

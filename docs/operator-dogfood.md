@@ -226,6 +226,15 @@ queue, doctor health, smoke readiness, runtime/session state, cleanup/audit
 status, and lane-specific next commands without claiming work, starting workers,
 repairing state, cleaning artifacts, or implying unattended readiness.
 
+Use the repo-owned Doctor skill at
+`.codex/skills/jade-symphony-doctor/SKILL.md` when an operator-selected issue or
+`Need Human Input` item needs triage before normal lane work can resume. The
+skill is read-first: it gathers `project-state`, `doctor`, `debug`, and
+`project-issue` evidence, classifies the stuck state, and produces a structured
+`Doctor Triage Note` with any repair actions that still require explicit
+confirmation. Keep full local skill install checking in #256 and dated
+installable skill suite packaging in #242.
+
 If `run-loop` finds runtime-state for an issue that has already moved out of
 active main-agent work, it reconciles tracker state first. Clean or absent
 workspaces are archived under the configured runtime log directory and the loop

@@ -90,7 +90,8 @@ use jade_symphony::runtime_state::{
 };
 use jade_symphony::session_registry::{
     capture_tmux_pane_tail, classify_session_record, load_session_registry, read_log_tail,
-    session_registry_path, unix_timestamp_ms,
+    save_session_record, session_registry_path, unix_timestamp_ms, AgentSessionRecord,
+    SessionStatus,
 };
 use jade_symphony::status_surface::{render_latest_status_bar, render_snapshot};
 use jade_symphony::tracker::{
@@ -420,13 +421,22 @@ fn session_status_snapshots(
     let mut snapshots = Vec::new();
 
     for record in registry.sessions.iter().rev().take(20).rev() {
-        let pane_tail = capture_tmux_pane_tail(
-            &config.tmux.command,
-            &record.pane_target,
-            DEFAULT_SESSION_STATUS_LINES,
-        )
-        .ok();
-        let log_tail = read_log_tail(&record.log_path, DEFAULT_SESSION_STATUS_LINES)?;
+        let is_tmux_session = record.backend == "tmux";
+        let pane_tail = if is_tmux_session {
+            capture_tmux_pane_tail(
+                &config.tmux.command,
+                &record.pane_target,
+                DEFAULT_SESSION_STATUS_LINES,
+            )
+            .ok()
+        } else {
+            None
+        };
+        let log_tail = if is_tmux_session {
+            read_log_tail(&record.log_path, DEFAULT_SESSION_STATUS_LINES)?
+        } else {
+            None
+        };
         let probe = classify_session_record(
             record,
             pane_tail.as_deref(),
@@ -443,8 +453,8 @@ fn session_status_snapshots(
             evidence: probe.evidence,
             issue_identifier: record.issue_identifier.clone(),
             issue_title: record.issue_title.clone(),
-            attach_command: Some(record.attach_command.clone()),
-            log_path: Some(record.log_path.display().to_string()),
+            attach_command: is_tmux_session.then(|| record.attach_command.clone()),
+            log_path: is_tmux_session.then(|| record.log_path.display().to_string()),
             updated_at_ms: record.updated_at_ms,
         });
     }
@@ -1505,6 +1515,14 @@ fn review_claim(
             value: claim_value.clone(),
         },
     )?;
+    let registry_path = record_manual_lane_claim_evidence(
+        &config,
+        &issue,
+        AgentSessionLaneArg::Review,
+        &claim,
+        &claim_value,
+        &worker,
+    )?;
     append_tracker_mutation_audit(
         &config,
         TrackerMutationAudit {
@@ -1518,8 +1536,10 @@ fn review_claim(
         },
     );
     println!(
-        "review_claim=ok issue_ref={} field=\"Review Agent\" run={} value={claim_value}",
-        issue.identifier, claim.run
+        "review_claim=ok issue_ref={} field=\"Review Agent\" run={} registry={} value={claim_value}",
+        issue.identifier,
+        claim.run,
+        registry_path.display()
     );
     Ok(())
 }
@@ -1576,6 +1596,8 @@ fn lane_claim_command(
             value: claim_value.clone(),
         },
     )?;
+    let registry_path =
+        record_manual_lane_claim_evidence(&config, &issue, lane, &claim, &claim_value, &worker)?;
     let command_name = format!("{} claim", lane.label());
     append_tracker_mutation_audit(
         &config,
@@ -1590,12 +1612,13 @@ fn lane_claim_command(
         },
     );
     println!(
-        "{}_claim=ok issue_ref={} field={:?} worker={} run={} value={claim_value}",
+        "{}_claim=ok issue_ref={} field={:?} worker={} run={} registry={} value={claim_value}",
         lane.label(),
         issue.identifier,
         lane.claim_field(),
         worker.trim(),
-        claim.run
+        claim.run,
+        registry_path.display()
     );
     Ok(())
 }
@@ -1681,6 +1704,50 @@ fn lane_claim_for_manual_worker(
         current_time_ms(),
     )
     .with_worker(worker))
+}
+
+fn record_manual_lane_claim_evidence(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    lane: AgentSessionLaneArg,
+    claim: &LaneClaim,
+    claim_value: &str,
+    worker: &str,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let registry_path = session_registry_path(config);
+    let now_ms = unix_timestamp_ms();
+    let path = std::env::current_dir()?;
+    let branch = current_git_branch(&path).ok().flatten();
+    let session_name = format!("manual-{}-{}", lane.label(), safe_identifier(&claim.run));
+    let record = AgentSessionRecord {
+        issue_id: Some(issue.id.clone()),
+        issue_identifier: Some(issue.identifier.clone()),
+        issue_title: Some(issue.title.clone()),
+        lane: lane.label().into(),
+        run_id: Some(claim.run.clone()),
+        thread: Some(claim.thread.clone()),
+        session_source: Some("manual-claim".into()),
+        claim_value: Some(claim_value.into()),
+        actor_role: Some(claim.actor.as_str().into()),
+        actor_label: Some(worker.trim().into()),
+        git_author: None,
+        profile_id: None,
+        instance_name: None,
+        worktree: path,
+        branch,
+        backend: "codex-app-manual".into(),
+        session_name,
+        pane_target: String::new(),
+        prompt_artifact_path: PathBuf::new(),
+        log_path: PathBuf::new(),
+        attach_command: "not a tmux session; manual Codex App evidence only".into(),
+        attempt: 1,
+        status: SessionStatus::Recorded,
+        started_at_ms: now_ms,
+        updated_at_ms: now_ms,
+    };
+    save_session_record(&registry_path, record)?;
+    Ok(registry_path)
 }
 
 fn review_clear_claim(
@@ -10376,6 +10443,58 @@ mod tests {
                 .map(|audit| audit.mutation_type.as_str()),
             Some("state_change")
         );
+    }
+
+    #[test]
+    fn manual_lane_claim_evidence_records_non_tmux_registry_records() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
+        config.artifacts.namespace = Some("acme/project".into());
+        let issue = tracker_issue_with_ref("#281", "Manual evidence", "In Progress");
+
+        for (index, lane) in [
+            AgentSessionLaneArg::Main,
+            AgentSessionLaneArg::Review,
+            AgentSessionLaneArg::Merge,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let worker = format!("codex-manual-{}", lane.label());
+            let claim = LaneClaim::active(
+                &issue.identifier,
+                lane.claim_lane(),
+                LaneClaimActor::Codex,
+                LaneClaimSource::Manual,
+                1_779_000_900_123 + index as u64,
+            )
+            .with_worker(&worker);
+            let claim_value = claim.render();
+
+            record_manual_lane_claim_evidence(&config, &issue, lane, &claim, &claim_value, &worker)
+                .unwrap();
+        }
+
+        let registry = load_session_registry(&session_registry_path(&config)).unwrap();
+        assert_eq!(registry.sessions.len(), 3);
+        for record in registry.sessions {
+            assert_eq!(record.issue_identifier.as_deref(), Some("#281"));
+            assert_eq!(record.backend, "codex-app-manual");
+            assert_eq!(record.status, SessionStatus::Recorded);
+            assert_eq!(record.session_source.as_deref(), Some("manual-claim"));
+            assert_eq!(record.thread.as_deref(), Some("unknown"));
+            assert!(record
+                .claim_value
+                .as_deref()
+                .unwrap()
+                .contains("source=manual"));
+            assert!(record.pane_target.is_empty());
+            assert_eq!(
+                record.attach_command,
+                "not a tmux session; manual Codex App evidence only"
+            );
+        }
     }
 
     #[test]

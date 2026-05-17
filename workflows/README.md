@@ -25,11 +25,12 @@ real implementation evidence is available for the normal handoff path. Status
 commands classify registered tmux sessions from bounded pane/log evidence while
 keeping full scrollback out of routine output.
 Manual tmux recovery is a two-step path. Use `main claim`, `review claim`, or
-`merge claim` to write only the matching Project claim field and print the
-structured `run=`. Then use `session start --lane ... --run ...` to render the
-lane prompt and start the tmux runtime. Session commands validate the existing
-claim and write attach/log evidence without approving reviews, merging PRs, or
-closing issues.
+`merge claim` to write the matching Project claim field, print the structured
+`run=`, and record minimum non-tmux registry evidence for the manual Codex App
+claim. Then use `session start --lane ... --run ...` to render the lane prompt
+and start the tmux runtime when a supervised terminal is needed. Session
+commands validate the existing claim and write attach/log evidence without
+approving reviews, merging PRs, or closing issues.
 
 Lane prompt files:
 

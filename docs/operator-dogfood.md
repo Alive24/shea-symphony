@@ -217,8 +217,9 @@ discussion, including Human Review -> Rework revision discussion; the CLI owns
 Main stops at `Agent Review`; Manual Review owns evidence-backed review
 routing; Human Review briefs the operator for UAT and final acceptance but waits
 for explicit confirmation before any state change; Manual Merge owns approved
-merge-lane work. Automatic doctor install-health checks remain future work for
-#256.
+merge-lane work. `doctor` reports read-only local install-health warnings and
+points operators back to the #242 install/update path rather than repairing
+skill files itself.
 
 ## Inspect And Resume
 
@@ -306,8 +307,8 @@ Use the repo-owned Doctor skill at
 skill is read-first: it gathers `project state`, `doctor`, `debug`, and
 `project issue` evidence, classifies the stuck state, and produces a structured
 `Doctor Triage Note` with any repair actions that still require explicit
-confirmation. Keep full local skill install checking in #256 and dated
-installable skill suite packaging in #242.
+confirmation. Local skill install checking is reported by `doctor`, while dated
+installable skill suite packaging and writes remain in the #242 installer path.
 
 If `main loop` finds runtime-state for an issue that has already moved out of
 active main-agent work, it reconciles tracker state first. Clean or absent

@@ -19,8 +19,9 @@ use jade_symphony::canonical_checkout::{
 };
 use jade_symphony::config::RuntimeConfig;
 use jade_symphony::doctor::{
-    audit_project_issues, audit_project_issues_with_context, draft_pr_repair_candidates,
-    human_review_repair_candidates, render_doctor_repair_workpad,
+    append_local_skill_install_doctor_violations, audit_project_issues,
+    audit_project_issues_with_context, default_jade_symphony_skill_targets,
+    draft_pr_repair_candidates, human_review_repair_candidates, render_doctor_repair_workpad,
     render_human_review_repair_workpad, render_project_audit_report,
     render_project_audit_report_json, AuditSeverity, ProjectAuditReport, ProjectAuditViolation,
     ProjectDoctorContext, AGENT_REVIEW_DRAFT_PR,
@@ -4486,6 +4487,9 @@ fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::Error>> {
     report.integration_gaps = integration_gaps;
     append_canonical_checkout_doctor_violations(&mut report, &config);
     append_workspace_doctor_violations(&mut report, &config, &issues);
+    let skill_repo_root = discover_skill_suite_repo_root(&workflow_path)?;
+    let skill_targets = default_jade_symphony_skill_targets();
+    append_local_skill_install_doctor_violations(&mut report, &skill_repo_root, &skill_targets);
 
     match &options.action {
         Some(DoctorAction::Repair(repair)) => {
@@ -4537,6 +4541,34 @@ fn resolve_doctor_workflow_path(explicit: Option<PathBuf>) -> PathBuf {
     } else {
         PathBuf::from("WORKFLOW.md")
     }
+}
+
+fn discover_skill_suite_repo_root(
+    workflow_path: &Path,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let start = if workflow_path.is_absolute() {
+        workflow_path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(workflow_path)
+    };
+    let mut cursor = start
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    loop {
+        if cursor
+            .join("skills")
+            .join("jade-symphony")
+            .join("manifest.toml")
+            .exists()
+        {
+            return Ok(cursor);
+        }
+        if !cursor.pop() {
+            break;
+        }
+    }
+    Ok(std::env::current_dir()?)
 }
 
 fn print_doctor_interactive_plan(report: &ProjectAuditReport) {

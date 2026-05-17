@@ -369,6 +369,11 @@ Normal install mode is interactive: it prints detected target paths and requires
 operator confirmation before writing. Use `--skip-codex`, `--skip-gemini`,
 `--codex-dir`, and `--gemini-dir` for manual target control. Validation compares
 the active local skill files with the repo-owned dated suite.
+`doctor` also reports read-only install-health warnings for the detected Codex
+and Gemini skill roots, including missing roots, broken links, file-shaped
+aliases, missing `SKILL.md`, stale metadata, and stale Jade Symphony CLI naming.
+It points back to this installer path for repair instead of mutating local
+skills directly.
 
 The suite packages Issue Forge, Issue Forge Reflect, Manual Main, Manual Review,
 Human Review, Manual Merge, and a Doctor/Fix stub. Human Review is an

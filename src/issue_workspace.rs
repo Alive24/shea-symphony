@@ -192,6 +192,7 @@ pub fn discover_issue_workspaces_from_parts(
         for hint in workpad_workspace_hints(description, workpad_marker) {
             let git = worktree_by_path.get(&hint);
             let strong = description.contains("jade-symphony-workspace-adoption")
+                || description.contains("jade-symphony-workspace-ensure")
                 || description.contains("Workspace adoption");
             upsert_candidate(
                 &mut candidates,
@@ -365,6 +366,42 @@ pub fn render_workspace_adoption_workpad(
         &workpad,
         "<!-- jade-symphony-workspace-adoption -->",
         "<!-- /jade-symphony-workspace-adoption -->",
+        &block,
+    );
+    workpad
+}
+
+pub fn render_workspace_ensure_workpad(
+    issue: &TrackerIssue,
+    marker: &str,
+    candidate: &IssueWorkspaceCandidate,
+    action: &str,
+    pr_ref: Option<&str>,
+) -> String {
+    let mut workpad = issue
+        .description
+        .as_deref()
+        .and_then(|description| {
+            description
+                .find(marker)
+                .map(|index| description[index..].trim())
+        })
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{marker}\n## Workpad"));
+
+    let block = format!(
+        "<!-- jade-symphony-workspace-ensure -->\n### Workspace Evidence\n- Issue: `{}`\n- Pull request: `{}`\n- Branch/ref: `{}`\n- Workspace path: `{}`\n- Action: `{}`\n- Source command: `workspace ensure`\n- Validation result: `clean local git worktree for Review/Merge inspection`\n<!-- /jade-symphony-workspace-ensure -->",
+        issue.identifier,
+        pr_ref.unwrap_or("none"),
+        candidate.branch.as_deref().unwrap_or("unknown"),
+        candidate.path.display(),
+        action,
+    );
+
+    workpad = replace_or_append_block(
+        &workpad,
+        "<!-- jade-symphony-workspace-ensure -->",
+        "<!-- /jade-symphony-workspace-ensure -->",
         &block,
     );
     workpad
@@ -669,6 +706,28 @@ mod tests {
         assert!(body.starts_with("<!-- jade-symphony-workpad -->"));
         assert!(body.contains("Workspace Adoption"));
         assert!(body.contains("/tmp/issue-253"));
+    }
+
+    #[test]
+    fn renders_ensure_block_as_workspace_evidence() {
+        let body = render_workspace_ensure_workpad(
+            &issue(),
+            "<!-- jade-symphony-workpad -->",
+            &IssueWorkspaceCandidate {
+                path: PathBuf::from("/tmp/issue-253"),
+                branch: Some("feature/issue-253-worktree-discovery".into()),
+                head: Some("def".into()),
+                strength: WorkspaceMatchStrength::Strong,
+                evidence: Vec::new(),
+            },
+            "reused",
+            Some("#254"),
+        );
+
+        assert!(body.starts_with("<!-- jade-symphony-workpad -->"));
+        assert!(body.contains("Workspace Evidence"));
+        assert!(body.contains("workspace ensure"));
+        assert!(body.contains("Pull request: `#254`"));
     }
 
     #[test]

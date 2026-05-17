@@ -37,6 +37,9 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
   canonical candidate exists.
 - If multiple strong candidates exist, require an operator `workspace adopt`
   choice before repairing local conflicts.
+- If no suitable candidate exists and local repair needs files, use
+  `workspace ensure` from the canonical checkout; do not run `gh pr checkout`
+  or switch branches in the canonical checkout.
 - Merge only when the PR is clean, current, and approved by the Project state.
 - Record merge evidence, final commit/merge information, and tracker updates.
 

@@ -147,10 +147,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         } => doctor_repair_human_review(workflow_path, write),
         Command::Profiles { workflow_path } => list_profiles(workflow_path),
         Command::Debug { workflow_path } => debug_report(workflow_path),
-        Command::DogfoodSmoke {
-            workflow_path,
-            write,
-        } => dogfood_smoke(workflow_path, write),
         Command::CleanupPlan { workflow_path } => cleanup_plan_command(workflow_path),
         Command::CleanPlan { workflow_path } => cleanup_plan_command(workflow_path),
         Command::CleanAudit { workflow_path } => clean_audit_command(workflow_path),
@@ -4621,94 +4617,6 @@ fn list_profiles(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
-fn dogfood_smoke(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let workflow = WorkflowDefinition::load(&workflow_path)?;
-    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
-    config.validate()?;
-    if write {
-        ensure_write_mode_main_agent_backend(&workflow_path, &config, "dogfood-smoke")?;
-    }
-
-    let adapter = adapter_from_config(&config);
-    let integration_gaps = adapter.integration_gaps();
-    let gap_report = classify_dogfood_integration_gaps(&integration_gaps);
-    let issues = adapter.list_dispatchable_issues()?;
-    let controlled_candidates: Vec<_> = issues
-        .iter()
-        .filter(|issue| is_controlled_dogfood_smoke_issue(issue))
-        .collect();
-    let executable_candidates = controlled_candidates
-        .iter()
-        .filter(|issue| {
-            evaluate_issue_for_current_source(&config, issue)
-                .map(|decision| decision.is_dispatchable())
-                .unwrap_or(false)
-        })
-        .count();
-    let fixture_mode = config.tracker.fixture_path.is_some();
-    let write_ready = dogfood_smoke_write_ready(
-        fixture_mode,
-        gap_report.blocking.len(),
-        executable_candidates,
-        write,
-    );
-
-    println!("dogfood_smoke=ok");
-    println!("workflow={}", workflow_path.display());
-    println!("tracker_kind={}", config.tracker.kind);
-    println!("fixture_mode={fixture_mode}");
-    println!("write_requested={write}");
-    println!("controlled_candidates={}", controlled_candidates.len());
-    println!("executable_candidates={executable_candidates}");
-    println!(
-        "runtime_state_path={}",
-        runtime_state_path(&config).display()
-    );
-    println!(
-        "event_log_root={}",
-        config.observability.logs_root.join("events").display()
-    );
-    if integration_gaps.is_empty() {
-        println!("integration_gaps=none");
-    } else {
-        println!(
-            "integration_gap_blocking_count={}",
-            gap_report.blocking.len()
-        );
-        println!(
-            "integration_gap_warning_count={}",
-            gap_report.warnings.len()
-        );
-        for gap in &gap_report.blocking {
-            println!("integration_gap_blocking={gap}");
-        }
-        for gap in &gap_report.warnings {
-            println!("integration_gap_warning={gap}");
-        }
-    }
-    println!("write_ready={write_ready}");
-
-    if !write {
-        println!("dogfood_smoke_dry_run action=inspect_project");
-        println!("dogfood_smoke_dry_run action=quality_gate_controlled_issue");
-        println!("dogfood_smoke_dry_run action=report_run_loop_command");
-        return Ok(());
-    }
-
-    if write_ready {
-        println!(
-            "dogfood_smoke_next_command=cargo run -- run-loop {} --max-iterations 1 --write",
-            workflow_path.display()
-        );
-    } else {
-        println!("dogfood_smoke_blocked=true");
-        println!("dogfood_smoke_blocker={DOGFOOD_SMOKE_WRITE_BLOCKER}");
-        return Err(DOGFOOD_SMOKE_WRITE_BLOCKER.into());
-    }
-
-    Ok(())
-}
-
 fn cleanup_plan_command(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config(&workflow_path)?;
     let adapter = adapter_from_config(&config);
@@ -5635,9 +5543,6 @@ enum DogfoodIntegrationGapSeverity {
     Warning,
 }
 
-const DOGFOOD_SMOKE_WRITE_BLOCKER: &str =
-    "requires exactly one executable controlled smoke issue, non-fixture tracker mode, and no blocking integration gaps";
-
 fn dogfood_integration_gap_severity(gap: &str) -> DogfoodIntegrationGapSeverity {
     let normalized = gap.to_ascii_lowercase();
 
@@ -5649,15 +5554,6 @@ fn dogfood_integration_gap_severity(gap: &str) -> DogfoodIntegrationGapSeverity 
     } else {
         DogfoodIntegrationGapSeverity::Blocking
     }
-}
-
-fn dogfood_smoke_write_ready(
-    fixture_mode: bool,
-    blocking_gap_count: usize,
-    executable_candidates: usize,
-    write: bool,
-) -> bool {
-    !fixture_mode && blocking_gap_count == 0 && executable_candidates == 1 && write
 }
 
 fn is_controlled_dogfood_smoke_issue(issue: &TrackerIssue) -> bool {
@@ -8488,10 +8384,6 @@ enum Command {
     Debug {
         workflow_path: PathBuf,
     },
-    DogfoodSmoke {
-        workflow_path: PathBuf,
-        write: bool,
-    },
     CleanupPlan {
         workflow_path: PathBuf,
     },
@@ -8863,8 +8755,6 @@ enum CliCommand {
     DoctorRepairHumanReview(DoctorRepairArgs),
     Profiles(WorkflowPathArgs),
     Debug(WorkflowPathArgs),
-    #[command(name = "dogfood-smoke", hide = true)]
-    DogfoodSmoke(DogfoodSmokeArgs),
     #[command(name = "cleanup-plan")]
     CleanupPlan(WorkflowPathArgs),
     Clean(CleanArgs),
@@ -9077,16 +8967,6 @@ impl From<CliDisplayMode> for DisplayMode {
             CliDisplayMode::Tui => Self::Tui,
         }
     }
-}
-
-#[derive(Debug, Args)]
-struct DogfoodSmokeArgs {
-    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
-    workflow_path: PathBuf,
-    #[arg(long)]
-    write: bool,
-    #[arg(long = "dry-run")]
-    _dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -9816,10 +9696,6 @@ impl TryFrom<Cli> for Command {
                     }),
                     CliCommand::Debug(args) => Ok(Self::Debug {
                         workflow_path: args.workflow_path,
-                    }),
-                    CliCommand::DogfoodSmoke(args) => Ok(Self::DogfoodSmoke {
-                        workflow_path: args.workflow_path,
-                        write: args.write,
                     }),
                     CliCommand::CleanupPlan(args) => Ok(Self::CleanupPlan {
                         workflow_path: args.workflow_path,
@@ -11404,29 +11280,18 @@ mod tests {
     }
 
     #[test]
-    fn parses_dogfood_smoke_command() {
-        assert_eq!(
-            parse(&[
-                "dogfood-smoke",
-                "examples/github-project-workflow.md",
-                "--dry-run"
-            ]),
-            Command::DogfoodSmoke {
-                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
-                write: false
-            }
-        );
-        assert_eq!(
-            parse(&[
-                "dogfood-smoke",
-                "examples/github-project-workflow.md",
-                "--write"
-            ]),
-            Command::DogfoodSmoke {
-                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
-                write: true
-            }
-        );
+    fn dogfood_smoke_is_not_a_cli_entrypoint() {
+        let help = help_text(&["--help"]);
+        assert!(!help.contains("dogfood-smoke"));
+
+        let error = Command::parse(vec![
+            "dogfood-smoke".into(),
+            "examples/github-project-workflow.md".into(),
+            "--dry-run".into(),
+        ])
+        .unwrap_err();
+
+        assert!(error.contains("unexpected argument 'examples/github-project-workflow.md'"));
     }
 
     #[test]
@@ -11675,35 +11540,6 @@ mod tests {
 
         assert_eq!(report.blocking, gaps);
         assert!(report.warnings.is_empty());
-    }
-
-    #[test]
-    fn dogfood_smoke_write_readiness_depends_on_blocking_gaps() {
-        assert!(dogfood_smoke_write_ready(false, 0, 1, true));
-        assert!(!dogfood_smoke_write_ready(true, 0, 1, true));
-        assert!(!dogfood_smoke_write_ready(false, 1, 1, true));
-        assert!(!dogfood_smoke_write_ready(false, 0, 2, true));
-        assert!(!dogfood_smoke_write_ready(false, 0, 1, false));
-    }
-
-    #[test]
-    fn dogfood_smoke_write_rejects_dry_run_backend_before_tracker_reads() {
-        let temp = tempfile::tempdir().unwrap();
-        let workflow_path = temp.path().join("WORKFLOW.md");
-        let missing_fixture = temp.path().join("missing-issues.json");
-        std::fs::write(
-            &workflow_path,
-            format!(
-                "---\ntracker:\n  kind: memory\n  fixture_path: {}\nagent:\n  backend: dry-run\n---\nPrompt",
-                missing_fixture.display()
-            ),
-        )
-        .unwrap();
-
-        let error = dogfood_smoke(workflow_path, true).unwrap_err().to_string();
-
-        assert!(error.contains("write-mode dogfood-smoke is blocked"));
-        assert!(error.contains("agent.backend=dry-run"));
     }
 
     #[test]

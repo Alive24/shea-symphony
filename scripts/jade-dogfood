@@ -10,10 +10,10 @@ usage() {
   cat <<'EOF'
 Usage: scripts/jade-dogfood [--dry-run | --write --confirm-write] [--workflow PATH] [--max-iterations N]
 
-Runs operator preflights for supervised Jade Symphony dogfood.
+Runs real-command preflights for supervised Jade Symphony dogfood.
 
 Options:
-  --dry-run            Preview the dogfood command without tracker mutation.
+  --dry-run            Preview the bounded lane tick without tracker mutation.
   --write              Run one bounded live write-mode tick after preflight.
   --confirm-write      Required with --write.
   --workflow PATH      Workflow markdown path. Default: workflows/jade-symphony.md
@@ -94,8 +94,10 @@ check "gh auth status" gh auth status
 
 if [ -x "$BIN" ]; then
   check "workflow validates" "$BIN" validate "$WORKFLOW"
+  check "project state reads" "$BIN" project-state "$WORKFLOW"
+  check "doctor reads" "$BIN" doctor "$WORKFLOW"
   if [ "$MODE" = "write" ]; then
-    check "controlled dogfood smoke preflight" "$BIN" dogfood-smoke "$WORKFLOW" --dry-run
+    check "bounded run-loop dry-run" "$BIN" run-loop "$WORKFLOW" --max-iterations "$MAX_ITERATIONS" --dry-run
   fi
 fi
 
@@ -104,7 +106,7 @@ echo "Recommended commands:"
 echo "- preview: scripts/jade-dogfood --dry-run"
 echo "- supervised write: scripts/jade-dogfood --write --confirm-write --max-iterations 1"
 echo "- inspect: $BIN inspect $WORKFLOW"
-echo "- smoke preflight: $BIN dogfood-smoke $WORKFLOW --dry-run"
+echo "- debug report: $BIN debug $WORKFLOW"
 echo "- resume tick: $BIN run-loop $WORKFLOW --max-iterations 1 --write"
 
 if [ "$FAILED" = "true" ]; then

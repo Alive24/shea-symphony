@@ -25,8 +25,9 @@ The launcher checks:
 - current directory is inside a git repository;
 - `gh` exists;
 - `gh auth status` succeeds;
-- the workflow validates.
-- in write mode, the controlled dogfood smoke preflight passes.
+- the workflow validates;
+- `project-state` and `doctor` read the live workflow state;
+- in write mode, the bounded `run-loop --dry-run` preflight passes.
 
 The canonical supervised operator workflow is `workflows/jade-symphony.md`. It
 defaults durable worktrees, logs, and runtime artifacts under
@@ -81,12 +82,12 @@ runs:
 
 ```bash
 target/debug/jade-symphony project-state workflows/jade-symphony.md
+target/debug/jade-symphony doctor workflows/jade-symphony.md
 target/debug/jade-symphony run-loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 
 If the normal preflight surfaces fail, the launcher exits before claiming
-tracker work. `dogfood-smoke` remains a hidden legacy smoke helper for older
-fixtures; it is not the canonical operator entrypoint.
+tracker work.
 The canonical workflow now uses the local `tmux` main-agent backend. A write
 tick starts an attachable tmux session, records its attach command and log path,
 persists a session registry record under the configured artifact root, and

@@ -514,6 +514,21 @@ fn workpad_workspace_hints(description: &str, marker: &str) -> Vec<PathBuf> {
     paths.into_iter().collect()
 }
 
+fn replace_or_append_block(content: &str, start: &str, end: &str, block: &str) -> String {
+    if let Some(start_index) = content.find(start) {
+        if let Some(end_offset) = content[start_index..].find(end) {
+            let end_index = start_index + end_offset + end.len();
+            return format!(
+                "{}{}{}",
+                content[..start_index].trim_end(),
+                block,
+                content[end_index..].trim_start()
+            );
+        }
+    }
+    format!("{}\n\n{}", content.trim_end(), block)
+}
+
 pub fn infer_issue_ref_from_branch_or_path(branch: Option<&str>, path: &Path) -> Option<String> {
     branch
         .and_then(issue_ref_from_text)

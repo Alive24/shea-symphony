@@ -13,10 +13,9 @@ cargo run -- forge validate --workflow workflows/jade-symphony.md --status Todo 
 cargo run -- forge create --workflow workflows/jade-symphony.md --status Todo --title "<title>" --body-file /private/tmp/issue.md --assignee Alive24 --write
 cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --write
 cargo run -- merge-once workflows/jade-symphony.md --write
-cargo run -- review session workflows/jade-symphony.md '#123' --write
-cargo run -- merge-session workflows/jade-symphony.md '#123' --write
-cargo run -- agent-session start workflows/jade-symphony.md '#220' --lane review --write
-cargo run -- agent-session list workflows/jade-symphony.md
+cargo run -- main claim workflows/jade-symphony.md '#123' --worker codex-manual-main --write
+cargo run -- session start workflows/jade-symphony.md '#123' --lane main --run <RUN_ID> --write
+cargo run -- session list workflows/jade-symphony.md
 ```
 
 Main Agent execution uses the local `tmux` backend. A bounded write tick creates
@@ -25,15 +24,12 @@ log path, persists a session registry record, and leaves the issue active until
 real implementation evidence is available for the normal handoff path. Status
 commands classify registered tmux sessions from bounded pane/log evidence while
 keeping full scrollback out of routine output.
-The `agent-session` command is the manual tmux recovery path for all lanes:
-`main`, `review`, and `merge` each render their own lane prompt, claim the
-matching Project field, and leave workflow state unchanged until the lane's
-normal evidence path is ready.
-`review session` starts a review runtime/session and writes attach/log evidence
-without writing the `Review Agent` claim; claim ownership stays with
-`review claim` or the configured `review loop`. `merge-session` remains the
-merge-lane shortcut for session recovery. Neither shortcut approves reviews,
-merges PRs, or closes issues.
+Manual tmux recovery is a two-step path. Use `main claim`, `review claim`, or
+`merge claim` to write only the matching Project claim field and print the
+structured `run=`. Then use `session start --lane ... --run ...` to render the
+lane prompt and start the tmux runtime. Session commands validate the existing
+claim and write attach/log evidence without approving reviews, merging PRs, or
+closing issues.
 
 Lane prompt files:
 

@@ -41,6 +41,8 @@ pub enum LaneClaimState {
 pub struct LaneClaim {
     pub lane: LaneClaimLane,
     pub actor: LaneClaimActor,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker: Option<String>,
     pub source: LaneClaimSource,
     pub issue: String,
     pub run: String,
@@ -136,6 +138,7 @@ impl LaneClaim {
         Self {
             lane,
             actor,
+            worker: None,
             source,
             issue: issue.to_string(),
             registry: format!("run/{run}"),
@@ -152,19 +155,32 @@ impl LaneClaim {
         }
     }
 
+    pub fn with_worker(&self, worker: impl Into<String>) -> Self {
+        let worker = worker.into();
+        Self {
+            worker: (!worker.trim().is_empty()).then(|| worker.trim().to_string()),
+            ..self.clone()
+        }
+    }
+
     pub fn render(&self) -> String {
-        [
+        let mut tokens = vec![
             "v=1".to_string(),
             format!("lane={}", self.lane.as_str()),
             format!("actor={}", self.actor.as_str()),
+        ];
+        if let Some(worker) = self.worker.as_deref() {
+            tokens.push(format!("worker={worker}"));
+        }
+        tokens.extend([
             format!("source={}", self.source.as_str()),
             format!("issue={}", self.issue),
             format!("run={}", self.run),
             format!("state={}", self.state.as_str()),
             format!("thread={}", self.thread),
             format!("registry={}", self.registry),
-        ]
-        .join(" ")
+        ]);
+        tokens.join(" ")
     }
 
     pub fn parse(input: &str) -> Result<Self, LaneClaimParseError> {
@@ -187,6 +203,7 @@ impl LaneClaim {
         Ok(Self {
             lane: parse_lane(required(&values, "lane")?)?,
             actor: parse_actor(required(&values, "actor")?)?,
+            worker: values.get("worker").map(|value| value.to_string()),
             source: parse_source(required(&values, "source")?)?,
             issue: required(&values, "issue")?.to_string(),
             run: required(&values, "run")?.to_string(),
@@ -304,6 +321,22 @@ mod tests {
 
         let rendered = claim.render();
         assert!(rendered.starts_with("v=1 lane=main actor=codex source=loop issue=#244"));
+        assert_eq!(LaneClaim::parse(&rendered).unwrap(), claim);
+    }
+
+    #[test]
+    fn renders_and_parses_worker_identity_when_present() {
+        let claim = LaneClaim::active(
+            "#265",
+            LaneClaimLane::Main,
+            LaneClaimActor::Codex,
+            LaneClaimSource::Manual,
+            1_778_904_900_123,
+        )
+        .with_worker("codex-manual-main");
+
+        let rendered = claim.render();
+        assert!(rendered.contains(" worker=codex-manual-main "));
         assert_eq!(LaneClaim::parse(&rendered).unwrap(), claim);
     }
 

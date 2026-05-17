@@ -24,6 +24,9 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
 ## Merge Contract
 
 - Confirm the issue is in `Merging` before attempting to land.
+- Claim `Merging Agent` through `merge claim ... --worker <worker> --write`
+  before starting manual merge work, then start runtime through `session start
+  --lane merge --run <RUN_ID>` only after the matching claim exists.
 - Confirm exactly one reliable PR target exists.
 - Preserve the assigned structured claim `run=` in merge evidence, workpad
   notes, and final summaries.

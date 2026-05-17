@@ -93,10 +93,24 @@ Tracked dirty files block the lane; recognized untracked
 runtime/log/prompt/evidence/draft artifacts are moved to artifact quarantine
 with a warning; unclassified untracked files block for operator repair.
 New lane claims are written as single-line `v=1` key/value audit pointers, for
-example `v=1 lane=main actor=codex source=loop issue=#244 run=... state=active
-thread=unknown registry=run/...`. The Project field stores the compact pointer;
-the session registry and workpad store the durable paths, logs, and handoff
-evidence for the same `run=`.
+example `v=1 lane=main actor=codex worker=codex-manual-main source=manual
+issue=#244 run=... state=active thread=unknown registry=run/...`. The Project
+field stores the compact pointer; the session registry and workpad store the
+durable paths, logs, and handoff evidence for the same `run=`.
+
+Manual claim and session control are separate operations. Claim commands write
+only the lane claim Project field and do not change Project Status:
+
+```bash
+cargo run -- main claim workflows/jade-symphony.md '#265' --worker codex-manual-main --write
+cargo run -- review claim workflows/jade-symphony.md '#265' --worker gemini-manual-review --write
+cargo run -- merge claim workflows/jade-symphony.md '#265' --worker codex-manual-merge --write
+```
+
+Live write-mode claim, session, and lane loop commands refuse to run unless the
+canonical checkout is attached to `main` and exactly matches `origin/main` after
+a fetch. They report the blocker and leave git untouched when HEAD is detached,
+the branch is not `main`, or local `main` is stale.
 
 PR relationship verification is a lane invariant, not just evidence text. A PR
 URL found in a workpad, issue comment, or local branch can help operators
@@ -123,15 +137,16 @@ rendered prompt after a ready viewport is observed. Set
 `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to opt out; a visible trust prompt or missing
 readiness then fails closed and preserves attach/log evidence for inspection.
 
-For manual lane recovery, `agent-session start WORKFLOW ISSUE --lane
-main|review|merge --write` starts the configured local tmux command with the
-lane-specific prompt, writes the lane claim field (`Main Agent`, `Review
-Agent`, or `Merging Agent`), and records session evidence in the workpad.
-The rendered prompt includes the assigned `run=` and registry pointer so the
-spawned agent can preserve that value in its handoff evidence.
-`agent-session list WORKFLOW` shows active tmux sessions with attach commands,
-and `agent-session attach WORKFLOW SESSION` prints the exact attach command
-without joining the terminal unless `--exec` is provided.
+For manual lane recovery, first claim the lane and keep the printed `run=`.
+Then `session start WORKFLOW ISSUE --lane main|review|merge --run RUN --write`
+starts the configured local tmux command with the lane-specific prompt only
+after confirming that the Project claim field already matches the issue, lane,
+and run. `session start` never writes claim fields. The rendered prompt includes
+the assigned `run=` and registry pointer so the spawned agent can preserve that
+value in its handoff evidence.
+`session list WORKFLOW` shows active tmux sessions with attach commands, and
+`session attach WORKFLOW SESSION` prints the exact attach command without
+joining the terminal unless `--exec` is provided.
 `status` and `status-api` include registered tmux session summaries from the
 durable session registry. `doctor` flags stale, failed, orphaned, usage-limited,
 or runtime/session mismatch cases, while `clean audit` classifies the registry,
@@ -272,23 +287,24 @@ changes.
 | `review fake` | Fixture/fake review transition helper. | Local testing path. |
 | `review once` | Run one configured review backend for one issue. | Only Review Agent may advance passed reviews to `Human Review`. |
 | `review loop` | Bounded review worker selection/reconciliation. | Prevents duplicate review workers where evidence exists. |
-| `review claim` | Claim one `Agent Review` item's `Review Agent` text field for manual/operator review. | Requires `--write`; refuses non-`Agent Review` issues and writes a structured claim pointer. |
+| `review claim` | Claim one `Agent Review` item's `Review Agent` text field for manual/operator review. | Requires `--worker` and `--write`; refuses non-`Agent Review` issues and writes a structured claim pointer. |
 | `review pass` | Record manual independent review pass evidence and move to `Human Review`. | Requires `--write`, a durable evidence file containing the exact current `Review Agent` claim, and preserves the field as terminal pass evidence. |
 | `review reject` | Record failed/inconclusive manual review evidence and route to `Agent Review`, `Rework`, or `Need Human Input`. | Refuses `Human Review`, requires exact claim evidence, and preserves the field as terminal reject/failed evidence. |
-| `review session` | Start or inspect a review runtime/session. | Does not write the `Review Agent` claim; use `review claim` or `review loop` for claim ownership. |
+| `review session` | Hidden legacy review session alias. | Does not write the `Review Agent` claim; use `review claim` or `review loop` for claim ownership. |
 | `review freshness` | Record/inspect review freshness evidence. | Used around merging/rework conflict repair. |
-| `agent-session start` | Start an attachable local tmux session for a selected lane. | Manual recovery path; it claims only the chosen lane and does not advance workflow state. |
-| `agent-session list` | List active Jade Symphony tmux sessions by configured prefix. | Read-only operator summary. |
-| `agent-session attach` | Print or execute the tmux attach command for one session. | Defaults to printing the command; `--exec` enters tmux. |
+| `review-clear-claim` | Clear one issue's `Review Agent` claim through the tracker adapter. | Requires `--write`; use after terminal manual review routing. |
+| `session start` | Start an attachable local tmux session for a selected lane and `run`. | Manual recovery path; validates an existing lane claim and does not write Project claim fields. |
+| `session list` | List active Jade Symphony tmux sessions by configured prefix. | Read-only operator summary. |
+| `session attach` | Print or execute the tmux attach command for one session. | Defaults to printing the command; `--exec` enters tmux. |
 
 Example:
 
 ```bash
 cargo run -- review loop examples/review-fixture-workflow.md --max-iterations 1 --dry-run
 cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --write
-cargo run -- agent-session start workflows/jade-symphony.md '#220' --lane review --write
-cargo run -- agent-session list workflows/jade-symphony.md
 cargo run -- review claim workflows/jade-symphony.md '#226' --worker "Manual Gemini Review" --write
+cargo run -- session start workflows/jade-symphony.md '#226' --lane review --run <RUN_ID> --write
+cargo run -- session list workflows/jade-symphony.md
 cargo run -- review pass workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
 cargo run -- review reject workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --target-state rework --write
 ```

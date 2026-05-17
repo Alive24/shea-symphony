@@ -21,7 +21,7 @@ Jade Symphony is not ready for unattended live GitHub Project v2 execution yet.
 | Orchestrator | Deterministic dispatch planning and a CLI `run-loop` skeleton with bounded modes, idle polling, claim-helper use, dependency preflight for `Todo` / `Rework`, runtime-state persistence, tracker-visible advisory ownership markers, resume preflight, retry backoff records, stall detection, live PR handoff plus tracker PR link recording in non-fixture GitHub mode, ready/non-draft PR enforcement before Agent Review handoff, guarded `merge-once` and bounded `merge-loop` lanes for `Merging` issues, first-slice `--pool` selection guarded by `Main Agent` / `Merging Agent` Project fields, a controlled `dogfood-smoke` preflight report with blocking-vs-warning integration gap severity, and a bounded operator launcher script exist. No long-running worker supervision, automated stall restart, full multi-worker runtime resume reconciliation, unbounded merge idle polling, or full state reconciliation yet. |
 | Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, grouped read-only `clean plan` / `clean audit` cleanup and persistence classification, guarded terminal cleanup planning, repository-local git identity application, workspace/branch/PR handoff planning, live git worktree/branch creation, issue-level `workspace list` / `workspace show` / `workspace adopt` discovery across registry, workpad, PR, and local git worktree evidence, dirty/no-op guards before branch push, optional configured verification commands before PR handoff, branch push, PR create-or-reuse, tracker PR link recording, run-loop handoff evidence, profile-scoped workspace keys, parsed-but-unused SSH worker host config, a namespaced artifact layout, and dry-run cleanup planning exist. Automatic runtime cleanup, write-mode artifact cleanup, and live SSH execution are not wired yet. |
 | Execution profiles | First-slice profile discovery exists. Workflow config can point to a cockpit-tools Codex `codex_instances.json` file, and Jade Symphony treats each instance `name` as a profile/worker identity while ignoring account binding fields. If the cockpit-tools file is missing, explicit `profiles.entries` are used. This is not a full account manager. |
-| Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. A local `tmux` backend can launch attachable lane sessions, capture the Codex pane before prompt injection, auto-advance the Codex workspace trust prompt inside Jade Symphony-created issue worktrees by default, paste rendered prompts only after readiness is observed, record the session name, attach command, prompt artifact, log path, lane, actor, profile/instance metadata, and durable session registry record, and leave workflow state unchanged until normal lane evidence is ready. `run-loop` uses that backend for Main Agent execution, while `agent-session start --lane main|review|merge`, `review session`, and `merge-session` provide manual recovery for lane prompts; `review session` does not write the `Review Agent` claim because claim ownership belongs to `review claim` or `review loop`. `status` classifies recent registered sessions from bounded pane/log evidence as `starting`, `running`, `waiting_for_trust`, `waiting_for_approval`, `waiting_for_human_input`, `usage_limited`, `failed`, `completed`, `stale`, or `unknown`. `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` opts out and fails closed if the trust prompt is visible. Prepared runs include selected profile/instance metadata and profile environment context. The Codex subprocess backend safely refuses `codex app-server` commands because that transport is not implemented yet. A first-slice Codex app-server event normalizer maps fixture JSON-RPC stream lines into Jade Symphony `AgentEvent` values, including completion, failure, cancellation, input-required, token usage, notification, and malformed events. Full Codex app-server transport and Claude Code protocol parity remain follow-ups. |
+| Agent backends | Dry-run backend plus conservative Codex and Claude Code subprocess backends exist. A local `tmux` backend can launch attachable lane sessions, capture the Codex pane before prompt injection, auto-advance the Codex workspace trust prompt inside Jade Symphony-created issue worktrees by default, paste rendered prompts only after readiness is observed, record the session name, attach command, prompt artifact, log path, lane, actor, profile/instance metadata, and durable session registry record, and leave workflow state unchanged until normal lane evidence is ready. `run-loop` uses that backend for Main Agent execution, while manual recovery now claims with `main claim`, `review claim`, or `merge claim` before starting runtime with `session start --run <RUN_ID>`. `status` classifies recent registered sessions from bounded pane/log evidence as `starting`, `running`, `waiting_for_trust`, `waiting_for_approval`, `waiting_for_human_input`, `usage_limited`, `failed`, `completed`, `stale`, or `unknown`. `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` opts out and fails closed if the trust prompt is visible. Prepared runs include selected profile/instance metadata and profile environment context. The Codex subprocess backend safely refuses `codex app-server` commands because that transport is not implemented yet. A first-slice Codex app-server event normalizer maps fixture JSON-RPC stream lines into Jade Symphony `AgentEvent` values, including completion, failure, cancellation, input-required, token usage, notification, and malformed events. Full Codex app-server transport and Claude Code protocol parity remain follow-ups. |
 | Prompt rendering | Strict prompt rendering supports `issue.*`, `attempt`, and basic `{% if %}` / `{% else %}` blocks. The supported subset is documented in `docs/prompt-template-contract.md`; full Liquid compatibility remains a parity gap. |
 | Dynamic tools | A first-slice dynamic-tool registry can describe planned backend-specific tools such as Codex `linear_graphql` without coupling them to the orchestrator. Tool execution and Codex app-server dynamic-tool protocol wiring are not implemented yet. |
 | Agent Review | Finding classes, fake reviewer lifecycle, Gemini CLI subprocess backend, role-bound transition decisions, evidence-first Rework diagnostics for confirmed findings and completed-but-inconclusive automatic reviews, invalid-handoff evidence when Agent Review receives a draft PR, `review freshness` evidence for Merging conflict repair, bounded `review loop` worker selection/reconciliation with one issue per worker slot, Project `Review Agent` claim markers before backend launch, terminal manual review claim preservation, durable JSON review job ledger records, and workpad/status evidence helpers exist. Persistent background review worker supervision is not implemented yet. |
@@ -72,8 +72,8 @@ The landed supervision slices are:
 The resulting operator loop is:
 
 1. Start or resume a bounded lane session with `run-loop --write`,
-   `agent-session start --lane main|review|merge --write`, `review session`, or
-   `merge-session`.
+   or manually claim with `main claim`, `review claim`, or `merge claim`, then
+   start runtime with `session start --lane main|review|merge --run <RUN_ID>`.
 2. Use `status` / `status-api` to inspect compact session state, attach command,
    log path, and evidence source without treating a running session as
    completed work.
@@ -112,7 +112,7 @@ Project v2 issues:
 2. Harden GitHub tracker writes.
    - Current explicit commands can set ProjectV2 status by option ID,
      create/update one marker workpad comment, create follow-up issues, add
-     issues to the configured project, claim/clear Review Agent fields, and
+     issues to the configured project, claim Main/Review/Merge lane fields, and
      route manual review pass/reject outcomes.
    - Mutating commands require `--write`.
    - Same-state status updates are treated as no-ops before mutation.
@@ -129,6 +129,10 @@ Project v2 issues:
    - Live GitHub `run-loop --write` requires unassigned issue execution to be
      explicitly allowed, and otherwise compares issue assignees against the
      current `gh` login or selected profile login before claim.
+   - Live write-mode claim, session, run-loop, review-loop, and merge-loop
+     commands require the canonical launch checkout to be attached to latest
+     `main`; detached HEAD, non-`main`, or stale `main` states block with
+     operator guidance instead of mutating git.
    - `run-loop` reuses tracker claim helpers to claim only `Todo` / `Rework`,
      resume active `In Progress`, and stop/replan on externally changed states.
    - Main-agent dispatch treats structured tracker blockers as authoritative,
@@ -491,8 +495,7 @@ local `tmux` backend for supervised lane execution, while prompt bodies remain
 the real Jade Symphony dogfood operating contracts. `run-loop --write` records
 attachable tmux session metadata, writes `session-registry.json` under the
 configured artifact root, and keeps the issue active until real implementation
-evidence is available for the existing handoff path. `agent-session`,
-`review session`, and `merge-session` use the same registry and lane prompt
-contracts for manual recovery. `review session` does not write the
-`Review Agent` claim. The registry is operator evidence for terminal sessions
-only; it does not replace Project state.
+evidence is available for the existing handoff path. Manual recovery uses lane
+claim commands first, then `session start --run <RUN_ID>` with the same registry
+and lane prompt contracts. The registry is operator evidence for terminal
+sessions only; it does not replace Project state.

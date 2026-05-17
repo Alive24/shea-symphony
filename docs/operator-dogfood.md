@@ -146,11 +146,12 @@ export GEMINI_CLI_TRUST_WORKSPACE=true
 target/debug/jade-symphony review loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
-For supervised manual review terminals, use
-`review session WORKFLOW '#issue' --write` on an `Agent Review` issue. It starts
-the lane-specific review prompt in tmux and writes attach/log evidence without
-writing the `Review Agent` claim or moving the issue to `Human Review`. Use
-`review claim` or the configured `review loop` for claim ownership.
+For supervised manual review terminals, first use
+`review claim WORKFLOW '#issue' --worker <worker> --write` on an `Agent Review`
+issue, then start the runtime with `session start WORKFLOW '#issue' --lane
+review --run <RUN_ID> --write`. Session startup validates the existing Review
+Agent claim and writes attach/log evidence without moving the issue to
+`Human Review`.
 
 If Gemini cannot start, the review workpad should name the configured command,
 whether worker `PATH` could resolve it, the required operator action, and the
@@ -301,14 +302,16 @@ loop tick. Merge work uses the `Merging Agent` Project field and can process
 multiple guarded merge slots in one bounded loop.
 Lane claim fields are latest-run audit pointers, not append-only logs. New
 values use `v=1 lane=<main|review|merge> actor=<codex|gemini|claude|human>
-source=<loop|manual|goal> issue=#N run=<id> state=<active|done|stale|failed|superseded>
-thread=<codex-link|unknown> registry=run/<id>`. Keep full paths and terminal
-logs in the session registry or workpad, and update terminal completed work to
-`state=done` instead of clearing useful claim evidence by default.
-For supervised merge terminals, use `merge-session WORKFLOW '#issue' --write`
-on a `Merging` issue. It uses the shared `agent-session` lane path to claim the
-`Merging Agent` field, start the merge prompt in tmux, and write attach/log
-evidence without merging the PR or closing the issue.
+worker=<worker> source=<loop|manual|goal> issue=#N run=<id>
+state=<active|done|stale|failed|superseded> thread=<codex-link|unknown>
+registry=run/<id>`. Keep full paths and terminal logs in the session registry
+or workpad, and update terminal completed work to `state=done` instead of
+clearing useful claim evidence by default.
+For supervised merge terminals, use `merge claim WORKFLOW '#issue' --worker
+<worker> --write` on a `Merging` issue, then `session start WORKFLOW '#issue'
+--lane merge --run <RUN_ID> --write`. Session startup validates the `Merging
+Agent` field and writes attach/log evidence without merging the PR or closing
+the issue.
 
 Operator commands also print compact `Latest:` lines for the current lane,
 issue, category, action, actor, workspace/branch when known, and next expected

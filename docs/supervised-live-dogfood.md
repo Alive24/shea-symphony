@@ -147,6 +147,19 @@ record it explicitly:
 cargo run -- workspace adopt workflows/jade-symphony.md '#253' /path/to/worktree --write
 ```
 
+If no suitable candidate exists, prepare the Review/Merge inspection workspace
+through Jade Symphony instead of checking out the PR in the canonical checkout:
+
+```bash
+cargo run -- workspace ensure workflows/jade-symphony.md '#253' --dry-run
+cargo run -- workspace ensure workflows/jade-symphony.md '#253' --pr 254 --write
+```
+
+`workspace ensure --write` requires the canonical checkout to be clean latest
+`main`, creates only below the configured workspace root, and records
+`### Workspace Evidence` in the issue workpad for later `workspace show`,
+Review, Merge, and Doctor flows.
+
 ## Agent Review
 
 For a bounded Review Agent pass, run:

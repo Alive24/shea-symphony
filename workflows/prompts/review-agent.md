@@ -42,6 +42,9 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
   needed. Treat discovered Main Agent worktrees as read-only by default.
 - If `workspace show` reports multiple strong candidates, stop and request an
   operator `workspace adopt` choice before relying on local files.
+- If `workspace show` reports no suitable candidate and local inspection is
+  required, use `workspace ensure` from the canonical checkout; do not run
+  `gh pr checkout` or switch branches in the canonical checkout.
 - Compare the PR against the issue goal, guardrails, expected outcome, and
   verification evidence.
 - Evaluate every checkbox under the issue body's `Expected Outcome`,

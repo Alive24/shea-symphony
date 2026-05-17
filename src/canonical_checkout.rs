@@ -13,6 +13,10 @@ use crate::workspace::safe_identifier;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CanonicalCheckoutReport {
     pub root: PathBuf,
+    pub branch: Option<String>,
+    pub head: Option<String>,
+    pub upstream: Option<String>,
+    pub upstream_head: Option<String>,
     pub tracked_dirty: Vec<String>,
     pub untracked: Vec<CanonicalUntrackedPath>,
     pub migrated: Vec<CanonicalMigratedPath>,
@@ -81,6 +85,17 @@ pub enum CanonicalCheckoutError {
     TrackedDirty { root: PathBuf, paths: String },
     #[error("canonical checkout is blocked: unclassified untracked files in {root}: {paths}. Move them to an issue worktree or artifact location, or add legitimate ignored files to .gitignore before running a live write lane.")]
     UnclassifiedUntracked { root: PathBuf, paths: String },
+    #[error("canonical checkout is blocked: {root} is detached at {head}. Switch the canonical checkout back to clean latest `main` before running a live write lane.")]
+    Detached { root: PathBuf, head: String },
+    #[error("canonical checkout is blocked: {root} is on branch `{branch}` instead of `main`. Do local inspection in an issue worktree; keep the canonical checkout on clean latest `main`.")]
+    NonMain { root: PathBuf, branch: String },
+    #[error("canonical checkout is blocked: local `main` at {head} does not match upstream `{upstream}` at {upstream_head}. Refresh the canonical checkout to latest `main` before running a live write lane.")]
+    StaleMain {
+        root: PathBuf,
+        head: String,
+        upstream: String,
+        upstream_head: String,
+    },
     #[error(
         "failed to migrate canonical checkout artifact {artifact_path} to {destination}: {error}"
     )]
@@ -99,6 +114,14 @@ pub fn inspect_canonical_checkout(
 ) -> Result<CanonicalCheckoutReport, CanonicalCheckoutError> {
     let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let status = git_status_entries(&root)?;
+    let branch = current_branch(&root)?;
+    let head = git_rev_parse(&root, "HEAD")?;
+    let upstream = upstream_branch(&root)?;
+    let upstream_head = upstream
+        .as_deref()
+        .map(|upstream| git_rev_parse(&root, upstream))
+        .transpose()?
+        .flatten();
     let quarantine_root = canonical_quarantine_root(config);
     let mut tracked_dirty = Vec::new();
     let mut untracked = Vec::new();
@@ -115,6 +138,10 @@ pub fn inspect_canonical_checkout(
 
     Ok(CanonicalCheckoutReport {
         root,
+        branch,
+        head,
+        upstream,
+        upstream_head,
         tracked_dirty,
         untracked,
         migrated: Vec::new(),
@@ -127,6 +154,33 @@ pub fn enforce_clean_canonical_checkout_for_write(
     config: &RuntimeConfig,
 ) -> Result<CanonicalCheckoutReport, CanonicalCheckoutError> {
     let mut report = inspect_canonical_checkout(root, config)?;
+    let head = report.head.as_deref().unwrap_or("unknown").to_string();
+    let Some(branch) = report.branch.as_deref() else {
+        return Err(CanonicalCheckoutError::Detached {
+            root: report.root.clone(),
+            head,
+        });
+    };
+    if branch != "main" {
+        return Err(CanonicalCheckoutError::NonMain {
+            root: report.root.clone(),
+            branch: branch.to_string(),
+        });
+    }
+    if let (Some(upstream), Some(upstream_head), Some(head)) = (
+        report.upstream.as_deref(),
+        report.upstream_head.as_deref(),
+        report.head.as_deref(),
+    ) {
+        if head != upstream_head {
+            return Err(CanonicalCheckoutError::StaleMain {
+                root: report.root.clone(),
+                head: head.to_string(),
+                upstream: upstream.to_string(),
+                upstream_head: upstream_head.to_string(),
+            });
+        }
+    }
     if !report.tracked_dirty.is_empty() {
         return Err(CanonicalCheckoutError::TrackedDirty {
             root: report.root.clone(),
@@ -179,8 +233,10 @@ pub fn enforce_clean_canonical_checkout_for_write(
 pub fn canonical_checkout_status_line(report: &CanonicalCheckoutReport) -> String {
     let unclassified = report.unclassified_untracked().len();
     format!(
-        "canonical_checkout root={} clean={} tracked_dirty={} untracked={} unclassified={} migrated={} quarantine={}",
+        "canonical_checkout root={} branch={} upstream={} clean={} tracked_dirty={} untracked={} unclassified={} migrated={} quarantine={}",
         report.root.display(),
+        report.branch.as_deref().unwrap_or("detached"),
+        report.upstream.as_deref().unwrap_or("none"),
         report.is_clean(),
         report.tracked_dirty.len(),
         report.untracked.len(),
@@ -243,6 +299,57 @@ fn git_status_entries(root: &Path) -> Result<Vec<GitStatusEntry>, CanonicalCheck
         }
     }
     Ok(entries)
+}
+
+fn current_branch(root: &Path) -> Result<Option<String>, CanonicalCheckoutError> {
+    let output = Command::new("git")
+        .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .current_dir(root)
+        .output()?;
+    if output.status.success() {
+        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if branch.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(branch))
+        }
+    } else {
+        Ok(None)
+    }
+}
+
+fn upstream_branch(root: &Path) -> Result<Option<String>, CanonicalCheckoutError> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+        .current_dir(root)
+        .output()?;
+    if output.status.success() {
+        let upstream = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if upstream.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(upstream))
+        }
+    } else {
+        Ok(None)
+    }
+}
+
+fn git_rev_parse(root: &Path, rev: &str) -> Result<Option<String>, CanonicalCheckoutError> {
+    let output = Command::new("git")
+        .args(["rev-parse", rev])
+        .current_dir(root)
+        .output()?;
+    if output.status.success() {
+        let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if value.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(value))
+        }
+    } else {
+        Ok(None)
+    }
 }
 
 fn classify_untracked_artifact(path: &Path) -> Option<CanonicalArtifactKind> {
@@ -376,6 +483,11 @@ mod tests {
             .status()
             .unwrap();
         Command::new("git")
+            .args(["checkout", "-q", "-B", "main"])
+            .current_dir(path)
+            .status()
+            .unwrap();
+        Command::new("git")
             .args(["config", "user.email", "test@example.com"])
             .current_dir(path)
             .status()
@@ -440,5 +552,45 @@ mod tests {
         assert!(!repo.join("handoff-evidence.md").exists());
         assert!(report.migrated[0].destination.exists());
         assert_eq!(report.migrated[0].kind, CanonicalArtifactKind::Evidence);
+    }
+
+    #[test]
+    fn non_main_branch_blocks_live_write() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        init_repo(&repo);
+        Command::new("git")
+            .args(["checkout", "-q", "-b", "feature/review-local-inspection"])
+            .current_dir(&repo)
+            .status()
+            .unwrap();
+
+        let error =
+            enforce_clean_canonical_checkout_for_write(&repo, &config(temp.path())).unwrap_err();
+
+        assert!(error.to_string().contains("instead of `main`"));
+    }
+
+    #[test]
+    fn detached_checkout_blocks_live_write() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        init_repo(&repo);
+        let head = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        let head = String::from_utf8_lossy(&head.stdout).trim().to_string();
+        Command::new("git")
+            .args(["checkout", "-q", "--detach", &head])
+            .current_dir(&repo)
+            .status()
+            .unwrap();
+
+        let error =
+            enforce_clean_canonical_checkout_for_write(&repo, &config(temp.path())).unwrap_err();
+
+        assert!(error.to_string().contains("detached"));
     }
 }

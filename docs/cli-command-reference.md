@@ -171,6 +171,7 @@ workpad evidence, and local `git worktree list --porcelain` output.
 | `workspace list` | List discovered issue worktrees and inferred orphan hints. | Read-only Project-wide inventory; does not select or mutate workspaces. |
 | `workspace show` | Show candidate worktrees for one issue. | Read-only lane preflight; multiple strong candidates require operator choice before local inspection. |
 | `workspace adopt` | Record an operator-selected existing worktree in the issue workpad. | Validates the path is a git worktree for this repository and the branch matches issue/PR evidence; does not create a worktree or checkout a PR. |
+| `workspace ensure` | Reuse or prepare a Review/Merge inspection worktree. | Reuse-first; creates only under the workflow workspace root, never switches the canonical checkout, and writes Workspace Evidence only with `--write`. |
 
 Examples:
 
@@ -178,11 +179,16 @@ Examples:
 cargo run -- workspace list workflows/jade-symphony.md
 cargo run -- workspace show workflows/jade-symphony.md '#253'
 cargo run -- workspace adopt workflows/jade-symphony.md '#253' /tmp/jade-symphony-issue-253 --write
+cargo run -- workspace ensure workflows/jade-symphony.md '#253' --dry-run
+cargo run -- workspace ensure workflows/jade-symphony.md '#253' --pr 254 --write
 ```
 
 Review lane uses discovered worktrees for read-only inspection by default.
 Merge lane should prefer the canonical Main PR worktree/branch for merge-lane
-repair instead of creating a replacement workspace. `workspace adopt` is only
+repair instead of creating a replacement workspace. If no suitable candidate is
+available, `workspace ensure` prepares the inspection worktree under the
+configured workspace root and records durable `### Workspace Evidence` in the
+issue workpad. `workspace adopt` is only
 for an operator-selected existing worktree; it must not be used as a shortcut
 for `gh pr checkout` in the canonical checkout. `doctor` warns when multiple
 strong candidates exist for one active issue.

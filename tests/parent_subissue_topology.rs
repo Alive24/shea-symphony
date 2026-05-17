@@ -74,7 +74,11 @@ fn fixture_covers_unsafe_topologies_for_later_doctor_checks() {
         .expect("fixture should include unsafe topology examples");
     let names: Vec<_> = unsafe_topologies
         .iter()
-        .map(|topology| topology["name"].as_str().expect("unsafe example should have a name"))
+        .map(|topology| {
+            topology["name"]
+                .as_str()
+                .expect("unsafe example should have a name")
+        })
         .collect();
 
     for required in [
@@ -91,7 +95,9 @@ fn fixture_covers_unsafe_topologies_for_later_doctor_checks() {
 
     for topology in unsafe_topologies {
         assert!(
-            topology["violates"].as_str().is_some_and(|value| !value.is_empty()),
+            topology["violates"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty()),
             "unsafe examples should explain the violated rule"
         );
         assert!(
@@ -113,7 +119,8 @@ fn documentation_states_the_non_competing_sources_and_boundaries() {
         "The parent issue remains the final Human Review unit",
         "The Main Agent still stops at `Agent Review`",
         "Issue #273 should turn these into doctor invariants",
-        "Issue #274 should teach lane flows how to use the parent integration branch",
+        "Issue #274 should teach",
+        "the parent integration branch during live execution",
     ] {
         assert!(
             doc.contains(required),

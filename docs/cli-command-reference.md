@@ -220,7 +220,7 @@ cargo run -- gate-apply workflows/jade-symphony.md '#123' --write
 | --- | --- | --- |
 | `forge validate` | Validate a body file or existing issue for `Backlog` or `Todo`. | Read-only; `Todo` uses the full Issue Quality Gate, `Backlog` uses the lighter seed gate. |
 | `forge create` | Create a Project-backed issue in `Backlog` or `Todo`. | Dry-run by default unless `--write` is supplied; live `Todo` creation requires `--assignee`. |
-| `forge promote` | Promote one existing Backlog issue in place by editing title/body and moving it to `Todo`. | Dry-run by default unless `--write` is supplied; reports the checkpoint where any failure stopped. |
+| `forge promote` | Promote one existing Backlog issue in place by editing title/body, moving it to `Todo`, and writing a structured Promotion Note comment. | Dry-run by default unless `--write` is supplied; requires structured note inputs and reports the checkpoint where any failure stopped. |
 
 Examples:
 
@@ -229,7 +229,36 @@ cargo run -- forge validate --workflow workflows/jade-symphony.md --status Backl
 cargo run -- forge validate --workflow workflows/jade-symphony.md --status Todo --title "Executable issue" --body-file /tmp/issue.md
 cargo run -- forge create --workflow workflows/jade-symphony.md --status Backlog --title "Backlog: follow-up title" --body-file /tmp/issue.md --dry-run
 cargo run -- forge create --workflow workflows/jade-symphony.md --status Todo --title "Follow-up title" --body-file /tmp/issue.md --assignee Alive24 --write
-cargo run -- forge promote '#241' --workflow workflows/jade-symphony.md --title "Executable title" --body-file /tmp/issue.md --dry-run
+cargo run -- forge promote '#241' --workflow workflows/jade-symphony.md --title "Executable title" --body-file /tmp/issue.md --operator-confirmation "promote it" --decision "Use the CLI-owned promotion note template." --scope-change "Backlog seed is now an executable Todo issue." --dependency-context "Dependencies: none; related context is non-blocking." --dry-run
+```
+
+`forge promote` owns the Promotion Note requirement. The command refuses missing
+or empty `--operator-confirmation`, `--decision`, `--scope-change`, and
+`--dependency-context` values. On write success, the comment uses this short
+Markdown shape:
+
+```md
+## Promotion Note
+
+- Source Backlog issue: #...
+- Promoted Todo title/status: `...` / `Todo`
+- Operator confirmation: "..."
+
+## Key Operator Decisions
+
+- ...
+
+## Major Scope Changes From Seed
+
+- ...
+
+## Dependencies and Context
+
+- ...
+
+## Verification Readback
+
+- ...
 ```
 
 ## Review Agent Lane

@@ -30,6 +30,12 @@ pub trait TrackerAdapter {
             self.kind()
         )))
     }
+    fn add_issue_comment(&self, _issue_ref: &str, _markdown: &str) -> Result<(), TrackerError> {
+        Err(TrackerError::NotImplemented(format!(
+            "{} tracker does not support issue comments",
+            self.kind()
+        )))
+    }
     fn create_follow_up_issue(&self, input: FollowUpIssueInput) -> Result<String, TrackerError>;
     fn add_issue_to_project(&self, issue_id: &str) -> Result<(), TrackerError>;
     fn set_project_field(
@@ -291,6 +297,10 @@ impl TrackerAdapter for MemoryTracker {
         Ok(())
     }
 
+    fn add_issue_comment(&self, _issue_ref: &str, _markdown: &str) -> Result<(), TrackerError> {
+        Ok(())
+    }
+
     fn create_follow_up_issue(&self, input: FollowUpIssueInput) -> Result<String, TrackerError> {
         Ok(format!("dry-run:{}", input.title))
     }
@@ -520,6 +530,16 @@ impl TrackerAdapter for GithubProjectV2Adapter {
         }
 
         GithubProjectV2GhClient::new(&self.config).update_issue_content(issue_ref, title, body)
+    }
+
+    fn add_issue_comment(&self, issue_ref: &str, markdown: &str) -> Result<(), TrackerError> {
+        if self.config.tracker.fixture_path.is_some() {
+            return Err(TrackerError::IntegrationUnavailable(
+                "GitHub Project v2 fixture mode cannot add live issue comments".into(),
+            ));
+        }
+
+        GithubProjectV2GhClient::new(&self.config).add_issue_comment(issue_ref, markdown)
     }
 
     fn create_follow_up_issue(&self, input: FollowUpIssueInput) -> Result<String, TrackerError> {
@@ -772,6 +792,15 @@ impl GithubProjectV2GhClient {
             )?;
         }
 
+        Ok(())
+    }
+
+    fn add_issue_comment(&self, issue_ref: &str, markdown: &str) -> Result<(), TrackerError> {
+        let issue = self.resolve_issue(issue_ref)?;
+        self.graphql(
+            GITHUB_ADD_COMMENT_MUTATION,
+            &[("subjectId", issue.id), ("body", markdown.to_string())],
+        )?;
         Ok(())
     }
 

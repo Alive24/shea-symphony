@@ -301,9 +301,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             issue_ref,
             title,
             markdown,
+            promotion_note,
             write,
             dry_run,
-        } => forge_promote(workflow_path, issue_ref, title, markdown, write, dry_run),
+        } => forge_promote(
+            workflow_path,
+            issue_ref,
+            title,
+            markdown,
+            promotion_note,
+            write,
+            dry_run,
+        ),
         Command::Help(text) => {
             print!("{text}");
             Ok(())
@@ -830,6 +839,7 @@ fn forge_promote(
     issue_ref: String,
     title: String,
     markdown: String,
+    promotion_note: PromotionNoteInput,
     write: bool,
     dry_run: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -867,10 +877,17 @@ fn forge_promote(
     }
 
     if dry_run {
+        let note = render_promotion_note(
+            &source.identifier,
+            &report.title,
+            &promotion_note,
+            "`forge promote --dry-run` validated the promoted body and promotion note inputs.",
+        );
         println!(
             "forge_promote_dry_run=ok issue={} from=Backlog to=Todo title={:?}",
             source.identifier, report.title
         );
+        println!("promotion_note_preview=\n{note}");
         return Ok(());
     }
 
@@ -926,11 +943,91 @@ fn forge_promote(
         .into());
     }
 
+    let note = render_promotion_note(
+        &source.identifier,
+        &verified.title,
+        &promotion_note,
+        &format!(
+            "`forge promote --write` updated the existing issue in place; readback confirmed issue `{}` title `{}` and Project status `Todo`.",
+            verified.identifier, verified.title
+        ),
+    );
+    adapter
+        .add_issue_comment(&verified.identifier, &note)
+        .map_err(|error| format!("forge promote stopped at promotion_note: {error}"))?;
+    append_tracker_mutation_audit(
+        &config,
+        TrackerMutationAudit {
+            command: "forge promote",
+            mutation_type: "comment",
+            issue_ref: Some(&verified.identifier),
+            target: Some("Promotion Note".into()),
+            from_state: Some(source.state.clone()),
+            to_state: Some("todo".into()),
+            reason: "forge backlog promotion note",
+        },
+    );
+
     println!(
-        "forge_promote=ok issue={} status=Todo title={:?}",
+        "forge_promote=ok issue={} status=Todo title={:?} promotion_note=commented",
         verified.identifier, verified.title
     );
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PromotionNoteInput {
+    operator_confirmation: String,
+    decisions: Vec<String>,
+    scope_changes: Vec<String>,
+    dependencies_context: Vec<String>,
+}
+
+fn render_promotion_note(
+    source_issue: &str,
+    promoted_title: &str,
+    input: &PromotionNoteInput,
+    verification_readback: &str,
+) -> String {
+    let mut lines = vec![
+        "## Promotion Note".to_string(),
+        String::new(),
+        format!("- Source Backlog issue: {source_issue}"),
+        format!("- Promoted Todo title/status: `{promoted_title}` / `Todo`"),
+        format!(
+            "- Operator confirmation: {:?}",
+            input.operator_confirmation.trim()
+        ),
+        String::new(),
+        "## Key Operator Decisions".to_string(),
+        String::new(),
+    ];
+    push_markdown_bullets(&mut lines, &input.decisions);
+    lines.extend([
+        String::new(),
+        "## Major Scope Changes From Seed".to_string(),
+        String::new(),
+    ]);
+    push_markdown_bullets(&mut lines, &input.scope_changes);
+    lines.extend([
+        String::new(),
+        "## Dependencies and Context".to_string(),
+        String::new(),
+    ]);
+    push_markdown_bullets(&mut lines, &input.dependencies_context);
+    lines.extend([
+        String::new(),
+        "## Verification Readback".to_string(),
+        String::new(),
+        format!("- {verification_readback}"),
+    ]);
+    lines.join("\n")
+}
+
+fn push_markdown_bullets(lines: &mut Vec<String>, values: &[String]) {
+    for value in values {
+        lines.push(format!("- {}", value.trim()));
+    }
 }
 
 fn forge_validate(
@@ -7631,6 +7728,7 @@ enum Command {
         issue_ref: String,
         title: String,
         markdown: String,
+        promotion_note: PromotionNoteInput,
         write: bool,
         dry_run: bool,
     },
@@ -8445,10 +8543,24 @@ struct ForgePromoteArgs {
     title: String,
     #[command(flatten)]
     markdown: ForgeMarkdownArgs,
+    #[command(flatten)]
+    promotion_note: PromotionNoteArgs,
     #[arg(long)]
     write: bool,
     #[arg(long = "dry-run")]
     dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct PromotionNoteArgs {
+    #[arg(long = "operator-confirmation")]
+    operator_confirmation: String,
+    #[arg(long = "decision", required = true)]
+    decisions: Vec<String>,
+    #[arg(long = "scope-change", required = true)]
+    scope_changes: Vec<String>,
+    #[arg(long = "dependency-context", required = true)]
+    dependencies_context: Vec<String>,
 }
 
 #[derive(Debug, Args)]
@@ -8785,6 +8897,7 @@ impl TryFrom<Cli> for Command {
                             issue_ref: args.issue_ref,
                             title: args.title,
                             markdown: read_forge_markdown_arg(args.markdown)?,
+                            promotion_note: promotion_note_input(args.promotion_note)?,
                             write: args.write,
                             dry_run: args.dry_run,
                         }),
@@ -8897,6 +9010,39 @@ fn parse_project_field_assignments(
         .into_iter()
         .map(|value| ProjectFieldAssignment::parse(&value).map_err(|error| error.to_string()))
         .collect()
+}
+
+fn promotion_note_input(args: PromotionNoteArgs) -> Result<PromotionNoteInput, String> {
+    fn clean_nonempty(value: String, field: &str) -> Result<String, String> {
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            Err(format!("forge promote requires non-empty {field}"))
+        } else {
+            Ok(trimmed)
+        }
+    }
+
+    fn clean_many(values: Vec<String>, field: &str) -> Result<Vec<String>, String> {
+        let cleaned = values
+            .into_iter()
+            .map(|value| clean_nonempty(value, field))
+            .collect::<Result<Vec<_>, _>>()?;
+        if cleaned.is_empty() {
+            Err(format!("forge promote requires at least one {field}"))
+        } else {
+            Ok(cleaned)
+        }
+    }
+
+    Ok(PromotionNoteInput {
+        operator_confirmation: clean_nonempty(
+            args.operator_confirmation,
+            "--operator-confirmation",
+        )?,
+        decisions: clean_many(args.decisions, "--decision")?,
+        scope_changes: clean_many(args.scope_changes, "--scope-change")?,
+        dependencies_context: clean_many(args.dependencies_context, "--dependency-context")?,
+    })
 }
 
 fn print_forge_validation(report: &ForgeValidationReport) {
@@ -11536,6 +11682,14 @@ mod tests {
             "Promoted issue".into(),
             "--body".into(),
             forge_contract(),
+            "--operator-confirmation".into(),
+            "promote it".into(),
+            "--decision".into(),
+            "Keep this as an in-place promotion.".into(),
+            "--scope-change".into(),
+            "Promoted body is now executable.".into(),
+            "--dependency-context".into(),
+            "Dependencies: none.".into(),
             "--dry-run".into(),
         ])
         .unwrap();
@@ -11545,6 +11699,7 @@ mod tests {
             issue_ref,
             title,
             markdown,
+            promotion_note,
             write,
             dry_run,
         } = command
@@ -11556,8 +11711,38 @@ mod tests {
         assert_eq!(issue_ref, "#241");
         assert_eq!(title, "Promoted issue");
         assert!(markdown.contains("## Issue Goal"));
+        assert_eq!(promotion_note.operator_confirmation, "promote it");
+        assert_eq!(
+            promotion_note.decisions,
+            vec!["Keep this as an in-place promotion.".to_string()]
+        );
         assert!(!write);
         assert!(dry_run);
+    }
+
+    #[test]
+    fn renders_strict_promotion_note_template() {
+        let note = render_promotion_note(
+            "#262",
+            "Standardize Issue Forge Reflect promotion notes",
+            &PromotionNoteInput {
+                operator_confirmation: "promote it".into(),
+                decisions: vec!["Use the CLI as the enforcement point.".into()],
+                scope_changes: vec!["The Backlog seed became an executable Todo issue.".into()],
+                dependencies_context: vec![
+                    "Dependencies: none; related context is non-blocking.".into()
+                ],
+            },
+            "Readback confirmed issue `#262` and Project status `Todo`.",
+        );
+
+        assert!(note.contains("## Promotion Note"));
+        assert!(note.contains("- Source Backlog issue: #262"));
+        assert!(note.contains("- Operator confirmation: \"promote it\""));
+        assert!(note.contains("## Key Operator Decisions"));
+        assert!(note.contains("## Major Scope Changes From Seed"));
+        assert!(note.contains("## Dependencies and Context"));
+        assert!(note.contains("## Verification Readback"));
     }
 
     #[test]

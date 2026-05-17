@@ -147,9 +147,11 @@ For manual lane recovery, first claim the lane and keep the printed `run=`.
 Then `session start WORKFLOW ISSUE --lane main|review|merge --run RUN --write`
 starts the configured local tmux command with the lane-specific prompt only
 after confirming that the Project claim field already matches the issue, lane,
-and run. `session start` never writes claim fields. The rendered prompt includes
-the assigned `run=` and registry pointer so the spawned agent can preserve that
-value in its handoff evidence.
+and run. Main and Merge default to `tmux.agent_command`; Review uses
+`tmux.review_agent_command` when set and otherwise uses `review.gemini_command`
+for `review.backend: gemini-cli`. `session start` never writes claim fields. The
+rendered prompt includes the assigned `run=` and registry pointer so the spawned
+agent can preserve that value in its handoff evidence.
 `session list WORKFLOW` shows active tmux sessions with attach commands, and
 `session attach WORKFLOW SESSION` prints the exact attach command without
 joining the terminal unless `--exec` is provided.
@@ -305,7 +307,7 @@ changes.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `review fake` | Fixture/fake review transition helper. | Local testing path. |
-| `review once` | Run one configured review backend for one issue. | Only Review Agent may advance passed reviews to `Human Review`. |
+| `review once` | Run one configured review backend for one issue. | Legacy direct backend command; normal Gemini dogfood should use `review loop` or `session start --lane review` so the runtime is supervised. |
 | `review loop` | Bounded review worker selection/reconciliation. | Prevents duplicate review workers where evidence exists. |
 | `review claim` | Claim one `Agent Review` item's `Review Agent` text field for manual/operator review. | Requires `--worker` and `--write`; refuses non-`Agent Review` issues and writes a structured claim pointer. |
 | `review pass` | Record manual independent review pass evidence and move to `Human Review`. | Requires `--write`, a durable evidence file containing the exact current `Review Agent` claim, and preserves the field as terminal pass evidence. |
@@ -313,7 +315,7 @@ changes.
 | `review session` | Hidden legacy review session alias. | Does not write the `Review Agent` claim; use `review claim` or `review loop` for claim ownership. |
 | `review freshness` | Record/inspect review freshness evidence. | Used around merging/rework conflict repair. |
 | `review-clear-claim` | Clear one issue's `Review Agent` claim through the tracker adapter. | Requires `--write`; use after terminal manual review routing. |
-| `session start` | Start an attachable local tmux session for a selected lane and `run`. | Manual recovery path; validates an existing lane claim and does not write Project claim fields. |
+| `session start` | Start an attachable local tmux session for a selected lane and `run`. | Manual recovery path; validates an existing lane claim, selects the lane-specific command, and does not write Project claim fields. |
 | `session list` | List active Jade Symphony tmux sessions by configured prefix. | Read-only operator summary. |
 | `session attach` | Print or execute the tmux attach command for one session. | Defaults to printing the command; `--exec` enters tmux. |
 

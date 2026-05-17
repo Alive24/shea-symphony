@@ -29,6 +29,9 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
   before starting manual or automated review work.
 - Start manual review sessions through `session start --lane review --run
   <RUN_ID>` only after the matching Project claim exists.
+- Gemini-backed review loops are Jade Symphony supervised tmux sessions; use
+  the configured Review command and preserve attach/log/session registry
+  evidence rather than treating Gemini as an unsupervised manual actor.
 - Preserve the assigned structured claim `run=` in review evidence, workpad
   notes, and any handoff summary.
 - `review session` may start or inspect a review runtime/session, but it does

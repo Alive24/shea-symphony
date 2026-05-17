@@ -2155,19 +2155,40 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                     if options.write { "write" } else { "dry-run" }
                 );
                     if !options.write {
-                        println!(
-                            "review_loop_dry_run action=start issue={} backend={backend_kind}",
-                            selected_issue.identifier
-                        );
+                        if backend_kind == "gemini-cli" {
+                            let agent_command =
+                                tmux_agent_command_for_lane(&config, AgentSessionLaneArg::Review)?;
+                            println!(
+                                "review_loop_dry_run action=session_start issue={} backend=tmux agent_command={}",
+                                selected_issue.identifier,
+                                shell_quote_display(&agent_command)
+                            );
+                        } else {
+                            println!(
+                                "review_loop_dry_run action=start issue={} backend={backend_kind}",
+                                selected_issue.identifier
+                            );
+                        }
                         print_review_claim_field_dry_run(&selected_issue, &worker_key);
-                        println!(
-                            "review_loop_dry_run action=workpad issue={} evidence=review_job",
+                        if backend_kind == "gemini-cli" {
+                            println!(
+                                "review_loop_dry_run action=workpad issue={} evidence=tmux_session",
+                                selected_issue.identifier
+                            );
+                            println!(
+                                "review_loop_dry_run action=await_session_result issue={} actor=independent_review_agent",
+                                selected_issue.identifier
+                            );
+                        } else {
+                            println!(
+                                "review_loop_dry_run action=workpad issue={} evidence=review_job",
+                                selected_issue.identifier
+                            );
+                            println!(
+                            "review_loop_dry_run action=reconcile issue={} actor=independent_review_agent",
                             selected_issue.identifier
                         );
-                        println!(
-                        "review_loop_dry_run action=reconcile issue={} actor=independent_review_agent",
-                        selected_issue.identifier
-                    );
+                        }
                         continue;
                     }
 
@@ -2186,12 +2207,41 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                         &backend_kind,
                     ) {
                         ReviewRunEligibility::Eligible { worker_key } => {
-                            write_review_claim_field(
+                            let claim = write_review_claim_field(
                                 &config,
                                 adapter.as_ref(),
                                 &latest,
                                 &worker_key,
                             )?;
+                            if config.review.backend == "gemini-cli" {
+                                let session = start_agent_session_with_claim(
+                                    &workflow,
+                                    &config,
+                                    adapter.as_ref(),
+                                    &latest,
+                                    AgentSessionLaneArg::Review,
+                                    &claim,
+                                    "review-loop",
+                                )?;
+                                println!(
+                                    "review_loop_action=session_started issue={} backend={} session={} pending_session={} workspace={} prompt_artifact={}",
+                                    latest.identifier,
+                                    session.summary.backend,
+                                    session.summary.session_id.as_deref().unwrap_or("n/a"),
+                                    session.summary.pending_session,
+                                    session.workspace_path.display(),
+                                    session.prompt_path.display()
+                                );
+                                if let Some(attach_command) =
+                                    session.summary.attach_command.as_deref()
+                                {
+                                    println!("attach_command={attach_command}");
+                                }
+                                if let Some(log_path) = session.summary.log_path.as_ref() {
+                                    println!("log_path={}", log_path.display());
+                                }
+                                continue;
+                            }
                             let mut job = run_review_job(
                                 &workflow,
                                 &config,
@@ -2734,7 +2784,7 @@ fn write_review_claim_field(
     adapter: &dyn TrackerAdapter,
     issue: &TrackerIssue,
     worker_key: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<LaneClaim, Box<dyn std::error::Error>> {
     let claim = review_claim_for_issue(issue, worker_key);
     let claim_value = claim.render();
     adapter.set_project_field(
@@ -2760,7 +2810,7 @@ fn write_review_claim_field(
         "review_loop_action=claim_field issue={} field=\"Review Agent\" run={}",
         issue.identifier, claim.run
     );
-    Ok(())
+    Ok(claim)
 }
 
 fn run_review_job(
@@ -2885,33 +2935,87 @@ fn agent_session_start(
     let workspace_key = agent_session_workspace_key(&config, &issue, lane)?;
     let prompt_path = rendered_lane_prompt_artifact_path(&config, &issue, lane, 1);
     let claim = matching_lane_claim_for_session(&issue, lane, &run_id)?;
-    let claim_value = claim.render();
+    let agent_command = tmux_agent_command_for_lane(&config, lane)?;
 
     if !write {
         println!(
-            "session_dry_run action=start issue={} lane={} run={} backend=tmux workspace_key={} prompt_artifact={}",
+            "session_dry_run action=start issue={} lane={} run={} backend=tmux agent_command={} workspace_key={} prompt_artifact={}",
             issue.identifier,
             lane.label(),
             claim.run,
+            shell_quote_display(&agent_command),
             workspace_key,
             prompt_path.display()
         );
         return Ok(());
     }
 
+    let started = start_agent_session_with_claim(
+        &workflow,
+        &config,
+        adapter.as_ref(),
+        &issue,
+        lane,
+        &claim,
+        "session start",
+    )?;
+
+    println!(
+        "session_action=started issue={} lane={} run={} backend={} session={} pending_session={} workspace={} prompt_artifact={}",
+        issue.identifier,
+        lane.label(),
+        claim.run,
+        started.summary.backend,
+        started.summary.session_id.as_deref().unwrap_or("n/a"),
+        started.summary.pending_session,
+        started.workspace_path.display(),
+        started.prompt_path.display()
+    );
+    if let Some(attach_command) = started.summary.attach_command.as_deref() {
+        println!("attach_command={attach_command}");
+    }
+    if let Some(log_path) = started.summary.log_path.as_ref() {
+        println!("log_path={}", log_path.display());
+    }
+    Ok(())
+}
+
+struct AgentSessionStartResult {
+    summary: jade_symphony::agent::AgentSummary,
+    workspace_path: PathBuf,
+    prompt_path: PathBuf,
+}
+
+fn start_agent_session_with_claim(
+    workflow: &WorkflowDefinition,
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    issue: &TrackerIssue,
+    lane: AgentSessionLaneArg,
+    claim: &LaneClaim,
+    audit_command: &'static str,
+) -> Result<AgentSessionStartResult, Box<dyn std::error::Error>> {
+    let workspace_key = agent_session_workspace_key(config, issue, lane)?;
+    let prompt_path = rendered_lane_prompt_artifact_path(config, issue, lane, 1);
     let workspace = prepare_workspace(&config.workspace.root, &workspace_key, &config.hooks)?;
     let git_identity = apply_local_git_identity(&workspace.path, &config.identity.git)?;
     let prompt = render_prompt_with_claim(
         workflow.prompt_for_lane(lane.workflow_lane()),
-        &issue,
+        issue,
         None,
-        Some(&claim),
+        Some(claim),
     )?;
+    let agent_command = tmux_agent_command_for_lane(config, lane)?;
     let backend = TmuxBackend;
-    let mut prepared = backend.prepare(workspace.path.clone(), prompt, &config)?;
+    let mut prepared = backend.prepare(workspace.path.clone(), prompt, config)?;
+    prepared.command = Some(agent_command.clone());
     prepared
         .env
         .insert("JADE_SYMPHONY_AGENT_LANE".into(), lane.label().to_string());
+    prepared.env.insert(
+        "JADE_SYMPHONY_TMUX_AGENT_COMMAND".into(),
+        prepared.command.clone().unwrap_or_default(),
+    );
     prepared.prompt_artifact_path = Some(prompt_path.clone());
     prepared.issue_id = Some(issue.id.clone());
     prepared.issue_identifier = Some(issue.identifier.clone());
@@ -2926,24 +3030,27 @@ fn agent_session_start(
         .insert("JADE_SYMPHONY_CLAIM".into(), claim.render());
     prepared.attempt = 1;
     prepared.branch_name = current_git_branch(&workspace.path).ok().flatten();
+
     let events = backend.run(prepared)?;
     let summary = backend.summarize(&events);
-    record_agent_session_events(&config, &issue, lane, &summary, &events, &prompt_path)?;
+    record_agent_session_events(config, issue, lane, &summary, &events, &prompt_path)?;
 
-    let workpad = agent_session_workpad(
-        &issue,
+    let claim_value = claim.render();
+    let workpad = agent_session_workpad(AgentSessionWorkpadInput {
+        issue,
         lane,
-        &workspace.path,
-        &summary,
-        &prompt_path,
-        &claim_value,
-        &git_identity,
-    );
+        workspace_path: &workspace.path,
+        summary: &summary,
+        prompt_path: &prompt_path,
+        claim_value: &claim_value,
+        agent_command: &agent_command,
+        git_identity: &git_identity,
+    });
     adapter.upsert_workpad(&issue.identifier, &workpad)?;
     append_tracker_mutation_audit(
-        &config,
+        config,
         TrackerMutationAudit {
-            command: "session start",
+            command: audit_command,
             mutation_type: "workpad_write",
             issue_ref: Some(&issue.identifier),
             target: summary.session_id.clone(),
@@ -2953,24 +3060,11 @@ fn agent_session_start(
         },
     );
 
-    println!(
-        "session_action=started issue={} lane={} run={} backend={} session={} pending_session={} workspace={} prompt_artifact={}",
-        issue.identifier,
-        lane.label(),
-        claim.run,
-        summary.backend,
-        summary.session_id.as_deref().unwrap_or("n/a"),
-        summary.pending_session,
-        workspace.path.display(),
-        prompt_path.display()
-    );
-    if let Some(attach_command) = summary.attach_command.as_deref() {
-        println!("attach_command={attach_command}");
-    }
-    if let Some(log_path) = summary.log_path.as_ref() {
-        println!("log_path={}", log_path.display());
-    }
-    Ok(())
+    Ok(AgentSessionStartResult {
+        summary,
+        workspace_path: workspace.path,
+        prompt_path,
+    })
 }
 
 fn legacy_agent_session_start(
@@ -3119,6 +3213,54 @@ fn validate_tmux_session_config(config: &RuntimeConfig) -> Result<(), Box<dyn st
     Ok(())
 }
 
+fn tmux_agent_command_for_lane(
+    config: &RuntimeConfig,
+    lane: AgentSessionLaneArg,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let command = match lane {
+        AgentSessionLaneArg::Main => config
+            .tmux
+            .main_agent_command
+            .as_deref()
+            .unwrap_or(&config.tmux.agent_command),
+        AgentSessionLaneArg::Review => config
+            .tmux
+            .review_agent_command
+            .as_deref()
+            .or_else(|| {
+                (config.review.backend == "gemini-cli")
+                    .then_some(config.review.gemini_command.as_str())
+            })
+            .unwrap_or(&config.tmux.agent_command),
+        AgentSessionLaneArg::Merge => config
+            .tmux
+            .merge_agent_command
+            .as_deref()
+            .unwrap_or(&config.tmux.agent_command),
+    };
+
+    if command.trim().is_empty() {
+        return Err(format!(
+            "tmux {} agent command must not be empty for session start",
+            lane.label()
+        )
+        .into());
+    }
+
+    Ok(command.to_string())
+}
+
+fn shell_quote_display(value: &str) -> String {
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '/' | '.' | ':'))
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
 fn agent_session_workspace_key(
     config: &RuntimeConfig,
     issue: &TrackerIssue,
@@ -3193,17 +3335,21 @@ fn record_agent_session_events(
     Ok(())
 }
 
-fn agent_session_workpad(
-    issue: &TrackerIssue,
+struct AgentSessionWorkpadInput<'a> {
+    issue: &'a TrackerIssue,
     lane: AgentSessionLaneArg,
-    workspace_path: &Path,
-    summary: &jade_symphony::agent::AgentSummary,
-    prompt_path: &Path,
-    claim_value: &str,
-    git_identity: &GitIdentityApplyResult,
-) -> String {
-    let attach_command = summary.attach_command.as_deref().unwrap_or("n/a");
-    let log_path = summary
+    workspace_path: &'a Path,
+    summary: &'a jade_symphony::agent::AgentSummary,
+    prompt_path: &'a Path,
+    claim_value: &'a str,
+    agent_command: &'a str,
+    git_identity: &'a GitIdentityApplyResult,
+}
+
+fn agent_session_workpad(input: AgentSessionWorkpadInput<'_>) -> String {
+    let attach_command = input.summary.attach_command.as_deref().unwrap_or("n/a");
+    let log_path = input
+        .summary
         .log_path
         .as_ref()
         .map(|path| path.display().to_string())
@@ -3212,22 +3358,27 @@ fn agent_session_workpad(
         "## Jade Symphony Workpad".to_string(),
         String::new(),
         "### Local tmux Agent Session".to_string(),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        format!("- Lane: `{}`", lane.label()),
-        format!("- Claim field: `{}` = `{claim_value}`", lane.claim_field()),
-        format!("- Backend: `{}`", summary.backend),
+        format!("- Issue: {} {}", input.issue.identifier, input.issue.title),
+        format!("- Lane: `{}`", input.lane.label()),
+        format!(
+            "- Claim field: `{}` = `{}`",
+            input.lane.claim_field(),
+            input.claim_value
+        ),
+        format!("- Backend: `{}`", input.summary.backend),
+        format!("- Agent command: `{}`", input.agent_command),
         format!(
             "- Session: `{}`",
-            summary.session_id.as_deref().unwrap_or("n/a")
+            input.summary.session_id.as_deref().unwrap_or("n/a")
         ),
-        format!("- Pending session: `{}`", summary.pending_session),
-        format!("- Workspace: `{}`", workspace_path.display()),
-        format!("- Prompt artifact: `{}`", prompt_path.display()),
+        format!("- Pending session: `{}`", input.summary.pending_session),
+        format!("- Workspace: `{}`", input.workspace_path.display()),
+        format!("- Prompt artifact: `{}`", input.prompt_path.display()),
         format!("- Session log: `{log_path}`"),
         format!("- Attach command: `{attach_command}`"),
-        format!("- Git identity: `{}`", git_identity.summary()),
+        format!("- Git identity: `{}`", input.git_identity.summary()),
         String::new(),
-        summary.message.clone(),
+        input.summary.message.clone(),
     ]
     .join("\n")
 }
@@ -11281,6 +11432,46 @@ mod tests {
             Command::SessionList {
                 workflow_path: PathBuf::from("workflows/jade-symphony.md"),
             }
+        );
+    }
+
+    #[test]
+    fn review_session_uses_gemini_command_when_no_tmux_override_exists() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nagent:\n  backend: tmux\ntmux:\n  agent_command: codex\nreview:\n  backend: gemini-cli\n  gemini_command: /opt/homebrew/bin/gemini\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(
+            tmux_agent_command_for_lane(&config, AgentSessionLaneArg::Main).unwrap(),
+            "codex"
+        );
+        assert_eq!(
+            tmux_agent_command_for_lane(&config, AgentSessionLaneArg::Review).unwrap(),
+            "/opt/homebrew/bin/gemini"
+        );
+        assert_eq!(
+            tmux_agent_command_for_lane(&config, AgentSessionLaneArg::Merge).unwrap(),
+            "codex"
+        );
+    }
+
+    #[test]
+    fn review_session_prefers_tmux_review_command_override() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nagent:\n  backend: tmux\ntmux:\n  agent_command: codex\n  review_agent_command: custom-gemini --model pro\nreview:\n  backend: gemini-cli\n  gemini_command: /opt/homebrew/bin/gemini\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(
+            tmux_agent_command_for_lane(&config, AgentSessionLaneArg::Review).unwrap(),
+            "custom-gemini --model pro"
         );
     }
 

@@ -52,6 +52,7 @@ agent:
 tmux:
   command: tmux
   agent_command: codex
+  review_agent_command: $JADE_GEMINI_COMMAND
   session_prefix: jade
 codex:
   command: codex app-server

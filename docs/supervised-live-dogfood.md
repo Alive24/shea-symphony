@@ -182,7 +182,10 @@ cargo run -- review reject workflows/jade-symphony.md '#226' --evidence-file /tm
 Expected outcomes:
 
 - each write-mode Review Agent records a `Review Agent` Project field claim
-  before launching the backend;
+  before launching supervised runtime;
+- Gemini-backed `review loop` starts a tmux Review session with the configured
+  Review command and records session name, attach command, prompt artifact, log
+  path, workspace, issue, lane, claim, and `run=`;
 - manual review claims use `review claim`, and terminal manual review routing
   validates the exact evidence claim before preserving the `Review Agent` field
   as a terminal structured audit pointer;
@@ -190,9 +193,8 @@ Expected outcomes:
 - confirmed findings move the issue to `Rework`;
 - completed but inconclusive automatic review moves to `Rework` with a missing
   evidence diagnostic;
-- failed, timed-out, or unavailable review stays out of `Human Review`, records
-  evidence, clears stale `Review Agent` claims, and remains retryable after the
-  backend environment is fixed.
+- failed, timed-out, unavailable, unparsed, or infrastructure-blocked review
+  stays out of `Human Review` with durable evidence.
 
 If the review workflow uses `review.gemini_command: $JADE_GEMINI_COMMAND`,
 set that environment variable to an absolute Gemini CLI path before starting

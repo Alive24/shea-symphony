@@ -123,8 +123,10 @@ claims, or workpad mutation.
 ## Review Backend Setup
 
 For live Agent Review, make the Gemini command visible to the worker process.
-`review.gemini_command` is launched directly, so `gemini` is resolved from the
-worker `PATH`, not from an interactive shell profile.
+`review loop` now claims the Review Agent field and starts a supervised tmux
+Review session instead of spawning Gemini as an unsupervised child process.
+The Review tmux command comes from `tmux.review_agent_command` when set, and
+otherwise from `review.gemini_command` for `review.backend: gemini-cli`.
 
 Prefer an absolute path when supervising review workers:
 
@@ -139,6 +141,8 @@ running review automation:
 review:
   backend: gemini-cli
   gemini_command: /opt/homebrew/bin/gemini
+tmux:
+  review_agent_command: /opt/homebrew/bin/gemini
 ```
 
 ```bash
@@ -162,12 +166,11 @@ handoff evidence and send the work back to Main/operator repair; `doctor repair
 <issue> --mark-pr-ready --confirm-handoff-ready --write` is the explicit repair
 path when the operator has confirmed the handoff is otherwise complete.
 
-If Gemini exits, refuses the workspace trust check, or times out before
-returning a review report, `review loop` records terminal workpad/ledger
-evidence, clears the `Review Agent` Project claim, and leaves the issue in
-`Agent Review` for retry after the operator fixes the backend environment.
-The Gemini subprocess receives the rendered prompt on stdin and Jade Symphony closes
-stdin after writing so headless commands that wait for EOF can proceed.
+If Gemini exits, refuses the workspace trust check, times out, or produces output
+that is not yet parsed into durable pass/finding evidence, the issue must stay
+out of `Human Review`. Inspect the recorded tmux attach command, prompt
+artifact, session registry entry, and log path, then route with `review pass` or
+`review reject` only after independent review evidence exists.
 
 If Gemini returns successfully but says it could not inspect the PR, workspace,
 diff, code changes, or required handoff evidence, treat that as an automatic

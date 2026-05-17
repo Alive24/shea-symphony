@@ -41,10 +41,11 @@ and operator prompts should be promoted into `workflows/`, `examples/`, or
 `docs/` before they become the canonical run path. Normal operator workflow
 config belongs in `workflows/`; `examples/` is fixture/reference material.
 
-The controlled live smoke runbook is in `docs/dogfood-smoke.md`. It keeps the
-first dogfood acceptance path supervised and bounded to one controlled issue;
-`examples/dogfood-smoke-workflow.md` provides a credential-free fixture
-rehearsal of the same candidate filtering path.
+Normal dogfood should exercise `project-state`, `run-loop`, `review-loop`,
+`merge-loop`, `doctor`, and related lane preflight surfaces directly.
+`docs/dogfood-smoke.md` and `examples/dogfood-smoke-workflow.md` remain legacy
+fixture references for the older controlled smoke helper, not the canonical
+operator entrypoint.
 
 The bootstrap completion audit is in `docs/bootstrap-parity-audit.md`. It
 separates landed mainline capability from open `Agent Review` coverage and
@@ -115,9 +116,11 @@ Project v2 issues:
      route manual review pass/reject outcomes.
    - Mutating commands require `--write`.
    - Same-state status updates are treated as no-ops before mutation.
-   - PR linking currently uses an issue comment/autolink strategy instead of a
-     first-class relationship; linked PR discovery can read closing references
-     and PR URLs recorded in canonical Jade Symphony workpad comments.
+   - PR relationship verification is first-class for lane transitions:
+     Project/issue linked-PR reads must expose the PR before Main handoff,
+     Review routing, or Merge landing. Workpad/comment URLs are discovery
+     evidence only; if Jade Symphony can identify a PR but cannot verify or
+     repair the relationship, the issue must stop in `Need Human Input`.
    - Remaining work: idempotency checks around project-item addition and richer
      reconciliation after writes.
 
@@ -236,9 +239,10 @@ Project v2 issues:
      non-fixture GitHub mode the runtime can create/reuse the issue worktree and
      branch, run optional configured verification commands, push the branch, and
      create/reuse one PR after successful backend execution, while blocking
-     dirty or no-op branch handoff. It records the PR link through the tracker
-     adapter and marks draft PRs ready before Agent Review handoff. Remaining
-     work: cleanup, richer reconciliation, and richer verification modeling.
+     dirty or no-op branch handoff. It attempts to record the PR link through
+     the tracker adapter, verifies the Project-visible linked-PR read surface,
+     and marks draft PRs ready before Agent Review handoff. Remaining work:
+     cleanup, richer reconciliation, and richer verification modeling.
    - `cleanup-plan` can report terminal worktree candidates without deleting
      files. Remaining work: explicit write-mode artifact cleanup after operator
      review.

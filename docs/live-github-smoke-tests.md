@@ -22,7 +22,8 @@ JADE_LIVE_GITHUB_SMOKE=1 cargo test --test live_github_smoke
 The smoke runs:
 
 - `jade-symphony inspect workflows/jade-symphony.md`
-- `jade-symphony dogfood-smoke workflows/jade-symphony.md --dry-run`
+- `jade-symphony project-state workflows/jade-symphony.md`
+- `jade-symphony run-loop workflows/jade-symphony.md --max-iterations 1 --dry-run`
 
 ## Expected Behavior
 

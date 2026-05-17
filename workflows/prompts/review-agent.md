@@ -28,7 +28,7 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
   before starting manual or automated review work.
 - Preserve the assigned structured claim `run=` in review evidence, workpad
   notes, and any handoff summary.
-- Confirm there is one clear PR or handoff target.
+- Confirm there is one verified Project-visible linked PR.
 - Confirm the linked PR is ready, not draft. If the PR is draft, do not run a
   normal review; record invalid handoff evidence and leave the issue out of
   `Human Review`.

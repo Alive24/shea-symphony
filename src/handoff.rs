@@ -43,6 +43,7 @@ pub struct AgentReviewHandoffEvidence {
     pub workspace_path: PathBuf,
     pub branch_name: String,
     pub pull_request_url: Option<String>,
+    pub project_pr_link_verified: Option<bool>,
     pub pull_request_is_draft: Option<bool>,
     pub validation_summary: String,
     pub last_transition: String,
@@ -116,6 +117,7 @@ impl AgentReviewHandoffEvidence {
             workspace_path: plan.workspace_path.clone(),
             branch_name: plan.branch_name.clone(),
             pull_request_url: None,
+            project_pr_link_verified: None,
             pull_request_is_draft: None,
             validation_summary: validation_summary.into(),
             last_transition: last_transition.into(),
@@ -160,6 +162,11 @@ pub fn evaluate_agent_review_handoff(
         missing.push("pull request url or explicit no-PR blocker".into());
     }
     if has_pr {
+        match evidence.project_pr_link_verified {
+            Some(true) => {}
+            Some(false) => missing.push("Project-visible pull request linkage".into()),
+            None => missing.push("Project-visible pull request linkage status".into()),
+        }
         match evidence.pull_request_is_draft {
             Some(false) => {}
             Some(true) => missing.push("non-draft pull request".into()),
@@ -167,7 +174,11 @@ pub fn evaluate_agent_review_handoff(
         }
     }
 
-    if missing.is_empty() && has_pr && evidence.pull_request_is_draft == Some(false) {
+    if missing.is_empty()
+        && has_pr
+        && evidence.project_pr_link_verified == Some(true)
+        && evidence.pull_request_is_draft == Some(false)
+    {
         AgentReviewHandoffReport {
             status: AgentReviewHandoffStatus::Ready,
             missing,
@@ -208,6 +219,13 @@ pub fn render_agent_review_handoff_workpad(
         format!(
             "- Pull request: `{}`",
             evidence.pull_request_url.as_deref().unwrap_or("missing")
+        ),
+        format!(
+            "- Project PR linkage verified: `{}`",
+            evidence
+                .project_pr_link_verified
+                .map(|verified| verified.to_string())
+                .unwrap_or_else(|| "unknown".into())
         ),
         format!(
             "- Pull request draft: `{}`",
@@ -741,6 +759,7 @@ mod tests {
         let mut evidence =
             AgentReviewHandoffEvidence::from_plan(&plan, "cargo test passed", "completed");
         evidence.pull_request_url = Some("https://github.com/Alive24/jade-symphony/pull/21".into());
+        evidence.project_pr_link_verified = Some(true);
         evidence.pull_request_is_draft = Some(false);
 
         let report = evaluate_agent_review_handoff(&evidence);
@@ -750,11 +769,28 @@ mod tests {
     }
 
     #[test]
+    fn agent_review_handoff_blocks_unverified_project_pr_linkage() {
+        let plan = plan_issue_handoff(Path::new("/tmp/jade-workspaces"), &issue(), "main").unwrap();
+        let mut evidence =
+            AgentReviewHandoffEvidence::from_plan(&plan, "cargo test passed", "completed");
+        evidence.pull_request_url = Some("https://github.com/Alive24/jade-symphony/pull/21".into());
+        evidence.pull_request_is_draft = Some(false);
+
+        let report = evaluate_agent_review_handoff(&evidence);
+
+        assert!(!report.is_ready());
+        assert!(report
+            .missing
+            .contains(&"Project-visible pull request linkage status".into()));
+    }
+
+    #[test]
     fn agent_review_handoff_blocks_draft_pr() {
         let plan = plan_issue_handoff(Path::new("/tmp/jade-workspaces"), &issue(), "main").unwrap();
         let mut evidence =
             AgentReviewHandoffEvidence::from_plan(&plan, "cargo test passed", "completed");
         evidence.pull_request_url = Some("https://github.com/Alive24/jade-symphony/pull/21".into());
+        evidence.project_pr_link_verified = Some(true);
         evidence.pull_request_is_draft = Some(true);
 
         let report = evaluate_agent_review_handoff(&evidence);
@@ -769,6 +805,7 @@ mod tests {
         let mut evidence =
             AgentReviewHandoffEvidence::from_plan(&plan, "cargo test passed", "completed");
         evidence.pull_request_url = Some("https://github.com/Alive24/jade-symphony/pull/21".into());
+        evidence.project_pr_link_verified = Some(true);
 
         let report = evaluate_agent_review_handoff(&evidence);
 

@@ -41,8 +41,8 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
 
 - Dirty, conflicted, stale, or failing PRs go to `Rework` with diagnostic
   evidence.
-- Ambiguous PR targets or missing approvals go to `Need Human Input` with one
-  concrete question.
+- Missing or ambiguous verified PR targets and missing approvals go to
+  `Need Human Input` with one concrete question.
 - Transient unknown mergeability can remain in `Merging` for retry when the
   command can prove it is transient.
 

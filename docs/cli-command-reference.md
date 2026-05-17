@@ -63,8 +63,7 @@ evidence and runs `gh pr ready`; `doctor --auto-fix` never marks PRs ready.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `run-once` | Execute one selected issue through the configured backend. | Fixture-safe by default when the workflow has `tracker.fixture_path`. |
-| `run-loop` | Poll/select/claim/run/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; tmux sessions stay active instead of auto-handing off; Agent Review handoff requires a ready, non-draft PR. |
-| `dogfood-smoke` | Supervised preflight for one controlled dogfood issue. | Dry-run inspection by default; live readiness does not bypass review or merge gates. |
+| `run-loop` | Poll/select/claim/run/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; tmux sessions stay active instead of auto-handing off; Agent Review handoff requires a verified Project-visible, ready, non-draft PR. |
 
 Examples:
 
@@ -73,7 +72,6 @@ cargo run -- run-once examples/dry-run-workflow.md
 cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
 cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run --display tui
 cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --pool 2 --dry-run
-cargo run -- dogfood-smoke workflows/jade-symphony.md --dry-run
 cargo run -- clean plan workflows/jade-symphony.md
 cargo run -- clean audit workflows/jade-symphony.md
 ```
@@ -93,6 +91,13 @@ example `v=1 lane=main actor=codex source=loop issue=#244 run=... state=active
 thread=unknown registry=run/...`. The Project field stores the compact pointer;
 the session registry and workpad store the durable paths, logs, and handoff
 evidence for the same `run=`.
+
+PR relationship verification is a lane invariant, not just evidence text. A PR
+URL found in a workpad, issue comment, or local branch can help operators
+identify the intended PR, but the issue must expose that PR through the
+Project/issue linked-PR read surface before Main handoff, Review routing, or
+Merge landing. If Jade Symphony cannot verify the relationship after a repair
+attempt, it routes the issue to `Need Human Input` with the blocker preserved.
 
 The canonical `workflows/jade-symphony.md` file uses the local `tmux` main-agent
 backend. A launched tmux session records its session name, log path, workspace,

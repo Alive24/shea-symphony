@@ -80,10 +80,13 @@ explicit confirmation flag is present. Before that mutating tick, the launcher
 runs:
 
 ```bash
-target/debug/jade-symphony dogfood-smoke workflows/jade-symphony.md --dry-run
+target/debug/jade-symphony project-state workflows/jade-symphony.md
+target/debug/jade-symphony run-loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 
-If the smoke preflight fails, the launcher exits before claiming tracker work.
+If the normal preflight surfaces fail, the launcher exits before claiming
+tracker work. `dogfood-smoke` remains a hidden legacy smoke helper for older
+fixtures; it is not the canonical operator entrypoint.
 The canonical workflow now uses the local `tmux` main-agent backend. A write
 tick starts an attachable tmux session, records its attach command and log path,
 persists a session registry record under the configured artifact root, and
@@ -95,10 +98,14 @@ only then pastes the rendered issue prompt. Set
 `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to opt out; when disabled, or when readiness
 cannot be confirmed, the tick fails closed with attach/log evidence and does not
 hand off to `Agent Review`.
-Main handoff also requires the linked PR to be ready, not draft. When all other
-handoff evidence is valid, `run-loop --write` may run `gh pr ready` before
-moving the issue to `Agent Review`; if that readiness mutation fails, keep the
-issue out of `Agent Review` and preserve the blocker in the workpad.
+Main handoff also requires the PR relationship to be visible through Jade
+Symphony's Project/issue linked-PR read surface, and the linked PR must be
+ready, not draft. Workpad or comment URLs can identify the intended PR, but
+they are not a permanent substitute for the verified relationship. When all
+other handoff evidence is valid, `run-loop --write` may run `gh pr ready`
+before moving the issue to `Agent Review`; if relationship verification or
+readiness mutation fails, keep the issue out of `Agent Review`, route to
+`Need Human Input`, and preserve the blocker in the workpad.
 Routine status output reads the durable session registry, probes bounded pane
 and log tails, and reports a conservative session classification such as
 `running`, `waiting_for_trust`, `waiting_for_approval`, `usage_limited`,

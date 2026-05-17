@@ -131,3 +131,20 @@ Later doctor checks should flag these examples:
 
 Issue #273 should turn these into doctor invariants. Issue #274 should teach
 lane flows how to use the parent integration branch during live execution.
+
+## Dry Fixture Verification
+
+The credential-free topology fixture lives at:
+
+```text
+examples/fixtures/parent-subissue-topology.json
+```
+
+Run its focused verification with:
+
+```bash
+cargo test --test parent_subissue_topology
+```
+
+That test validates the happy path, unsafe topology examples, and the
+documentation boundaries above without changing live lane behavior.

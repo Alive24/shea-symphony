@@ -49,7 +49,7 @@ memory-backed. They do not mutate live GitHub Project v2 state.
 
 | Fixture | Purpose | Verification |
 | --- | --- | --- |
-| `fixtures/parent-subissue-topology.json` | Dry parent/subissue integration branch topology examples for the documented `#243` parent flow. | `cargo test parent_subissue_topology` |
+| `fixtures/parent-subissue-topology.json` | Dry parent/subissue integration branch topology examples for the documented `#243` parent flow. | `cargo test --test parent_subissue_topology` |
 
 ## Fixture Data
 

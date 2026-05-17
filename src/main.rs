@@ -4379,6 +4379,7 @@ struct RunLoopLiveHandoff {
     worktree: LiveWorktreeResult,
     publication: PullRequestPublication,
     verification: String,
+    project_pr_link_verified: Option<bool>,
     pull_request_ready: Option<PullRequestReadyStatus>,
 }
 
@@ -5167,6 +5168,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                                 worktree,
                                 publication,
                                 verification: verification.summary,
+                                project_pr_link_verified: None,
                                 pull_request_ready: None,
                             });
                         }
@@ -5470,6 +5472,54 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     Some(format!("retry in {retry_delay_ms}ms")),
                 ));
                 break;
+            }
+            if result.message.contains("handoff PR link") {
+                runtime_state = run_loop_runtime_state_with_transition(
+                    runtime_state,
+                    Some(latest.state.clone()),
+                    "need_human_input",
+                    "handoff PR linkage invariant failed",
+                );
+                mark_runtime_state_updated(&mut runtime_state, current_time_ms());
+                save_runtime_state(&config, &runtime_state)?;
+                write_lane_claim_state(
+                    &config,
+                    adapter.as_ref(),
+                    &latest,
+                    WorkerLane::Main,
+                    &main_claim,
+                    LaneClaimState::Failed,
+                )?;
+                adapter.set_state(&latest.identifier, "need_human_input")?;
+                append_tracker_mutation_audit(
+                    &config,
+                    TrackerMutationAudit {
+                        command: "run-loop",
+                        mutation_type: "state_change",
+                        issue_ref: Some(&latest.identifier),
+                        target: result
+                            .live_handoff
+                            .as_ref()
+                            .map(|handoff| handoff.publication.pr_url.clone()),
+                        from_state: Some(latest.state.clone()),
+                        to_state: Some("need_human_input".into()),
+                        reason: "handoff PR linkage invariant failed",
+                    },
+                );
+                clear_runtime_state(&config)?;
+                println!(
+                    "run_loop_action=blocked issue={} target_state=need_human_input reason=handoff_pr_linkage_invariant_failed",
+                    latest.identifier
+                );
+                print_latest_status(&latest_status_for_issue(
+                    &config,
+                    &latest,
+                    "main",
+                    "blocked",
+                    "handoff_pr_linkage",
+                    Some("Need Human Input".into()),
+                ));
+                continue;
             }
             if runtime_state.attempt_count < config.agent.max_turns {
                 record_runtime_retry(
@@ -6703,7 +6753,20 @@ fn record_live_handoff_pr_link(
 
     adapter
         .link_pull_request(issue_ref, &handoff.publication.pr_url)
-        .map_err(|error| format!("handoff PR link failed: {error}"))
+        .map_err(|error| format!("handoff PR link repair failed: {error}"))?;
+
+    let linked = adapter
+        .list_linked_pull_requests(issue_ref)
+        .map_err(|error| format!("handoff PR link verification failed: {error}"))?;
+
+    if linked_pull_requests_contain(&linked, &handoff.publication.pr_url) {
+        Ok(())
+    } else {
+        Err(format!(
+            "handoff PR link was not Project-visible after repair attempt: {}",
+            handoff.publication.pr_url
+        ))
+    }
 }
 
 fn apply_live_handoff_pr_link(
@@ -6716,13 +6779,44 @@ fn apply_live_handoff_pr_link(
     }
 
     match record_live_handoff_pr_link(adapter, issue_ref, result) {
-        Ok(()) => true,
+        Ok(()) => {
+            if let Some(handoff) = result.live_handoff.as_mut() {
+                handoff.project_pr_link_verified = Some(true);
+            }
+            true
+        }
         Err(error) => {
+            if let Some(handoff) = result.live_handoff.as_mut() {
+                handoff.project_pr_link_verified = Some(false);
+            }
             result.success = false;
             result.message = error;
             false
         }
     }
+}
+
+fn linked_pull_requests_contain(
+    linked_pull_requests: &[jade_symphony::model::LinkedPullRequest],
+    pr_url: &str,
+) -> bool {
+    let expected_url = pr_url.trim();
+    let expected_number = pull_request_number_from_url(expected_url);
+    linked_pull_requests.iter().any(|linked| {
+        linked
+            .url
+            .as_deref()
+            .is_some_and(|url| url.trim() == expected_url)
+            || expected_number.is_some() && linked.number == expected_number
+    })
+}
+
+fn pull_request_number_from_url(url: &str) -> Option<u64> {
+    url.trim()
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .and_then(|segment| segment.parse().ok())
 }
 
 fn run_loop_agent_review_handoff_evidence(
@@ -6767,6 +6861,17 @@ fn run_loop_agent_review_handoff_evidence(
                 .iter()
                 .find(|pr| pr.url.as_deref() == Some(url))
                 .and_then(|pr| pr.is_draft)
+        });
+    evidence.project_pr_link_verified = result
+        .live_handoff
+        .as_ref()
+        .and_then(|handoff| handoff.project_pr_link_verified)
+        .or_else(|| {
+            let url = evidence.pull_request_url.as_deref()?;
+            Some(linked_pull_requests_contain(
+                &issue.linked_pull_requests,
+                url,
+            ))
         });
     if evidence.pull_request_url.is_none() {
         evidence.no_pr_blocker = Some(
@@ -7201,7 +7306,7 @@ enum CliCommand {
     #[command(name = "doctor-repair-human-review")]
     DoctorRepairHumanReview(DoctorRepairArgs),
     Profiles(WorkflowPathArgs),
-    #[command(name = "dogfood-smoke")]
+    #[command(name = "dogfood-smoke", hide = true)]
     DogfoodSmoke(DogfoodSmokeArgs),
     #[command(name = "cleanup-plan")]
     CleanupPlan(WorkflowPathArgs),
@@ -8548,11 +8653,41 @@ mod tests {
         issue
     }
 
-    #[derive(Default)]
+    fn review_issue_with_ref(identifier: &str, title: &str) -> TrackerIssue {
+        let mut issue = tracker_issue_with_ref(identifier, title, "Agent Review");
+        let number = identifier.trim_start_matches('#');
+        issue
+            .linked_pull_requests
+            .push(jade_symphony::model::LinkedPullRequest {
+                number: number.parse().ok(),
+                url: Some(format!(
+                    "https://github.com/Alive24/jade-symphony/pull/{number}"
+                )),
+                state: Some("OPEN".into()),
+                is_draft: Some(false),
+                ..Default::default()
+            });
+        issue
+    }
+
     struct RecordingAdapter {
         operations: RefCell<Vec<String>>,
+        linked_pull_requests: RefCell<Vec<jade_symphony::model::LinkedPullRequest>>,
         fail_workpad: bool,
         fail_link_pr: bool,
+        confirm_link_pr: bool,
+    }
+
+    impl Default for RecordingAdapter {
+        fn default() -> Self {
+            Self {
+                operations: RefCell::new(Vec::new()),
+                linked_pull_requests: RefCell::new(Vec::new()),
+                fail_workpad: false,
+                fail_link_pr: false,
+                confirm_link_pr: true,
+            }
+        }
     }
 
     impl RecordingAdapter {
@@ -8648,6 +8783,17 @@ mod tests {
             self.operations
                 .borrow_mut()
                 .push(format!("link_pr:{issue_ref}:{pr_ref}"));
+            if self.confirm_link_pr {
+                self.linked_pull_requests.borrow_mut().push(
+                    jade_symphony::model::LinkedPullRequest {
+                        number: pull_request_number_from_url(pr_ref),
+                        url: Some(pr_ref.to_string()),
+                        state: Some("OPEN".into()),
+                        is_draft: Some(false),
+                        ..Default::default()
+                    },
+                );
+            }
             Ok(())
         }
 
@@ -8658,7 +8804,7 @@ mod tests {
             Vec<jade_symphony::model::LinkedPullRequest>,
             jade_symphony::tracker::TrackerError,
         > {
-            Ok(Vec::new())
+            Ok(self.linked_pull_requests.borrow().clone())
         }
 
         fn close_issue(&self, issue_ref: &str) -> Result<(), jade_symphony::tracker::TrackerError> {
@@ -9612,9 +9758,9 @@ mod tests {
     fn review_worker_selection_respects_concurrency_limit() {
         let selected = select_review_worker_issues(
             &[
-                tracker_issue_with_ref("#67", "First review", "Agent Review"),
-                tracker_issue_with_ref("#68", "Second review", "Agent Review"),
-                tracker_issue_with_ref("#69", "Third review", "Agent Review"),
+                review_issue_with_ref("#67", "First review"),
+                review_issue_with_ref("#68", "Second review"),
+                review_issue_with_ref("#69", "Third review"),
             ],
             "Agent Review",
             "fake-reviewer",
@@ -9632,12 +9778,12 @@ mod tests {
 
     #[test]
     fn review_worker_selection_skips_existing_worker_marker() {
-        let mut queued = tracker_issue_with_ref("#67", "Queued review", "Agent Review");
+        let mut queued = review_issue_with_ref("#67", "Queued review");
         queued.project_fields.insert(
             "Review Worker".into(),
             serde_json::Value::String("queued review:#67:fake-reviewer".into()),
         );
-        let ready = tracker_issue_with_ref("#68", "Ready review", "Agent Review");
+        let ready = review_issue_with_ref("#68", "Ready review");
 
         let selected =
             select_review_worker_issues(&[queued, ready], "Agent Review", "fake-reviewer", 2);
@@ -9648,13 +9794,13 @@ mod tests {
 
     #[test]
     fn review_worker_selection_skips_review_agent_field_claim() {
-        let mut queued = tracker_issue_with_ref("#67", "Queued review", "Agent Review");
+        let mut queued = review_issue_with_ref("#67", "Queued review");
         let claim = review_claim_for_issue(&queued, "review:#67:fake-reviewer");
         queued.project_fields.insert(
             "Review Agent".into(),
             serde_json::Value::String(claim.render()),
         );
-        let ready = tracker_issue_with_ref("#68", "Ready review", "Agent Review");
+        let ready = review_issue_with_ref("#68", "Ready review");
 
         let selected =
             select_review_worker_issues(&[queued, ready], "Agent Review", "fake-reviewer", 2);
@@ -9666,8 +9812,7 @@ mod tests {
     #[test]
     fn review_workspace_uses_issue_handoff_workspace() {
         let config = test_config();
-        let issue =
-            tracker_issue_with_ref("#67", "Add parallel review worker pool", "Agent Review");
+        let issue = review_issue_with_ref("#67", "Add parallel review worker pool");
 
         let workspace = review_workspace_for_issue(&config, &issue);
 
@@ -10370,6 +10515,7 @@ mod tests {
                     pr_created: true,
                 },
                 verification: "skipped:not_configured".into(),
+                project_pr_link_verified: Some(true),
                 pull_request_ready: Some(PullRequestReadyStatus {
                     pr_url: "https://github.com/Alive24/jade-symphony/pull/45".into(),
                     was_draft: false,
@@ -10451,9 +10597,8 @@ mod tests {
         let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
         let mut result = successful_live_handoff_result(&handoff);
         let adapter = RecordingAdapter {
-            operations: RefCell::new(Vec::new()),
-            fail_workpad: false,
             fail_link_pr: true,
+            ..Default::default()
         };
 
         assert!(!apply_live_handoff_pr_link(
@@ -10463,7 +10608,42 @@ mod tests {
         ));
 
         assert!(!result.success);
-        assert!(result.message.contains("handoff PR link failed"));
+        assert!(result.message.contains("handoff PR link repair failed"));
+        assert_eq!(
+            result
+                .live_handoff
+                .as_ref()
+                .and_then(|handoff| handoff.project_pr_link_verified),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn live_run_loop_handoff_requires_verified_project_pr_linkage() {
+        let config = test_config();
+        let issue = tracker_issue("In Progress");
+        let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+        let mut result = successful_live_handoff_result(&handoff);
+        let adapter = RecordingAdapter {
+            confirm_link_pr: false,
+            ..Default::default()
+        };
+
+        assert!(!apply_live_handoff_pr_link(
+            &adapter,
+            &issue.identifier,
+            &mut result
+        ));
+
+        assert!(!result.success);
+        assert!(result.message.contains("not Project-visible"));
+        assert_eq!(
+            result
+                .live_handoff
+                .as_ref()
+                .and_then(|handoff| handoff.project_pr_link_verified),
+            Some(false)
+        );
     }
 
     fn successful_live_handoff_result(handoff: &IssueHandoffPlan) -> IssueExecutionResult {
@@ -10501,6 +10681,7 @@ mod tests {
                     pr_created: true,
                 },
                 verification: "skipped:not_configured".into(),
+                project_pr_link_verified: Some(true),
                 pull_request_ready: Some(PullRequestReadyStatus {
                     pr_url: "https://github.com/Alive24/jade-symphony/pull/45".into(),
                     was_draft: false,
@@ -10590,9 +10771,8 @@ mod tests {
     #[test]
     fn rework_transition_does_not_set_state_when_workpad_write_fails() {
         let adapter = RecordingAdapter {
-            operations: RefCell::new(Vec::new()),
             fail_workpad: true,
-            fail_link_pr: false,
+            ..Default::default()
         };
         let issue = tracker_issue("Agent Review");
         let diagnostic = ReworkDiagnostic::validation_failure(

@@ -622,6 +622,12 @@ pub fn review_run_eligibility(
         };
     }
 
+    if issue.linked_pull_requests.is_empty() {
+        return ReviewRunEligibility::InvalidHandoff {
+            reason: "Agent Review handoff has no verified Project-visible linked PR; Main Agent or operator repair must establish the PR relationship before normal review.".into(),
+        };
+    }
+
     if issue
         .linked_pull_requests
         .iter()
@@ -1142,7 +1148,12 @@ mod tests {
             assignees: vec![],
             priority: None,
             branch_name: None,
-            linked_pull_requests: vec![],
+            linked_pull_requests: vec![crate::model::LinkedPullRequest {
+                url: Some("https://github.com/Alive24/jade-symphony/pull/1".into()),
+                state: Some("OPEN".into()),
+                is_draft: Some(false),
+                ..Default::default()
+            }],
             blocked_by: vec![],
             project_fields: Default::default(),
             created_at: None,
@@ -1822,8 +1833,17 @@ mod tests {
 
     #[test]
     fn review_run_eligibility_accepts_agent_review_issue() {
+        let mut issue = issue();
+        issue
+            .linked_pull_requests
+            .push(crate::model::LinkedPullRequest {
+                url: Some("https://github.com/Alive24/jade-symphony/pull/1".into()),
+                state: Some("OPEN".into()),
+                is_draft: Some(false),
+                ..Default::default()
+            });
         assert_eq!(
-            review_run_eligibility(&issue(), "Agent Review", "fake"),
+            review_run_eligibility(&issue, "Agent Review", "fake"),
             ReviewRunEligibility::Eligible {
                 worker_key: "review:#1:fake".into()
             }
@@ -1841,6 +1861,18 @@ mod tests {
                 current_state: "Todo".into()
             }
         );
+    }
+
+    #[test]
+    fn review_run_eligibility_rejects_agent_review_missing_pr_linkage() {
+        let mut issue = issue();
+        issue.linked_pull_requests.clear();
+
+        assert!(matches!(
+            review_run_eligibility(&issue, "Agent Review", "fake"),
+            ReviewRunEligibility::InvalidHandoff { reason }
+                if reason.contains("no verified Project-visible linked PR")
+        ));
     }
 
     #[test]

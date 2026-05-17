@@ -62,17 +62,19 @@ Review the output before mutating anything. In particular, check for:
 - dirty Merging PRs;
 - integration gaps.
 
-## Controlled Smoke
+## Normal Preflight
 
-Before the first write tick, run the controlled smoke preflight:
+Before the first write tick, run the same preflight surfaces operators use for
+normal work:
 
 ```bash
-cargo run -- dogfood-smoke workflows/jade-symphony.md --dry-run
+cargo run -- project-state workflows/jade-symphony.md
+cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 
-Proceed only when there is exactly one executable controlled smoke candidate,
-the tracker is not fixture-backed, and the report shows no blocking integration
-gaps.
+Proceed only when tracker access is trusted, the selected issue is claimable,
+and the dry-run shows no blocking integration gaps. `dogfood-smoke` is kept as
+a hidden legacy fixture helper, not a product dogfood lane.
 
 ## One Implementation Tick
 
@@ -121,13 +123,16 @@ Expected outcome for successful main-agent work:
 - the configured backend runs in that workspace;
 - runtime state and event logs are written;
 - a PR is created or reused;
+- the PR relationship is verified through the Project/issue linked-PR read
+  surface;
 - the linked PR is ready, not draft;
 - the workpad records durable handoff evidence;
 - the issue moves to `Agent Review`, not `Human Review`.
 
-If the run reports usage limits, retry backoff, missing PR evidence, draft PR
-handoff, failed handoff, stale runtime state, or missing human input, stop and
-resolve that specific blocker before running another write tick.
+If the run reports usage limits, retry backoff, missing or unverified PR
+relationship evidence, draft PR handoff, failed handoff, stale runtime state,
+or missing human input, stop and resolve that specific blocker before running
+another write tick.
 
 Before manual Review or Merge recovery, check the issue workspace first:
 
@@ -204,7 +209,7 @@ cargo run -- merge-once workflows/jade-symphony.md --write
 The merge lane should:
 
 - inspect only `Merging` issues;
-- require exactly one linked PR;
+- require exactly one verified linked PR;
 - check PR state, base branch, checks, review/approval signal, and mergeability;
 - merge clean approved work;
 - route dirty or failing work to `Rework` with workpad evidence;

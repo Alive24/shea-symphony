@@ -1,4 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+#[cfg(test)]
+use std::collections::BTreeSet;
 use std::fs;
 use std::process::Command;
 use std::thread;
@@ -1065,12 +1067,7 @@ impl GithubProjectV2GhClient {
         issue_ref: &str,
     ) -> Result<Vec<LinkedPullRequest>, TrackerError> {
         let issue = self.resolve_issue(issue_ref)?;
-        let marker = &self.config.tracker.workpad.marker;
-        let workpad_bodies = self.find_workpad_comment_bodies(&issue.id, marker)?;
-        Ok(merge_linked_pull_requests(
-            issue.linked_pull_requests,
-            linked_pull_requests_from_workpads(&workpad_bodies),
-        ))
+        Ok(issue.linked_pull_requests)
     }
 
     fn close_issue(&self, issue_ref: &str) -> Result<(), TrackerError> {
@@ -1112,27 +1109,6 @@ impl GithubProjectV2GhClient {
                 } else {
                     None
                 }
-            })
-            .collect())
-    }
-
-    fn find_workpad_comment_bodies(
-        &self,
-        issue_id: &str,
-        marker: &str,
-    ) -> Result<Vec<String>, TrackerError> {
-        let response = self.graphql(
-            GITHUB_ISSUE_COMMENTS_QUERY,
-            &[("issueId", issue_id.to_string())],
-        )?;
-        Ok(response
-            .pointer("/data/node/comments/nodes")
-            .and_then(serde_json::Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|comment| {
-                let body = comment.get("body")?.as_str()?;
-                body.contains(marker).then(|| body.to_string())
             })
             .collect())
     }
@@ -2305,6 +2281,7 @@ fn pull_requests_from_issue(issue: &serde_json::Value) -> Vec<LinkedPullRequest>
         .collect()
 }
 
+#[cfg(test)]
 fn linked_pull_requests_from_workpads(workpad_bodies: &[String]) -> Vec<LinkedPullRequest> {
     let mut seen = BTreeSet::new();
     let mut linked = Vec::new();
@@ -2318,6 +2295,7 @@ fn linked_pull_requests_from_workpads(workpad_bodies: &[String]) -> Vec<LinkedPu
     linked
 }
 
+#[cfg(test)]
 fn merge_linked_pull_requests(
     existing: Vec<LinkedPullRequest>,
     discovered: Vec<LinkedPullRequest>,
@@ -2335,12 +2313,14 @@ fn merge_linked_pull_requests(
     merged
 }
 
+#[cfg(test)]
 fn github_pull_request_urls(text: &str) -> Vec<String> {
     text.split(|character: char| character.is_whitespace() || character == '<' || character == '>')
         .filter_map(clean_github_pull_request_url)
         .collect()
 }
 
+#[cfg(test)]
 fn clean_github_pull_request_url(raw: &str) -> Option<String> {
     let value = raw.trim_matches(|character: char| {
         matches!(
@@ -2363,6 +2343,7 @@ fn clean_github_pull_request_url(raw: &str) -> Option<String> {
         .then(|| base.to_string())
 }
 
+#[cfg(test)]
 fn linked_pull_request_from_url(url: &str) -> LinkedPullRequest {
     LinkedPullRequest {
         id: None,

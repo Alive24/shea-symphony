@@ -70,9 +70,11 @@ question, but do not edit files under
    evidence, PR summaries, and workpad updates.
 9. Open or update exactly one PR for this issue with concise validation
    evidence.
-10. Confirm the linked PR is ready, not draft. If every other handoff invariant
-   is satisfied and the PR is still draft, mark it ready before moving state;
-   if that fails, keep the issue out of `Agent Review` and record the blocker.
+10. Confirm the linked PR is Project-visible, ready, and not draft. Workpad or
+   comment PR URLs can identify the intended PR, but they are not a substitute
+   for verified Project/issue linked-PR state. If every other handoff invariant
+   is satisfied but PR relationship verification or draft repair fails, keep
+   the issue out of `Agent Review` and record the blocker.
 11. Move locally complete main-agent work to `Agent Review` only.
 12. Return to tracker selection only after this issue has a PR/workpad handoff
     or a documented blocked state.

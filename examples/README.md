@@ -13,10 +13,10 @@ commands and testing specific lanes.
 
 | Workflow | Purpose | Safe commands |
 | --- | --- | --- |
-| `dry-run-workflow.md` | Main credential-free dispatch and run-loop fixture backed by `fixtures/dry-run-issues.json`. | `cargo run -- plan examples/dry-run-workflow.md`; `cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run` |
-| `source-alignment-workflow.md` | Source-alignment gate fixture with one valid and one broken issue. | `cargo run -- plan examples/source-alignment-workflow.md`; `cargo run -- gate examples/source-alignment-workflow.md '#1'` |
-| `usage-limit-workflow.md` | Fixture backend path that exercises usage-limit pause handling. | `cargo run -- run-loop examples/usage-limit-workflow.md --max-iterations 1 --write` |
-| `git-identity-workflow.md` | Workspace-local git identity application fixture. | `cargo run -- run-once examples/git-identity-workflow.md` |
+| `dry-run-workflow.md` | Main credential-free dispatch and main loop fixture backed by `fixtures/dry-run-issues.json`. | `cargo run -- plan examples/dry-run-workflow.md`; `cargo run -- main loop examples/dry-run-workflow.md --max-iterations 1 --dry-run` |
+| `source-alignment-workflow.md` | Source-alignment gate fixture with one valid and one broken issue. | `cargo run -- plan examples/source-alignment-workflow.md`; `cargo run -- forge validate --workflow examples/source-alignment-workflow.md '#1'` |
+| `usage-limit-workflow.md` | Fixture backend path that exercises usage-limit pause handling. | `cargo run -- main loop examples/usage-limit-workflow.md --max-iterations 1 --write` |
+| `git-identity-workflow.md` | Workspace-local git identity application fixture. | `cargo run -- main once examples/git-identity-workflow.md` |
 
 Fixture workflows may use `--write` when the tracker is fixture-backed or
 memory-backed. They do not mutate live GitHub Project v2 state.

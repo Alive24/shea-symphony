@@ -69,10 +69,10 @@ During live use, if the current binary still exposes flat commands, use those
 commands and say so in the workpad note:
 
 ```bash
-cargo run -- project-state workflows/jade-symphony.md
-cargo run -- project-issue workflows/jade-symphony.md '#<issue>' --json
-cargo run -- workpad workflows/jade-symphony.md '#<issue>' /path/to/human-review-note.md --write
-cargo run -- set-state workflows/jade-symphony.md '#<issue>' merging --write
+cargo run -- project state workflows/jade-symphony.md
+cargo run -- project issue workflows/jade-symphony.md '#<issue>' --json
+cargo run -- project workpad workflows/jade-symphony.md '#<issue>' /path/to/human-review-note.md --write
+cargo run -- project set-state workflows/jade-symphony.md '#<issue>' merging --write
 ```
 
 Do not turn the topology transition into custom GitHub Project mutations.
@@ -82,7 +82,7 @@ Do not turn the topology transition into custom GitHub Project mutations.
 Before briefing the operator, read the decision surfaces:
 
 ```bash
-cargo run -- project-issue workflows/jade-symphony.md '#<issue>' --json
+cargo run -- project issue workflows/jade-symphony.md '#<issue>' --json
 gh issue view <issue> --repo Alive24/jade-symphony --comments
 gh pr view <pr> --repo Alive24/jade-symphony --json number,title,state,url,isDraft,baseRefName,headRefName,mergeStateStatus,reviewDecision,statusCheckRollup
 ```
@@ -160,20 +160,20 @@ After explicit confirmation, write the completed decision note through the Jade
 Symphony workpad surface first. Then, if the decision requires a state change,
 set state as the final mutation.
 
-Current flat-command examples:
+Current grouped-command examples:
 
 ```bash
-cargo run -- workpad workflows/jade-symphony.md '#<issue>' /path/to/human-review-note.md --write
-cargo run -- set-state workflows/jade-symphony.md '#<issue>' merging --write
-cargo run -- set-state workflows/jade-symphony.md '#<issue>' rework --write
-cargo run -- set-state workflows/jade-symphony.md '#<issue>' need_human_input --write
+cargo run -- project workpad workflows/jade-symphony.md '#<issue>' /path/to/human-review-note.md --write
+cargo run -- project set-state workflows/jade-symphony.md '#<issue>' merging --write
+cargo run -- project set-state workflows/jade-symphony.md '#<issue>' rework --write
+cargo run -- project set-state workflows/jade-symphony.md '#<issue>' need_human_input --write
 ```
 
 After the state mutation, only read back:
 
 ```bash
-cargo run -- project-issue workflows/jade-symphony.md '#<issue>' --json
-cargo run -- project-state workflows/jade-symphony.md
+cargo run -- project issue workflows/jade-symphony.md '#<issue>' --json
+cargo run -- project state workflows/jade-symphony.md
 ```
 
 Do not continue reviewing, implementing, or merging after the state change.

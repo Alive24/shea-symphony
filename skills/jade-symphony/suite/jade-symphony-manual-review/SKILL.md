@@ -1,6 +1,6 @@
 ---
 name: jade-symphony-manual-review
-description: Use when manually reviewing a Jade Symphony GitHub issue or pull request as a Review Agent, while recording evidence in the Jade Symphony tracker without confusing manual review with automatic review-loop evidence.
+description: Use when manually reviewing a Jade Symphony GitHub issue or pull request as a Review Agent, while recording evidence in the Jade Symphony tracker without confusing manual review with automatic review loop evidence.
 metadata:
   short-description: Jade Symphony manual review
   suite-version: 2026.05.17
@@ -52,7 +52,7 @@ itself produced that result.
 
 1. Identify the issue number and PR number.
 2. Read issue and PR metadata with `gh issue view`, `gh pr view`, and
-   `cargo run -- project-issue workflows/jade-symphony.md '#<issue>' --json`.
+   `cargo run -- project issue workflows/jade-symphony.md '#<issue>' --json`.
 3. Confirm the PR closes or clearly links to the issue.
 4. Confirm the issue is in `Agent Review`, unless the operator explicitly asks
    for re-review.
@@ -81,7 +81,7 @@ command, stop and ask the operator for the intended workspace.
 
 Status transition ordering: `review pass` or `review reject` must be the final
 mutating step of the manual review session. After the status changes, do only
-readback verification such as `project-issue` or `doctor`.
+readback verification such as `project issue` or `doctor`.
 
 ## Review Agent Claim
 

@@ -8,11 +8,11 @@ contract under `workflows/prompts/`.
 Use it for live Project #9 operations:
 
 ```bash
-cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --write
+cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --write
 cargo run -- forge validate --workflow workflows/jade-symphony.md --status Todo --title "<title>" --body-file /private/tmp/issue.md
 cargo run -- forge create --workflow workflows/jade-symphony.md --status Todo --title "<title>" --body-file /private/tmp/issue.md --assignee Alive24 --write
 cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --write
-cargo run -- merge-once workflows/jade-symphony.md --write
+cargo run -- merge once workflows/jade-symphony.md --write
 cargo run -- main claim workflows/jade-symphony.md '#123' --worker codex-manual-main --write
 cargo run -- session start workflows/jade-symphony.md '#123' --lane main --run <RUN_ID> --write
 cargo run -- session list workflows/jade-symphony.md

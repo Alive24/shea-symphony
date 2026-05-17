@@ -25,7 +25,7 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
 
 - Confirm the issue is in `Agent Review` before starting review.
 - Claim `Review Agent` through `review claim ... --worker <worker> --write`
-  or the configured `review-loop`
+  or the configured `review loop`
   before starting manual or automated review work.
 - Start manual review sessions through `session start --lane review --run
   <RUN_ID>` only after the matching Project claim exists.
@@ -72,7 +72,7 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
   backend, credentials, draft PR handoff, or an ambiguous decision, keep the
   issue out of `Human Review` and record the next operator action.
 - After changing Project status, only perform readback verification such as
-  `project-issue` or `doctor`; do not continue reviewing or claim another issue
+  `project issue` or `doctor`; do not continue reviewing or claim another issue
   in the same session.
 
 ## Non-Negotiable Boundaries

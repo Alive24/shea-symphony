@@ -55,10 +55,10 @@ Do not use this skill for fresh `Todo` implementation. Use
 ## Preflight
 
 ```bash
-cargo run -- project-state workflows/jade-symphony.md
+cargo run -- project state workflows/jade-symphony.md
 cargo run -- doctor workflows/jade-symphony.md
-cargo run -- inspect workflows/jade-symphony.md
-cargo run -- project-issue workflows/jade-symphony.md '#<issue>' --json
+cargo run -- project inspect workflows/jade-symphony.md '#<issue>'
+cargo run -- project issue workflows/jade-symphony.md '#<issue>' --json
 gh issue view <issue> --repo Alive24/jade-symphony --comments
 gh pr view <pr> --repo Alive24/jade-symphony --json number,title,state,url,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,isDraft,commits,closingIssuesReferences
 ```
@@ -125,7 +125,7 @@ Project `Status` changes must be the final mutating step of the session. Before
 moving an issue to `Done`, `Need Human Input`, or another routing state, finish
 merge evidence, PR/issue reconciliation, workpad comments, and safe branch
 cleanup. After status changes, do only readback verification such as
-`project-issue`, `project-state`, or `doctor`.
+`project issue`, `project state`, or `doctor`.
 
 ## Hard Boundaries
 

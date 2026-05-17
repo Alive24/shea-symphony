@@ -51,7 +51,7 @@ observability:
   logs_root: /tmp/jade-symphony-merge-fixture-logs
 ---
 
-Fixture workflow for `merge-once --dry-run`.
+Fixture workflow for `merge once --dry-run`.
 
 This workflow never performs a live merge. It exists to rehearse merge-lane
 decision logic from fixture-linked pull request metadata.

@@ -3,7 +3,10 @@ use std::fs;
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, Mutex,
+};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -1113,12 +1116,15 @@ fn inconclusive_review_text_reason(text: &str) -> Option<String> {
     None
 }
 
+static REVIEW_JOB_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
 fn review_job_id(prefix: &str) -> String {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or_default();
-    format!("{prefix}-{millis}")
+    let sequence = REVIEW_JOB_ID_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!("{prefix}-{millis}-{sequence}")
 }
 
 fn first_non_empty_line(output: &str) -> Option<&str> {
@@ -1178,6 +1184,27 @@ mod tests {
             }),
             error: None,
         }
+    }
+
+    fn review_request_with_temp_roots(temp: &tempfile::TempDir) -> ReviewRequest {
+        ReviewRequest {
+            issue: issue(),
+            prompt: "review".into(),
+            workspace: temp.path().join("review-workspace"),
+            artifact_root: temp.path().join("review-artifacts"),
+        }
+    }
+
+    fn poll_test_job_until_terminal(
+        backend: &dyn ReviewBackend,
+        job: ReviewJob,
+    ) -> Result<ReviewJob, ReviewError> {
+        poll_review_job_until_terminal(
+            backend,
+            job,
+            Duration::from_secs(5),
+            Duration::from_millis(10),
+        )
     }
 
     #[derive(Clone)]
@@ -1248,12 +1275,8 @@ mod tests {
     #[test]
     fn poll_review_job_until_terminal_waits_for_delayed_completion() {
         let backend = DelayedBackend::new(3);
-        let request = ReviewRequest {
-            issue: issue(),
-            prompt: "review".into(),
-            workspace: PathBuf::from("/tmp/review-workspace"),
-            artifact_root: PathBuf::from("/tmp/review-artifacts"),
-        };
+        let temp = tempfile::tempdir().unwrap();
+        let request = review_request_with_temp_roots(&temp);
         let job = backend.start(request).unwrap();
 
         let job = poll_review_job_until_terminal(
@@ -1278,12 +1301,8 @@ mod tests {
     #[test]
     fn poll_review_job_until_terminal_times_out_and_cancels_running_job() {
         let backend = DelayedBackend::new(usize::MAX);
-        let request = ReviewRequest {
-            issue: issue(),
-            prompt: "review".into(),
-            workspace: PathBuf::from("/tmp/review-workspace"),
-            artifact_root: PathBuf::from("/tmp/review-artifacts"),
-        };
+        let temp = tempfile::tempdir().unwrap();
+        let request = review_request_with_temp_roots(&temp);
         let job = backend.start(request).unwrap();
 
         let job = poll_review_job_until_terminal(
@@ -1402,12 +1421,8 @@ mod tests {
     #[test]
     fn confirmed_findings_route_to_rework() {
         let backend = FakeReviewBackend::new(FakeReviewOutcome::ConfirmedFinding);
-        let request = ReviewRequest {
-            issue: issue(),
-            prompt: "review".into(),
-            workspace: std::env::temp_dir(),
-            artifact_root: std::env::temp_dir(),
-        };
+        let temp = tempfile::tempdir().unwrap();
+        let request = review_request_with_temp_roots(&temp);
         let job = backend.poll(backend.start(request).unwrap()).unwrap();
         let decision = review_gate_decision(&job);
 
@@ -1418,12 +1433,8 @@ mod tests {
     #[test]
     fn review_agent_passed_review_moves_to_human_review() {
         let backend = FakeReviewBackend::new(FakeReviewOutcome::Pass);
-        let request = ReviewRequest {
-            issue: issue(),
-            prompt: "review".into(),
-            workspace: std::env::temp_dir(),
-            artifact_root: std::env::temp_dir(),
-        };
+        let temp = tempfile::tempdir().unwrap();
+        let request = review_request_with_temp_roots(&temp);
         let job = backend.poll(backend.start(request).unwrap()).unwrap();
         let decision = review_gate_decision(&job);
 
@@ -1455,16 +1466,9 @@ mod tests {
             artifact_root,
         };
 
-        let mut job = backend.start(request).unwrap();
+        let job = backend.start(request).unwrap();
         assert!(workspace.is_dir());
-
-        for _ in 0..100 {
-            job = backend.poll(job).unwrap();
-            if job.state != ReviewJobState::Running {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        let job = poll_test_job_until_terminal(&backend, job).unwrap();
 
         assert_eq!(job.state, ReviewJobState::Completed);
         assert_eq!(
@@ -1500,13 +1504,7 @@ mod tests {
         };
 
         let job = backend.start(request).unwrap();
-        let job = poll_review_job_until_terminal(
-            &backend,
-            job,
-            Duration::from_millis(750),
-            Duration::from_millis(10),
-        )
-        .unwrap();
+        let job = poll_test_job_until_terminal(&backend, job).unwrap();
 
         assert_eq!(job.state, ReviewJobState::Completed);
         assert_eq!(
@@ -1515,6 +1513,15 @@ mod tests {
                 .and_then(|report| report.summary.as_deref()),
             Some("Review completed after EOF.")
         );
+    }
+
+    #[test]
+    fn review_job_ids_are_unique_for_parallel_bursts() {
+        let ids = (0..128)
+            .map(|_| review_job_id("gemini"))
+            .collect::<std::collections::BTreeSet<_>>();
+
+        assert_eq!(ids.len(), 128);
     }
 
     #[test]

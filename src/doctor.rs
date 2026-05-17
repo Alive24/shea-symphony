@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::lane_claim::{LaneClaim, LaneClaimState};
-use crate::model::{normalize_state, LinkedPullRequest, SessionStatusSnapshot, TrackerIssue};
+use crate::model::{normalize_state, SessionStatusSnapshot, TrackerIssue};
 use crate::runtime_state::{detect_runtime_stall, RuntimeState};
 
 pub const HUMAN_REVIEW_MISSING_REVIEW_EVIDENCE: &str = "human_review_missing_review_evidence";
@@ -64,6 +64,12 @@ pub fn audit_project_issues_with_context(
     let mut violations = Vec::new();
     for issue in issues {
         let state = issue.normalized_state();
+        audit_terminal_state_mismatch(issue, &state, &mut violations);
+
+        if state == "done" {
+            continue;
+        }
+
         match state.as_str() {
             "agent review" if !has_pr_url(issue) && !has_handoff_evidence(issue) => {
                 violations.push(violation(
@@ -126,15 +132,6 @@ pub fn audit_project_issues_with_context(
                     "in_progress_missing_runtime_owner",
                     "In Progress issue has no visible runtime ownership metadata.",
                     "Confirm the active workspace/session before dispatching another worker.",
-                ));
-            }
-            "done" if has_open_pr(issue) => {
-                violations.push(violation(
-                    issue,
-                    AuditSeverity::Warning,
-                    "done_issue_has_open_pr",
-                    "Done issue still has an open linked PR.",
-                    "Confirm whether the PR should be merged, closed, or unlinked.",
                 ));
             }
             "todo" | "need to clarify"
@@ -358,16 +355,6 @@ fn reliable_pr_targets(issue: &TrackerIssue) -> Vec<String> {
     targets
 }
 
-fn has_open_pr(issue: &TrackerIssue) -> bool {
-    issue
-        .linked_pull_requests
-        .iter()
-        .any(|pr| match pr_state(pr) {
-            Some(state) => state == "open",
-            None => true,
-        })
-}
-
 fn has_draft_pr(issue: &TrackerIssue) -> bool {
     issue
         .linked_pull_requests
@@ -494,6 +481,38 @@ fn audit_runtime_consistency(
     }
 }
 
+fn audit_terminal_state_mismatch(
+    issue: &TrackerIssue,
+    normalized_issue_state: &str,
+    violations: &mut Vec<ProjectAuditViolation>,
+) {
+    let Some(github_issue_state) =
+        string_project_field(issue, "GitHub Issue State").map(|value| normalize_state(&value))
+    else {
+        return;
+    };
+
+    if github_issue_state == "closed" && normalized_issue_state != "done" {
+        violations.push(violation(
+            issue,
+            AuditSeverity::Warning,
+            "closed_issue_not_done",
+            "GitHub issue is closed, but Project Status is not Done.",
+            "Reconcile the Project status with the closed GitHub issue before relying on tracker health.",
+        ));
+    }
+
+    if normalized_issue_state == "done" && github_issue_state != "closed" {
+        violations.push(violation(
+            issue,
+            AuditSeverity::Warning,
+            "done_project_issue_still_open",
+            "Project Status is Done, but the GitHub issue is still open.",
+            "Close the GitHub issue or move the Project item back to the appropriate active state.",
+        ));
+    }
+}
+
 fn audit_session_consistency(
     issues: &[TrackerIssue],
     context: &ProjectDoctorContext,
@@ -531,6 +550,10 @@ fn audit_session_consistency(
             ));
             continue;
         };
+
+        if normalize_state(&issue.state) == "done" {
+            continue;
+        }
 
         if status == "stale" {
             violations.push(violation(
@@ -582,6 +605,9 @@ fn audit_session_consistency(
     let Some(issue) = find_issue_by_ref(issues, &active_issue.identifier) else {
         return;
     };
+    if normalize_state(&issue.state) == "done" {
+        return;
+    }
     let matching_session = context
         .sessions
         .iter()
@@ -822,13 +848,10 @@ fn related_violations<'a>(
         .collect()
 }
 
-fn pr_state(pr: &LinkedPullRequest) -> Option<String> {
-    pr.state.as_deref().map(normalize_state)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::LinkedPullRequest;
     use std::collections::BTreeMap;
 
     fn issue(identifier: &str, state: &str) -> TrackerIssue {
@@ -894,6 +917,14 @@ mod tests {
             log_path: Some("/tmp/jade/logs/tmux/jade-main-202-attempt-1-runtime.log".into()),
             updated_at_ms: 1_000,
         }
+    }
+
+    fn with_github_issue_state(mut issue: TrackerIssue, state: &str) -> TrackerIssue {
+        issue.project_fields.insert(
+            "GitHub Issue State".into(),
+            serde_json::Value::String(state.into()),
+        );
+        issue
     }
 
     #[test]
@@ -1113,6 +1144,74 @@ mod tests {
             .violations
             .iter()
             .any(|violation| violation.code == "todo_main_agent_claimed"));
+    }
+
+    #[test]
+    fn skips_done_issue_legacy_lane_claims() {
+        let mut issue = with_github_issue_state(issue("#67", "Done"), "CLOSED");
+        issue.project_fields.insert(
+            "Main Agent".into(),
+            serde_json::Value::String("legacy-codex-worker".into()),
+        );
+
+        let report = audit_project_issues(&[issue]);
+
+        assert!(report.is_clean());
+    }
+
+    #[test]
+    fn skips_done_issue_active_structured_claims_without_registry() {
+        let mut issue = with_github_issue_state(issue("#244", "Done"), "CLOSED");
+        issue.project_fields.insert(
+            "Main Agent".into(),
+            serde_json::Value::String(
+                "v=1 lane=main actor=codex source=manual issue=#244 run=20260516T0415Z-issue244-main-a7f3 state=active thread=unknown registry=run/20260516T0415Z-issue244-main-a7f3".into(),
+            ),
+        );
+        let context = ProjectDoctorContext {
+            runtime_state: None,
+            sessions: Vec::new(),
+            now_ms: 20_000,
+            stale_after_ms: 10_000,
+        };
+
+        let report = audit_project_issues_with_context(&[issue], Some(&context));
+
+        assert!(report.is_clean());
+    }
+
+    #[test]
+    fn skips_done_issue_runtime_and_session_checks() {
+        let issue = with_github_issue_state(issue("#202", "Done"), "CLOSED");
+        let mut context = runtime_context("#202", 1_000);
+        context.runtime_state.as_mut().unwrap().backend_session_id = Some("missing-session".into());
+        context.sessions = vec![session(Some("#202"), "stale")];
+
+        let report = audit_project_issues_with_context(&[issue], Some(&context));
+
+        assert!(report.is_clean());
+    }
+
+    #[test]
+    fn reports_done_project_item_with_open_github_issue() {
+        let issue = with_github_issue_state(issue("#255", "Done"), "OPEN");
+
+        let report = audit_project_issues(&[issue]);
+
+        assert_eq!(report.violations.len(), 1);
+        assert_eq!(report.violations[0].code, "done_project_issue_still_open");
+    }
+
+    #[test]
+    fn reports_closed_github_issue_without_done_project_status() {
+        let issue = with_github_issue_state(issue("#255", "Agent Review"), "CLOSED");
+
+        let report = audit_project_issues(&[issue]);
+
+        assert!(report
+            .violations
+            .iter()
+            .any(|violation| violation.code == "closed_issue_not_done"));
     }
 
     #[test]

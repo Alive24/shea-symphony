@@ -13,6 +13,10 @@ use jade_symphony::agent::{
     TmuxBackend, UsageLimitPause,
 };
 use jade_symphony::artifacts::{artifact_layout, cleanup_plan, ArtifactClass, CleanupPlan};
+use jade_symphony::canonical_checkout::{
+    canonical_checkout_status_line, canonical_checkout_warning_lines, canonical_quarantine_root,
+    enforce_clean_canonical_checkout_for_write, inspect_canonical_checkout,
+};
 use jade_symphony::config::RuntimeConfig;
 use jade_symphony::doctor::{
     audit_project_issues, audit_project_issues_with_context, draft_pr_repair_candidates,
@@ -1599,6 +1603,9 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
         let workflow = WorkflowDefinition::load(&options.workflow_path)?;
         let config = RuntimeConfig::from_workflow(&workflow, &options.workflow_path)?;
         config.validate()?;
+        if options.write {
+            enforce_canonical_checkout_before_write(&config, "review_loop")?;
+        }
         let adapter = adapter_from_config(&config);
         let issues = adapter
             .fetch_issues_by_states(std::slice::from_ref(&config.tracker.state_map.agent_review))?;
@@ -1884,6 +1891,9 @@ fn merge_once_tick(
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
+    if write {
+        enforce_canonical_checkout_before_write(&config, "merge_loop")?;
+    }
     let _merge_prompt = workflow.prompt_for_lane(AgentLane::MergeAgent);
 
     let adapter = adapter_from_config(&config);
@@ -2943,6 +2953,9 @@ fn project_state(options: ProjectStateOptions) -> Result<(), Box<dyn std::error:
             println!("issues={}", issues.len());
             println!("empty_queue={}", issues.is_empty());
             println!("{}", render_state_summary(&issues));
+            for line in report_canonical_checkout_readonly(&config) {
+                println!("{line}");
+            }
             for gap in integration_gaps {
                 println!("integration_gap={gap}");
             }
@@ -3118,6 +3131,7 @@ fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut report = audit_project_issues_with_context(&issues, Some(&context));
     report.integration_gaps = integration_gaps;
+    append_canonical_checkout_doctor_violations(&mut report, &config);
     append_workspace_doctor_violations(&mut report, &config, &issues);
 
     match &options.action {
@@ -3264,6 +3278,68 @@ fn apply_doctor_auto_fix(
         }
     }
     Ok(())
+}
+
+fn append_canonical_checkout_doctor_violations(
+    report: &mut ProjectAuditReport,
+    config: &RuntimeConfig,
+) {
+    let root = match std::env::current_dir() {
+        Ok(root) => root,
+        Err(error) => {
+            report
+                .integration_gaps
+                .push(format!("canonical_checkout_unavailable: {error}"));
+            return;
+        }
+    };
+    let checkout = match inspect_canonical_checkout(&root, config) {
+        Ok(report) => report,
+        Err(error) => {
+            report
+                .integration_gaps
+                .push(format!("canonical_checkout_unavailable: {error}"));
+            return;
+        }
+    };
+    report
+        .integration_gaps
+        .push(canonical_checkout_status_line(&checkout));
+
+    if !checkout.tracked_dirty.is_empty() {
+        report.violations.push(ProjectAuditViolation {
+            issue_ref: "canonical".into(),
+            title: "Canonical checkout has tracked dirty files".into(),
+            state: "local".into(),
+            severity: AuditSeverity::Blocker,
+            code: "canonical_checkout_tracked_dirty".into(),
+            message: format!(
+                "Canonical checkout has tracked dirty files: {}",
+                checkout.tracked_dirty.join(", ")
+            ),
+            suggestion: "Move the edits into the correct issue worktree, commit them, or restore them before running any live write lane.".into(),
+        });
+    }
+
+    let unclassified = checkout.unclassified_untracked();
+    if !unclassified.is_empty() {
+        report.violations.push(ProjectAuditViolation {
+            issue_ref: "canonical".into(),
+            title: "Canonical checkout has unclassified untracked files".into(),
+            state: "local".into(),
+            severity: AuditSeverity::Warning,
+            code: "canonical_checkout_unclassified_untracked".into(),
+            message: format!(
+                "Canonical checkout has unclassified untracked files: {}",
+                unclassified
+                    .iter()
+                    .map(|entry| entry.path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            suggestion: "Move unclassified files to an issue worktree or artifact location, or add legitimate ignored files to .gitignore.".into(),
+        });
+    }
 }
 
 fn append_workspace_doctor_violations(
@@ -3857,6 +3933,12 @@ fn clean_audit_command(workflow_path: PathBuf) -> Result<(), Box<dyn std::error:
         "disposable_scratch",
         layout.class_path(ArtifactClass::DisposableScratch),
         "scratch files are disposable after operator review",
+    );
+    print_clean_audit_path(
+        "needs_human_decision",
+        "canonical_checkout_quarantine",
+        canonical_quarantine_root(&config),
+        "files moved out of the canonical checkout before live write lanes should be archived or deleted after tracker evidence is settled",
     );
 
     let mut cleanup_candidates = 0;
@@ -4565,6 +4647,32 @@ fn print_latest_status(status: &LatestStatus) {
     println!("{}", render_latest_status_bar(status));
 }
 
+fn report_canonical_checkout_readonly(config: &RuntimeConfig) -> Vec<String> {
+    let root = match std::env::current_dir() {
+        Ok(root) => root,
+        Err(error) => {
+            return vec![format!("canonical_checkout_error={error}")];
+        }
+    };
+    match inspect_canonical_checkout(&root, config) {
+        Ok(report) => vec![canonical_checkout_status_line(&report)],
+        Err(error) => vec![format!("canonical_checkout_error={error}")],
+    }
+}
+
+fn enforce_canonical_checkout_before_write(
+    config: &RuntimeConfig,
+    command: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let root = std::env::current_dir()?;
+    let report = enforce_clean_canonical_checkout_for_write(&root, config)?;
+    println!("{}", canonical_checkout_status_line(&report));
+    for line in canonical_checkout_warning_lines(&report) {
+        println!("{command}_{line}");
+    }
+    Ok(())
+}
+
 fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
     let limit = options.iteration_limit();
     let mut iterations = 0usize;
@@ -4584,6 +4692,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         config.validate()?;
         if options.write {
             ensure_write_mode_main_agent_backend(&options.workflow_path, &config, "run-loop")?;
+            enforce_canonical_checkout_before_write(&config, "run_loop")?;
         }
         let adapter = adapter_from_config(&config);
         if options.write {

@@ -54,7 +54,9 @@ question, but do not edit files under
    dependency semantics: either no blocking dependencies, or named
    blockers/overlaps with the condition that makes the issue claimable.
 3. Work in exactly one isolated workspace and branch for this issue. Do not mix
-   unrelated issue scopes in this branch or PR.
+   unrelated issue scopes in this branch or PR. The canonical checkout is only
+   the launch directory; do not write implementation edits, runtime state, logs,
+   prompts, drafts, or evidence there.
 4. Use `workspace show` when resuming or handoff evidence is ambiguous, and use
    `workspace adopt` only for an operator-selected worktree that matches the
    issue branch.

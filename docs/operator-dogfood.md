@@ -197,10 +197,19 @@ target/debug/jade-symphony run-loop workflows/jade-symphony.md --max-iterations 
 
 Use `project-state` before claiming work when multiple operators are active. A
 healthy read prints `project_state_access=ok`, `trusted=true`, the issue count,
-and a state summary. A failed read prints `project_state_access=blocked`,
+and a state summary, plus a read-only `canonical_checkout` cleanliness line for
+the launch checkout. A failed read prints `project_state_access=blocked`,
 `trusted=false`, and a `failure_kind` such as `auth`, `network`, `rate_limit`,
 `schema`, `partial_response`, or `payload`; treat that as a blocker, not as an
 empty queue.
+
+The canonical checkout is only the harness launch directory. Do not use it as a
+Main, Review, or Merge issue worktree, and do not leave runtime state, logs,
+prompts, drafts, or evidence there. `run-loop --write`, `review-loop --write`,
+and `merge-loop --write` check the launch checkout before tracker mutation:
+tracked dirty files block the lane, recognized local artifacts are moved to the
+artifact quarantine with a warning, and unclassified untracked files block until
+the operator moves them to an issue worktree or artifact location.
 
 Use `project-issue` for per-issue Project status, Project fields, blocker
 relationships, claim locks, and linked PRs. Raw `gh issue view` and `gh pr view`

@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod artifacts;
+pub mod canonical_checkout;
 pub mod codex_app_server;
 pub mod config;
 pub mod doctor;

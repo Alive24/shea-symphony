@@ -335,10 +335,28 @@ updates that same field to an audit pointer such as `state=done result=passed`,
 `state=done result=rejected`, `state=failed result=inconclusive`, or
 `state=failed result=blocked`; it does not clear the field.
 
-Repo-packaged Jade Symphony skills, if added later, may overwrite same-name
-locally installed skills during install or update. Operators who manually edit
-local skills should preserve those edits intentionally before installing a
-repo-packaged replacement.
+## Local Skill Suite
+
+Repo-packaged Jade Symphony skills live under `skills/jade-symphony/` with
+release metadata in `skills/jade-symphony/manifest.toml`. The installer previews
+and updates local Codex and Gemini skill directories:
+
+```bash
+node scripts/install-jade-symphony-skills.js --dry-run
+node scripts/install-jade-symphony-skills.js
+node scripts/install-jade-symphony-skills.js --validate
+node scripts/install-jade-symphony-skills.js --codex-dir "$HOME/.codex/skills" --gemini-dir "$HOME/.gemini/local-skills" --yes
+```
+
+Normal install mode is interactive: it prints detected target paths and requires
+operator confirmation before writing. Use `--skip-codex`, `--skip-gemini`,
+`--codex-dir`, and `--gemini-dir` for manual target control. Validation compares
+the active local skill files with the repo-owned dated suite.
+
+The suite packages Issue Forge, Issue Forge Reflect, Manual Main, Manual Review,
+Manual Merge, and a Doctor/Fix stub. `forge reflect` remains a skill behavior,
+not a Jade Symphony CLI subcommand. `forge create`, `forge promote`, and
+`forge validate` remain deterministic CLI executor surfaces.
 
 ## Merge Lane
 

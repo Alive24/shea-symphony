@@ -219,6 +219,29 @@ but normal dogfood should not read or mutate Project fields, status, claim locks
 or relationships through raw Project GraphQL or the Project UI. Those are
 break-glass recovery paths.
 
+## Issue Forge Reflect
+
+Issue Forge Reflect is a Codex skill workflow, not a Jade Symphony CLI
+subcommand. Use it to turn recent dogfood conversations, operator notes, or
+Project observations into non-dispatchable `Backlog` seeds, then use the
+conversation-led promote flow when an operator selects one seed for execution.
+
+Backlog capture should stay intentionally light:
+
+- create only enough body context to revisit the candidate later;
+- keep Project status as `Backlog`;
+- do not treat the seed as executable work;
+- use `forge create --status Backlog` for the actual tracker mutation.
+
+Promotion is stricter. Before mutation, resolve scope, dependencies,
+verification, UAT, and the exact promoted title/body with the operator. Require
+an explicit confirmation phrase, then run `forge promote` with the structured
+Promotion Note fields. In write mode, `forge promote` edits the same issue,
+writes the Promotion Note, moves status from `Backlog` to `Todo` as the final
+mutation, and only then performs read-only status readback. Do not start
+Main/Review/Merge work in that same promotion session unless the operator
+explicitly starts a new cycle.
+
 Use `debug` when you need one read-only operator report before a supervised
 dogfood, repair, review, or merge session. It summarizes the current Project
 queue, doctor health, smoke readiness, runtime/session state, cleanup/audit

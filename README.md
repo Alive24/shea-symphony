@@ -183,6 +183,8 @@ selection. See the command reference before using live creation:
   launcher and live-run guidance.
 - [`docs/cli-command-reference.md`](docs/cli-command-reference.md): command
   behavior, write boundaries, and examples.
+- [`skills/jade-symphony/`](skills/jade-symphony/): repo-owned, dated
+  installable Jade Symphony skills for Codex and Gemini operator sessions.
 - [`docs/dogfood-readiness.md`](docs/dogfood-readiness.md): current readiness
   and known gaps.
 - [`docs/bootstrap-parity-audit.md`](docs/bootstrap-parity-audit.md): detailed

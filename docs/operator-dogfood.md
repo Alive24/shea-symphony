@@ -185,6 +185,32 @@ active review workflow only under `/tmp` or `/private/tmp`; the CLI prints
 `workflow_warning=temporary_path` for those workflow files so operators can
 promote reusable config into the repo.
 
+## Local Skill Suite
+
+Jade Symphony's local operator skills are repo-owned under
+`skills/jade-symphony/` and versioned by `skills/jade-symphony/manifest.toml`.
+Use the installer to preview, install, update, or validate the Codex and Gemini
+copies instead of hand-copying skill files:
+
+```bash
+node scripts/install-jade-symphony-skills.js --dry-run
+node scripts/install-jade-symphony-skills.js
+node scripts/install-jade-symphony-skills.js --validate
+```
+
+The install path is interactive by default. It shows the detected Codex and
+Gemini target directories and requires operator confirmation before writing.
+Use `--codex-dir`, `--gemini-dir`, `--skip-codex`, or `--skip-gemini` to make
+the target set explicit. Use `--yes` only after the printed target paths are
+known and intentional.
+
+The packaged skills preserve the same lane boundaries as the Jade Symphony CLI:
+Issue Forge and Reflect handle conversation, draft shaping, and promotion
+discussion; the CLI owns `forge create`, `forge promote`, and `forge validate`.
+Manual Main stops at `Agent Review`; Manual Review owns evidence-backed review
+routing; Manual Merge owns approved merge-lane work. Automatic doctor
+install-health checks remain future work for #256.
+
 ## Inspect And Resume
 
 ```bash

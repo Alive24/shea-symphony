@@ -154,16 +154,17 @@ rendered prompts, tmux logs, and individual sessions without deleting them.
 
 ## Workspace Discovery
 
-Use `workspace` when a lane needs to find the local worktree for an issue before
-starting review or merge repair. Discovery combines Project issue/PR hints,
-session registry records, canonical workpad evidence, and local
-`git worktree list --porcelain` output.
+Use `workspace` when a lane needs to find or record the local git worktree for
+an issue before starting review or merge repair. This command group is a safe
+coordination surface for per-issue worktrees; it is not a generic checkout tool.
+Discovery combines Project issue/PR hints, session registry records, canonical
+workpad evidence, and local `git worktree list --porcelain` output.
 
 | Command | Purpose | Boundary |
 | --- | --- | --- |
-| `workspace list` | List issue worktrees and inferred orphan hints. | Read-only. |
-| `workspace show` | Show canonical and candidate worktrees for one issue. | Read-only; multiple strong candidates require operator choice. |
-| `workspace adopt` | Record an operator-selected local worktree in the issue workpad. | Validates the path is a worktree for this repository and the branch matches the issue. |
+| `workspace list` | List discovered issue worktrees and inferred orphan hints. | Read-only Project-wide inventory; does not select or mutate workspaces. |
+| `workspace show` | Show candidate worktrees for one issue. | Read-only lane preflight; multiple strong candidates require operator choice before local inspection. |
+| `workspace adopt` | Record an operator-selected existing worktree in the issue workpad. | Validates the path is a git worktree for this repository and the branch matches issue/PR evidence; does not create a worktree or checkout a PR. |
 
 Examples:
 
@@ -175,7 +176,9 @@ cargo run -- workspace adopt workflows/jade-symphony.md '#253' /tmp/jade-symphon
 
 Review lane uses discovered worktrees for read-only inspection by default.
 Merge lane should prefer the canonical Main PR worktree/branch for merge-lane
-repair instead of creating a replacement workspace. `doctor` warns when multiple
+repair instead of creating a replacement workspace. `workspace adopt` is only
+for an operator-selected existing worktree; it must not be used as a shortcut
+for `gh pr checkout` in the canonical checkout. `doctor` warns when multiple
 strong candidates exist for one active issue.
 
 ## Tracker Writes

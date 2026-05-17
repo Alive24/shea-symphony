@@ -8373,6 +8373,10 @@ enum CliCommand {
     RunLoop(RunLoopArgs),
     #[command(name = "cleanup-workspaces", alias = "workspace-cleanup")]
     CleanupWorkspaces(CleanupWorkspacesArgs),
+    #[command(
+        about = "Discover and record per-issue git worktrees",
+        long_about = "Discover and record per-issue git worktrees.\n\n`workspace` is the safe local-worktree coordination surface for Main, Review, and Merge lanes. It discovers existing issue worktrees from the session registry, workpad evidence, linked PR/branch hints, and `git worktree list`. It does not create replacement worktrees, checkout PRs, or change the canonical repository checkout.\n\nUse `workspace show` before local Review or Merge inspection. Use `workspace adopt` only when an operator has selected an existing worktree that should become the canonical workspace evidence for the issue."
+    )]
     Workspace(WorkspaceArgs),
     #[command(name = "merge-once", alias = "land")]
     MergeOnce(MergeOnceArgs),
@@ -8614,33 +8618,63 @@ struct WorkspaceArgs {
 
 #[derive(Debug, Subcommand)]
 enum WorkspaceCommandArgs {
+    #[command(
+        about = "List discovered issue worktrees and orphan hints",
+        long_about = "List discovered issue worktrees and orphan hints.\n\nThis is a read-only Project-wide inventory. It scans tracker issues, session registry records, workpad evidence, linked PR/branch hints, and local `git worktree list` output. It reports candidates per issue and orphan-looking worktrees whose branch/path implies an issue not currently present in the fetched Project state."
+    )]
     List(WorkspaceListArgs),
+    #[command(
+        about = "Show candidate worktrees for one issue",
+        long_about = "Show candidate worktrees for one issue.\n\nThis is the read-only preflight for Review and Merge agents before touching local files. It prints candidate worktrees, their branch/head metadata, evidence sources, warnings, and the canonical candidate when one can be chosen safely. Multiple strong candidates require operator choice through `workspace adopt` before local inspection should rely on a path."
+    )]
     Show(WorkspaceShowArgs),
+    #[command(
+        about = "Record an operator-selected existing worktree",
+        long_about = "Record an operator-selected existing worktree as canonical workspace evidence for one issue.\n\n`workspace adopt` validates that the path is an existing git worktree for this repository and that its branch matches the issue/PR evidence. With `--write`, it writes a tracker workpad entry so later Main, Review, and Merge sessions can reuse the same workspace. It does not create a worktree, checkout a PR, switch branches, or mutate files in the selected worktree."
+    )]
     Adopt(WorkspaceAdoptArgs),
 }
 
 #[derive(Debug, Args)]
 struct WorkspaceListArgs {
-    #[arg(value_name = "path-to-WORKFLOW.md")]
+    #[arg(
+        value_name = "path-to-WORKFLOW.md",
+        help = "Workflow config that defines the tracker, artifact roots, and workspace root"
+    )]
     workflow_path: PathBuf,
 }
 
 #[derive(Debug, Args)]
 struct WorkspaceShowArgs {
-    #[arg(value_name = "path-to-WORKFLOW.md")]
+    #[arg(
+        value_name = "path-to-WORKFLOW.md",
+        help = "Workflow config that defines the tracker, artifact roots, and workspace root"
+    )]
     workflow_path: PathBuf,
+    #[arg(help = "Issue identifier to inspect, for example #253")]
     issue_ref: String,
 }
 
 #[derive(Debug, Args)]
 struct WorkspaceAdoptArgs {
-    #[arg(value_name = "path-to-WORKFLOW.md")]
+    #[arg(
+        value_name = "path-to-WORKFLOW.md",
+        help = "Workflow config that defines the tracker, artifact roots, and workspace root"
+    )]
     workflow_path: PathBuf,
+    #[arg(help = "Issue identifier whose canonical workspace evidence should be updated")]
     issue_ref: String,
+    #[arg(help = "Existing local git worktree path selected by the operator")]
     path: PathBuf,
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Write workspace adoption evidence to the tracker workpad"
+    )]
     write: bool,
-    #[arg(long = "dry-run")]
+    #[arg(
+        long = "dry-run",
+        help = "Preview adoption validation without writing tracker evidence"
+    )]
     _dry_run: bool,
 }
 
@@ -10989,6 +11023,27 @@ mod tests {
         let set_state = help_text(&["set-state", "--help"]);
         assert!(set_state.contains("Usage: jade-symphony set-state"));
         assert!(set_state.contains("<STATE>"));
+    }
+
+    #[test]
+    fn workspace_help_explains_discovery_and_adoption_boundaries() {
+        let workspace = help_text(&["workspace", "--help"]);
+        assert!(workspace.contains("Discover and record per-issue git worktrees"));
+        assert!(workspace.contains("does not create replacement worktrees"));
+        assert!(workspace.contains("checkout PRs"));
+
+        let list = help_text(&["workspace", "list", "--help"]);
+        assert!(list.contains("read-only Project-wide inventory"));
+        assert!(list.contains("orphan-looking worktrees"));
+
+        let show = help_text(&["workspace", "show", "--help"]);
+        assert!(show.contains("read-only preflight for Review and Merge agents"));
+        assert!(show.contains("Multiple strong candidates require operator choice"));
+
+        let adopt = help_text(&["workspace", "adopt", "--help"]);
+        assert!(adopt.contains("operator-selected existing worktree"));
+        assert!(adopt.contains("It does not create a worktree"));
+        assert!(adopt.contains("--write"));
     }
 
     #[test]

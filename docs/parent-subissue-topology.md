@@ -154,6 +154,27 @@ without directly targeting `main`. Doctor does not repair these states, retarget
 PRs, edit native GitHub relationships, move Project statuses, or replace the
 #274 lane-flow work.
 
+## Lane Flow Evidence
+
+Jade Symphony resolves branch targets from GitHub native parent/subissue
+metadata plus durable supplemental evidence. Normal single-issue work still
+targets `main`. A native subissue keeps its per-issue feature branch as the PR
+head and uses the recorded parent integration branch as the PR base. A parent
+issue with native subissues uses the parent integration branch as the parent
+final PR head and `main` as the PR base.
+
+Handoff, workpad, PR body, and merge readback surfaces should record:
+
+- native parent issue, when the issue is a subissue;
+- `parent_integration_branch`;
+- actual PR base branch;
+- parent final PR base branch, when the issue is the parent.
+
+Merge-lane `Done` has topology-specific meaning. A subissue merged into the
+parent integration branch can become `Done` after evidence is recorded. The
+parent issue remains the only final Human Review unit for merging that parent
+branch into `main`.
+
 ## Dry Fixture Verification
 
 The credential-free topology fixture lives at:

@@ -1613,6 +1613,20 @@ query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
                   login
                 }}
               }}
+              parent {{
+                number
+                title
+                state
+                url
+              }}
+              subIssues(first: 50) {{
+                nodes {{
+                  number
+                  title
+                  state
+                  url
+                }}
+              }}
               closedByPullRequestsReferences(first: 10) {{
                 nodes {{
                   id
@@ -2213,16 +2227,7 @@ fn issue_from_project_item(
             serde_json::Value::String(issue_state.to_string()),
         );
     }
-    if let Some(parent) = native_issue_ref(content.get("parent")) {
-        project_fields.insert("GitHub Native Parent".into(), parent);
-    }
-    let native_subissues = native_issue_refs(content.pointer("/subIssues/nodes"));
-    if !native_subissues.is_empty() {
-        project_fields.insert(
-            "GitHub Native Subissues".into(),
-            serde_json::Value::Array(native_subissues),
-        );
-    }
+    insert_native_subissue_fields(&mut project_fields, content);
     let blocked_by = blocker_refs_from_project_fields(&project_fields);
     let linked_pull_requests = merge_linked_pull_requests(
         pull_requests_from_issue(content),
@@ -2298,6 +2303,87 @@ fn native_issue_refs(nodes: Option<&serde_json::Value>) -> Vec<serde_json::Value
         .flatten()
         .filter_map(|node| native_issue_ref(Some(node)))
         .collect()
+}
+
+fn insert_native_subissue_fields(
+    project_fields: &mut BTreeMap<String, serde_json::Value>,
+    content: &serde_json::Value,
+) {
+    if let Some(parent) = native_issue_ref(content.get("parent")) {
+        project_fields.insert("GitHub Native Parent".into(), parent);
+    }
+    let native_subissues = native_issue_refs(content.pointer("/subIssues/nodes"));
+    if !native_subissues.is_empty() {
+        project_fields.insert(
+            "GitHub Native Subissues".into(),
+            serde_json::Value::Array(native_subissues),
+        );
+    }
+
+    if let Some(parent) = content.get("parent").filter(|parent| !parent.is_null()) {
+        if let Some(number) = parent.get("number").and_then(serde_json::Value::as_u64) {
+            project_fields.insert(
+                "Native Parent Issue".into(),
+                serde_json::Value::String(format!("#{number}")),
+            );
+        }
+        if let Some(title) = parent.get("title").and_then(serde_json::Value::as_str) {
+            project_fields.insert(
+                "Native Parent Title".into(),
+                serde_json::Value::String(title.to_string()),
+            );
+        }
+        if let Some(state) = parent.get("state").and_then(serde_json::Value::as_str) {
+            project_fields.insert(
+                "Native Parent State".into(),
+                serde_json::Value::String(state.to_string()),
+            );
+        }
+        if let Some(url) = parent.get("url").and_then(serde_json::Value::as_str) {
+            project_fields.insert(
+                "Native Parent URL".into(),
+                serde_json::Value::String(url.to_string()),
+            );
+        }
+    }
+
+    let subissues = content
+        .pointer("/subIssues/nodes")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|subissue| {
+            let number = subissue.get("number").and_then(serde_json::Value::as_u64)?;
+            let state = subissue
+                .get("state")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("UNKNOWN");
+            Some((format!("#{number}"), state.to_string()))
+        })
+        .collect::<Vec<_>>();
+
+    if !subissues.is_empty() {
+        project_fields.insert(
+            "Native Subissues".into(),
+            serde_json::Value::String(
+                subissues
+                    .iter()
+                    .map(|(issue, _)| issue.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ),
+        );
+        project_fields.insert(
+            "Native Subissue States".into(),
+            serde_json::Value::String(
+                subissues
+                    .iter()
+                    .map(|(issue, state)| format!("{issue}={state}"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ),
+        );
+    }
 }
 
 fn github_issue_description_with_workpad(
@@ -3651,6 +3737,22 @@ mod tests {
                                         "updatedAt": "2026-05-10T01:00:00Z",
                                         "labels": {"nodes": [{"name": "Dogfood"}]},
                                         "assignees": {"nodes": [{"login": "codex"}]},
+                                        "parent": {
+                                            "number": 243,
+                                            "title": "Complete parent/subissue orchestration umbrella gating",
+                                            "state": "OPEN",
+                                            "url": "https://github.com/Alive24/jade-symphony/issues/243"
+                                        },
+                                        "subIssues": {
+                                            "nodes": [
+                                                {
+                                                    "number": 274,
+                                                    "title": "Teach lane flows about parent integration branches",
+                                                    "state": "OPEN",
+                                                    "url": "https://github.com/Alive24/jade-symphony/issues/274"
+                                                }
+                                            ]
+                                        },
                                         "closedByPullRequestsReferences": {
                                             "nodes": [
                                                 {
@@ -3663,17 +3765,10 @@ mod tests {
                                                 }
                                             ]
                                         },
-                                        "parent": {
-                                            "id": "GHI_PARENT",
-                                            "number": 41,
-                                            "state": "OPEN"
-                                        },
-                                        "subIssues": {
+                                        "comments": {
                                             "nodes": [
                                                 {
-                                                    "id": "GHI_CHILD",
-                                                    "number": 43,
-                                                    "state": "OPEN"
+                                                    "body": "Jade Symphony linked pull request: https://github.com/Alive24/jade-symphony/pull/289"
                                                 }
                                             ]
                                         }
@@ -3710,6 +3805,20 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("OPEN")
         );
+        assert_eq!(
+            issues[0]
+                .project_fields
+                .get("Native Parent Issue")
+                .and_then(serde_json::Value::as_str),
+            Some("#243")
+        );
+        assert_eq!(
+            issues[0]
+                .project_fields
+                .get("Native Subissues")
+                .and_then(serde_json::Value::as_str),
+            Some("#274")
+        );
         assert_eq!(issues[0].linked_pull_requests[0].number, Some(7));
         assert_eq!(
             issues[0].linked_pull_requests[0].base_ref_name.as_deref(),
@@ -3721,7 +3830,7 @@ mod tests {
                 .get("GitHub Native Parent")
                 .and_then(|value| value.get("identifier"))
                 .and_then(serde_json::Value::as_str),
-            Some("#41")
+            Some("#243")
         );
         assert_eq!(
             issues[0]
@@ -3731,8 +3840,12 @@ mod tests {
                 .and_then(|values| values.first())
                 .and_then(|value| value.get("identifier"))
                 .and_then(serde_json::Value::as_str),
-            Some("#43")
+            Some("#274")
         );
+        assert!(issues[0]
+            .linked_pull_requests
+            .iter()
+            .any(|pr| pr.number == Some(289)));
     }
 
     #[test]

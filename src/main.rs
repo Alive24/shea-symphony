@@ -34,9 +34,9 @@ use jade_symphony::git_handoff::{
     PullRequestReadyStatus,
 };
 use jade_symphony::handoff::{
-    evaluate_agent_review_handoff, plan_issue_handoff_for_profile,
-    render_agent_review_handoff_workpad, AgentReviewHandoffEvidence, HandoffError,
-    IssueHandoffPlan,
+    evaluate_agent_review_handoff, expected_merge_base_branch_for_issue,
+    plan_issue_handoff_for_profile, render_agent_review_handoff_workpad,
+    AgentReviewHandoffEvidence, HandoffError, IssueHandoffPlan,
 };
 use jade_symphony::issue_forge::{next_clarification_question, ForgeValidationReport};
 use jade_symphony::issue_workspace::{
@@ -2416,12 +2416,13 @@ fn merge_once_tick(
     )?;
     let linked_pull_requests = adapter.list_linked_pull_requests(&issue.identifier)?;
     let runner = ProcessHandoffCommandRunner;
-    let expected_base = expected_merge_base_branch(&config);
+    let default_expected_base = expected_merge_base_branch(&config);
+    let expected_base = expected_merge_base_branch_for_issue(&issue, default_expected_base);
     let status = merge_preflight_status(&config, &issue, &linked_pull_requests, &runner)?;
     let decision = merge_lane_decision(
         &issue,
         &merging_state,
-        expected_base,
+        &expected_base,
         &linked_pull_requests,
         status.as_ref(),
     );
@@ -8126,6 +8127,8 @@ fn run_loop_handoff_workpad(
         format!("- Branch: `{}`", handoff.branch_name),
         format!("- PR title: `{}`", handoff.pull_request.title),
         format!("- PR base branch: `{}`", handoff.pull_request.base_branch),
+        format!("- Branch target role: `{:?}`", handoff.branch_target.role),
+        branch_target_workpad_line(handoff),
         rework_continuation_workpad_line(handoff),
         handoff_verification_workpad_line(result),
         live_handoff_workpad_line(result),
@@ -8135,6 +8138,27 @@ fn run_loop_handoff_workpad(
         "- `Human Review` is reserved for independent Review Agent pass evidence.".to_string(),
     ]
     .join("\n")
+}
+
+fn branch_target_workpad_line(handoff: &IssueHandoffPlan) -> String {
+    let mut parts = Vec::new();
+    if let Some(parent_issue) = &handoff.branch_target.parent_issue {
+        parts.push(format!("native_parent={parent_issue}"));
+    }
+    if let Some(parent_integration_branch) = &handoff.branch_target.parent_integration_branch {
+        parts.push(format!(
+            "parent_integration_branch={parent_integration_branch}"
+        ));
+    }
+    if let Some(parent_final_base_branch) = &handoff.branch_target.parent_final_base_branch {
+        parts.push(format!("parent_final_base={parent_final_base_branch}"));
+    }
+
+    if parts.is_empty() {
+        "- Branch target evidence: `single-issue default`".to_string()
+    } else {
+        format!("- Branch target evidence: `{}`", parts.join(" "))
+    }
 }
 
 fn rework_continuation_workpad_line(handoff: &IssueHandoffPlan) -> String {

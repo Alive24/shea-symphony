@@ -291,6 +291,14 @@ mod tests {
                 issue_ref: "#196".into(),
                 body: String::new(),
             },
+            branch_target: crate::handoff::BranchTargetEvidence {
+                role: crate::handoff::BranchTargetRole::SingleIssue,
+                parent_issue: None,
+                parent_title: None,
+                parent_integration_branch: None,
+                pull_request_base_branch: "main".into(),
+                parent_final_base_branch: None,
+            },
             continuation: None,
         };
         let snapshot = RuntimeSnapshot {

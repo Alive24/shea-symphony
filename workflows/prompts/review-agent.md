@@ -24,8 +24,11 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
 ## Review Contract
 
 - Confirm the issue is in `Agent Review` before starting review.
-- Claim `Review Agent` through `review claim` or the configured `review loop`
+- Claim `Review Agent` through `review claim ... --worker <worker> --write`
+  or the configured `review-loop`
   before starting manual or automated review work.
+- Start manual review sessions through `session start --lane review --run
+  <RUN_ID>` only after the matching Project claim exists.
 - Preserve the assigned structured claim `run=` in review evidence, workpad
   notes, and any handoff summary.
 - `review session` may start or inspect a review runtime/session, but it does

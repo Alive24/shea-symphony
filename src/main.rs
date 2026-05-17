@@ -220,6 +220,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             worker,
             write,
         } => review_claim(workflow_path, issue_ref, worker, write),
+        Command::LaneClaim {
+            workflow_path,
+            issue_ref,
+            lane,
+            worker,
+            source,
+            write,
+        } => lane_claim_command(workflow_path, issue_ref, lane, worker, source, write),
         Command::ReviewClearClaim {
             workflow_path,
             issue_ref,
@@ -242,20 +250,38 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             workflow_path,
             issue_ref,
             write,
-        } => review_session(workflow_path, issue_ref, write),
+        } => {
+            legacy_agent_session_start(workflow_path, issue_ref, AgentSessionLaneArg::Review, write)
+        }
         Command::ReviewFreshness { input } => review_freshness(input),
         Command::ReviewLoop { options } => review_loop(options),
         Command::MergeSession {
             workflow_path,
             issue_ref,
             write,
-        } => agent_session_start(workflow_path, issue_ref, AgentSessionLaneArg::Merge, write),
+        } => {
+            legacy_agent_session_start(workflow_path, issue_ref, AgentSessionLaneArg::Merge, write)
+        }
         Command::AgentSessionStart {
             workflow_path,
             issue_ref,
             lane,
+            run_id,
             write,
-        } => agent_session_start(workflow_path, issue_ref, lane, write),
+        } => agent_session_start(workflow_path, issue_ref, lane, run_id, write),
+        Command::SessionStart {
+            workflow_path,
+            issue_ref,
+            lane,
+            run_id,
+            write,
+        } => agent_session_start(workflow_path, issue_ref, lane, Some(run_id), write),
+        Command::SessionList { workflow_path } => agent_session_list(workflow_path),
+        Command::SessionAttach {
+            workflow_path,
+            session,
+            exec,
+        } => agent_session_attach(workflow_path, session, exec),
         Command::AgentSessionList { workflow_path } => agent_session_list(workflow_path),
         Command::AgentSessionAttach {
             workflow_path,
@@ -1370,7 +1396,8 @@ fn review_claim(
         },
         LaneClaimSource::Manual,
         project_text_field(&issue, "Review Agent").as_deref(),
-    );
+    )
+    .with_worker(&worker);
     let claim_value = claim.render();
     if !write {
         println!(
@@ -1403,6 +1430,165 @@ fn review_claim(
         issue.identifier, claim.run
     );
     Ok(())
+}
+
+fn lane_claim_command(
+    workflow_path: PathBuf,
+    issue_ref: String,
+    lane: AgentSessionLaneArg,
+    worker: String,
+    source: CliLaneClaimSource,
+    write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if worker.trim().is_empty() {
+        return Err("lane claim requires a non-empty --worker".into());
+    }
+
+    let config = load_config(&workflow_path)?;
+    if write {
+        enforce_canonical_checkout_before_write(&config, &format!("{} claim", lane.label()))?;
+    }
+
+    let adapter = adapter_from_config(&config);
+    let issue = adapter
+        .get_issue(&issue_ref)?
+        .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
+    validate_lane_claim_state(&issue, lane)?;
+
+    let existing_value = project_text_field(&issue, lane.claim_field());
+    let claim = lane_claim_for_manual_worker(
+        &issue,
+        lane,
+        actor_from_worker(&worker),
+        source.into(),
+        worker.trim(),
+        existing_value.as_deref(),
+    )?;
+    let claim_value = claim.render();
+
+    if !write {
+        println!(
+            "{}_claim_dry_run action=claim_field issue_ref={} field={:?} run={} value={claim_value}",
+            lane.label(),
+            issue.identifier,
+            lane.claim_field(),
+            claim.run
+        );
+        return Ok(());
+    }
+
+    adapter.set_project_field(
+        &issue.identifier,
+        &ProjectFieldAssignment {
+            name: lane.claim_field().into(),
+            value: claim_value.clone(),
+        },
+    )?;
+    let command_name = format!("{} claim", lane.label());
+    append_tracker_mutation_audit(
+        &config,
+        TrackerMutationAudit {
+            command: &command_name,
+            mutation_type: "claim_field",
+            issue_ref: Some(&issue.identifier),
+            target: Some(format!("{}={claim_value}", lane.claim_field())),
+            from_state: Some(issue.state.clone()),
+            to_state: None,
+            reason: "manual lane worker claim",
+        },
+    );
+    println!(
+        "{}_claim=ok issue_ref={} field={:?} worker={} run={} value={claim_value}",
+        lane.label(),
+        issue.identifier,
+        lane.claim_field(),
+        worker.trim(),
+        claim.run
+    );
+    Ok(())
+}
+
+fn validate_lane_claim_state(
+    issue: &TrackerIssue,
+    lane: AgentSessionLaneArg,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let normalized = issue.normalized_state();
+    let valid = match lane {
+        AgentSessionLaneArg::Main => matches!(normalized.as_str(), "todo" | "in progress"),
+        AgentSessionLaneArg::Review => normalized == "agent review",
+        AgentSessionLaneArg::Merge => normalized == "merging",
+    };
+    if valid {
+        return Ok(());
+    }
+
+    Err(format!(
+        "{} claim cannot claim {}; {} is currently {}",
+        lane.label(),
+        issue.identifier,
+        issue.identifier,
+        issue.state
+    )
+    .into())
+}
+
+fn actor_from_worker(worker: &str) -> LaneClaimActor {
+    let normalized = worker.to_ascii_lowercase();
+    if normalized.contains("gemini") {
+        LaneClaimActor::Gemini
+    } else if normalized.contains("claude") {
+        LaneClaimActor::Claude
+    } else if normalized.contains("human") {
+        LaneClaimActor::Human
+    } else {
+        LaneClaimActor::Codex
+    }
+}
+
+fn lane_claim_for_manual_worker(
+    issue: &TrackerIssue,
+    lane: AgentSessionLaneArg,
+    actor: LaneClaimActor,
+    source: LaneClaimSource,
+    worker: &str,
+    existing: Option<&str>,
+) -> Result<LaneClaim, Box<dyn std::error::Error>> {
+    if let Some(existing) = existing {
+        if let Ok(claim) = LaneClaim::parse(existing) {
+            if claim.lane == lane.claim_lane()
+                && claim.issue == issue.identifier
+                && claim.state == LaneClaimState::Active
+            {
+                if claim.worker.as_deref() == Some(worker) {
+                    return Ok(claim);
+                }
+                return Err(format!(
+                    "{} already has an active {} claim owned by {} run={}",
+                    issue.identifier,
+                    lane.label(),
+                    claim.worker.as_deref().unwrap_or(claim.actor.as_str()),
+                    claim.run
+                )
+                .into());
+            }
+        } else if !existing.trim().is_empty() {
+            return Err(format!(
+                "{} already has an unparseable {} claim: {existing}",
+                issue.identifier,
+                lane.claim_field()
+            )
+            .into());
+        }
+    }
+
+    Ok(LaneClaim::active(
+        &issue.identifier,
+        lane.claim_lane(),
+        actor,
+        source,
+        current_time_ms(),
+    )
+    .with_worker(worker))
 }
 
 fn review_clear_claim(
@@ -2120,7 +2306,8 @@ fn merge_once_tick(
         LaneClaimActor::Codex,
         LaneClaimSource::Loop,
         project_text_field(&issue, WorkerLane::Merging.claim_field()).as_deref(),
-    );
+    )
+    .with_worker(&worker_id);
     write_lane_claim_field(
         &config,
         adapter.as_ref(),
@@ -2431,6 +2618,7 @@ fn review_claim_for_issue(issue: &TrackerIssue, worker_key: &str) -> LaneClaim {
         LaneClaimSource::Loop,
         project_text_field(issue, "Review Agent").as_deref(),
     )
+    .with_worker(worker_key)
 }
 
 fn print_review_claim_field_dry_run(issue: &TrackerIssue, worker_key: &str) {
@@ -2580,36 +2768,17 @@ fn agent_session_start(
     workflow_path: PathBuf,
     issue_ref: String,
     lane: AgentSessionLaneArg,
+    run_id: Option<String>,
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    agent_session_start_inner(workflow_path, issue_ref, lane, write, true)
-}
-
-fn review_session(
-    workflow_path: PathBuf,
-    issue_ref: String,
-    write: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    agent_session_start_inner(
-        workflow_path,
-        issue_ref,
-        AgentSessionLaneArg::Review,
-        write,
-        false,
-    )
-}
-
-fn agent_session_start_inner(
-    workflow_path: PathBuf,
-    issue_ref: String,
-    lane: AgentSessionLaneArg,
-    write: bool,
-    write_claim: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+    let run_id = run_id.ok_or("session start requires explicit --run <RUN_ID>")?;
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
     validate_tmux_session_config(&config)?;
+    if write {
+        enforce_canonical_checkout_before_write(&config, "session start")?;
+    }
 
     let adapter = adapter_from_config(&config);
     let issue = adapter
@@ -2617,66 +2786,19 @@ fn agent_session_start_inner(
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
     let workspace_key = agent_session_workspace_key(&config, &issue, lane)?;
     let prompt_path = rendered_lane_prompt_artifact_path(&config, &issue, lane, 1);
-    let claim = write_claim.then(|| {
-        lane_claim_for_issue(
-            &issue,
-            lane.claim_lane(),
-            LaneClaimActor::Codex,
-            LaneClaimSource::Manual,
-            None,
-        )
-    });
-    let claim_value = claim.as_ref().map(LaneClaim::render);
+    let claim = matching_lane_claim_for_session(&issue, lane, &run_id)?;
+    let claim_value = claim.render();
 
     if !write {
-        if let Some(claim_value) = claim_value.as_deref() {
-            println!(
-                "agent_session_dry_run action=claim_field issue={} field={:?} value={:?}",
-                issue.identifier,
-                lane.claim_field(),
-                claim_value
-            );
-        } else {
-            println!(
-                "agent_session_dry_run action=skip_claim_field issue={} field={:?}",
-                issue.identifier,
-                lane.claim_field()
-            );
-        }
         println!(
-            "agent_session_dry_run action=start issue={} lane={} run={} backend=tmux workspace_key={} prompt_artifact={}",
+            "session_dry_run action=start issue={} lane={} run={} backend=tmux workspace_key={} prompt_artifact={}",
             issue.identifier,
             lane.label(),
-            claim
-                .as_ref()
-                .map(|claim| claim.run.as_str())
-                .unwrap_or("unclaimed-session"),
+            claim.run,
             workspace_key,
             prompt_path.display()
         );
         return Ok(());
-    }
-
-    if let Some(claim_value) = claim_value.as_deref() {
-        adapter.set_project_field(
-            &issue.identifier,
-            &ProjectFieldAssignment {
-                name: lane.claim_field().into(),
-                value: claim_value.into(),
-            },
-        )?;
-        append_tracker_mutation_audit(
-            &config,
-            TrackerMutationAudit {
-                command: "agent-session",
-                mutation_type: "claim_field",
-                issue_ref: Some(&issue.identifier),
-                target: Some(format!("{}={claim_value}", lane.claim_field())),
-                from_state: Some(issue.state.clone()),
-                to_state: None,
-                reason: "manual tmux lane session claim",
-            },
-        );
     }
 
     let workspace = prepare_workspace(&config.workspace.root, &workspace_key, &config.hooks)?;
@@ -2685,7 +2807,7 @@ fn agent_session_start_inner(
         workflow.prompt_for_lane(lane.workflow_lane()),
         &issue,
         None,
-        claim.as_ref(),
+        Some(&claim),
     )?;
     let backend = TmuxBackend;
     let mut prepared = backend.prepare(workspace.path.clone(), prompt, &config)?;
@@ -2697,15 +2819,13 @@ fn agent_session_start_inner(
     prepared.issue_identifier = Some(issue.identifier.clone());
     prepared.issue_title = Some(issue.title.clone());
     prepared.lane = Some(lane.label().into());
-    if let Some(claim) = claim.as_ref() {
-        prepared.run_id = Some(claim.run.clone());
-        prepared
-            .env
-            .insert("JADE_SYMPHONY_RUN_ID".into(), claim.run.clone());
-        prepared
-            .env
-            .insert("JADE_SYMPHONY_CLAIM".into(), claim.render());
-    }
+    prepared.run_id = Some(claim.run.clone());
+    prepared
+        .env
+        .insert("JADE_SYMPHONY_RUN_ID".into(), claim.run.clone());
+    prepared
+        .env
+        .insert("JADE_SYMPHONY_CLAIM".into(), claim.render());
     prepared.attempt = 1;
     prepared.branch_name = current_git_branch(&workspace.path).ok().flatten();
     let events = backend.run(prepared)?;
@@ -2718,16 +2838,14 @@ fn agent_session_start_inner(
         &workspace.path,
         &summary,
         &prompt_path,
-        claim_value
-            .as_deref()
-            .unwrap_or("not written by review session"),
+        &claim_value,
         &git_identity,
     );
     adapter.upsert_workpad(&issue.identifier, &workpad)?;
     append_tracker_mutation_audit(
         &config,
         TrackerMutationAudit {
-            command: "agent-session",
+            command: "session start",
             mutation_type: "workpad_write",
             issue_ref: Some(&issue.identifier),
             target: summary.session_id.clone(),
@@ -2738,13 +2856,10 @@ fn agent_session_start_inner(
     );
 
     println!(
-        "agent_session_action=started issue={} lane={} run={} backend={} session={} pending_session={} workspace={} prompt_artifact={}",
+        "session_action=started issue={} lane={} run={} backend={} session={} pending_session={} workspace={} prompt_artifact={}",
         issue.identifier,
         lane.label(),
-        claim
-            .as_ref()
-            .map(|claim| claim.run.as_str())
-            .unwrap_or("unclaimed-session"),
+        claim.run,
         summary.backend,
         summary.session_id.as_deref().unwrap_or("n/a"),
         summary.pending_session,
@@ -2758,6 +2873,75 @@ fn agent_session_start_inner(
         println!("log_path={}", log_path.display());
     }
     Ok(())
+}
+
+fn legacy_agent_session_start(
+    _workflow_path: PathBuf,
+    _issue_ref: String,
+    lane: AgentSessionLaneArg,
+    _write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    Err(format!(
+        "{}-session and agent-session are hidden legacy entrypoints; use `{} claim` first, then `session start --lane {} --run <RUN_ID>`",
+        lane.label(),
+        lane.label(),
+        lane.label()
+    )
+    .into())
+}
+
+fn matching_lane_claim_for_session(
+    issue: &TrackerIssue,
+    lane: AgentSessionLaneArg,
+    run_id: &str,
+) -> Result<LaneClaim, Box<dyn std::error::Error>> {
+    let claim_value = project_text_field(issue, lane.claim_field()).ok_or_else(|| {
+        format!(
+            "session start requires an existing {} claim for {}",
+            lane.claim_field(),
+            issue.identifier
+        )
+    })?;
+    let claim = LaneClaim::parse(&claim_value)?;
+    if claim.lane != lane.claim_lane() {
+        return Err(format!(
+            "session start lane mismatch for {}; claim lane={} requested lane={}",
+            issue.identifier,
+            claim.lane.as_str(),
+            lane.label()
+        )
+        .into());
+    }
+    if claim.issue != issue.identifier {
+        return Err(format!(
+            "session start issue mismatch for {}; claim points at {}",
+            issue.identifier, claim.issue
+        )
+        .into());
+    }
+    if claim.run != run_id {
+        return Err(format!(
+            "session start run mismatch for {}; claim run={} requested run={run_id}",
+            issue.identifier, claim.run
+        )
+        .into());
+    }
+    if claim.state != LaneClaimState::Active {
+        return Err(format!(
+            "session start requires an active claim; {} claim state={}",
+            issue.identifier,
+            claim.state.as_str()
+        )
+        .into());
+    }
+    if claim.worker.as_deref().unwrap_or("").trim().is_empty() {
+        return Err(format!(
+            "session start requires a structured worker= claim for {} run={}",
+            issue.identifier, claim.run
+        )
+        .into());
+    }
+    Ok(claim)
 }
 
 fn agent_session_list(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
@@ -2826,13 +3010,13 @@ fn agent_session_attach(
 
 fn validate_tmux_session_config(config: &RuntimeConfig) -> Result<(), Box<dyn std::error::Error>> {
     if config.tmux.command.trim().is_empty() {
-        return Err("tmux.command must not be empty for agent-session".into());
+        return Err("tmux.command must not be empty for session start".into());
     }
     if config.tmux.agent_command.trim().is_empty() {
-        return Err("tmux.agent_command must not be empty for agent-session".into());
+        return Err("tmux.agent_command must not be empty for session start".into());
     }
     if config.tmux.session_prefix.trim().is_empty() {
-        return Err("tmux.session_prefix must not be empty for agent-session".into());
+        return Err("tmux.session_prefix must not be empty for session start".into());
     }
     Ok(())
 }
@@ -3177,7 +3361,8 @@ fn project_state(options: ProjectStateOptions) -> Result<(), Box<dyn std::error:
     let adapter = adapter_from_config(&config);
     match adapter.list_dispatchable_issues() {
         Ok(issues) => {
-            let integration_gaps = adapter.integration_gaps();
+            let mut integration_gaps = adapter.integration_gaps();
+            append_canonical_checkout_gap(&config, &mut integration_gaps);
             if options.display == DisplayMode::Tui {
                 println!("{}", render_project_state_panel(&issues, &integration_gaps));
                 return Ok(());
@@ -3343,6 +3528,7 @@ fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::Error>> {
     let adapter = adapter_from_config(&config);
     let issues = adapter.fetch_issues_by_states(&all_mapped_tracker_states(&config))?;
     let mut integration_gaps = adapter.integration_gaps();
+    append_canonical_checkout_gap(&config, &mut integration_gaps);
     let runtime_state = match load_runtime_state(&config) {
         Ok(state) => state,
         Err(error) => {
@@ -5516,7 +5702,8 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     LaneClaimActor::Codex,
                     LaneClaimSource::Loop,
                     project_text_field(candidate, WorkerLane::Main.claim_field()).as_deref(),
-                );
+                )
+                .with_worker(&worker_id);
                 write_lane_claim_field(
                     &config,
                     adapter.as_ref(),
@@ -5650,7 +5837,8 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             LaneClaimActor::Codex,
             LaneClaimSource::Loop,
             project_text_field(&latest, WorkerLane::Main.claim_field()).as_deref(),
-        );
+        )
+        .with_worker(&worker_id);
         if matches!(claim_action, RunLoopClaimAction::Resume) {
             if let RuntimeOwnershipDecision::Mismatched { reason, .. } =
                 runtime_ownership_decision(latest.description.as_deref(), &ownership)
@@ -6629,6 +6817,110 @@ fn run_loop_assignee_ownership_decision(
 
 fn live_github_tracker(config: &RuntimeConfig) -> bool {
     config.tracker.kind == "github_project_v2" && config.tracker.fixture_path.is_none()
+}
+
+fn append_canonical_checkout_gap(config: &RuntimeConfig, gaps: &mut Vec<String>) {
+    if !live_github_tracker(config) {
+        return;
+    }
+    let Ok(current_dir) = std::env::current_dir() else {
+        gaps.push("canonical_checkout_blocked: current directory is unavailable".into());
+        return;
+    };
+    if let Some(reason) = canonical_checkout_report(&current_dir).blocker() {
+        gaps.push(format!("canonical_checkout_blocked: {reason}"));
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CanonicalCheckoutReport {
+    Ready,
+    Blocked { reason: String },
+}
+
+impl CanonicalCheckoutReport {
+    fn blocker(&self) -> Option<&str> {
+        match self {
+            Self::Ready => None,
+            Self::Blocked { reason } => Some(reason.as_str()),
+        }
+    }
+}
+
+fn canonical_checkout_report(path: &Path) -> CanonicalCheckoutReport {
+    let branch = match git_stdout(path, &["branch", "--show-current"]) {
+        Ok(branch) if !branch.trim().is_empty() => branch.trim().to_string(),
+        Ok(_) => {
+            return CanonicalCheckoutReport::Blocked {
+                reason: "HEAD is detached".into(),
+            }
+        }
+        Err(error) => {
+            return CanonicalCheckoutReport::Blocked {
+                reason: format!("git branch check failed: {error}"),
+            }
+        }
+    };
+    if branch != "main" {
+        return CanonicalCheckoutReport::Blocked {
+            reason: format!("current branch is {branch:?}, expected \"main\""),
+        };
+    }
+
+    if let Err(error) = git_status(path, &["fetch", "--quiet", "origin", "main"]) {
+        return CanonicalCheckoutReport::Blocked {
+            reason: format!("git fetch origin main failed: {error}"),
+        };
+    }
+
+    let head = match git_stdout(path, &["rev-parse", "HEAD"]) {
+        Ok(value) => value.trim().to_string(),
+        Err(error) => {
+            return CanonicalCheckoutReport::Blocked {
+                reason: format!("cannot read HEAD: {error}"),
+            }
+        }
+    };
+    let origin_main = match git_stdout(path, &["rev-parse", "origin/main"]) {
+        Ok(value) => value.trim().to_string(),
+        Err(error) => {
+            return CanonicalCheckoutReport::Blocked {
+                reason: format!("cannot read origin/main: {error}"),
+            }
+        }
+    };
+    if head != origin_main {
+        return CanonicalCheckoutReport::Blocked {
+            reason: "local main does not exactly match origin/main".into(),
+        };
+    }
+
+    CanonicalCheckoutReport::Ready
+}
+
+fn git_stdout(path: &Path, args: &[&str]) -> Result<String, String> {
+    let output = ProcessCommand::new("git")
+        .args(args)
+        .current_dir(path)
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!(
+                "git {:?} exited with status {:?}",
+                args,
+                output.status.code()
+            )
+        } else {
+            stderr
+        });
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn git_status(path: &Path, args: &[&str]) -> Result<(), String> {
+    git_stdout(path, args).map(|_| ())
 }
 
 fn normalized_login(value: &str) -> String {
@@ -7788,6 +8080,14 @@ enum Command {
         worker: String,
         write: bool,
     },
+    LaneClaim {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        lane: AgentSessionLaneArg,
+        worker: String,
+        source: CliLaneClaimSource,
+        write: bool,
+    },
     ReviewClearClaim {
         workflow_path: PathBuf,
         issue_ref: String,
@@ -7826,7 +8126,23 @@ enum Command {
         workflow_path: PathBuf,
         issue_ref: String,
         lane: AgentSessionLaneArg,
+        run_id: Option<String>,
         write: bool,
+    },
+    SessionStart {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        lane: AgentSessionLaneArg,
+        run_id: String,
+        write: bool,
+    },
+    SessionList {
+        workflow_path: PathBuf,
+    },
+    SessionAttach {
+        workflow_path: PathBuf,
+        session: String,
+        exec: bool,
     },
     AgentSessionList {
         workflow_path: PathBuf,
@@ -8000,6 +8316,19 @@ impl Command {
     }
 }
 
+fn lane_command(lane: AgentSessionLaneArg, args: LaneCommandArgs) -> Result<Command, String> {
+    match args.command {
+        LaneCommand::Claim(claim) => Ok(Command::LaneClaim {
+            workflow_path: claim.workflow_path,
+            issue_ref: claim.issue_ref,
+            lane,
+            worker: claim.worker,
+            source: claim.source,
+            write: claim.write,
+        }),
+    }
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "jade-symphony",
@@ -8049,7 +8378,13 @@ enum CliCommand {
     MergeOnce(MergeOnceArgs),
     #[command(name = "merge-loop")]
     MergeLoop(MergeLoopArgs),
-    #[command(name = "merge-session")]
+    #[command(name = "main")]
+    Main(LaneCommandArgs),
+    #[command(name = "merge")]
+    Merge(LaneCommandArgs),
+    #[command(name = "session")]
+    Session(SessionArgs),
+    #[command(name = "merge-session", hide = true)]
     MergeSession(LaneSessionAliasArgs),
     #[command(name = "set-state")]
     SetState(SetStateArgs),
@@ -8079,7 +8414,7 @@ enum CliCommand {
     ReviewFreshness(ReviewFreshnessArgs),
     #[command(name = "review-loop", hide = true)]
     ReviewLoop(ReviewLoopArgs),
-    #[command(name = "agent-session")]
+    #[command(name = "agent-session", hide = true)]
     AgentSession(AgentSessionArgs),
     Gate(GateArgs),
     #[command(name = "gate-apply")]
@@ -8336,6 +8671,49 @@ struct MergeLoopArgs {
 }
 
 #[derive(Debug, Args)]
+struct LaneCommandArgs {
+    #[command(subcommand)]
+    command: LaneCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum LaneCommand {
+    Claim(LaneClaimArgs),
+}
+
+#[derive(Debug, Args)]
+struct LaneClaimArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    issue_ref: String,
+    #[arg(long)]
+    worker: String,
+    #[arg(long, value_enum, default_value_t = CliLaneClaimSource::Manual)]
+    source: CliLaneClaimSource,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CliLaneClaimSource {
+    Manual,
+    Loop,
+    Goal,
+}
+
+impl From<CliLaneClaimSource> for LaneClaimSource {
+    fn from(value: CliLaneClaimSource) -> Self {
+        match value {
+            CliLaneClaimSource::Manual => Self::Manual,
+            CliLaneClaimSource::Loop => Self::Loop,
+            CliLaneClaimSource::Goal => Self::Goal,
+        }
+    }
+}
+
+#[derive(Debug, Args)]
 struct AgentSessionArgs {
     #[command(subcommand)]
     command: AgentSessionCommand,
@@ -8355,6 +8733,36 @@ struct AgentSessionStartArgs {
     issue_ref: String,
     #[arg(long, value_enum, default_value = "main")]
     lane: AgentSessionLaneArg,
+    #[arg(long = "run")]
+    run_id: Option<String>,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct SessionArgs {
+    #[command(subcommand)]
+    command: SessionCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum SessionCommand {
+    Start(SessionStartArgs),
+    List(AgentSessionListArgs),
+    Attach(AgentSessionAttachArgs),
+}
+
+#[derive(Debug, Args)]
+struct SessionStartArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    issue_ref: String,
+    #[arg(long, value_enum)]
+    lane: AgentSessionLaneArg,
+    #[arg(long = "run")]
+    run_id: String,
     #[arg(long)]
     write: bool,
     #[arg(long = "dry-run")]
@@ -8585,7 +8993,7 @@ struct ReviewArgs {
 enum ReviewCommandArgs {
     Fake(ReviewFakeArgs),
     Once(ReviewOnceArgs),
-    Claim(ReviewClaimArgs),
+    Claim(LaneClaimArgs),
     Pass(ReviewEvidenceArgs),
     Reject(ReviewRejectArgs),
     Session(LaneSessionAliasArgs),
@@ -8909,6 +9317,25 @@ impl TryFrom<Cli> for Command {
                             },
                         })
                     }
+                    CliCommand::Main(args) => lane_command(AgentSessionLaneArg::Main, args),
+                    CliCommand::Merge(args) => lane_command(AgentSessionLaneArg::Merge, args),
+                    CliCommand::Session(args) => match args.command {
+                        SessionCommand::Start(start) => Ok(Self::SessionStart {
+                            workflow_path: start.workflow_path,
+                            issue_ref: start.issue_ref,
+                            lane: start.lane,
+                            run_id: start.run_id,
+                            write: start.write,
+                        }),
+                        SessionCommand::List(list) => Ok(Self::SessionList {
+                            workflow_path: list.workflow_path,
+                        }),
+                        SessionCommand::Attach(attach) => Ok(Self::SessionAttach {
+                            workflow_path: attach.workflow_path,
+                            session: attach.session,
+                            exec: attach.exec,
+                        }),
+                    },
                     CliCommand::MergeSession(args) => Ok(Self::MergeSession {
                         workflow_path: args.workflow_path,
                         issue_ref: args.issue_ref,
@@ -8950,9 +9377,12 @@ impl TryFrom<Cli> for Command {
                     CliCommand::ReviewOnce(args) => {
                         command_from_review_args(ReviewCommandArgs::Once(args))
                     }
-                    CliCommand::ReviewClaim(args) => {
-                        command_from_review_args(ReviewCommandArgs::Claim(args))
-                    }
+                    CliCommand::ReviewClaim(args) => Ok(Self::ReviewClaim {
+                        workflow_path: args.workflow_path,
+                        issue_ref: args.issue_ref,
+                        worker: args.worker,
+                        write: args.write,
+                    }),
                     CliCommand::ReviewClearClaim(args) => Ok(Self::ReviewClearClaim {
                         workflow_path: args.workflow_path,
                         issue_ref: args.issue_ref,
@@ -8978,6 +9408,7 @@ impl TryFrom<Cli> for Command {
                             workflow_path: start.workflow_path,
                             issue_ref: start.issue_ref,
                             lane: start.lane,
+                            run_id: start.run_id,
                             write: start.write,
                         }),
                         AgentSessionCommand::List(list) => Ok(Self::AgentSessionList {
@@ -9137,10 +9568,12 @@ fn command_from_review_args(command: ReviewCommandArgs) -> Result<Command, Strin
             issue_ref: args.issue_ref,
             write: args.write,
         }),
-        ReviewCommandArgs::Claim(args) => Ok(Command::ReviewClaim {
+        ReviewCommandArgs::Claim(args) => Ok(Command::LaneClaim {
             workflow_path: args.workflow_path,
             issue_ref: args.issue_ref,
+            lane: AgentSessionLaneArg::Review,
             worker: args.worker,
+            source: args.source,
             write: args.write,
         }),
         ReviewCommandArgs::Pass(args) => Ok(Command::ReviewPass {
@@ -9291,6 +9724,100 @@ mod tests {
 
     fn parse(args: &[&str]) -> Command {
         Command::parse(args.iter().map(|arg| arg.to_string()).collect()).unwrap()
+    }
+
+    fn git_ok(path: &Path, args: &[&str]) {
+        let output = ProcessCommand::new("git")
+            .args(args)
+            .current_dir(path)
+            .output()
+            .unwrap_or_else(|error| panic!("failed to run git {args:?}: {error}"));
+        assert!(
+            output.status.success(),
+            "git {:?} failed\nstdout={}\nstderr={}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn canonical_git_repo() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let temp = tempfile::tempdir().unwrap();
+        let remote = temp.path().join("origin.git");
+        let repo = temp.path().join("repo");
+        git_ok(
+            temp.path(),
+            &["init", "--bare", "--initial-branch=main", "origin.git"],
+        );
+        git_ok(temp.path(), &["init", "--initial-branch=main", "repo"]);
+        git_ok(&repo, &["config", "user.email", "jade@example.invalid"]);
+        git_ok(&repo, &["config", "user.name", "Jade Symphony"]);
+        std::fs::write(repo.join("README.md"), "main\n").unwrap();
+        git_ok(&repo, &["add", "README.md"]);
+        git_ok(&repo, &["commit", "-m", "initial"]);
+        git_ok(
+            &repo,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
+        git_ok(&repo, &["push", "-u", "origin", "main"]);
+        (temp, repo, remote)
+    }
+
+    #[test]
+    fn canonical_checkout_report_accepts_latest_main() {
+        let (_temp, repo, _remote) = canonical_git_repo();
+
+        assert_eq!(
+            canonical_checkout_report(&repo),
+            CanonicalCheckoutReport::Ready
+        );
+    }
+
+    #[test]
+    fn canonical_checkout_report_blocks_detached_head() {
+        let (_temp, repo, _remote) = canonical_git_repo();
+        git_ok(&repo, &["checkout", "--detach", "HEAD"]);
+
+        let report = canonical_checkout_report(&repo);
+        assert!(matches!(
+            report,
+            CanonicalCheckoutReport::Blocked { ref reason } if reason.contains("detached")
+        ));
+    }
+
+    #[test]
+    fn canonical_checkout_report_blocks_non_main_branch() {
+        let (_temp, repo, _remote) = canonical_git_repo();
+        git_ok(&repo, &["checkout", "-b", "feature/test"]);
+
+        let report = canonical_checkout_report(&repo);
+        assert!(matches!(
+            report,
+            CanonicalCheckoutReport::Blocked { ref reason } if reason.contains("current branch")
+        ));
+    }
+
+    #[test]
+    fn canonical_checkout_report_blocks_main_behind_origin_main() {
+        let (temp, repo, remote) = canonical_git_repo();
+        let other = temp.path().join("other");
+        git_ok(
+            temp.path(),
+            &["clone", remote.to_str().unwrap(), other.to_str().unwrap()],
+        );
+        git_ok(&other, &["config", "user.email", "jade@example.invalid"]);
+        git_ok(&other, &["config", "user.name", "Jade Symphony"]);
+        std::fs::write(other.join("CHANGELOG.md"), "change\n").unwrap();
+        git_ok(&other, &["add", "CHANGELOG.md"]);
+        git_ok(&other, &["commit", "-m", "advance main"]);
+        git_ok(&other, &["push", "origin", "main"]);
+
+        let report = canonical_checkout_report(&repo);
+        assert!(matches!(
+            report,
+            CanonicalCheckoutReport::Blocked { ref reason }
+                if reason.contains("local main does not exactly match origin/main")
+        ));
     }
 
     #[test]
@@ -10089,6 +10616,7 @@ mod tests {
                 workflow_path: PathBuf::from("workflows/jade-symphony.md"),
                 issue_ref: "#220".into(),
                 lane: AgentSessionLaneArg::Review,
+                run_id: None,
                 write: true,
             }
         );
@@ -10135,6 +10663,79 @@ mod tests {
                 workflow_path: PathBuf::from("workflows/jade-symphony.md"),
                 issue_ref: "#227".into(),
                 write: true,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_lane_claim_command_groups() {
+        assert_eq!(
+            parse(&[
+                "main",
+                "claim",
+                "workflows/jade-symphony.md",
+                "#265",
+                "--worker",
+                "codex-manual-main",
+                "--source",
+                "manual",
+                "--write"
+            ]),
+            Command::LaneClaim {
+                workflow_path: PathBuf::from("workflows/jade-symphony.md"),
+                issue_ref: "#265".into(),
+                lane: AgentSessionLaneArg::Main,
+                worker: "codex-manual-main".into(),
+                source: CliLaneClaimSource::Manual,
+                write: true,
+            }
+        );
+        assert_eq!(
+            parse(&[
+                "review",
+                "claim",
+                "workflows/jade-symphony.md",
+                "#265",
+                "--worker",
+                "gemini-manual-review"
+            ]),
+            Command::LaneClaim {
+                workflow_path: PathBuf::from("workflows/jade-symphony.md"),
+                issue_ref: "#265".into(),
+                lane: AgentSessionLaneArg::Review,
+                worker: "gemini-manual-review".into(),
+                source: CliLaneClaimSource::Manual,
+                write: false,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_unified_session_commands() {
+        assert_eq!(
+            parse(&[
+                "session",
+                "start",
+                "workflows/jade-symphony.md",
+                "#265",
+                "--lane",
+                "main",
+                "--run",
+                "20260517T0909Z-issue265-main-manual",
+                "--write"
+            ]),
+            Command::SessionStart {
+                workflow_path: PathBuf::from("workflows/jade-symphony.md"),
+                issue_ref: "#265".into(),
+                lane: AgentSessionLaneArg::Main,
+                run_id: "20260517T0909Z-issue265-main-manual".into(),
+                write: true,
+            }
+        );
+        assert_eq!(
+            parse(&["session", "list", "workflows/jade-symphony.md"]),
+            Command::SessionList {
+                workflow_path: PathBuf::from("workflows/jade-symphony.md"),
             }
         );
     }
@@ -10458,10 +11059,12 @@ mod tests {
                 "Gemini A",
                 "--write"
             ]),
-            Command::ReviewClaim {
+            Command::LaneClaim {
                 workflow_path: PathBuf::from("examples/github-project-workflow.md"),
                 issue_ref: "#235".into(),
+                lane: AgentSessionLaneArg::Review,
                 worker: "Gemini A".into(),
+                source: CliLaneClaimSource::Manual,
                 write: true
             }
         );

@@ -48,6 +48,9 @@ question, but do not edit files under
    implementation. Direct `gh issue view` / `gh pr view` is acceptable for raw
    issue and PR content, but do not use raw Project GraphQL or the Project UI
    for normal Project state reads or mutations.
+   Manual lane ownership must use `main claim ... --worker <worker> --write`;
+   session startup must use `session start ... --lane main --run <RUN_ID>`.
+   Session startup validates the claim and must not write Project claim fields.
 2. Confirm the issue is still executable with the Issue Quality Gate. If the
    issue is not executable, leave a precise workpad note, move it to
    `Need to Clarify`, and stop this issue. The gate must include explicit
@@ -130,6 +133,8 @@ throughout execution. Record:
 
 - Base the issue branch on the current `origin/main` unless the issue says
   otherwise.
+- The canonical harness checkout must stay on latest `main`; dogfood branches
+  belong in separate issue worktrees.
 - Use a branch name that includes the issue number.
 - Keep one issue per branch and one branch per PR.
 - Do not rewrite or revert unrelated user changes.

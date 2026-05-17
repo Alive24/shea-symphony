@@ -50,6 +50,12 @@ cargo run -- doctor repair 194 --move-need-human-input --write
 cargo run -- doctor repair 194 --mark-pr-ready --confirm-handoff-ready --write
 ```
 
+For operator-selected stuck states and `Need Human Input` triage, use the
+repo-owned Doctor skill at `.codex/skills/jade-symphony-doctor/SKILL.md` with
+the supporting spec in `docs/operator-doctor.md`. The skill is a read-first
+diagnostic workflow that produces a structured `Doctor Triage Note`; it does
+not replace the CLI repair commands or authorize automatic Project mutation.
+
 `doctor repair ISSUE` is non-destructive by default. It prints safe,
 uncertain, and dangerous actions for the issue using tracker state, Project
 fields, runtime-state evidence, branch/PR hints, and doctor findings. The

@@ -10,6 +10,15 @@ instructions, or a CLI invariant.
 
 ## Current Runs
 
+- `2026-05-18-02-dream-cli-skill-drift/`
+  - Themes: Codex tmux config-migration prompts, repo-owned skill command
+    example drift, duplicate filtering against current Backlog/Todo.
+  - Created Backlog: #319, #320.
+  - Slept enough: no; next theme should revisit skill readiness and install
+    drift after #315 moves.
+  - Gemini review: ran; duplicate risk, evidence, scope, Backlog safety, and
+    lane-authority checks passed.
+
 - `2026-05-18-01-issue-295-dream-skill-rehearsal/`
   - Themes: manual lane claim parsing, session registry status drift, malformed
     claim repair UX.

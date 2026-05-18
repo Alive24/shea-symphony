@@ -1,6 +1,4 @@
-use std::collections::BTreeMap;
-#[cfg(test)]
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::process::Command;
 use std::thread;
@@ -1626,7 +1624,19 @@ query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
                   headRefName
                 }}
               }}
-              comments(first: 20) {{
+              parent {{
+                id
+                number
+                state
+              }}
+              subIssues(first: 20) {{
+                nodes {{
+                  id
+                  number
+                  state
+                }}
+              }}
+              comments(last: 50) {{
                 nodes {{
                   body
                 }}
@@ -2203,7 +2213,25 @@ fn issue_from_project_item(
             serde_json::Value::String(issue_state.to_string()),
         );
     }
+    if let Some(parent) = native_issue_ref(content.get("parent")) {
+        project_fields.insert("GitHub Native Parent".into(), parent);
+    }
+    let native_subissues = native_issue_refs(content.pointer("/subIssues/nodes"));
+    if !native_subissues.is_empty() {
+        project_fields.insert(
+            "GitHub Native Subissues".into(),
+            serde_json::Value::Array(native_subissues),
+        );
+    }
     let blocked_by = blocker_refs_from_project_fields(&project_fields);
+    let linked_pull_requests = merge_linked_pull_requests(
+        pull_requests_from_issue(content),
+        linked_pull_requests_from_workpads(
+            &comment_bodies(content.pointer("/comments/nodes")),
+            config.tracker.owner.as_deref(),
+            config.tracker.repo.as_deref(),
+        ),
+    );
 
     Ok(Some(TrackerIssue {
         tracker_kind: "github_project_v2".into(),
@@ -2239,7 +2267,7 @@ fn issue_from_project_item(
         assignees: string_nodes(content.pointer("/assignees/nodes"), "login"),
         priority: project_fields.get("Priority").and_then(json_number_to_i64),
         branch_name: None,
-        linked_pull_requests: pull_requests_from_issue(content),
+        linked_pull_requests,
         blocked_by,
         project_fields,
         created_at: content
@@ -2251,6 +2279,25 @@ fn issue_from_project_item(
             .and_then(serde_json::Value::as_str)
             .map(ToOwned::to_owned),
     }))
+}
+
+fn native_issue_ref(issue: Option<&serde_json::Value>) -> Option<serde_json::Value> {
+    let issue = issue?;
+    let number = issue.get("number").and_then(serde_json::Value::as_u64)?;
+    Some(serde_json::json!({
+        "id": issue.get("id").and_then(serde_json::Value::as_str),
+        "identifier": format!("#{number}"),
+        "state": issue.get("state").and_then(serde_json::Value::as_str),
+    }))
+}
+
+fn native_issue_refs(nodes: Option<&serde_json::Value>) -> Vec<serde_json::Value> {
+    nodes
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|node| native_issue_ref(Some(node)))
+        .collect()
 }
 
 fn github_issue_description_with_workpad(
@@ -2470,6 +2517,16 @@ fn string_nodes(nodes: Option<&serde_json::Value>, field: &str) -> Vec<String> {
         .collect()
 }
 
+fn comment_bodies(nodes: Option<&serde_json::Value>) -> Vec<String> {
+    nodes
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|node| node.get("body").and_then(serde_json::Value::as_str))
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
 fn pull_requests_from_issue(issue: &serde_json::Value) -> Vec<LinkedPullRequest> {
     issue
         .pointer("/closedByPullRequestsReferences/nodes")
@@ -2504,8 +2561,11 @@ fn pull_requests_from_issue(issue: &serde_json::Value) -> Vec<LinkedPullRequest>
         .collect()
 }
 
-#[cfg(test)]
-fn linked_pull_requests_from_workpads(workpad_bodies: &[String]) -> Vec<LinkedPullRequest> {
+fn linked_pull_requests_from_workpads(
+    workpad_bodies: &[String],
+    owner: Option<&str>,
+    repo: Option<&str>,
+) -> Vec<LinkedPullRequest> {
     let mut seen = BTreeSet::new();
     let mut linked = Vec::new();
     for body in workpad_bodies {
@@ -2514,11 +2574,20 @@ fn linked_pull_requests_from_workpads(workpad_bodies: &[String]) -> Vec<LinkedPu
                 linked.push(linked_pull_request_from_url(&url));
             }
         }
+        for pr in linked_pull_request_comment_refs(body, owner, repo) {
+            let key = pr
+                .url
+                .clone()
+                .or_else(|| pr.number.map(|number| format!("#{number}")))
+                .unwrap_or_default();
+            if seen.insert(key) {
+                linked.push(pr);
+            }
+        }
     }
     linked
 }
 
-#[cfg(test)]
 fn merge_linked_pull_requests(
     existing: Vec<LinkedPullRequest>,
     discovered: Vec<LinkedPullRequest>,
@@ -2536,14 +2605,12 @@ fn merge_linked_pull_requests(
     merged
 }
 
-#[cfg(test)]
 fn github_pull_request_urls(text: &str) -> Vec<String> {
     text.split(|character: char| character.is_whitespace() || character == '<' || character == '>')
         .filter_map(clean_github_pull_request_url)
         .collect()
 }
 
-#[cfg(test)]
 fn clean_github_pull_request_url(raw: &str) -> Option<String> {
     let value = raw.trim_matches(|character: char| {
         matches!(
@@ -2566,7 +2633,6 @@ fn clean_github_pull_request_url(raw: &str) -> Option<String> {
         .then(|| base.to_string())
 }
 
-#[cfg(test)]
 fn linked_pull_request_from_url(url: &str) -> LinkedPullRequest {
     LinkedPullRequest {
         id: None,
@@ -2581,6 +2647,44 @@ fn linked_pull_request_from_url(url: &str) -> LinkedPullRequest {
         base_ref_name: None,
         head_ref_name: None,
     }
+}
+
+fn linked_pull_request_comment_refs(
+    text: &str,
+    owner: Option<&str>,
+    repo: Option<&str>,
+) -> Vec<LinkedPullRequest> {
+    text.lines()
+        .filter_map(|line| {
+            let (_, raw_ref) = line.split_once("Jade Symphony linked pull request:")?;
+            let raw_ref = raw_ref.trim();
+            if raw_ref.starts_with("http://github.com/")
+                || raw_ref.starts_with("https://github.com/")
+            {
+                return clean_github_pull_request_url(raw_ref)
+                    .map(|url| linked_pull_request_from_url(&url));
+            }
+            let number = raw_ref
+                .trim_start_matches('#')
+                .split(|character: char| !character.is_ascii_digit())
+                .next()
+                .and_then(|number| number.parse::<u64>().ok())?;
+            let url = owner
+                .zip(repo)
+                .map(|(owner, repo)| format!("https://github.com/{owner}/{repo}/pull/{number}"));
+            Some(LinkedPullRequest {
+                id: None,
+                number: Some(number),
+                url,
+                state: None,
+                is_draft: None,
+                merge_state_status: None,
+                review_decision: None,
+                base_ref_name: None,
+                head_ref_name: None,
+            })
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -3553,6 +3657,22 @@ mod tests {
                                                     "id": "PR_1",
                                                     "number": 7,
                                                     "url": "https://github.com/Alive24/jade-symphony/pull/7",
+                                                    "state": "OPEN",
+                                                    "baseRefName": "integration/issue-41-parent",
+                                                    "headRefName": "feature/issue-42-implement-adapter"
+                                                }
+                                            ]
+                                        },
+                                        "parent": {
+                                            "id": "GHI_PARENT",
+                                            "number": 41,
+                                            "state": "OPEN"
+                                        },
+                                        "subIssues": {
+                                            "nodes": [
+                                                {
+                                                    "id": "GHI_CHILD",
+                                                    "number": 43,
                                                     "state": "OPEN"
                                                 }
                                             ]
@@ -3591,18 +3711,41 @@ mod tests {
             Some("OPEN")
         );
         assert_eq!(issues[0].linked_pull_requests[0].number, Some(7));
+        assert_eq!(
+            issues[0].linked_pull_requests[0].base_ref_name.as_deref(),
+            Some("integration/issue-41-parent")
+        );
+        assert_eq!(
+            issues[0]
+                .project_fields
+                .get("GitHub Native Parent")
+                .and_then(|value| value.get("identifier"))
+                .and_then(serde_json::Value::as_str),
+            Some("#41")
+        );
+        assert_eq!(
+            issues[0]
+                .project_fields
+                .get("GitHub Native Subissues")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|values| values.first())
+                .and_then(|value| value.get("identifier"))
+                .and_then(serde_json::Value::as_str),
+            Some("#43")
+        );
     }
 
     #[test]
     fn discovers_pull_request_urls_from_workpad_text() {
         let bodies = vec![format!(
-            "{}\n- Live PR: `https://github.com/Alive24/jade-symphony/pull/98` (created: `true`)\n- Also see https://github.com/Alive24/jade-symphony/pull/100.",
+            "{}\n- Live PR: `https://github.com/Alive24/jade-symphony/pull/98` (created: `true`)\n- Also see https://github.com/Alive24/jade-symphony/pull/100.\nJade Symphony linked pull request: 101",
             "<!-- jade-symphony-workpad -->"
         )];
 
-        let prs = linked_pull_requests_from_workpads(&bodies);
+        let prs =
+            linked_pull_requests_from_workpads(&bodies, Some("Alive24"), Some("jade-symphony"));
 
-        assert_eq!(prs.len(), 2);
+        assert_eq!(prs.len(), 3);
         assert_eq!(
             prs[0].url.as_deref(),
             Some("https://github.com/Alive24/jade-symphony/pull/98")
@@ -3612,6 +3755,11 @@ mod tests {
         assert_eq!(
             prs[1].url.as_deref(),
             Some("https://github.com/Alive24/jade-symphony/pull/100")
+        );
+        assert_eq!(prs[2].number, Some(101));
+        assert_eq!(
+            prs[2].url.as_deref(),
+            Some("https://github.com/Alive24/jade-symphony/pull/101")
         );
     }
 

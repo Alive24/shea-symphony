@@ -291,9 +291,12 @@ Project v2 issues:
      claim alone is not evidence. `doctor --interactive` and
      `doctor repair ISSUE` provide non-destructive repair guidance, while
      explicit-write repair can move uncertain work to `Need Human Input` after
-     writing workpad evidence. `doctor --auto-fix --write` is limited to clearly
-     safe repairs such as invalid `Human Review` issues without independent
-     Review Agent pass evidence.
+     writing workpad evidence. Native parent/subissue topology diagnostics are
+     read-only and flag unsafe parent integration branch evidence, subissue PR
+     targets, subissue `Done` merge evidence, and premature parent
+     `Human Review`. `doctor --auto-fix --write` is limited to clearly safe
+     repairs such as invalid `Human Review` issues without independent Review
+     Agent pass evidence.
 
 9. Integration profile.
    - Credential-gated GitHub Project v2 smoke test.

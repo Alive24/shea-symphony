@@ -2858,10 +2858,15 @@ Do not run mutating Jade Symphony or GitHub commands, including `review claim`, 
 `review reject`, `set-state`, `workpad`, `forge`, `gh issue edit`, `gh issue comment`, raw\n\
 Project GraphQL mutations, or Project UI changes. Do not activate or follow any manual review\n\
 skill that tells you to mutate Project state.\n\n\
-Return review evidence in stdout only. Use finding lines with `[Confirmed]`, `[Plausible]`,\n\
-`[Rejected]`, or `[Needs Context]` when there are findings. If there are no blocking findings,\n\
-say that the automatic review passed and summarize the evidence. Leave routing and evidence\n\
-persistence to the Jade Symphony wrapper after this process exits.\n",
+Return review evidence in stdout only. Start with exactly one line: `Review Result: PASS`,\n\
+`Review Result: REWORK`, or `Review Result: NEEDS_CONTEXT`. Use `PASS` only when there are no\n\
+blocking findings. Use `REWORK` only when confirmed implementation defects require Main Agent\n\
+changes. Use `NEEDS_CONTEXT` when missing evidence or ambiguity prevents an independent decision.\n\n\
+Only use `[Confirmed]`, `[Plausible]`, `[Rejected]`, or `[Needs Context]` for actual review\n\
+findings. Do not use those bracketed finding tags for positive verification evidence, checklist\n\
+items, or things that were implemented correctly; put positive observations under an `Evidence`\n\
+heading with plain bullets instead. Leave routing and evidence persistence to the Jade Symphony\n\
+wrapper after this process exits.\n",
     );
     Ok(prompt)
 }
@@ -11977,6 +11982,8 @@ mod tests {
         assert!(prompt.contains("`review claim`, `review pass`"));
         assert!(prompt.contains("`gh issue edit`, `gh issue comment`"));
         assert!(prompt.contains("Return review evidence in stdout only"));
+        assert!(prompt.contains("Review Result: PASS"));
+        assert!(prompt.contains("Do not use those bracketed finding tags for positive"));
         assert!(prompt.contains("Leave routing and evidence"));
     }
 

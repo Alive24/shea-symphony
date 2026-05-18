@@ -83,8 +83,17 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
   move the issue to `Rework` with the finding summary and reproduction evidence
   through `review reject` as the final mutating step of the review session.
 - In automatic headless review: do not perform those transitions yourself;
-  report `[Confirmed]`, `[Plausible]`, `[Rejected]`, or `[Needs Context]`
-  findings and let the wrapper route the issue.
+  let the wrapper route the issue from your stdout.
+- For automatic headless review, use this result shape:
+  - `Review Result: PASS` when there are no blocking findings.
+  - `Review Result: REWORK` when confirmed implementation defects require
+    Main Agent changes.
+  - `Review Result: NEEDS_CONTEXT` when missing evidence or ambiguity prevents
+    an independent decision.
+- Only use `[Confirmed]`, `[Plausible]`, `[Rejected]`, or `[Needs Context]` for
+  actual review findings. Do not use these bracketed finding tags for positive
+  verification evidence or checklist items. Positive evidence should be plain
+  bullets under `Evidence`.
 - If review cannot complete because of missing PR evidence, unavailable review
   backend, credentials, draft PR handoff, or an ambiguous decision, keep the
   issue out of `Human Review` and record the next operator action.

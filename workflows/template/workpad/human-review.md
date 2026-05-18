@@ -4,6 +4,7 @@
 - Issue: #<issue>
 - PR: #<pr> <url>
 - Human reviewer: <operator or unknown>
+- Decision timestamp: <YYYY-MM-DD HH:MM timezone>
 - Decision: Approve for Merging | Request Rework | Need Human Input | Defer
 - Target state after explicit confirmation: Merging | Rework | Need Human Input | unchanged
 

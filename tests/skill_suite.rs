@@ -26,6 +26,7 @@ fn human_review_template_supports_all_decisions() {
     assert!(template.starts_with("<!-- jade-symphony-workpad -->"));
     assert!(template.contains("## Human Review Decision Note"));
     assert!(template.contains("Approve for Merging"));
+    assert!(template.contains("Decision timestamp: <YYYY-MM-DD HH:MM timezone>"));
     assert!(template.contains("Request Rework"));
     assert!(template.contains("Need Human Input"));
     assert!(template.contains("Defer"));

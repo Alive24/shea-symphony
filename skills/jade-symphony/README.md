@@ -1,6 +1,6 @@
 # Jade Symphony Skill Suite
 
-Release: `2026.05.17`
+Release: `2026.05.18`
 
 This directory contains the repo-owned Jade Symphony skills used by local Codex
 and Gemini operator sessions. The suite is intentionally versioned in the repo
@@ -48,6 +48,7 @@ operator confirmation before writing.
 
 - `jade-symphony-issue-forge`
 - `jade-symphony-issue-forge-reflect`
+- `jade-symphony-issue-forge-dream`
 - `jade-symphony-manual-main`
 - `jade-symphony-manual-review`
 - `jade-symphony-human-review`
@@ -57,6 +58,11 @@ operator confirmation before writing.
 Human Review briefs the operator after Review Agent pass evidence, guides
 operator-owned UAT, records a structured decision note, and routes only after
 explicit confirmation. Accepted Human Review goes to `Merging`, not `Done`.
+
+Dream is the slow, deep backlog mining skill. It writes bounded advisory Dream
+Logs under `docs/dream-log/`, updates the compact Dream index, and creates
+enriched `Backlog` seeds by default unless the operator asks for report-only
+mode. It never creates `Todo` issues directly.
 
 The Doctor skill is a read-first operator triage slot. The Jade Symphony CLI
 `doctor` command reports local install-health warnings, while automatic repair

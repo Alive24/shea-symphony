@@ -218,15 +218,15 @@ the target set explicit. Use `--yes` only after the printed target paths are
 known and intentional.
 
 The packaged skills preserve the same lane boundaries as the Jade Symphony CLI:
-Issue Forge and Reflect handle conversation, draft shaping, and promotion
-discussion, including Human Review -> Rework revision discussion; the CLI owns
-`forge create`, `forge promote`, `forge rework`, and `forge validate`. Manual
-Main stops at `Agent Review`; Manual Review owns evidence-backed review
-routing; Human Review briefs the operator for UAT and final acceptance but waits
-for explicit confirmation before any state change; Manual Merge owns approved
-merge-lane work. `doctor` reports read-only local install-health warnings and
-points operators back to the #242 install/update path rather than repairing
-skill files itself.
+Issue Forge, Reflect, and Dream handle conversation, draft shaping, backlog
+mining, and promotion discussion, including Human Review -> Rework revision
+discussion; the CLI owns `forge create`, `forge promote`, `forge rework`, and
+`forge validate`. Manual Main stops at `Agent Review`; Manual Review owns
+evidence-backed review routing; Human Review briefs the operator for UAT and
+final acceptance but waits for explicit confirmation before any state change;
+Manual Merge owns approved merge-lane work. `doctor` reports read-only local
+install-health warnings and points operators back to the #242 install/update
+path rather than repairing skill files itself.
 
 ## Inspect And Resume
 
@@ -317,6 +317,27 @@ dogfood, repair, review, or merge session. It summarizes the current Project
 queue, doctor health, smoke readiness, runtime/session state, cleanup/audit
 status, and lane-specific next commands without claiming work, starting workers,
 repairing state, cleaning artifacts, or implying unattended readiness.
+
+## Issue Forge Dream
+
+Issue Forge Dream is the slow backlog-mining companion to Reflect. Use Dream
+when the operator wants to sleep on broader Jade Symphony history: recent
+Project state, run logs, workpads, Doctor findings, repo-owned skills, memory
+summaries, bootstrap docs, and recent docs/code drift.
+
+Dream creates enriched `Backlog` seeds by default unless the operator requests
+report-only mode. It never creates `Todo` issues directly. Dream Logs live under
+`docs/dream-log/YYYY-MM-DD-<run-count>-<slug>/`, with
+`docs/dream-log/INDEX.md` as the compact global entrypoint. A normal Dream run
+reads the index plus the most recent five Dream runs, writes bounded `RUN.md`
+and `topic-*.md` evidence, records lightweight Gemini review status, and reports
+whether it slept enough plus the next useful Dream theme.
+
+Dream Logs are advisory. Dream, Reflect, and Issue Forge may read them actively;
+Main reads only Dream Logs explicitly referenced by an issue contract; Review
+reads them only when the PR or issue body involves Dream-derived context; Merge
+usually ignores them; Doctor may use them only as advisory context, not
+workflow invariants.
 
 Use the repo-owned Doctor skill at
 `.codex/skills/jade-symphony-doctor/SKILL.md` when an operator-selected issue or

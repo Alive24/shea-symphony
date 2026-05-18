@@ -391,13 +391,39 @@ aliases, missing `SKILL.md`, stale metadata, and stale Jade Symphony CLI naming.
 It points back to this installer path for repair instead of mutating local
 skills directly.
 
-The suite packages Issue Forge, Issue Forge Reflect, Manual Main, Manual Review,
-Human Review, Manual Merge, and a Doctor/Fix stub. Human Review is an
-operator-owned briefing and UAT decision skill: it records a structured decision
-note and routes to `Merging`, `Rework`, or `Need Human Input` only after
-explicit operator confirmation. `forge reflect` remains a skill behavior, not a
-Jade Symphony CLI subcommand. `forge create`, `forge promote`, and `forge
-validate` remain deterministic CLI executor surfaces.
+The suite packages Issue Forge, Issue Forge Reflect, Issue Forge Dream, Manual
+Main, Manual Review, Human Review, Manual Merge, and a Doctor/Fix stub. Human
+Review is an operator-owned briefing and UAT decision skill: it records a
+structured decision note and routes to `Merging`, `Rework`, or
+`Need Human Input` only after explicit operator confirmation. `forge reflect`
+and `forge dream` remain skill behaviors, not Jade Symphony CLI subcommands.
+`forge create`, `forge promote`, `forge rework`, and `forge validate` remain
+deterministic CLI executor surfaces.
+
+## Issue Forge Dream
+
+Issue Forge Dream is a Codex/Gemini skill workflow for slow, deep backlog
+mining. It reads broader Jade Symphony context, writes bounded advisory logs,
+runs a lightweight Gemini review by default when available, and creates
+evidence-backed `Backlog` seeds unless the operator asks for report-only mode.
+
+Dream writes repo-owned logs under `docs/dream-log/`:
+
+- `docs/dream-log/INDEX.md` is the compact global entrypoint.
+- Each run directory uses `docs/dream-log/YYYY-MM-DD-<run-count>-<slug>/`.
+- `RUN.md` records the source inventory, created backlog mapping, sleep-enough
+  judgment, Gemini review status, and next useful theme.
+- `topic-*.md` records bounded topic triage with evidence anchors, coverage
+  checks, promotion path, and Dream confidence.
+- `gemini-review.md` records the lightweight review summary or unavailable
+  reason.
+- `created-backlog.md` is optional when several seeds are created.
+
+Dream-created Backlog seeds should include evidence anchors, existing coverage
+checked, promotion guidance, and Dream confidence. Low-confidence candidates
+stay Watchlist or very light Backlog. Dream never creates `Todo` issues
+directly and Dream Logs are not execution authority for Main, Review, Merge, or
+Doctor lanes.
 
 ## Merge Lane
 

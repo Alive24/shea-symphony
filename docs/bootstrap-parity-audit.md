@@ -43,16 +43,16 @@ must not be edited by Jade Symphony implementation work.
 | Workflow loading | Partial | `src/workflow.rs`, `README.md`, `docs/dogfood-readiness.md`, `workflows/jade-symphony.md` | A first-slice reload store exists; long-running runtime reload wiring remains deferred. |
 | Typed config | Partial | `src/config.rs`, `examples/*.md` | Config is enough for current CLI paths, but richer live worker settings are still evolving. |
 | Normalized tracker model | Landed | `src/model.rs`, `src/tracker.rs` | Blocker relationship sources need continued adapter hardening. |
-| GitHub Project v2 adapter | Partial | `src/tracker.rs`, `workflows/jade-symphony.md`, `project-state` command | Live reads/writes exist behind `gh` and explicit `--write`; full reconciliation and richer Project field mutation are not complete. |
+| GitHub Project v2 adapter | Partial | `src/tracker.rs`, `workflows/jade-symphony.md`, `project state` command | Live reads/writes exist behind `gh` and explicit `--write`; full reconciliation and richer Project field mutation are not complete. |
 | Linear adapter | Partial | `src/tracker.rs`, `examples/linear-fixture-workflow.md` | Live schema smoke coverage is still required before routine use. |
 | Issue Quality Gate | Landed | `src/quality_gate.rs`, `docs/bootstrap/ISSUE_QUALITY_GATE_TEMPLATE.md` | Semantic/LLM-assisted checks remain optional and conservative. |
 | Issue Forge | Partial | `src/issue_forge.rs`, README command docs | Tracker creation exists; richer field setup and conversational UI remain follow-ups. |
-| Workspace lifecycle | Partial | `src/workspace.rs`, `src/handoff.rs`, `src/git_handoff.rs`, `cleanup-plan` command | Terminal cleanup planning exists; automatic runtime cleanup and remote/SSH parity are not complete. |
+| Workspace lifecycle | Partial | `src/workspace.rs`, `src/handoff.rs`, `src/git_handoff.rs`, `clean plan` command | Terminal cleanup planning exists; automatic runtime cleanup and remote/SSH parity are not complete. |
 | Agent backend abstraction | Partial | `src/agent.rs`, Codex/Claude subprocess workflows | Full Codex app-server and Claude Code protocol parity are deferred. |
 | Run loop/orchestrator | Partial | `src/orchestrator.rs`, `src/main.rs`, `src/runtime_state.rs` | Long-running supervision, multi-worker reconciliation, and fully autonomous operation are not complete. |
 | Agent Review boundary | Partial | `src/review.rs`, `review loop`, review job ledger docs | Bounded `review loop` and durable review evidence exist; persistent background reviewer supervision is still incomplete. |
-| Merging lane | Partial | `src/merge_lane.rs`, `merge-once`, `merge-loop` command | Guarded one-shot and bounded pool landing exist; unbounded continuous merge polling and richer reconciliation are not complete. |
-| Observability/status | Partial | `src/status_surface.rs`, `src/event_log.rs`, `src/runtime_state.rs`, `status-api` command | Terminal, JSONL, JSON snapshot, local one-shot API, and tracker mutation audit surfaces exist; persistent/remote web service mode remains incomplete. |
+| Merging lane | Partial | `src/merge_lane.rs`, `merge once`, `merge loop` command | Guarded one-shot and bounded pool landing exist; unbounded continuous merge polling and richer reconciliation are not complete. |
+| Observability/status | Partial | `src/status_surface.rs`, `src/event_log.rs`, `src/runtime_state.rs`, `status serve` command | Terminal, JSONL, JSON snapshot, local one-shot API, and tracker mutation audit surfaces exist; persistent/remote web service mode remains incomplete. |
 | Usage-limit pause/resume | Partial | `src/agent.rs`, `src/runtime_state.rs`, `docs/dogfood-readiness.md` | Vendor-specific quota management and worker-level recovery remain future work. |
 | Project doctor | Partial | `src/doctor.rs`, `doctor` / `audit-project`, `doctor-repair-human-review` commands | Strict/JSON audit and one targeted repair exist; broader repair mode remains a follow-up. |
 
@@ -113,8 +113,8 @@ set `Human Review`, and only after review evidence is recorded.
 Keep this document aligned by running:
 
 ```bash
-cargo run -- inspect workflows/jade-symphony.md
-cargo run -- project-state workflows/jade-symphony.md
+cargo run -- project inspect workflows/jade-symphony.md '#<issue>'
+cargo run -- project state workflows/jade-symphony.md
 cargo run -- doctor workflows/jade-symphony.md
 cargo test
 cargo fmt --check

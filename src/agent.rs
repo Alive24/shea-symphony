@@ -594,6 +594,9 @@ fn run_tmux_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError
             issue_title: prepared.issue_title.clone(),
             lane: prepared.lane.clone().unwrap_or_else(|| "main".into()),
             run_id: prepared.run_id.clone(),
+            thread: None,
+            session_source: None,
+            claim_value: None,
             actor_role: prepared.actor_role.clone(),
             actor_label: prepared.actor_label.clone(),
             git_author: prepared.git_author.clone(),
@@ -635,6 +638,17 @@ fn run_tmux_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError
 
     if is_codex_tmux_agent_command(agent_command) {
         match wait_for_codex_tmux_readiness(&prepared, &tmux, target) {
+            Ok(()) => {}
+            Err(error) => {
+                events.push(AgentEvent::Failed {
+                    backend: prepared.backend,
+                    error,
+                });
+                return Ok(events);
+            }
+        }
+    } else if is_gemini_tmux_agent_command(agent_command) {
+        match wait_for_gemini_tmux_readiness(&prepared, &tmux, target) {
             Ok(()) => {}
             Err(error) => {
                 events.push(AgentEvent::Failed {
@@ -781,6 +795,38 @@ fn wait_for_codex_tmux_readiness(
     ))
 }
 
+fn wait_for_gemini_tmux_readiness(
+    prepared: &PreparedRun,
+    tmux: &str,
+    target: &str,
+) -> Result<(), String> {
+    let mut last_capture = String::new();
+    let attempts = prepared
+        .env
+        .get("JADE_SYMPHONY_GEMINI_TMUX_READINESS_ATTEMPTS")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(80);
+    let interval_ms = prepared
+        .env
+        .get("JADE_SYMPHONY_GEMINI_TMUX_READINESS_INTERVAL_MS")
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(250);
+
+    for _ in 0..attempts {
+        let capture = capture_tmux_pane(prepared, tmux, target, DEFAULT_TMUX_CAPTURE_LINES)?;
+        if gemini_viewport_ready(&capture) {
+            return Ok(());
+        }
+        last_capture = capture;
+        thread::sleep(Duration::from_millis(interval_ms));
+    }
+
+    Err(format!(
+        "Gemini tmux pane did not reach a ready input viewport before prompt injection; last_capture={}",
+        compact_pane_capture(&last_capture)
+    ))
+}
+
 fn capture_tmux_pane(
     prepared: &PreparedRun,
     tmux: &str,
@@ -806,6 +852,13 @@ fn is_codex_tmux_agent_command(agent_command: &str) -> bool {
         .split_whitespace()
         .next()
         .is_some_and(|word| word.ends_with("codex") || word == "codex")
+}
+
+fn is_gemini_tmux_agent_command(agent_command: &str) -> bool {
+    agent_command
+        .split_whitespace()
+        .next()
+        .is_some_and(|word| word.ends_with("gemini") || word == "gemini")
 }
 
 fn tmux_auto_trust_enabled(prepared: &PreparedRun) -> bool {
@@ -856,6 +909,18 @@ fn codex_viewport_ready(text: &str) -> bool {
             || normalized.contains("model")
             || text.contains('›')
             || text.contains('▌'))
+}
+
+fn gemini_viewport_ready(text: &str) -> bool {
+    let normalized = normalized_pane_text(text);
+    !normalized.is_empty()
+        && !normalized.contains("waiting for authentication")
+        && !normalized.contains("press esc or ctrl+c to cancel")
+        && (normalized.contains("type your message")
+            || normalized.contains("@path/to/file")
+            || normalized.contains("auto-accept edits")
+            || normalized.contains("/model")
+            || normalized.contains("quota"))
 }
 
 fn normalized_pane_text(text: &str) -> String {
@@ -1240,6 +1305,17 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn detects_gemini_ready_viewport_conservatively() {
+        assert!(!gemini_viewport_ready(
+            "Gemini\nWaiting for authentication...\nPress Esc or Ctrl+C to cancel"
+        ));
+        assert!(!gemini_viewport_ready("Gemini CLI starting up"));
+        assert!(gemini_viewport_ready(
+            "Gemini\nType your message or @path/to/file"
+        ));
+    }
+
     #[cfg(unix)]
     #[test]
     fn tmux_backend_auto_advances_codex_trust_prompt_before_prompt_injection() {
@@ -1292,6 +1368,130 @@ mod tests {
         assert!(fake_log.contains("load-buffer"), "{fake_log}");
         assert!(fake_log.contains("paste-buffer"), "{fake_log}");
         assert!(fake_log.contains(" Enter"), "{fake_log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tmux_backend_waits_for_gemini_readiness_before_prompt_injection() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let fake_tmux = temp.path().join("fake-tmux.sh");
+        let log_path = temp.path().join("fake-tmux.log");
+        let state_path = temp.path().join("fake-tmux-state");
+        fs::write(&fake_tmux, fake_tmux_script(false)).unwrap();
+        let mut perms = fs::metadata(&fake_tmux).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&fake_tmux, perms).unwrap();
+        let workspace_root = temp.path().join("worktrees");
+        let workspace = workspace_root.join("issue-282-gemini-ready");
+        fs::create_dir_all(&workspace).unwrap();
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            &format!(
+                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {:?}\nagent:\n  backend: tmux\ntmux:\n  command: {:?}\n  agent_command: gemini\n  session_prefix: jade-test\n---\nPrompt",
+                workspace_root.display().to_string(),
+                fake_tmux.display().to_string()
+            ),
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, std::path::Path::new("/tmp/WORKFLOW.md"))
+                .unwrap();
+        let backend = TmuxBackend;
+        let mut prepared = backend
+            .prepare(workspace, "echo tmux-gemini-ready".into(), &config)
+            .unwrap();
+        prepared.prompt_artifact_path = Some(temp.path().join("logs/prompts/smoke.prompt.md"));
+        prepared.session_registry_path = Some(temp.path().join("sessions/session-registry.json"));
+        prepared
+            .env
+            .insert("FAKE_TMUX_LOG".into(), log_path.display().to_string());
+        prepared
+            .env
+            .insert("FAKE_TMUX_STATE".into(), state_path.display().to_string());
+        prepared
+            .env
+            .insert("FAKE_TMUX_MODE".into(), "gemini".into());
+        prepared.env.insert(
+            "JADE_SYMPHONY_GEMINI_TMUX_READINESS_INTERVAL_MS".into(),
+            "1".into(),
+        );
+
+        let events = backend.run(prepared).unwrap();
+        let summary = backend.summarize(&events);
+        let fake_log = fs::read_to_string(log_path).unwrap();
+
+        assert!(summary.pending_session, "{fake_log}");
+        assert!(fake_log.matches("capture-pane").count() >= 2, "{fake_log}");
+        assert_before(&fake_log, "capture-pane", "load-buffer");
+        assert!(fake_log.contains("load-buffer"), "{fake_log}");
+        assert!(fake_log.contains("paste-buffer"), "{fake_log}");
+        assert!(fake_log.contains(" Enter"), "{fake_log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tmux_backend_fails_closed_when_gemini_readiness_is_not_observed() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let fake_tmux = temp.path().join("fake-tmux.sh");
+        let log_path = temp.path().join("fake-tmux.log");
+        let state_path = temp.path().join("fake-tmux-state");
+        fs::write(&fake_tmux, fake_tmux_script(false)).unwrap();
+        let mut perms = fs::metadata(&fake_tmux).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&fake_tmux, perms).unwrap();
+        let workspace_root = temp.path().join("worktrees");
+        let workspace = workspace_root.join("issue-282-gemini-stuck");
+        fs::create_dir_all(&workspace).unwrap();
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            &format!(
+                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {:?}\nagent:\n  backend: tmux\ntmux:\n  command: {:?}\n  agent_command: gemini\n  session_prefix: jade-test\n---\nPrompt",
+                workspace_root.display().to_string(),
+                fake_tmux.display().to_string()
+            ),
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, std::path::Path::new("/tmp/WORKFLOW.md"))
+                .unwrap();
+        let backend = TmuxBackend;
+        let mut prepared = backend
+            .prepare(workspace, "echo tmux-gemini-stuck".into(), &config)
+            .unwrap();
+        prepared.prompt_artifact_path = Some(temp.path().join("logs/prompts/smoke.prompt.md"));
+        prepared.session_registry_path = Some(temp.path().join("sessions/session-registry.json"));
+        prepared
+            .env
+            .insert("FAKE_TMUX_LOG".into(), log_path.display().to_string());
+        prepared
+            .env
+            .insert("FAKE_TMUX_STATE".into(), state_path.display().to_string());
+        prepared
+            .env
+            .insert("FAKE_TMUX_MODE".into(), "gemini-auth".into());
+        prepared.env.insert(
+            "JADE_SYMPHONY_GEMINI_TMUX_READINESS_ATTEMPTS".into(),
+            "2".into(),
+        );
+        prepared.env.insert(
+            "JADE_SYMPHONY_GEMINI_TMUX_READINESS_INTERVAL_MS".into(),
+            "1".into(),
+        );
+
+        let events = backend.run(prepared).unwrap();
+        let summary = backend.summarize(&events);
+        let fake_log = fs::read_to_string(log_path).unwrap();
+
+        assert!(!summary.success);
+        assert!(!summary.pending_session);
+        assert!(summary.message.contains("Gemini tmux pane did not reach"));
+        assert!(summary.message.contains("Waiting for authentication"));
+        assert!(!fake_log.contains("load-buffer"), "{fake_log}");
+        assert!(!fake_log.contains("paste-buffer"), "{fake_log}");
     }
 
     #[cfg(unix)]
@@ -1570,6 +1770,7 @@ mod tests {
 set -eu
 log="${{FAKE_TMUX_LOG:?}}"
 state="${{FAKE_TMUX_STATE:?}}"
+mode="${{FAKE_TMUX_MODE:-codex}}"
 printf '%s\n' "$*" >> "$log"
 cmd="${{1:-}}"
 case "$cmd" in
@@ -1587,6 +1788,21 @@ case "$cmd" in
     exit 0
     ;;
   capture-pane)
+    if [ "$mode" = "gemini" ]; then
+      count="$(cat "$state" 2>/dev/null || echo 0)"
+      count=$((count + 1))
+      printf '%s\n' "$count" > "$state"
+      if [ "$count" -lt 2 ]; then
+        printf '%s\n' 'Gemini' 'Waiting for authentication...' 'Press Esc or Ctrl+C to cancel'
+      else
+        printf '%s\n' 'Gemini' 'Type your message or @path/to/file'
+      fi
+      exit 0
+    fi
+    if [ "$mode" = "gemini-auth" ]; then
+      printf '%s\n' 'Gemini' 'Waiting for authentication...' 'Press Esc or Ctrl+C to cancel'
+      exit 0
+    fi
     count="$(cat "$state" 2>/dev/null || echo 0)"
     if {trust_condition}; then
       printf '%s\n' 'Codex' 'Do you trust the contents of this directory?'

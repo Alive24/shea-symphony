@@ -45,22 +45,27 @@ Before doing any work:
 Handle only:
 
 - `Todo` issues that pass the issue quality gate and dependency checks.
+- `Rework` issues that are Main-lane repair work after Agent Review or
+  Human Review contract revision, once dependencies and issue quality pass.
 - `In Progress` issues already claimed by this Main Agent session or clearly
   resumable from prior interrupted Main Agent work.
 
 Do not use this skill for merge-lane `Rework` or `Merging` work. Use
-`$jade-symphony-manual-merge` for those.
+`$jade-symphony-manual-merge` for those. When `Rework` came from
+`forge rework`, missing linked PR or missing local worktree evidence is not a
+claim blocker; the Main Agent owns PR/workspace recovery inside the issue
+scope.
 
 ## Preflight
 
 Run or equivalent-check:
 
 ```bash
-cargo run -- project-state workflows/jade-symphony.md
+cargo run -- project state workflows/jade-symphony.md
 cargo run -- doctor workflows/jade-symphony.md
-cargo run -- inspect workflows/jade-symphony.md
-cargo run -- project-issue workflows/jade-symphony.md '#<issue>' --json
-cargo run -- gate workflows/jade-symphony.md '#<issue>'
+cargo run -- project inspect workflows/jade-symphony.md '#<issue>'
+cargo run -- project issue workflows/jade-symphony.md '#<issue>' --json
+cargo run -- forge validate --workflow workflows/jade-symphony.md --issue '#<issue>'
 ```
 
 Use the Jade Symphony CLI Project read surface instead of raw Project GraphQL.
@@ -109,7 +114,7 @@ session phase. Before moving an issue to `In Progress`, `Need to Clarify`,
 `Need Human Input`, or `Agent Review`, finish every required claim,
 worktree/PR update, workpad write, PR readiness check, linked-PR verification,
 and evidence update that justifies that state. After the status changes, do only
-readback verification such as `project-issue` or `doctor`.
+readback verification such as `project issue` or `doctor`.
 
 ## Workpad Evidence
 
@@ -130,11 +135,11 @@ independent Review Agent to evaluate and check.
 
 ## PR Linkage Check
 
-Before handoff, do not rely on a workpad comment or `link-pr` output alone.
+Before handoff, do not rely on a workpad comment or `project link-pr` output alone.
 Confirm the CLI Project read surface exposes the PR under linked pull requests:
 
 ```bash
-cargo run -- project-issue workflows/jade-symphony.md '#<issue>' --json
+cargo run -- project issue workflows/jade-symphony.md '#<issue>' --json
 gh pr view <pr-number> --repo Alive24/jade-symphony --json number,isDraft,url
 ```
 

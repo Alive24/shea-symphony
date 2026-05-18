@@ -83,7 +83,7 @@ question, but do not edit files under
 11. Move locally complete main-agent work to `Agent Review` only as the final
     mutating step for this issue.
 12. After the Project status changes, only perform readback verification such
-    as `project-issue` or `doctor`; do not continue implementation or claim
+    as `project issue` or `doctor`; do not continue implementation or claim
     another issue in the same session.
 13. Return to tracker selection only after this issue has a PR/workpad handoff
     or a documented blocked state.

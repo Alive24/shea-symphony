@@ -28,12 +28,12 @@ workflows may still use an inline prompt body.
 | `plan` | Default dispatch/status plan for a workflow. | `cargo run -- plan examples/dry-run-workflow.md` |
 | `plan-dispatch` | Alias-style dispatch planning command. | `cargo run -- plan-dispatch examples/dry-run-workflow.md` |
 | `dry-run` | Compatibility alias for planning output. | `cargo run -- dry-run examples/dry-run-workflow.md` |
-| `status` | Operator status alias for planning output. | `cargo run -- status examples/dry-run-workflow.md` |
+| `status show` | Operator status view for planning output. | `cargo run -- status show examples/dry-run-workflow.md` |
 | `validate` | Validate workflow loading/configuration. | `cargo run -- validate examples/dry-run-workflow.md` |
 | `validate-workflow` | Compatibility alias for `validate`. | `cargo run -- validate-workflow examples/dry-run-workflow.md` |
-| `inspect` | Read tracker issues and print gate/status information. | `cargo run -- inspect workflows/jade-symphony.md` |
-| `project-state` | Diagnose whether the canonical Project read path is trustworthy. | `cargo run -- project-state workflows/jade-symphony.md` |
-| `project-issue` | Read one issue's normalized Project state, fields, blockers, and linked PRs through Jade Symphony. | `cargo run -- project-issue workflows/jade-symphony.md '#235' --json` |
+| `project state` | Diagnose whether the canonical Project read path is trustworthy. | `cargo run -- project state workflows/jade-symphony.md` |
+| `project issue` | Read one issue's normalized Project state, fields, blockers, and linked PRs through Jade Symphony. | `cargo run -- project issue workflows/jade-symphony.md '#235' --json` |
+| `project inspect` | Inspect one live issue's readiness facts without tracker mutation. | `cargo run -- project inspect workflows/jade-symphony.md '#235'` |
 | `doctor` | Audit Project/workflow/runtime invariants. | `cargo run -- doctor` |
 | `audit-project` | Compatibility alias for `doctor`. | `cargo run -- audit-project workflows/jade-symphony.md` |
 | `profiles` | List configured/discovered execution profiles. | `cargo run -- profiles examples/cockpit-profiles-workflow.md` |
@@ -69,31 +69,31 @@ evidence and runs `gh pr ready`; `doctor --auto-fix` never marks PRs ready.
 
 | Command | Purpose | Boundary |
 | --- | --- | --- |
-| `run-once` | Execute one selected issue through the configured backend. | Fixture-safe by default when the workflow has `tracker.fixture_path`. |
-| `run-loop` | Poll/select/claim/run/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; tmux sessions stay active instead of auto-handing off; Agent Review handoff requires a verified Project-visible, ready, non-draft PR; native subissue PRs target the parent integration branch when topology evidence is present. |
+| `main once` | Execute one selected issue through the configured backend. | Fixture-safe by default when the workflow has `tracker.fixture_path`. |
+| `main loop` | Poll/select/claim/run/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; tmux sessions stay active instead of auto-handing off; Agent Review handoff requires a verified Project-visible, ready, non-draft PR; native subissue PRs target the parent integration branch when topology evidence is present. |
 
 Examples:
 
 ```bash
-cargo run -- run-once examples/dry-run-workflow.md
-cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
-cargo run -- run-loop examples/dry-run-workflow.md --max-iterations 1 --dry-run --display tui
-cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --pool 2 --dry-run
+cargo run -- main once examples/dry-run-workflow.md
+cargo run -- main loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
+cargo run -- main loop examples/dry-run-workflow.md --max-iterations 1 --dry-run --display tui
+cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --pool 2 --dry-run
 cargo run -- clean plan workflows/jade-symphony.md
 cargo run -- clean audit workflows/jade-symphony.md
 ```
 
-Use `--display tui` for an opt-in operator panel on `run-loop`, `project-state`,
+Use `--display tui` for an opt-in operator panel on `main loop`, `project state`,
 and `doctor`. The default output stays line-oriented for logs and scripts.
 
-`run-loop --pool N` is a supervised planning and claim-locking slice. Dry-run
+`main loop --pool N` is a supervised planning and claim-locking slice. Dry-run
 mode previews up to `N` eligible main-lane issues after skipping items whose
 `Main Agent` Project field is already owned by another worker. Write mode still
 processes one main work item at a time because the runtime state tracks one
 active issue, but it uses the same lane claim check and stamps `Main Agent`
-before tracker mutation. `run-loop`, `review loop`, and `merge-once` print
+before tracker mutation. `main loop`, `review loop`, and `merge once` print
 compact `Latest:` status bars in addition to their detailed line logs.
-`run-loop --write`, `review loop --write`, and `merge-loop --write` also
+`main loop --write`, `review loop --write`, and `merge loop --write` also
 enforce a clean canonical launch checkout before the first tracker mutation.
 Tracked dirty files block the lane; recognized untracked
 runtime/log/prompt/evidence/draft artifacts are moved to artifact quarantine
@@ -105,7 +105,8 @@ field stores the compact pointer; the session registry and workpad store the
 durable paths, logs, and handoff evidence for the same `run=`.
 
 Manual claim and session control are separate operations. Claim commands write
-only the lane claim Project field and do not change Project Status:
+the lane claim Project field, create a matching `codex-app-manual` registry
+record with status `recorded`, and do not change Project Status:
 
 ```bash
 cargo run -- main claim workflows/jade-symphony.md '#265' --worker codex-manual-main --write
@@ -132,11 +133,11 @@ status in a durable session registry under the configured artifact root. The
 registry is terminal-session evidence only; tracker state remains the issue
 lifecycle source of truth. The issue stays in the active main lane until later
 completion evidence satisfies the existing handoff rules. If an operator
-overrides the workflow back to `agent.backend: dry-run`, `run-loop --write`
+overrides the workflow back to `agent.backend: dry-run`, `main loop --write`
 exits non-zero before loading runtime state, creating worktrees, claiming
 Project fields, or writing workpads.
 
-When the tmux agent command is Codex, `run-loop --write` captures the pane before
+When the tmux agent command is Codex, `main loop --write` captures the pane before
 prompt injection. The default behavior auto-advances the Codex workspace trust
 prompt only inside the configured Jade Symphony issue worktree root, then injects the
 rendered prompt after a ready viewport is observed. Set
@@ -147,13 +148,17 @@ For manual lane recovery, first claim the lane and keep the printed `run=`.
 Then `session start WORKFLOW ISSUE --lane main|review|merge --run RUN --write`
 starts the configured local tmux command with the lane-specific prompt only
 after confirming that the Project claim field already matches the issue, lane,
-and run. `session start` never writes claim fields. The rendered prompt includes
-the assigned `run=` and registry pointer so the spawned agent can preserve that
-value in its handoff evidence.
+and run. Manual claim evidence is truthful non-tmux registry evidence; `session
+start` is the step that creates attach/log evidence for a real tmux session and
+never writes claim fields. Main and Merge default to `tmux.agent_command`;
+Review uses `tmux.review_agent_command` when set and otherwise uses
+`review.gemini_command` for `review.backend: gemini-cli`. The rendered prompt
+includes the assigned `run=` and registry pointer so the spawned agent can
+preserve that value in its handoff evidence.
 `session list WORKFLOW` shows active tmux sessions with attach commands, and
 `session attach WORKFLOW SESSION` prints the exact attach command without
 joining the terminal unless `--exec` is provided.
-`status` and `status-api` include registered tmux session summaries from the
+`status` and `status serve` include registered tmux session summaries from the
 durable session registry. `doctor` flags stale, failed, orphaned, usage-limited,
 or runtime/session mismatch cases, while `clean audit` classifies the registry,
 rendered prompts, tmux logs, and individual sessions without deleting them.
@@ -206,16 +211,16 @@ These commands can mutate live tracker state and require `--write`.
 
 | Command | Purpose | Boundary |
 | --- | --- | --- |
-| `set-state` | Move one issue to a normalized workflow state. | Refuses `Human Review` from the main implementation role. |
-| `workpad` | Upsert the canonical issue workpad comment. | Use for durable evidence before state transitions. |
+| `project set-state` | Move one issue to a normalized workflow state. | Refuses `Human Review` from the main implementation role. |
+| `project workpad` | Upsert the canonical issue workpad comment. | Use for durable evidence before state transitions. |
 | `create-follow-up` | Create a follow-up issue from a body file. | Lower-level creation path; prefer `forge create` for quality-gated issues. |
-| `add-to-project` | Add an existing GitHub issue node to the configured Project. | Initializes configured Project status where supported. |
+| `project add` | Add an existing GitHub issue node to the configured Project. | Initializes configured Project status where supported. |
 
 Examples:
 
 ```bash
-cargo run -- set-state workflows/jade-symphony.md '#123' need_to_clarify --write
-cargo run -- workpad workflows/jade-symphony.md '#123' /tmp/workpad.md --write
+cargo run -- project set-state workflows/jade-symphony.md '#123' need_to_clarify --write
+cargo run -- project workpad workflows/jade-symphony.md '#123' /tmp/workpad.md --write
 ```
 
 ## Clean Lane
@@ -226,8 +231,7 @@ invariants, and repair evidence.
 
 | Command | Purpose | Boundary |
 | --- | --- | --- |
-| `clean plan` | Grouped read-only alias for `cleanup-plan`. | Reports terminal clean worktrees that are cleanup candidates; never deletes. |
-| `cleanup-plan` | Compatibility path for existing scripts. | Same output and read-only boundary as `clean plan`. |
+| `clean plan` | Read-only cleanup planning command. | Reports terminal clean worktrees that are cleanup candidates; never deletes. |
 | `clean audit` | Classify configured artifact/workspace residue by persistence action. | Read-only; categories include `promote_to_repo`, `attach_to_tracker`, `safe_to_keep`, `cleanup_candidate`, `needs_human_decision`, and canonical checkout quarantine. |
 
 Examples:
@@ -237,18 +241,18 @@ cargo run -- clean plan workflows/jade-symphony.md
 cargo run -- clean audit workflows/jade-symphony.md
 ```
 
-## Issue Quality Gate
+## Issue Readiness And Contract Validation
 
 | Command | Purpose | Boundary |
 | --- | --- | --- |
-| `gate` | Evaluate one issue with the deterministic/optional LLM gate. | Read-only. |
-| `gate-apply` | Apply gate failure routing and workpad evidence. | Requires `--write` for tracker mutation. |
+| `forge validate` | Validate issue contract quality for a draft body or existing issue. | Read-only; `Todo` uses the full Issue Quality Gate, `Backlog` uses the lighter seed gate. |
+| `project inspect` | Read live Project readiness, blockers, linked PR evidence, and dispatchability for one issue. | Read-only; does not claim, route, write workpads, or change status. |
 
 Examples:
 
 ```bash
-cargo run -- gate examples/dry-run-workflow.md '#3'
-cargo run -- gate-apply workflows/jade-symphony.md '#123' --write
+cargo run -- forge validate --workflow workflows/jade-symphony.md --issue '#123'
+cargo run -- project inspect workflows/jade-symphony.md '#123'
 ```
 
 ## Issue Forge
@@ -258,6 +262,7 @@ cargo run -- gate-apply workflows/jade-symphony.md '#123' --write
 | `forge validate` | Validate a body file or existing issue for `Backlog` or `Todo`. | Read-only; `Todo` uses the full Issue Quality Gate, `Backlog` uses the lighter seed gate. |
 | `forge create` | Create a Project-backed issue in `Backlog` or `Todo`. | Dry-run by default unless `--write` is supplied; initializes the Project item to the requested status and verifies readback; live `Todo` creation requires `--assignee`. |
 | `forge promote` | Promote one existing Backlog issue in place by editing title/body, writing a structured Promotion Note comment, then moving it to `Todo`. | Dry-run by default unless `--write` is supplied; requires structured note inputs, keeps the `Todo` status mutation last, and reports the checkpoint where any failure stopped. |
+| `forge rework` | Revise one live `Human Review` issue into an explicit `Rework` contract. | Dry-run by default unless `--write` is supplied; requires a replacement title/body, evidence file, and operator confirmation; rejects active lane claims and keeps the `Rework` status mutation last. |
 
 Examples:
 
@@ -268,6 +273,7 @@ cargo run -- forge create --workflow workflows/jade-symphony.md --status Backlog
 cargo run -- forge create --workflow workflows/jade-symphony.md --status Todo --title "Follow-up title" --body-file /tmp/issue.md --assignee Alive24 --write
 cargo run -- forge promote '#241' --workflow workflows/jade-symphony.md --title "Executable title" --body-file /tmp/issue.md --operator-confirmation "promote it" --decision "Use the CLI-owned promotion note template." --scope-change "Backlog seed is now an executable Todo issue." --dependency-context "Dependencies: none; related context is non-blocking." --readback-summary "Operator confirmed the dry-run preview before write." --dry-run
 cargo run -- forge promote '#241' --workflow examples/promote-fixture-workflow.md --title "Harden Issue Forge Reflect promotion fixture" --body-file examples/fixtures/promoted-issue.md --operator-confirmation "promote it" --decision "Keep the promotion in place." --scope-change "Backlog seed becomes an executable Todo issue." --dependency-context "Dependencies: none." --readback-summary "Dry-run preview verified before write." --dry-run
+cargo run -- forge rework '#282' --workflow workflows/jade-symphony.md --title "Rework: revised execution contract" --body-file /tmp/rework-body.md --evidence-file /tmp/rework-evidence.md --operator-confirmation "route Human Review back to Rework" --dry-run
 ```
 
 `forge promote` owns the Promotion Note requirement. The command refuses missing
@@ -303,6 +309,17 @@ uses this short Markdown shape:
 - ...
 ```
 
+`forge rework` owns the Human Review -> Rework contract-revision path. The
+interactive decision still belongs in the Issue Forge skill layer; the CLI
+accepts prepared files and confirmation, verifies the source issue is in
+`Human Review`, rejects active `Main Agent`, `Review Agent`, or `Merging Agent`
+claims with a diagnostic workpad, preserves terminal `state=done` or other
+terminal claim values as audit pointers, replaces the title/body, writes Rework
+revision evidence to the workpad, and only then sets Project status to
+`Rework`. It does not require a linked PR or local worktree, and it does not
+create or recover either one; the next Main Agent owns that repair setup after
+claiming `Rework`.
+
 ## Review Agent Lane
 
 The main implementation agent must never set `Human Review`. Review commands
@@ -312,15 +329,15 @@ changes.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `review fake` | Fixture/fake review transition helper. | Local testing path. |
-| `review once` | Run one configured review backend for one issue. | Only Review Agent may advance passed reviews to `Human Review`. |
-| `review loop` | Bounded review worker selection/reconciliation. | Prevents duplicate review workers where evidence exists. |
+| `review once` | Run one configured review backend for one issue. | Direct backend command for one issue. |
+| `review loop` | Bounded review worker selection/reconciliation. | For `gemini-cli`, runs headless Gemini by default with stdin prompt transport, JSON output capture, configured model/tools, and durable review-job evidence. |
 | `review claim` | Claim one `Agent Review` item's `Review Agent` text field for manual/operator review. | Requires `--worker` and `--write`; refuses non-`Agent Review` issues and writes a structured claim pointer. |
 | `review pass` | Record manual independent review pass evidence and move to `Human Review`. | Requires `--write`, a durable evidence file containing the exact current `Review Agent` claim, and preserves the field as terminal pass evidence. |
 | `review reject` | Record failed/inconclusive manual review evidence and route to `Agent Review`, `Rework`, or `Need Human Input`. | Refuses `Human Review`, requires exact claim evidence, and preserves the field as terminal reject/failed evidence. |
 | `review session` | Hidden legacy review session alias. | Does not write the `Review Agent` claim; use `review claim` or `review loop` for claim ownership. |
 | `review freshness` | Record/inspect review freshness evidence. | Used around merging/rework conflict repair. |
 | `review-clear-claim` | Clear one issue's `Review Agent` claim through the tracker adapter. | Requires `--write`; use after terminal manual review routing. |
-| `session start` | Start an attachable local tmux session for a selected lane and `run`. | Manual recovery path; validates an existing lane claim and does not write Project claim fields. |
+| `session start` | Start an attachable local tmux session for a selected lane and `run`. | Manual recovery path; validates an existing lane claim, selects the lane-specific command, and does not write Project claim fields. |
 | `session list` | List active Jade Symphony tmux sessions by configured prefix. | Read-only operator summary. |
 | `session attach` | Print or execute the tmux attach command for one session. | Defaults to printing the command; `--exec` enters tmux. |
 
@@ -359,26 +376,33 @@ Normal install mode is interactive: it prints detected target paths and requires
 operator confirmation before writing. Use `--skip-codex`, `--skip-gemini`,
 `--codex-dir`, and `--gemini-dir` for manual target control. Validation compares
 the active local skill files with the repo-owned dated suite.
+`doctor` also reports read-only install-health warnings for the detected Codex
+and Gemini skill roots, including missing roots, broken links, file-shaped
+aliases, missing `SKILL.md`, stale metadata, and stale Jade Symphony CLI naming.
+It points back to this installer path for repair instead of mutating local
+skills directly.
 
 The suite packages Issue Forge, Issue Forge Reflect, Manual Main, Manual Review,
-Manual Merge, and a Doctor/Fix stub. `forge reflect` remains a skill behavior,
-not a Jade Symphony CLI subcommand. `forge create`, `forge promote`, and
-`forge validate` remain deterministic CLI executor surfaces.
+Human Review, Manual Merge, and a Doctor/Fix stub. Human Review is an
+operator-owned briefing and UAT decision skill: it records a structured decision
+note and routes to `Merging`, `Rework`, or `Need Human Input` only after
+explicit operator confirmation. `forge reflect` remains a skill behavior, not a
+Jade Symphony CLI subcommand. `forge create`, `forge promote`, and `forge
+validate` remain deterministic CLI executor surfaces.
 
 ## Merge Lane
 
 | Command | Purpose | Boundary |
 | --- | --- | --- |
-| `merge-once` | Inspect one `Merging` issue, verify a single linked PR, and either merge or route blockers. | Live merge requires explicit `--write`; dirty/failing PRs route to `Rework`, transient `UNKNOWN` mergeability stays in `Merging` for retry, and `Need Human Input` workpads include a concrete question. Native subissues expect the parent integration branch as the PR base; parent final PRs expect `main`. |
-| `land` | Compatibility alias for `merge-once`. | Same boundary as `merge-once`. |
+| `merge once` | Inspect one `Merging` issue, verify a single linked PR, and either merge or route blockers. | Live merge requires explicit `--write`; dirty/failing PRs route to `Rework`, transient `UNKNOWN` mergeability stays in `Merging` for retry, and `Need Human Input` workpads include a concrete question. Native subissues expect the parent integration branch as the PR base; parent final PRs expect `main`. |
 
 Examples:
 
 ```bash
-cargo run -- merge-once workflows/jade-symphony.md --dry-run
+cargo run -- merge once workflows/jade-symphony.md --dry-run
 ```
 
-`merge-once` is separate from main implementation and review work. It should
+`merge once` is separate from main implementation and review work. It should
 only consume issues already in `Merging`.
 
 ## Live Dogfood Boundary

@@ -62,8 +62,8 @@ Gather only relevant sources:
 
 ```bash
 cd /Volumes/Bohemialive/GitHub/jade-symphony
-cargo run -- project-state workflows/jade-symphony.md
-cargo run -- project-issue workflows/jade-symphony.md '#<number>' --json
+cargo run -- project state workflows/jade-symphony.md
+cargo run -- project issue workflows/jade-symphony.md '#<number>' --json
 cargo run -- doctor workflows/jade-symphony.md
 ```
 
@@ -121,7 +121,7 @@ Read the Backlog item first:
 
 ```bash
 cd /Volumes/Bohemialive/GitHub/jade-symphony
-cargo run -- project-issue workflows/jade-symphony.md '#<number>' --json
+cargo run -- project issue workflows/jade-symphony.md '#<number>' --json
 ```
 
 Confirm it is still `Backlog`. If it is already `Todo`, `In Progress`, or
@@ -145,6 +145,12 @@ Default promotion path:
 
 The `Backlog` to `Todo` status change must be the final mutating step of the
 promotion session. After `forge promote --write`, only read back and report.
+
+If reflection identifies a live `Human Review` issue whose contract must be
+revised, treat that as Issue Forge discussion, not Backlog promotion. Prepare
+the full replacement body and evidence file, require explicit operator
+confirmation, and use `forge rework`; do not use `forge promote`, `set-state`,
+or raw Project mutation for the normal path.
 
 Suggested command after confirmation:
 

@@ -66,17 +66,15 @@ fn live_github_project_inspect_smoke() {
 }
 
 #[test]
-fn live_github_dogfood_smoke_dry_run_is_read_only() {
+fn live_github_debug_report_is_read_only() {
     if !require_live_smoke() {
         return;
     }
 
-    let output = run_jade(&["dogfood-smoke", WORKFLOW, "--dry-run"]);
+    let output = run_jade(&["debug", WORKFLOW]);
     let text = combined_output(&output);
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("dogfood_smoke="), "{text}");
-    assert!(
-        text.contains("dry_run") || text.contains("blocked"),
-        "dogfood smoke should remain dry-run/read-only in this smoke\n{text}"
-    );
+    assert!(text.contains("Jade Symphony Debug Report"), "{text}");
+    assert!(text.contains("read_only=true"), "{text}");
+    assert!(text.contains("Smoke Readiness"), "{text}");
 }

@@ -916,7 +916,7 @@ mod tests {
     fn interactive_forge_builds_quality_gated_contract() {
         let report = interactive_forge(InteractiveForgeInput {
             title: "Add resume preflight".into(),
-            intent: "run-loop should inspect runtime state before claiming new work".into(),
+            intent: "main loop should inspect runtime state before claiming new work".into(),
             skill: Some("runtime".into()),
             context: None,
             assignees: vec!["Alive24".into()],

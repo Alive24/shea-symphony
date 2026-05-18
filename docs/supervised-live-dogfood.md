@@ -33,7 +33,7 @@ or verification is failing for an unexplained reason.
 The repo-owned live workflow is:
 
 - `workflows/jade-symphony.md` for implementation, review, merge, smoke,
-  inspect, project-state, and Issue Forge commands.
+  inspect, project state, and Issue Forge commands.
 
 It defaults durable artifacts to `~/.jade-symphony/artifacts` when
 `JADE_SYMPHONY_ARTIFACT_ROOT` is unset. Set that variable to migrate worktrees,
@@ -47,7 +47,7 @@ as canonical. Normal dogfood workflow config belongs in `workflows/`.
 Use the live workflow as the source of tracker state:
 
 ```bash
-cargo run -- inspect workflows/jade-symphony.md
+cargo run -- project inspect workflows/jade-symphony.md '#<issue>'
 cargo run -- doctor
 cargo run -- doctor --interactive
 ```
@@ -68,26 +68,27 @@ Before the first write tick, run the same preflight surfaces operators use for
 normal work:
 
 ```bash
-cargo run -- project-state workflows/jade-symphony.md
-cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+cargo run -- project state workflows/jade-symphony.md
+cargo run -- doctor workflows/jade-symphony.md
+cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 
 Proceed only when tracker access is trusted, the selected issue is claimable,
-and the dry-run shows no blocking integration gaps. `dogfood-smoke` is kept as
-a hidden legacy fixture helper, not a product dogfood lane.
+and the dry-run shows no blocking integration gaps. Use `debug` when a compact
+human-readable readiness report is useful.
 
 ## One Implementation Tick
 
 Preview the same bounded implementation tick without tracker mutation:
 
 ```bash
-cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 
 Use one bounded write tick:
 
 ```bash
-cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --write
+cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
 That write tick requires a real main-agent backend. The canonical workflow uses
@@ -166,7 +167,6 @@ For a bounded Review Agent pass, run:
 
 ```bash
 export JADE_GEMINI_COMMAND="$(command -v gemini)"
-export GEMINI_CLI_TRUST_WORKSPACE=true
 cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
@@ -182,7 +182,12 @@ cargo run -- review reject workflows/jade-symphony.md '#226' --evidence-file /tm
 Expected outcomes:
 
 - each write-mode Review Agent records a `Review Agent` Project field claim
-  before launching the backend;
+  before launching the headless review job;
+- Gemini-backed `review loop` invokes the configured Gemini command headlessly
+  with `--prompt`, `--output-format json`, workflow-configured model, and
+  workflow-configured interim allowed tools, writes the prompt through stdin,
+  and records stdout, stderr, exit status, Gemini session id when present, a
+  review output artifact, and a durable job ledger;
 - manual review claims use `review claim`, and terminal manual review routing
   validates the exact evidence claim before preserving the `Review Agent` field
   as a terminal structured audit pointer;
@@ -190,14 +195,17 @@ Expected outcomes:
 - confirmed findings move the issue to `Rework`;
 - completed but inconclusive automatic review moves to `Rework` with a missing
   evidence diagnostic;
-- failed, timed-out, or unavailable review stays out of `Human Review`, records
-  evidence, clears stale `Review Agent` claims, and remains retryable after the
-  backend environment is fixed.
+- failed, timed-out, unavailable, unparsed, or infrastructure-blocked review
+  stays out of `Human Review` with durable evidence.
 
 If the review workflow uses `review.gemini_command: $JADE_GEMINI_COMMAND`,
 set that environment variable to an absolute Gemini CLI path before starting
-the supervised review loop. This avoids worker sessions with a narrower `PATH`
-recording a backend-unavailable failure for an otherwise installed Gemini CLI.
+the review loop. This avoids worker processes with a narrower `PATH` recording
+a backend-unavailable failure for an otherwise installed Gemini CLI.
+
+Supervised tmux Review remains available for operator-controlled review through
+`review claim` followed by `session start --lane review --run <RUN_ID>`, but it
+is no longer the default automatic `review loop` backend.
 
 Do not use review commands to bypass human acceptance.
 
@@ -216,8 +224,8 @@ After a human accepts work and moves the issue to `Merging`, use the guarded
 merge lane:
 
 ```bash
-cargo run -- merge-once workflows/jade-symphony.md --dry-run
-cargo run -- merge-once workflows/jade-symphony.md --write
+cargo run -- merge once workflows/jade-symphony.md --dry-run
+cargo run -- merge once workflows/jade-symphony.md --write
 ```
 
 The merge lane should:
@@ -244,7 +252,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 Then refresh the tracker and project invariants:
 
 ```bash
-cargo run -- inspect workflows/jade-symphony.md
+cargo run -- project inspect workflows/jade-symphony.md '#<issue>'
 cargo run -- doctor workflows/jade-symphony.md
 ```
 
@@ -252,7 +260,7 @@ cargo run -- doctor workflows/jade-symphony.md
 
 When something goes wrong:
 
-- use `cargo run -- inspect workflows/jade-symphony.md` to refresh
+- use `cargo run -- project inspect workflows/jade-symphony.md '#<issue>'` to refresh
   tracker state;
 - use `cargo run -- doctor` to find project, claim, and runtime-state
   invariant violations;

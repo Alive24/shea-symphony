@@ -7,7 +7,7 @@ use std::process::Command as ProcessCommand;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use clap::{error::ErrorKind, Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{error::ErrorKind, Args, Parser, Subcommand, ValueEnum};
 use jade_symphony::agent::{
     backend_from_config, persist_prompt_artifact, usage_limit_pause_from_events, AgentBackend,
     TmuxBackend, UsageLimitPause,
@@ -19,8 +19,9 @@ use jade_symphony::canonical_checkout::{
 };
 use jade_symphony::config::RuntimeConfig;
 use jade_symphony::doctor::{
-    audit_project_issues, audit_project_issues_with_context, draft_pr_repair_candidates,
-    human_review_repair_candidates, render_doctor_repair_workpad,
+    append_local_skill_install_doctor_violations, audit_project_issues,
+    audit_project_issues_with_context, default_jade_symphony_skill_targets,
+    draft_pr_repair_candidates, human_review_repair_candidates, render_doctor_repair_workpad,
     render_human_review_repair_workpad, render_project_audit_report,
     render_project_audit_report_json, AuditSeverity, ProjectAuditReport, ProjectAuditViolation,
     ProjectDoctorContext, AGENT_REVIEW_DRAFT_PR,
@@ -72,12 +73,12 @@ use jade_symphony::quality_gate::{
     evaluate_issue_with_source_alignment, LlmGateMode, LlmGateOptions,
 };
 use jade_symphony::review::{
-    classify_review_freshness, poll_review_job_until_terminal, render_review_freshness_workpad,
-    render_review_workpad, review_gate_decision, review_run_eligibility,
-    transition_allowed_for_main_agent, transition_allowed_for_review_agent,
+    classify_review_freshness, gemini_cli_headless_args, poll_review_job_until_terminal,
+    render_review_freshness_workpad, render_review_workpad, review_gate_decision,
+    review_run_eligibility, transition_allowed_for_main_agent, transition_allowed_for_review_agent,
     write_review_job_ledger_record, FakeReviewBackend, FakeReviewOutcome, GeminiCliReviewBackend,
-    ReviewBackend, ReviewFreshnessInput, ReviewJob, ReviewJobState, ReviewRequest,
-    ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
+    ReviewBackend, ReviewFreshnessInput, ReviewGateDecision, ReviewJob, ReviewJobState,
+    ReviewOutcome, ReviewRequest, ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
 };
 use jade_symphony::rework::{
     render_rework_diagnostic_workpad, rework_diagnostic_from_review, rework_transition_expected,
@@ -90,7 +91,8 @@ use jade_symphony::runtime_state::{
 };
 use jade_symphony::session_registry::{
     capture_tmux_pane_tail, classify_session_record, load_session_registry, read_log_tail,
-    session_registry_path, unix_timestamp_ms,
+    save_session_record, session_registry_path, unix_timestamp_ms, AgentSessionRecord,
+    SessionStatus,
 };
 use jade_symphony::status_surface::{render_latest_status_bar, render_snapshot};
 use jade_symphony::tracker::{
@@ -139,6 +141,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             issue_ref,
             json,
         } => project_issue(workflow_path, issue_ref, json),
+        Command::ProjectInspect {
+            workflow_path,
+            issue_ref,
+            lane,
+        } => project_inspect(workflow_path, issue_ref, lane),
         Command::Doctor { options } => doctor(options),
         Command::DoctorRepairHumanReview {
             workflow_path,
@@ -146,10 +153,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         } => doctor_repair_human_review(workflow_path, write),
         Command::Profiles { workflow_path } => list_profiles(workflow_path),
         Command::Debug { workflow_path } => debug_report(workflow_path),
-        Command::DogfoodSmoke {
-            workflow_path,
-            write,
-        } => dogfood_smoke(workflow_path, write),
         Command::CleanupPlan { workflow_path } => cleanup_plan_command(workflow_path),
         Command::CleanPlan { workflow_path } => cleanup_plan_command(workflow_path),
         Command::CleanAudit { workflow_path } => clean_audit_command(workflow_path),
@@ -347,6 +350,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             write,
             dry_run,
         ),
+        Command::ForgeRework { options } => forge_rework(options),
         Command::Help(text) => {
             print!("{text}");
             Ok(())
@@ -367,10 +371,10 @@ fn status_api(
     once: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !once {
-        return Err("status-api currently requires --once".into());
+        return Err("status serve currently requires --once".into());
     }
     if !bind.ip().is_loopback() {
-        return Err("status-api bind address must be loopback for this first slice".into());
+        return Err("status serve bind address must be loopback for this first slice".into());
     }
 
     let snapshot = build_plan_snapshot(&workflow_path)?;
@@ -420,13 +424,22 @@ fn session_status_snapshots(
     let mut snapshots = Vec::new();
 
     for record in registry.sessions.iter().rev().take(20).rev() {
-        let pane_tail = capture_tmux_pane_tail(
-            &config.tmux.command,
-            &record.pane_target,
-            DEFAULT_SESSION_STATUS_LINES,
-        )
-        .ok();
-        let log_tail = read_log_tail(&record.log_path, DEFAULT_SESSION_STATUS_LINES)?;
+        let is_tmux_session = record.backend == "tmux";
+        let pane_tail = if is_tmux_session {
+            capture_tmux_pane_tail(
+                &config.tmux.command,
+                &record.pane_target,
+                DEFAULT_SESSION_STATUS_LINES,
+            )
+            .ok()
+        } else {
+            None
+        };
+        let log_tail = if is_tmux_session {
+            read_log_tail(&record.log_path, DEFAULT_SESSION_STATUS_LINES)?
+        } else {
+            None
+        };
         let probe = classify_session_record(
             record,
             pane_tail.as_deref(),
@@ -443,8 +456,8 @@ fn session_status_snapshots(
             evidence: probe.evidence,
             issue_identifier: record.issue_identifier.clone(),
             issue_title: record.issue_title.clone(),
-            attach_command: Some(record.attach_command.clone()),
-            log_path: Some(record.log_path.display().to_string()),
+            attach_command: is_tmux_session.then(|| record.attach_command.clone()),
+            log_path: is_tmux_session.then(|| record.log_path.display().to_string()),
             updated_at_ms: record.updated_at_ms,
         });
     }
@@ -495,7 +508,7 @@ fn quality_gate(
         append_tracker_mutation_audit(
             &config,
             TrackerMutationAudit {
-                command: "gate-apply",
+                command: "forge validate",
                 mutation_type: "workpad_write",
                 issue_ref: Some(&issue_ref),
                 target: None,
@@ -510,7 +523,7 @@ fn quality_gate(
             append_tracker_mutation_audit(
                 &config,
                 TrackerMutationAudit {
-                    command: "gate-apply",
+                    command: "project inspect",
                     mutation_type: "state_change",
                     issue_ref: Some(&issue_ref),
                     target: None,
@@ -1089,6 +1102,340 @@ fn forge_promote(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct ForgeReworkOptions {
+    workflow_path: PathBuf,
+    issue_ref: String,
+    title: String,
+    markdown: String,
+    evidence: String,
+    operator_confirmation: String,
+    write: bool,
+    dry_run: bool,
+}
+
+fn forge_rework(options: ForgeReworkOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let ForgeReworkOptions {
+        workflow_path,
+        issue_ref,
+        title,
+        markdown,
+        evidence,
+        operator_confirmation,
+        write,
+        dry_run,
+    } = options;
+    if write && dry_run {
+        return Err("forge rework cannot use --write and --dry-run together".into());
+    }
+    let dry_run = !write || dry_run;
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    forge_rework_with_adapter(
+        &config,
+        adapter.as_ref(),
+        ForgeReworkInput {
+            issue_ref,
+            title,
+            markdown,
+            evidence,
+            operator_confirmation,
+            dry_run,
+        },
+    )
+}
+
+#[derive(Debug, Clone)]
+struct ForgeReworkInput {
+    issue_ref: String,
+    title: String,
+    markdown: String,
+    evidence: String,
+    operator_confirmation: String,
+    dry_run: bool,
+}
+
+fn forge_rework_with_adapter(
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    input: ForgeReworkInput,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let confirmation = clean_rework_text(&input.operator_confirmation, "--operator-confirmation")?;
+    let evidence = clean_rework_text(&input.evidence, "--evidence-file")?;
+    let source = adapter
+        .get_issue(&input.issue_ref)
+        .map_err(|error| format!("forge rework stopped at read_source: {error}"))?
+        .ok_or_else(|| {
+            format!(
+                "forge rework stopped at read_source: issue not found: {}",
+                input.issue_ref
+            )
+        })?;
+    if normalize_state(&source.state) != normalize_state(&config.tracker.state_map.human_review) {
+        return Err(format!(
+            "forge rework stopped at preflight: {} is in {:?}, expected Human Review",
+            source.identifier, source.state
+        )
+        .into());
+    }
+    if let Err(error) = ensure_no_active_human_review_lane_claims(&source) {
+        if !input.dry_run {
+            let diagnostic = render_forge_rework_blocked_workpad(&source, &error.to_string());
+            adapter
+                .upsert_workpad(&source.identifier, &diagnostic)
+                .map_err(|write_error| {
+                    format!("forge rework stopped at active_claim_diagnostic: {write_error}")
+                })?;
+            append_tracker_mutation_audit(
+                config,
+                TrackerMutationAudit {
+                    command: "forge rework",
+                    mutation_type: "workpad_write",
+                    issue_ref: Some(&source.identifier),
+                    target: Some("Rework Revision Blocker".into()),
+                    from_state: Some(source.state.clone()),
+                    to_state: None,
+                    reason: "forge human review rework active claim diagnostic",
+                },
+            );
+        }
+        return Err(error);
+    }
+
+    let report = forge_validation_report(
+        ForgeStatusArg::Todo,
+        &input.title,
+        &input.markdown,
+        config,
+        &source.assignees,
+    )
+    .map_err(|error| format!("forge rework stopped at validate: {error}"))?;
+    print_forge_validation(&report);
+    if !report.decision.is_dispatchable() {
+        return Err(
+            "forge rework stopped at validate: replacement body failed executable issue gate"
+                .into(),
+        );
+    }
+
+    if input.dry_run {
+        let note = render_forge_rework_workpad(
+            &source,
+            &report.title,
+            &confirmation,
+            &evidence,
+            &[
+                "`forge rework --dry-run` validated Human Review source state, lane claims, replacement body, and evidence inputs.".into(),
+            ],
+        );
+        println!(
+            "forge_rework_dry_run=ok issue={} from=HumanReview to=Rework title={:?}",
+            source.identifier, report.title
+        );
+        println!("rework_evidence_preview=\n{note}");
+        return Ok(());
+    }
+
+    adapter
+        .update_issue_content(&source.identifier, &report.title, &input.markdown)
+        .map_err(|error| format!("forge rework stopped at edit_issue: {error}"))?;
+    append_tracker_mutation_audit(
+        config,
+        TrackerMutationAudit {
+            command: "forge rework",
+            mutation_type: "issue_edit",
+            issue_ref: Some(&source.identifier),
+            target: Some(report.title.clone()),
+            from_state: Some(source.state.clone()),
+            to_state: None,
+            reason: "forge human review rework content replacement",
+        },
+    );
+
+    let content_verified = adapter
+        .get_issue(&source.identifier)
+        .map_err(|error| format!("forge rework stopped at readback: {error}"))?
+        .ok_or_else(|| {
+            format!(
+                "forge rework stopped at readback: issue disappeared after update: {}",
+                source.identifier
+            )
+        })?;
+    if content_verified.title != report.title
+        || content_verified.description.as_deref() != Some(input.markdown.as_str())
+    {
+        return Err(format!(
+            "forge rework stopped at readback: expected title {:?} and replacement body for {}, got title {:?}",
+            report.title, content_verified.identifier, content_verified.title
+        )
+        .into());
+    }
+
+    let readbacks = vec![format!(
+        "`forge rework --write` replaced the issue content; pre-status readback confirmed issue `{}` title `{}` before the final Project status mutation.",
+        content_verified.identifier, content_verified.title
+    )];
+    let workpad = render_forge_rework_workpad(
+        &content_verified,
+        &content_verified.title,
+        &confirmation,
+        &evidence,
+        &readbacks,
+    );
+    adapter
+        .upsert_workpad(&content_verified.identifier, &workpad)
+        .map_err(|error| format!("forge rework stopped at evidence_workpad: {error}"))?;
+    append_tracker_mutation_audit(
+        config,
+        TrackerMutationAudit {
+            command: "forge rework",
+            mutation_type: "workpad_write",
+            issue_ref: Some(&content_verified.identifier),
+            target: Some("Rework Revision Evidence".into()),
+            from_state: Some(source.state.clone()),
+            to_state: None,
+            reason: "forge human review rework evidence before status change",
+        },
+    );
+
+    adapter
+        .set_state(&source.identifier, "rework")
+        .map_err(|error| format!("forge rework stopped at set_status: {error}"))?;
+    append_tracker_mutation_audit(
+        config,
+        TrackerMutationAudit {
+            command: "forge rework",
+            mutation_type: "status",
+            issue_ref: Some(&source.identifier),
+            target: Some("Rework".into()),
+            from_state: Some(source.state.clone()),
+            to_state: Some("rework".into()),
+            reason: "forge human review rework final status update",
+        },
+    );
+
+    let verified = adapter
+        .get_issue(&source.identifier)
+        .map_err(|error| format!("forge rework stopped at final_readback: {error}"))?
+        .ok_or_else(|| {
+            format!(
+                "forge rework stopped at final_readback: issue disappeared after update: {}",
+                source.identifier
+            )
+        })?;
+    if normalize_state(&verified.state) != normalize_state(&config.tracker.state_map.rework) {
+        return Err(format!(
+            "forge rework stopped at final_readback: expected Rework, got {:?}",
+            verified.state
+        )
+        .into());
+    }
+
+    println!(
+        "forge_rework=ok issue={} status=Rework title={:?} evidence=workpad final_status_mutation=true",
+        verified.identifier, verified.title
+    );
+    Ok(())
+}
+
+fn clean_rework_text(value: &str, field: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        Err(format!("forge rework requires non-empty {field}").into())
+    } else {
+        Ok(trimmed.to_string())
+    }
+}
+
+fn ensure_no_active_human_review_lane_claims(
+    issue: &TrackerIssue,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for (field, lane) in [
+        ("Main Agent", LaneClaimLane::Main),
+        ("Review Agent", LaneClaimLane::Review),
+        ("Merging Agent", LaneClaimLane::Merge),
+    ] {
+        let Some(value) = project_text_field(issue, field) else {
+            continue;
+        };
+        let claim = LaneClaim::parse(&value).map_err(|error| {
+            format!(
+                "forge rework stopped at preflight: Human Review has unparseable {field} claim: {error}"
+            )
+        })?;
+        if claim.lane != lane {
+            return Err(format!(
+                "forge rework stopped at preflight: Human Review has mismatched {field} claim lane={}",
+                claim.lane.as_str()
+            )
+            .into());
+        }
+        if !claim.state.is_terminal_audit_pointer() {
+            return Err(format!(
+                "forge rework stopped at preflight: Human Review has active {field} claim run={} state={}",
+                claim.run,
+                claim.state.as_str()
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn render_forge_rework_workpad(
+    issue: &TrackerIssue,
+    rework_title: &str,
+    operator_confirmation: &str,
+    evidence: &str,
+    generated_readbacks: &[String],
+) -> String {
+    let mut lines = vec![
+        "## Rework Revision Evidence".to_string(),
+        String::new(),
+        format!("- Issue: {} {}", issue.identifier, issue.title),
+        format!("- Replacement Rework title/status: `{rework_title}` / `Rework`"),
+        format!("- Operator confirmation: {operator_confirmation:?}"),
+        "- Source state validated as `Human Review` before mutation.".into(),
+        "- Terminal lane claims, when present, were preserved as audit pointers.".into(),
+        "- Active lane claims in `Human Review` are rejected before content or status writes."
+            .into(),
+        "- Replacement body was written and read back before the final Project status mutation."
+            .into(),
+        "- Final Project status mutation is `Rework`.".into(),
+        String::new(),
+        "### Rework Direction".into(),
+        String::new(),
+        evidence.trim().to_string(),
+        String::new(),
+        "### Verification Readback".into(),
+        String::new(),
+    ];
+    push_markdown_bullets(&mut lines, generated_readbacks);
+    lines.extend([
+        String::new(),
+        "### Role Boundary".into(),
+        String::new(),
+        "- Main Agent may claim `Rework`, repair the revised contract, and stop at `Agent Review`."
+            .into(),
+        "- `Human Review` remains reserved for independent Review Agent pass evidence.".into(),
+    ]);
+    lines.join("\n")
+}
+
+fn render_forge_rework_blocked_workpad(issue: &TrackerIssue, reason: &str) -> String {
+    [
+        "## Rework Revision Blocker".to_string(),
+        String::new(),
+        format!("- Issue: {} {}", issue.identifier, issue.title),
+        "- Source state: `Human Review`".into(),
+        format!("- Blocker: {reason}"),
+        "- No replacement body was written.".into(),
+        "- Project status was not changed to `Rework`.".into(),
+        "- Resolve or supersede the active lane claim before retrying `forge rework`.".into(),
+    ]
+    .join("\n")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct PromotionNoteInput {
     operator_confirmation: String,
     decisions: Vec<String>,
@@ -1166,17 +1513,33 @@ fn forge_validate(
             issue.assignees,
         )
     } else {
+        let assignees = issue_contract_assignees(&markdown);
         (
             status.unwrap_or(ForgeStatusArg::Todo),
             title,
             markdown,
-            Vec::new(),
+            assignees,
         )
     };
     let report = forge_validation_report(status, &title, &markdown, &config, &assignees)?;
     print_forge_validation(&report);
     println!("status={}", status.as_str());
     Ok(())
+}
+
+fn issue_contract_assignees(markdown: &str) -> Vec<String> {
+    markdown
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim().trim_start_matches('-').trim();
+            trimmed
+                .strip_prefix("Assignee:")
+                .or_else(|| trimmed.strip_prefix("Assignees:"))
+        })
+        .flat_map(|value| value.split(','))
+        .map(|assignee| assignee.trim().trim_start_matches('@').to_string())
+        .filter(|assignee| !assignee.is_empty() && !assignee.eq_ignore_ascii_case("none"))
+        .collect()
 }
 
 fn forge_validation_report(
@@ -1385,17 +1748,13 @@ fn review_fake(
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
     let request = ReviewRequest {
         issue: issue.clone(),
-        prompt: render_prompt(
-            workflow.prompt_for_lane(AgentLane::ReviewAgent),
-            &issue,
-            None,
-        )?,
+        prompt: render_automatic_review_prompt(&workflow, &issue)?,
         workspace: config.workspace.root.clone(),
         artifact_root: config.observability.logs_root.join("reviews"),
     };
     let backend = FakeReviewBackend::new(outcome);
     let job = backend.poll(backend.start(request)?)?;
-    apply_review_result(&config, adapter.as_ref(), &issue_ref, &issue, &job)?;
+    apply_review_result(&config, adapter.as_ref(), &issue_ref, &issue, &job, None)?;
 
     let decision = review_gate_decision(&job);
     println!(
@@ -1421,19 +1780,24 @@ fn review_once(
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
     let request = ReviewRequest {
         issue: issue.clone(),
-        prompt: render_prompt(
-            workflow.prompt_for_lane(AgentLane::ReviewAgent),
-            &issue,
-            None,
-        )?,
+        prompt: render_automatic_review_prompt(&workflow, &issue)?,
         workspace: config.workspace.root.clone(),
         artifact_root: config.observability.logs_root.join("reviews"),
     };
     let job = match config.review.backend.as_str() {
         "gemini-cli" => {
-            let backend = GeminiCliReviewBackend::new(config.review.gemini_command.clone());
+            let backend = GeminiCliReviewBackend::with_headless_options(
+                config.review.gemini_command.clone(),
+                config.review.gemini_model.clone(),
+                config.review.gemini_allowed_tools.clone(),
+            );
             match backend.start(request) {
-                Ok(job) => backend.poll(job)?,
+                Ok(job) => poll_review_job_until_terminal(
+                    &backend,
+                    job,
+                    Duration::from_millis(config.review.timeout_ms),
+                    Duration::from_millis(500),
+                )?,
                 Err(error) => ReviewJob::failed_unavailable(
                     issue.identifier.clone(),
                     "gemini-cli",
@@ -1446,7 +1810,7 @@ fn review_once(
             backend.poll(backend.start(request)?)?
         }
     };
-    apply_review_result(&config, adapter.as_ref(), &issue_ref, &issue, &job)?;
+    apply_review_result(&config, adapter.as_ref(), &issue_ref, &issue, &job, None)?;
 
     let decision = review_gate_decision(&job);
     println!(
@@ -1505,6 +1869,14 @@ fn review_claim(
             value: claim_value.clone(),
         },
     )?;
+    let registry_path = record_manual_lane_claim_evidence(
+        &config,
+        &issue,
+        AgentSessionLaneArg::Review,
+        &claim,
+        &claim_value,
+        &worker,
+    )?;
     append_tracker_mutation_audit(
         &config,
         TrackerMutationAudit {
@@ -1518,8 +1890,10 @@ fn review_claim(
         },
     );
     println!(
-        "review_claim=ok issue_ref={} field=\"Review Agent\" run={} value={claim_value}",
-        issue.identifier, claim.run
+        "review_claim=ok issue_ref={} field=\"Review Agent\" run={} registry={} value={claim_value}",
+        issue.identifier,
+        claim.run,
+        registry_path.display()
     );
     Ok(())
 }
@@ -1576,6 +1950,8 @@ fn lane_claim_command(
             value: claim_value.clone(),
         },
     )?;
+    let registry_path =
+        record_manual_lane_claim_evidence(&config, &issue, lane, &claim, &claim_value, &worker)?;
     let command_name = format!("{} claim", lane.label());
     append_tracker_mutation_audit(
         &config,
@@ -1590,12 +1966,13 @@ fn lane_claim_command(
         },
     );
     println!(
-        "{}_claim=ok issue_ref={} field={:?} worker={} run={} value={claim_value}",
+        "{}_claim=ok issue_ref={} field={:?} worker={} run={} registry={} value={claim_value}",
         lane.label(),
         issue.identifier,
         lane.claim_field(),
         worker.trim(),
-        claim.run
+        claim.run,
+        registry_path.display()
     );
     Ok(())
 }
@@ -1606,7 +1983,9 @@ fn validate_lane_claim_state(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let normalized = issue.normalized_state();
     let valid = match lane {
-        AgentSessionLaneArg::Main => matches!(normalized.as_str(), "todo" | "in progress"),
+        AgentSessionLaneArg::Main => {
+            matches!(normalized.as_str(), "todo" | "in progress" | "rework")
+        }
         AgentSessionLaneArg::Review => normalized == "agent review",
         AgentSessionLaneArg::Merge => normalized == "merging",
     };
@@ -1683,6 +2062,50 @@ fn lane_claim_for_manual_worker(
     .with_worker(worker))
 }
 
+fn record_manual_lane_claim_evidence(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    lane: AgentSessionLaneArg,
+    claim: &LaneClaim,
+    claim_value: &str,
+    worker: &str,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let registry_path = session_registry_path(config);
+    let now_ms = unix_timestamp_ms();
+    let path = std::env::current_dir()?;
+    let branch = current_git_branch(&path).ok().flatten();
+    let session_name = format!("manual-{}-{}", lane.label(), safe_identifier(&claim.run));
+    let record = AgentSessionRecord {
+        issue_id: Some(issue.id.clone()),
+        issue_identifier: Some(issue.identifier.clone()),
+        issue_title: Some(issue.title.clone()),
+        lane: lane.label().into(),
+        run_id: Some(claim.run.clone()),
+        thread: Some(claim.thread.clone()),
+        session_source: Some("manual-claim".into()),
+        claim_value: Some(claim_value.into()),
+        actor_role: Some(claim.actor.as_str().into()),
+        actor_label: Some(worker.trim().into()),
+        git_author: None,
+        profile_id: None,
+        instance_name: None,
+        worktree: path,
+        branch,
+        backend: "codex-app-manual".into(),
+        session_name,
+        pane_target: String::new(),
+        prompt_artifact_path: PathBuf::new(),
+        log_path: PathBuf::new(),
+        attach_command: "not a tmux session; manual Codex App evidence only".into(),
+        attempt: 1,
+        status: SessionStatus::Recorded,
+        started_at_ms: now_ms,
+        updated_at_ms: now_ms,
+    };
+    save_session_record(&registry_path, record)?;
+    Ok(registry_path)
+}
+
 fn review_clear_claim(
     workflow_path: PathBuf,
     issue_ref: String,
@@ -1742,7 +2165,8 @@ fn review_manual_pass(
         .into());
     }
 
-    let (current_claim_value, current_claim) = validate_manual_review_claim(&issue, &evidence)?;
+    let (current_claim_value, current_claim) =
+        validate_manual_review_pass_claim(&issue, &evidence)?;
     let terminal_claim_value =
         terminal_review_claim_value(&current_claim, LaneClaimState::Done, "passed");
     let target_state = "human_review";
@@ -1847,7 +2271,8 @@ fn review_manual_reject(
         .into());
     }
 
-    let (current_claim_value, current_claim) = validate_manual_review_claim(&issue, &evidence)?;
+    let (current_claim_value, current_claim) =
+        validate_active_manual_review_claim(&issue, &evidence)?;
     let (terminal_state, terminal_result) = reject_terminal_claim_outcome(&normalized_target);
     let terminal_claim_value =
         terminal_review_claim_value(&current_claim, terminal_state, terminal_result);
@@ -1954,9 +2379,44 @@ fn render_manual_review_workpad(
     lines.join("\n")
 }
 
-fn validate_manual_review_claim(
+fn validate_manual_review_pass_claim(
     issue: &TrackerIssue,
     evidence: &str,
+) -> Result<(String, LaneClaim), Box<dyn std::error::Error>> {
+    let (current, claim) = parse_manual_review_claim(issue)?;
+    if claim.state == LaneClaimState::Active
+        || (claim.state == LaneClaimState::Done
+            && review_claim_result_value(&current) == Some("passed"))
+    {
+        validate_manual_review_evidence_contains_claim(&current, evidence)?;
+        return Ok((current, claim));
+    }
+    Err(format!(
+        "current Review Agent claim must be active, or already state=done result=passed for idempotent pass repair; found state={} result={}",
+        claim.state.as_str(),
+        review_claim_result_value(&current).unwrap_or("missing")
+    )
+    .into())
+}
+
+fn validate_active_manual_review_claim(
+    issue: &TrackerIssue,
+    evidence: &str,
+) -> Result<(String, LaneClaim), Box<dyn std::error::Error>> {
+    let (current, claim) = parse_manual_review_claim(issue)?;
+    if claim.state != LaneClaimState::Active {
+        return Err(format!(
+            "current Review Agent claim must be active before routing, found state={}",
+            claim.state.as_str()
+        )
+        .into());
+    }
+    validate_manual_review_evidence_contains_claim(&current, evidence)?;
+    Ok((current, claim))
+}
+
+fn parse_manual_review_claim(
+    issue: &TrackerIssue,
 ) -> Result<(String, LaneClaim), Box<dyn std::error::Error>> {
     let current = project_text_field(issue, "Review Agent")
         .ok_or("manual review routing requires a current Review Agent claim")?;
@@ -1973,19 +2433,25 @@ fn validate_manual_review_claim(
         )
         .into());
     }
-    if claim.state != LaneClaimState::Active {
-        return Err(format!(
-            "current Review Agent claim must be active before routing, found state={}",
-            claim.state.as_str()
-        )
-        .into());
-    }
-    if !evidence.contains(&current) {
+    Ok((current, claim))
+}
+
+fn validate_manual_review_evidence_contains_claim(
+    current: &str,
+    evidence: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !evidence.contains(current) {
         return Err(
             "manual review evidence must include the exact current Review Agent claim value".into(),
         );
     }
-    Ok((current, claim))
+    Ok(())
+}
+
+fn review_claim_result_value(value: &str) -> Option<&str> {
+    value
+        .split_whitespace()
+        .find_map(|token| token.strip_prefix("result="))
 }
 
 fn terminal_review_claim_value(claim: &LaneClaim, state: LaneClaimState, result: &str) -> String {
@@ -2133,6 +2599,13 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
             continue;
         }
 
+        let mut pending_review_jobs: Vec<(
+            usize,
+            TrackerIssue,
+            LaneClaim,
+            thread::JoinHandle<ReviewJob>,
+        )> = Vec::new();
+
         for (slot, selected_issue) in selected.into_iter().enumerate() {
             let worker_slot = slot + 1;
             match review_run_eligibility(
@@ -2156,18 +2629,35 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                 );
                     if !options.write {
                         println!(
-                            "review_loop_dry_run action=start issue={} backend={backend_kind}",
-                            selected_issue.identifier
+                            "review_loop_dry_run action=start issue={} backend={backend_kind} mode={}",
+                            selected_issue.identifier,
+                            if backend_kind == "gemini-cli" {
+                                "headless"
+                            } else {
+                                "job"
+                            }
                         );
+                        if backend_kind == "gemini-cli" {
+                            println!(
+                                "review_loop_dry_run action=command issue={} command={} args={}",
+                                selected_issue.identifier,
+                                shell_quote_display(&config.review.gemini_command),
+                                gemini_cli_headless_args(
+                                    config.review.gemini_model.as_deref(),
+                                    &config.review.gemini_allowed_tools,
+                                )
+                                .join(" ")
+                            );
+                        }
                         print_review_claim_field_dry_run(&selected_issue, &worker_key);
                         println!(
                             "review_loop_dry_run action=workpad issue={} evidence=review_job",
                             selected_issue.identifier
                         );
                         println!(
-                        "review_loop_dry_run action=reconcile issue={} actor=independent_review_agent",
-                        selected_issue.identifier
-                    );
+                            "review_loop_dry_run action=reconcile issue={} actor=independent_review_agent",
+                            selected_issue.identifier
+                        );
                         continue;
                     }
 
@@ -2186,40 +2676,40 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                         &backend_kind,
                     ) {
                         ReviewRunEligibility::Eligible { worker_key } => {
-                            write_review_claim_field(
+                            let claim = write_review_claim_field(
                                 &config,
                                 adapter.as_ref(),
                                 &latest,
                                 &worker_key,
                             )?;
-                            let mut job = run_review_job(
-                                &workflow,
-                                &config,
-                                &latest,
-                                options.fake_outcome.clone(),
-                            )?;
-                            let ledger_path = write_review_job_ledger_record(
-                                &config.observability.logs_root,
-                                &latest,
-                                &job,
-                            )?;
-                            job.ledger_path = Some(ledger_path.clone());
-                            apply_review_result(
-                                &config,
-                                adapter.as_ref(),
-                                &latest.identifier,
-                                &latest,
-                                &job,
-                            )?;
-                            let decision = review_gate_decision(&job);
+                            let workflow_for_job = workflow.clone();
+                            let config_for_job = config.clone();
+                            let issue_for_job = latest.clone();
+                            let fake_outcome_for_job = options.fake_outcome.clone();
+                            let backend_kind_for_job = backend_kind.clone();
                             println!(
-                            "review_loop_action=reconciled issue={} backend={} outcome={:?} target_state={:?} ledger={}",
-                            latest.identifier,
-                            job.backend,
-                            decision.outcome,
-                            decision.target_state,
-                            ledger_path.display()
-                        );
+                                "review_loop_action=start issue={} worker_slot={} backend={} mode={}",
+                                latest.identifier,
+                                worker_slot,
+                                backend_kind,
+                                if backend_kind == "gemini-cli" { "headless" } else { "job" }
+                            );
+                            let handle = thread::spawn(move || {
+                                run_review_job(
+                                    &workflow_for_job,
+                                    &config_for_job,
+                                    &issue_for_job,
+                                    fake_outcome_for_job,
+                                )
+                                .unwrap_or_else(|error| {
+                                    ReviewJob::failed_unavailable(
+                                        issue_for_job.identifier.clone(),
+                                        backend_kind_for_job,
+                                        error.to_string(),
+                                    )
+                                })
+                            });
+                            pending_review_jobs.push((worker_slot, latest, claim, handle));
                         }
                         ReviewRunEligibility::AlreadyQueued { worker_key } => {
                             println!(
@@ -2276,6 +2766,38 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
             }
         }
 
+        for (worker_slot, latest, claim, handle) in pending_review_jobs {
+            let mut job = match handle.join() {
+                Ok(job) => job,
+                Err(_) => ReviewJob::failed_unavailable(
+                    latest.identifier.clone(),
+                    backend_kind.clone(),
+                    "review worker thread panicked",
+                ),
+            };
+            let ledger_path =
+                write_review_job_ledger_record(&config.observability.logs_root, &latest, &job)?;
+            job.ledger_path = Some(ledger_path.clone());
+            apply_review_result(
+                &config,
+                adapter.as_ref(),
+                &latest.identifier,
+                &latest,
+                &job,
+                Some(&claim),
+            )?;
+            let decision = review_gate_decision(&job);
+            println!(
+                "review_loop_action=reconciled issue={} worker_slot={} backend={} outcome={:?} target_state={:?} ledger={}",
+                latest.identifier,
+                worker_slot,
+                job.backend,
+                decision.outcome,
+                decision.target_state,
+                ledger_path.display()
+            );
+        }
+
         if !options.write && limit.is_none() {
             println!(
                 "review_loop=stopped reason=dry_run_would_repeat_without_mutation iterations={iterations}"
@@ -2303,7 +2825,7 @@ fn merge_once(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std::er
 fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
     let max = options
         .iteration_limit()
-        .ok_or("merge-loop requires --max-iterations or --once")?;
+        .ok_or("merge loop requires --max-iterations or --once")?;
     let pool = options.pool_size();
     let mut stopped = false;
 
@@ -2478,7 +3000,7 @@ fn merge_once_tick(
     append_tracker_mutation_audit(
         &config,
         TrackerMutationAudit {
-            command: "merge-once",
+            command: "merge once",
             mutation_type: "workpad_write",
             issue_ref: Some(&issue.identifier),
             target: decision.pr_url.clone(),
@@ -2492,7 +3014,7 @@ fn merge_once_tick(
         append_tracker_mutation_audit(
             &config,
             TrackerMutationAudit {
-                command: "merge-once",
+                command: "merge once",
                 mutation_type: "state_change",
                 issue_ref: Some(&issue.identifier),
                 target: decision.pr_url.clone(),
@@ -2528,7 +3050,7 @@ fn record_done_merge_lane_completion(
     append_tracker_mutation_audit(
         config,
         TrackerMutationAudit {
-            command: "merge-once",
+            command: "merge once",
             mutation_type: "workpad_write",
             issue_ref: Some(&issue.identifier),
             target: issue
@@ -2544,7 +3066,7 @@ fn record_done_merge_lane_completion(
     append_tracker_mutation_audit(
         config,
         TrackerMutationAudit {
-            command: "merge-once",
+            command: "merge once",
             mutation_type: "state_change",
             issue_ref: Some(&issue.identifier),
             target: issue
@@ -2667,7 +3189,7 @@ fn record_review_invalid_handoff(
         append_tracker_mutation_audit(
             config,
             TrackerMutationAudit {
-                command: "review-loop",
+                command: "review loop",
                 mutation_type: "workpad_write",
                 issue_ref: Some(&issue.identifier),
                 target: Some("invalid_handoff".into()),
@@ -2735,7 +3257,7 @@ fn write_review_claim_field(
     adapter: &dyn TrackerAdapter,
     issue: &TrackerIssue,
     worker_key: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<LaneClaim, Box<dyn std::error::Error>> {
     let claim = review_claim_for_issue(issue, worker_key);
     let claim_value = claim.render();
     adapter.set_project_field(
@@ -2748,7 +3270,7 @@ fn write_review_claim_field(
     append_tracker_mutation_audit(
         config,
         TrackerMutationAudit {
-            command: "review-loop",
+            command: "review loop",
             mutation_type: "claim_field",
             issue_ref: Some(&issue.identifier),
             target: Some(format!("Review Agent={claim_value}")),
@@ -2761,7 +3283,7 @@ fn write_review_claim_field(
         "review_loop_action=claim_field issue={} field=\"Review Agent\" run={}",
         issue.identifier, claim.run
     );
-    Ok(())
+    Ok(claim)
 }
 
 fn run_review_job(
@@ -2772,11 +3294,7 @@ fn run_review_job(
 ) -> Result<ReviewJob, Box<dyn std::error::Error>> {
     let request = ReviewRequest {
         issue: issue.clone(),
-        prompt: render_prompt(
-            workflow.prompt_for_lane(AgentLane::ReviewAgent),
-            issue,
-            None,
-        )?,
+        prompt: render_automatic_review_prompt(workflow, issue)?,
         workspace: review_workspace_for_issue(config, issue),
         artifact_root: config.observability.logs_root.join("reviews"),
     };
@@ -2794,7 +3312,11 @@ fn run_review_job(
 
     match config.review.backend.as_str() {
         "gemini-cli" => {
-            let backend = GeminiCliReviewBackend::new(config.review.gemini_command.clone());
+            let backend = GeminiCliReviewBackend::with_headless_options(
+                config.review.gemini_command.clone(),
+                config.review.gemini_model.clone(),
+                config.review.gemini_allowed_tools.clone(),
+            );
             match backend.start(request) {
                 Ok(job) => Ok(poll_review_job_until_terminal(
                     &backend,
@@ -2820,6 +3342,37 @@ fn review_workspace_for_issue(config: &RuntimeConfig, issue: &TrackerIssue) -> P
     run_loop_handoff_plan(config, issue)
         .map(|handoff| handoff.workspace_path)
         .unwrap_or_else(|_| config.workspace.root.clone())
+}
+
+fn render_automatic_review_prompt(
+    workflow: &WorkflowDefinition,
+    issue: &TrackerIssue,
+) -> Result<String, jade_symphony::prompt::PromptError> {
+    let mut prompt = render_prompt(
+        workflow.prompt_for_lane(AgentLane::ReviewAgent),
+        issue,
+        None,
+    )?;
+    prompt.push_str(
+        "\n\n## Automatic Headless Review Boundary\n\n\
+This Gemini process is running under Jade Symphony automatic `review loop` or `review once`.\n\
+Jade Symphony CLI has already claimed or will own any Review Agent claim, workpad write,\n\
+issue body update, and Project state transition outside this process.\n\n\
+Do not run mutating Jade Symphony or GitHub commands, including `review claim`, `review pass`,\n\
+`review reject`, `set-state`, `workpad`, `forge`, `gh issue edit`, `gh issue comment`, raw\n\
+Project GraphQL mutations, or Project UI changes. Do not activate or follow any manual review\n\
+skill that tells you to mutate Project state.\n\n\
+Return review evidence in stdout only. Start with exactly one line: `Review Result: PASS`,\n\
+`Review Result: REWORK`, or `Review Result: NEEDS_CONTEXT`. Use `PASS` only when there are no\n\
+blocking findings. Use `REWORK` only when confirmed implementation defects require Main Agent\n\
+changes. Use `NEEDS_CONTEXT` when missing evidence or ambiguity prevents an independent decision.\n\n\
+Only use `[Confirmed]`, `[Plausible]`, `[Rejected]`, or `[Needs Context]` for actual review\n\
+findings. Do not use those bracketed finding tags for positive verification evidence, checklist\n\
+items, or things that were implemented correctly; put positive observations under an `Evidence`\n\
+heading with plain bullets instead. Leave routing and evidence persistence to the Jade Symphony\n\
+wrapper after this process exits.\n",
+    );
+    Ok(prompt)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -2886,33 +3439,87 @@ fn agent_session_start(
     let workspace_key = agent_session_workspace_key(&config, &issue, lane)?;
     let prompt_path = rendered_lane_prompt_artifact_path(&config, &issue, lane, 1);
     let claim = matching_lane_claim_for_session(&issue, lane, &run_id)?;
-    let claim_value = claim.render();
+    let agent_command = tmux_agent_command_for_lane(&config, lane)?;
 
     if !write {
         println!(
-            "session_dry_run action=start issue={} lane={} run={} backend=tmux workspace_key={} prompt_artifact={}",
+            "session_dry_run action=start issue={} lane={} run={} backend=tmux agent_command={} workspace_key={} prompt_artifact={}",
             issue.identifier,
             lane.label(),
             claim.run,
+            shell_quote_display(&agent_command),
             workspace_key,
             prompt_path.display()
         );
         return Ok(());
     }
 
+    let started = start_agent_session_with_claim(
+        &workflow,
+        &config,
+        adapter.as_ref(),
+        &issue,
+        lane,
+        &claim,
+        "session start",
+    )?;
+
+    println!(
+        "session_action=started issue={} lane={} run={} backend={} session={} pending_session={} workspace={} prompt_artifact={}",
+        issue.identifier,
+        lane.label(),
+        claim.run,
+        started.summary.backend,
+        started.summary.session_id.as_deref().unwrap_or("n/a"),
+        started.summary.pending_session,
+        started.workspace_path.display(),
+        started.prompt_path.display()
+    );
+    if let Some(attach_command) = started.summary.attach_command.as_deref() {
+        println!("attach_command={attach_command}");
+    }
+    if let Some(log_path) = started.summary.log_path.as_ref() {
+        println!("log_path={}", log_path.display());
+    }
+    Ok(())
+}
+
+struct AgentSessionStartResult {
+    summary: jade_symphony::agent::AgentSummary,
+    workspace_path: PathBuf,
+    prompt_path: PathBuf,
+}
+
+fn start_agent_session_with_claim(
+    workflow: &WorkflowDefinition,
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    issue: &TrackerIssue,
+    lane: AgentSessionLaneArg,
+    claim: &LaneClaim,
+    audit_command: &'static str,
+) -> Result<AgentSessionStartResult, Box<dyn std::error::Error>> {
+    let workspace_key = agent_session_workspace_key(config, issue, lane)?;
+    let prompt_path = rendered_lane_prompt_artifact_path(config, issue, lane, 1);
     let workspace = prepare_workspace(&config.workspace.root, &workspace_key, &config.hooks)?;
     let git_identity = apply_local_git_identity(&workspace.path, &config.identity.git)?;
     let prompt = render_prompt_with_claim(
         workflow.prompt_for_lane(lane.workflow_lane()),
-        &issue,
+        issue,
         None,
-        Some(&claim),
+        Some(claim),
     )?;
+    let agent_command = tmux_agent_command_for_lane(config, lane)?;
     let backend = TmuxBackend;
-    let mut prepared = backend.prepare(workspace.path.clone(), prompt, &config)?;
+    let mut prepared = backend.prepare(workspace.path.clone(), prompt, config)?;
+    prepared.command = Some(agent_command.clone());
     prepared
         .env
         .insert("JADE_SYMPHONY_AGENT_LANE".into(), lane.label().to_string());
+    prepared.env.insert(
+        "JADE_SYMPHONY_TMUX_AGENT_COMMAND".into(),
+        prepared.command.clone().unwrap_or_default(),
+    );
     prepared.prompt_artifact_path = Some(prompt_path.clone());
     prepared.issue_id = Some(issue.id.clone());
     prepared.issue_identifier = Some(issue.identifier.clone());
@@ -2927,24 +3534,27 @@ fn agent_session_start(
         .insert("JADE_SYMPHONY_CLAIM".into(), claim.render());
     prepared.attempt = 1;
     prepared.branch_name = current_git_branch(&workspace.path).ok().flatten();
+
     let events = backend.run(prepared)?;
     let summary = backend.summarize(&events);
-    record_agent_session_events(&config, &issue, lane, &summary, &events, &prompt_path)?;
+    record_agent_session_events(config, issue, lane, &summary, &events, &prompt_path)?;
 
-    let workpad = agent_session_workpad(
-        &issue,
+    let claim_value = claim.render();
+    let workpad = agent_session_workpad(AgentSessionWorkpadInput {
+        issue,
         lane,
-        &workspace.path,
-        &summary,
-        &prompt_path,
-        &claim_value,
-        &git_identity,
-    );
+        workspace_path: &workspace.path,
+        summary: &summary,
+        prompt_path: &prompt_path,
+        claim_value: &claim_value,
+        agent_command: &agent_command,
+        git_identity: &git_identity,
+    });
     adapter.upsert_workpad(&issue.identifier, &workpad)?;
     append_tracker_mutation_audit(
-        &config,
+        config,
         TrackerMutationAudit {
-            command: "session start",
+            command: audit_command,
             mutation_type: "workpad_write",
             issue_ref: Some(&issue.identifier),
             target: summary.session_id.clone(),
@@ -2954,24 +3564,11 @@ fn agent_session_start(
         },
     );
 
-    println!(
-        "session_action=started issue={} lane={} run={} backend={} session={} pending_session={} workspace={} prompt_artifact={}",
-        issue.identifier,
-        lane.label(),
-        claim.run,
-        summary.backend,
-        summary.session_id.as_deref().unwrap_or("n/a"),
-        summary.pending_session,
-        workspace.path.display(),
-        prompt_path.display()
-    );
-    if let Some(attach_command) = summary.attach_command.as_deref() {
-        println!("attach_command={attach_command}");
-    }
-    if let Some(log_path) = summary.log_path.as_ref() {
-        println!("log_path={}", log_path.display());
-    }
-    Ok(())
+    Ok(AgentSessionStartResult {
+        summary,
+        workspace_path: workspace.path,
+        prompt_path,
+    })
 }
 
 fn legacy_agent_session_start(
@@ -2981,8 +3578,7 @@ fn legacy_agent_session_start(
     _write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     Err(format!(
-        "{}-session and agent-session are hidden legacy entrypoints; use `{} claim` first, then `session start --lane {} --run <RUN_ID>`",
-        lane.label(),
+        "legacy session aliases are unavailable; use `{} claim` first, then `session start --lane {} --run <RUN_ID>`",
         lane.label(),
         lane.label()
     )
@@ -3120,6 +3716,54 @@ fn validate_tmux_session_config(config: &RuntimeConfig) -> Result<(), Box<dyn st
     Ok(())
 }
 
+fn tmux_agent_command_for_lane(
+    config: &RuntimeConfig,
+    lane: AgentSessionLaneArg,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let command = match lane {
+        AgentSessionLaneArg::Main => config
+            .tmux
+            .main_agent_command
+            .as_deref()
+            .unwrap_or(&config.tmux.agent_command),
+        AgentSessionLaneArg::Review => config
+            .tmux
+            .review_agent_command
+            .as_deref()
+            .or_else(|| {
+                (config.review.backend == "gemini-cli")
+                    .then_some(config.review.gemini_command.as_str())
+            })
+            .unwrap_or(&config.tmux.agent_command),
+        AgentSessionLaneArg::Merge => config
+            .tmux
+            .merge_agent_command
+            .as_deref()
+            .unwrap_or(&config.tmux.agent_command),
+    };
+
+    if command.trim().is_empty() {
+        return Err(format!(
+            "tmux {} agent command must not be empty for session start",
+            lane.label()
+        )
+        .into());
+    }
+
+    Ok(command.to_string())
+}
+
+fn shell_quote_display(value: &str) -> String {
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '/' | '.' | ':'))
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
 fn agent_session_workspace_key(
     config: &RuntimeConfig,
     issue: &TrackerIssue,
@@ -3194,17 +3838,21 @@ fn record_agent_session_events(
     Ok(())
 }
 
-fn agent_session_workpad(
-    issue: &TrackerIssue,
+struct AgentSessionWorkpadInput<'a> {
+    issue: &'a TrackerIssue,
     lane: AgentSessionLaneArg,
-    workspace_path: &Path,
-    summary: &jade_symphony::agent::AgentSummary,
-    prompt_path: &Path,
-    claim_value: &str,
-    git_identity: &GitIdentityApplyResult,
-) -> String {
-    let attach_command = summary.attach_command.as_deref().unwrap_or("n/a");
-    let log_path = summary
+    workspace_path: &'a Path,
+    summary: &'a jade_symphony::agent::AgentSummary,
+    prompt_path: &'a Path,
+    claim_value: &'a str,
+    agent_command: &'a str,
+    git_identity: &'a GitIdentityApplyResult,
+}
+
+fn agent_session_workpad(input: AgentSessionWorkpadInput<'_>) -> String {
+    let attach_command = input.summary.attach_command.as_deref().unwrap_or("n/a");
+    let log_path = input
+        .summary
         .log_path
         .as_ref()
         .map(|path| path.display().to_string())
@@ -3213,22 +3861,27 @@ fn agent_session_workpad(
         "## Jade Symphony Workpad".to_string(),
         String::new(),
         "### Local tmux Agent Session".to_string(),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        format!("- Lane: `{}`", lane.label()),
-        format!("- Claim field: `{}` = `{claim_value}`", lane.claim_field()),
-        format!("- Backend: `{}`", summary.backend),
+        format!("- Issue: {} {}", input.issue.identifier, input.issue.title),
+        format!("- Lane: `{}`", input.lane.label()),
+        format!(
+            "- Claim field: `{}` = `{}`",
+            input.lane.claim_field(),
+            input.claim_value
+        ),
+        format!("- Backend: `{}`", input.summary.backend),
+        format!("- Agent command: `{}`", input.agent_command),
         format!(
             "- Session: `{}`",
-            summary.session_id.as_deref().unwrap_or("n/a")
+            input.summary.session_id.as_deref().unwrap_or("n/a")
         ),
-        format!("- Pending session: `{}`", summary.pending_session),
-        format!("- Workspace: `{}`", workspace_path.display()),
-        format!("- Prompt artifact: `{}`", prompt_path.display()),
+        format!("- Pending session: `{}`", input.summary.pending_session),
+        format!("- Workspace: `{}`", input.workspace_path.display()),
+        format!("- Prompt artifact: `{}`", input.prompt_path.display()),
         format!("- Session log: `{log_path}`"),
         format!("- Attach command: `{attach_command}`"),
-        format!("- Git identity: `{}`", git_identity.summary()),
+        format!("- Git identity: `{}`", input.git_identity.summary()),
         String::new(),
-        summary.message.clone(),
+        input.summary.message.clone(),
     ]
     .join("\n")
 }
@@ -3239,8 +3892,22 @@ fn apply_review_result(
     issue_ref: &str,
     issue: &TrackerIssue,
     job: &jade_symphony::review::ReviewJob,
+    claim: Option<&LaneClaim>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let decision = review_gate_decision(job);
+    if let Some(value) = terminal_review_loop_claim_value(claim, job, &decision) {
+        write_terminal_review_claim(
+            config,
+            adapter,
+            issue_ref,
+            &issue.state,
+            &value,
+            "review loop terminal claim evidence",
+        )?;
+    }
+    if decision.outcome == ReviewOutcome::PassedToHumanReview {
+        update_review_checklist_for_pass(config, adapter, issue)?;
+    }
     if let Some(target_state) = decision.target_state {
         if !transition_allowed_for_review_agent(target_state, &decision) {
             return Err("review agent transition is not allowed for this review decision".into());
@@ -3257,7 +3924,7 @@ fn apply_review_result(
     append_tracker_mutation_audit(
         config,
         TrackerMutationAudit {
-            command: "review-loop",
+            command: "review loop",
             mutation_type: "workpad_write",
             issue_ref: Some(issue_ref),
             target: job
@@ -3269,15 +3936,12 @@ fn apply_review_result(
             reason: "review result workpad evidence",
         },
     );
-    if review_claim_should_be_released(job, decision.target_state) {
-        clear_review_claim_field(config, adapter, issue_ref, job)?;
-    }
     if let Some(target_state) = decision.target_state {
         adapter.set_state(issue_ref, target_state)?;
         append_tracker_mutation_audit(
             config,
             TrackerMutationAudit {
-                command: "review-loop",
+                command: "review loop",
                 mutation_type: "state_change",
                 issue_ref: Some(issue_ref),
                 target: None,
@@ -3290,37 +3954,137 @@ fn apply_review_result(
     Ok(())
 }
 
-fn review_claim_should_be_released(
-    job: &jade_symphony::review::ReviewJob,
-    target_state: Option<&str>,
-) -> bool {
-    matches!(
-        job.state,
-        ReviewJobState::Failed | ReviewJobState::TimedOut | ReviewJobState::Cancelled
-    ) && target_state == Some("agent_review")
-}
-
-fn clear_review_claim_field(
+fn update_review_checklist_for_pass(
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
-    issue_ref: &str,
-    job: &jade_symphony::review::ReviewJob,
+    issue: &TrackerIssue,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    adapter.clear_project_field(issue_ref, "Review Agent")?;
+    let Some(description) = issue.description.as_deref() else {
+        return Ok(());
+    };
+    let body = canonical_issue_body_without_workpad(description);
+    let updated = check_review_verified_issue_body_checkboxes(&body);
+    if updated == body {
+        return Ok(());
+    }
+
+    adapter.update_issue_content(&issue.identifier, &issue.title, &updated)?;
     append_tracker_mutation_audit(
         config,
         TrackerMutationAudit {
-            command: "review-loop",
-            mutation_type: "claim_field_clear",
-            issue_ref: Some(issue_ref),
-            target: Some("Review Agent".into()),
-            from_state: Some(format!("{:?}", job.state)),
-            to_state: None,
-            reason: "terminal review backend result",
+            command: "review loop",
+            mutation_type: "issue_body_update",
+            issue_ref: Some(&issue.identifier),
+            target: Some("non-UAT review checkboxes".into()),
+            from_state: Some(issue.state.clone()),
+            to_state: Some("human_review".into()),
+            reason: "automatic review pass checklist evidence",
         },
     );
-    println!("review_loop_action=clear_claim_field issue={issue_ref} field=\"Review Agent\"");
     Ok(())
+}
+
+fn canonical_issue_body_without_workpad(description: &str) -> String {
+    description
+        .split("<!-- jade-symphony-workpad -->")
+        .next()
+        .unwrap_or(description)
+        .trim_end()
+        .to_string()
+}
+
+fn check_review_verified_issue_body_checkboxes(body: &str) -> String {
+    let mut in_fence = false;
+    let mut in_review_section = false;
+    let mut lines = Vec::new();
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            lines.push(line.to_string());
+            continue;
+        }
+        if !in_fence {
+            if let Some(section) = markdown_heading_title(trimmed) {
+                in_review_section = review_checklist_section_is_agent_owned(section);
+            }
+        }
+        if in_review_section && !in_fence {
+            lines.push(check_markdown_checkbox_line(line));
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+    let mut updated = lines.join("\n");
+    if body.ends_with('\n') {
+        updated.push('\n');
+    }
+    updated
+}
+
+fn markdown_heading_title(line: &str) -> Option<&str> {
+    let heading_len = line.chars().take_while(|ch| *ch == '#').count();
+    if heading_len == 0 || heading_len > 6 {
+        return None;
+    }
+    if !line
+        .chars()
+        .nth(heading_len)
+        .is_some_and(char::is_whitespace)
+    {
+        return None;
+    }
+    Some(line[heading_len..].trim().trim_matches('#').trim())
+}
+
+fn review_checklist_section_is_agent_owned(section: &str) -> bool {
+    matches!(
+        section.to_ascii_lowercase().as_str(),
+        "expected outcome"
+            | "completion criteria"
+            | "functional verification"
+            | "context verification"
+    )
+}
+
+fn check_markdown_checkbox_line(line: &str) -> String {
+    let trimmed = line.trim_start();
+    if !(trimmed.starts_with("- [ ]") || trimmed.starts_with("* [ ]")) {
+        return line.to_string();
+    }
+    if let Some(index) = line.find("[ ]") {
+        let mut checked = line.to_string();
+        checked.replace_range(index..index + 3, "[x]");
+        checked
+    } else {
+        line.to_string()
+    }
+}
+
+fn terminal_review_loop_claim_value(
+    claim: Option<&LaneClaim>,
+    job: &jade_symphony::review::ReviewJob,
+    decision: &ReviewGateDecision,
+) -> Option<String> {
+    let claim = claim?;
+    let (state, result) = match decision.outcome {
+        ReviewOutcome::PassedToHumanReview => (LaneClaimState::Done, "passed"),
+        ReviewOutcome::NeedsRework => (LaneClaimState::Done, "rejected"),
+        ReviewOutcome::InconclusiveNeedsRework => (LaneClaimState::Failed, "inconclusive"),
+        ReviewOutcome::NeedsHumanInput => (LaneClaimState::Failed, "blocked"),
+        ReviewOutcome::BackendUnavailable => (LaneClaimState::Failed, "unavailable"),
+        ReviewOutcome::Cancelled => (LaneClaimState::Failed, "cancelled"),
+        ReviewOutcome::StillRunning => match job.state {
+            ReviewJobState::Failed | ReviewJobState::TimedOut => {
+                (LaneClaimState::Failed, "unavailable")
+            }
+            ReviewJobState::Cancelled => (LaneClaimState::Failed, "cancelled"),
+            ReviewJobState::Queued | ReviewJobState::Running | ReviewJobState::Completed => {
+                return None;
+            }
+        },
+    };
+    Some(terminal_review_claim_value(claim, state, result))
 }
 
 fn transition_issue_to_rework_with_diagnostic(
@@ -3334,7 +4098,7 @@ fn transition_issue_to_rework_with_diagnostic(
     append_tracker_mutation_audit(
         config,
         TrackerMutationAudit {
-            command: "review-loop",
+            command: "review loop",
             mutation_type: "workpad_write",
             issue_ref: Some(&issue.identifier),
             target: diagnostic.review_ledger_path.clone(),
@@ -3347,7 +4111,7 @@ fn transition_issue_to_rework_with_diagnostic(
     append_tracker_mutation_audit(
         config,
         TrackerMutationAudit {
-            command: "review-loop",
+            command: "review loop",
             mutation_type: "state_change",
             issue_ref: Some(&issue.identifier),
             target: None,
@@ -3561,6 +4325,78 @@ fn project_issue(
     Ok(())
 }
 
+fn project_inspect(
+    workflow_path: PathBuf,
+    issue_ref: String,
+    lane: Option<AgentSessionLaneArg>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    let mut issue = adapter
+        .get_issue(&issue_ref)?
+        .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
+    issue.linked_pull_requests = adapter
+        .list_linked_pull_requests(&issue.identifier)
+        .unwrap_or_else(|_| issue.linked_pull_requests.clone());
+    let gate = evaluate_issue_for_current_source(&config, &issue)?;
+
+    println!("project_inspect=ok");
+    println!("read_only=true");
+    println!("issue={}", issue.identifier);
+    println!("title={}", issue.title);
+    println!("state={}", issue.state);
+    if let Some(lane) = lane {
+        println!("lane={}", lane.label());
+    }
+    println!("gate={:?}", gate.kind);
+    println!("dispatchable={}", gate.is_dispatchable());
+    if !gate.missing.is_empty() {
+        println!("missing={}", gate.missing.join(", "));
+    }
+    if !gate.assumptions.is_empty() {
+        println!("assumptions={}", gate.assumptions.join("; "));
+    }
+    if issue.blocked_by.is_empty() {
+        println!("blocked_by=");
+    } else {
+        let blockers = issue
+            .blocked_by
+            .iter()
+            .map(|blocker| {
+                blocker
+                    .identifier
+                    .as_deref()
+                    .or(blocker.id.as_deref())
+                    .unwrap_or("unknown")
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        println!("blocked_by={blockers}");
+    }
+    if issue.linked_pull_requests.is_empty() {
+        println!("linked_prs=");
+    } else {
+        for pr in &issue.linked_pull_requests {
+            let pr_ref = pr
+                .url
+                .clone()
+                .or_else(|| pr.number.map(|number| format!("#{number}")))
+                .unwrap_or_else(|| "unknown".into());
+            println!(
+                "linked_pr={} state={}",
+                pr_ref,
+                pr.state.as_deref().unwrap_or("unknown")
+            );
+        }
+    }
+    for gap in adapter.integration_gaps() {
+        println!("integration_gap={gap}");
+    }
+
+    Ok(())
+}
+
 fn compact_json_value(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::String(value) => value.clone(),
@@ -3652,6 +4488,9 @@ fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::Error>> {
     report.integration_gaps = integration_gaps;
     append_canonical_checkout_doctor_violations(&mut report, &config);
     append_workspace_doctor_violations(&mut report, &config, &issues);
+    let skill_repo_root = discover_skill_suite_repo_root(&workflow_path)?;
+    let skill_targets = default_jade_symphony_skill_targets();
+    append_local_skill_install_doctor_violations(&mut report, &skill_repo_root, &skill_targets);
 
     match &options.action {
         Some(DoctorAction::Repair(repair)) => {
@@ -3703,6 +4542,34 @@ fn resolve_doctor_workflow_path(explicit: Option<PathBuf>) -> PathBuf {
     } else {
         PathBuf::from("WORKFLOW.md")
     }
+}
+
+fn discover_skill_suite_repo_root(
+    workflow_path: &Path,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let start = if workflow_path.is_absolute() {
+        workflow_path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(workflow_path)
+    };
+    let mut cursor = start
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    loop {
+        if cursor
+            .join("skills")
+            .join("jade-symphony")
+            .join("manifest.toml")
+            .exists()
+        {
+            return Ok(cursor);
+        }
+        if !cursor.pop() {
+            break;
+        }
+    }
+    Ok(std::env::current_dir()?)
 }
 
 fn print_doctor_interactive_plan(report: &ProjectAuditReport) {
@@ -3953,7 +4820,7 @@ fn doctor_repair_issue(
         "safe=no_op command=\"doctor repair {}\"",
         issue.identifier.trim_start_matches('#')
     );
-    println!("uncertain=resume command=\"run-loop <workflow> --write\" reason=requires operator confirmation and live workspace inspection");
+    println!("uncertain=resume command=\"main loop <workflow> --write\" reason=requires operator confirmation and live workspace inspection");
     println!("uncertain=reset reason=requires confirming no useful work would be discarded");
     println!("uncertain=move_need_human_input command=\"doctor repair {} --move-need-human-input --write\" reason=records evidence before tracker mutation", issue.identifier.trim_start_matches('#'));
     println!("uncertain=mark_pr_ready command=\"doctor repair {} --mark-pr-ready --confirm-handoff-ready --write\" reason=requires operator-confirmed handoff evidence", issue.identifier.trim_start_matches('#'));
@@ -4336,7 +5203,7 @@ fn debug_report(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>
     println!("Tracker Authority");
     println!("authority=Jade Symphony CLI Project reads and mutations are the operator authority for Project state.");
     println!(
-        "project_state_command=cargo run -- project-state {}",
+        "project_state_command=cargo run -- project state {}",
         workflow_path.display()
     );
     println!(
@@ -4464,7 +5331,7 @@ fn print_debug_lane_next_actions(
     );
     if todo + rework > 0 {
         println!(
-            "  next=cargo run -- run-loop {} --max-iterations 1 --write",
+            "  next=cargo run -- main loop {} --max-iterations 1 --write",
             workflow_path.display()
         );
     } else if in_progress > 0 {
@@ -4482,7 +5349,7 @@ fn print_debug_lane_next_actions(
     println!("- Review lane: agent_review={agent_review} active_claims={active_review_claims}");
     if agent_review > 0 {
         println!(
-            "  next=cargo run -- review-loop {} --max-iterations 1 --write",
+            "  next=cargo run -- review loop {} --max-iterations 1 --write",
             workflow_path.display()
         );
     } else {
@@ -4492,7 +5359,7 @@ fn print_debug_lane_next_actions(
     println!("- Merge lane: merging={merging} active_claims={active_merge_claims}");
     if merging > 0 {
         println!(
-            "  next=cargo run -- merge-loop {} --max-iterations 1 --write",
+            "  next=cargo run -- merge loop {} --max-iterations 1 --write",
             workflow_path.display()
         );
     } else {
@@ -4552,94 +5419,6 @@ fn list_profiles(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error
             profile.backend.as_deref().unwrap_or("configured")
         );
     }
-    Ok(())
-}
-
-fn dogfood_smoke(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let workflow = WorkflowDefinition::load(&workflow_path)?;
-    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
-    config.validate()?;
-    if write {
-        ensure_write_mode_main_agent_backend(&workflow_path, &config, "dogfood-smoke")?;
-    }
-
-    let adapter = adapter_from_config(&config);
-    let integration_gaps = adapter.integration_gaps();
-    let gap_report = classify_dogfood_integration_gaps(&integration_gaps);
-    let issues = adapter.list_dispatchable_issues()?;
-    let controlled_candidates: Vec<_> = issues
-        .iter()
-        .filter(|issue| is_controlled_dogfood_smoke_issue(issue))
-        .collect();
-    let executable_candidates = controlled_candidates
-        .iter()
-        .filter(|issue| {
-            evaluate_issue_for_current_source(&config, issue)
-                .map(|decision| decision.is_dispatchable())
-                .unwrap_or(false)
-        })
-        .count();
-    let fixture_mode = config.tracker.fixture_path.is_some();
-    let write_ready = dogfood_smoke_write_ready(
-        fixture_mode,
-        gap_report.blocking.len(),
-        executable_candidates,
-        write,
-    );
-
-    println!("dogfood_smoke=ok");
-    println!("workflow={}", workflow_path.display());
-    println!("tracker_kind={}", config.tracker.kind);
-    println!("fixture_mode={fixture_mode}");
-    println!("write_requested={write}");
-    println!("controlled_candidates={}", controlled_candidates.len());
-    println!("executable_candidates={executable_candidates}");
-    println!(
-        "runtime_state_path={}",
-        runtime_state_path(&config).display()
-    );
-    println!(
-        "event_log_root={}",
-        config.observability.logs_root.join("events").display()
-    );
-    if integration_gaps.is_empty() {
-        println!("integration_gaps=none");
-    } else {
-        println!(
-            "integration_gap_blocking_count={}",
-            gap_report.blocking.len()
-        );
-        println!(
-            "integration_gap_warning_count={}",
-            gap_report.warnings.len()
-        );
-        for gap in &gap_report.blocking {
-            println!("integration_gap_blocking={gap}");
-        }
-        for gap in &gap_report.warnings {
-            println!("integration_gap_warning={gap}");
-        }
-    }
-    println!("write_ready={write_ready}");
-
-    if !write {
-        println!("dogfood_smoke_dry_run action=inspect_project");
-        println!("dogfood_smoke_dry_run action=quality_gate_controlled_issue");
-        println!("dogfood_smoke_dry_run action=report_run_loop_command");
-        return Ok(());
-    }
-
-    if write_ready {
-        println!(
-            "dogfood_smoke_next_command=cargo run -- run-loop {} --max-iterations 1 --write",
-            workflow_path.display()
-        );
-    } else {
-        println!("dogfood_smoke_blocked=true");
-        println!("dogfood_smoke_blocker={DOGFOOD_SMOKE_WRITE_BLOCKER}");
-        return Err(DOGFOOD_SMOKE_WRITE_BLOCKER.into());
-    }
-
     Ok(())
 }
 
@@ -5569,9 +6348,6 @@ enum DogfoodIntegrationGapSeverity {
     Warning,
 }
 
-const DOGFOOD_SMOKE_WRITE_BLOCKER: &str =
-    "requires exactly one executable controlled smoke issue, non-fixture tracker mode, and no blocking integration gaps";
-
 fn dogfood_integration_gap_severity(gap: &str) -> DogfoodIntegrationGapSeverity {
     let normalized = gap.to_ascii_lowercase();
 
@@ -5583,15 +6359,6 @@ fn dogfood_integration_gap_severity(gap: &str) -> DogfoodIntegrationGapSeverity 
     } else {
         DogfoodIntegrationGapSeverity::Blocking
     }
-}
-
-fn dogfood_smoke_write_ready(
-    fixture_mode: bool,
-    blocking_gap_count: usize,
-    executable_candidates: usize,
-    write: bool,
-) -> bool {
-    !fixture_mode && blocking_gap_count == 0 && executable_candidates == 1 && write
 }
 
 fn is_controlled_dogfood_smoke_issue(issue: &TrackerIssue) -> bool {
@@ -5900,7 +6667,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         let config = RuntimeConfig::from_workflow(&workflow, &options.workflow_path)?;
         config.validate()?;
         if options.write {
-            ensure_write_mode_main_agent_backend(&options.workflow_path, &config, "run-loop")?;
+            ensure_write_mode_main_agent_backend(&options.workflow_path, &config, "main loop")?;
             enforce_canonical_checkout_before_write(&config, "run_loop")?;
         }
         let adapter = adapter_from_config(&config);
@@ -6301,7 +7068,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 append_tracker_mutation_audit(
                     &config,
                     TrackerMutationAudit {
-                        command: "run-loop",
+                        command: "main loop",
                         mutation_type: "state_change",
                         issue_ref: Some(&latest.identifier),
                         target: None,
@@ -6365,7 +7132,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         append_tracker_mutation_audit(
             &config,
             TrackerMutationAudit {
-                command: "run-loop",
+                command: "main loop",
                 mutation_type: "workpad_write",
                 issue_ref: Some(&latest.identifier),
                 target: ownership.profile_id.clone(),
@@ -6510,7 +7277,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     append_tracker_mutation_audit(
                         &config,
                         TrackerMutationAudit {
-                            command: "run-loop",
+                            command: "main loop",
                             mutation_type: "pr_link",
                             issue_ref: Some(&latest.identifier),
                             target: result
@@ -6571,7 +7338,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         append_tracker_mutation_audit(
             &config,
             TrackerMutationAudit {
-                command: "run-loop",
+                command: "main loop",
                 mutation_type: "workpad_write",
                 issue_ref: Some(&latest.identifier),
                 target: result
@@ -6643,7 +7410,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             append_tracker_mutation_audit(
                 &config,
                 TrackerMutationAudit {
-                    command: "run-loop",
+                    command: "main loop",
                     mutation_type: "workpad_write",
                     issue_ref: Some(&latest.identifier),
                     target: result
@@ -6675,7 +7442,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 append_tracker_mutation_audit(
                     &config,
                     TrackerMutationAudit {
-                        command: "run-loop",
+                        command: "main loop",
                         mutation_type: "state_change",
                         issue_ref: Some(&latest.identifier),
                         target: None,
@@ -6719,7 +7486,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             append_tracker_mutation_audit(
                 &config,
                 TrackerMutationAudit {
-                    command: "run-loop",
+                    command: "main loop",
                     mutation_type: "state_change",
                     issue_ref: Some(&latest.identifier),
                     target: result
@@ -6761,7 +7528,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 append_tracker_mutation_audit(
                     &config,
                     TrackerMutationAudit {
-                        command: "run-loop",
+                        command: "main loop",
                         mutation_type: "workpad_write",
                         issue_ref: Some(&latest.identifier),
                         target: Some(pause.classifier.clone()),
@@ -6814,7 +7581,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 append_tracker_mutation_audit(
                     &config,
                     TrackerMutationAudit {
-                        command: "run-loop",
+                        command: "main loop",
                         mutation_type: "state_change",
                         issue_ref: Some(&latest.identifier),
                         target: result
@@ -6887,7 +7654,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 append_tracker_mutation_audit(
                     &config,
                     TrackerMutationAudit {
-                        command: "run-loop",
+                        command: "main loop",
                         mutation_type: "state_change",
                         issue_ref: Some(&latest.identifier),
                         target: None,
@@ -7618,7 +8385,11 @@ fn lane_claim_for_issue(
 ) -> LaneClaim {
     existing
         .and_then(|value| LaneClaim::parse(value).ok())
-        .filter(|claim| claim.lane == lane && claim.issue == issue.identifier)
+        .filter(|claim| {
+            claim.lane == lane
+                && claim.issue == issue.identifier
+                && claim.state == LaneClaimState::Active
+        })
         .unwrap_or_else(|| {
             LaneClaim::active(&issue.identifier, lane, actor, source, current_time_ms())
         })
@@ -7836,7 +8607,7 @@ fn run_loop_ownership_workpad(
         format!("- Run: `{}`", claim.run),
         format!("- Claim: `{}`", claim.render()),
         "- This marker is advisory tracker-visible ownership for active `In Progress` work.".into(),
-        "- Another run-loop profile should not resume this issue when the marker differs.".into(),
+        "- Another main loop profile should not resume this issue when the marker differs.".into(),
         String::new(),
         render_runtime_ownership_marker(ownership),
     ]
@@ -8055,7 +8826,7 @@ fn run_loop_handoff_workpad(
         String::new(),
         "### Context".to_string(),
         format!("- Issue: {} {}", issue.identifier, issue.title),
-        "- Source: `jade-symphony run-loop`".to_string(),
+        "- Source: `jade-symphony main loop`".to_string(),
         String::new(),
         "### Run-Loop Handoff Checklist".to_string(),
         "- [x] Read the issue contract, Project state, and existing workpad evidence.".to_string(),
@@ -8352,7 +9123,7 @@ fn run_loop_handoff_failure_workpad(issue: &TrackerIssue, error: &HandoffError) 
         String::new(),
         "### Context".to_string(),
         format!("- Issue: {} {}", issue.identifier, issue.title),
-        "- Source: `jade-symphony run-loop`".to_string(),
+        "- Source: `jade-symphony main loop`".to_string(),
         String::new(),
         "### Handoff Planning Blocker".to_string(),
         format!("- Error: `{}`", error),
@@ -8391,7 +9162,7 @@ fn run_loop_usage_limit_pause_workpad(
         String::new(),
         "### Usage-Limit Pause".to_string(),
         format!("- Issue: {} {}", issue.identifier, issue.title),
-        "- Source: `jade-symphony run-loop`".to_string(),
+        "- Source: `jade-symphony main loop`".to_string(),
         format!("- Backend: `{}`", result.backend),
         format!("- Classifier: `{}`", pause.classifier),
         format!("- Evidence: {}", pause.evidence),
@@ -8400,12 +9171,13 @@ fn run_loop_usage_limit_pause_workpad(
         "### State Safety".to_string(),
         "- Tracker state was not advanced to `Agent Review`.".to_string(),
         "- Runtime state keeps the active issue and next retry time.".to_string(),
-        "- The run-loop will skip this issue until retry backoff expires or an operator intervenes."
+        "- The main loop will skip this issue until retry backoff expires or an operator intervenes."
             .to_string(),
     ]
     .join("\n")
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Command {
     Plan {
@@ -8432,6 +9204,11 @@ enum Command {
         issue_ref: String,
         json: bool,
     },
+    ProjectInspect {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        lane: Option<AgentSessionLaneArg>,
+    },
     Doctor {
         options: DoctorOptions,
     },
@@ -8444,10 +9221,6 @@ enum Command {
     },
     Debug {
         workflow_path: PathBuf,
-    },
-    DogfoodSmoke {
-        workflow_path: PathBuf,
-        write: bool,
     },
     CleanupPlan {
         workflow_path: PathBuf,
@@ -8646,6 +9419,9 @@ enum Command {
         write: bool,
         dry_run: bool,
     },
+    ForgeRework {
+        options: ForgeReworkOptions,
+    },
     Help(String),
 }
 
@@ -8757,7 +9533,10 @@ impl RunLoopOptions {
 
 impl Command {
     fn parse(args: Vec<String>) -> Result<Self, String> {
-        if matches!(args.first().map(String::as_str), Some("help")) {
+        if matches!(
+            args.first().map(String::as_str),
+            Some("help" | "--help" | "-h")
+        ) {
             return Ok(Self::Help(usage()));
         }
 
@@ -8776,7 +9555,7 @@ impl Command {
 
 fn lane_command(lane: AgentSessionLaneArg, args: LaneCommandArgs) -> Result<Command, String> {
     match args.command {
-        LaneCommand::Claim(claim) => Ok(Command::LaneClaim {
+        MainCommandArgs::Claim(claim) => Ok(Command::LaneClaim {
             workflow_path: claim.workflow_path,
             issue_ref: claim.issue_ref,
             lane,
@@ -8784,6 +9563,13 @@ fn lane_command(lane: AgentSessionLaneArg, args: LaneCommandArgs) -> Result<Comm
             source: claim.source,
             write: claim.write,
         }),
+        MainCommandArgs::Once(args) if lane == AgentSessionLaneArg::Main => Ok(Command::RunOnce {
+            workflow_path: args.workflow_path,
+        }),
+        MainCommandArgs::Loop(args) if lane == AgentSessionLaneArg::Main => run_loop_command(args),
+        MainCommandArgs::Once(_) | MainCommandArgs::Loop(_) => {
+            Err("only the main lane supports once/loop through this command group".into())
+        }
     }
 }
 
@@ -8803,85 +9589,47 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum CliCommand {
-    #[command(alias = "plan-dispatch", alias = "dry-run", alias = "status")]
+    #[command(
+        next_help_heading = "Human / Operator operations",
+        alias = "plan-dispatch",
+        alias = "dry-run"
+    )]
     Plan(WorkflowPathArgs),
-    #[command(name = "status-api")]
-    StatusApi(StatusApiArgs),
     #[command(alias = "validate-workflow")]
     Validate(WorkflowPathArgs),
-    Inspect(InspectArgs),
-    #[command(name = "project-state", alias = "project-state-health")]
-    ProjectState(ProjectStateArgs),
-    #[command(name = "project-issue")]
-    ProjectIssue(ProjectIssueArgs),
     #[command(alias = "audit-project")]
     Doctor(DoctorArgs),
     #[command(name = "doctor-repair-human-review")]
     DoctorRepairHumanReview(DoctorRepairArgs),
     Profiles(WorkflowPathArgs),
     Debug(WorkflowPathArgs),
-    #[command(name = "dogfood-smoke", hide = true)]
-    DogfoodSmoke(DogfoodSmokeArgs),
-    #[command(name = "cleanup-plan")]
-    CleanupPlan(WorkflowPathArgs),
+    Status(StatusArgs),
     Clean(CleanArgs),
-    #[command(name = "run-once")]
-    RunOnce(WorkflowPathArgs),
-    #[command(name = "run-loop")]
-    RunLoop(RunLoopArgs),
-    #[command(name = "cleanup-workspaces", alias = "workspace-cleanup")]
-    CleanupWorkspaces(CleanupWorkspacesArgs),
     #[command(
+        next_help_heading = "Project / Agent internals",
         about = "Discover and record per-issue git worktrees",
         long_about = "Discover and record per-issue git worktrees.\n\n`workspace` is the safe local-worktree coordination surface for Main, Review, and Merge lanes. It discovers existing issue worktrees from the session registry, workpad evidence, linked PR/branch hints, and `git worktree list`. It can ensure missing Review/Merge inspection worktrees under the configured workspace root, but it never runs `gh pr checkout`, switches branches, or changes the canonical repository checkout.\n\nUse `workspace show` before local Review or Merge inspection. Use `workspace adopt` only when an operator has selected an existing worktree that should become the canonical workspace evidence for the issue. Use `workspace ensure` only when no suitable candidate exists and local inspection is required."
     )]
     Workspace(WorkspaceArgs),
-    #[command(name = "merge-once", alias = "land")]
-    MergeOnce(MergeOnceArgs),
-    #[command(name = "merge-loop")]
-    MergeLoop(MergeLoopArgs),
-    #[command(name = "main")]
-    Main(LaneCommandArgs),
-    #[command(name = "merge")]
-    Merge(LaneCommandArgs),
     #[command(name = "session")]
     Session(SessionArgs),
-    #[command(name = "merge-session", hide = true)]
-    MergeSession(LaneSessionAliasArgs),
-    #[command(name = "set-state")]
-    SetState(SetStateArgs),
-    Workpad(WorkpadArgs),
-    #[command(name = "link-pr")]
-    LinkPr(LinkPrArgs),
+    Project(ProjectArgs),
+    #[command(next_help_heading = "Lane orchestration", name = "main")]
+    Main(LaneCommandArgs),
+    #[command(name = "merge")]
+    Merge(MergeArgs),
+    Review(ReviewArgs),
     #[command(name = "create-follow-up")]
     CreateFollowUp(CreateFollowUpArgs),
-    #[command(name = "add-to-project")]
-    AddToProject(AddToProjectArgs),
-    Review(ReviewArgs),
-    #[command(name = "review-fake", hide = true)]
-    ReviewFake(ReviewFakeArgs),
-    #[command(name = "review-once", hide = true)]
-    ReviewOnce(ReviewOnceArgs),
-    #[command(name = "review-claim", hide = true)]
-    ReviewClaim(ReviewClaimArgs),
-    #[command(name = "review-clear-claim", hide = true)]
-    ReviewClearClaim(ReviewClearClaimArgs),
-    #[command(name = "review-pass", hide = true)]
-    ReviewPass(ReviewEvidenceArgs),
-    #[command(name = "review-reject", hide = true)]
-    ReviewReject(ReviewRejectArgs),
-    #[command(name = "review-session", hide = true)]
-    ReviewSession(LaneSessionAliasArgs),
-    #[command(name = "review-freshness", hide = true)]
-    ReviewFreshness(ReviewFreshnessArgs),
-    #[command(name = "review-loop", hide = true)]
-    ReviewLoop(ReviewLoopArgs),
-    #[command(name = "agent-session", hide = true)]
-    AgentSession(AgentSessionArgs),
-    Gate(GateArgs),
-    #[command(name = "gate-apply")]
-    GateApply(GateArgs),
+    #[command(next_help_heading = "Issue Forge")]
     Forge(ForgeArgs),
+    #[command(
+        next_help_heading = "Reserved lifecycle topology",
+        about = "Reserved for future all-lane automatic orchestration"
+    )]
+    Run,
+    #[command(about = "Reserved for future Jade Symphony binary and skill upgrades")]
+    Upgrade,
 }
 
 #[derive(Debug, Args)]
@@ -8967,6 +9715,20 @@ struct DoctorArgs {
     action: Option<DoctorSubcommandArgs>,
 }
 
+#[derive(Debug, Args)]
+struct StatusArgs {
+    #[command(subcommand)]
+    command: StatusCommandArgs,
+}
+
+#[derive(Debug, Subcommand)]
+enum StatusCommandArgs {
+    #[command(about = "Render the current runtime snapshot")]
+    Show(WorkflowPathArgs),
+    #[command(about = "Serve the current runtime snapshot once over loopback HTTP")]
+    Serve(StatusApiArgs),
+}
+
 #[derive(Debug, Subcommand)]
 enum DoctorSubcommandArgs {
     Repair(DoctorRepairIssueArgs),
@@ -9034,16 +9796,6 @@ impl From<CliDisplayMode> for DisplayMode {
             CliDisplayMode::Tui => Self::Tui,
         }
     }
-}
-
-#[derive(Debug, Args)]
-struct DogfoodSmokeArgs {
-    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
-    workflow_path: PathBuf,
-    #[arg(long)]
-    write: bool,
-    #[arg(long = "dry-run")]
-    _dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -9201,12 +9953,14 @@ struct MergeLoopArgs {
 #[derive(Debug, Args)]
 struct LaneCommandArgs {
     #[command(subcommand)]
-    command: LaneCommand,
+    command: MainCommandArgs,
 }
 
 #[derive(Debug, Subcommand)]
-enum LaneCommand {
+enum MainCommandArgs {
     Claim(LaneClaimArgs),
+    Once(WorkflowPathArgs),
+    Loop(RunLoopArgs),
 }
 
 #[derive(Debug, Args)]
@@ -9273,6 +10027,57 @@ struct AgentSessionStartArgs {
 struct SessionArgs {
     #[command(subcommand)]
     command: SessionCommand,
+}
+
+#[derive(Debug, Args)]
+struct ProjectArgs {
+    #[command(subcommand)]
+    command: ProjectCommandArgs,
+}
+
+#[derive(Debug, Subcommand)]
+enum ProjectCommandArgs {
+    #[command(about = "Read tracker state and Project health")]
+    State(ProjectStateArgs),
+    #[command(about = "Read one Project issue and linked PR evidence")]
+    Issue(ProjectIssueArgs),
+    #[command(about = "Inspect live issue readiness without mutating tracker state")]
+    Inspect(ProjectInspectArgs),
+    #[command(name = "set-state", about = "Set one issue Project status")]
+    SetState(SetStateArgs),
+    #[command(name = "link-pr", about = "Record pull request evidence for one issue")]
+    LinkPr(LinkPrArgs),
+    #[command(name = "add", about = "Add one GitHub issue to the configured Project")]
+    Add(AddToProjectArgs),
+    #[command(about = "Upsert the canonical issue workpad")]
+    Workpad(WorkpadArgs),
+}
+
+#[derive(Debug, Args)]
+struct ProjectInspectArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(help = "Issue identifier to inspect, for example #284")]
+    issue_ref: String,
+    #[arg(long, value_enum, help = "Optional lane context for readiness output")]
+    lane: Option<AgentSessionLaneArg>,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+    #[arg(long = "write")]
+    _write: bool,
+}
+
+#[derive(Debug, Args)]
+struct MergeArgs {
+    #[command(subcommand)]
+    command: MergeCommandArgs,
+}
+
+#[derive(Debug, Subcommand)]
+enum MergeCommandArgs {
+    Claim(LaneClaimArgs),
+    Once(MergeOnceArgs),
+    Loop(MergeLoopArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -9604,6 +10409,7 @@ struct ForgeArgs {
 enum ForgeCommandArgs {
     Create(ForgeCreateArgs),
     Promote(ForgePromoteArgs),
+    Rework(ForgeReworkArgs),
     Validate(ForgeValidateArgs),
 }
 
@@ -9640,6 +10446,25 @@ struct ForgePromoteArgs {
     markdown: ForgeMarkdownArgs,
     #[command(flatten)]
     promotion_note: PromotionNoteArgs,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct ForgeReworkArgs {
+    issue_ref: String,
+    #[arg(long, default_value = "workflows/jade-symphony.md")]
+    workflow: PathBuf,
+    #[arg(long)]
+    title: String,
+    #[command(flatten)]
+    markdown: ForgeMarkdownArgs,
+    #[arg(long = "evidence-file")]
+    evidence_file: PathBuf,
+    #[arg(long = "operator-confirmation")]
+    operator_confirmation: String,
     #[arg(long)]
     write: bool,
     #[arg(long = "dry-run")]
@@ -9696,6 +10521,102 @@ impl ForgeStatusArg {
     }
 }
 
+fn run_loop_command(args: RunLoopArgs) -> Result<Command, String> {
+    if args.max_iterations == Some(0) || args.pool == Some(0) {
+        return Err(usage());
+    }
+    Ok(Command::RunLoop {
+        options: RunLoopOptions {
+            workflow_path: args.workflow_path,
+            max_iterations: args.max_iterations,
+            once: args.once,
+            write: args.write,
+            pool: args.pool,
+            display: args.display.into(),
+        },
+    })
+}
+
+fn merge_loop_command(args: MergeLoopArgs) -> Result<Command, String> {
+    if args.max_iterations == Some(0)
+        || args.pool == Some(0)
+        || (!args.once && args.max_iterations.is_none())
+    {
+        return Err(usage());
+    }
+    Ok(Command::MergeLoop {
+        options: MergeLoopOptions {
+            workflow_path: args.workflow_path,
+            max_iterations: args.max_iterations,
+            once: args.once,
+            write: args.write,
+            pool: args.pool,
+        },
+    })
+}
+
+fn command_from_project_args(command: ProjectCommandArgs) -> Result<Command, String> {
+    match command {
+        ProjectCommandArgs::State(args) => Ok(Command::ProjectState {
+            options: ProjectStateOptions {
+                workflow_path: args.workflow_path,
+                display: args.display.into(),
+            },
+        }),
+        ProjectCommandArgs::Issue(args) => Ok(Command::ProjectIssue {
+            workflow_path: args.workflow_path,
+            issue_ref: args.issue_ref,
+            json: args.json,
+        }),
+        ProjectCommandArgs::Inspect(args) => Ok(Command::ProjectInspect {
+            workflow_path: args.workflow_path,
+            issue_ref: args.issue_ref,
+            lane: args.lane,
+        }),
+        ProjectCommandArgs::SetState(args) => Ok(Command::SetState {
+            workflow_path: args.workflow_path,
+            issue_ref: args.issue_ref,
+            state: args.state,
+            write: args.write,
+        }),
+        ProjectCommandArgs::LinkPr(args) => Ok(Command::LinkPr {
+            workflow_path: args.workflow_path,
+            issue_ref: args.issue_ref,
+            pr_ref: args.pr_ref,
+            write: args.write,
+        }),
+        ProjectCommandArgs::Add(args) => Ok(Command::AddToProject {
+            workflow_path: args.workflow_path,
+            issue_id: args.issue_id,
+            write: args.write,
+        }),
+        ProjectCommandArgs::Workpad(args) => Ok(Command::Workpad {
+            workflow_path: args.workflow_path,
+            issue_ref: args.issue_ref,
+            markdown_path: args.markdown_path,
+            write: args.write,
+        }),
+    }
+}
+
+fn command_from_merge_args(command: MergeCommandArgs) -> Result<Command, String> {
+    match command {
+        MergeCommandArgs::Claim(claim) => Ok(Command::LaneClaim {
+            workflow_path: claim.workflow_path,
+            issue_ref: claim.issue_ref,
+            lane: AgentSessionLaneArg::Merge,
+            worker: claim.worker,
+            source: claim.source,
+            write: claim.write,
+        }),
+        MergeCommandArgs::Once(args) => Ok(Command::MergeOnce {
+            workflow_path: args.workflow_path,
+            write: args.write,
+        }),
+        MergeCommandArgs::Loop(args) => merge_loop_command(args),
+    }
+}
+
 impl TryFrom<Cli> for Command {
     type Error = String;
 
@@ -9716,28 +10637,8 @@ impl TryFrom<Cli> for Command {
                         workflow_path: args.workflow_path,
                         json: args.json,
                     }),
-                    CliCommand::StatusApi(args) => Ok(Self::StatusApi {
-                        workflow_path: args.workflow_path,
-                        bind: args.bind,
-                        once: args.once,
-                    }),
                     CliCommand::Validate(args) => Ok(Self::Validate {
                         workflow_path: args.workflow_path,
-                    }),
-                    CliCommand::Inspect(args) => Ok(Self::Inspect {
-                        workflow_path: args.workflow_path,
-                        states: args.states,
-                    }),
-                    CliCommand::ProjectState(args) => Ok(Self::ProjectState {
-                        options: ProjectStateOptions {
-                            workflow_path: args.workflow_path,
-                            display: args.display.into(),
-                        },
-                    }),
-                    CliCommand::ProjectIssue(args) => Ok(Self::ProjectIssue {
-                        workflow_path: args.workflow_path,
-                        issue_ref: args.issue_ref,
-                        json: args.json,
                     }),
                     CliCommand::Doctor(args) => Ok(Self::Doctor {
                         options: DoctorOptions {
@@ -9774,13 +10675,17 @@ impl TryFrom<Cli> for Command {
                     CliCommand::Debug(args) => Ok(Self::Debug {
                         workflow_path: args.workflow_path,
                     }),
-                    CliCommand::DogfoodSmoke(args) => Ok(Self::DogfoodSmoke {
-                        workflow_path: args.workflow_path,
-                        write: args.write,
-                    }),
-                    CliCommand::CleanupPlan(args) => Ok(Self::CleanupPlan {
-                        workflow_path: args.workflow_path,
-                    }),
+                    CliCommand::Status(args) => match args.command {
+                        StatusCommandArgs::Show(show) => Ok(Self::Plan {
+                            workflow_path: show.workflow_path,
+                            json: show.json,
+                        }),
+                        StatusCommandArgs::Serve(serve) => Ok(Self::StatusApi {
+                            workflow_path: serve.workflow_path,
+                            bind: serve.bind,
+                            once: serve.once,
+                        }),
+                    },
                     CliCommand::Clean(args) => match args.command {
                         CleanCommand::Plan(plan) => Ok(Self::CleanPlan {
                             workflow_path: plan.workflow_path,
@@ -9789,28 +10694,6 @@ impl TryFrom<Cli> for Command {
                             workflow_path: audit.workflow_path,
                         }),
                     },
-                    CliCommand::RunOnce(args) => Ok(Self::RunOnce {
-                        workflow_path: args.workflow_path,
-                    }),
-                    CliCommand::RunLoop(args) => {
-                        if args.max_iterations == Some(0) || args.pool == Some(0) {
-                            return Err(usage());
-                        }
-                        Ok(Self::RunLoop {
-                            options: RunLoopOptions {
-                                workflow_path: args.workflow_path,
-                                max_iterations: args.max_iterations,
-                                once: args.once,
-                                write: args.write,
-                                pool: args.pool,
-                                display: args.display.into(),
-                            },
-                        })
-                    }
-                    CliCommand::CleanupWorkspaces(args) => Ok(Self::CleanupWorkspaces {
-                        workflow_path: args.workflow_path,
-                        write: args.write,
-                    }),
                     CliCommand::Workspace(args) => match args.command {
                         WorkspaceCommandArgs::List(list) => Ok(Self::WorkspaceList {
                             workflow_path: list.workflow_path,
@@ -9833,29 +10716,9 @@ impl TryFrom<Cli> for Command {
                             write: ensure.write,
                         }),
                     },
-                    CliCommand::MergeOnce(args) => Ok(Self::MergeOnce {
-                        workflow_path: args.workflow_path,
-                        write: args.write,
-                    }),
-                    CliCommand::MergeLoop(args) => {
-                        if args.max_iterations == Some(0)
-                            || args.pool == Some(0)
-                            || (!args.once && args.max_iterations.is_none())
-                        {
-                            return Err(usage());
-                        }
-                        Ok(Self::MergeLoop {
-                            options: MergeLoopOptions {
-                                workflow_path: args.workflow_path,
-                                max_iterations: args.max_iterations,
-                                once: args.once,
-                                write: args.write,
-                                pool: args.pool,
-                            },
-                        })
-                    }
+                    CliCommand::Project(args) => command_from_project_args(args.command),
                     CliCommand::Main(args) => lane_command(AgentSessionLaneArg::Main, args),
-                    CliCommand::Merge(args) => lane_command(AgentSessionLaneArg::Merge, args),
+                    CliCommand::Merge(args) => command_from_merge_args(args.command),
                     CliCommand::Session(args) => match args.command {
                         SessionCommand::Start(start) => Ok(Self::SessionStart {
                             workflow_path: start.workflow_path,
@@ -9873,102 +10736,13 @@ impl TryFrom<Cli> for Command {
                             exec: attach.exec,
                         }),
                     },
-                    CliCommand::MergeSession(args) => Ok(Self::MergeSession {
-                        workflow_path: args.workflow_path,
-                        issue_ref: args.issue_ref,
-                        write: args.write,
-                    }),
-                    CliCommand::SetState(args) => Ok(Self::SetState {
-                        workflow_path: args.workflow_path,
-                        issue_ref: args.issue_ref,
-                        state: args.state,
-                        write: args.write,
-                    }),
-                    CliCommand::Workpad(args) => Ok(Self::Workpad {
-                        workflow_path: args.workflow_path,
-                        issue_ref: args.issue_ref,
-                        markdown_path: args.markdown_path,
-                        write: args.write,
-                    }),
-                    CliCommand::LinkPr(args) => Ok(Self::LinkPr {
-                        workflow_path: args.workflow_path,
-                        issue_ref: args.issue_ref,
-                        pr_ref: args.pr_ref,
-                        write: args.write,
-                    }),
                     CliCommand::CreateFollowUp(args) => Ok(Self::CreateFollowUp {
                         workflow_path: args.workflow,
                         title: args.title,
                         body_path: args.body_file,
                         write: args.write,
                     }),
-                    CliCommand::AddToProject(args) => Ok(Self::AddToProject {
-                        workflow_path: args.workflow_path,
-                        issue_id: args.issue_id,
-                        write: args.write,
-                    }),
                     CliCommand::Review(args) => command_from_review_args(args.command),
-                    CliCommand::ReviewFake(args) => {
-                        command_from_review_args(ReviewCommandArgs::Fake(args))
-                    }
-                    CliCommand::ReviewOnce(args) => {
-                        command_from_review_args(ReviewCommandArgs::Once(args))
-                    }
-                    CliCommand::ReviewClaim(args) => Ok(Self::ReviewClaim {
-                        workflow_path: args.workflow_path,
-                        issue_ref: args.issue_ref,
-                        worker: args.worker,
-                        write: args.write,
-                    }),
-                    CliCommand::ReviewClearClaim(args) => Ok(Self::ReviewClearClaim {
-                        workflow_path: args.workflow_path,
-                        issue_ref: args.issue_ref,
-                        write: args.write,
-                    }),
-                    CliCommand::ReviewPass(args) => {
-                        command_from_review_args(ReviewCommandArgs::Pass(args))
-                    }
-                    CliCommand::ReviewReject(args) => {
-                        command_from_review_args(ReviewCommandArgs::Reject(args))
-                    }
-                    CliCommand::ReviewSession(args) => {
-                        command_from_review_args(ReviewCommandArgs::Session(args))
-                    }
-                    CliCommand::ReviewFreshness(args) => {
-                        command_from_review_args(ReviewCommandArgs::Freshness(args))
-                    }
-                    CliCommand::ReviewLoop(args) => {
-                        command_from_review_args(ReviewCommandArgs::Loop(args))
-                    }
-                    CliCommand::AgentSession(args) => match args.command {
-                        AgentSessionCommand::Start(start) => Ok(Self::AgentSessionStart {
-                            workflow_path: start.workflow_path,
-                            issue_ref: start.issue_ref,
-                            lane: start.lane,
-                            run_id: start.run_id,
-                            write: start.write,
-                        }),
-                        AgentSessionCommand::List(list) => Ok(Self::AgentSessionList {
-                            workflow_path: list.workflow_path,
-                        }),
-                        AgentSessionCommand::Attach(attach) => Ok(Self::AgentSessionAttach {
-                            workflow_path: attach.workflow_path,
-                            session: attach.session,
-                            exec: attach.exec,
-                        }),
-                    },
-                    CliCommand::Gate(args) => Ok(Self::Gate {
-                        workflow_path: args.workflow_path,
-                        issue_ref: args.issue_ref,
-                        apply: false,
-                        write: args.write,
-                    }),
-                    CliCommand::GateApply(args) => Ok(Self::Gate {
-                        workflow_path: args.workflow_path,
-                        issue_ref: args.issue_ref,
-                        apply: true,
-                        write: args.write,
-                    }),
                     CliCommand::Forge(args) => match args.command {
                         ForgeCommandArgs::Create(args) => Ok(Self::ForgeCreate {
                             workflow_path: args.workflow,
@@ -9989,6 +10763,18 @@ impl TryFrom<Cli> for Command {
                             promotion_note: promotion_note_input(args.promotion_note)?,
                             write: args.write,
                             dry_run: args.dry_run,
+                        }),
+                        ForgeCommandArgs::Rework(args) => Ok(Self::ForgeRework {
+                            options: ForgeReworkOptions {
+                                workflow_path: args.workflow,
+                                issue_ref: args.issue_ref,
+                                title: args.title,
+                                markdown: read_forge_markdown_arg(args.markdown)?,
+                                evidence: read_required_file(args.evidence_file)?,
+                                operator_confirmation: args.operator_confirmation,
+                                write: args.write,
+                                dry_run: args.dry_run,
+                            },
                         }),
                         ForgeCommandArgs::Validate(args) => {
                             if let Some(issue_ref) = args.issue_ref {
@@ -10021,6 +10807,12 @@ impl TryFrom<Cli> for Command {
                             }
                         }
                     },
+                    CliCommand::Run => {
+                        Err("`jade-symphony run` is reserved for future all-lane orchestration and is not implemented yet".into())
+                    }
+                    CliCommand::Upgrade => {
+                        Err("`jade-symphony upgrade` is reserved for future Jade Symphony binary and skill upgrades and is not implemented yet".into())
+                    }
                 }
             }
         }
@@ -10063,7 +10855,7 @@ fn gate_workpad(issue: &TrackerIssue, decision: &GateDecision) -> String {
         "- [ ] Resolve quality-gate findings before dispatch.".to_string(),
         String::new(),
         "### Validation".to_string(),
-        "- [ ] Re-run `jade-symphony gate` after issue updates.".to_string(),
+        "- [ ] Re-run `jade-symphony forge validate --issue` after issue updates.".to_string(),
     ]);
 
     lines.join("\n")
@@ -10226,8 +11018,46 @@ fn print_forge_validation(report: &ForgeValidationReport) {
 }
 
 fn usage() -> String {
-    let mut command = Cli::command();
-    command.render_long_help().to_string()
+    [
+        "OpenAI Symphony-style orchestration harness with Jade Symphony extensions",
+        "",
+        "Usage: jade-symphony [path-to-WORKFLOW.md] [COMMAND]",
+        "",
+        "Human / Operator operations:",
+        "  plan                        Render the dispatch/status plan",
+        "  validate                    Validate workflow loading and configuration",
+        "  doctor                      Audit Project, workflow, and runtime invariants",
+        "  status                      Show or serve runtime status snapshots",
+        "  clean                       Plan or audit artifact cleanup",
+        "  profiles                    List execution profiles",
+        "  debug                       Render a combined operator debug report",
+        "",
+        "Project / Agent internals:",
+        "  project                     Read or mutate Project facts through grouped subcommands",
+        "  workspace                   Discover and record per-issue git worktrees",
+        "  session                     Start, list, or attach supervised lane sessions",
+        "",
+        "Lane orchestration:",
+        "  main                        Main Agent claim, once, and loop commands",
+        "  review                      Review Agent claim, pass/reject, session, freshness, and loop commands",
+        "  merge                       Merging Agent claim, once, and loop commands",
+        "  create-follow-up            Create an operator follow-up issue",
+        "",
+        "Issue Forge:",
+        "  forge                       Validate, create, or promote issue contracts",
+        "",
+        "Reserved lifecycle topology:",
+        "  run                         Reserved for future all-lane automatic orchestration",
+        "  upgrade                     Reserved for future Jade Symphony binary and skill upgrades",
+        "",
+        "Arguments:",
+        "  [path-to-WORKFLOW.md]",
+        "",
+        "Options:",
+        "  -h, --help                  Print help",
+        "",
+    ]
+    .join("\n")
 }
 
 #[cfg(test)]
@@ -10373,7 +11203,7 @@ mod tests {
         append_tracker_mutation_audit(
             &config,
             TrackerMutationAudit {
-                command: "merge-once",
+                command: "merge once",
                 mutation_type: "state_change",
                 issue_ref: Some("#7"),
                 target: Some("https://github.com/Alive24/jade-symphony/pull/7".into()),
@@ -10400,6 +11230,58 @@ mod tests {
                 .map(|audit| audit.mutation_type.as_str()),
             Some("state_change")
         );
+    }
+
+    #[test]
+    fn manual_lane_claim_evidence_records_non_tmux_registry_records() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
+        config.artifacts.namespace = Some("acme/project".into());
+        let issue = tracker_issue_with_ref("#281", "Manual evidence", "In Progress");
+
+        for (index, lane) in [
+            AgentSessionLaneArg::Main,
+            AgentSessionLaneArg::Review,
+            AgentSessionLaneArg::Merge,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let worker = format!("codex-manual-{}", lane.label());
+            let claim = LaneClaim::active(
+                &issue.identifier,
+                lane.claim_lane(),
+                LaneClaimActor::Codex,
+                LaneClaimSource::Manual,
+                1_779_000_900_123 + index as u64,
+            )
+            .with_worker(&worker);
+            let claim_value = claim.render();
+
+            record_manual_lane_claim_evidence(&config, &issue, lane, &claim, &claim_value, &worker)
+                .unwrap();
+        }
+
+        let registry = load_session_registry(&session_registry_path(&config)).unwrap();
+        assert_eq!(registry.sessions.len(), 3);
+        for record in registry.sessions {
+            assert_eq!(record.issue_identifier.as_deref(), Some("#281"));
+            assert_eq!(record.backend, "codex-app-manual");
+            assert_eq!(record.status, SessionStatus::Recorded);
+            assert_eq!(record.session_source.as_deref(), Some("manual-claim"));
+            assert_eq!(record.thread.as_deref(), Some("unknown"));
+            assert!(record
+                .claim_value
+                .as_deref()
+                .unwrap()
+                .contains("source=manual"));
+            assert!(record.pane_target.is_empty());
+            assert_eq!(
+                record.attach_command,
+                "not a tmux session; manual Codex App evidence only"
+            );
+        }
     }
 
     #[test]
@@ -10515,14 +11397,14 @@ mod tests {
             id: "ISSUE_29".into(),
             item_id: None,
             identifier: "#29".into(),
-            title: "Wire runtime state persistence into run-loop".into(),
+            title: "Wire runtime state persistence into main loop".into(),
             description: None,
             url: None,
             state: state.into(),
             labels: Vec::new(),
             assignees: Vec::new(),
             priority: None,
-            branch_name: Some("feature/issue-29-runtime-state-run-loop".into()),
+            branch_name: Some("feature/issue-29-runtime-state-main-loop".into()),
             linked_pull_requests: Vec::new(),
             blocked_by: Vec::new(),
             project_fields: Default::default(),
@@ -10640,6 +11522,9 @@ mod tests {
             issue_ref: &str,
             normalized_state: &str,
         ) -> Result<(), jade_symphony::tracker::TrackerError> {
+            if let Some(issue) = self.issues.borrow_mut().get_mut(issue_ref) {
+                issue.state = normalize_state(normalized_state);
+            }
             self.operations
                 .borrow_mut()
                 .push(format!("set_state:{issue_ref}:{normalized_state}"));
@@ -10660,11 +11545,42 @@ mod tests {
             }
             assert!(
                 markdown.contains("## Rework Diagnostic")
+                    || markdown.contains("## Rework Revision Evidence")
+                    || markdown.contains("## Rework Revision Blocker")
                     || markdown.contains("### Merge Lane Handoff")
+                    || markdown.contains("## Agent Review")
             );
             self.operations
                 .borrow_mut()
                 .push(format!("workpad:{issue_ref}"));
+            Ok(())
+        }
+
+        fn update_issue_content(
+            &self,
+            issue_ref: &str,
+            title: &str,
+            body: &str,
+        ) -> Result<(), jade_symphony::tracker::TrackerError> {
+            if let Some(issue) = self.issues.borrow_mut().get_mut(issue_ref) {
+                issue.title = title.to_string();
+                issue.description = Some(body.to_string());
+            }
+            self.operations
+                .borrow_mut()
+                .push(format!("update_issue_content:{issue_ref}"));
+            Ok(())
+        }
+
+        fn add_issue_comment(
+            &self,
+            issue_ref: &str,
+            markdown: &str,
+        ) -> Result<(), jade_symphony::tracker::TrackerError> {
+            assert!(markdown.contains("## Promotion Note"));
+            self.operations
+                .borrow_mut()
+                .push(format!("comment:{issue_ref}"));
             Ok(())
         }
 
@@ -10798,12 +11714,8 @@ mod tests {
 
     #[test]
     fn clap_parser_keeps_operator_command_aliases() {
-        assert_eq!(
-            parse(&["status", "examples/dry-run-workflow.md"]),
-            Command::Plan {
-                workflow_path: PathBuf::from("examples/dry-run-workflow.md"),
-                json: false,
-            }
+        assert!(
+            Command::parse(vec!["status".into(), "examples/dry-run-workflow.md".into()]).is_err()
         );
         assert_eq!(
             parse(&["validate-workflow", "examples/dry-run-workflow.md"]),
@@ -10845,27 +11757,25 @@ mod tests {
     fn parses_inspect_state_filters() {
         assert_eq!(
             parse(&[
+                "project",
                 "inspect",
                 "examples/github-project-workflow.md",
-                "--state",
-                "Merging",
-                "--state",
-                "Rework"
+                "#284",
+                "--lane",
+                "main"
             ]),
-            Command::Inspect {
+            Command::ProjectInspect {
                 workflow_path: PathBuf::from("examples/github-project-workflow.md"),
-                states: vec!["Merging".into(), "Rework".into()]
+                issue_ref: "#284".into(),
+                lane: Some(AgentSessionLaneArg::Main),
             }
         );
     }
 
     #[test]
-    fn parses_project_state_health_alias() {
+    fn parses_project_state_read_surface() {
         assert_eq!(
-            parse(&[
-                "project-state-health",
-                "examples/github-project-workflow.md"
-            ]),
+            parse(&["project", "state", "examples/github-project-workflow.md"]),
             Command::ProjectState {
                 options: ProjectStateOptions {
                     workflow_path: PathBuf::from("examples/github-project-workflow.md"),
@@ -10879,7 +11789,8 @@ mod tests {
     fn parses_project_state_tui_display() {
         assert_eq!(
             parse(&[
-                "project-state",
+                "project",
+                "state",
                 "examples/github-project-workflow.md",
                 "--display",
                 "tui"
@@ -11008,7 +11919,7 @@ mod tests {
     #[test]
     fn parses_status_json_flag() {
         assert_eq!(
-            parse(&["status", "examples/dry-run-workflow.md", "--json"]),
+            parse(&["status", "show", "examples/dry-run-workflow.md", "--json"]),
             Command::Plan {
                 workflow_path: PathBuf::from("examples/dry-run-workflow.md"),
                 json: true,
@@ -11154,7 +12065,8 @@ mod tests {
     fn parses_status_api_command() {
         assert_eq!(
             parse(&[
-                "status-api",
+                "status",
+                "serve",
                 "examples/dry-run-workflow.md",
                 "--bind",
                 "127.0.0.1:0",
@@ -11172,67 +12084,46 @@ mod tests {
     fn parses_agent_session_commands() {
         assert_eq!(
             parse(&[
-                "agent-session",
+                "session",
                 "start",
                 "workflows/jade-symphony.md",
                 "#220",
                 "--lane",
                 "review",
+                "--run",
+                "20260517T1404Z-issue220-review-manual",
                 "--write"
             ]),
-            Command::AgentSessionStart {
+            Command::SessionStart {
                 workflow_path: PathBuf::from("workflows/jade-symphony.md"),
                 issue_ref: "#220".into(),
                 lane: AgentSessionLaneArg::Review,
-                run_id: None,
+                run_id: "20260517T1404Z-issue220-review-manual".into(),
                 write: true,
             }
         );
         assert_eq!(
-            parse(&["agent-session", "list", "workflows/jade-symphony.md"]),
-            Command::AgentSessionList {
+            parse(&["session", "list", "workflows/jade-symphony.md"]),
+            Command::SessionList {
                 workflow_path: PathBuf::from("workflows/jade-symphony.md"),
             }
         );
         assert_eq!(
             parse(&[
-                "agent-session",
+                "session",
                 "attach",
                 "workflows/jade-symphony.md",
                 "jade-review-220"
             ]),
-            Command::AgentSessionAttach {
+            Command::SessionAttach {
                 workflow_path: PathBuf::from("workflows/jade-symphony.md"),
                 session: "jade-review-220".into(),
                 exec: false,
             }
         );
-        assert_eq!(
-            parse(&[
-                "review-session",
-                "workflows/jade-symphony.md",
-                "#227",
-                "--write"
-            ]),
-            Command::ReviewSession {
-                workflow_path: PathBuf::from("workflows/jade-symphony.md"),
-                issue_ref: "#227".into(),
-                write: true,
-            }
-        );
-        assert_eq!(
-            parse(&[
-                "merge-session",
-                "workflows/jade-symphony.md",
-                "#227",
-                "--write"
-            ]),
-            Command::MergeSession {
-                workflow_path: PathBuf::from("workflows/jade-symphony.md"),
-                issue_ref: "#227".into(),
-                write: true,
-            }
-        );
+        assert!(Command::parse(vec!["agent-session".into(), "list".into()]).is_err());
+        assert!(Command::parse(vec!["review-session".into(), "WORKFLOW.md".into()]).is_err());
+        assert!(Command::parse(vec!["merge-session".into(), "WORKFLOW.md".into()]).is_err());
     }
 
     #[test]
@@ -11309,39 +12200,62 @@ mod tests {
     }
 
     #[test]
-    fn parses_dogfood_smoke_command() {
+    fn review_session_uses_gemini_command_when_no_tmux_override_exists() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nagent:\n  backend: tmux\ntmux:\n  agent_command: codex\nreview:\n  backend: gemini-cli\n  gemini_command: /opt/homebrew/bin/gemini\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
         assert_eq!(
-            parse(&[
-                "dogfood-smoke",
-                "examples/github-project-workflow.md",
-                "--dry-run"
-            ]),
-            Command::DogfoodSmoke {
-                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
-                write: false
-            }
+            tmux_agent_command_for_lane(&config, AgentSessionLaneArg::Main).unwrap(),
+            "codex"
         );
         assert_eq!(
-            parse(&[
-                "dogfood-smoke",
-                "examples/github-project-workflow.md",
-                "--write"
-            ]),
-            Command::DogfoodSmoke {
-                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
-                write: true
-            }
+            tmux_agent_command_for_lane(&config, AgentSessionLaneArg::Review).unwrap(),
+            "/opt/homebrew/bin/gemini"
+        );
+        assert_eq!(
+            tmux_agent_command_for_lane(&config, AgentSessionLaneArg::Merge).unwrap(),
+            "codex"
         );
     }
 
     #[test]
-    fn parses_cleanup_plan_command() {
+    fn review_session_prefers_tmux_review_command_override() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nagent:\n  backend: tmux\ntmux:\n  agent_command: codex\n  review_agent_command: custom-gemini --model pro\nreview:\n  backend: gemini-cli\n  gemini_command: /opt/homebrew/bin/gemini\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
         assert_eq!(
-            parse(&["cleanup-plan", "examples/github-project-workflow.md"]),
-            Command::CleanupPlan {
-                workflow_path: PathBuf::from("examples/github-project-workflow.md")
-            }
+            tmux_agent_command_for_lane(&config, AgentSessionLaneArg::Review).unwrap(),
+            "custom-gemini --model pro"
         );
+    }
+
+    #[test]
+    fn dogfood_smoke_is_not_a_cli_entrypoint() {
+        let help = help_text(&["--help"]);
+        assert!(!help.contains("dogfood-smoke"));
+
+        let error = Command::parse(vec![
+            "dogfood-smoke".into(),
+            "examples/github-project-workflow.md".into(),
+            "--dry-run".into(),
+        ])
+        .unwrap_err();
+
+        assert!(error.contains("unexpected argument 'examples/github-project-workflow.md'"));
+    }
+
+    #[test]
+    fn parses_cleanup_plan_command() {
         assert_eq!(
             parse(&["clean", "plan", "examples/github-project-workflow.md"]),
             Command::CleanPlan {
@@ -11358,24 +12272,17 @@ mod tests {
 
     #[test]
     fn parses_cleanup_workspaces_command() {
-        assert_eq!(
-            parse(&[
-                "cleanup-workspaces",
-                "examples/github-project-workflow.md",
-                "--write"
-            ]),
-            Command::CleanupWorkspaces {
-                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
-                write: true,
-            }
-        );
-        assert_eq!(
-            parse(&["workspace-cleanup", "examples/github-project-workflow.md"]),
-            Command::CleanupWorkspaces {
-                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
-                write: false,
-            }
-        );
+        assert!(Command::parse(vec![
+            "cleanup-workspaces".into(),
+            "examples/github-project-workflow.md".into(),
+            "--write".into()
+        ])
+        .is_err());
+        assert!(Command::parse(vec![
+            "workspace-cleanup".into(),
+            "examples/github-project-workflow.md".into()
+        ])
+        .is_err());
     }
 
     #[test]
@@ -11583,35 +12490,6 @@ mod tests {
     }
 
     #[test]
-    fn dogfood_smoke_write_readiness_depends_on_blocking_gaps() {
-        assert!(dogfood_smoke_write_ready(false, 0, 1, true));
-        assert!(!dogfood_smoke_write_ready(true, 0, 1, true));
-        assert!(!dogfood_smoke_write_ready(false, 1, 1, true));
-        assert!(!dogfood_smoke_write_ready(false, 0, 2, true));
-        assert!(!dogfood_smoke_write_ready(false, 0, 1, false));
-    }
-
-    #[test]
-    fn dogfood_smoke_write_rejects_dry_run_backend_before_tracker_reads() {
-        let temp = tempfile::tempdir().unwrap();
-        let workflow_path = temp.path().join("WORKFLOW.md");
-        let missing_fixture = temp.path().join("missing-issues.json");
-        std::fs::write(
-            &workflow_path,
-            format!(
-                "---\ntracker:\n  kind: memory\n  fixture_path: {}\nagent:\n  backend: dry-run\n---\nPrompt",
-                missing_fixture.display()
-            ),
-        )
-        .unwrap();
-
-        let error = dogfood_smoke(workflow_path, true).unwrap_err().to_string();
-
-        assert!(error.contains("write-mode dogfood-smoke is blocked"));
-        assert!(error.contains("agent.backend=dry-run"));
-    }
-
-    #[test]
     fn clap_parser_treats_help_flags_as_successful_help() {
         assert!(help_text(&["--help"]).contains("Usage: jade-symphony"));
         assert!(help_text(&["-h"]).contains("Usage: jade-symphony"));
@@ -11619,18 +12497,18 @@ mod tests {
 
     #[test]
     fn clap_parser_preserves_subcommand_specific_help() {
-        let link_pr = help_text(&["link-pr", "--help"]);
-        assert!(link_pr.contains("Usage: jade-symphony link-pr"));
+        let link_pr = help_text(&["project", "link-pr", "--help"]);
+        assert!(link_pr.contains("Usage: jade-symphony project link-pr"));
         assert!(link_pr.contains("<path-to-WORKFLOW.md>"));
         assert!(link_pr.contains("<ISSUE_REF>"));
         assert!(link_pr.contains("<PR_REF>"));
 
-        let workpad = help_text(&["workpad", "--help"]);
-        assert!(workpad.contains("Usage: jade-symphony workpad"));
+        let workpad = help_text(&["project", "workpad", "--help"]);
+        assert!(workpad.contains("Usage: jade-symphony project workpad"));
         assert!(workpad.contains("<MARKDOWN_PATH>"));
 
-        let set_state = help_text(&["set-state", "--help"]);
-        assert!(set_state.contains("Usage: jade-symphony set-state"));
+        let set_state = help_text(&["project", "set-state", "--help"]);
+        assert!(set_state.contains("Usage: jade-symphony project set-state"));
         assert!(set_state.contains("<STATE>"));
 
         let forge_promote = help_text(&["forge", "promote", "--help"]);
@@ -11670,6 +12548,7 @@ mod tests {
     fn clap_parser_preserves_write_intent_for_mutating_commands() {
         assert_eq!(
             parse(&[
+                "project",
                 "set-state",
                 "examples/github-project-workflow.md",
                 "#4",
@@ -11689,7 +12568,8 @@ mod tests {
     fn clap_parser_preserves_review_outcome_mapping() {
         assert_eq!(
             parse(&[
-                "review-fake",
+                "review",
+                "fake",
                 "examples/github-project-workflow.md",
                 "#4",
                 "--outcome",
@@ -11709,7 +12589,8 @@ mod tests {
     fn parses_project_issue_read_surface() {
         assert_eq!(
             parse(&[
-                "project-issue",
+                "project",
+                "issue",
                 "examples/github-project-workflow.md",
                 "#235",
                 "--json"
@@ -11744,19 +12625,13 @@ mod tests {
             }
         );
 
-        assert_eq!(
-            parse(&[
-                "review-clear-claim",
-                "examples/github-project-workflow.md",
-                "#235",
-                "--write"
-            ]),
-            Command::ReviewClearClaim {
-                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
-                issue_ref: "#235".into(),
-                write: true
-            }
-        );
+        assert!(Command::parse(vec![
+            "review-clear-claim".into(),
+            "examples/github-project-workflow.md".into(),
+            "#235".into(),
+            "--write".into()
+        ])
+        .is_err());
     }
 
     #[test]
@@ -11794,6 +12669,30 @@ mod tests {
             options.fake_outcome,
             Some(FakeReviewOutcome::ConfirmedFinding)
         );
+    }
+
+    #[test]
+    fn automatic_review_prompt_forbids_project_mutations() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\n---\nReview {{ issue.identifier }}",
+        )
+        .unwrap();
+        let prompt = render_automatic_review_prompt(
+            &workflow,
+            &review_issue_with_ref("#282", "Headless review"),
+        )
+        .unwrap();
+
+        assert!(prompt.contains("Review #282"));
+        assert!(prompt.contains("Automatic Headless Review Boundary"));
+        assert!(prompt.contains("Do not run mutating Jade Symphony or GitHub commands"));
+        assert!(prompt.contains("`review claim`, `review pass`"));
+        assert!(prompt.contains("`gh issue edit`, `gh issue comment`"));
+        assert!(prompt.contains("Return review evidence in stdout only"));
+        assert!(prompt.contains("Review Result: PASS"));
+        assert!(prompt.contains("Do not use those bracketed finding tags for positive"));
+        assert!(prompt.contains("Leave routing and evidence"));
     }
 
     #[test]
@@ -11853,11 +12752,53 @@ mod tests {
         let issue = tracker_issue_with_review_claim();
         let claim = project_text_field(&issue, "Review Agent").unwrap();
 
-        assert!(validate_manual_review_claim(&issue, &format!("claim: {claim}")).is_ok());
-        let error = validate_manual_review_claim(&issue, "claim: Manual Gemini A")
+        assert!(validate_active_manual_review_claim(&issue, &format!("claim: {claim}")).is_ok());
+        let error = validate_active_manual_review_claim(&issue, "claim: Manual Gemini A")
             .unwrap_err()
             .to_string();
         assert!(error.contains("exact current Review Agent claim"));
+    }
+
+    #[test]
+    fn manual_review_pass_allows_terminal_passed_claim_repair() {
+        let mut issue = tracker_issue_with_review_claim();
+        let claim = project_text_field(&issue, "Review Agent").unwrap();
+        let terminal = terminal_review_claim_value(
+            &LaneClaim::parse(&claim).unwrap(),
+            LaneClaimState::Done,
+            "passed",
+        );
+        issue.project_fields.insert(
+            "Review Agent".into(),
+            serde_json::Value::String(terminal.clone()),
+        );
+
+        let (current, parsed) =
+            validate_manual_review_pass_claim(&issue, &format!("claim: {terminal}")).unwrap();
+
+        assert_eq!(current, terminal);
+        assert_eq!(parsed.state, LaneClaimState::Done);
+    }
+
+    #[test]
+    fn manual_review_reject_still_requires_active_claim() {
+        let mut issue = tracker_issue_with_review_claim();
+        let claim = project_text_field(&issue, "Review Agent").unwrap();
+        let terminal = terminal_review_claim_value(
+            &LaneClaim::parse(&claim).unwrap(),
+            LaneClaimState::Done,
+            "passed",
+        );
+        issue.project_fields.insert(
+            "Review Agent".into(),
+            serde_json::Value::String(terminal.clone()),
+        );
+
+        let error = validate_active_manual_review_claim(&issue, &format!("claim: {terminal}"))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("must be active before routing"));
     }
 
     #[test]
@@ -11880,7 +12821,8 @@ mod tests {
     #[test]
     fn parses_review_freshness_command() {
         let command = Command::parse(vec![
-            "review-freshness".into(),
+            "review".into(),
+            "freshness".into(),
             "--issue".into(),
             "#33".into(),
             "--prior-head".into(),
@@ -11919,7 +12861,8 @@ mod tests {
     #[test]
     fn parses_review_loop_flags() {
         let command = Command::parse(vec![
-            "review-loop".into(),
+            "review".into(),
+            "loop".into(),
             "examples/review-fixture-workflow.md".into(),
             "--max-iterations".into(),
             "2".into(),
@@ -11932,7 +12875,7 @@ mod tests {
         .unwrap();
 
         let Command::ReviewLoop { options } = command else {
-            panic!("expected review-loop command");
+            panic!("expected review loop command");
         };
 
         assert_eq!(
@@ -11951,7 +12894,8 @@ mod tests {
     #[test]
     fn review_loop_once_overrides_max_iterations() {
         let command = Command::parse(vec![
-            "review-loop".into(),
+            "review".into(),
+            "loop".into(),
             "WORKFLOW.md".into(),
             "--max-iterations".into(),
             "4".into(),
@@ -11960,7 +12904,7 @@ mod tests {
         .unwrap();
 
         let Command::ReviewLoop { options } = command else {
-            panic!("expected review-loop command");
+            panic!("expected review loop command");
         };
 
         assert_eq!(options.iteration_limit(), Some(1));
@@ -11969,7 +12913,8 @@ mod tests {
     #[test]
     fn parses_merge_loop_flags() {
         let command = Command::parse(vec![
-            "merge-loop".into(),
+            "merge".into(),
+            "loop".into(),
             "examples/github-project-workflow.md".into(),
             "--max-iterations".into(),
             "3".into(),
@@ -11980,7 +12925,7 @@ mod tests {
         .unwrap();
 
         let Command::MergeLoop { options } = command else {
-            panic!("expected merge-loop command");
+            panic!("expected merge loop command");
         };
 
         assert_eq!(
@@ -11996,7 +12941,8 @@ mod tests {
     #[test]
     fn merge_loop_once_overrides_max_iterations() {
         let command = Command::parse(vec![
-            "merge-loop".into(),
+            "merge".into(),
+            "loop".into(),
             "WORKFLOW.md".into(),
             "--max-iterations".into(),
             "4".into(),
@@ -12005,7 +12951,7 @@ mod tests {
         .unwrap();
 
         let Command::MergeLoop { options } = command else {
-            panic!("expected merge-loop command");
+            panic!("expected merge loop command");
         };
 
         assert_eq!(options.iteration_limit(), Some(1));
@@ -12013,13 +12959,14 @@ mod tests {
 
     #[test]
     fn rejects_unbounded_merge_loop_for_now() {
-        assert!(Command::parse(vec!["merge-loop".into(), "WORKFLOW.md".into()]).is_err());
+        assert!(Command::parse(vec!["merge".into(), "loop".into(), "WORKFLOW.md".into()]).is_err());
     }
 
     #[test]
     fn rejects_zero_merge_loop_iterations() {
         assert!(Command::parse(vec![
-            "merge-loop".into(),
+            "merge".into(),
+            "loop".into(),
             "WORKFLOW.md".into(),
             "--max-iterations".into(),
             "0".into(),
@@ -12030,7 +12977,8 @@ mod tests {
     #[test]
     fn rejects_zero_merge_loop_pool() {
         assert!(Command::parse(vec![
-            "merge-loop".into(),
+            "merge".into(),
+            "loop".into(),
             "WORKFLOW.md".into(),
             "--max-iterations".into(),
             "1".into(),
@@ -12096,6 +13044,190 @@ mod tests {
     }
 
     #[test]
+    fn review_claim_for_issue_replaces_terminal_review_claim() {
+        let mut issue = review_issue_with_ref("#67", "Retry review");
+        let terminal_claim = LaneClaim::active(
+            "#67",
+            LaneClaimLane::Review,
+            LaneClaimActor::Gemini,
+            LaneClaimSource::Loop,
+            42,
+        )
+        .with_worker("review:#67:gemini-cli")
+        .with_state(LaneClaimState::Failed);
+        issue.project_fields.insert(
+            "Review Agent".into(),
+            serde_json::Value::String(format!("{} result=inconclusive", terminal_claim.render())),
+        );
+
+        let claim = review_claim_for_issue(&issue, "review:#67:gemini-cli");
+
+        assert_eq!(claim.state, LaneClaimState::Active);
+        assert_ne!(claim.run, terminal_claim.run);
+    }
+
+    #[test]
+    fn review_loop_terminal_claim_records_pass_result() {
+        let claim = LaneClaim::active(
+            "#67",
+            LaneClaimLane::Review,
+            LaneClaimActor::Gemini,
+            LaneClaimSource::Loop,
+            42,
+        )
+        .with_worker("review:#67:gemini-cli");
+        let decision = ReviewGateDecision {
+            outcome: ReviewOutcome::PassedToHumanReview,
+            target_state: Some("human_review"),
+            message: "passed".into(),
+        };
+        let job = ReviewJob {
+            id: "job".into(),
+            issue_ref: "#67".into(),
+            backend: "gemini-cli".into(),
+            state: ReviewJobState::Completed,
+            artifact_path: None,
+            ledger_path: None,
+            report: None,
+            error: None,
+        };
+
+        let value = terminal_review_loop_claim_value(Some(&claim), &job, &decision).unwrap();
+
+        assert!(value.contains("state=done"));
+        assert!(value.contains("result=passed"));
+        assert_eq!(
+            LaneClaim::parse(&value).unwrap(),
+            claim.with_state(LaneClaimState::Done)
+        );
+    }
+
+    #[test]
+    fn review_pass_checklist_update_checks_non_uat_sections_only() {
+        let body = [
+            "## Expected Outcome",
+            "",
+            "- [ ] Outcome done",
+            "",
+            "## Verification",
+            "",
+            "### Completion Criteria",
+            "",
+            "- [ ] Criteria done",
+            "",
+            "### Functional Verification",
+            "",
+            "- [ ] `cargo test`",
+            "",
+            "### UAT",
+            "",
+            "- [ ] Human checks this",
+            "",
+            "### Context Verification",
+            "",
+            "- [ ] Context done",
+            "",
+            "```md",
+            "- [ ] do not touch fenced examples",
+            "```",
+        ]
+        .join("\n");
+
+        let updated = check_review_verified_issue_body_checkboxes(&body);
+
+        assert!(updated.contains("- [x] Outcome done"));
+        assert!(updated.contains("- [x] Criteria done"));
+        assert!(updated.contains("- [x] `cargo test`"));
+        assert!(updated.contains("- [ ] Human checks this"));
+        assert!(updated.contains("- [x] Context done"));
+        assert!(updated.contains("- [ ] do not touch fenced examples"));
+    }
+
+    #[test]
+    fn review_pass_checklist_update_removes_appended_workpad_before_editing_body() {
+        let description =
+            "## Expected Outcome\n\n- [ ] Done\n\n<!-- jade-symphony-workpad -->\n## Agent Review";
+
+        let body = canonical_issue_body_without_workpad(description);
+        let updated = check_review_verified_issue_body_checkboxes(&body);
+
+        assert_eq!(updated, "## Expected Outcome\n\n- [x] Done");
+        assert!(!updated.contains("jade-symphony-workpad"));
+    }
+
+    #[test]
+    fn review_pass_updates_issue_body_checkboxes_before_human_review_transition() {
+        let config = test_config();
+        let adapter = RecordingAdapter::default();
+        let mut issue = review_issue_with_ref("#67", "Checklist review");
+        issue.description = Some(
+            [
+                "## Expected Outcome",
+                "",
+                "- [ ] Outcome done",
+                "",
+                "## Verification",
+                "",
+                "### Completion Criteria",
+                "",
+                "- [ ] Criteria done",
+                "",
+                "### Functional Verification",
+                "",
+                "- [ ] `cargo test`",
+                "",
+                "### UAT",
+                "",
+                "- [ ] Human checks this",
+                "",
+                "### Context Verification",
+                "",
+                "- [ ] Context done",
+            ]
+            .join("\n"),
+        );
+        adapter
+            .issues
+            .borrow_mut()
+            .insert(issue.identifier.clone(), issue.clone());
+        let job = ReviewJob {
+            id: "job-67".into(),
+            issue_ref: "#67".into(),
+            backend: "gemini-cli".into(),
+            state: ReviewJobState::Completed,
+            artifact_path: None,
+            ledger_path: None,
+            report: Some(jade_symphony::review::AgentReviewReport {
+                summary: Some("Review Result: PASS".into()),
+                ..Default::default()
+            }),
+            error: None,
+        };
+
+        apply_review_result(&config, &adapter, "#67", &issue, &job, None).unwrap();
+
+        let updated = adapter
+            .issues
+            .borrow()
+            .get("#67")
+            .and_then(|issue| issue.description.clone())
+            .unwrap();
+        assert!(updated.contains("- [x] Outcome done"));
+        assert!(updated.contains("- [x] Criteria done"));
+        assert!(updated.contains("- [x] `cargo test`"));
+        assert!(updated.contains("- [ ] Human checks this"));
+        assert!(updated.contains("- [x] Context done"));
+        assert_eq!(
+            adapter.operations(),
+            vec![
+                "update_issue_content:#67",
+                "workpad:#67",
+                "set_state:#67:human_review"
+            ]
+        );
+    }
+
+    #[test]
     fn review_workspace_uses_issue_handoff_workspace() {
         let config = test_config();
         let issue = review_issue_with_ref("#67", "Add parallel review worker pool");
@@ -12108,7 +13240,8 @@ mod tests {
     #[test]
     fn parses_run_loop_flags() {
         let command = Command::parse(vec![
-            "run-loop".into(),
+            "main".into(),
+            "loop".into(),
             "examples/dry-run-workflow.md".into(),
             "--max-iterations".into(),
             "3".into(),
@@ -12121,7 +13254,7 @@ mod tests {
         .unwrap();
 
         let Command::RunLoop { options } = command else {
-            panic!("expected run-loop command");
+            panic!("expected main loop command");
         };
 
         assert_eq!(
@@ -12139,7 +13272,8 @@ mod tests {
     #[test]
     fn run_loop_once_overrides_max_iterations() {
         let command = Command::parse(vec![
-            "run-loop".into(),
+            "main".into(),
+            "loop".into(),
             "WORKFLOW.md".into(),
             "--max-iterations".into(),
             "9".into(),
@@ -12149,7 +13283,7 @@ mod tests {
         .unwrap();
 
         let Command::RunLoop { options } = command else {
-            panic!("expected run-loop command");
+            panic!("expected main loop command");
         };
 
         assert_eq!(options.iteration_limit(), Some(1));
@@ -12159,7 +13293,8 @@ mod tests {
     #[test]
     fn parses_merge_once_command() {
         let command = Command::parse(vec![
-            "merge-once".into(),
+            "merge".into(),
+            "once".into(),
             "examples/github-project-workflow.md".into(),
             "--dry-run".into(),
         ])
@@ -12173,26 +13308,19 @@ mod tests {
             }
         );
 
-        let command = Command::parse(vec![
+        assert!(Command::parse(vec![
             "land".into(),
             "examples/github-project-workflow.md".into(),
-            "--write".into(),
+            "--write".into()
         ])
-        .unwrap();
-
-        assert_eq!(
-            command,
-            Command::MergeOnce {
-                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
-                write: true
-            }
-        );
+        .is_err());
     }
 
     #[test]
     fn rejects_zero_run_loop_iterations() {
         let error = Command::parse(vec![
-            "run-loop".into(),
+            "main".into(),
+            "loop".into(),
             "WORKFLOW.md".into(),
             "--max-iterations".into(),
             "0".into(),
@@ -12205,7 +13333,8 @@ mod tests {
     #[test]
     fn rejects_zero_run_loop_pool() {
         let error = Command::parse(vec![
-            "run-loop".into(),
+            "main".into(),
+            "loop".into(),
             "WORKFLOW.md".into(),
             "--max-iterations".into(),
             "1".into(),
@@ -12299,7 +13428,8 @@ mod tests {
     #[test]
     fn rejects_zero_review_loop_iterations() {
         let error = Command::parse(vec![
-            "review-loop".into(),
+            "review".into(),
+            "loop".into(),
             "WORKFLOW.md".into(),
             "--max-iterations".into(),
             "0".into(),
@@ -12341,6 +13471,18 @@ mod tests {
         assert_eq!(
             live_missing_assignee_gate_blocker(&config, &issue).as_deref(),
             Some("live GitHub issue assignee")
+        );
+    }
+
+    #[test]
+    fn issue_contract_assignees_parse_setup_field() {
+        assert_eq!(
+            issue_contract_assignees("- Assignee: @Alive24\n- UAT Required: Yes"),
+            vec!["Alive24".to_string()]
+        );
+        assert_eq!(
+            issue_contract_assignees("- Assignees: Alive24, codex\n"),
+            vec!["Alive24".to_string(), "codex".to_string()]
         );
     }
 
@@ -12728,18 +13870,18 @@ mod tests {
 
         assert_eq!(
             handoff.workspace_key,
-            "issue-29-wire-runtime-state-persistence-into-run-loop"
+            "issue-29-wire-runtime-state-persistence-into-main-loop"
         );
         assert!(handoff
             .workspace_path
-            .ends_with("issue-29-wire-runtime-state-persistence-into-run-loop"));
+            .ends_with("issue-29-wire-runtime-state-persistence-into-main-loop"));
         assert_eq!(
             handoff.branch_name,
-            "feature/issue-29-wire-runtime-state-persistence-into-run-loop"
+            "feature/issue-29-wire-runtime-state-persistence-into-main-loop"
         );
         assert_eq!(
             handoff.pull_request.title,
-            "#29: Wire runtime state persistence into run-loop"
+            "#29: Wire runtime state persistence into main loop"
         );
         assert_eq!(handoff.pull_request.base_branch, "main");
     }
@@ -12822,10 +13964,10 @@ mod tests {
             workpad.contains("Git identity: `applied:Jade Symphony Agent <jade@example.invalid>`")
         );
         assert!(workpad
-            .contains("Workspace key: `issue-29-wire-runtime-state-persistence-into-run-loop`"));
+            .contains("Workspace key: `issue-29-wire-runtime-state-persistence-into-main-loop`"));
         assert!(workpad
-            .contains("Branch: `feature/issue-29-wire-runtime-state-persistence-into-run-loop`"));
-        assert!(workpad.contains("PR title: `#29: Wire runtime state persistence into run-loop`"));
+            .contains("Branch: `feature/issue-29-wire-runtime-state-persistence-into-main-loop`"));
+        assert!(workpad.contains("PR title: `#29: Wire runtime state persistence into main loop`"));
         assert!(workpad.contains("Handoff verification: `skipped:not_configured`"));
         assert!(workpad.contains("Live PR: `https://github.com/Alive24/jade-symphony/pull/45`"));
     }
@@ -13303,6 +14445,153 @@ mod tests {
     }
 
     #[test]
+    fn parses_forge_rework_flags() {
+        let temp = tempfile::tempdir().unwrap();
+        let body_path = temp.path().join("body.md");
+        let evidence_path = temp.path().join("evidence.md");
+        std::fs::write(&body_path, forge_contract()).unwrap();
+        std::fs::write(&evidence_path, "Reviewer changed the execution contract.").unwrap();
+
+        let command = Command::parse(vec![
+            "forge".into(),
+            "rework".into(),
+            "#282".into(),
+            "--workflow".into(),
+            "examples/dry-run-workflow.md".into(),
+            "--title".into(),
+            "Reworked contract".into(),
+            "--body-file".into(),
+            body_path.display().to_string(),
+            "--evidence-file".into(),
+            evidence_path.display().to_string(),
+            "--operator-confirmation".into(),
+            "send it back to Rework".into(),
+            "--dry-run".into(),
+        ])
+        .unwrap();
+
+        let Command::ForgeRework { options } = command else {
+            panic!("expected forge rework command");
+        };
+
+        assert_eq!(
+            options.workflow_path,
+            PathBuf::from("examples/dry-run-workflow.md")
+        );
+        assert_eq!(options.issue_ref, "#282");
+        assert_eq!(options.title, "Reworked contract");
+        assert!(options.markdown.contains("## Issue Goal"));
+        assert_eq!(options.evidence, "Reviewer changed the execution contract.");
+        assert_eq!(options.operator_confirmation, "send it back to Rework");
+        assert!(!options.write);
+        assert!(options.dry_run);
+    }
+
+    #[test]
+    fn forge_rework_writes_content_then_evidence_then_status() {
+        let config = test_config();
+        let adapter = RecordingAdapter::default();
+        let mut issue = tracker_issue_with_ref("#282", "Old reviewed contract", "Human Review");
+        issue.description = Some(forge_contract());
+        let done_main_claim = LaneClaim::active(
+            "#282",
+            LaneClaimLane::Main,
+            LaneClaimActor::Codex,
+            LaneClaimSource::Manual,
+            1_779_000_900_123,
+        )
+        .with_state(LaneClaimState::Done);
+        issue.project_fields.insert(
+            "Main Agent".into(),
+            serde_json::Value::String(done_main_claim.render()),
+        );
+        adapter
+            .issues
+            .borrow_mut()
+            .insert(issue.identifier.clone(), issue);
+
+        forge_rework_with_adapter(
+            &config,
+            &adapter,
+            ForgeReworkInput {
+                issue_ref: "#282".into(),
+                title: "Reworked contract".into(),
+                markdown: forge_contract(),
+                evidence: "Prior Human Review evidence is superseded by the revised contract."
+                    .into(),
+                operator_confirmation: "route to Rework".into(),
+                dry_run: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            adapter.operations(),
+            vec![
+                "update_issue_content:#282".to_string(),
+                "workpad:#282".to_string(),
+                "set_state:#282:rework".to_string(),
+            ]
+        );
+        assert_eq!(
+            adapter
+                .get_issue("#282")
+                .unwrap()
+                .unwrap()
+                .normalized_state(),
+            "rework"
+        );
+    }
+
+    #[test]
+    fn forge_rework_records_diagnostic_for_active_human_review_claims() {
+        let config = test_config();
+        let adapter = RecordingAdapter::default();
+        let mut issue = tracker_issue_with_ref("#282", "Reviewed contract", "Human Review");
+        issue.description = Some(forge_contract());
+        let active_review_claim = LaneClaim::active(
+            "#282",
+            LaneClaimLane::Review,
+            LaneClaimActor::Gemini,
+            LaneClaimSource::Manual,
+            1_779_000_900_123,
+        );
+        issue.project_fields.insert(
+            "Review Agent".into(),
+            serde_json::Value::String(active_review_claim.render()),
+        );
+        adapter
+            .issues
+            .borrow_mut()
+            .insert(issue.identifier.clone(), issue);
+
+        let error = forge_rework_with_adapter(
+            &config,
+            &adapter,
+            ForgeReworkInput {
+                issue_ref: "#282".into(),
+                title: "Reworked contract".into(),
+                markdown: forge_contract(),
+                evidence: "Reviewer changed the contract.".into(),
+                operator_confirmation: "route to Rework".into(),
+                dry_run: false,
+            },
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("active Review Agent claim"));
+        assert_eq!(adapter.operations(), vec!["workpad:#282".to_string()]);
+    }
+
+    #[test]
+    fn manual_main_claim_accepts_rework() {
+        let issue = tracker_issue("Rework");
+
+        validate_lane_claim_state(&issue, AgentSessionLaneArg::Main).unwrap();
+    }
+
+    #[test]
     fn renders_strict_promotion_note_template() {
         let note = render_promotion_note(
             "#262",
@@ -13337,6 +14626,7 @@ mod tests {
     #[test]
     fn parses_link_pr_flags() {
         let command = Command::parse(vec![
+            "project".into(),
             "link-pr".into(),
             "examples/github-project-workflow.md".into(),
             "#127".into(),
@@ -13684,7 +14974,7 @@ mod tests {
         .unwrap_err()
         .to_string();
 
-        assert!(error.contains("write-mode run-loop is blocked"));
+        assert!(error.contains("write-mode main loop is blocked"));
         assert!(error.contains("agent.backend=dry-run"));
         assert!(error.contains(workflow_path.to_string_lossy().as_ref()));
         assert!(

@@ -60,7 +60,7 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
   must be the final mutating step of the merge session. Finish merge evidence,
   PR/issue reconciliation, branch cleanup that is safe and required, and workpad
   updates first. After status changes, only perform readback verification such
-  as `project-issue`, `project-state`, or `doctor`; do not claim another issue
+  as `project issue`, `project state`, or `doctor`; do not claim another issue
   in the same session.
 
 ## Non-Negotiable Boundaries

@@ -29,6 +29,12 @@ targets = ["codex", "gemini"]
 summary = "Manual Review Agent lane for evidence-backed review and Human Review routing."
 
 [[skills]]
+name = "jade-symphony-human-review"
+path = "suite/jade-symphony-human-review"
+targets = ["codex", "gemini"]
+summary = "Human Review briefing flow for operator-owned UAT, decision notes, and confirmed routing."
+
+[[skills]]
 name = "jade-symphony-manual-merge"
 path = "suite/jade-symphony-manual-merge"
 targets = ["codex", "gemini"]

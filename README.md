@@ -69,7 +69,7 @@ Jade Symphony can already support a supervised local dogfood loop:
 - gate issues for required fields, dependency semantics, referenced paths, and
   verification commands;
 - create or reuse isolated issue worktrees and branches;
-- run bounded `run-loop`, `review loop`, and `merge-loop` ticks with explicit
+- run bounded `main loop`, `review loop`, and `merge loop` ticks with explicit
   write-mode confirmation;
 - write tracker-visible workpad evidence and local JSONL audit records;
 - create or reuse PR handoffs for completed Main Agent work;
@@ -127,8 +127,8 @@ Inspect the canonical dogfood workflow:
 
 ```bash
 cargo run -- validate workflows/jade-symphony.md
-cargo run -- inspect workflows/jade-symphony.md
-cargo run -- project-state workflows/jade-symphony.md
+cargo run -- project state workflows/jade-symphony.md
+cargo run -- project inspect workflows/jade-symphony.md '#284'
 cargo run -- doctor workflows/jade-symphony.md
 ```
 
@@ -136,9 +136,9 @@ Run a bounded supervised preview:
 
 ```bash
 scripts/jade-dogfood --dry-run
-cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --dry-run
-cargo run -- merge-loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+cargo run -- merge loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 
 Live writes are explicit and should stay bounded:
@@ -223,10 +223,10 @@ Useful read-only commands:
 
 ```bash
 cargo run -- validate examples/dry-run-workflow.md
-cargo run -- inspect examples/dry-run-workflow.md
+cargo run -- project inspect examples/dry-run-workflow.md '#1'
 cargo run -- plan examples/dry-run-workflow.md
-cargo run -- status examples/dry-run-workflow.md --json
-cargo run -- cleanup-plan workflows/jade-symphony.md
+cargo run -- status show examples/dry-run-workflow.md --json
+cargo run -- clean plan workflows/jade-symphony.md
 ```
 
 The implementation is grounded in `docs/bootstrap/` and the pinned official

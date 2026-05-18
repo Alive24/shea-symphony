@@ -284,7 +284,7 @@ mod tests {
     #[test]
     fn tracker_mutation_records_redact_secret_like_text() {
         let record = TrackerMutationAuditRecord::from_input(TrackerMutationAuditInput {
-            command: "run-loop".into(),
+            command: "main loop".into(),
             mutation_type: "state_change".into(),
             issue_ref: Some("#1".into()),
             target: Some("Authorization: bearer secret".into()),
@@ -294,7 +294,7 @@ mod tests {
             timestamp_ms: 42,
         });
 
-        assert_eq!(record.command, "run-loop");
+        assert_eq!(record.command, "main loop");
         assert_eq!(record.mutation_type, "state_change");
         assert_eq!(record.target.as_deref(), Some("[redacted] bearer secret"));
         assert_eq!(record.reason, "claim [redacted]");

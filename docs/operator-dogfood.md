@@ -238,8 +238,8 @@ healthy read prints `project_state_access=ok`, `trusted=true`, the issue count,
 and a state summary, plus a read-only `canonical_checkout` cleanliness line for
 the launch checkout. A failed read prints `project_state_access=blocked`,
 `trusted=false`, and a `failure_kind` such as `auth`, `network`, `rate_limit`,
-`schema`, `partial_response`, or `payload`; treat that as a blocker, not as an
-empty queue.
+`resource_limit`, `schema`, `partial_response`, `payload`, or
+`missing_capability`; treat that as a blocker, not as an empty queue.
 
 The canonical checkout is only the harness launch directory. Do not use it as a
 Main, Review, or Merge issue worktree, and do not leave runtime state, logs,
@@ -252,9 +252,12 @@ the operator moves them to an issue worktree or artifact location.
 Use `project issue` for per-issue Project status, Project fields, blocker
 relationships, claim locks, and linked PRs. Raw `gh issue view` and `gh pr view`
 remain acceptable for ordinary issue/PR body text, comments, and diff context,
-but normal dogfood should not read or mutate Project fields, status, claim locks,
-or relationships through raw Project GraphQL or the Project UI. Those are
-break-glass recovery paths.
+when the CLI does not expose the needed content read; record that as a CLI gap
+when it affects a workflow decision. Normal dogfood should not read or mutate
+Project fields, status, claim locks, relationships, workpads, or linked-PR
+handoff state through raw Project GraphQL or the Project UI. Those are
+break-glass recovery paths. The current inventory and classification live in
+`docs/github-access-policy.md`.
 
 For parent tracking issues with native GitHub subissues, use
 `docs/parent-subissue-topology.md` as the design source. Native sub-issue links
@@ -291,9 +294,9 @@ it validates the source issue is `Human Review`, rejects active lane claims,
 records a diagnostic workpad if they are present, preserves terminal lane claims
 as audit pointers, replaces the issue content, writes Rework revision evidence
 to the workpad, and sets `Rework` as the final mutation. Do not use raw Project
-mutation, `set-state`, or `forge promote` for this normal path. Missing linked
-PRs or missing local worktrees are downstream Main Agent recovery work after the
-issue is in `Rework`.
+mutation, `project set-state`, or `forge promote` for this normal path. Missing
+linked PRs or missing local worktrees are downstream Main Agent recovery work
+after the issue is in `Rework`.
 
 Use `debug` when you need one read-only operator report before a supervised
 dogfood, repair, review, or merge session. It summarizes the current Project

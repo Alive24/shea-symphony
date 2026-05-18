@@ -91,17 +91,19 @@ These must exist before Jade Symphony can safely dogfood against real GitHub
 Project v2 issues:
 
 1. Harden read-only GitHub Project v2 adapter.
-   - Keep loading ProjectV2 items through `gh api graphql` or replace it with a
-     direct HTTP client behind the same adapter.
+   - Keep loading ProjectV2 items through the centralized GitHub access helper
+     in `src/tracker.rs`; it may call `gh api graphql` or a future direct HTTP
+     client, but callers should not open-code Project queries.
    - Use `project state` as the canonical dogfood diagnostic before claim or
      merge work; failed reads print a classified blocker instead of looking like
      an empty queue.
    - Use `project issue` for per-issue Project status, fields, claim locks,
      blockers, and linked PRs. Direct `gh issue view` / `gh pr view` is still
-     allowed for raw issue and PR context, but not for normal Project state
-     reads.
-   - Retry transient network and rate-limit failures, and fail partial Project
-     payloads loudly when required item fields are missing.
+     allowed for raw issue and PR context when the CLI lacks an equivalent
+     content read, but not for normal Project state reads.
+   - Retry transient network and rate-limit failures, classify GraphQL resource
+     limits separately, and fail partial Project payloads loudly when required
+     item fields are missing.
    - Filter to real GitHub Issues, not draft items or PR items.
    - Resolve configured status field and option IDs.
    - Normalize issue body, labels, assignees, linked PRs, project fields, and

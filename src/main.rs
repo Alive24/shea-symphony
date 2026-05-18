@@ -3358,7 +3358,7 @@ This Gemini process is running under Jade Symphony automatic `review loop` or `r
 Jade Symphony CLI has already claimed or will own any Review Agent claim, workpad write,\n\
 issue body update, and Project state transition outside this process.\n\n\
 Do not run mutating Jade Symphony or GitHub commands, including `review claim`, `review pass`,\n\
-`review reject`, `set-state`, `workpad`, `forge`, `gh issue edit`, `gh issue comment`, raw\n\
+`review reject`, `project set-state`, `project workpad`, `forge`, `gh issue edit`, `gh issue comment`, raw\n\
 Project GraphQL mutations, or Project UI changes. Do not activate or follow any manual review\n\
 skill that tells you to mutate Project state.\n\n\
 Return review evidence in stdout only. Start with exactly one line: `Review Result: PASS`,\n\

@@ -11,10 +11,13 @@ workflow path when `JADE_SYMPHONY_WORKFLOW` is set, or when
 
 For normal dogfood, Jade Symphony CLI is the authority for GitHub Project v2
 workflow reads and mutations. Direct `gh issue view` / `gh pr view` is still
-acceptable for raw issue or PR content, but Project status, Project fields,
-relationships, claim locks, workpads, and state transitions should go through
-the commands in this reference. Manual Project UI or raw Project GraphQL changes
-are break-glass recovery actions, not the standard path.
+acceptable for raw issue or PR content when the CLI lacks the needed content
+read, but Project status, Project fields, relationships, claim locks, workpads,
+linked-PR handoff checks, and state transitions should go through the commands
+in this reference. Manual Project UI or raw Project GraphQL changes are
+break-glass recovery actions, not the standard path. See
+`docs/github-access-policy.md` for the current raw GitHub inventory and
+REST-first / GraphQL-required boundaries.
 
 The canonical `workflows/jade-symphony.md` file is a workflow index/config. It
 references lane-specific prompts in `workflows/prompts/` so Main, Review, and

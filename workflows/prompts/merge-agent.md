@@ -14,8 +14,9 @@ the linked PR, records evidence, merges only clean and authorized PRs, closes
 the issue when supported, and routes blockers with a clear workpad.
 
 Use Jade Symphony CLI for Project state, Project fields, claim locks, workpad
-updates, and merge routing. Direct GitHub PR reads are acceptable for raw PR
-context, but raw Project GraphQL or Project UI changes are break-glass only.
+updates, linked-PR state, and merge routing. Direct GitHub PR reads are
+acceptable for raw PR context only as read-only CLI-gap diagnostics, but raw
+Project GraphQL or Project UI changes are break-glass only.
 
 ## Current Issue Contract
 

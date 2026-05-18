@@ -3483,6 +3483,9 @@ fn apply_review_result(
             "review loop terminal claim evidence",
         )?;
     }
+    if decision.outcome == ReviewOutcome::PassedToHumanReview {
+        update_review_checklist_for_pass(config, adapter, issue)?;
+    }
     if let Some(target_state) = decision.target_state {
         if !transition_allowed_for_review_agent(target_state, &decision) {
             return Err("review agent transition is not allowed for this review decision".into());
@@ -3527,6 +3530,113 @@ fn apply_review_result(
         );
     }
     Ok(())
+}
+
+fn update_review_checklist_for_pass(
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    issue: &TrackerIssue,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(description) = issue.description.as_deref() else {
+        return Ok(());
+    };
+    let body = canonical_issue_body_without_workpad(description);
+    let updated = check_review_verified_issue_body_checkboxes(&body);
+    if updated == body {
+        return Ok(());
+    }
+
+    adapter.update_issue_content(&issue.identifier, &issue.title, &updated)?;
+    append_tracker_mutation_audit(
+        config,
+        TrackerMutationAudit {
+            command: "review-loop",
+            mutation_type: "issue_body_update",
+            issue_ref: Some(&issue.identifier),
+            target: Some("non-UAT review checkboxes".into()),
+            from_state: Some(issue.state.clone()),
+            to_state: Some("human_review".into()),
+            reason: "automatic review pass checklist evidence",
+        },
+    );
+    Ok(())
+}
+
+fn canonical_issue_body_without_workpad(description: &str) -> String {
+    description
+        .split("<!-- jade-symphony-workpad -->")
+        .next()
+        .unwrap_or(description)
+        .trim_end()
+        .to_string()
+}
+
+fn check_review_verified_issue_body_checkboxes(body: &str) -> String {
+    let mut in_fence = false;
+    let mut in_review_section = false;
+    let mut lines = Vec::new();
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            lines.push(line.to_string());
+            continue;
+        }
+        if !in_fence {
+            if let Some(section) = markdown_heading_title(trimmed) {
+                in_review_section = review_checklist_section_is_agent_owned(section);
+            }
+        }
+        if in_review_section && !in_fence {
+            lines.push(check_markdown_checkbox_line(line));
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+    let mut updated = lines.join("\n");
+    if body.ends_with('\n') {
+        updated.push('\n');
+    }
+    updated
+}
+
+fn markdown_heading_title(line: &str) -> Option<&str> {
+    let heading_len = line.chars().take_while(|ch| *ch == '#').count();
+    if heading_len == 0 || heading_len > 6 {
+        return None;
+    }
+    if !line
+        .chars()
+        .nth(heading_len)
+        .is_some_and(char::is_whitespace)
+    {
+        return None;
+    }
+    Some(line[heading_len..].trim().trim_matches('#').trim())
+}
+
+fn review_checklist_section_is_agent_owned(section: &str) -> bool {
+    matches!(
+        section.to_ascii_lowercase().as_str(),
+        "expected outcome"
+            | "completion criteria"
+            | "functional verification"
+            | "context verification"
+    )
+}
+
+fn check_markdown_checkbox_line(line: &str) -> String {
+    let trimmed = line.trim_start();
+    if !(trimmed.starts_with("- [ ]") || trimmed.starts_with("* [ ]")) {
+        return line.to_string();
+    }
+    if let Some(index) = line.find("[ ]") {
+        let mut checked = line.to_string();
+        checked.replace_range(index..index + 3, "[x]");
+        checked
+    } else {
+        line.to_string()
+    }
 }
 
 fn terminal_review_loop_claim_value(
@@ -10873,10 +10983,27 @@ mod tests {
             assert!(
                 markdown.contains("## Rework Diagnostic")
                     || markdown.contains("### Merge Lane Handoff")
+                    || markdown.contains("## Agent Review")
             );
             self.operations
                 .borrow_mut()
                 .push(format!("workpad:{issue_ref}"));
+            Ok(())
+        }
+
+        fn update_issue_content(
+            &self,
+            issue_ref: &str,
+            title: &str,
+            body: &str,
+        ) -> Result<(), jade_symphony::tracker::TrackerError> {
+            if let Some(issue) = self.issues.borrow_mut().get_mut(issue_ref) {
+                issue.title = title.to_string();
+                issue.description = Some(body.to_string());
+            }
+            self.operations
+                .borrow_mut()
+                .push(format!("update_issue_content:{issue_ref}"));
             Ok(())
         }
 
@@ -12469,6 +12596,131 @@ mod tests {
         assert_eq!(
             LaneClaim::parse(&value).unwrap(),
             claim.with_state(LaneClaimState::Done)
+        );
+    }
+
+    #[test]
+    fn review_pass_checklist_update_checks_non_uat_sections_only() {
+        let body = [
+            "## Expected Outcome",
+            "",
+            "- [ ] Outcome done",
+            "",
+            "## Verification",
+            "",
+            "### Completion Criteria",
+            "",
+            "- [ ] Criteria done",
+            "",
+            "### Functional Verification",
+            "",
+            "- [ ] `cargo test`",
+            "",
+            "### UAT",
+            "",
+            "- [ ] Human checks this",
+            "",
+            "### Context Verification",
+            "",
+            "- [ ] Context done",
+            "",
+            "```md",
+            "- [ ] do not touch fenced examples",
+            "```",
+        ]
+        .join("\n");
+
+        let updated = check_review_verified_issue_body_checkboxes(&body);
+
+        assert!(updated.contains("- [x] Outcome done"));
+        assert!(updated.contains("- [x] Criteria done"));
+        assert!(updated.contains("- [x] `cargo test`"));
+        assert!(updated.contains("- [ ] Human checks this"));
+        assert!(updated.contains("- [x] Context done"));
+        assert!(updated.contains("- [ ] do not touch fenced examples"));
+    }
+
+    #[test]
+    fn review_pass_checklist_update_removes_appended_workpad_before_editing_body() {
+        let description =
+            "## Expected Outcome\n\n- [ ] Done\n\n<!-- jade-symphony-workpad -->\n## Agent Review";
+
+        let body = canonical_issue_body_without_workpad(description);
+        let updated = check_review_verified_issue_body_checkboxes(&body);
+
+        assert_eq!(updated, "## Expected Outcome\n\n- [x] Done");
+        assert!(!updated.contains("jade-symphony-workpad"));
+    }
+
+    #[test]
+    fn review_pass_updates_issue_body_checkboxes_before_human_review_transition() {
+        let config = test_config();
+        let adapter = RecordingAdapter::default();
+        let mut issue = review_issue_with_ref("#67", "Checklist review");
+        issue.description = Some(
+            [
+                "## Expected Outcome",
+                "",
+                "- [ ] Outcome done",
+                "",
+                "## Verification",
+                "",
+                "### Completion Criteria",
+                "",
+                "- [ ] Criteria done",
+                "",
+                "### Functional Verification",
+                "",
+                "- [ ] `cargo test`",
+                "",
+                "### UAT",
+                "",
+                "- [ ] Human checks this",
+                "",
+                "### Context Verification",
+                "",
+                "- [ ] Context done",
+            ]
+            .join("\n"),
+        );
+        adapter
+            .issues
+            .borrow_mut()
+            .insert(issue.identifier.clone(), issue.clone());
+        let job = ReviewJob {
+            id: "job-67".into(),
+            issue_ref: "#67".into(),
+            backend: "gemini-cli".into(),
+            state: ReviewJobState::Completed,
+            artifact_path: None,
+            ledger_path: None,
+            report: Some(jade_symphony::review::AgentReviewReport {
+                summary: Some("Review Result: PASS".into()),
+                ..Default::default()
+            }),
+            error: None,
+        };
+
+        apply_review_result(&config, &adapter, "#67", &issue, &job, None).unwrap();
+
+        let updated = adapter
+            .issues
+            .borrow()
+            .get("#67")
+            .and_then(|issue| issue.description.clone())
+            .unwrap();
+        assert!(updated.contains("- [x] Outcome done"));
+        assert!(updated.contains("- [x] Criteria done"));
+        assert!(updated.contains("- [x] `cargo test`"));
+        assert!(updated.contains("- [ ] Human checks this"));
+        assert!(updated.contains("- [x] Context done"));
+        assert_eq!(
+            adapter.operations(),
+            vec![
+                "update_issue_content:#67",
+                "workpad:#67",
+                "set_state:#67:human_review"
+            ]
         );
     }
 

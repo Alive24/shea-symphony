@@ -1,6 +1,6 @@
 ## Agent Review
 
-- Generated at: `{{generated_at}}` (Unix ms)
+- Generated at: `{{generated_at}}`
 - Issue: {{issue_ref}} {{issue_title}}
 - Worker key: `{{worker_key}}`
 - Reviewer backend: `{{reviewer_backend}}`

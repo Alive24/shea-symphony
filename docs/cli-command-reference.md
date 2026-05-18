@@ -258,7 +258,7 @@ cargo run -- project inspect workflows/jade-symphony.md '#123'
 
 | Command | Purpose | Boundary |
 | --- | --- | --- |
-| `forge validate` | Validate a body file or existing issue for `Backlog` or `Todo`. | Read-only; `Todo` uses the full Issue Quality Gate, `Backlog` uses the lighter seed gate. |
+| `forge validate` | Validate a body file, an existing issue, or candidate title/body content against live issue context for `Backlog` or `Todo`. | Read-only; `Todo` uses the full Issue Quality Gate, `Backlog` uses the lighter seed gate; output separates candidate contract gaps from live context gaps. |
 | `forge create` | Create a Project-backed issue in `Backlog` or `Todo`. | Dry-run by default unless `--write` is supplied; initializes the Project item to the requested status and verifies readback; live `Todo` creation requires `--assignee`. |
 | `forge promote` | Promote one existing Backlog issue in place by editing title/body, writing a structured Promotion Note comment, then moving it to `Todo`. | Dry-run by default unless `--write` is supplied; requires structured note inputs, keeps the `Todo` status mutation last, and reports the checkpoint where any failure stopped. |
 | `forge rework` | Revise one live `Human Review` issue into an explicit `Rework` contract. | Dry-run by default unless `--write` is supplied; requires a replacement title/body, evidence file, and operator confirmation; rejects active lane claims and keeps the `Rework` status mutation last. |
@@ -268,12 +268,19 @@ Examples:
 ```bash
 cargo run -- forge validate --workflow workflows/jade-symphony.md --status Backlog --title "Backlog seed" --body-file /tmp/issue.md
 cargo run -- forge validate --workflow workflows/jade-symphony.md --status Todo --title "Executable issue" --body-file /tmp/issue.md
+cargo run -- forge validate --workflow workflows/jade-symphony.md --issue '#293' --status Todo --title "Candidate promoted title" --body-file /tmp/candidate.md
 cargo run -- forge create --workflow workflows/jade-symphony.md --status Backlog --title "Backlog: follow-up title" --body-file /tmp/issue.md --dry-run
 cargo run -- forge create --workflow workflows/jade-symphony.md --status Todo --title "Follow-up title" --body-file /tmp/issue.md --assignee Alive24 --write
 cargo run -- forge promote '#241' --workflow workflows/jade-symphony.md --title "Executable title" --body-file /tmp/issue.md --operator-confirmation "promote it" --decision "Use the CLI-owned promotion note template." --scope-change "Backlog seed is now an executable Todo issue." --dependency-context "Dependencies: none; related context is non-blocking." --readback-summary "Operator confirmed the dry-run preview before write." --dry-run
 cargo run -- forge promote '#241' --workflow examples/promote-fixture-workflow.md --title "Harden Issue Forge Reflect promotion fixture" --body-file examples/fixtures/promoted-issue.md --operator-confirmation "promote it" --decision "Keep the promotion in place." --scope-change "Backlog seed becomes an executable Todo issue." --dependency-context "Dependencies: none." --readback-summary "Dry-run preview verified before write." --dry-run
 cargo run -- forge rework '#282' --workflow workflows/jade-symphony.md --title "Rework: revised execution contract" --body-file /tmp/rework-body.md --evidence-file /tmp/rework-evidence.md --operator-confirmation "route Human Review back to Rework" --dry-run
 ```
+
+Use `forge validate --issue '#123'` without overrides to validate the current
+live issue body. Add `--title` plus `--body` or `--body-file` when validating a
+candidate replacement contract against the live issue's assignee and Project
+context. `forge promote --dry-run` uses the same validation output categories,
+then adds the promotion-note preview and promotion-specific checks.
 
 `forge promote` owns the Promotion Note requirement. The command refuses missing
 or empty `--operator-confirmation`, `--decision`, `--scope-change`, and

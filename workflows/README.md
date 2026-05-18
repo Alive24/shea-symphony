@@ -10,6 +10,7 @@ Use it for live Project #9 operations:
 ```bash
 cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --write
 cargo run -- forge validate --workflow workflows/jade-symphony.md --status Todo --title "<title>" --body-file /private/tmp/issue.md
+cargo run -- forge validate --workflow workflows/jade-symphony.md --issue '#123' --status Todo --title "<candidate title>" --body-file /private/tmp/candidate.md
 cargo run -- forge create --workflow workflows/jade-symphony.md --status Todo --title "<title>" --body-file /private/tmp/issue.md --assignee Alive24 --write
 cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --write
 cargo run -- merge once workflows/jade-symphony.md --write

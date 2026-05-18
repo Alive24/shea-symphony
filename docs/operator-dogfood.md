@@ -302,6 +302,13 @@ mutation, `project set-state`, or `forge promote` for this normal path. Missing
 linked PRs or missing local worktrees are downstream Main Agent recovery work
 after the issue is in `Rework`.
 
+When the operator wants to preflight a candidate body for an existing issue
+without running the promotion command, use `forge validate --issue '#123'
+--status Todo --title "<candidate title>" --body-file <path>`. That mode is
+read-only: it validates the candidate title/body while reusing live assignee and
+Project context from the issue, and reports candidate contract gaps separately
+from live-context gaps.
+
 Use `debug` when you need one read-only operator report before a supervised
 dogfood, repair, review, or merge session. It summarizes the current Project
 queue, doctor health, smoke readiness, runtime/session state, cleanup/audit

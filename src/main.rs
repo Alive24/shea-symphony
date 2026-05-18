@@ -1506,12 +1506,17 @@ fn forge_validate(
             .get_issue(&issue_ref)?
             .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
         let status = status.unwrap_or_else(|| forge_status_from_issue(&config, &issue));
-        (
-            status,
-            issue.title,
-            issue.description.unwrap_or_default(),
-            issue.assignees,
-        )
+        let title = if title.trim().is_empty() {
+            issue.title.clone()
+        } else {
+            title
+        };
+        let markdown = if markdown.trim().is_empty() {
+            issue.description.clone().unwrap_or_default()
+        } else {
+            markdown
+        };
+        (status, title, markdown, issue.assignees)
     } else {
         let assignees = issue_contract_assignees(&markdown);
         (
@@ -1555,6 +1560,29 @@ fn forge_validation_report(
             validate_forge_create_report_with_assignees(title, markdown, config, intended_assignees)
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ForgeMissingCategories {
+    candidate_missing: Vec<String>,
+    live_context_missing: Vec<String>,
+}
+
+fn forge_missing_categories(report: &ForgeValidationReport) -> ForgeMissingCategories {
+    let (live_context_missing, candidate_missing): (Vec<_>, Vec<_>) = report
+        .decision
+        .missing
+        .iter()
+        .cloned()
+        .partition(|missing| is_live_context_missing(missing));
+    ForgeMissingCategories {
+        candidate_missing,
+        live_context_missing,
+    }
+}
+
+fn is_live_context_missing(missing: &str) -> bool {
+    matches!(missing, "live GitHub issue assignee")
 }
 
 fn validate_backlog_seed(title: &str, markdown: &str) -> ForgeValidationReport {
@@ -10754,20 +10782,11 @@ impl TryFrom<Cli> for Command {
                         }),
                         ForgeCommandArgs::Validate(args) => {
                             if let Some(issue_ref) = args.issue_ref {
-                                if args.title.is_some()
-                                    || args.markdown.body.is_some()
-                                    || args.markdown.body_file.is_some()
-                                {
-                                    return Err(
-                                        "forge validate --issue cannot be combined with --title, --body, or --body-file"
-                                            .into(),
-                                    );
-                                }
                                 Ok(Self::ForgeValidate {
                                     workflow_path: args.workflow,
                                     status: args.status,
-                                    title: String::new(),
-                                    markdown: String::new(),
+                                    title: args.title.unwrap_or_default(),
+                                    markdown: read_optional_forge_markdown_arg(args.markdown)?,
                                     issue_ref: Some(issue_ref),
                                 })
                             } else {
@@ -10852,6 +10871,16 @@ fn read_forge_markdown_arg(args: ForgeMarkdownArgs) -> Result<String, String> {
         (None, Some(path)) => std::fs::read_to_string(&path)
             .map_err(|error| format!("failed to read {}: {error}", path.display())),
         _ => Err(usage()),
+    }
+}
+
+fn read_optional_forge_markdown_arg(args: ForgeMarkdownArgs) -> Result<String, String> {
+    match (args.body, args.body_file) {
+        (Some(value), None) => Ok(value),
+        (None, Some(path)) => std::fs::read_to_string(&path)
+            .map_err(|error| format!("failed to read {}: {error}", path.display())),
+        (None, None) => Ok(String::new()),
+        (Some(_), Some(_)) => Err(usage()),
     }
 }
 
@@ -10978,18 +11007,35 @@ fn promotion_note_input(args: PromotionNoteArgs) -> Result<PromotionNoteInput, S
 }
 
 fn print_forge_validation(report: &ForgeValidationReport) {
+    let categories = forge_missing_categories(report);
     println!("title={}", report.title);
     println!("gate={:?}", report.decision.kind);
     println!("dispatchable={}", report.decision.is_dispatchable());
     if !report.decision.missing.is_empty() {
         println!("missing={}", report.decision.missing.join(", "));
     }
+    println!(
+        "candidate_missing={}",
+        missing_category_value(&categories.candidate_missing)
+    );
+    println!(
+        "live_context_missing={}",
+        missing_category_value(&categories.live_context_missing)
+    );
     if !report.decision.assumptions.is_empty() {
         println!("assumptions={}", report.decision.assumptions.join("; "));
     }
     if let Some(question) = &report.question {
         println!("question={}", question.question);
         println!("why={}", question.why_it_matters);
+    }
+}
+
+fn missing_category_value(values: &[String]) -> String {
+    if values.is_empty() {
+        "none".into()
+    } else {
+        values.join(", ")
     }
 }
 
@@ -14677,6 +14723,45 @@ mod tests {
     }
 
     #[test]
+    fn parses_forge_validate_issue_with_candidate_body_flags() {
+        let temp = tempfile::tempdir().unwrap();
+        let body_path = temp.path().join("candidate.md");
+        std::fs::write(&body_path, forge_contract()).unwrap();
+
+        let command = Command::parse(vec![
+            "forge".into(),
+            "validate".into(),
+            "--workflow".into(),
+            "examples/github-project-workflow.md".into(),
+            "--issue".into(),
+            "#293".into(),
+            "--status".into(),
+            "todo".into(),
+            "--title".into(),
+            "Candidate promoted title".into(),
+            "--body-file".into(),
+            body_path.display().to_string(),
+        ])
+        .unwrap();
+
+        let Command::ForgeValidate {
+            status,
+            title,
+            markdown,
+            issue_ref,
+            ..
+        } = command
+        else {
+            panic!("expected forge validate command");
+        };
+
+        assert_eq!(status, Some(ForgeStatusArg::Todo));
+        assert_eq!(title, "Candidate promoted title");
+        assert!(markdown.contains("## Issue Goal"));
+        assert_eq!(issue_ref.as_deref(), Some("#293"));
+    }
+
+    #[test]
     fn rejects_removed_flat_forge_commands() {
         let error = Command::parse(vec![
             "forge-create".into(),
@@ -14733,6 +14818,63 @@ mod tests {
         .unwrap();
 
         assert!(report.decision.is_dispatchable());
+    }
+
+    #[test]
+    fn forge_validate_candidate_context_uses_live_issue_assignee() {
+        let config = live_github_config(false);
+        let assignees = vec!["Alive24".to_string()];
+        let report = forge_validation_report(
+            ForgeStatusArg::Todo,
+            "Candidate promoted title",
+            &forge_contract(),
+            &config,
+            &assignees,
+        )
+        .unwrap();
+        let categories = forge_missing_categories(&report);
+
+        assert!(report.decision.is_dispatchable());
+        assert!(categories.candidate_missing.is_empty());
+        assert!(categories.live_context_missing.is_empty());
+    }
+
+    #[test]
+    fn forge_validate_candidate_context_reports_unassigned_live_issue() {
+        let config = live_github_config(false);
+        let report = forge_validation_report(
+            ForgeStatusArg::Todo,
+            "Candidate promoted title",
+            &forge_contract(),
+            &config,
+            &[],
+        )
+        .unwrap();
+        let categories = forge_missing_categories(&report);
+
+        assert_eq!(
+            categories.live_context_missing,
+            vec!["live GitHub issue assignee".to_string()]
+        );
+        assert!(categories.candidate_missing.is_empty());
+    }
+
+    #[test]
+    fn forge_validate_candidate_context_reports_candidate_gaps_separately() {
+        let config = live_github_config(false);
+        let assignees = vec!["Alive24".to_string()];
+        let report = forge_validation_report(
+            ForgeStatusArg::Todo,
+            "Thin issue",
+            "make forge better",
+            &config,
+            &assignees,
+        )
+        .unwrap();
+        let categories = forge_missing_categories(&report);
+
+        assert!(!categories.candidate_missing.is_empty());
+        assert!(categories.live_context_missing.is_empty());
     }
 
     #[test]

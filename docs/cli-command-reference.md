@@ -354,9 +354,12 @@ operator confirmation before writing. Use `--skip-codex`, `--skip-gemini`,
 the active local skill files with the repo-owned dated suite.
 
 The suite packages Issue Forge, Issue Forge Reflect, Manual Main, Manual Review,
-Manual Merge, and a Doctor/Fix stub. `forge reflect` remains a skill behavior,
-not a Jade Symphony CLI subcommand. `forge create`, `forge promote`, and
-`forge validate` remain deterministic CLI executor surfaces.
+Human Review, Manual Merge, and a Doctor/Fix stub. Human Review is an
+operator-owned briefing and UAT decision skill: it records a structured decision
+note and routes to `Merging`, `Rework`, or `Need Human Input` only after
+explicit operator confirmation. `forge reflect` remains a skill behavior, not a
+Jade Symphony CLI subcommand. `forge create`, `forge promote`, and `forge
+validate` remain deterministic CLI executor surfaces.
 
 ## Merge Lane
 

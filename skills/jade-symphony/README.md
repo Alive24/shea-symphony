@@ -50,8 +50,13 @@ operator confirmation before writing.
 - `jade-symphony-issue-forge-reflect`
 - `jade-symphony-manual-main`
 - `jade-symphony-manual-review`
+- `jade-symphony-human-review`
 - `jade-symphony-manual-merge`
 - `jade-symphony-doctor`
+
+Human Review briefs the operator after Review Agent pass evidence, guides
+operator-owned UAT, records a structured decision note, and routes only after
+explicit confirmation. Accepted Human Review goes to `Merging`, not `Done`.
 
 The Doctor skill is a stub slot for operator triage and install-health checks.
 Full automatic doctor install-health repair remains out of scope for this

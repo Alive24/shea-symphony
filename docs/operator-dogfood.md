@@ -208,8 +208,10 @@ The packaged skills preserve the same lane boundaries as the Jade Symphony CLI:
 Issue Forge and Reflect handle conversation, draft shaping, and promotion
 discussion; the CLI owns `forge create`, `forge promote`, and `forge validate`.
 Manual Main stops at `Agent Review`; Manual Review owns evidence-backed review
-routing; Manual Merge owns approved merge-lane work. Automatic doctor
-install-health checks remain future work for #256.
+routing; Human Review briefs the operator for UAT and final acceptance but waits
+for explicit confirmation before any state change; Manual Merge owns approved
+merge-lane work. Automatic doctor install-health checks remain future work for
+#256.
 
 ## Inspect And Resume
 

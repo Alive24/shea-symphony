@@ -97,6 +97,10 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
 - If review cannot complete because of missing PR evidence, unavailable review
   backend, credentials, draft PR handoff, or an ambiguous decision, keep the
   issue out of `Human Review` and record the next operator action.
+- If an issue already in `Human Review` needs a changed execution contract,
+  record the review/operator finding and hand the revision to the Issue Forge
+  layer. The normal deterministic CLI executor for that path is `forge rework`,
+  not raw Project mutation or `forge promote`.
 - After changing Project status, only perform readback verification such as
   `project issue` or `doctor`; do not continue reviewing or claim another issue
   in the same session.

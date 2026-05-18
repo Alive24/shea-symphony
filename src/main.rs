@@ -349,6 +349,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             write,
             dry_run,
         ),
+        Command::ForgeRework { options } => forge_rework(options),
         Command::Help(text) => {
             print!("{text}");
             Ok(())
@@ -1100,6 +1101,340 @@ fn forge_promote(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct ForgeReworkOptions {
+    workflow_path: PathBuf,
+    issue_ref: String,
+    title: String,
+    markdown: String,
+    evidence: String,
+    operator_confirmation: String,
+    write: bool,
+    dry_run: bool,
+}
+
+fn forge_rework(options: ForgeReworkOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let ForgeReworkOptions {
+        workflow_path,
+        issue_ref,
+        title,
+        markdown,
+        evidence,
+        operator_confirmation,
+        write,
+        dry_run,
+    } = options;
+    if write && dry_run {
+        return Err("forge rework cannot use --write and --dry-run together".into());
+    }
+    let dry_run = !write || dry_run;
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    forge_rework_with_adapter(
+        &config,
+        adapter.as_ref(),
+        ForgeReworkInput {
+            issue_ref,
+            title,
+            markdown,
+            evidence,
+            operator_confirmation,
+            dry_run,
+        },
+    )
+}
+
+#[derive(Debug, Clone)]
+struct ForgeReworkInput {
+    issue_ref: String,
+    title: String,
+    markdown: String,
+    evidence: String,
+    operator_confirmation: String,
+    dry_run: bool,
+}
+
+fn forge_rework_with_adapter(
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    input: ForgeReworkInput,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let confirmation = clean_rework_text(&input.operator_confirmation, "--operator-confirmation")?;
+    let evidence = clean_rework_text(&input.evidence, "--evidence-file")?;
+    let source = adapter
+        .get_issue(&input.issue_ref)
+        .map_err(|error| format!("forge rework stopped at read_source: {error}"))?
+        .ok_or_else(|| {
+            format!(
+                "forge rework stopped at read_source: issue not found: {}",
+                input.issue_ref
+            )
+        })?;
+    if normalize_state(&source.state) != normalize_state(&config.tracker.state_map.human_review) {
+        return Err(format!(
+            "forge rework stopped at preflight: {} is in {:?}, expected Human Review",
+            source.identifier, source.state
+        )
+        .into());
+    }
+    if let Err(error) = ensure_no_active_human_review_lane_claims(&source) {
+        if !input.dry_run {
+            let diagnostic = render_forge_rework_blocked_workpad(&source, &error.to_string());
+            adapter
+                .upsert_workpad(&source.identifier, &diagnostic)
+                .map_err(|write_error| {
+                    format!("forge rework stopped at active_claim_diagnostic: {write_error}")
+                })?;
+            append_tracker_mutation_audit(
+                config,
+                TrackerMutationAudit {
+                    command: "forge rework",
+                    mutation_type: "workpad_write",
+                    issue_ref: Some(&source.identifier),
+                    target: Some("Rework Revision Blocker".into()),
+                    from_state: Some(source.state.clone()),
+                    to_state: None,
+                    reason: "forge human review rework active claim diagnostic",
+                },
+            );
+        }
+        return Err(error);
+    }
+
+    let report = forge_validation_report(
+        ForgeStatusArg::Todo,
+        &input.title,
+        &input.markdown,
+        config,
+        &source.assignees,
+    )
+    .map_err(|error| format!("forge rework stopped at validate: {error}"))?;
+    print_forge_validation(&report);
+    if !report.decision.is_dispatchable() {
+        return Err(
+            "forge rework stopped at validate: replacement body failed executable issue gate"
+                .into(),
+        );
+    }
+
+    if input.dry_run {
+        let note = render_forge_rework_workpad(
+            &source,
+            &report.title,
+            &confirmation,
+            &evidence,
+            &[
+                "`forge rework --dry-run` validated Human Review source state, lane claims, replacement body, and evidence inputs.".into(),
+            ],
+        );
+        println!(
+            "forge_rework_dry_run=ok issue={} from=HumanReview to=Rework title={:?}",
+            source.identifier, report.title
+        );
+        println!("rework_evidence_preview=\n{note}");
+        return Ok(());
+    }
+
+    adapter
+        .update_issue_content(&source.identifier, &report.title, &input.markdown)
+        .map_err(|error| format!("forge rework stopped at edit_issue: {error}"))?;
+    append_tracker_mutation_audit(
+        config,
+        TrackerMutationAudit {
+            command: "forge rework",
+            mutation_type: "issue_edit",
+            issue_ref: Some(&source.identifier),
+            target: Some(report.title.clone()),
+            from_state: Some(source.state.clone()),
+            to_state: None,
+            reason: "forge human review rework content replacement",
+        },
+    );
+
+    let content_verified = adapter
+        .get_issue(&source.identifier)
+        .map_err(|error| format!("forge rework stopped at readback: {error}"))?
+        .ok_or_else(|| {
+            format!(
+                "forge rework stopped at readback: issue disappeared after update: {}",
+                source.identifier
+            )
+        })?;
+    if content_verified.title != report.title
+        || content_verified.description.as_deref() != Some(input.markdown.as_str())
+    {
+        return Err(format!(
+            "forge rework stopped at readback: expected title {:?} and replacement body for {}, got title {:?}",
+            report.title, content_verified.identifier, content_verified.title
+        )
+        .into());
+    }
+
+    let readbacks = vec![format!(
+        "`forge rework --write` replaced the issue content; pre-status readback confirmed issue `{}` title `{}` before the final Project status mutation.",
+        content_verified.identifier, content_verified.title
+    )];
+    let workpad = render_forge_rework_workpad(
+        &content_verified,
+        &content_verified.title,
+        &confirmation,
+        &evidence,
+        &readbacks,
+    );
+    adapter
+        .upsert_workpad(&content_verified.identifier, &workpad)
+        .map_err(|error| format!("forge rework stopped at evidence_workpad: {error}"))?;
+    append_tracker_mutation_audit(
+        config,
+        TrackerMutationAudit {
+            command: "forge rework",
+            mutation_type: "workpad_write",
+            issue_ref: Some(&content_verified.identifier),
+            target: Some("Rework Revision Evidence".into()),
+            from_state: Some(source.state.clone()),
+            to_state: None,
+            reason: "forge human review rework evidence before status change",
+        },
+    );
+
+    adapter
+        .set_state(&source.identifier, "rework")
+        .map_err(|error| format!("forge rework stopped at set_status: {error}"))?;
+    append_tracker_mutation_audit(
+        config,
+        TrackerMutationAudit {
+            command: "forge rework",
+            mutation_type: "status",
+            issue_ref: Some(&source.identifier),
+            target: Some("Rework".into()),
+            from_state: Some(source.state.clone()),
+            to_state: Some("rework".into()),
+            reason: "forge human review rework final status update",
+        },
+    );
+
+    let verified = adapter
+        .get_issue(&source.identifier)
+        .map_err(|error| format!("forge rework stopped at final_readback: {error}"))?
+        .ok_or_else(|| {
+            format!(
+                "forge rework stopped at final_readback: issue disappeared after update: {}",
+                source.identifier
+            )
+        })?;
+    if normalize_state(&verified.state) != normalize_state(&config.tracker.state_map.rework) {
+        return Err(format!(
+            "forge rework stopped at final_readback: expected Rework, got {:?}",
+            verified.state
+        )
+        .into());
+    }
+
+    println!(
+        "forge_rework=ok issue={} status=Rework title={:?} evidence=workpad final_status_mutation=true",
+        verified.identifier, verified.title
+    );
+    Ok(())
+}
+
+fn clean_rework_text(value: &str, field: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        Err(format!("forge rework requires non-empty {field}").into())
+    } else {
+        Ok(trimmed.to_string())
+    }
+}
+
+fn ensure_no_active_human_review_lane_claims(
+    issue: &TrackerIssue,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for (field, lane) in [
+        ("Main Agent", LaneClaimLane::Main),
+        ("Review Agent", LaneClaimLane::Review),
+        ("Merging Agent", LaneClaimLane::Merge),
+    ] {
+        let Some(value) = project_text_field(issue, field) else {
+            continue;
+        };
+        let claim = LaneClaim::parse(&value).map_err(|error| {
+            format!(
+                "forge rework stopped at preflight: Human Review has unparseable {field} claim: {error}"
+            )
+        })?;
+        if claim.lane != lane {
+            return Err(format!(
+                "forge rework stopped at preflight: Human Review has mismatched {field} claim lane={}",
+                claim.lane.as_str()
+            )
+            .into());
+        }
+        if !claim.state.is_terminal_audit_pointer() {
+            return Err(format!(
+                "forge rework stopped at preflight: Human Review has active {field} claim run={} state={}",
+                claim.run,
+                claim.state.as_str()
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn render_forge_rework_workpad(
+    issue: &TrackerIssue,
+    rework_title: &str,
+    operator_confirmation: &str,
+    evidence: &str,
+    generated_readbacks: &[String],
+) -> String {
+    let mut lines = vec![
+        "## Rework Revision Evidence".to_string(),
+        String::new(),
+        format!("- Issue: {} {}", issue.identifier, issue.title),
+        format!("- Replacement Rework title/status: `{rework_title}` / `Rework`"),
+        format!("- Operator confirmation: {operator_confirmation:?}"),
+        "- Source state validated as `Human Review` before mutation.".into(),
+        "- Terminal lane claims, when present, were preserved as audit pointers.".into(),
+        "- Active lane claims in `Human Review` are rejected before content or status writes."
+            .into(),
+        "- Replacement body was written and read back before the final Project status mutation."
+            .into(),
+        "- Final Project status mutation is `Rework`.".into(),
+        String::new(),
+        "### Rework Direction".into(),
+        String::new(),
+        evidence.trim().to_string(),
+        String::new(),
+        "### Verification Readback".into(),
+        String::new(),
+    ];
+    push_markdown_bullets(&mut lines, generated_readbacks);
+    lines.extend([
+        String::new(),
+        "### Role Boundary".into(),
+        String::new(),
+        "- Main Agent may claim `Rework`, repair the revised contract, and stop at `Agent Review`."
+            .into(),
+        "- `Human Review` remains reserved for independent Review Agent pass evidence.".into(),
+    ]);
+    lines.join("\n")
+}
+
+fn render_forge_rework_blocked_workpad(issue: &TrackerIssue, reason: &str) -> String {
+    [
+        "## Rework Revision Blocker".to_string(),
+        String::new(),
+        format!("- Issue: {} {}", issue.identifier, issue.title),
+        "- Source state: `Human Review`".into(),
+        format!("- Blocker: {reason}"),
+        "- No replacement body was written.".into(),
+        "- Project status was not changed to `Rework`.".into(),
+        "- Resolve or supersede the active lane claim before retrying `forge rework`.".into(),
+    ]
+    .join("\n")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct PromotionNoteInput {
     operator_confirmation: String,
     decisions: Vec<String>,
@@ -1647,7 +1982,9 @@ fn validate_lane_claim_state(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let normalized = issue.normalized_state();
     let valid = match lane {
-        AgentSessionLaneArg::Main => matches!(normalized.as_str(), "todo" | "in progress"),
+        AgentSessionLaneArg::Main => {
+            matches!(normalized.as_str(), "todo" | "in progress" | "rework")
+        }
         AgentSessionLaneArg::Review => normalized == "agent review",
         AgentSessionLaneArg::Merge => normalized == "merging",
     };
@@ -9026,6 +9363,9 @@ enum Command {
         write: bool,
         dry_run: bool,
     },
+    ForgeRework {
+        options: ForgeReworkOptions,
+    },
     Help(String),
 }
 
@@ -10013,6 +10353,7 @@ struct ForgeArgs {
 enum ForgeCommandArgs {
     Create(ForgeCreateArgs),
     Promote(ForgePromoteArgs),
+    Rework(ForgeReworkArgs),
     Validate(ForgeValidateArgs),
 }
 
@@ -10049,6 +10390,25 @@ struct ForgePromoteArgs {
     markdown: ForgeMarkdownArgs,
     #[command(flatten)]
     promotion_note: PromotionNoteArgs,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct ForgeReworkArgs {
+    issue_ref: String,
+    #[arg(long, default_value = "workflows/jade-symphony.md")]
+    workflow: PathBuf,
+    #[arg(long)]
+    title: String,
+    #[command(flatten)]
+    markdown: ForgeMarkdownArgs,
+    #[arg(long = "evidence-file")]
+    evidence_file: PathBuf,
+    #[arg(long = "operator-confirmation")]
+    operator_confirmation: String,
     #[arg(long)]
     write: bool,
     #[arg(long = "dry-run")]
@@ -10347,6 +10707,18 @@ impl TryFrom<Cli> for Command {
                             promotion_note: promotion_note_input(args.promotion_note)?,
                             write: args.write,
                             dry_run: args.dry_run,
+                        }),
+                        ForgeCommandArgs::Rework(args) => Ok(Self::ForgeRework {
+                            options: ForgeReworkOptions {
+                                workflow_path: args.workflow,
+                                issue_ref: args.issue_ref,
+                                title: args.title,
+                                markdown: read_forge_markdown_arg(args.markdown)?,
+                                evidence: read_required_file(args.evidence_file)?,
+                                operator_confirmation: args.operator_confirmation,
+                                write: args.write,
+                                dry_run: args.dry_run,
+                            },
                         }),
                         ForgeCommandArgs::Validate(args) => {
                             if let Some(issue_ref) = args.issue_ref {
@@ -11094,6 +11466,9 @@ mod tests {
             issue_ref: &str,
             normalized_state: &str,
         ) -> Result<(), jade_symphony::tracker::TrackerError> {
+            if let Some(issue) = self.issues.borrow_mut().get_mut(issue_ref) {
+                issue.state = normalize_state(normalized_state);
+            }
             self.operations
                 .borrow_mut()
                 .push(format!("set_state:{issue_ref}:{normalized_state}"));
@@ -11114,6 +11489,8 @@ mod tests {
             }
             assert!(
                 markdown.contains("## Rework Diagnostic")
+                    || markdown.contains("## Rework Revision Evidence")
+                    || markdown.contains("## Rework Revision Blocker")
                     || markdown.contains("### Merge Lane Handoff")
                     || markdown.contains("## Agent Review")
             );
@@ -11136,6 +11513,18 @@ mod tests {
             self.operations
                 .borrow_mut()
                 .push(format!("update_issue_content:{issue_ref}"));
+            Ok(())
+        }
+
+        fn add_issue_comment(
+            &self,
+            issue_ref: &str,
+            markdown: &str,
+        ) -> Result<(), jade_symphony::tracker::TrackerError> {
+            assert!(markdown.contains("## Promotion Note"));
+            self.operations
+                .borrow_mut()
+                .push(format!("comment:{issue_ref}"));
             Ok(())
         }
 
@@ -13997,6 +14386,153 @@ mod tests {
         );
         assert!(!write);
         assert!(dry_run);
+    }
+
+    #[test]
+    fn parses_forge_rework_flags() {
+        let temp = tempfile::tempdir().unwrap();
+        let body_path = temp.path().join("body.md");
+        let evidence_path = temp.path().join("evidence.md");
+        std::fs::write(&body_path, forge_contract()).unwrap();
+        std::fs::write(&evidence_path, "Reviewer changed the execution contract.").unwrap();
+
+        let command = Command::parse(vec![
+            "forge".into(),
+            "rework".into(),
+            "#282".into(),
+            "--workflow".into(),
+            "examples/dry-run-workflow.md".into(),
+            "--title".into(),
+            "Reworked contract".into(),
+            "--body-file".into(),
+            body_path.display().to_string(),
+            "--evidence-file".into(),
+            evidence_path.display().to_string(),
+            "--operator-confirmation".into(),
+            "send it back to Rework".into(),
+            "--dry-run".into(),
+        ])
+        .unwrap();
+
+        let Command::ForgeRework { options } = command else {
+            panic!("expected forge rework command");
+        };
+
+        assert_eq!(
+            options.workflow_path,
+            PathBuf::from("examples/dry-run-workflow.md")
+        );
+        assert_eq!(options.issue_ref, "#282");
+        assert_eq!(options.title, "Reworked contract");
+        assert!(options.markdown.contains("## Issue Goal"));
+        assert_eq!(options.evidence, "Reviewer changed the execution contract.");
+        assert_eq!(options.operator_confirmation, "send it back to Rework");
+        assert!(!options.write);
+        assert!(options.dry_run);
+    }
+
+    #[test]
+    fn forge_rework_writes_content_then_evidence_then_status() {
+        let config = test_config();
+        let adapter = RecordingAdapter::default();
+        let mut issue = tracker_issue_with_ref("#282", "Old reviewed contract", "Human Review");
+        issue.description = Some(forge_contract());
+        let done_main_claim = LaneClaim::active(
+            "#282",
+            LaneClaimLane::Main,
+            LaneClaimActor::Codex,
+            LaneClaimSource::Manual,
+            1_779_000_900_123,
+        )
+        .with_state(LaneClaimState::Done);
+        issue.project_fields.insert(
+            "Main Agent".into(),
+            serde_json::Value::String(done_main_claim.render()),
+        );
+        adapter
+            .issues
+            .borrow_mut()
+            .insert(issue.identifier.clone(), issue);
+
+        forge_rework_with_adapter(
+            &config,
+            &adapter,
+            ForgeReworkInput {
+                issue_ref: "#282".into(),
+                title: "Reworked contract".into(),
+                markdown: forge_contract(),
+                evidence: "Prior Human Review evidence is superseded by the revised contract."
+                    .into(),
+                operator_confirmation: "route to Rework".into(),
+                dry_run: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            adapter.operations(),
+            vec![
+                "update_issue_content:#282".to_string(),
+                "workpad:#282".to_string(),
+                "set_state:#282:rework".to_string(),
+            ]
+        );
+        assert_eq!(
+            adapter
+                .get_issue("#282")
+                .unwrap()
+                .unwrap()
+                .normalized_state(),
+            "rework"
+        );
+    }
+
+    #[test]
+    fn forge_rework_records_diagnostic_for_active_human_review_claims() {
+        let config = test_config();
+        let adapter = RecordingAdapter::default();
+        let mut issue = tracker_issue_with_ref("#282", "Reviewed contract", "Human Review");
+        issue.description = Some(forge_contract());
+        let active_review_claim = LaneClaim::active(
+            "#282",
+            LaneClaimLane::Review,
+            LaneClaimActor::Gemini,
+            LaneClaimSource::Manual,
+            1_779_000_900_123,
+        );
+        issue.project_fields.insert(
+            "Review Agent".into(),
+            serde_json::Value::String(active_review_claim.render()),
+        );
+        adapter
+            .issues
+            .borrow_mut()
+            .insert(issue.identifier.clone(), issue);
+
+        let error = forge_rework_with_adapter(
+            &config,
+            &adapter,
+            ForgeReworkInput {
+                issue_ref: "#282".into(),
+                title: "Reworked contract".into(),
+                markdown: forge_contract(),
+                evidence: "Reviewer changed the contract.".into(),
+                operator_confirmation: "route to Rework".into(),
+                dry_run: false,
+            },
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("active Review Agent claim"));
+        assert_eq!(adapter.operations(), vec!["workpad:#282".to_string()]);
+    }
+
+    #[test]
+    fn manual_main_claim_accepts_rework() {
+        let issue = tracker_issue("Rework");
+
+        validate_lane_claim_state(&issue, AgentSessionLaneArg::Main).unwrap();
     }
 
     #[test]

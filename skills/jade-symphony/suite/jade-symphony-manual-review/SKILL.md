@@ -166,6 +166,10 @@ This is manual/operator-supplied Review Agent evidence. It is not automatic
 - Do not use legacy single-select values.
 - Do not manually clear terminal review claims; let routing commands preserve
   audit evidence.
+- Do not revise a `Human Review` issue by raw Project mutation or
+  `forge promote`. If the reviewed contract must change, hand the operator
+  decision to Issue Forge and use the deterministic `forge rework` flow with a
+  replacement body, evidence file, and explicit confirmation.
 - Do not check issue body checklist items unless PR diff, workpad evidence,
   command output, or operator evidence supports them.
 - Do not check `UAT` checklist items.

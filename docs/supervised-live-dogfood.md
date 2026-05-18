@@ -167,7 +167,6 @@ For a bounded Review Agent pass, run:
 
 ```bash
 export JADE_GEMINI_COMMAND="$(command -v gemini)"
-export GEMINI_CLI_TRUST_WORKSPACE=true
 cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
@@ -183,7 +182,12 @@ cargo run -- review reject workflows/jade-symphony.md '#226' --evidence-file /tm
 Expected outcomes:
 
 - each write-mode Review Agent records a `Review Agent` Project field claim
-  before launching the backend;
+  before launching the headless review job;
+- Gemini-backed `review loop` invokes the configured Gemini command headlessly
+  with `--prompt`, `--output-format json`, workflow-configured model, and
+  workflow-configured interim allowed tools, writes the prompt through stdin,
+  and records stdout, stderr, exit status, Gemini session id when present, a
+  review output artifact, and a durable job ledger;
 - manual review claims use `review claim`, and terminal manual review routing
   validates the exact evidence claim before preserving the `Review Agent` field
   as a terminal structured audit pointer;
@@ -191,14 +195,17 @@ Expected outcomes:
 - confirmed findings move the issue to `Rework`;
 - completed but inconclusive automatic review moves to `Rework` with a missing
   evidence diagnostic;
-- failed, timed-out, or unavailable review stays out of `Human Review`, records
-  evidence, clears stale `Review Agent` claims, and remains retryable after the
-  backend environment is fixed.
+- failed, timed-out, unavailable, unparsed, or infrastructure-blocked review
+  stays out of `Human Review` with durable evidence.
 
 If the review workflow uses `review.gemini_command: $JADE_GEMINI_COMMAND`,
 set that environment variable to an absolute Gemini CLI path before starting
-the supervised review loop. This avoids worker sessions with a narrower `PATH`
-recording a backend-unavailable failure for an otherwise installed Gemini CLI.
+the review loop. This avoids worker processes with a narrower `PATH` recording
+a backend-unavailable failure for an otherwise installed Gemini CLI.
+
+Supervised tmux Review remains available for operator-controlled review through
+`review claim` followed by `session start --lane review --run <RUN_ID>`, but it
+is no longer the default automatic `review loop` backend.
 
 Do not use review commands to bypass human acceptance.
 

@@ -52,6 +52,7 @@ agent:
 tmux:
   command: tmux
   agent_command: codex
+  review_agent_command: $JADE_GEMINI_COMMAND
   session_prefix: jade
 codex:
   command: codex app-server
@@ -60,6 +61,9 @@ claude:
 review:
   backend: gemini-cli
   gemini_command: $JADE_GEMINI_COMMAND
+  gemini_model: gemini-3.1-pro-preview
+  gemini_allowed_tools:
+    - run_shell_command
   timeout_ms: 600000
   max_concurrent_workers: 2
 verification:

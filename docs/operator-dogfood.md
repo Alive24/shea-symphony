@@ -124,10 +124,12 @@ claims, or workpad mutation.
 ## Review Backend Setup
 
 For live Agent Review, make the Gemini command visible to the worker process.
-`review.gemini_command` is launched directly, so `gemini` is resolved from the
-worker `PATH`, not from an interactive shell profile.
+`review loop` claims the Review Agent field and runs Gemini headlessly by
+default with `--prompt`, `--output-format json`, the configured model, and the
+configured interim allowed tools. Prompt content is written through stdin so
+long prompts are not passed through argv or TUI paste buffers.
 
-Prefer an absolute path when supervising review workers:
+Prefer an absolute Gemini path for automatic review workers:
 
 ```bash
 command -v gemini
@@ -140,10 +142,12 @@ running review automation:
 review:
   backend: gemini-cli
   gemini_command: /opt/homebrew/bin/gemini
+  gemini_model: gemini-3.1-pro-preview
+  gemini_allowed_tools:
+    - run_shell_command
 ```
 
 ```bash
-export GEMINI_CLI_TRUST_WORKSPACE=true
 target/debug/jade-symphony review loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
@@ -153,7 +157,8 @@ issue. The claim records minimum `codex-app-manual` registry evidence for the
 printed `run=` without pretending a tmux pane exists. Then start the runtime
 with `session start WORKFLOW '#issue' --lane review --run <RUN_ID> --write`.
 Session startup validates the existing Review Agent claim and writes attach/log
-evidence without moving the issue to `Human Review`.
+evidence without moving the issue to `Human Review`; this tmux path is an
+explicit manual fallback, not the automatic review-loop default.
 
 If Gemini cannot start, the review workpad should name the configured command,
 whether worker `PATH` could resolve it, the required operator action, and the
@@ -164,12 +169,11 @@ handoff evidence and send the work back to Main/operator repair; `doctor repair
 <issue> --mark-pr-ready --confirm-handoff-ready --write` is the explicit repair
 path when the operator has confirmed the handoff is otherwise complete.
 
-If Gemini exits, refuses the workspace trust check, or times out before
-returning a review report, `review loop` records terminal workpad/ledger
-evidence, clears the `Review Agent` Project claim, and leaves the issue in
-`Agent Review` for retry after the operator fixes the backend environment.
-The Gemini subprocess receives the rendered prompt on stdin and Jade Symphony closes
-stdin after writing so headless commands that wait for EOF can proceed.
+If Gemini exits, refuses the workspace trust check, times out, or produces output
+that is not yet parsed into durable pass/finding evidence, the issue must stay
+out of `Human Review`. Inspect the recorded tmux attach command, prompt
+artifact, session registry entry, and log path, then route with `review pass` or
+`review reject` only after independent review evidence exists.
 
 If Gemini returns successfully but says it could not inspect the PR, workspace,
 diff, code changes, or required handoff evidence, treat that as an automatic

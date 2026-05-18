@@ -139,6 +139,9 @@ pub struct ClaudeConfig {
 pub struct TmuxConfig {
     pub command: String,
     pub agent_command: String,
+    pub main_agent_command: Option<String>,
+    pub review_agent_command: Option<String>,
+    pub merge_agent_command: Option<String>,
     pub session_prefix: String,
 }
 
@@ -146,6 +149,8 @@ pub struct TmuxConfig {
 pub struct ReviewConfig {
     pub backend: String,
     pub gemini_command: String,
+    pub gemini_model: Option<String>,
+    pub gemini_allowed_tools: Vec<String>,
     pub timeout_ms: u64,
     pub max_concurrent_workers: usize,
 }
@@ -323,6 +328,18 @@ impl RuntimeConfig {
             command: resolve_command_token(get_string(root.get("tmux"), "command"), "tmux"),
             agent_command: get_string(root.get("tmux"), "agent_command")
                 .unwrap_or_else(|| "codex".to_string()),
+            main_agent_command: resolve_optional_command_token(get_string(
+                root.get("tmux"),
+                "main_agent_command",
+            )),
+            review_agent_command: resolve_optional_command_token(get_string(
+                root.get("tmux"),
+                "review_agent_command",
+            )),
+            merge_agent_command: resolve_optional_command_token(get_string(
+                root.get("tmux"),
+                "merge_agent_command",
+            )),
             session_prefix: get_string(root.get("tmux"), "session_prefix")
                 .unwrap_or_else(|| "jade".to_string()),
         };
@@ -333,6 +350,13 @@ impl RuntimeConfig {
                 get_string(root.get("review"), "gemini_command"),
                 "gemini",
             ),
+            gemini_model: get_string(root.get("review"), "gemini_model"),
+            gemini_allowed_tools: get_string_vec(root.get("review"), "gemini_allowed_tools")
+                .unwrap_or_default()
+                .into_iter()
+                .map(|tool| tool.trim().to_string())
+                .filter(|tool| !tool.is_empty())
+                .collect(),
             timeout_ms: get_u64(root.get("review"), "timeout_ms").unwrap_or(600_000),
             max_concurrent_workers: get_u64(root.get("review"), "max_concurrent_workers")
                 .unwrap_or(1)
@@ -751,6 +775,19 @@ fn resolve_command_token(value: Option<String>, default: &str) -> String {
     }
 }
 
+fn resolve_optional_command_token(value: Option<String>) -> Option<String> {
+    match value {
+        Some(raw) if raw.starts_with('$') => Some(
+            env::var(raw.trim_start_matches('$'))
+                .ok()
+                .filter(|value| !value.is_empty())
+                .unwrap_or(raw),
+        ),
+        Some(raw) if !raw.trim().is_empty() => Some(raw),
+        _ => None,
+    }
+}
+
 fn resolve_path(raw: Option<&str>, workflow_dir: &Path, default: &Path) -> PathBuf {
     let value = raw
         .and_then(resolve_path_token)
@@ -898,7 +935,7 @@ mod tests {
     fn parses_tmux_backend_config() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\ntracker:\n  kind: memory\nagent:\n  backend: tmux\ntmux:\n  command: /opt/homebrew/bin/tmux\n  agent_command: codex\n  session_prefix: jade-local\n---\nPrompt",
+            "---\ntracker:\n  kind: memory\nagent:\n  backend: tmux\ntmux:\n  command: /opt/homebrew/bin/tmux\n  agent_command: codex\n  review_agent_command: gemini\n  merge_agent_command: codex\n  session_prefix: jade-local\n---\nPrompt",
         )
         .unwrap();
         let config =
@@ -907,6 +944,9 @@ mod tests {
         assert_eq!(config.backend.kind, "tmux");
         assert_eq!(config.tmux.command, "/opt/homebrew/bin/tmux");
         assert_eq!(config.tmux.agent_command, "codex");
+        assert_eq!(config.tmux.main_agent_command, None);
+        assert_eq!(config.tmux.review_agent_command.as_deref(), Some("gemini"));
+        assert_eq!(config.tmux.merge_agent_command.as_deref(), Some("codex"));
         assert_eq!(config.tmux.session_prefix, "jade-local");
         assert!(config.validate().is_ok());
     }
@@ -1007,7 +1047,7 @@ mod tests {
         std::env::set_var("JADE_TEST_GEMINI_COMMAND", "/opt/homebrew/bin/gemini-test");
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\nreview:\n  backend: gemini-cli\n  gemini_command: $JADE_TEST_GEMINI_COMMAND\n---\nPrompt",
+            "---\nreview:\n  backend: gemini-cli\n  gemini_command: $JADE_TEST_GEMINI_COMMAND\n  gemini_model: gemini-3.1-pro-preview\n  gemini_allowed_tools:\n    - run_shell_command\n---\nPrompt",
         )
         .unwrap();
         let config =
@@ -1017,6 +1057,14 @@ mod tests {
         assert_eq!(
             config.review.gemini_command,
             "/opt/homebrew/bin/gemini-test"
+        );
+        assert_eq!(
+            config.review.gemini_model.as_deref(),
+            Some("gemini-3.1-pro-preview")
+        );
+        assert_eq!(
+            config.review.gemini_allowed_tools,
+            vec!["run_shell_command".to_string()]
         );
     }
 

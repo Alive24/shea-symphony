@@ -72,12 +72,12 @@ use jade_symphony::quality_gate::{
     evaluate_issue_with_source_alignment, LlmGateMode, LlmGateOptions,
 };
 use jade_symphony::review::{
-    classify_review_freshness, poll_review_job_until_terminal, render_review_freshness_workpad,
-    render_review_workpad, review_gate_decision, review_run_eligibility,
-    transition_allowed_for_main_agent, transition_allowed_for_review_agent,
+    classify_review_freshness, gemini_cli_headless_args, poll_review_job_until_terminal,
+    render_review_freshness_workpad, render_review_workpad, review_gate_decision,
+    review_run_eligibility, transition_allowed_for_main_agent, transition_allowed_for_review_agent,
     write_review_job_ledger_record, FakeReviewBackend, FakeReviewOutcome, GeminiCliReviewBackend,
-    ReviewBackend, ReviewFreshnessInput, ReviewJob, ReviewJobState, ReviewRequest,
-    ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
+    ReviewBackend, ReviewFreshnessInput, ReviewGateDecision, ReviewJob, ReviewJobState,
+    ReviewOutcome, ReviewRequest, ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
 };
 use jade_symphony::rework::{
     render_rework_diagnostic_workpad, rework_diagnostic_from_review, rework_transition_expected,
@@ -1412,17 +1412,13 @@ fn review_fake(
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
     let request = ReviewRequest {
         issue: issue.clone(),
-        prompt: render_prompt(
-            workflow.prompt_for_lane(AgentLane::ReviewAgent),
-            &issue,
-            None,
-        )?,
+        prompt: render_automatic_review_prompt(&workflow, &issue)?,
         workspace: config.workspace.root.clone(),
         artifact_root: config.observability.logs_root.join("reviews"),
     };
     let backend = FakeReviewBackend::new(outcome);
     let job = backend.poll(backend.start(request)?)?;
-    apply_review_result(&config, adapter.as_ref(), &issue_ref, &issue, &job)?;
+    apply_review_result(&config, adapter.as_ref(), &issue_ref, &issue, &job, None)?;
 
     let decision = review_gate_decision(&job);
     println!(
@@ -1448,19 +1444,24 @@ fn review_once(
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
     let request = ReviewRequest {
         issue: issue.clone(),
-        prompt: render_prompt(
-            workflow.prompt_for_lane(AgentLane::ReviewAgent),
-            &issue,
-            None,
-        )?,
+        prompt: render_automatic_review_prompt(&workflow, &issue)?,
         workspace: config.workspace.root.clone(),
         artifact_root: config.observability.logs_root.join("reviews"),
     };
     let job = match config.review.backend.as_str() {
         "gemini-cli" => {
-            let backend = GeminiCliReviewBackend::new(config.review.gemini_command.clone());
+            let backend = GeminiCliReviewBackend::with_headless_options(
+                config.review.gemini_command.clone(),
+                config.review.gemini_model.clone(),
+                config.review.gemini_allowed_tools.clone(),
+            );
             match backend.start(request) {
-                Ok(job) => backend.poll(job)?,
+                Ok(job) => poll_review_job_until_terminal(
+                    &backend,
+                    job,
+                    Duration::from_millis(config.review.timeout_ms),
+                    Duration::from_millis(500),
+                )?,
                 Err(error) => ReviewJob::failed_unavailable(
                     issue.identifier.clone(),
                     "gemini-cli",
@@ -1473,7 +1474,7 @@ fn review_once(
             backend.poll(backend.start(request)?)?
         }
     };
-    apply_review_result(&config, adapter.as_ref(), &issue_ref, &issue, &job)?;
+    apply_review_result(&config, adapter.as_ref(), &issue_ref, &issue, &job, None)?;
 
     let decision = review_gate_decision(&job);
     println!(
@@ -1826,7 +1827,8 @@ fn review_manual_pass(
         .into());
     }
 
-    let (current_claim_value, current_claim) = validate_manual_review_claim(&issue, &evidence)?;
+    let (current_claim_value, current_claim) =
+        validate_manual_review_pass_claim(&issue, &evidence)?;
     let terminal_claim_value =
         terminal_review_claim_value(&current_claim, LaneClaimState::Done, "passed");
     let target_state = "human_review";
@@ -1931,7 +1933,8 @@ fn review_manual_reject(
         .into());
     }
 
-    let (current_claim_value, current_claim) = validate_manual_review_claim(&issue, &evidence)?;
+    let (current_claim_value, current_claim) =
+        validate_active_manual_review_claim(&issue, &evidence)?;
     let (terminal_state, terminal_result) = reject_terminal_claim_outcome(&normalized_target);
     let terminal_claim_value =
         terminal_review_claim_value(&current_claim, terminal_state, terminal_result);
@@ -2038,9 +2041,44 @@ fn render_manual_review_workpad(
     lines.join("\n")
 }
 
-fn validate_manual_review_claim(
+fn validate_manual_review_pass_claim(
     issue: &TrackerIssue,
     evidence: &str,
+) -> Result<(String, LaneClaim), Box<dyn std::error::Error>> {
+    let (current, claim) = parse_manual_review_claim(issue)?;
+    if claim.state == LaneClaimState::Active
+        || (claim.state == LaneClaimState::Done
+            && review_claim_result_value(&current) == Some("passed"))
+    {
+        validate_manual_review_evidence_contains_claim(&current, evidence)?;
+        return Ok((current, claim));
+    }
+    Err(format!(
+        "current Review Agent claim must be active, or already state=done result=passed for idempotent pass repair; found state={} result={}",
+        claim.state.as_str(),
+        review_claim_result_value(&current).unwrap_or("missing")
+    )
+    .into())
+}
+
+fn validate_active_manual_review_claim(
+    issue: &TrackerIssue,
+    evidence: &str,
+) -> Result<(String, LaneClaim), Box<dyn std::error::Error>> {
+    let (current, claim) = parse_manual_review_claim(issue)?;
+    if claim.state != LaneClaimState::Active {
+        return Err(format!(
+            "current Review Agent claim must be active before routing, found state={}",
+            claim.state.as_str()
+        )
+        .into());
+    }
+    validate_manual_review_evidence_contains_claim(&current, evidence)?;
+    Ok((current, claim))
+}
+
+fn parse_manual_review_claim(
+    issue: &TrackerIssue,
 ) -> Result<(String, LaneClaim), Box<dyn std::error::Error>> {
     let current = project_text_field(issue, "Review Agent")
         .ok_or("manual review routing requires a current Review Agent claim")?;
@@ -2057,19 +2095,25 @@ fn validate_manual_review_claim(
         )
         .into());
     }
-    if claim.state != LaneClaimState::Active {
-        return Err(format!(
-            "current Review Agent claim must be active before routing, found state={}",
-            claim.state.as_str()
-        )
-        .into());
-    }
-    if !evidence.contains(&current) {
+    Ok((current, claim))
+}
+
+fn validate_manual_review_evidence_contains_claim(
+    current: &str,
+    evidence: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !evidence.contains(current) {
         return Err(
             "manual review evidence must include the exact current Review Agent claim value".into(),
         );
     }
-    Ok((current, claim))
+    Ok(())
+}
+
+fn review_claim_result_value(value: &str) -> Option<&str> {
+    value
+        .split_whitespace()
+        .find_map(|token| token.strip_prefix("result="))
 }
 
 fn terminal_review_claim_value(claim: &LaneClaim, state: LaneClaimState, result: &str) -> String {
@@ -2217,6 +2261,13 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
             continue;
         }
 
+        let mut pending_review_jobs: Vec<(
+            usize,
+            TrackerIssue,
+            LaneClaim,
+            thread::JoinHandle<ReviewJob>,
+        )> = Vec::new();
+
         for (slot, selected_issue) in selected.into_iter().enumerate() {
             let worker_slot = slot + 1;
             match review_run_eligibility(
@@ -2240,18 +2291,35 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                 );
                     if !options.write {
                         println!(
-                            "review_loop_dry_run action=start issue={} backend={backend_kind}",
-                            selected_issue.identifier
+                            "review_loop_dry_run action=start issue={} backend={backend_kind} mode={}",
+                            selected_issue.identifier,
+                            if backend_kind == "gemini-cli" {
+                                "headless"
+                            } else {
+                                "job"
+                            }
                         );
+                        if backend_kind == "gemini-cli" {
+                            println!(
+                                "review_loop_dry_run action=command issue={} command={} args={}",
+                                selected_issue.identifier,
+                                shell_quote_display(&config.review.gemini_command),
+                                gemini_cli_headless_args(
+                                    config.review.gemini_model.as_deref(),
+                                    &config.review.gemini_allowed_tools,
+                                )
+                                .join(" ")
+                            );
+                        }
                         print_review_claim_field_dry_run(&selected_issue, &worker_key);
                         println!(
                             "review_loop_dry_run action=workpad issue={} evidence=review_job",
                             selected_issue.identifier
                         );
                         println!(
-                        "review_loop_dry_run action=reconcile issue={} actor=independent_review_agent",
-                        selected_issue.identifier
-                    );
+                            "review_loop_dry_run action=reconcile issue={} actor=independent_review_agent",
+                            selected_issue.identifier
+                        );
                         continue;
                     }
 
@@ -2270,40 +2338,40 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                         &backend_kind,
                     ) {
                         ReviewRunEligibility::Eligible { worker_key } => {
-                            write_review_claim_field(
+                            let claim = write_review_claim_field(
                                 &config,
                                 adapter.as_ref(),
                                 &latest,
                                 &worker_key,
                             )?;
-                            let mut job = run_review_job(
-                                &workflow,
-                                &config,
-                                &latest,
-                                options.fake_outcome.clone(),
-                            )?;
-                            let ledger_path = write_review_job_ledger_record(
-                                &config.observability.logs_root,
-                                &latest,
-                                &job,
-                            )?;
-                            job.ledger_path = Some(ledger_path.clone());
-                            apply_review_result(
-                                &config,
-                                adapter.as_ref(),
-                                &latest.identifier,
-                                &latest,
-                                &job,
-                            )?;
-                            let decision = review_gate_decision(&job);
+                            let workflow_for_job = workflow.clone();
+                            let config_for_job = config.clone();
+                            let issue_for_job = latest.clone();
+                            let fake_outcome_for_job = options.fake_outcome.clone();
+                            let backend_kind_for_job = backend_kind.clone();
                             println!(
-                            "review_loop_action=reconciled issue={} backend={} outcome={:?} target_state={:?} ledger={}",
-                            latest.identifier,
-                            job.backend,
-                            decision.outcome,
-                            decision.target_state,
-                            ledger_path.display()
-                        );
+                                "review_loop_action=start issue={} worker_slot={} backend={} mode={}",
+                                latest.identifier,
+                                worker_slot,
+                                backend_kind,
+                                if backend_kind == "gemini-cli" { "headless" } else { "job" }
+                            );
+                            let handle = thread::spawn(move || {
+                                run_review_job(
+                                    &workflow_for_job,
+                                    &config_for_job,
+                                    &issue_for_job,
+                                    fake_outcome_for_job,
+                                )
+                                .unwrap_or_else(|error| {
+                                    ReviewJob::failed_unavailable(
+                                        issue_for_job.identifier.clone(),
+                                        backend_kind_for_job,
+                                        error.to_string(),
+                                    )
+                                })
+                            });
+                            pending_review_jobs.push((worker_slot, latest, claim, handle));
                         }
                         ReviewRunEligibility::AlreadyQueued { worker_key } => {
                             println!(
@@ -2358,6 +2426,38 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                     )?;
                 }
             }
+        }
+
+        for (worker_slot, latest, claim, handle) in pending_review_jobs {
+            let mut job = match handle.join() {
+                Ok(job) => job,
+                Err(_) => ReviewJob::failed_unavailable(
+                    latest.identifier.clone(),
+                    backend_kind.clone(),
+                    "review worker thread panicked",
+                ),
+            };
+            let ledger_path =
+                write_review_job_ledger_record(&config.observability.logs_root, &latest, &job)?;
+            job.ledger_path = Some(ledger_path.clone());
+            apply_review_result(
+                &config,
+                adapter.as_ref(),
+                &latest.identifier,
+                &latest,
+                &job,
+                Some(&claim),
+            )?;
+            let decision = review_gate_decision(&job);
+            println!(
+                "review_loop_action=reconciled issue={} worker_slot={} backend={} outcome={:?} target_state={:?} ledger={}",
+                latest.identifier,
+                worker_slot,
+                job.backend,
+                decision.outcome,
+                decision.target_state,
+                ledger_path.display()
+            );
         }
 
         if !options.write && limit.is_none() {
@@ -2818,7 +2918,7 @@ fn write_review_claim_field(
     adapter: &dyn TrackerAdapter,
     issue: &TrackerIssue,
     worker_key: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<LaneClaim, Box<dyn std::error::Error>> {
     let claim = review_claim_for_issue(issue, worker_key);
     let claim_value = claim.render();
     adapter.set_project_field(
@@ -2844,7 +2944,7 @@ fn write_review_claim_field(
         "review_loop_action=claim_field issue={} field=\"Review Agent\" run={}",
         issue.identifier, claim.run
     );
-    Ok(())
+    Ok(claim)
 }
 
 fn run_review_job(
@@ -2855,11 +2955,7 @@ fn run_review_job(
 ) -> Result<ReviewJob, Box<dyn std::error::Error>> {
     let request = ReviewRequest {
         issue: issue.clone(),
-        prompt: render_prompt(
-            workflow.prompt_for_lane(AgentLane::ReviewAgent),
-            issue,
-            None,
-        )?,
+        prompt: render_automatic_review_prompt(workflow, issue)?,
         workspace: review_workspace_for_issue(config, issue),
         artifact_root: config.observability.logs_root.join("reviews"),
     };
@@ -2877,7 +2973,11 @@ fn run_review_job(
 
     match config.review.backend.as_str() {
         "gemini-cli" => {
-            let backend = GeminiCliReviewBackend::new(config.review.gemini_command.clone());
+            let backend = GeminiCliReviewBackend::with_headless_options(
+                config.review.gemini_command.clone(),
+                config.review.gemini_model.clone(),
+                config.review.gemini_allowed_tools.clone(),
+            );
             match backend.start(request) {
                 Ok(job) => Ok(poll_review_job_until_terminal(
                     &backend,
@@ -2903,6 +3003,37 @@ fn review_workspace_for_issue(config: &RuntimeConfig, issue: &TrackerIssue) -> P
     run_loop_handoff_plan(config, issue)
         .map(|handoff| handoff.workspace_path)
         .unwrap_or_else(|_| config.workspace.root.clone())
+}
+
+fn render_automatic_review_prompt(
+    workflow: &WorkflowDefinition,
+    issue: &TrackerIssue,
+) -> Result<String, jade_symphony::prompt::PromptError> {
+    let mut prompt = render_prompt(
+        workflow.prompt_for_lane(AgentLane::ReviewAgent),
+        issue,
+        None,
+    )?;
+    prompt.push_str(
+        "\n\n## Automatic Headless Review Boundary\n\n\
+This Gemini process is running under Jade Symphony automatic `review loop` or `review once`.\n\
+Jade Symphony CLI has already claimed or will own any Review Agent claim, workpad write,\n\
+issue body update, and Project state transition outside this process.\n\n\
+Do not run mutating Jade Symphony or GitHub commands, including `review claim`, `review pass`,\n\
+`review reject`, `set-state`, `workpad`, `forge`, `gh issue edit`, `gh issue comment`, raw\n\
+Project GraphQL mutations, or Project UI changes. Do not activate or follow any manual review\n\
+skill that tells you to mutate Project state.\n\n\
+Return review evidence in stdout only. Start with exactly one line: `Review Result: PASS`,\n\
+`Review Result: REWORK`, or `Review Result: NEEDS_CONTEXT`. Use `PASS` only when there are no\n\
+blocking findings. Use `REWORK` only when confirmed implementation defects require Main Agent\n\
+changes. Use `NEEDS_CONTEXT` when missing evidence or ambiguity prevents an independent decision.\n\n\
+Only use `[Confirmed]`, `[Plausible]`, `[Rejected]`, or `[Needs Context]` for actual review\n\
+findings. Do not use those bracketed finding tags for positive verification evidence, checklist\n\
+items, or things that were implemented correctly; put positive observations under an `Evidence`\n\
+heading with plain bullets instead. Leave routing and evidence persistence to the Jade Symphony\n\
+wrapper after this process exits.\n",
+    );
+    Ok(prompt)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -2969,33 +3100,87 @@ fn agent_session_start(
     let workspace_key = agent_session_workspace_key(&config, &issue, lane)?;
     let prompt_path = rendered_lane_prompt_artifact_path(&config, &issue, lane, 1);
     let claim = matching_lane_claim_for_session(&issue, lane, &run_id)?;
-    let claim_value = claim.render();
+    let agent_command = tmux_agent_command_for_lane(&config, lane)?;
 
     if !write {
         println!(
-            "session_dry_run action=start issue={} lane={} run={} backend=tmux workspace_key={} prompt_artifact={}",
+            "session_dry_run action=start issue={} lane={} run={} backend=tmux agent_command={} workspace_key={} prompt_artifact={}",
             issue.identifier,
             lane.label(),
             claim.run,
+            shell_quote_display(&agent_command),
             workspace_key,
             prompt_path.display()
         );
         return Ok(());
     }
 
+    let started = start_agent_session_with_claim(
+        &workflow,
+        &config,
+        adapter.as_ref(),
+        &issue,
+        lane,
+        &claim,
+        "session start",
+    )?;
+
+    println!(
+        "session_action=started issue={} lane={} run={} backend={} session={} pending_session={} workspace={} prompt_artifact={}",
+        issue.identifier,
+        lane.label(),
+        claim.run,
+        started.summary.backend,
+        started.summary.session_id.as_deref().unwrap_or("n/a"),
+        started.summary.pending_session,
+        started.workspace_path.display(),
+        started.prompt_path.display()
+    );
+    if let Some(attach_command) = started.summary.attach_command.as_deref() {
+        println!("attach_command={attach_command}");
+    }
+    if let Some(log_path) = started.summary.log_path.as_ref() {
+        println!("log_path={}", log_path.display());
+    }
+    Ok(())
+}
+
+struct AgentSessionStartResult {
+    summary: jade_symphony::agent::AgentSummary,
+    workspace_path: PathBuf,
+    prompt_path: PathBuf,
+}
+
+fn start_agent_session_with_claim(
+    workflow: &WorkflowDefinition,
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    issue: &TrackerIssue,
+    lane: AgentSessionLaneArg,
+    claim: &LaneClaim,
+    audit_command: &'static str,
+) -> Result<AgentSessionStartResult, Box<dyn std::error::Error>> {
+    let workspace_key = agent_session_workspace_key(config, issue, lane)?;
+    let prompt_path = rendered_lane_prompt_artifact_path(config, issue, lane, 1);
     let workspace = prepare_workspace(&config.workspace.root, &workspace_key, &config.hooks)?;
     let git_identity = apply_local_git_identity(&workspace.path, &config.identity.git)?;
     let prompt = render_prompt_with_claim(
         workflow.prompt_for_lane(lane.workflow_lane()),
-        &issue,
+        issue,
         None,
-        Some(&claim),
+        Some(claim),
     )?;
+    let agent_command = tmux_agent_command_for_lane(config, lane)?;
     let backend = TmuxBackend;
-    let mut prepared = backend.prepare(workspace.path.clone(), prompt, &config)?;
+    let mut prepared = backend.prepare(workspace.path.clone(), prompt, config)?;
+    prepared.command = Some(agent_command.clone());
     prepared
         .env
         .insert("JADE_SYMPHONY_AGENT_LANE".into(), lane.label().to_string());
+    prepared.env.insert(
+        "JADE_SYMPHONY_TMUX_AGENT_COMMAND".into(),
+        prepared.command.clone().unwrap_or_default(),
+    );
     prepared.prompt_artifact_path = Some(prompt_path.clone());
     prepared.issue_id = Some(issue.id.clone());
     prepared.issue_identifier = Some(issue.identifier.clone());
@@ -3010,24 +3195,27 @@ fn agent_session_start(
         .insert("JADE_SYMPHONY_CLAIM".into(), claim.render());
     prepared.attempt = 1;
     prepared.branch_name = current_git_branch(&workspace.path).ok().flatten();
+
     let events = backend.run(prepared)?;
     let summary = backend.summarize(&events);
-    record_agent_session_events(&config, &issue, lane, &summary, &events, &prompt_path)?;
+    record_agent_session_events(config, issue, lane, &summary, &events, &prompt_path)?;
 
-    let workpad = agent_session_workpad(
-        &issue,
+    let claim_value = claim.render();
+    let workpad = agent_session_workpad(AgentSessionWorkpadInput {
+        issue,
         lane,
-        &workspace.path,
-        &summary,
-        &prompt_path,
-        &claim_value,
-        &git_identity,
-    );
+        workspace_path: &workspace.path,
+        summary: &summary,
+        prompt_path: &prompt_path,
+        claim_value: &claim_value,
+        agent_command: &agent_command,
+        git_identity: &git_identity,
+    });
     adapter.upsert_workpad(&issue.identifier, &workpad)?;
     append_tracker_mutation_audit(
-        &config,
+        config,
         TrackerMutationAudit {
-            command: "session start",
+            command: audit_command,
             mutation_type: "workpad_write",
             issue_ref: Some(&issue.identifier),
             target: summary.session_id.clone(),
@@ -3037,24 +3225,11 @@ fn agent_session_start(
         },
     );
 
-    println!(
-        "session_action=started issue={} lane={} run={} backend={} session={} pending_session={} workspace={} prompt_artifact={}",
-        issue.identifier,
-        lane.label(),
-        claim.run,
-        summary.backend,
-        summary.session_id.as_deref().unwrap_or("n/a"),
-        summary.pending_session,
-        workspace.path.display(),
-        prompt_path.display()
-    );
-    if let Some(attach_command) = summary.attach_command.as_deref() {
-        println!("attach_command={attach_command}");
-    }
-    if let Some(log_path) = summary.log_path.as_ref() {
-        println!("log_path={}", log_path.display());
-    }
-    Ok(())
+    Ok(AgentSessionStartResult {
+        summary,
+        workspace_path: workspace.path,
+        prompt_path,
+    })
 }
 
 fn legacy_agent_session_start(
@@ -3202,6 +3377,54 @@ fn validate_tmux_session_config(config: &RuntimeConfig) -> Result<(), Box<dyn st
     Ok(())
 }
 
+fn tmux_agent_command_for_lane(
+    config: &RuntimeConfig,
+    lane: AgentSessionLaneArg,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let command = match lane {
+        AgentSessionLaneArg::Main => config
+            .tmux
+            .main_agent_command
+            .as_deref()
+            .unwrap_or(&config.tmux.agent_command),
+        AgentSessionLaneArg::Review => config
+            .tmux
+            .review_agent_command
+            .as_deref()
+            .or_else(|| {
+                (config.review.backend == "gemini-cli")
+                    .then_some(config.review.gemini_command.as_str())
+            })
+            .unwrap_or(&config.tmux.agent_command),
+        AgentSessionLaneArg::Merge => config
+            .tmux
+            .merge_agent_command
+            .as_deref()
+            .unwrap_or(&config.tmux.agent_command),
+    };
+
+    if command.trim().is_empty() {
+        return Err(format!(
+            "tmux {} agent command must not be empty for session start",
+            lane.label()
+        )
+        .into());
+    }
+
+    Ok(command.to_string())
+}
+
+fn shell_quote_display(value: &str) -> String {
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '/' | '.' | ':'))
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
 fn agent_session_workspace_key(
     config: &RuntimeConfig,
     issue: &TrackerIssue,
@@ -3276,17 +3499,21 @@ fn record_agent_session_events(
     Ok(())
 }
 
-fn agent_session_workpad(
-    issue: &TrackerIssue,
+struct AgentSessionWorkpadInput<'a> {
+    issue: &'a TrackerIssue,
     lane: AgentSessionLaneArg,
-    workspace_path: &Path,
-    summary: &jade_symphony::agent::AgentSummary,
-    prompt_path: &Path,
-    claim_value: &str,
-    git_identity: &GitIdentityApplyResult,
-) -> String {
-    let attach_command = summary.attach_command.as_deref().unwrap_or("n/a");
-    let log_path = summary
+    workspace_path: &'a Path,
+    summary: &'a jade_symphony::agent::AgentSummary,
+    prompt_path: &'a Path,
+    claim_value: &'a str,
+    agent_command: &'a str,
+    git_identity: &'a GitIdentityApplyResult,
+}
+
+fn agent_session_workpad(input: AgentSessionWorkpadInput<'_>) -> String {
+    let attach_command = input.summary.attach_command.as_deref().unwrap_or("n/a");
+    let log_path = input
+        .summary
         .log_path
         .as_ref()
         .map(|path| path.display().to_string())
@@ -3295,22 +3522,27 @@ fn agent_session_workpad(
         "## Jade Symphony Workpad".to_string(),
         String::new(),
         "### Local tmux Agent Session".to_string(),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        format!("- Lane: `{}`", lane.label()),
-        format!("- Claim field: `{}` = `{claim_value}`", lane.claim_field()),
-        format!("- Backend: `{}`", summary.backend),
+        format!("- Issue: {} {}", input.issue.identifier, input.issue.title),
+        format!("- Lane: `{}`", input.lane.label()),
+        format!(
+            "- Claim field: `{}` = `{}`",
+            input.lane.claim_field(),
+            input.claim_value
+        ),
+        format!("- Backend: `{}`", input.summary.backend),
+        format!("- Agent command: `{}`", input.agent_command),
         format!(
             "- Session: `{}`",
-            summary.session_id.as_deref().unwrap_or("n/a")
+            input.summary.session_id.as_deref().unwrap_or("n/a")
         ),
-        format!("- Pending session: `{}`", summary.pending_session),
-        format!("- Workspace: `{}`", workspace_path.display()),
-        format!("- Prompt artifact: `{}`", prompt_path.display()),
+        format!("- Pending session: `{}`", input.summary.pending_session),
+        format!("- Workspace: `{}`", input.workspace_path.display()),
+        format!("- Prompt artifact: `{}`", input.prompt_path.display()),
         format!("- Session log: `{log_path}`"),
         format!("- Attach command: `{attach_command}`"),
-        format!("- Git identity: `{}`", git_identity.summary()),
+        format!("- Git identity: `{}`", input.git_identity.summary()),
         String::new(),
-        summary.message.clone(),
+        input.summary.message.clone(),
     ]
     .join("\n")
 }
@@ -3321,8 +3553,22 @@ fn apply_review_result(
     issue_ref: &str,
     issue: &TrackerIssue,
     job: &jade_symphony::review::ReviewJob,
+    claim: Option<&LaneClaim>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let decision = review_gate_decision(job);
+    if let Some(value) = terminal_review_loop_claim_value(claim, job, &decision) {
+        write_terminal_review_claim(
+            config,
+            adapter,
+            issue_ref,
+            &issue.state,
+            &value,
+            "review loop terminal claim evidence",
+        )?;
+    }
+    if decision.outcome == ReviewOutcome::PassedToHumanReview {
+        update_review_checklist_for_pass(config, adapter, issue)?;
+    }
     if let Some(target_state) = decision.target_state {
         if !transition_allowed_for_review_agent(target_state, &decision) {
             return Err("review agent transition is not allowed for this review decision".into());
@@ -3351,9 +3597,6 @@ fn apply_review_result(
             reason: "review result workpad evidence",
         },
     );
-    if review_claim_should_be_released(job, decision.target_state) {
-        clear_review_claim_field(config, adapter, issue_ref, job)?;
-    }
     if let Some(target_state) = decision.target_state {
         adapter.set_state(issue_ref, target_state)?;
         append_tracker_mutation_audit(
@@ -3372,37 +3615,137 @@ fn apply_review_result(
     Ok(())
 }
 
-fn review_claim_should_be_released(
-    job: &jade_symphony::review::ReviewJob,
-    target_state: Option<&str>,
-) -> bool {
-    matches!(
-        job.state,
-        ReviewJobState::Failed | ReviewJobState::TimedOut | ReviewJobState::Cancelled
-    ) && target_state == Some("agent_review")
-}
-
-fn clear_review_claim_field(
+fn update_review_checklist_for_pass(
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
-    issue_ref: &str,
-    job: &jade_symphony::review::ReviewJob,
+    issue: &TrackerIssue,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    adapter.clear_project_field(issue_ref, "Review Agent")?;
+    let Some(description) = issue.description.as_deref() else {
+        return Ok(());
+    };
+    let body = canonical_issue_body_without_workpad(description);
+    let updated = check_review_verified_issue_body_checkboxes(&body);
+    if updated == body {
+        return Ok(());
+    }
+
+    adapter.update_issue_content(&issue.identifier, &issue.title, &updated)?;
     append_tracker_mutation_audit(
         config,
         TrackerMutationAudit {
             command: "review loop",
-            mutation_type: "claim_field_clear",
-            issue_ref: Some(issue_ref),
-            target: Some("Review Agent".into()),
-            from_state: Some(format!("{:?}", job.state)),
-            to_state: None,
-            reason: "terminal review backend result",
+            mutation_type: "issue_body_update",
+            issue_ref: Some(&issue.identifier),
+            target: Some("non-UAT review checkboxes".into()),
+            from_state: Some(issue.state.clone()),
+            to_state: Some("human_review".into()),
+            reason: "automatic review pass checklist evidence",
         },
     );
-    println!("review_loop_action=clear_claim_field issue={issue_ref} field=\"Review Agent\"");
     Ok(())
+}
+
+fn canonical_issue_body_without_workpad(description: &str) -> String {
+    description
+        .split("<!-- jade-symphony-workpad -->")
+        .next()
+        .unwrap_or(description)
+        .trim_end()
+        .to_string()
+}
+
+fn check_review_verified_issue_body_checkboxes(body: &str) -> String {
+    let mut in_fence = false;
+    let mut in_review_section = false;
+    let mut lines = Vec::new();
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            lines.push(line.to_string());
+            continue;
+        }
+        if !in_fence {
+            if let Some(section) = markdown_heading_title(trimmed) {
+                in_review_section = review_checklist_section_is_agent_owned(section);
+            }
+        }
+        if in_review_section && !in_fence {
+            lines.push(check_markdown_checkbox_line(line));
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+    let mut updated = lines.join("\n");
+    if body.ends_with('\n') {
+        updated.push('\n');
+    }
+    updated
+}
+
+fn markdown_heading_title(line: &str) -> Option<&str> {
+    let heading_len = line.chars().take_while(|ch| *ch == '#').count();
+    if heading_len == 0 || heading_len > 6 {
+        return None;
+    }
+    if !line
+        .chars()
+        .nth(heading_len)
+        .is_some_and(char::is_whitespace)
+    {
+        return None;
+    }
+    Some(line[heading_len..].trim().trim_matches('#').trim())
+}
+
+fn review_checklist_section_is_agent_owned(section: &str) -> bool {
+    matches!(
+        section.to_ascii_lowercase().as_str(),
+        "expected outcome"
+            | "completion criteria"
+            | "functional verification"
+            | "context verification"
+    )
+}
+
+fn check_markdown_checkbox_line(line: &str) -> String {
+    let trimmed = line.trim_start();
+    if !(trimmed.starts_with("- [ ]") || trimmed.starts_with("* [ ]")) {
+        return line.to_string();
+    }
+    if let Some(index) = line.find("[ ]") {
+        let mut checked = line.to_string();
+        checked.replace_range(index..index + 3, "[x]");
+        checked
+    } else {
+        line.to_string()
+    }
+}
+
+fn terminal_review_loop_claim_value(
+    claim: Option<&LaneClaim>,
+    job: &jade_symphony::review::ReviewJob,
+    decision: &ReviewGateDecision,
+) -> Option<String> {
+    let claim = claim?;
+    let (state, result) = match decision.outcome {
+        ReviewOutcome::PassedToHumanReview => (LaneClaimState::Done, "passed"),
+        ReviewOutcome::NeedsRework => (LaneClaimState::Done, "rejected"),
+        ReviewOutcome::InconclusiveNeedsRework => (LaneClaimState::Failed, "inconclusive"),
+        ReviewOutcome::NeedsHumanInput => (LaneClaimState::Failed, "blocked"),
+        ReviewOutcome::BackendUnavailable => (LaneClaimState::Failed, "unavailable"),
+        ReviewOutcome::Cancelled => (LaneClaimState::Failed, "cancelled"),
+        ReviewOutcome::StillRunning => match job.state {
+            ReviewJobState::Failed | ReviewJobState::TimedOut => {
+                (LaneClaimState::Failed, "unavailable")
+            }
+            ReviewJobState::Cancelled => (LaneClaimState::Failed, "cancelled"),
+            ReviewJobState::Queued | ReviewJobState::Running | ReviewJobState::Completed => {
+                return None;
+            }
+        },
+    };
+    Some(terminal_review_claim_value(claim, state, result))
 }
 
 fn transition_issue_to_rework_with_diagnostic(
@@ -7672,7 +8015,11 @@ fn lane_claim_for_issue(
 ) -> LaneClaim {
     existing
         .and_then(|value| LaneClaim::parse(value).ok())
-        .filter(|claim| claim.lane == lane && claim.issue == issue.identifier)
+        .filter(|claim| {
+            claim.lane == lane
+                && claim.issue == issue.identifier
+                && claim.state == LaneClaimState::Active
+        })
         .unwrap_or_else(|| {
             LaneClaim::active(&issue.identifier, lane, actor, source, current_time_ms())
         })
@@ -10768,10 +11115,27 @@ mod tests {
             assert!(
                 markdown.contains("## Rework Diagnostic")
                     || markdown.contains("### Merge Lane Handoff")
+                    || markdown.contains("## Agent Review")
             );
             self.operations
                 .borrow_mut()
                 .push(format!("workpad:{issue_ref}"));
+            Ok(())
+        }
+
+        fn update_issue_content(
+            &self,
+            issue_ref: &str,
+            title: &str,
+            body: &str,
+        ) -> Result<(), jade_symphony::tracker::TrackerError> {
+            if let Some(issue) = self.issues.borrow_mut().get_mut(issue_ref) {
+                issue.title = title.to_string();
+                issue.description = Some(body.to_string());
+            }
+            self.operations
+                .borrow_mut()
+                .push(format!("update_issue_content:{issue_ref}"));
             Ok(())
         }
 
@@ -11391,6 +11755,46 @@ mod tests {
     }
 
     #[test]
+    fn review_session_uses_gemini_command_when_no_tmux_override_exists() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nagent:\n  backend: tmux\ntmux:\n  agent_command: codex\nreview:\n  backend: gemini-cli\n  gemini_command: /opt/homebrew/bin/gemini\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(
+            tmux_agent_command_for_lane(&config, AgentSessionLaneArg::Main).unwrap(),
+            "codex"
+        );
+        assert_eq!(
+            tmux_agent_command_for_lane(&config, AgentSessionLaneArg::Review).unwrap(),
+            "/opt/homebrew/bin/gemini"
+        );
+        assert_eq!(
+            tmux_agent_command_for_lane(&config, AgentSessionLaneArg::Merge).unwrap(),
+            "codex"
+        );
+    }
+
+    #[test]
+    fn review_session_prefers_tmux_review_command_override() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nagent:\n  backend: tmux\ntmux:\n  agent_command: codex\n  review_agent_command: custom-gemini --model pro\nreview:\n  backend: gemini-cli\n  gemini_command: /opt/homebrew/bin/gemini\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(
+            tmux_agent_command_for_lane(&config, AgentSessionLaneArg::Review).unwrap(),
+            "custom-gemini --model pro"
+        );
+    }
+
+    #[test]
     fn dogfood_smoke_is_not_a_cli_entrypoint() {
         let help = help_text(&["--help"]);
         assert!(!help.contains("dogfood-smoke"));
@@ -11823,6 +12227,30 @@ mod tests {
     }
 
     #[test]
+    fn automatic_review_prompt_forbids_project_mutations() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\n---\nReview {{ issue.identifier }}",
+        )
+        .unwrap();
+        let prompt = render_automatic_review_prompt(
+            &workflow,
+            &review_issue_with_ref("#282", "Headless review"),
+        )
+        .unwrap();
+
+        assert!(prompt.contains("Review #282"));
+        assert!(prompt.contains("Automatic Headless Review Boundary"));
+        assert!(prompt.contains("Do not run mutating Jade Symphony or GitHub commands"));
+        assert!(prompt.contains("`review claim`, `review pass`"));
+        assert!(prompt.contains("`gh issue edit`, `gh issue comment`"));
+        assert!(prompt.contains("Return review evidence in stdout only"));
+        assert!(prompt.contains("Review Result: PASS"));
+        assert!(prompt.contains("Do not use those bracketed finding tags for positive"));
+        assert!(prompt.contains("Leave routing and evidence"));
+    }
+
+    #[test]
     fn manual_review_pass_workpad_records_doctor_evidence_marker() {
         let issue = tracker_issue_with_review_claim();
         let claim = project_text_field(&issue, "Review Agent").unwrap();
@@ -11879,11 +12307,53 @@ mod tests {
         let issue = tracker_issue_with_review_claim();
         let claim = project_text_field(&issue, "Review Agent").unwrap();
 
-        assert!(validate_manual_review_claim(&issue, &format!("claim: {claim}")).is_ok());
-        let error = validate_manual_review_claim(&issue, "claim: Manual Gemini A")
+        assert!(validate_active_manual_review_claim(&issue, &format!("claim: {claim}")).is_ok());
+        let error = validate_active_manual_review_claim(&issue, "claim: Manual Gemini A")
             .unwrap_err()
             .to_string();
         assert!(error.contains("exact current Review Agent claim"));
+    }
+
+    #[test]
+    fn manual_review_pass_allows_terminal_passed_claim_repair() {
+        let mut issue = tracker_issue_with_review_claim();
+        let claim = project_text_field(&issue, "Review Agent").unwrap();
+        let terminal = terminal_review_claim_value(
+            &LaneClaim::parse(&claim).unwrap(),
+            LaneClaimState::Done,
+            "passed",
+        );
+        issue.project_fields.insert(
+            "Review Agent".into(),
+            serde_json::Value::String(terminal.clone()),
+        );
+
+        let (current, parsed) =
+            validate_manual_review_pass_claim(&issue, &format!("claim: {terminal}")).unwrap();
+
+        assert_eq!(current, terminal);
+        assert_eq!(parsed.state, LaneClaimState::Done);
+    }
+
+    #[test]
+    fn manual_review_reject_still_requires_active_claim() {
+        let mut issue = tracker_issue_with_review_claim();
+        let claim = project_text_field(&issue, "Review Agent").unwrap();
+        let terminal = terminal_review_claim_value(
+            &LaneClaim::parse(&claim).unwrap(),
+            LaneClaimState::Done,
+            "passed",
+        );
+        issue.project_fields.insert(
+            "Review Agent".into(),
+            serde_json::Value::String(terminal.clone()),
+        );
+
+        let error = validate_active_manual_review_claim(&issue, &format!("claim: {terminal}"))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("must be active before routing"));
     }
 
     #[test]
@@ -12126,6 +12596,190 @@ mod tests {
 
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].identifier, "#68");
+    }
+
+    #[test]
+    fn review_claim_for_issue_replaces_terminal_review_claim() {
+        let mut issue = review_issue_with_ref("#67", "Retry review");
+        let terminal_claim = LaneClaim::active(
+            "#67",
+            LaneClaimLane::Review,
+            LaneClaimActor::Gemini,
+            LaneClaimSource::Loop,
+            42,
+        )
+        .with_worker("review:#67:gemini-cli")
+        .with_state(LaneClaimState::Failed);
+        issue.project_fields.insert(
+            "Review Agent".into(),
+            serde_json::Value::String(format!("{} result=inconclusive", terminal_claim.render())),
+        );
+
+        let claim = review_claim_for_issue(&issue, "review:#67:gemini-cli");
+
+        assert_eq!(claim.state, LaneClaimState::Active);
+        assert_ne!(claim.run, terminal_claim.run);
+    }
+
+    #[test]
+    fn review_loop_terminal_claim_records_pass_result() {
+        let claim = LaneClaim::active(
+            "#67",
+            LaneClaimLane::Review,
+            LaneClaimActor::Gemini,
+            LaneClaimSource::Loop,
+            42,
+        )
+        .with_worker("review:#67:gemini-cli");
+        let decision = ReviewGateDecision {
+            outcome: ReviewOutcome::PassedToHumanReview,
+            target_state: Some("human_review"),
+            message: "passed".into(),
+        };
+        let job = ReviewJob {
+            id: "job".into(),
+            issue_ref: "#67".into(),
+            backend: "gemini-cli".into(),
+            state: ReviewJobState::Completed,
+            artifact_path: None,
+            ledger_path: None,
+            report: None,
+            error: None,
+        };
+
+        let value = terminal_review_loop_claim_value(Some(&claim), &job, &decision).unwrap();
+
+        assert!(value.contains("state=done"));
+        assert!(value.contains("result=passed"));
+        assert_eq!(
+            LaneClaim::parse(&value).unwrap(),
+            claim.with_state(LaneClaimState::Done)
+        );
+    }
+
+    #[test]
+    fn review_pass_checklist_update_checks_non_uat_sections_only() {
+        let body = [
+            "## Expected Outcome",
+            "",
+            "- [ ] Outcome done",
+            "",
+            "## Verification",
+            "",
+            "### Completion Criteria",
+            "",
+            "- [ ] Criteria done",
+            "",
+            "### Functional Verification",
+            "",
+            "- [ ] `cargo test`",
+            "",
+            "### UAT",
+            "",
+            "- [ ] Human checks this",
+            "",
+            "### Context Verification",
+            "",
+            "- [ ] Context done",
+            "",
+            "```md",
+            "- [ ] do not touch fenced examples",
+            "```",
+        ]
+        .join("\n");
+
+        let updated = check_review_verified_issue_body_checkboxes(&body);
+
+        assert!(updated.contains("- [x] Outcome done"));
+        assert!(updated.contains("- [x] Criteria done"));
+        assert!(updated.contains("- [x] `cargo test`"));
+        assert!(updated.contains("- [ ] Human checks this"));
+        assert!(updated.contains("- [x] Context done"));
+        assert!(updated.contains("- [ ] do not touch fenced examples"));
+    }
+
+    #[test]
+    fn review_pass_checklist_update_removes_appended_workpad_before_editing_body() {
+        let description =
+            "## Expected Outcome\n\n- [ ] Done\n\n<!-- jade-symphony-workpad -->\n## Agent Review";
+
+        let body = canonical_issue_body_without_workpad(description);
+        let updated = check_review_verified_issue_body_checkboxes(&body);
+
+        assert_eq!(updated, "## Expected Outcome\n\n- [x] Done");
+        assert!(!updated.contains("jade-symphony-workpad"));
+    }
+
+    #[test]
+    fn review_pass_updates_issue_body_checkboxes_before_human_review_transition() {
+        let config = test_config();
+        let adapter = RecordingAdapter::default();
+        let mut issue = review_issue_with_ref("#67", "Checklist review");
+        issue.description = Some(
+            [
+                "## Expected Outcome",
+                "",
+                "- [ ] Outcome done",
+                "",
+                "## Verification",
+                "",
+                "### Completion Criteria",
+                "",
+                "- [ ] Criteria done",
+                "",
+                "### Functional Verification",
+                "",
+                "- [ ] `cargo test`",
+                "",
+                "### UAT",
+                "",
+                "- [ ] Human checks this",
+                "",
+                "### Context Verification",
+                "",
+                "- [ ] Context done",
+            ]
+            .join("\n"),
+        );
+        adapter
+            .issues
+            .borrow_mut()
+            .insert(issue.identifier.clone(), issue.clone());
+        let job = ReviewJob {
+            id: "job-67".into(),
+            issue_ref: "#67".into(),
+            backend: "gemini-cli".into(),
+            state: ReviewJobState::Completed,
+            artifact_path: None,
+            ledger_path: None,
+            report: Some(jade_symphony::review::AgentReviewReport {
+                summary: Some("Review Result: PASS".into()),
+                ..Default::default()
+            }),
+            error: None,
+        };
+
+        apply_review_result(&config, &adapter, "#67", &issue, &job, None).unwrap();
+
+        let updated = adapter
+            .issues
+            .borrow()
+            .get("#67")
+            .and_then(|issue| issue.description.clone())
+            .unwrap();
+        assert!(updated.contains("- [x] Outcome done"));
+        assert!(updated.contains("- [x] Criteria done"));
+        assert!(updated.contains("- [x] `cargo test`"));
+        assert!(updated.contains("- [ ] Human checks this"));
+        assert!(updated.contains("- [x] Context done"));
+        assert_eq!(
+            adapter.operations(),
+            vec![
+                "update_issue_content:#67",
+                "workpad:#67",
+                "set_state:#67:human_review"
+            ]
+        );
     }
 
     #[test]

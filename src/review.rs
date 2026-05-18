@@ -18,6 +18,10 @@ use crate::lane_claim::{LaneClaim, LaneClaimState};
 use crate::model::{normalize_state, TrackerIssue};
 use crate::workspace::safe_identifier;
 
+const AGENT_REVIEW_WORKPAD_TEMPLATE: &str =
+    include_str!("../workflows/template/workpad/agent-review.md");
+const LOG_BLOCK_LIMIT: usize = 2_000;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReviewFindingClass {
     Confirmed,
@@ -41,6 +45,8 @@ pub struct AgentReviewReport {
     pub summary: Option<String>,
     pub stdout: Option<String>,
     pub stderr: Option<String>,
+    pub exit_status: Option<String>,
+    pub session_id: Option<String>,
 }
 
 impl AgentReviewReport {
@@ -127,6 +133,7 @@ pub enum ReviewOutcome {
     NeedsRework,
     InconclusiveNeedsRework,
     NeedsHumanInput,
+    BackendUnavailable,
     StillRunning,
     Cancelled,
 }
@@ -336,6 +343,8 @@ impl ReviewBackend for FakeReviewBackend {
                     summary: Some("Fake reviewer found no confirmed findings.".into()),
                     stdout: None,
                     stderr: None,
+                    exit_status: None,
+                    session_id: None,
                 });
             }
             FakeReviewOutcome::ConfirmedFinding => {
@@ -350,6 +359,8 @@ impl ReviewBackend for FakeReviewBackend {
                     summary: Some("Fake reviewer produced one confirmed finding.".into()),
                     stdout: None,
                     stderr: None,
+                    exit_status: None,
+                    session_id: None,
                 });
             }
             FakeReviewOutcome::Failed => {
@@ -364,6 +375,8 @@ impl ReviewBackend for FakeReviewBackend {
 #[derive(Debug, Clone)]
 pub struct GeminiCliReviewBackend {
     command: String,
+    model: Option<String>,
+    allowed_tools: Vec<String>,
     children: Arc<Mutex<BTreeMap<String, Child>>>,
 }
 
@@ -371,6 +384,21 @@ impl GeminiCliReviewBackend {
     pub fn new(command: impl Into<String>) -> Self {
         Self {
             command: command.into(),
+            model: None,
+            allowed_tools: Vec::new(),
+            children: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+
+    pub fn with_headless_options(
+        command: impl Into<String>,
+        model: Option<String>,
+        allowed_tools: Vec<String>,
+    ) -> Self {
+        Self {
+            command: command.into(),
+            model,
+            allowed_tools,
             children: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
@@ -391,7 +419,9 @@ impl ReviewBackend for GeminiCliReviewBackend {
         fs::write(&prompt_path, &request.prompt)
             .map_err(|error| ReviewError::Artifact(error.to_string()))?;
 
+        let args = gemini_cli_headless_args(self.model.as_deref(), &self.allowed_tools);
         let mut child = Command::new(&self.command)
+            .args(&args)
             .current_dir(&request.workspace)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -455,33 +485,55 @@ impl ReviewBackend for GeminiCliReviewBackend {
             .map_err(|error| ReviewError::Backend(error.to_string()))?;
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let exit_status = output
+            .status
+            .code()
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| "terminated by signal".into());
+        let parsed_output = parse_gemini_stdout(&stdout);
+        let output_artifact = write_gemini_review_artifact(
+            job.artifact_path.as_deref(),
+            &job.id,
+            &stdout,
+            &stderr,
+            &exit_status,
+            parsed_output.session_id.as_deref(),
+            &parsed_output.response,
+        )?;
+        job.artifact_path = Some(output_artifact);
 
         if output.status.success() {
-            let findings = classify_findings(&stdout);
+            let findings = classify_findings(&parsed_output.response);
             job.state = ReviewJobState::Completed;
             job.report = Some(AgentReviewReport {
                 reviewer_backend: self.kind().into(),
                 findings,
                 summary: Some(
-                    first_non_empty_line(&stdout)
+                    first_non_empty_line(&parsed_output.response)
                         .unwrap_or("Review completed.")
                         .into(),
                 ),
                 stdout: Some(stdout),
                 stderr: Some(stderr),
+                exit_status: Some(exit_status),
+                session_id: parsed_output.session_id,
             });
         } else {
             job.state = ReviewJobState::Failed;
-            let status = output
-                .status
-                .code()
-                .map(|code| code.to_string())
-                .unwrap_or_else(|| "terminated by signal".into());
             let detail = stderr.trim();
             job.error = Some(if detail.is_empty() {
-                format!("Gemini review command exited with status {status} and no stderr.")
+                format!("Gemini review command exited with status {exit_status} and no stderr.")
             } else {
-                format!("Gemini review command exited with status {status}: {detail}")
+                format!("Gemini review command exited with status {exit_status}: {detail}")
+            });
+            job.report = Some(AgentReviewReport {
+                reviewer_backend: self.kind().into(),
+                findings: Vec::new(),
+                summary: first_non_empty_line(&parsed_output.response).map(str::to_string),
+                stdout: Some(stdout),
+                stderr: Some(stderr),
+                exit_status: Some(exit_status),
+                session_id: parsed_output.session_id,
             });
         }
 
@@ -499,6 +551,95 @@ impl ReviewBackend for GeminiCliReviewBackend {
         }
         Ok(())
     }
+}
+
+pub fn gemini_cli_headless_args(model: Option<&str>, allowed_tools: &[String]) -> Vec<String> {
+    let mut args = vec![
+        "--skip-trust".to_string(),
+        "--prompt".to_string(),
+        String::new(),
+        "--output-format".to_string(),
+        "json".to_string(),
+    ];
+    if let Some(model) = model.map(str::trim).filter(|model| !model.is_empty()) {
+        args.extend(["--model".to_string(), model.to_string()]);
+    }
+    if !allowed_tools.is_empty() {
+        args.extend(["--allowed-tools".to_string(), allowed_tools.join(",")]);
+    }
+    args
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedGeminiStdout {
+    response: String,
+    session_id: Option<String>,
+}
+
+fn parse_gemini_stdout(stdout: &str) -> ParsedGeminiStdout {
+    extract_gemini_json_envelope(stdout)
+        .and_then(|value| {
+            let response = value
+                .get("response")
+                .and_then(|response| response.as_str())
+                .map(str::to_string)?;
+            let session_id = value
+                .get("session_id")
+                .and_then(|session_id| session_id.as_str())
+                .map(str::to_string);
+            Some(ParsedGeminiStdout {
+                response,
+                session_id,
+            })
+        })
+        .unwrap_or_else(|| ParsedGeminiStdout {
+            response: stdout.to_string(),
+            session_id: None,
+        })
+}
+
+fn extract_gemini_json_envelope(stdout: &str) -> Option<serde_json::Value> {
+    for (start, ch) in stdout.char_indices() {
+        if ch != '{' {
+            continue;
+        }
+        let mut deserializer = serde_json::Deserializer::from_str(&stdout[start..]);
+        if let Ok(value) = serde_json::Value::deserialize(&mut deserializer) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn write_gemini_review_artifact(
+    prompt_artifact_path: Option<&Path>,
+    job_id: &str,
+    stdout: &str,
+    stderr: &str,
+    exit_status: &str,
+    session_id: Option<&str>,
+    response: &str,
+) -> Result<PathBuf, ReviewError> {
+    let artifact_root = prompt_artifact_path
+        .and_then(Path::parent)
+        .ok_or_else(|| ReviewError::Artifact("missing Gemini prompt artifact path".into()))?;
+    let output_path = artifact_root.join(format!("{job_id}.output.json"));
+    let artifact = serde_json::json!({
+        "job_id": job_id,
+        "prompt_artifact_path": prompt_artifact_path.map(|path| path.display().to_string()),
+        "stdout": stdout,
+        "stderr": stderr,
+        "exit_status": exit_status,
+        "session_id": session_id,
+        "response": response,
+    });
+    fs::write(
+        &output_path,
+        serde_json::to_string_pretty(&artifact)
+            .map_err(|error| ReviewError::Artifact(error.to_string()))?,
+    )
+    .map_err(|error| ReviewError::Artifact(error.to_string()))?;
+    Ok(output_path)
 }
 
 fn diagnose_gemini_spawn_failure(command: &str, error: &std::io::Error) -> String {
@@ -586,7 +727,7 @@ pub fn review_gate_decision_for_actor(job: &ReviewJob, actor: ReviewActor) -> Re
             if review_required_operator_actions(job).is_some() =>
         {
             ReviewGateDecision {
-                outcome: ReviewOutcome::StillRunning,
+                outcome: ReviewOutcome::BackendUnavailable,
                 target_state: Some("agent_review"),
                 message:
                     "Agent Review backend is blocked by required operator action; issue remains in Agent Review."
@@ -715,9 +856,13 @@ fn terminal_review_failure_marker_matches(value: &str, worker_key: &str) -> bool
     let worker_key = worker_key.to_lowercase();
     value.contains(&worker_key)
         && (value.contains("job state: failed")
+            || value.contains("job state: `failed`")
             || value.contains("job state: timedout")
+            || value.contains("job state: `timedout`")
             || value.contains("job state: timed out")
-            || value.contains("job state: cancelled"))
+            || value.contains("job state: `timed out`")
+            || value.contains("job state: cancelled")
+            || value.contains("job state: `cancelled`"))
         && (value.contains("required operator action")
             || value.contains("review backend")
             || value.contains("gemini review command")
@@ -727,71 +872,310 @@ fn terminal_review_failure_marker_matches(value: &str, worker_key: &str) -> bool
 
 pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
     let decision = review_gate_decision_for_actor(job, ReviewActor::IndependentReviewAgent);
-    let mut lines = vec![
-        "## Agent Review".to_string(),
-        String::new(),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        format!("- Worker key: {}", review_worker_key(issue, &job.backend)),
-        format!("- Reviewer backend: {}", job.backend),
-        format!("- Job state: {:?}", job.state),
-        format!("- Decision: {}", decision.message),
-    ];
-
-    if let Some(path) = &job.artifact_path {
-        lines.push(format!("- Artifact: {}", path.display()));
-    }
-    if let Some(path) = &job.ledger_path {
-        lines.push(format!("- Review job ledger: {}", path.display()));
-    }
+    let mut attempt_details = Vec::new();
     if let Some(error) = &job.error {
-        lines.push(format!("- Error: {error}"));
-    }
-    if let Some(actions) = review_required_operator_actions(job) {
-        lines.push(String::new());
-        lines.push("### Required Operator Action".into());
-        lines.extend(actions);
-    }
-    if let Some(pause) = review_usage_limit_pause(job) {
-        lines.push(format!("- Usage-limit classifier: `{}`", pause.classifier));
-        lines.push(format!("- Usage-limit evidence: {}", pause.evidence));
-        lines.push("- Review did not pass; unavailable or inconclusive review must not move to Human Review.".into());
+        attempt_details.push(render_attempt_error(error));
     }
     if let Some(report) = &job.report {
-        if let Some(reason) = report.inconclusive_reason() {
-            lines.push(String::new());
-            lines.push("### Inconclusive Review Diagnostic".into());
-            lines.push(format!("- Reason: {reason}"));
-            lines.push(
-                "- Automatic Review Agent output did not establish a conclusive pass.".into(),
-            );
-            lines.push("- Route to `Rework`; do not move to `Human Review`.".into());
+        if let Some(status) = report.exit_status.as_deref() {
+            attempt_details.push(format!("- Exit status: `{status}`"));
+        }
+        if let Some(session_id) = report.session_id.as_deref() {
+            attempt_details.push(format!("- Gemini session id: `{session_id}`"));
         }
     }
+    if attempt_details.is_empty() {
+        attempt_details.push("- No attempt details captured yet.".into());
+    }
 
-    lines.push(String::new());
-    lines.push("### Findings".into());
-    match &job.report {
+    let operator_action_section = if let Some(actions) = review_required_operator_actions(job) {
+        render_section("Required Operator Action", &actions.join("\n"))
+    } else {
+        String::new()
+    };
+
+    let usage_limit_section = review_usage_limit_pause(job)
+        .map(|pause| {
+            render_section(
+                "Usage Limit Diagnostic",
+                &[
+                    format!("- Usage-limit classifier: `{}`", pause.classifier),
+                    format!("- Usage-limit evidence: {}", pause.evidence),
+                    "- Review did not pass; unavailable or inconclusive review must not move to Human Review.".into(),
+                ]
+                .join("\n"),
+            )
+        })
+        .unwrap_or_default();
+
+    let inconclusive_section = job
+        .report
+        .as_ref()
+        .and_then(|report| report.inconclusive_reason())
+        .map(|reason| {
+            render_section(
+                "Inconclusive Review Diagnostic",
+                &[
+                    format!("- Reason: {reason}"),
+                    "- Automatic Review Agent output did not establish a conclusive pass.".into(),
+                    "- Route to `Rework`; do not move to `Human Review`.".into(),
+                ]
+                .join("\n"),
+            )
+        })
+        .unwrap_or_default();
+
+    let findings = match &job.report {
         Some(report) if report.findings.is_empty() => {
-            lines.push("- No confirmed, plausible, rejected, or needs-context findings.".into());
+            "- No confirmed, plausible, rejected, or needs-context findings.".into()
         }
-        Some(report) => {
-            for finding in &report.findings {
-                lines.push(format!(
+        Some(report) => report
+            .findings
+            .iter()
+            .map(|finding| {
+                format!(
                     "- {:?}: {} - {}",
                     finding.class, finding.title, finding.body
-                ));
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        None => "- No report captured yet.".into(),
+    };
+
+    let agent_review_note = job
+        .report
+        .as_ref()
+        .and_then(agent_review_note)
+        .unwrap_or_else(|| "- No Agent Review note captured.".into());
+
+    let stdout_section = job
+        .report
+        .as_ref()
+        .and_then(|report| render_log_section("Stdout", report.stdout.as_deref()))
+        .unwrap_or_default();
+    let stderr_section = job
+        .report
+        .as_ref()
+        .and_then(|report| render_log_section("Stderr", report.stderr.as_deref()))
+        .unwrap_or_default();
+
+    let pass_evidence_section = if decision.outcome == ReviewOutcome::PassedToHumanReview {
+        render_section(
+            "Review Pass Evidence",
+            "- Review pass evidence: `recorded`\nEvidence recorded. Independent Review Agent may move this issue to Human Review; the main implementation agent must not.",
+        )
+    } else {
+        String::new()
+    };
+
+    render_template(
+        AGENT_REVIEW_WORKPAD_TEMPLATE,
+        &[
+            ("generated_at", current_gmt_timestamp()),
+            ("issue_ref", issue.identifier.clone()),
+            ("issue_title", issue.title.clone()),
+            ("worker_key", review_worker_key(issue, &job.backend)),
+            ("reviewer_backend", job.backend.clone()),
+            ("job_state", format!("{:?}", job.state)),
+            ("decision", decision.message),
+            (
+                "target_state",
+                decision.target_state.unwrap_or("none").to_string(),
+            ),
+            (
+                "artifact_line",
+                job.artifact_path
+                    .as_ref()
+                    .map(|path| format!("- Artifact: `{}`", path.display()))
+                    .unwrap_or_else(|| "- Artifact: `not recorded`".into()),
+            ),
+            (
+                "ledger_line",
+                job.ledger_path
+                    .as_ref()
+                    .map(|path| format!("- Review job ledger: `{}`", path.display()))
+                    .unwrap_or_else(|| "- Review job ledger: `not recorded`".into()),
+            ),
+            ("job_id", job.id.clone()),
+            ("attempt_details", attempt_details.join("\n")),
+            ("operator_action_section", operator_action_section),
+            ("usage_limit_section", usage_limit_section),
+            ("inconclusive_section", inconclusive_section),
+            ("agent_review_note", agent_review_note),
+            ("findings", findings),
+            ("stdout_section", stdout_section),
+            ("stderr_section", stderr_section),
+            ("pass_evidence_section", pass_evidence_section),
+        ],
+    )
+}
+
+fn render_template(template: &str, replacements: &[(&str, String)]) -> String {
+    let mut rendered = template.to_string();
+    for (key, value) in replacements {
+        rendered = rendered.replace(&format!("{{{{{key}}}}}"), value);
+    }
+    rendered.trim_end().to_string()
+}
+
+fn render_section(title: &str, body: &str) -> String {
+    if body.trim().is_empty() {
+        return String::new();
+    }
+    format!("### {title}\n\n{}\n\n", body.trim())
+}
+
+fn render_log_section(title: &str, content: Option<&str>) -> Option<String> {
+    let content = content?.trim();
+    if content.is_empty() {
+        return None;
+    }
+    Some(render_section(
+        title,
+        &format!("```text\n{}\n```", truncate_log(content)),
+    ))
+}
+
+fn render_attempt_error(error: &str) -> String {
+    let summary = error
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .unwrap_or("review backend error");
+    format!(
+        "<details>\n<summary>Error: {}</summary>\n\n```text\n{}\n```\n\n</details>",
+        html_escape_summary(&truncate_summary(summary, 180)),
+        truncate_log(error)
+    )
+}
+
+fn truncate_summary(summary: &str, limit: usize) -> String {
+    if summary.len() <= limit {
+        return summary.to_string();
+    }
+
+    let mut end = limit;
+    while !summary.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}...", &summary[..end])
+}
+
+fn html_escape_summary(summary: &str) -> String {
+    summary
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn agent_review_note(report: &AgentReviewReport) -> Option<String> {
+    if let Some(stdout) = report.stdout.as_deref() {
+        if let Some(value) = extract_gemini_json_envelope(stdout) {
+            if let Some(note) = value
+                .get("response")
+                .or_else(|| value.get("note"))
+                .and_then(|response| response.as_str())
+                .map(str::trim)
+                .filter(|response| !response.is_empty())
+            {
+                return Some(normalize_agent_review_note_headings(note));
             }
         }
-        None => lines.push("- No report captured yet.".into()),
     }
 
-    if decision.outcome == ReviewOutcome::PassedToHumanReview {
-        lines.push(String::new());
-        lines.push("- Review pass evidence: `recorded`".into());
-        lines.push("Evidence recorded. Independent Review Agent may move this issue to Human Review; the main implementation agent must not.".into());
+    report
+        .summary
+        .as_deref()
+        .map(str::trim)
+        .filter(|summary| !summary.is_empty())
+        .map(normalize_agent_review_note_headings)
+}
+
+fn normalize_agent_review_note_headings(note: &str) -> String {
+    note.lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            let indent_len = line.len() - trimmed.len();
+            let heading_len = trimmed.chars().take_while(|ch| *ch == '#').count();
+            if (1..=6).contains(&heading_len)
+                && trimmed
+                    .chars()
+                    .nth(heading_len)
+                    .is_some_and(char::is_whitespace)
+            {
+                if heading_len < 4 {
+                    let title = trimmed[heading_len..].trim();
+                    format!("{}#### {title}", &line[..indent_len])
+                } else {
+                    line.to_string()
+                }
+            } else if let Some(title) = agent_review_note_label_heading(trimmed) {
+                format!("{}#### {title}", &line[..indent_len])
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn agent_review_note_label_heading(line: &str) -> Option<&str> {
+    let title = line.strip_suffix(':').unwrap_or(line).trim();
+    let prefix = title
+        .split_once(':')
+        .map_or(title, |(prefix, _)| prefix.trim());
+    matches!(
+        prefix.to_ascii_lowercase().as_str(),
+        "review result" | "evidence" | "findings" | "verification" | "checklist review"
+    )
+    .then_some(title)
+}
+
+fn truncate_log(content: &str) -> String {
+    if content.len() <= LOG_BLOCK_LIMIT {
+        return content.to_string();
     }
 
-    lines.join("\n")
+    let mut end = LOG_BLOCK_LIMIT;
+    while !content.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{} [... truncated]", &content[..end])
+}
+
+fn current_gmt_timestamp() -> String {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    format_gmt_timestamp(seconds)
+}
+
+fn format_gmt_timestamp(seconds_since_unix_epoch: u64) -> String {
+    let days = (seconds_since_unix_epoch / 86_400) as i64;
+    let seconds_of_day = seconds_since_unix_epoch % 86_400;
+    let (year, month, day) = civil_from_days(days);
+    let hour = seconds_of_day / 3_600;
+    let minute = (seconds_of_day % 3_600) / 60;
+    let second = seconds_of_day % 60;
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02} GMT")
+}
+
+fn civil_from_days(days_since_unix_epoch: i64) -> (i64, u32, u32) {
+    let days = days_since_unix_epoch + 719_468;
+    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
+    let day_of_era = days - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    year += if month <= 2 { 1 } else { 0 };
+    (year, month as u32, day as u32)
 }
 
 fn review_required_operator_actions(job: &ReviewJob) -> Option<Vec<String>> {
@@ -1015,7 +1399,9 @@ pub fn transition_allowed_for_review_agent(
         "agent_review" | "agent review" => {
             matches!(
                 decision.outcome,
-                ReviewOutcome::StillRunning | ReviewOutcome::Cancelled
+                ReviewOutcome::BackendUnavailable
+                    | ReviewOutcome::StillRunning
+                    | ReviewOutcome::Cancelled
             )
         }
         _ => true,
@@ -1043,7 +1429,10 @@ fn parse_finding_line(line: &str) -> Option<ReviewFinding> {
     };
 
     let rest = trimmed[closing_bracket + 1..].trim();
-    let (title, body) = rest.split_once(':').unwrap_or((rest, ""));
+    let (title, body) = rest.split_once(':')?;
+    if title.trim().is_empty() || body.trim().is_empty() {
+        return None;
+    }
     Some(ReviewFinding {
         class,
         title: title.trim().to_string(),
@@ -1181,6 +1570,8 @@ mod tests {
                 summary: first_non_empty_line(output).map(str::to_string),
                 stdout: Some(output.into()),
                 stderr: Some(String::new()),
+                exit_status: None,
+                session_id: None,
             }),
             error: None,
         }
@@ -1261,6 +1652,8 @@ mod tests {
                     summary: Some("Delayed review completed.".into()),
                     stdout: Some("Delayed review completed.".into()),
                     stderr: Some(String::new()),
+                    exit_status: None,
+                    session_id: None,
                 });
             }
             Ok(job)
@@ -1345,6 +1738,98 @@ mod tests {
     }
 
     #[test]
+    fn gemini_headless_args_include_prompt_json_model_and_allowed_tools() {
+        let args = gemini_cli_headless_args(
+            Some("gemini-3.1-pro-preview"),
+            &["run_shell_command".into()],
+        );
+
+        assert_eq!(
+            args,
+            vec![
+                "--skip-trust",
+                "--prompt",
+                "",
+                "--output-format",
+                "json",
+                "--model",
+                "gemini-3.1-pro-preview",
+                "--allowed-tools",
+                "run_shell_command",
+            ]
+        );
+    }
+
+    #[test]
+    fn gemini_backend_uses_headless_args_stdin_prompt_and_json_response() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("review-workspace");
+        let artifact_root = temp.path().join("reviews");
+        let reviewer = temp.path().join("reviewer.sh");
+        fs::write(
+            &reviewer,
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > args.txt\ncat > prompt.txt\nprintf 'warning prelude\\n{\"session_id\":\"gemini-session-7\",\"response\":\"Review completed.\\\\n[Rejected] Noise: not a bug\"}\\n'\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&reviewer).unwrap().permissions();
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(0o755);
+        fs::set_permissions(&reviewer, permissions).unwrap();
+
+        let backend = GeminiCliReviewBackend::with_headless_options(
+            reviewer.display().to_string(),
+            Some("gemini-3.1-pro-preview".into()),
+            vec!["run_shell_command".into()],
+        );
+        let request = ReviewRequest {
+            issue: issue(),
+            prompt: "Review this prompt.".into(),
+            workspace: workspace.clone(),
+            artifact_root: artifact_root.clone(),
+        };
+
+        let job = backend.start(request).unwrap();
+        let job = poll_review_job_until_terminal(
+            &backend,
+            job,
+            Duration::from_secs(5),
+            Duration::from_millis(10),
+        )
+        .unwrap();
+
+        assert_eq!(job.state, ReviewJobState::Completed);
+        assert_eq!(
+            fs::read_to_string(workspace.join("args.txt")).unwrap(),
+            "--skip-trust\n--prompt\n\n--output-format\njson\n--model\ngemini-3.1-pro-preview\n--allowed-tools\nrun_shell_command\n"
+        );
+        assert_eq!(
+            fs::read_to_string(workspace.join("prompt.txt")).unwrap(),
+            "Review this prompt."
+        );
+        let report = job.report.as_ref().unwrap();
+        assert_eq!(report.summary.as_deref(), Some("Review completed."));
+        assert_eq!(report.session_id.as_deref(), Some("gemini-session-7"));
+        assert_eq!(report.exit_status.as_deref(), Some("0"));
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].class, ReviewFindingClass::Rejected);
+        assert!(job
+            .artifact_path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .is_some_and(|name| name.to_string_lossy() == format!("{}.output.json", job.id)));
+    }
+
+    #[test]
+    fn parses_gemini_warning_prelude_plus_json_envelope() {
+        let parsed = parse_gemini_stdout(
+            "Using experimental output\n{\"session_id\":\"abc\",\"response\":\"Review passed.\"}",
+        );
+
+        assert_eq!(parsed.response, "Review passed.");
+        assert_eq!(parsed.session_id.as_deref(), Some("abc"));
+    }
+
+    #[test]
     fn review_workpad_includes_required_operator_action_for_backend_startup_failure() {
         let job = ReviewJob::failed_unavailable(
             "#1",
@@ -1371,7 +1856,7 @@ mod tests {
 
         let decision = review_gate_decision(&job);
 
-        assert_eq!(decision.outcome, ReviewOutcome::StillRunning);
+        assert_eq!(decision.outcome, ReviewOutcome::BackendUnavailable);
         assert_eq!(decision.target_state, Some("agent_review"));
         assert!(decision.message.contains("required operator action"));
     }
@@ -1388,6 +1873,10 @@ mod tests {
         let workpad = render_review_workpad(&issue(), &job);
 
         assert!(workpad.contains("### Required Operator Action"));
+        assert!(workpad.contains("<details>"));
+        assert!(workpad.contains("<summary>Error: Gemini review command exited with status 1"));
+        assert!(workpad.contains("```text\nGemini review command exited with status 1"));
+        assert!(!workpad.contains("- Error: Gemini review command exited with status 1"));
         assert!(workpad.contains("started but exited unsuccessfully"));
         assert!(workpad.contains("Inspect stderr/auth/configuration"));
     }
@@ -1416,6 +1905,18 @@ mod tests {
         assert_eq!(findings[1].class, ReviewFindingClass::Plausible);
         assert_eq!(findings[2].class, ReviewFindingClass::Rejected);
         assert_eq!(findings[3].class, ReviewFindingClass::NeedsContext);
+    }
+
+    #[test]
+    fn finding_parser_ignores_positive_evidence_without_title_body_separator() {
+        let findings = classify_findings(
+            "Review Result: PASS\n\n[Confirmed] The PR diff shows the requested test isolation was implemented.\n[Confirmed] Bug: actual blocker",
+        );
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].class, ReviewFindingClass::Confirmed);
+        assert_eq!(findings[0].title, "Bug");
+        assert_eq!(findings[0].body, "actual blocker");
     }
 
     #[test]
@@ -1540,6 +2041,8 @@ mod tests {
                     summary: None,
                     stdout: None,
                     stderr: None,
+                    exit_status: None,
+                    session_id: None,
                 }),
                 error: None,
             },
@@ -1573,6 +2076,8 @@ mod tests {
                 summary: None,
                 stdout: None,
                 stderr: None,
+                exit_status: None,
+                session_id: None,
             }),
             error: None,
         };
@@ -1582,6 +2087,70 @@ mod tests {
         assert!(body.contains("Review pass evidence: `recorded`"));
         assert!(body.contains("Independent Review Agent may move this issue to Human Review"));
         assert!(body.contains("main implementation agent must not"));
+    }
+
+    #[test]
+    fn review_workpad_uses_agent_review_template_with_note_and_target_state() {
+        let job = ReviewJob {
+            id: "gemini-1".into(),
+            issue_ref: "#1".into(),
+            backend: "gemini-cli".into(),
+            state: ReviewJobState::Completed,
+            artifact_path: Some("/tmp/review-output.json".into()),
+            ledger_path: Some("/tmp/reviews/jobs/1-gemini.json".into()),
+            report: Some(AgentReviewReport {
+                reviewer_backend: "gemini-cli".into(),
+                findings: Vec::new(),
+                summary: Some("Review Result: PASS".into()),
+                stdout: Some(
+                    "{\"session_id\":\"gemini-session\",\"response\":\"Review Result: PASS\\n\\nAgent note body.\"}"
+                        .into(),
+                ),
+                stderr: Some("warning only".into()),
+                exit_status: Some("0".into()),
+                session_id: Some("gemini-session".into()),
+            }),
+            error: None,
+        };
+
+        let body = render_review_workpad(&issue(), &job);
+
+        assert!(body.contains("Generated at: `"));
+        assert!(body.contains("GMT`"));
+        assert!(body.contains("Target state after review routing: `human_review`"));
+        assert!(body.contains("### Agent Review Note"));
+        assert!(body.contains("Agent note body."));
+        assert!(body.contains("### Stdout"));
+        assert!(body.contains("### Stderr"));
+        assert!(body.contains("warning only"));
+        assert!(body.contains("Review job ledger: `/tmp/reviews/jobs/1-gemini.json`"));
+    }
+
+    #[test]
+    fn review_workpad_demotes_headings_inside_agent_review_note() {
+        let report = AgentReviewReport {
+            stdout: Some(
+                "{\"response\":\"Review Result: PASS\\n\\nEvidence:\\n\\n## Details\\n\\n##### Deep Detail\"}".into(),
+            ),
+            ..Default::default()
+        };
+
+        let note = agent_review_note(&report).unwrap();
+
+        assert!(note.contains("#### Review Result: PASS"));
+        assert!(note.contains("#### Evidence"));
+        assert!(note.contains("#### Details"));
+        assert!(note.contains("##### Deep Detail"));
+        assert!(!note.contains("\n## Details"));
+    }
+
+    #[test]
+    fn review_workpad_formats_human_readable_gmt_timestamp() {
+        assert_eq!(format_gmt_timestamp(0), "1970-01-01 00:00:00 GMT");
+        assert_eq!(
+            format_gmt_timestamp(1_779_085_565),
+            "2026-05-18 06:26:05 GMT"
+        );
     }
 
     #[test]
@@ -1599,6 +2168,8 @@ mod tests {
                 summary: Some("Review passed.".into()),
                 stdout: None,
                 stderr: None,
+                exit_status: None,
+                session_id: None,
             }),
             error: None,
         };
@@ -1633,6 +2204,8 @@ mod tests {
                 summary: Some("Review passed.".into()),
                 stdout: None,
                 stderr: None,
+                exit_status: None,
+                session_id: None,
             }),
             error: None,
         };
@@ -1664,13 +2237,15 @@ mod tests {
                 summary: None,
                 stdout: None,
                 stderr: None,
+                exit_status: None,
+                session_id: None,
             }),
             error: None,
         };
 
         let body = render_review_workpad(&issue(), &job);
 
-        assert!(body.contains("Review job ledger: /tmp/reviews/jobs/1-job.json"));
+        assert!(body.contains("Review job ledger: `/tmp/reviews/jobs/1-job.json`"));
     }
 
     #[test]
@@ -1701,6 +2276,8 @@ mod tests {
                 summary: None,
                 stdout: None,
                 stderr: None,
+                exit_status: None,
+                session_id: None,
             }),
             error: None,
         };

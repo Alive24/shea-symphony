@@ -149,6 +149,8 @@ pub struct TmuxConfig {
 pub struct ReviewConfig {
     pub backend: String,
     pub gemini_command: String,
+    pub gemini_model: Option<String>,
+    pub gemini_allowed_tools: Vec<String>,
     pub timeout_ms: u64,
     pub max_concurrent_workers: usize,
 }
@@ -348,6 +350,13 @@ impl RuntimeConfig {
                 get_string(root.get("review"), "gemini_command"),
                 "gemini",
             ),
+            gemini_model: get_string(root.get("review"), "gemini_model"),
+            gemini_allowed_tools: get_string_vec(root.get("review"), "gemini_allowed_tools")
+                .unwrap_or_default()
+                .into_iter()
+                .map(|tool| tool.trim().to_string())
+                .filter(|tool| !tool.is_empty())
+                .collect(),
             timeout_ms: get_u64(root.get("review"), "timeout_ms").unwrap_or(600_000),
             max_concurrent_workers: get_u64(root.get("review"), "max_concurrent_workers")
                 .unwrap_or(1)
@@ -1038,7 +1047,7 @@ mod tests {
         std::env::set_var("JADE_TEST_GEMINI_COMMAND", "/opt/homebrew/bin/gemini-test");
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\nreview:\n  backend: gemini-cli\n  gemini_command: $JADE_TEST_GEMINI_COMMAND\n---\nPrompt",
+            "---\nreview:\n  backend: gemini-cli\n  gemini_command: $JADE_TEST_GEMINI_COMMAND\n  gemini_model: gemini-3.1-pro-preview\n  gemini_allowed_tools:\n    - run_shell_command\n---\nPrompt",
         )
         .unwrap();
         let config =
@@ -1048,6 +1057,14 @@ mod tests {
         assert_eq!(
             config.review.gemini_command,
             "/opt/homebrew/bin/gemini-test"
+        );
+        assert_eq!(
+            config.review.gemini_model.as_deref(),
+            Some("gemini-3.1-pro-preview")
+        );
+        assert_eq!(
+            config.review.gemini_allowed_tools,
+            vec!["run_shell_command".to_string()]
         );
     }
 

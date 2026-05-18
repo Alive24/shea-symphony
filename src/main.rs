@@ -72,9 +72,9 @@ use jade_symphony::quality_gate::{
     evaluate_issue_with_source_alignment, LlmGateMode, LlmGateOptions,
 };
 use jade_symphony::review::{
-    classify_review_freshness, poll_review_job_until_terminal, render_review_freshness_workpad,
-    render_review_workpad, review_gate_decision, review_run_eligibility,
-    transition_allowed_for_main_agent, transition_allowed_for_review_agent,
+    classify_review_freshness, gemini_cli_headless_args, poll_review_job_until_terminal,
+    render_review_freshness_workpad, render_review_workpad, review_gate_decision,
+    review_run_eligibility, transition_allowed_for_main_agent, transition_allowed_for_review_agent,
     write_review_job_ledger_record, FakeReviewBackend, FakeReviewOutcome, GeminiCliReviewBackend,
     ReviewBackend, ReviewFreshnessInput, ReviewJob, ReviewJobState, ReviewRequest,
     ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
@@ -1431,9 +1431,18 @@ fn review_once(
     };
     let job = match config.review.backend.as_str() {
         "gemini-cli" => {
-            let backend = GeminiCliReviewBackend::new(config.review.gemini_command.clone());
+            let backend = GeminiCliReviewBackend::with_headless_options(
+                config.review.gemini_command.clone(),
+                config.review.gemini_model.clone(),
+                config.review.gemini_allowed_tools.clone(),
+            );
             match backend.start(request) {
-                Ok(job) => backend.poll(job)?,
+                Ok(job) => poll_review_job_until_terminal(
+                    &backend,
+                    job,
+                    Duration::from_millis(config.review.timeout_ms),
+                    Duration::from_millis(500),
+                )?,
                 Err(error) => ReviewJob::failed_unavailable(
                     issue.identifier.clone(),
                     "gemini-cli",
@@ -2155,40 +2164,36 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                     if options.write { "write" } else { "dry-run" }
                 );
                     if !options.write {
+                        println!(
+                            "review_loop_dry_run action=start issue={} backend={backend_kind} mode={}",
+                            selected_issue.identifier,
+                            if backend_kind == "gemini-cli" {
+                                "headless"
+                            } else {
+                                "job"
+                            }
+                        );
                         if backend_kind == "gemini-cli" {
-                            let agent_command =
-                                tmux_agent_command_for_lane(&config, AgentSessionLaneArg::Review)?;
                             println!(
-                                "review_loop_dry_run action=session_start issue={} backend=tmux agent_command={}",
+                                "review_loop_dry_run action=command issue={} command={} args={}",
                                 selected_issue.identifier,
-                                shell_quote_display(&agent_command)
-                            );
-                        } else {
-                            println!(
-                                "review_loop_dry_run action=start issue={} backend={backend_kind}",
-                                selected_issue.identifier
+                                shell_quote_display(&config.review.gemini_command),
+                                gemini_cli_headless_args(
+                                    config.review.gemini_model.as_deref(),
+                                    &config.review.gemini_allowed_tools,
+                                )
+                                .join(" ")
                             );
                         }
                         print_review_claim_field_dry_run(&selected_issue, &worker_key);
-                        if backend_kind == "gemini-cli" {
-                            println!(
-                                "review_loop_dry_run action=workpad issue={} evidence=tmux_session",
-                                selected_issue.identifier
-                            );
-                            println!(
-                                "review_loop_dry_run action=await_session_result issue={} actor=independent_review_agent",
-                                selected_issue.identifier
-                            );
-                        } else {
-                            println!(
-                                "review_loop_dry_run action=workpad issue={} evidence=review_job",
-                                selected_issue.identifier
-                            );
-                            println!(
+                        println!(
+                            "review_loop_dry_run action=workpad issue={} evidence=review_job",
+                            selected_issue.identifier
+                        );
+                        println!(
                             "review_loop_dry_run action=reconcile issue={} actor=independent_review_agent",
                             selected_issue.identifier
                         );
-                        }
                         continue;
                     }
 
@@ -2213,35 +2218,7 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                                 &latest,
                                 &worker_key,
                             )?;
-                            if config.review.backend == "gemini-cli" {
-                                let session = start_agent_session_with_claim(
-                                    &workflow,
-                                    &config,
-                                    adapter.as_ref(),
-                                    &latest,
-                                    AgentSessionLaneArg::Review,
-                                    &claim,
-                                    "review-loop",
-                                )?;
-                                println!(
-                                    "review_loop_action=session_started issue={} backend={} session={} pending_session={} workspace={} prompt_artifact={}",
-                                    latest.identifier,
-                                    session.summary.backend,
-                                    session.summary.session_id.as_deref().unwrap_or("n/a"),
-                                    session.summary.pending_session,
-                                    session.workspace_path.display(),
-                                    session.prompt_path.display()
-                                );
-                                if let Some(attach_command) =
-                                    session.summary.attach_command.as_deref()
-                                {
-                                    println!("attach_command={attach_command}");
-                                }
-                                if let Some(log_path) = session.summary.log_path.as_ref() {
-                                    println!("log_path={}", log_path.display());
-                                }
-                                continue;
-                            }
+                            let _claim = claim;
                             let mut job = run_review_job(
                                 &workflow,
                                 &config,
@@ -2843,7 +2820,11 @@ fn run_review_job(
 
     match config.review.backend.as_str() {
         "gemini-cli" => {
-            let backend = GeminiCliReviewBackend::new(config.review.gemini_command.clone());
+            let backend = GeminiCliReviewBackend::with_headless_options(
+                config.review.gemini_command.clone(),
+                config.review.gemini_model.clone(),
+                config.review.gemini_allowed_tools.clone(),
+            );
             match backend.start(request) {
                 Ok(job) => Ok(poll_review_job_until_terminal(
                     &backend,

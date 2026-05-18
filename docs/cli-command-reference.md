@@ -307,8 +307,8 @@ changes.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `review fake` | Fixture/fake review transition helper. | Local testing path. |
-| `review once` | Run one configured review backend for one issue. | Legacy direct backend command; normal Gemini dogfood should use `review loop` or `session start --lane review` so the runtime is supervised. |
-| `review loop` | Bounded review worker selection/reconciliation. | Prevents duplicate review workers where evidence exists. |
+| `review once` | Run one configured review backend for one issue. | Direct backend command for one issue. |
+| `review loop` | Bounded review worker selection/reconciliation. | For `gemini-cli`, runs headless Gemini by default with stdin prompt transport, JSON output capture, configured model/tools, and durable review-job evidence. |
 | `review claim` | Claim one `Agent Review` item's `Review Agent` text field for manual/operator review. | Requires `--worker` and `--write`; refuses non-`Agent Review` issues and writes a structured claim pointer. |
 | `review pass` | Record manual independent review pass evidence and move to `Human Review`. | Requires `--write`, a durable evidence file containing the exact current `Review Agent` claim, and preserves the field as terminal pass evidence. |
 | `review reject` | Record failed/inconclusive manual review evidence and route to `Agent Review`, `Rework`, or `Need Human Input`. | Refuses `Human Review`, requires exact claim evidence, and preserves the field as terminal reject/failed evidence. |

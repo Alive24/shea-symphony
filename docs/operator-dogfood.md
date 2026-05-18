@@ -123,12 +123,12 @@ claims, or workpad mutation.
 ## Review Backend Setup
 
 For live Agent Review, make the Gemini command visible to the worker process.
-`review loop` now claims the Review Agent field and starts a supervised tmux
-Review session instead of spawning Gemini as an unsupervised child process.
-The Review tmux command comes from `tmux.review_agent_command` when set, and
-otherwise from `review.gemini_command` for `review.backend: gemini-cli`.
+`review loop` claims the Review Agent field and runs Gemini headlessly by
+default with `--prompt`, `--output-format json`, the configured model, and the
+configured interim allowed tools. Prompt content is written through stdin so
+long prompts are not passed through argv or TUI paste buffers.
 
-Prefer an absolute path when supervising review workers:
+Prefer an absolute Gemini path for automatic review workers:
 
 ```bash
 command -v gemini
@@ -141,12 +141,12 @@ running review automation:
 review:
   backend: gemini-cli
   gemini_command: /opt/homebrew/bin/gemini
-tmux:
-  review_agent_command: /opt/homebrew/bin/gemini
+  gemini_model: gemini-3.1-pro-preview
+  gemini_allowed_tools:
+    - run_shell_command
 ```
 
 ```bash
-export GEMINI_CLI_TRUST_WORKSPACE=true
 target/debug/jade-symphony review loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
@@ -155,7 +155,8 @@ For supervised manual review terminals, first use
 issue, then start the runtime with `session start WORKFLOW '#issue' --lane
 review --run <RUN_ID> --write`. Session startup validates the existing Review
 Agent claim and writes attach/log evidence without moving the issue to
-`Human Review`.
+`Human Review`; this tmux path is an explicit manual fallback, not the automatic
+review-loop default.
 
 If Gemini cannot start, the review workpad should name the configured command,
 whether worker `PATH` could resolve it, the required operator action, and the

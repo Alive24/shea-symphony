@@ -4111,6 +4111,23 @@ Prompt
     }
 
     #[test]
+    fn merge_workpad_body_appends_distinct_review_attempts() {
+        let marker = "<!-- jade-symphony-workpad -->";
+        let existing = format!(
+            "{marker}\n## Agent Review\n\n- Reviewer backend: gemini-cli\n\n### Review Attempt gemini-old\n- Review pass evidence: `recorded`"
+        );
+        let incoming = "## Agent Review\n\n- Reviewer backend: gemini-cli\n\n### Review Attempt gemini-new\n- [Confirmed] Bug: needs rework";
+
+        let body = merge_workpad_body(&existing, incoming, marker);
+
+        assert_eq!(body.matches("## Agent Review").count(), 2);
+        assert!(body.contains("### Review Attempt gemini-old"));
+        assert!(body.contains("### Review Attempt gemini-new"));
+        assert!(body.contains("Review pass evidence: `recorded`"));
+        assert!(body.contains("[Confirmed] Bug"));
+    }
+
+    #[test]
     fn merge_workpad_body_replaces_matching_jade_symphony_workpad_entry() {
         let marker = "<!-- jade-symphony-workpad -->";
         let existing = format!(

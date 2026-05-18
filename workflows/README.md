@@ -24,6 +24,10 @@ log path, persists a session registry record, and leaves the issue active until
 real implementation evidence is available for the normal handoff path. Status
 commands classify registered tmux sessions from bounded pane/log evidence while
 keeping full scrollback out of routine output.
+Gemini-backed `review loop` uses the headless CLI path by default: it writes the
+Review prompt through stdin, requests JSON output, applies configured model and
+interim allowed-tools settings, and records stdout/stderr/job evidence for the
+review handoff.
 Manual tmux recovery is a two-step path. Use `main claim`, `review claim`, or
 `merge claim` to write only the matching Project claim field and print the
 structured `run=`. Then use `session start --lane ... --run ...` to render the

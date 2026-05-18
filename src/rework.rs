@@ -304,6 +304,8 @@ mod tests {
                 summary: Some("Confirmed finding requires rework.".into()),
                 stdout: Some("review stdout".into()),
                 stderr: Some("review stderr".into()),
+                exit_status: None,
+                session_id: None,
             }),
             error: None,
         };
@@ -341,6 +343,8 @@ mod tests {
                 summary: Some("Could not complete review: missing PR evidence.".into()),
                 stdout: Some("Could not complete review: missing PR evidence.".into()),
                 stderr: None,
+                exit_status: None,
+                session_id: None,
             }),
             error: None,
         };

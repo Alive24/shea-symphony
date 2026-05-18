@@ -10,6 +10,18 @@ instructions, or a CLI invariant.
 
 ## Current Runs
 
+- `2026-05-19-04-final-parity-audit/`
+  - Themes: Liquid-compatible prompt rendering, runtime state persistence and
+    resume wiring, final partial-row duplicate audit.
+  - Created Backlog: #326, #327.
+  - Watchlist: persistent observability API/dashboard after live worker-fed
+    runtime snapshots; tracker adapter smoke tests after dynamic-tool/runtime
+    boundaries are clearer.
+  - Slept enough: yes; this source window produced no further high-signal
+    uncovered theme that should become a Backlog seed now.
+  - Gemini review: ran; duplicate risk, evidence quality, Backlog safety,
+    slept-enough judgment, and lane-authority checks passed.
+
 - `2026-05-19-03-ssh-worker-workspaces/`
   - Themes: remote SSH worker transport, remote workspace lifecycle, host
     scheduling, remote sandbox/evidence boundaries.

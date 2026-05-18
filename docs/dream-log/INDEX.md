@@ -10,6 +10,17 @@ instructions, or a CLI invariant.
 
 ## Current Runs
 
+- `2026-05-19-02-worker-supervision-parity/`
+  - Themes: persistent worker lifecycle, retry timers, stall restart,
+    active-run reconciliation, process-exit classification.
+  - Created Backlog: #324.
+  - Watchlist: worker host / SSH execution and workspace lifecycle boundaries.
+  - Slept enough: no; next theme should compare OpenAI Symphony worker host,
+    SSH, and workspace lifecycle assumptions against Jade's local worktree and
+    session model.
+  - Gemini review: ran; duplicate risk, evidence quality, Backlog safety,
+    next-theme Watchlist, and lane-authority checks passed.
+
 - `2026-05-19-01-openai-symphony-parity/`
   - Themes: Codex app-server continuation parity, tracker-scoped dynamic tool
     execution, last-known-good workflow reload, OpenAI Symphony reference gaps.

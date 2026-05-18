@@ -34,7 +34,7 @@ workflows/jade-symphony.md
 Start with read-only diagnosis:
 
 ```bash
-cargo run -- project-state workflows/jade-symphony.md
+cargo run -- project state workflows/jade-symphony.md
 cargo run -- doctor workflows/jade-symphony.md
 cargo run -- debug workflows/jade-symphony.md
 ```

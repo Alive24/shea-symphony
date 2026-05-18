@@ -33,7 +33,7 @@ or verification is failing for an unexplained reason.
 The repo-owned live workflow is:
 
 - `workflows/jade-symphony.md` for implementation, review, merge, smoke,
-  inspect, project-state, and Issue Forge commands.
+  inspect, project state, and Issue Forge commands.
 
 It defaults durable artifacts to `~/.jade-symphony/artifacts` when
 `JADE_SYMPHONY_ARTIFACT_ROOT` is unset. Set that variable to migrate worktrees,
@@ -47,7 +47,7 @@ as canonical. Normal dogfood workflow config belongs in `workflows/`.
 Use the live workflow as the source of tracker state:
 
 ```bash
-cargo run -- inspect workflows/jade-symphony.md
+cargo run -- project inspect workflows/jade-symphony.md '#<issue>'
 cargo run -- doctor
 cargo run -- doctor --interactive
 ```
@@ -68,9 +68,9 @@ Before the first write tick, run the same preflight surfaces operators use for
 normal work:
 
 ```bash
-cargo run -- project-state workflows/jade-symphony.md
+cargo run -- project state workflows/jade-symphony.md
 cargo run -- doctor workflows/jade-symphony.md
-cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 
 Proceed only when tracker access is trusted, the selected issue is claimable,
@@ -82,13 +82,13 @@ human-readable readiness report is useful.
 Preview the same bounded implementation tick without tracker mutation:
 
 ```bash
-cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 
 Use one bounded write tick:
 
 ```bash
-cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --write
+cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
 That write tick requires a real main-agent backend. The canonical workflow uses
@@ -217,8 +217,8 @@ After a human accepts work and moves the issue to `Merging`, use the guarded
 merge lane:
 
 ```bash
-cargo run -- merge-once workflows/jade-symphony.md --dry-run
-cargo run -- merge-once workflows/jade-symphony.md --write
+cargo run -- merge once workflows/jade-symphony.md --dry-run
+cargo run -- merge once workflows/jade-symphony.md --write
 ```
 
 The merge lane should:
@@ -245,7 +245,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 Then refresh the tracker and project invariants:
 
 ```bash
-cargo run -- inspect workflows/jade-symphony.md
+cargo run -- project inspect workflows/jade-symphony.md '#<issue>'
 cargo run -- doctor workflows/jade-symphony.md
 ```
 
@@ -253,7 +253,7 @@ cargo run -- doctor workflows/jade-symphony.md
 
 When something goes wrong:
 
-- use `cargo run -- inspect workflows/jade-symphony.md` to refresh
+- use `cargo run -- project inspect workflows/jade-symphony.md '#<issue>'` to refresh
   tracker state;
 - use `cargo run -- doctor` to find project, claim, and runtime-state
   invariant violations;

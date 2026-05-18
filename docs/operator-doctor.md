@@ -6,8 +6,8 @@ The Jade Symphony Doctor skill is a repo-owned Codex operator workflow for
 diagnosing stuck tracker, PR, claim, worktree, runtime, and skill-install
 symptoms. It is intentionally read-first and confirmation-gated.
 
-Doctor v1 complements the existing `doctor`, `project-state`, `project-issue`,
-`debug`, `workspace`, and `agent-session` commands. It does not replace them and
+Doctor v1 complements the existing `doctor`, `project state`, `project issue`,
+`debug`, `workspace`, and `session` commands. It does not replace them and
 does not expand automatic repair authority.
 
 ## Entry Points
@@ -53,7 +53,7 @@ the triage note must record why the break-glass path was used.
 For all Doctor sessions:
 
 ```bash
-cargo run -- project-state workflows/jade-symphony.md
+cargo run -- project state workflows/jade-symphony.md
 cargo run -- doctor workflows/jade-symphony.md
 cargo run -- debug workflows/jade-symphony.md
 ```
@@ -61,21 +61,21 @@ cargo run -- debug workflows/jade-symphony.md
 For a selected issue:
 
 ```bash
-cargo run -- project-issue workflows/jade-symphony.md '#258' --json
+cargo run -- project issue workflows/jade-symphony.md '#258' --json
 cargo run -- doctor workflows/jade-symphony.md repair '#258'
 ```
 
 For an issue that might still be dispatchable:
 
 ```bash
-cargo run -- gate workflows/jade-symphony.md '#258'
+cargo run -- project inspect workflows/jade-symphony.md '#258'
 ```
 
 For worktree or session ambiguity:
 
 ```bash
 cargo run -- workspace show workflows/jade-symphony.md '#258'
-cargo run -- agent-session list workflows/jade-symphony.md
+cargo run -- session list workflows/jade-symphony.md
 git worktree list --porcelain
 ```
 
@@ -96,7 +96,7 @@ Every Doctor session should choose one primary classification:
 | Classification | Meaning | Typical next step |
 | --- | --- | --- |
 | `need_human_decision` | Continuation depends on a decision, credential, missing sample, destructive approval, or unstated product choice. | Ask one concrete question or move/preserve evidence in `Need Human Input`. |
-| `missing_pr_linkage` | A PR exists or is expected, but `project-issue` does not expose it as linked. | Preserve PR URL evidence and request confirmation for linkage repair. |
+| `missing_pr_linkage` | A PR exists or is expected, but `project issue` does not expose it as linked. | Preserve PR URL evidence and request confirmation for linkage repair. |
 | `draft_pr_handoff` | A linked PR is draft before Agent Review handoff. | Use documented ready repair only after confirmation. |
 | `stale_lane_claim` | A lane claim is stale, mismatched, failed, superseded, or missing registry evidence. | Preserve prior claim and request confirmation before superseding it. |
 | `dirty_runtime_or_worktree` | Runtime state, session registry, or issue worktree is dirty or ambiguous. | Inspect, preserve evidence, and avoid cleanup until confirmed. |
@@ -121,8 +121,8 @@ Use this format for durable issue-comment evidence:
 - Secondary classifications: `stale_lane_claim`
 - Diagnosis: The issue is blocked because ...
 - Evidence read:
-  - `cargo run -- project-state workflows/jade-symphony.md`: `trusted=true`
-  - `cargo run -- project-issue workflows/jade-symphony.md '#258' --json`: ...
+  - `cargo run -- project state workflows/jade-symphony.md`: `trusted=true`
+  - `cargo run -- project issue workflows/jade-symphony.md '#258' --json`: ...
   - `cargo run -- doctor workflows/jade-symphony.md repair '#258'`: ...
 - Recommended next step: ...
 - Repair actions requiring explicit confirmation:

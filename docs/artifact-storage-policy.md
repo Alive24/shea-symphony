@@ -71,8 +71,7 @@ worktree, artifact location, or `.gitignore` rule.
 
 ## Cleanup Planning
 
-`clean plan` is the grouped cleanup-planning command, and `cleanup-plan` remains
-a compatibility path for existing scripts. Both are dry-run only. They report
+`clean plan` is the grouped cleanup-planning command. It is dry-run only and reports
 worktrees that are safe candidates for operator removal when all of these are
 true:
 
@@ -86,7 +85,7 @@ The command never deletes files:
 
 ```bash
 cargo run -- clean plan workflows/jade-symphony.md
-cargo run -- cleanup-plan workflows/jade-symphony.md
+cargo run -- clean plan workflows/jade-symphony.md
 ```
 
 `clean audit` is also read-only. It classifies configured local artifacts and

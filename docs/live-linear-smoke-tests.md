@@ -24,7 +24,7 @@ cargo test --test live_linear_smoke
 
 The smoke runs:
 
-- `jade-symphony inspect <temporary-linear-live-workflow.md>`
+- `jade-symphony project inspect <temporary-linear-live-workflow.md> '#<issue>'`
 
 ## Expected Behavior
 

@@ -62,8 +62,8 @@ Gather only relevant sources:
 
 ```bash
 cd /Volumes/Bohemialive/GitHub/jade-symphony
-cargo run -- project-state workflows/jade-symphony.md
-cargo run -- project-issue workflows/jade-symphony.md '#<number>' --json
+cargo run -- project state workflows/jade-symphony.md
+cargo run -- project issue workflows/jade-symphony.md '#<number>' --json
 cargo run -- doctor workflows/jade-symphony.md
 ```
 
@@ -121,7 +121,7 @@ Read the Backlog item first:
 
 ```bash
 cd /Volumes/Bohemialive/GitHub/jade-symphony
-cargo run -- project-issue workflows/jade-symphony.md '#<number>' --json
+cargo run -- project issue workflows/jade-symphony.md '#<number>' --json
 ```
 
 Confirm it is still `Backlog`. If it is already `Todo`, `In Progress`, or

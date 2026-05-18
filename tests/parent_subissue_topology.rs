@@ -1,5 +1,10 @@
 use serde_json::Value;
 
+use jade_symphony::handoff::{
+    expected_merge_base_branch_for_issue, plan_issue_handoff, BranchTargetRole,
+};
+use jade_symphony::model::TrackerIssue;
+
 fn fixture() -> Value {
     let raw = include_str!("../examples/fixtures/parent-subissue-topology.json");
     serde_json::from_str(raw).expect("parent/subissue topology fixture should be valid JSON")
@@ -127,4 +132,102 @@ fn documentation_states_the_non_competing_sources_and_boundaries() {
             "topology doc should contain required rule: {required}"
         );
     }
+}
+
+#[test]
+fn lane_handoff_uses_fixture_parent_branch_for_subissue_and_parent() {
+    let fixture = fixture();
+    let happy_path = &fixture["happy_path"];
+    let parent_branch = happy_path["parent_integration_branch"].as_str().unwrap();
+
+    let subissue = tracker_issue(
+        "#274",
+        "Teach lane flows about parent integration branches",
+        Some("#243"),
+        None,
+        Some(parent_branch),
+    );
+    let subissue_plan = plan_issue_handoff(
+        std::path::Path::new("/tmp/jade-workspaces"),
+        &subissue,
+        "main",
+    )
+    .unwrap();
+
+    assert_eq!(subissue_plan.branch_target.role, BranchTargetRole::Subissue);
+    assert_eq!(subissue_plan.pull_request.base_branch, parent_branch);
+    assert_eq!(
+        expected_merge_base_branch_for_issue(&subissue, "main"),
+        parent_branch
+    );
+
+    let parent = tracker_issue(
+        "#243",
+        "Complete parent/subissue orchestration umbrella gating",
+        None,
+        Some("#272, #273, #274"),
+        Some(parent_branch),
+    );
+    let parent_plan = plan_issue_handoff(
+        std::path::Path::new("/tmp/jade-workspaces"),
+        &parent,
+        "main",
+    )
+    .unwrap();
+
+    assert_eq!(
+        parent_plan.branch_target.role,
+        BranchTargetRole::ParentIssue
+    );
+    assert_eq!(parent_plan.branch_name, parent_branch);
+    assert_eq!(parent_plan.pull_request.head_branch, parent_branch);
+    assert_eq!(parent_plan.pull_request.base_branch, "main");
+}
+
+fn tracker_issue(
+    identifier: &str,
+    title: &str,
+    native_parent: Option<&str>,
+    native_subissues: Option<&str>,
+    parent_integration_branch: Option<&str>,
+) -> TrackerIssue {
+    let mut issue = TrackerIssue {
+        tracker_kind: "fixture".into(),
+        id: identifier.into(),
+        item_id: None,
+        identifier: identifier.into(),
+        title: title.into(),
+        description: None,
+        url: None,
+        state: "Merging".into(),
+        labels: Vec::new(),
+        assignees: Vec::new(),
+        priority: None,
+        branch_name: None,
+        linked_pull_requests: Vec::new(),
+        blocked_by: Vec::new(),
+        project_fields: Default::default(),
+        created_at: None,
+        updated_at: None,
+    };
+
+    if let Some(native_parent) = native_parent {
+        issue.project_fields.insert(
+            "Native Parent Issue".into(),
+            serde_json::json!(native_parent),
+        );
+    }
+    if let Some(native_subissues) = native_subissues {
+        issue.project_fields.insert(
+            "Native Subissues".into(),
+            serde_json::json!(native_subissues),
+        );
+    }
+    if let Some(parent_integration_branch) = parent_integration_branch {
+        issue.project_fields.insert(
+            "Parent Integration Branch".into(),
+            serde_json::json!(parent_integration_branch),
+        );
+    }
+    issue
 }

@@ -133,6 +133,10 @@ throughout execution. Record:
 
 - Base the issue branch on the current `origin/main` unless the issue says
   otherwise.
+- For native GitHub subissues, create the normal per-subissue feature branch
+  but open the PR against the parent integration branch recorded in topology
+  evidence. For parent issues with native subissues, the parent final PR uses
+  the parent integration branch as the head and `main` as the base.
 - The canonical harness checkout must stay on latest `main`; dogfood branches
   belong in separate issue worktrees.
 - Use a branch name that includes the issue number.
@@ -142,6 +146,9 @@ throughout execution. Record:
   to `Need Human Input` with evidence.
 - PR handoff must explain scope, validation, and the state boundary that main
   work stops at `Agent Review`.
+- PR handoff for parent/subissue work must include branch target evidence:
+  native parent issue, `parent_integration_branch`, PR base branch, and parent
+  final PR base branch when applicable.
 - Draft PRs must not be handed off to `Agent Review`. Mark the PR ready first,
   or keep the issue in a blocked state with workpad evidence.
 

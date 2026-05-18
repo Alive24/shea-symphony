@@ -32,6 +32,9 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
   notes, and final summaries.
 - Refresh the PR state, review decision, checks, mergeability, base branch, and
   linked issue evidence before merge.
+- Use native parent/subissue branch target evidence when validating the PR base:
+  subissue PRs merge into the parent integration branch, while parent final PRs
+  merge into `main`.
 - Use `workspace show` before local merge repair. Prefer the canonical Main PR
   worktree/branch, and do not create a replacement worktree when a usable
   canonical candidate exists.
@@ -42,6 +45,8 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
   or switch branches in the canonical checkout.
 - Merge only when the PR is clean, current, and approved by the Project state.
 - Record merge evidence, final commit/merge information, and tracker updates.
+- A merged subissue PR targeting the parent integration branch may move the
+  subissue to `Done`; it is not final parent approval for `main`.
 
 ## Blocker Routing
 

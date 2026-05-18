@@ -255,6 +255,14 @@ ambiguous parent integration branch evidence, `Done` subissues without merge
 evidence into the parent branch, and parent `Human Review` before all native
 subissues are `Done` and merged.
 
+Lane handoff and merge flows must make branch target evidence explicit. A
+subissue keeps its normal `feature/issue-*` head branch but uses the parent
+integration branch as the PR base. A parent final PR uses the parent integration
+branch as its head and `main` as its base. Workpads and PR bodies should record
+the native parent issue, `parent_integration_branch`, PR base branch, and parent
+final base branch when applicable so Review, Doctor, and Merge read the same
+topology evidence.
+
 ## Issue Forge Reflect
 
 Issue Forge Reflect is a Codex skill workflow, not a Jade Symphony CLI

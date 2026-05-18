@@ -70,7 +70,7 @@ evidence and runs `gh pr ready`; `doctor --auto-fix` never marks PRs ready.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `run-once` | Execute one selected issue through the configured backend. | Fixture-safe by default when the workflow has `tracker.fixture_path`. |
-| `run-loop` | Poll/select/claim/run/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; tmux sessions stay active instead of auto-handing off; Agent Review handoff requires a verified Project-visible, ready, non-draft PR. |
+| `run-loop` | Poll/select/claim/run/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; tmux sessions stay active instead of auto-handing off; Agent Review handoff requires a verified Project-visible, ready, non-draft PR; native subissue PRs target the parent integration branch when topology evidence is present. |
 
 Examples:
 
@@ -369,7 +369,7 @@ not a Jade Symphony CLI subcommand. `forge create`, `forge promote`, and
 
 | Command | Purpose | Boundary |
 | --- | --- | --- |
-| `merge-once` | Inspect one `Merging` issue, verify a single linked PR, and either merge or route blockers. | Live merge requires explicit `--write`; dirty/failing PRs route to `Rework`, transient `UNKNOWN` mergeability stays in `Merging` for retry, and `Need Human Input` workpads include a concrete question. |
+| `merge-once` | Inspect one `Merging` issue, verify a single linked PR, and either merge or route blockers. | Live merge requires explicit `--write`; dirty/failing PRs route to `Rework`, transient `UNKNOWN` mergeability stays in `Merging` for retry, and `Need Human Input` workpads include a concrete question. Native subissues expect the parent integration branch as the PR base; parent final PRs expect `main`. |
 | `land` | Compatibility alias for `merge-once`. | Same boundary as `merge-once`. |
 
 Examples:

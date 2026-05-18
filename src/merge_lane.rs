@@ -5,6 +5,7 @@ use thiserror::Error;
 
 use crate::config::RuntimeConfig;
 use crate::git_handoff::{CommandOutput, GitHandoffError, HandoffCommandRunner};
+use crate::handoff::branch_target_evidence;
 use crate::model::{normalize_state, LinkedPullRequest, TrackerIssue};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -375,6 +376,22 @@ pub fn merge_lane_workpad(
         "- It must not move work into `Human Review`.".to_string(),
         "- It records diagnostics before any tracker state transition.".to_string(),
     ];
+    let branch_target = branch_target_evidence(issue, expected_merge_base_branch_for_workpad());
+    lines.push(String::new());
+    lines.push("### Branch Target Evidence".to_string());
+    lines.push(format!("- Role: `{:?}`", branch_target.role));
+    lines.push(format!(
+        "- Expected PR base branch: `{}`",
+        branch_target.pull_request_base_branch
+    ));
+    if let Some(parent_issue) = branch_target.parent_issue {
+        lines.push(format!("- Native parent issue: `{parent_issue}`"));
+    }
+    if let Some(parent_integration_branch) = branch_target.parent_integration_branch {
+        lines.push(format!(
+            "- Parent integration branch: `{parent_integration_branch}`"
+        ));
+    }
 
     if let Some(output) = merge_output {
         lines.extend([
@@ -394,6 +411,10 @@ pub fn merge_lane_workpad(
 }
 
 pub fn expected_merge_base_branch(_config: &RuntimeConfig) -> &'static str {
+    "main"
+}
+
+fn expected_merge_base_branch_for_workpad() -> &'static str {
     "main"
 }
 
@@ -606,6 +627,20 @@ mod tests {
                 conclusion: Some("SUCCESS".into()),
             }],
         }
+    }
+
+    fn subissue(state: &str, prs: Vec<LinkedPullRequest>) -> TrackerIssue {
+        let mut issue = issue(state, prs);
+        issue.identifier = "#274".into();
+        issue.title = "Teach lane flows about parent integration branches".into();
+        issue
+            .project_fields
+            .insert("Native Parent Issue".into(), serde_json::json!("#243"));
+        issue.project_fields.insert(
+            "Parent Integration Branch".into(),
+            serde_json::json!("integration/issue-243-parent-subissue-orchestration"),
+        );
+        issue
     }
 
     fn pr_json(merge_state_status: &str) -> String {
@@ -860,5 +895,48 @@ mod tests {
 
         assert_eq!(decision.kind, MergeLaneDecisionKind::AlreadyMerged);
         assert_eq!(decision.target_state, Some("done"));
+    }
+
+    #[test]
+    fn subissue_merge_uses_parent_integration_branch_as_expected_base() {
+        let issue = subissue("Merging", vec![pr()]);
+        let mut status = clean_status();
+        status.base_ref_name = Some("integration/issue-243-parent-subissue-orchestration".into());
+        let expected_base = crate::handoff::expected_merge_base_branch_for_issue(&issue, "main");
+        let decision = merge_lane_decision(
+            &issue,
+            "Merging",
+            &expected_base,
+            &issue.linked_pull_requests,
+            Some(&status),
+        );
+        let workpad = merge_lane_workpad(&issue, &decision, None);
+
+        assert_eq!(decision.kind, MergeLaneDecisionKind::ReadyToMerge);
+        assert_eq!(decision.target_state, Some("done"));
+        assert!(workpad.contains("Role: `Subissue`"));
+        assert!(workpad.contains(
+            "Expected PR base branch: `integration/issue-243-parent-subissue-orchestration`"
+        ));
+    }
+
+    #[test]
+    fn subissue_pr_targeting_main_is_a_base_mismatch() {
+        let issue = subissue("Merging", vec![pr()]);
+        let status = clean_status();
+        let expected_base = crate::handoff::expected_merge_base_branch_for_issue(&issue, "main");
+        let decision = merge_lane_decision(
+            &issue,
+            "Merging",
+            &expected_base,
+            &issue.linked_pull_requests,
+            Some(&status),
+        );
+
+        assert_eq!(decision.kind, MergeLaneDecisionKind::BaseMismatch);
+        assert_eq!(decision.target_state, Some("need_human_input"));
+        assert!(decision
+            .reason
+            .contains("expected `integration/issue-243-parent-subissue-orchestration`"));
     }
 }

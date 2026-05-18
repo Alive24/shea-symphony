@@ -1,0 +1,3 @@
+display_name: Jade Symphony Doctor
+short_description: Triage Jade Symphony doctor findings and install-health gaps.
+default_prompt: Inspect Jade Symphony doctor output, identify safe repair paths, and keep install-health checks scoped to issue #256 unless the operator explicitly asks for a manual fix.

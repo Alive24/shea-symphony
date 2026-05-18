@@ -1,0 +1,47 @@
+suite_name = "Jade Symphony skill suite"
+version = "2026.05.17"
+release_date = "2026-05-17"
+repository = "Alive24/jade-symphony"
+minimum_jade_symphony_cli = "repo main as of 2026-05-17"
+
+[[skills]]
+name = "jade-symphony-issue-forge"
+path = "suite/jade-symphony-issue-forge"
+targets = ["codex", "gemini"]
+summary = "Conversational Issue Forge flow that validates and creates issues through Jade Symphony CLI."
+
+[[skills]]
+name = "jade-symphony-issue-forge-reflect"
+path = "suite/jade-symphony-issue-forge-reflect"
+targets = ["codex", "gemini"]
+summary = "Reflect recent work into Backlog seeds and promote them through Issue Forge discussion."
+
+[[skills]]
+name = "jade-symphony-manual-main"
+path = "suite/jade-symphony-manual-main"
+targets = ["codex", "gemini"]
+summary = "Manual Main Agent lane for implementation work that stops at Agent Review."
+
+[[skills]]
+name = "jade-symphony-manual-review"
+path = "suite/jade-symphony-manual-review"
+targets = ["codex", "gemini"]
+summary = "Manual Review Agent lane for evidence-backed review and Human Review routing."
+
+[[skills]]
+name = "jade-symphony-human-review"
+path = "suite/jade-symphony-human-review"
+targets = ["codex", "gemini"]
+summary = "Human Review briefing flow for operator-owned UAT, decision notes, and confirmed routing."
+
+[[skills]]
+name = "jade-symphony-manual-merge"
+path = "suite/jade-symphony-manual-merge"
+targets = ["codex", "gemini"]
+summary = "Manual Merging Agent lane for approved merge and merge-lane repair work."
+
+[[skills]]
+name = "jade-symphony-doctor"
+path = "suite/jade-symphony-doctor"
+targets = ["codex", "gemini"]
+summary = "Doctor and repair triage stub for local Need Human Input and install-health workflows."

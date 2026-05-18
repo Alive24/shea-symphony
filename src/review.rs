@@ -3,7 +3,10 @@ use std::fs;
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, Mutex,
+};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -642,16 +645,16 @@ fn write_gemini_review_artifact(
 fn diagnose_gemini_spawn_failure(command: &str, error: &std::io::Error) -> String {
     match error.kind() {
         ErrorKind::NotFound if command_uses_path_lookup(command) => format!(
-            "review backend startup failed: configured command: `{command}`; resolved executable: not found in worker PATH; suggested fix: configure `review.gemini_command` with an absolute Gemini path such as `/opt/homebrew/bin/gemini`, or export a worker PATH that can resolve `{command}`; retry: rerun `review-loop` after updating the workflow or environment."
+            "review backend startup failed: configured command: `{command}`; resolved executable: not found in worker PATH; suggested fix: configure `review.gemini_command` with an absolute Gemini path such as `/opt/homebrew/bin/gemini`, or export a worker PATH that can resolve `{command}`; retry: rerun `review loop` after updating the workflow or environment."
         ),
         ErrorKind::NotFound => format!(
-            "review backend startup failed: configured command: `{command}`; resolved executable: path was not found or could not be executed; suggested fix: verify the configured Gemini path exists and is executable; retry: rerun `review-loop` after updating the workflow or environment."
+            "review backend startup failed: configured command: `{command}`; resolved executable: path was not found or could not be executed; suggested fix: verify the configured Gemini path exists and is executable; retry: rerun `review loop` after updating the workflow or environment."
         ),
         ErrorKind::PermissionDenied => format!(
-            "review backend startup failed: configured command: `{command}`; resolved executable: permission denied; suggested fix: make the Gemini command executable or configure `review.gemini_command` to an executable path; retry: rerun `review-loop` after fixing permissions."
+            "review backend startup failed: configured command: `{command}`; resolved executable: permission denied; suggested fix: make the Gemini command executable or configure `review.gemini_command` to an executable path; retry: rerun `review loop` after fixing permissions."
         ),
         _ => format!(
-            "review backend startup failed: configured command: `{command}`; spawn error: {error}; suggested fix: inspect the Gemini CLI installation, auth/configuration, and worker environment; retry: rerun `review-loop` after fixing the backend."
+            "review backend startup failed: configured command: `{command}`; spawn error: {error}; suggested fix: inspect the Gemini CLI installation, auth/configuration, and worker environment; retry: rerun `review loop` after fixing the backend."
         ),
     }
 }
@@ -863,8 +866,8 @@ fn terminal_review_failure_marker_matches(value: &str, worker_key: &str) -> bool
         && (value.contains("required operator action")
             || value.contains("review backend")
             || value.contains("gemini review command")
-            || value.contains("retry: rerun `review-loop`")
-            || value.contains("retry: rerun review-loop"))
+            || value.contains("retry: rerun `review loop`")
+            || value.contains("retry: rerun review loop"))
 }
 
 pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
@@ -1181,7 +1184,7 @@ fn review_required_operator_actions(job: &ReviewJob) -> Option<Vec<String>> {
         return Some(vec![
             "- Review backend timed out before producing evidence.".into(),
             "- Check Gemini auth/configuration and increase `review.timeout_ms` only if the backend is healthy but slow.".into(),
-            "- Retry: rerun `review-loop` for this issue after fixing the backend.".into(),
+            "- Retry: rerun `review loop` for this issue after fixing the backend.".into(),
         ]);
     }
 
@@ -1197,7 +1200,7 @@ fn review_required_operator_actions(job: &ReviewJob) -> Option<Vec<String>> {
             "- Fix the Review Agent backend command or worker PATH shown in the error above.".into(),
             "- For Gemini CLI, prefer an absolute `review.gemini_command` path or export a worker PATH that resolves `gemini`.".into(),
             "- This issue must not move to `Human Review` until an independent Review Agent records passing review evidence.".into(),
-            "- Retry: rerun `review-loop` for this issue after updating the workflow or environment.".into(),
+            "- Retry: rerun `review loop` for this issue after updating the workflow or environment.".into(),
         ]);
     }
 
@@ -1206,7 +1209,7 @@ fn review_required_operator_actions(job: &ReviewJob) -> Option<Vec<String>> {
             "- The Review Agent backend started but exited unsuccessfully.".into(),
             "- Inspect stderr/auth/configuration from the error above; do not move to Human Review until a review pass is recorded.".into(),
             "- This issue must not move to `Human Review` until an independent Review Agent records passing review evidence.".into(),
-            "- Retry: rerun `review-loop` for this issue after fixing the backend.".into(),
+            "- Retry: rerun `review loop` for this issue after fixing the backend.".into(),
         ]);
     }
 
@@ -1341,7 +1344,7 @@ pub fn render_review_freshness_workpad(report: &ReviewFreshnessReport) -> String
             decision.main_agent_target_state
         ),
         format!(
-            "- Authorized next state after review-freshness evidence: `{}`",
+            "- Authorized next state after review freshness evidence: `{}`",
             decision.authorized_next_state.as_deref().unwrap_or("none")
         ),
         format!("- Decision: {:?}", decision.kind),
@@ -1502,12 +1505,15 @@ fn inconclusive_review_text_reason(text: &str) -> Option<String> {
     None
 }
 
+static REVIEW_JOB_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
 fn review_job_id(prefix: &str) -> String {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or_default();
-    format!("{prefix}-{millis}")
+    let sequence = REVIEW_JOB_ID_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!("{prefix}-{millis}-{sequence}")
 }
 
 fn first_non_empty_line(output: &str) -> Option<&str> {
@@ -1569,6 +1575,27 @@ mod tests {
             }),
             error: None,
         }
+    }
+
+    fn review_request_with_temp_roots(temp: &tempfile::TempDir) -> ReviewRequest {
+        ReviewRequest {
+            issue: issue(),
+            prompt: "review".into(),
+            workspace: temp.path().join("review-workspace"),
+            artifact_root: temp.path().join("review-artifacts"),
+        }
+    }
+
+    fn poll_test_job_until_terminal(
+        backend: &dyn ReviewBackend,
+        job: ReviewJob,
+    ) -> Result<ReviewJob, ReviewError> {
+        poll_review_job_until_terminal(
+            backend,
+            job,
+            Duration::from_secs(5),
+            Duration::from_millis(10),
+        )
     }
 
     #[derive(Clone)]
@@ -1641,12 +1668,8 @@ mod tests {
     #[test]
     fn poll_review_job_until_terminal_waits_for_delayed_completion() {
         let backend = DelayedBackend::new(3);
-        let request = ReviewRequest {
-            issue: issue(),
-            prompt: "review".into(),
-            workspace: PathBuf::from("/tmp/review-workspace"),
-            artifact_root: PathBuf::from("/tmp/review-artifacts"),
-        };
+        let temp = tempfile::tempdir().unwrap();
+        let request = review_request_with_temp_roots(&temp);
         let job = backend.start(request).unwrap();
 
         let job = poll_review_job_until_terminal(
@@ -1671,12 +1694,8 @@ mod tests {
     #[test]
     fn poll_review_job_until_terminal_times_out_and_cancels_running_job() {
         let backend = DelayedBackend::new(usize::MAX);
-        let request = ReviewRequest {
-            issue: issue(),
-            prompt: "review".into(),
-            workspace: PathBuf::from("/tmp/review-workspace"),
-            artifact_root: PathBuf::from("/tmp/review-artifacts"),
-        };
+        let temp = tempfile::tempdir().unwrap();
+        let request = review_request_with_temp_roots(&temp);
         let job = backend.start(request).unwrap();
 
         let job = poll_review_job_until_terminal(
@@ -1715,7 +1734,7 @@ mod tests {
         assert!(error.contains("configured command: `jade-missing-gemini-command`"));
         assert!(error.contains("resolved executable: not found in worker PATH"));
         assert!(error.contains("absolute Gemini path"));
-        assert!(error.contains("retry: rerun `review-loop`"));
+        assert!(error.contains("retry: rerun `review loop`"));
     }
 
     #[test]
@@ -1815,7 +1834,7 @@ mod tests {
         let job = ReviewJob::failed_unavailable(
             "#1",
             "gemini-cli",
-            "review backend failed: review backend startup failed: configured command: `gemini`; resolved executable: not found in worker PATH; suggested fix: configure `review.gemini_command` with an absolute Gemini path; retry: rerun `review-loop` after updating the workflow or environment.",
+            "review backend failed: review backend startup failed: configured command: `gemini`; resolved executable: not found in worker PATH; suggested fix: configure `review.gemini_command` with an absolute Gemini path; retry: rerun `review loop` after updating the workflow or environment.",
         );
 
         let workpad = render_review_workpad(&issue(), &job);
@@ -1823,7 +1842,7 @@ mod tests {
         assert!(workpad.contains("### Required Operator Action"));
         assert!(workpad.contains("Fix the Review Agent backend command or worker PATH"));
         assert!(workpad.contains("absolute `review.gemini_command` path"));
-        assert!(workpad.contains("Retry: rerun `review-loop`"));
+        assert!(workpad.contains("Retry: rerun `review loop`"));
         assert!(workpad.contains("must not"));
     }
 
@@ -1903,12 +1922,8 @@ mod tests {
     #[test]
     fn confirmed_findings_route_to_rework() {
         let backend = FakeReviewBackend::new(FakeReviewOutcome::ConfirmedFinding);
-        let request = ReviewRequest {
-            issue: issue(),
-            prompt: "review".into(),
-            workspace: std::env::temp_dir(),
-            artifact_root: std::env::temp_dir(),
-        };
+        let temp = tempfile::tempdir().unwrap();
+        let request = review_request_with_temp_roots(&temp);
         let job = backend.poll(backend.start(request).unwrap()).unwrap();
         let decision = review_gate_decision(&job);
 
@@ -1919,12 +1934,8 @@ mod tests {
     #[test]
     fn review_agent_passed_review_moves_to_human_review() {
         let backend = FakeReviewBackend::new(FakeReviewOutcome::Pass);
-        let request = ReviewRequest {
-            issue: issue(),
-            prompt: "review".into(),
-            workspace: std::env::temp_dir(),
-            artifact_root: std::env::temp_dir(),
-        };
+        let temp = tempfile::tempdir().unwrap();
+        let request = review_request_with_temp_roots(&temp);
         let job = backend.poll(backend.start(request).unwrap()).unwrap();
         let decision = review_gate_decision(&job);
 
@@ -1958,13 +1969,7 @@ mod tests {
 
         let job = backend.start(request).unwrap();
         assert!(workspace.is_dir());
-        let job = poll_review_job_until_terminal(
-            &backend,
-            job,
-            Duration::from_secs(5),
-            Duration::from_millis(10),
-        )
-        .unwrap();
+        let job = poll_test_job_until_terminal(&backend, job).unwrap();
 
         assert_eq!(job.state, ReviewJobState::Completed);
         assert_eq!(
@@ -2000,13 +2005,7 @@ mod tests {
         };
 
         let job = backend.start(request).unwrap();
-        let job = poll_review_job_until_terminal(
-            &backend,
-            job,
-            Duration::from_secs(5),
-            Duration::from_millis(10),
-        )
-        .unwrap();
+        let job = poll_test_job_until_terminal(&backend, job).unwrap();
 
         assert_eq!(job.state, ReviewJobState::Completed);
         assert_eq!(
@@ -2015,6 +2014,15 @@ mod tests {
                 .and_then(|report| report.summary.as_deref()),
             Some("Review completed after EOF.")
         );
+    }
+
+    #[test]
+    fn review_job_ids_are_unique_for_parallel_bursts() {
+        let ids = (0..128)
+            .map(|_| review_job_id("gemini"))
+            .collect::<std::collections::BTreeSet<_>>();
+
+        assert_eq!(ids.len(), 128);
     }
 
     #[test]

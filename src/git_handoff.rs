@@ -481,7 +481,7 @@ mod tests {
             id: "I_45".into(),
             item_id: Some("PVTI_45".into()),
             identifier: "#45".into(),
-            title: "Wire live worktree and PR creation into run-loop".into(),
+            title: "Wire live worktree and PR creation into main loop".into(),
             description: None,
             url: None,
             state: "In Progress".into(),

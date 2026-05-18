@@ -785,6 +785,18 @@ fn audit_lane_claim_fields(
                         "Preserve any issue/worktree/PR context, then use doctor repair or a superseding lane claim before starting replacement work.",
                     ));
                 }
+                if claim.state.is_terminal_audit_pointer()
+                    && !matches!(normalized_issue_state, "done" | "closed")
+                    && context.is_some_and(|context| !context_has_run(context, &claim.run))
+                {
+                    violations.push(violation(
+                        issue,
+                        AuditSeverity::Warning,
+                        "terminal_lane_claim_missing_registry",
+                        &format!("{field} terminal claim run `{}` has no matching runtime/session registry evidence.", claim.run),
+                        "Treat this as historical audit guidance; preserve the claim and supersede it only if this lane needs fresh work.",
+                    ));
+                }
             }
             Err(_) if matches!(normalized_issue_state, "done" | "closed") => {
                 violations.push(violation(
@@ -1233,6 +1245,64 @@ mod tests {
         let report = audit_project_issues_with_context(&[issue], Some(&context));
 
         assert!(report
+            .violations
+            .iter()
+            .any(|violation| violation.code == "active_lane_claim_missing_registry"));
+    }
+
+    #[test]
+    fn accepts_active_structured_claim_with_manual_registry_evidence() {
+        let run = "20260516T0415Z-issue244-main-a7f3";
+        let mut issue = issue("#244", "In Progress");
+        issue.project_fields.insert(
+            "Main Agent".into(),
+            serde_json::Value::String(
+                format!("v=1 lane=main actor=codex source=manual issue=#244 run={run} state=active thread=unknown registry=run/{run}"),
+            ),
+        );
+        let mut session = session(Some("#244"), "recorded");
+        session.run_id = Some(run.into());
+        session.session_id = format!("manual-main-{run}");
+        session.attach_command = None;
+        session.log_path = None;
+        let context = ProjectDoctorContext {
+            runtime_state: None,
+            sessions: vec![session],
+            now_ms: 20_000,
+            stale_after_ms: 10_000,
+        };
+
+        let report = audit_project_issues_with_context(&[issue], Some(&context));
+
+        assert!(!report
+            .violations
+            .iter()
+            .any(|violation| violation.code == "active_lane_claim_missing_registry"));
+    }
+
+    #[test]
+    fn reports_terminal_structured_claim_missing_registry_as_guidance() {
+        let mut issue = issue("#244", "In Progress");
+        issue.project_fields.insert(
+            "Main Agent".into(),
+            serde_json::Value::String(
+                "v=1 lane=main actor=codex source=manual issue=#244 run=20260516T0415Z-issue244-main-a7f3 state=done thread=unknown registry=run/20260516T0415Z-issue244-main-a7f3".into(),
+            ),
+        );
+        let context = ProjectDoctorContext {
+            runtime_state: None,
+            sessions: Vec::new(),
+            now_ms: 20_000,
+            stale_after_ms: 10_000,
+        };
+
+        let report = audit_project_issues_with_context(&[issue], Some(&context));
+
+        assert!(report.violations.iter().any(|violation| {
+            violation.code == "terminal_lane_claim_missing_registry"
+                && violation.severity == AuditSeverity::Warning
+        }));
+        assert!(!report
             .violations
             .iter()
             .any(|violation| violation.code == "active_lane_claim_missing_registry"));

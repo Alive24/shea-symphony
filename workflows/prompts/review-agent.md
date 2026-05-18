@@ -98,7 +98,7 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
   backend, credentials, draft PR handoff, or an ambiguous decision, keep the
   issue out of `Human Review` and record the next operator action.
 - After changing Project status, only perform readback verification such as
-  `project-issue` or `doctor`; do not continue reviewing or claim another issue
+  `project issue` or `doctor`; do not continue reviewing or claim another issue
   in the same session.
 
 ## Non-Negotiable Boundaries

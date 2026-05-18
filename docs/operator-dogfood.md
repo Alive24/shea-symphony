@@ -25,8 +25,9 @@ The launcher checks:
 - current directory is inside a git repository;
 - `gh` exists;
 - `gh auth status` succeeds;
-- the workflow validates.
-- in write mode, the controlled dogfood smoke preflight passes.
+- the workflow validates;
+- `project state` and `doctor` read the live workflow state;
+- in write mode, the bounded `main loop --dry-run` preflight passes.
 
 The canonical supervised operator workflow is `workflows/jade-symphony.md`. It
 defaults durable worktrees, logs, and runtime artifacts under
@@ -48,19 +49,19 @@ initialization continues.
 After preflight, dry-run mode executes:
 
 ```bash
-target/debug/jade-symphony run-loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 
 For a more scannable operator view, keep the same dry-run boundary and opt into
 the terminal panel:
 
 ```bash
-target/debug/jade-symphony run-loop workflows/jade-symphony.md --max-iterations 1 --dry-run --display tui
+target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --dry-run --display tui
 ```
 
 The panel view is not a full-screen dashboard. It keeps plain text and JSON/log
 evidence available by default, and only changes output when `--display tui` is
-passed. The same opt-in display flag is available on `project-state` and
+passed. The same opt-in display flag is available on `project state` and
 `doctor`.
 
 The first slice follows the current OpenAI Codex CLI terminal direction checked
@@ -75,18 +76,18 @@ deliberately avoiding full-screen interaction in this issue.
 scripts/jade-dogfood --write --confirm-write --max-iterations 1
 ```
 
-Write mode is intentionally bounded. It runs one `run-loop` tick only after the
+Write mode is intentionally bounded. It runs one `main loop` tick only after the
 explicit confirmation flag is present. Before that mutating tick, the launcher
 runs:
 
 ```bash
-target/debug/jade-symphony project-state workflows/jade-symphony.md
-target/debug/jade-symphony run-loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+target/debug/jade-symphony project state workflows/jade-symphony.md
+target/debug/jade-symphony doctor workflows/jade-symphony.md
+target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 
 If the normal preflight surfaces fail, the launcher exits before claiming
-tracker work. `dogfood-smoke` remains a hidden legacy smoke helper for older
-fixtures; it is not the canonical operator entrypoint.
+tracker work.
 The canonical workflow now uses the local `tmux` main-agent backend. A write
 tick starts an attachable tmux session, records its attach command and log path,
 persists a session registry record under the configured artifact root, and
@@ -102,7 +103,7 @@ Main handoff also requires the PR relationship to be visible through Jade
 Symphony's Project/issue linked-PR read surface, and the linked PR must be
 ready, not draft. Workpad or comment URLs can identify the intended PR, but
 they are not a permanent substitute for the verified relationship. When all
-other handoff evidence is valid, `run-loop --write` may run `gh pr ready`
+other handoff evidence is valid, `main loop --write` may run `gh pr ready`
 before moving the issue to `Agent Review`; if relationship verification or
 readiness mutation fails, keep the issue out of `Agent Review`, route to
 `Need Human Input`, and preserve the blocker in the workpad.
@@ -152,11 +153,12 @@ target/debug/jade-symphony review loop workflows/jade-symphony.md --max-iteratio
 
 For supervised manual review terminals, first use
 `review claim WORKFLOW '#issue' --worker <worker> --write` on an `Agent Review`
-issue, then start the runtime with `session start WORKFLOW '#issue' --lane
-review --run <RUN_ID> --write`. Session startup validates the existing Review
-Agent claim and writes attach/log evidence without moving the issue to
-`Human Review`; this tmux path is an explicit manual fallback, not the automatic
-review-loop default.
+issue. The claim records minimum `codex-app-manual` registry evidence for the
+printed `run=` without pretending a tmux pane exists. Then start the runtime
+with `session start WORKFLOW '#issue' --lane review --run <RUN_ID> --write`.
+Session startup validates the existing Review Agent claim and writes attach/log
+evidence without moving the issue to `Human Review`; this tmux path is an
+explicit manual fallback, not the automatic review-loop default.
 
 If Gemini cannot start, the review workpad should name the configured command,
 whether worker `PATH` could resolve it, the required operator action, and the
@@ -189,19 +191,47 @@ active review workflow only under `/tmp` or `/private/tmp`; the CLI prints
 `workflow_warning=temporary_path` for those workflow files so operators can
 promote reusable config into the repo.
 
+## Local Skill Suite
+
+Jade Symphony's local operator skills are repo-owned under
+`skills/jade-symphony/` and versioned by `skills/jade-symphony/manifest.toml`.
+Use the installer to preview, install, update, or validate the Codex and Gemini
+copies instead of hand-copying skill files:
+
+```bash
+node scripts/install-jade-symphony-skills.js --dry-run
+node scripts/install-jade-symphony-skills.js
+node scripts/install-jade-symphony-skills.js --validate
+```
+
+The install path is interactive by default. It shows the detected Codex and
+Gemini target directories and requires operator confirmation before writing.
+Use `--codex-dir`, `--gemini-dir`, `--skip-codex`, or `--skip-gemini` to make
+the target set explicit. Use `--yes` only after the printed target paths are
+known and intentional.
+
+The packaged skills preserve the same lane boundaries as the Jade Symphony CLI:
+Issue Forge and Reflect handle conversation, draft shaping, and promotion
+discussion; the CLI owns `forge create`, `forge promote`, and `forge validate`.
+Manual Main stops at `Agent Review`; Manual Review owns evidence-backed review
+routing; Human Review briefs the operator for UAT and final acceptance but waits
+for explicit confirmation before any state change; Manual Merge owns approved
+merge-lane work. Automatic doctor install-health checks remain future work for
+#256.
+
 ## Inspect And Resume
 
 ```bash
-target/debug/jade-symphony inspect workflows/jade-symphony.md
-target/debug/jade-symphony project-state workflows/jade-symphony.md
-target/debug/jade-symphony project-issue workflows/jade-symphony.md '#235' --json
+target/debug/jade-symphony project inspect workflows/jade-symphony.md '#<issue>'
+target/debug/jade-symphony project state workflows/jade-symphony.md
+target/debug/jade-symphony project issue workflows/jade-symphony.md '#235' --json
 target/debug/jade-symphony debug workflows/jade-symphony.md
-target/debug/jade-symphony project-state workflows/jade-symphony.md --display tui
+target/debug/jade-symphony project state workflows/jade-symphony.md --display tui
 target/debug/jade-symphony doctor workflows/jade-symphony.md --display tui
-target/debug/jade-symphony run-loop workflows/jade-symphony.md --max-iterations 1 --write
+target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
-Use `project-state` before claiming work when multiple operators are active. A
+Use `project state` before claiming work when multiple operators are active. A
 healthy read prints `project_state_access=ok`, `trusted=true`, the issue count,
 and a state summary, plus a read-only `canonical_checkout` cleanliness line for
 the launch checkout. A failed read prints `project_state_access=blocked`,
@@ -211,13 +241,13 @@ empty queue.
 
 The canonical checkout is only the harness launch directory. Do not use it as a
 Main, Review, or Merge issue worktree, and do not leave runtime state, logs,
-prompts, drafts, or evidence there. `run-loop --write`, `review-loop --write`,
-and `merge-loop --write` check the launch checkout before tracker mutation:
+prompts, drafts, or evidence there. `main loop --write`, `review loop --write`,
+and `merge loop --write` check the launch checkout before tracker mutation:
 tracked dirty files block the lane, recognized local artifacts are moved to the
 artifact quarantine with a warning, and unclassified untracked files block until
 the operator moves them to an issue worktree or artifact location.
 
-Use `project-issue` for per-issue Project status, Project fields, blocker
+Use `project issue` for per-issue Project status, Project fields, blocker
 relationships, claim locks, and linked PRs. Raw `gh issue view` and `gh pr view`
 remain acceptable for ordinary issue/PR body text, comments, and diff context,
 but normal dogfood should not read or mutate Project fields, status, claim locks,
@@ -261,13 +291,13 @@ repairing state, cleaning artifacts, or implying unattended readiness.
 Use the repo-owned Doctor skill at
 `.codex/skills/jade-symphony-doctor/SKILL.md` when an operator-selected issue or
 `Need Human Input` item needs triage before normal lane work can resume. The
-skill is read-first: it gathers `project-state`, `doctor`, `debug`, and
-`project-issue` evidence, classifies the stuck state, and produces a structured
+skill is read-first: it gathers `project state`, `doctor`, `debug`, and
+`project issue` evidence, classifies the stuck state, and produces a structured
 `Doctor Triage Note` with any repair actions that still require explicit
 confirmation. Keep full local skill install checking in #256 and dated
 installable skill suite packaging in #242.
 
-If `run-loop` finds runtime-state for an issue that has already moved out of
+If `main loop` finds runtime-state for an issue that has already moved out of
 active main-agent work, it reconciles tracker state first. Clean or absent
 workspaces are archived under the configured runtime log directory and the loop
 continues; dirty or unknown workspaces still stop the loop with a repair
@@ -349,10 +379,11 @@ registry=run/<id>`. Keep full paths and terminal logs in the session registry
 or workpad, and update terminal completed work to `state=done` instead of
 clearing useful claim evidence by default.
 For supervised merge terminals, use `merge claim WORKFLOW '#issue' --worker
-<worker> --write` on a `Merging` issue, then `session start WORKFLOW '#issue'
---lane merge --run <RUN_ID> --write`. Session startup validates the `Merging
-Agent` field and writes attach/log evidence without merging the PR or closing
-the issue.
+<worker> --write` on a `Merging` issue; the claim records truthful non-tmux
+manual evidence for the `run=`. Then use `session start WORKFLOW '#issue'
+--lane merge --run <RUN_ID> --write` when a supervised tmux terminal is needed.
+Session startup validates the `Merging Agent` field and writes attach/log
+evidence without merging the PR or closing the issue.
 
 Operator commands also print compact `Latest:` lines for the current lane,
 issue, category, action, actor, workspace/branch when known, and next expected
@@ -360,8 +391,8 @@ step. Treat these as the glanceable status bar; detailed line logs and JSONL
 events remain the durable audit trail.
 
 ```bash
-target/debug/jade-symphony run-loop workflows/jade-symphony.md --max-iterations 1 --pool 2 --dry-run
-target/debug/jade-symphony merge-loop workflows/jade-symphony.md --max-iterations 1 --pool 2 --dry-run
+target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --pool 2 --dry-run
+target/debug/jade-symphony merge loop workflows/jade-symphony.md --max-iterations 1 --pool 2 --dry-run
 ```
 
 ## Logical Actor Audit
@@ -384,12 +415,12 @@ Cleanup planning is read-only:
 ```bash
 target/debug/jade-symphony clean plan workflows/jade-symphony.md
 target/debug/jade-symphony clean audit workflows/jade-symphony.md
-target/debug/jade-symphony cleanup-plan workflows/jade-symphony.md
+target/debug/jade-symphony clean plan workflows/jade-symphony.md
 ```
 
 `clean plan` reports terminal worktrees that appear removable only when tracker
 state is terminal, the linked PR is merged or closed, the local worktree branch
-matches the issue branch, and the worktree is clean. `cleanup-plan` remains a
+matches the issue branch, and the worktree is clean. `clean plan` remains a
 compatibility path for the same read-only behavior.
 
 `clean audit` classifies local artifact and workspace residue by persistence

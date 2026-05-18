@@ -165,6 +165,7 @@ pub fn discover_issue_workspaces_from_parts(
     for session in sessions
         .iter()
         .filter(|session| session_matches_issue(session, &issue.identifier))
+        .filter(|session| session.session_source.as_deref() != Some("manual-claim"))
     {
         let git = worktree_by_path.get(&session.worktree);
         upsert_candidate(
@@ -589,6 +590,9 @@ mod tests {
             issue_title: Some("Title".into()),
             lane: "main".into(),
             run_id: Some("run-253".into()),
+            thread: None,
+            session_source: None,
+            claim_value: None,
             actor_role: Some("Main Agent".into()),
             actor_label: None,
             git_author: None,
@@ -650,6 +654,31 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.contains("multiple strong")));
+    }
+
+    #[test]
+    fn ignores_manual_claim_registry_records_as_workspace_candidates() {
+        let mut manual = session("/repo");
+        manual.backend = "codex-app-manual".into();
+        manual.session_source = Some("manual-claim".into());
+        manual.status = SessionStatus::Recorded;
+        let mut issue = issue();
+        issue.description = None;
+        issue.linked_pull_requests = Vec::new();
+        let report = discover_issue_workspaces_from_parts(
+            &issue,
+            &[manual],
+            &[GitWorktree {
+                path: PathBuf::from("/repo"),
+                head: Some("def".into()),
+                branch: Some("main".into()),
+                prunable: None,
+            }],
+            "<!-- jade-symphony-workpad -->",
+        );
+
+        assert!(report.candidates.is_empty());
+        assert_eq!(report.canonical_index, None);
     }
 
     #[test]

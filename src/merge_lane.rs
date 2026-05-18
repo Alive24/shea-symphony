@@ -358,7 +358,7 @@ pub fn merge_lane_workpad(
         "### Merge Lane Handoff".to_string(),
         format!("- Issue: {} {}", issue.identifier, issue.title),
         "- Actor role: `merge_agent`".to_string(),
-        "- Source: `jade-symphony merge-once`".to_string(),
+        "- Source: `jade-symphony merge once`".to_string(),
         format!("- Decision: `{:?}`", decision.kind),
         format!("- Reason: {}", decision.reason),
         format!(
@@ -518,7 +518,7 @@ fn required_human_input_section(decision: &MergeLaneDecision) -> Vec<String> {
         "### Required Human Input".to_string(),
         format!("- Question: {question}"),
         "- Options: update PR metadata, choose the canonical PR, move the issue out of Merging, or document the required repair.".to_string(),
-        "- After answer: rerun `jade-symphony merge-once` so the merge lane can re-evaluate with concrete evidence.".to_string(),
+        "- After answer: rerun `jade-symphony merge once` so the merge lane can re-evaluate with concrete evidence.".to_string(),
     ]
 }
 

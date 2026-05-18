@@ -10,6 +10,17 @@ instructions, or a CLI invariant.
 
 ## Current Runs
 
+- `2026-05-19-03-ssh-worker-workspaces/`
+  - Themes: remote SSH worker transport, remote workspace lifecycle, host
+    scheduling, remote sandbox/evidence boundaries.
+  - Created Backlog: #325.
+  - Watchlist: final parity-table audit for prompt rendering, tracker adapter
+    smoke coverage, runtime state resume wiring, and status snapshot feed.
+  - Slept enough: no; next theme should audit remaining partial parity rows and
+    avoid creating duplicates for already-covered implementation notes.
+  - Gemini review: ran; duplicate risk, evidence quality, Backlog safety,
+    next-theme Watchlist, and lane-authority checks passed.
+
 - `2026-05-19-02-worker-supervision-parity/`
   - Themes: persistent worker lifecycle, retry timers, stall restart,
     active-run reconciliation, process-exit classification.

@@ -665,10 +665,48 @@ fn command_uses_path_lookup(command: &str) -> bool {
 }
 
 pub fn classify_findings(output: &str) -> Vec<ReviewFinding> {
-    output
+    let result = parse_review_result(output);
+    let mut findings = output
         .lines()
-        .filter_map(parse_finding_line)
-        .collect::<Vec<_>>()
+        .filter_map(|line| {
+            parse_finding_line(line).or_else(|| {
+                matches!(
+                    result,
+                    Some(ParsedReviewResult::Rework) | Some(ParsedReviewResult::NeedsContext)
+                )
+                .then(|| parse_loose_finding_line(line))
+                .flatten()
+            })
+        })
+        .collect::<Vec<_>>();
+
+    match result {
+        Some(ParsedReviewResult::Rework)
+            if !findings
+                .iter()
+                .any(|finding| finding.class == ReviewFindingClass::Confirmed) =>
+        {
+            findings.push(synthetic_review_result_finding(
+                ReviewFindingClass::Confirmed,
+                "Review result requires rework",
+                output,
+            ));
+        }
+        Some(ParsedReviewResult::NeedsContext)
+            if !findings
+                .iter()
+                .any(|finding| finding.class == ReviewFindingClass::NeedsContext) =>
+        {
+            findings.push(synthetic_review_result_finding(
+                ReviewFindingClass::NeedsContext,
+                "Review result needs context",
+                output,
+            ));
+        }
+        _ => {}
+    }
+
+    findings
 }
 
 pub fn main_agent_completion_decision() -> ReviewGateDecision {
@@ -1440,6 +1478,104 @@ fn parse_finding_line(line: &str) -> Option<ReviewFinding> {
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParsedReviewResult {
+    Pass,
+    Rework,
+    NeedsContext,
+}
+
+fn parse_review_result(output: &str) -> Option<ParsedReviewResult> {
+    output.lines().find_map(|line| {
+        let normalized = line
+            .trim()
+            .trim_matches(|ch: char| ch == '*' || ch == '_' || ch == '`')
+            .to_ascii_lowercase();
+        let (_, value) = normalized.split_once("review result:")?;
+        let value = value.trim();
+        if value.starts_with("pass") {
+            Some(ParsedReviewResult::Pass)
+        } else if value.starts_with("rework") {
+            Some(ParsedReviewResult::Rework)
+        } else if value.starts_with("needs_context")
+            || value.starts_with("needs context")
+            || value.starts_with("need context")
+        {
+            Some(ParsedReviewResult::NeedsContext)
+        } else {
+            None
+        }
+    })
+}
+
+fn parse_loose_finding_line(line: &str) -> Option<ReviewFinding> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('[') {
+        return None;
+    }
+
+    let closing_bracket = trimmed.find(']')?;
+    let label = trimmed[1..closing_bracket]
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    let class = match label.as_str() {
+        "confirmed" => ReviewFindingClass::Confirmed,
+        "plausible" => ReviewFindingClass::Plausible,
+        "rejected" => ReviewFindingClass::Rejected,
+        "needs context" => ReviewFindingClass::NeedsContext,
+        _ => return None,
+    };
+
+    let rest = trimmed[closing_bracket + 1..].trim();
+    if rest.is_empty() {
+        return None;
+    }
+    Some(ReviewFinding {
+        class,
+        title: summarize_finding_title(rest),
+        body: rest.to_string(),
+    })
+}
+
+fn synthetic_review_result_finding(
+    class: ReviewFindingClass,
+    title: &str,
+    output: &str,
+) -> ReviewFinding {
+    ReviewFinding {
+        class,
+        title: title.into(),
+        body: first_review_result_body_line(output)
+            .unwrap_or("Review backend returned this routing result without a parseable finding.")
+            .into(),
+    }
+}
+
+fn first_review_result_body_line(output: &str) -> Option<&str> {
+    output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .find(|line| !line.to_ascii_lowercase().contains("review result:"))
+}
+
+fn summarize_finding_title(text: &str) -> String {
+    let mut title = text
+        .split(['.', ';', '\n'])
+        .next()
+        .unwrap_or(text)
+        .trim()
+        .to_string();
+    const MAX_TITLE_CHARS: usize = 96;
+    if title.chars().count() > MAX_TITLE_CHARS {
+        title = title.chars().take(MAX_TITLE_CHARS).collect::<String>();
+        title.push_str("...");
+    }
+    title
+}
+
 fn inconclusive_review_text_reason(text: &str) -> Option<String> {
     let normalized = text
         .to_lowercase()
@@ -1917,6 +2053,62 @@ mod tests {
         assert_eq!(findings[0].class, ReviewFindingClass::Confirmed);
         assert_eq!(findings[0].title, "Bug");
         assert_eq!(findings[0].body, "actual blocker");
+    }
+
+    #[test]
+    fn rework_result_classifies_loose_confirmed_findings() {
+        let findings = classify_findings(
+            "Review Result: REWORK\n\n[Confirmed] The PR does not implement the parent execution gates for `Todo` issues.\n[Confirmed] Documentation changes fail to state the parent gate.",
+        );
+
+        assert_eq!(findings.len(), 2);
+        assert_eq!(findings[0].class, ReviewFindingClass::Confirmed);
+        assert_eq!(
+            findings[0].title,
+            "The PR does not implement the parent execution gates for `Todo` issues"
+        );
+        assert_eq!(findings[1].class, ReviewFindingClass::Confirmed);
+    }
+
+    #[test]
+    fn rework_result_without_parseable_findings_still_blocks_progress() {
+        let findings = classify_findings(
+            "Review Result: REWORK\n\nThe implementation is missing the required claim gate.",
+        );
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].class, ReviewFindingClass::Confirmed);
+        assert_eq!(findings[0].title, "Review result requires rework");
+    }
+
+    #[test]
+    fn completed_rework_result_routes_to_rework() {
+        let job = completed_gemini_review(
+            "Review Result: REWORK\n\n[Confirmed] The PR does not implement the parent execution gates for `Todo` issues.",
+        );
+
+        let decision = review_gate_decision(&job);
+
+        assert_eq!(decision.outcome, ReviewOutcome::NeedsRework);
+        assert_eq!(decision.target_state, Some("rework"));
+    }
+
+    #[test]
+    fn needs_context_result_without_parseable_findings_is_inconclusive() {
+        let report = AgentReviewReport {
+            reviewer_backend: "gemini-cli".into(),
+            findings: classify_findings(
+                "Review Result: NEEDS_CONTEXT\n\nThe linked PR could not be inspected.",
+            ),
+            summary: None,
+            stdout: None,
+            stderr: None,
+            exit_status: Some("0".into()),
+            session_id: None,
+        };
+
+        assert!(report.is_inconclusive());
+        assert!(!report.blocks_progress());
     }
 
     #[test]

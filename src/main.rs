@@ -1882,7 +1882,7 @@ fn review_claim(
         project_text_field(&issue, "Review Agent").as_deref(),
     )
     .with_worker(&worker);
-    let claim_value = claim.render();
+    let claim_value = render_parseable_lane_claim(&claim)?;
     if !write {
         println!(
             "review_claim_dry_run action=claim_field issue_ref={} field=\"Review Agent\" value={claim_value}",
@@ -1958,7 +1958,7 @@ fn lane_claim_command(
         worker.trim(),
         existing_value.as_deref(),
     )?;
-    let claim_value = claim.render();
+    let claim_value = render_parseable_lane_claim(&claim)?;
 
     if !write {
         println!(
@@ -2088,6 +2088,19 @@ fn lane_claim_for_manual_worker(
         current_time_ms(),
     )
     .with_worker(worker))
+}
+
+fn render_parseable_lane_claim(claim: &LaneClaim) -> Result<String, Box<dyn std::error::Error>> {
+    let value = claim.render();
+    let parsed = LaneClaim::parse(&value)
+        .map_err(|error| format!("rendered lane claim is not parseable: {error}; value={value}"))?;
+    if parsed != *claim {
+        return Err(format!(
+            "rendered lane claim did not round-trip; rendered={value} parsed={parsed:?} original={claim:?}"
+        )
+        .into());
+    }
+    Ok(value)
 }
 
 fn record_manual_lane_claim_evidence(
@@ -3286,7 +3299,7 @@ fn write_review_claim_field(
     worker_key: &str,
 ) -> Result<LaneClaim, Box<dyn std::error::Error>> {
     let claim = review_claim_for_issue(issue, worker_key);
-    let claim_value = claim.render();
+    let claim_value = render_parseable_lane_claim(&claim)?;
     adapter.set_project_field(
         &issue.identifier,
         &ProjectFieldAssignment {
@@ -7857,7 +7870,7 @@ fn write_lane_claim_field(
     claim: &LaneClaim,
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let claim_value = claim.render();
+    let claim_value = render_parseable_lane_claim(claim)?;
     if !write {
         println!(
             "{}_pool_dry_run action=claim_field issue={} field={:?} value={:?}",
@@ -7906,7 +7919,7 @@ fn write_lane_claim_state(
     state: LaneClaimState,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let updated = claim.with_state(state);
-    let value = updated.render();
+    let value = render_parseable_lane_claim(&updated)?;
     adapter.set_project_field(
         &issue.identifier,
         &ProjectFieldAssignment {
@@ -12605,6 +12618,32 @@ mod tests {
                 write: true
             }
         );
+    }
+
+    #[test]
+    fn manual_lane_claim_with_display_worker_round_trips_to_session_start_validation() {
+        let mut issue = tracker_issue_with_ref("#297", "Support quoted worker labels", "Todo");
+        let claim = lane_claim_for_manual_worker(
+            &issue,
+            AgentSessionLaneArg::Main,
+            LaneClaimActor::Codex,
+            LaneClaimSource::Manual,
+            "Codex Manual Main",
+            None,
+        )
+        .unwrap();
+        let claim_value = render_parseable_lane_claim(&claim).unwrap();
+
+        assert!(claim_value.contains("worker=\"Codex Manual Main\""));
+        issue
+            .project_fields
+            .insert("Main Agent".into(), serde_json::Value::String(claim_value));
+
+        let parsed =
+            matching_lane_claim_for_session(&issue, AgentSessionLaneArg::Main, &claim.run).unwrap();
+
+        assert_eq!(parsed.worker.as_deref(), Some("Codex Manual Main"));
+        assert_eq!(parsed, claim);
     }
 
     #[test]

@@ -509,3 +509,8 @@ evidence is available for the existing handoff path. Manual recovery uses lane
 claim commands first, then `session start --run <RUN_ID>` with the same registry
 and lane prompt contracts. The registry is operator evidence for terminal
 sessions only; it does not replace Project state.
+Worker display labels supplied to `main claim`, `review claim`, or
+`merge claim` may contain spaces. Jade Symphony stores those labels with
+reversible quoting in the structured claim pointer, validates the rendered
+claim before Project mutation, and expects operators to use the CLI claim path
+instead of raw Project field edits for normal claim ownership.

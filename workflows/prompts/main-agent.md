@@ -50,7 +50,8 @@ question, but do not edit files under
    when it affects workflow decisions. Do not use raw Project GraphQL or the
    Project UI for normal Project state reads or mutations.
    Manual lane ownership must use `main claim ... --worker <worker> --write`;
-   session startup must use `session start ... --lane main --run <RUN_ID>`.
+   worker display labels with spaces are allowed through the CLI claim path.
+   Session startup must use `session start ... --lane main --run <RUN_ID>`.
    Session startup validates the claim and must not write Project claim fields.
 2. Confirm the issue is still executable with the Issue Quality Gate. If the
    issue is not executable, leave a precise workpad note, move it to

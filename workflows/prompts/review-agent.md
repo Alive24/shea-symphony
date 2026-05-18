@@ -27,6 +27,7 @@ Project GraphQL or Project UI changes are break-glass only.
 - Confirm the issue is in `Agent Review` before starting review.
 - Manual review sessions must claim `Review Agent` through
   `review claim ... --worker <worker> --write` before starting review work.
+  Worker display labels with spaces are allowed through the CLI claim path.
 - Automatic headless `review loop` owns its own Review Agent claim and final
   routing outside the Gemini process. In that mode, do not run `review claim`,
   `review pass`, `review reject`, `project set-state`, `project workpad`,

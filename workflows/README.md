@@ -14,7 +14,7 @@ cargo run -- forge validate --workflow workflows/jade-symphony.md --issue '#123'
 cargo run -- forge create --workflow workflows/jade-symphony.md --status Todo --title "<title>" --body-file /private/tmp/issue.md --assignee Alive24 --write
 cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --write
 cargo run -- merge once workflows/jade-symphony.md --write
-cargo run -- main claim workflows/jade-symphony.md '#123' --worker codex-manual-main --write
+cargo run -- main claim workflows/jade-symphony.md '#123' --worker "Codex Manual Main" --write
 cargo run -- session start workflows/jade-symphony.md '#123' --lane main --run <RUN_ID> --write
 cargo run -- session list workflows/jade-symphony.md
 ```
@@ -32,10 +32,12 @@ review handoff.
 Manual tmux recovery is a two-step path. Use `main claim`, `review claim`, or
 `merge claim` to write the matching Project claim field, print the structured
 `run=`, and record minimum non-tmux registry evidence for the manual Codex App
-claim. Then use `session start --lane ... --run ...` to render the lane prompt
-and start the tmux runtime when a supervised terminal is needed. Session
-commands validate the existing claim and write attach/log evidence without
-approving reviews, merging PRs, or closing issues.
+claim. Worker labels may be human-readable display labels with spaces; claim
+commands quote and validate those values before Project writes. Then use
+`session start --lane ... --run ...` to render the lane prompt and start the
+tmux runtime when a supervised terminal is needed. Session commands validate the
+existing claim and write attach/log evidence without approving reviews, merging
+PRs, or closing issues.
 
 Lane prompt files:
 

@@ -162,7 +162,10 @@ printed `run=` without pretending a tmux pane exists. Then start the runtime
 with `session start WORKFLOW '#issue' --lane review --run <RUN_ID> --write`.
 Session startup validates the existing Review Agent claim and writes attach/log
 evidence without moving the issue to `Human Review`; this tmux path is an
-explicit manual fallback, not the automatic review-loop default.
+explicit manual fallback, not the automatic review-loop default. The worker
+value may be a display label such as `Manual Gemini Review`; use the claim
+command so Jade Symphony can quote, escape, and validate the stored pointer
+before Project mutation.
 
 If Gemini cannot start, the review workpad should name the configured command,
 whether worker `PATH` could resolve it, the required operator action, and the
@@ -404,7 +407,9 @@ worker=<worker> source=<loop|manual|goal> issue=#N run=<id>
 state=<active|done|stale|failed|superseded> thread=<codex-link|unknown>
 registry=run/<id>`. Keep full paths and terminal logs in the session registry
 or workpad, and update terminal completed work to `state=done` instead of
-clearing useful claim evidence by default.
+clearing useful claim evidence by default. Display labels with spaces are stored
+with reversible quoting, for example `worker="Codex Manual Main"`; raw Project
+field edits are a break-glass repair path, not normal claim ownership.
 For supervised merge terminals, use `merge claim WORKFLOW '#issue' --worker
 <worker> --write` on a `Merging` issue; the claim records truthful non-tmux
 manual evidence for the `run=`. Then use `session start WORKFLOW '#issue'

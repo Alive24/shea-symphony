@@ -2134,6 +2134,9 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
             continue;
         }
 
+        let mut pending_review_jobs: Vec<(usize, TrackerIssue, thread::JoinHandle<ReviewJob>)> =
+            Vec::new();
+
         for (slot, selected_issue) in selected.into_iter().enumerate() {
             let worker_slot = slot + 1;
             match review_run_eligibility(
@@ -2211,34 +2214,34 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                                 &worker_key,
                             )?;
                             let _claim = claim;
-                            let mut job = run_review_job(
-                                &workflow,
-                                &config,
-                                &latest,
-                                options.fake_outcome.clone(),
-                            )?;
-                            let ledger_path = write_review_job_ledger_record(
-                                &config.observability.logs_root,
-                                &latest,
-                                &job,
-                            )?;
-                            job.ledger_path = Some(ledger_path.clone());
-                            apply_review_result(
-                                &config,
-                                adapter.as_ref(),
-                                &latest.identifier,
-                                &latest,
-                                &job,
-                            )?;
-                            let decision = review_gate_decision(&job);
+                            let workflow_for_job = workflow.clone();
+                            let config_for_job = config.clone();
+                            let issue_for_job = latest.clone();
+                            let fake_outcome_for_job = options.fake_outcome.clone();
+                            let backend_kind_for_job = backend_kind.clone();
                             println!(
-                            "review_loop_action=reconciled issue={} backend={} outcome={:?} target_state={:?} ledger={}",
-                            latest.identifier,
-                            job.backend,
-                            decision.outcome,
-                            decision.target_state,
-                            ledger_path.display()
-                        );
+                                "review_loop_action=start issue={} worker_slot={} backend={} mode={}",
+                                latest.identifier,
+                                worker_slot,
+                                backend_kind,
+                                if backend_kind == "gemini-cli" { "headless" } else { "job" }
+                            );
+                            let handle = thread::spawn(move || {
+                                run_review_job(
+                                    &workflow_for_job,
+                                    &config_for_job,
+                                    &issue_for_job,
+                                    fake_outcome_for_job,
+                                )
+                                .unwrap_or_else(|error| {
+                                    ReviewJob::failed_unavailable(
+                                        issue_for_job.identifier.clone(),
+                                        backend_kind_for_job,
+                                        error.to_string(),
+                                    )
+                                })
+                            });
+                            pending_review_jobs.push((worker_slot, latest, handle));
                         }
                         ReviewRunEligibility::AlreadyQueued { worker_key } => {
                             println!(
@@ -2293,6 +2296,31 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                     )?;
                 }
             }
+        }
+
+        for (worker_slot, latest, handle) in pending_review_jobs {
+            let mut job = match handle.join() {
+                Ok(job) => job,
+                Err(_) => ReviewJob::failed_unavailable(
+                    latest.identifier.clone(),
+                    backend_kind.clone(),
+                    "review worker thread panicked",
+                ),
+            };
+            let ledger_path =
+                write_review_job_ledger_record(&config.observability.logs_root, &latest, &job)?;
+            job.ledger_path = Some(ledger_path.clone());
+            apply_review_result(&config, adapter.as_ref(), &latest.identifier, &latest, &job)?;
+            let decision = review_gate_decision(&job);
+            println!(
+                "review_loop_action=reconciled issue={} worker_slot={} backend={} outcome={:?} target_state={:?} ledger={}",
+                latest.identifier,
+                worker_slot,
+                job.backend,
+                decision.outcome,
+                decision.target_state,
+                ledger_path.display()
+            );
         }
 
         if !options.write && limit.is_none() {

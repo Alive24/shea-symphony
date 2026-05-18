@@ -1186,7 +1186,10 @@ fn parse_finding_line(line: &str) -> Option<ReviewFinding> {
     };
 
     let rest = trimmed[closing_bracket + 1..].trim();
-    let (title, body) = rest.split_once(':').unwrap_or((rest, ""));
+    let (title, body) = rest.split_once(':')?;
+    if title.trim().is_empty() || body.trim().is_empty() {
+        return None;
+    }
     Some(ReviewFinding {
         class,
         title: title.trim().to_string(),
@@ -1639,6 +1642,18 @@ mod tests {
         assert_eq!(findings[1].class, ReviewFindingClass::Plausible);
         assert_eq!(findings[2].class, ReviewFindingClass::Rejected);
         assert_eq!(findings[3].class, ReviewFindingClass::NeedsContext);
+    }
+
+    #[test]
+    fn finding_parser_ignores_positive_evidence_without_title_body_separator() {
+        let findings = classify_findings(
+            "Review Result: PASS\n\n[Confirmed] The PR diff shows the requested test isolation was implemented.\n[Confirmed] Bug: actual blocker",
+        );
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].class, ReviewFindingClass::Confirmed);
+        assert_eq!(findings[0].title, "Bug");
+        assert_eq!(findings[0].body, "actual blocker");
     }
 
     #[test]

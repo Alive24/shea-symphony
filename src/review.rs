@@ -130,6 +130,7 @@ pub enum ReviewOutcome {
     NeedsRework,
     InconclusiveNeedsRework,
     NeedsHumanInput,
+    BackendUnavailable,
     StillRunning,
     Cancelled,
 }
@@ -723,7 +724,7 @@ pub fn review_gate_decision_for_actor(job: &ReviewJob, actor: ReviewActor) -> Re
             if review_required_operator_actions(job).is_some() =>
         {
             ReviewGateDecision {
-                outcome: ReviewOutcome::StillRunning,
+                outcome: ReviewOutcome::BackendUnavailable,
                 target_state: Some("agent_review"),
                 message:
                     "Agent Review backend is blocked by required operator action; issue remains in Agent Review."
@@ -870,7 +871,7 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
     let decision = review_gate_decision_for_actor(job, ReviewActor::IndependentReviewAgent);
     let mut attempt_details = Vec::new();
     if let Some(error) = &job.error {
-        attempt_details.push(format!("- Error: {error}"));
+        attempt_details.push(render_attempt_error(error));
     }
     if let Some(report) = &job.report {
         if let Some(status) = report.exit_status.as_deref() {
@@ -1031,6 +1032,39 @@ fn render_log_section(title: &str, content: Option<&str>) -> Option<String> {
         title,
         &format!("```text\n{}\n```", truncate_log(content)),
     ))
+}
+
+fn render_attempt_error(error: &str) -> String {
+    let summary = error
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .unwrap_or("review backend error");
+    format!(
+        "<details>\n<summary>Error: {}</summary>\n\n```text\n{}\n```\n\n</details>",
+        html_escape_summary(&truncate_summary(summary, 180)),
+        truncate_log(error)
+    )
+}
+
+fn truncate_summary(summary: &str, limit: usize) -> String {
+    if summary.len() <= limit {
+        return summary.to_string();
+    }
+
+    let mut end = limit;
+    while !summary.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}...", &summary[..end])
+}
+
+fn html_escape_summary(summary: &str) -> String {
+    summary
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn agent_review_note(report: &AgentReviewReport) -> Option<String> {
@@ -1362,7 +1396,9 @@ pub fn transition_allowed_for_review_agent(
         "agent_review" | "agent review" => {
             matches!(
                 decision.outcome,
-                ReviewOutcome::StillRunning | ReviewOutcome::Cancelled
+                ReviewOutcome::BackendUnavailable
+                    | ReviewOutcome::StillRunning
+                    | ReviewOutcome::Cancelled
             )
         }
         _ => true,
@@ -1801,7 +1837,7 @@ mod tests {
 
         let decision = review_gate_decision(&job);
 
-        assert_eq!(decision.outcome, ReviewOutcome::StillRunning);
+        assert_eq!(decision.outcome, ReviewOutcome::BackendUnavailable);
         assert_eq!(decision.target_state, Some("agent_review"));
         assert!(decision.message.contains("required operator action"));
     }
@@ -1818,6 +1854,10 @@ mod tests {
         let workpad = render_review_workpad(&issue(), &job);
 
         assert!(workpad.contains("### Required Operator Action"));
+        assert!(workpad.contains("<details>"));
+        assert!(workpad.contains("<summary>Error: Gemini review command exited with status 1"));
+        assert!(workpad.contains("```text\nGemini review command exited with status 1"));
+        assert!(!workpad.contains("- Error: Gemini review command exited with status 1"));
         assert!(workpad.contains("started but exited unsuccessfully"));
         assert!(workpad.contains("Inspect stderr/auth/configuration"));
     }

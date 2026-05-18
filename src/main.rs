@@ -3650,6 +3650,7 @@ fn terminal_review_loop_claim_value(
         ReviewOutcome::NeedsRework => (LaneClaimState::Done, "rejected"),
         ReviewOutcome::InconclusiveNeedsRework => (LaneClaimState::Failed, "inconclusive"),
         ReviewOutcome::NeedsHumanInput => (LaneClaimState::Failed, "blocked"),
+        ReviewOutcome::BackendUnavailable => (LaneClaimState::Failed, "unavailable"),
         ReviewOutcome::Cancelled => (LaneClaimState::Failed, "cancelled"),
         ReviewOutcome::StillRunning => match job.state {
             ReviewJobState::Failed | ReviewJobState::TimedOut => {

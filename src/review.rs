@@ -549,6 +549,7 @@ pub fn gemini_cli_headless_args(model: Option<&str>, allowed_tools: &[String]) -
     let mut args = vec![
         "--skip-trust".to_string(),
         "--prompt".to_string(),
+        String::new(),
         "--output-format".to_string(),
         "json".to_string(),
     ];
@@ -1486,6 +1487,7 @@ mod tests {
             vec![
                 "--skip-trust",
                 "--prompt",
+                "",
                 "--output-format",
                 "json",
                 "--model",
@@ -1536,7 +1538,7 @@ mod tests {
         assert_eq!(job.state, ReviewJobState::Completed);
         assert_eq!(
             fs::read_to_string(workspace.join("args.txt")).unwrap(),
-            "--skip-trust\n--prompt\n--output-format\njson\n--model\ngemini-3.1-pro-preview\n--allowed-tools\nrun_shell_command\n"
+            "--skip-trust\n--prompt\n\n--output-format\njson\n--model\ngemini-3.1-pro-preview\n--allowed-tools\nrun_shell_command\n"
         );
         assert_eq!(
             fs::read_to_string(workspace.join("prompt.txt")).unwrap(),
@@ -1695,16 +1697,15 @@ mod tests {
             artifact_root,
         };
 
-        let mut job = backend.start(request).unwrap();
+        let job = backend.start(request).unwrap();
         assert!(workspace.is_dir());
-
-        for _ in 0..100 {
-            job = backend.poll(job).unwrap();
-            if job.state != ReviewJobState::Running {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        let job = poll_review_job_until_terminal(
+            &backend,
+            job,
+            Duration::from_secs(5),
+            Duration::from_millis(10),
+        )
+        .unwrap();
 
         assert_eq!(job.state, ReviewJobState::Completed);
         assert_eq!(

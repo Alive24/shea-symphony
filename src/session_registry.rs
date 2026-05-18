@@ -24,6 +24,12 @@ pub struct AgentSessionRecord {
     pub lane: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim_value: Option<String>,
     pub actor_role: Option<String>,
     pub actor_label: Option<String>,
     pub git_author: Option<String>,
@@ -54,6 +60,7 @@ pub enum SessionStatus {
     UsageLimited,
     Failed,
     Completed,
+    Recorded,
     Stale,
     Unknown,
 }
@@ -84,6 +91,7 @@ impl SessionStatus {
             Self::UsageLimited => "usage_limited",
             Self::Failed => "failed",
             Self::Completed => "completed",
+            Self::Recorded => "recorded",
             Self::Stale => "stale",
             Self::Unknown => "unknown",
         }
@@ -242,7 +250,7 @@ pub fn classify_session_record(
         && now_ms.saturating_sub(record.updated_at_ms) > stale_after_ms
         && !matches!(
             record.status,
-            SessionStatus::Completed | SessionStatus::Failed
+            SessionStatus::Completed | SessionStatus::Failed | SessionStatus::Recorded
         )
     {
         return SessionStatusProbe {
@@ -516,6 +524,9 @@ mod tests {
             issue_title: Some("Add registry".into()),
             lane: "main".into(),
             run_id: Some("20260516T0415Z-issue225-main-0001".into()),
+            thread: None,
+            session_source: None,
+            claim_value: None,
             actor_role: Some("implementation_agent".into()),
             actor_label: Some("Jade Symphony Agent".into()),
             git_author: None,
@@ -609,6 +620,9 @@ mod tests {
             issue_title: Some("Classify status".into()),
             lane: "main".into(),
             run_id: None,
+            thread: None,
+            session_source: None,
+            claim_value: None,
             actor_role: None,
             actor_label: None,
             git_author: None,
@@ -632,5 +646,19 @@ mod tests {
     #[test]
     fn tails_bounded_log_lines() {
         assert_eq!(tail_lines("one\ntwo\nthree\nfour", 2), "three\nfour");
+    }
+
+    #[test]
+    fn recorded_manual_evidence_does_not_become_stale() {
+        let mut record = fixture_record();
+        record.backend = "codex-app-manual".into();
+        record.status = SessionStatus::Recorded;
+        record.updated_at_ms = 1_000;
+
+        let probe = classify_session_record(&record, None, None, 20_000, 10_000);
+
+        assert_eq!(probe.status, SessionStatus::Recorded);
+        assert_eq!(probe.source, SessionStatusSource::Registry);
+        assert_eq!(probe.evidence, "registry status recorded");
     }
 }

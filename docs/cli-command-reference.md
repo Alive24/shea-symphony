@@ -105,7 +105,8 @@ field stores the compact pointer; the session registry and workpad store the
 durable paths, logs, and handoff evidence for the same `run=`.
 
 Manual claim and session control are separate operations. Claim commands write
-only the lane claim Project field and do not change Project Status:
+the lane claim Project field, create a matching `codex-app-manual` registry
+record with status `recorded`, and do not change Project Status:
 
 ```bash
 cargo run -- main claim workflows/jade-symphony.md '#265' --worker codex-manual-main --write
@@ -147,7 +148,9 @@ For manual lane recovery, first claim the lane and keep the printed `run=`.
 Then `session start WORKFLOW ISSUE --lane main|review|merge --run RUN --write`
 starts the configured local tmux command with the lane-specific prompt only
 after confirming that the Project claim field already matches the issue, lane,
-and run. `session start` never writes claim fields. The rendered prompt includes
+and run. Manual claim evidence is truthful non-tmux registry evidence; `session
+start` is the step that creates attach/log evidence for a real tmux session and
+never writes claim fields. The rendered prompt includes
 the assigned `run=` and registry pointer so the spawned agent can preserve that
 value in its handoff evidence.
 `session list WORKFLOW` shows active tmux sessions with attach commands, and

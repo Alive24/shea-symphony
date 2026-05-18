@@ -148,10 +148,11 @@ target/debug/jade-symphony review loop workflows/jade-symphony.md --max-iteratio
 
 For supervised manual review terminals, first use
 `review claim WORKFLOW '#issue' --worker <worker> --write` on an `Agent Review`
-issue, then start the runtime with `session start WORKFLOW '#issue' --lane
-review --run <RUN_ID> --write`. Session startup validates the existing Review
-Agent claim and writes attach/log evidence without moving the issue to
-`Human Review`.
+issue. The claim records minimum `codex-app-manual` registry evidence for the
+printed `run=` without pretending a tmux pane exists. Then start the runtime
+with `session start WORKFLOW '#issue' --lane review --run <RUN_ID> --write`.
+Session startup validates the existing Review Agent claim and writes attach/log
+evidence without moving the issue to `Human Review`.
 
 If Gemini cannot start, the review workpad should name the configured command,
 whether worker `PATH` could resolve it, the required operator action, and the
@@ -371,10 +372,11 @@ registry=run/<id>`. Keep full paths and terminal logs in the session registry
 or workpad, and update terminal completed work to `state=done` instead of
 clearing useful claim evidence by default.
 For supervised merge terminals, use `merge claim WORKFLOW '#issue' --worker
-<worker> --write` on a `Merging` issue, then `session start WORKFLOW '#issue'
---lane merge --run <RUN_ID> --write`. Session startup validates the `Merging
-Agent` field and writes attach/log evidence without merging the PR or closing
-the issue.
+<worker> --write` on a `Merging` issue; the claim records truthful non-tmux
+manual evidence for the `run=`. Then use `session start WORKFLOW '#issue'
+--lane merge --run <RUN_ID> --write` when a supervised tmux terminal is needed.
+Session startup validates the `Merging Agent` field and writes attach/log
+evidence without merging the PR or closing the issue.
 
 Operator commands also print compact `Latest:` lines for the current lane,
 issue, category, action, actor, workspace/branch when known, and next expected

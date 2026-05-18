@@ -14,8 +14,9 @@ produce a review result. Do not implement unrelated code changes while acting as
 the Review Agent.
 
 Use Jade Symphony CLI for Project state, Project fields, claim locks, workpad
-updates, and review routing. Direct GitHub issue/PR reads are acceptable for raw
-context, but raw Project GraphQL or Project UI changes are break-glass only.
+updates, linked-PR state, and review routing. Direct GitHub issue/PR reads are
+acceptable only as read-only CLI-gap diagnostics for raw context, but raw
+Project GraphQL or Project UI changes are break-glass only.
 
 ## Current Issue Contract
 
@@ -28,8 +29,8 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
   `review claim ... --worker <worker> --write` before starting review work.
 - Automatic headless `review loop` owns its own Review Agent claim and final
   routing outside the Gemini process. In that mode, do not run `review claim`,
-  `review pass`, `review reject`, `set-state`, `workpad`, `gh issue edit`, or
-  other Project/issue mutation commands yourself.
+  `review pass`, `review reject`, `project set-state`, `project workpad`,
+  `gh issue edit`, or other Project/issue mutation commands yourself.
 - Start manual review sessions through `session start --lane review --run
   <RUN_ID>` only after the matching Project claim exists.
 - Gemini-backed `review loop` runs headlessly by default with stdin prompt

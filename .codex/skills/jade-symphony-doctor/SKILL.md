@@ -70,7 +70,7 @@ evidence preserved before the mutation.
 Run or equivalent-check these before recommending repair:
 
 ```bash
-cargo run -- project-state workflows/jade-symphony.md
+cargo run -- project state workflows/jade-symphony.md
 cargo run -- doctor workflows/jade-symphony.md
 cargo run -- debug workflows/jade-symphony.md
 ```
@@ -78,14 +78,14 @@ cargo run -- debug workflows/jade-symphony.md
 For an operator-selected issue:
 
 ```bash
-cargo run -- project-issue workflows/jade-symphony.md '#258' --json
+cargo run -- project issue workflows/jade-symphony.md '#258' --json
 cargo run -- doctor workflows/jade-symphony.md repair '#258'
 ```
 
 If the issue appears to be implementation-claimable, also run:
 
 ```bash
-cargo run -- gate workflows/jade-symphony.md '#258'
+cargo run -- forge validate --workflow workflows/jade-symphony.md --issue '#258'
 ```
 
 If worktree or session evidence is ambiguous, add the narrowest relevant reads:
@@ -96,9 +96,10 @@ cargo run -- agent-session list workflows/jade-symphony.md
 git worktree list --porcelain
 ```
 
-Use `gh issue view` and `gh pr view` only for ordinary issue/PR content. Do not
-use raw Project reads for status, claim fields, blockers, or linked PR state in
-normal flow.
+Use `gh issue view` and `gh pr view` only for ordinary issue/PR content when
+the CLI lacks the needed content read, and record the CLI gap when the result
+changes the repair recommendation. Do not use raw Project reads for status,
+claim fields, blockers, workpads, or linked PR state in normal flow.
 
 ## Classification
 
@@ -109,7 +110,7 @@ when they change the recommended next step.
   credentials, destructive approval, missing sample data, or a choice that the
   issue contract did not authorize.
 - `missing_pr_linkage`: a lane handoff or merge needs a Project-visible linked
-  PR, but `project-issue` does not expose the expected PR.
+  PR, but `project issue` does not expose the expected PR.
 - `draft_pr_handoff`: the linked PR exists but is draft before an Agent Review
   handoff.
 - `stale_lane_claim`: `Main Agent`, `Review Agent`, or `Merging Agent` points to
@@ -141,8 +142,8 @@ GitHub issue comment through the configured workpad/comment path.
 - Secondary classifications: `stale_lane_claim`
 - Diagnosis: ...
 - Evidence read:
-  - `cargo run -- project-state workflows/jade-symphony.md`: ...
-  - `cargo run -- project-issue workflows/jade-symphony.md '#258' --json`: ...
+  - `cargo run -- project state workflows/jade-symphony.md`: ...
+  - `cargo run -- project issue workflows/jade-symphony.md '#258' --json`: ...
   - `cargo run -- doctor workflows/jade-symphony.md repair '#258'`: ...
 - Recommended next step: ...
 - Repair actions requiring explicit confirmation:
@@ -188,7 +189,7 @@ Out of scope for Doctor v1:
 - automatic Project mutation.
 - full local skill integrity checking from #256.
 - full dated installable skill suite packaging from #242.
-- replacing `doctor`, `project-state`, or `project-issue`.
+- replacing `doctor`, `project state`, or `project issue`.
 
 ## Handoff
 

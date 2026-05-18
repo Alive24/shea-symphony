@@ -55,6 +55,25 @@ Alive24
   seeds; do not promote them without explicit operator discussion.
 - Summarize conversations and sessions. Do not paste raw long conversation
   dumps into Dream Logs.
+- Dream may directly improve internal repository documentation when the change
+  clarifies Dream findings, operator memory, workflow lessons, run logs, or
+  internal maintenance context. Internal documentation includes `docs/dream-log/`
+  and other docs whose primary audience is the Jade Symphony operator or
+  maintainers.
+- Do not directly change repo-owned or locally installed skills while dreaming.
+  Skill changes should be captured as proposals, Backlog seeds, or future Issue
+  Forge promotion work unless the operator explicitly switches out of Dream and
+  asks for a direct skill edit.
+- Do not directly change external-facing product surfaces while dreaming.
+  External-facing surfaces include root `README.md`, CLI help text, user-facing
+  command output, UI, public docs, and workflow behavior. For these, summarize a
+  proposal, create or update a Backlog seed, or recommend a future Issue Forge
+  promotion instead of editing them in the Dream run.
+- After each write-mode Dream round, commit the Dream artifacts and any allowed
+  internal documentation updates before starting another Dream round. Do not let
+  multiple Dream rounds accumulate uncommitted state in the canonical checkout.
+  If the commit cannot be made safely, stop and report the dirty state instead
+  of continuing to dream.
 
 ## Mode Selection
 
@@ -224,6 +243,14 @@ Dream may run multiple bounded rounds. Each round must report:
 - Watchlist candidates retained;
 - Gemini review status;
 - next most valuable Dream theme if more sleep is useful.
+
+Before starting a subsequent write-mode round:
+
+1. Review `git status --short --branch`.
+2. Commit the completed Dream round's `docs/dream-log/` artifacts and any
+   allowed internal documentation updates.
+3. Confirm the canonical checkout is clean after the commit.
+4. Only then begin the next Dream round.
 
 Stop when another round would mostly reread the same evidence or create noisy
 candidates. Say `slept enough: yes` only when the current source window produced

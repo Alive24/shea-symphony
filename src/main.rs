@@ -76,8 +76,8 @@ use jade_symphony::review::{
     render_review_freshness_workpad, render_review_workpad, review_gate_decision,
     review_run_eligibility, transition_allowed_for_main_agent, transition_allowed_for_review_agent,
     write_review_job_ledger_record, FakeReviewBackend, FakeReviewOutcome, GeminiCliReviewBackend,
-    ReviewBackend, ReviewFreshnessInput, ReviewJob, ReviewJobState, ReviewRequest,
-    ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
+    ReviewBackend, ReviewFreshnessInput, ReviewGateDecision, ReviewJob, ReviewJobState,
+    ReviewOutcome, ReviewRequest, ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
 };
 use jade_symphony::rework::{
     render_rework_diagnostic_workpad, rework_diagnostic_from_review, rework_transition_expected,
@@ -1391,7 +1391,7 @@ fn review_fake(
     };
     let backend = FakeReviewBackend::new(outcome);
     let job = backend.poll(backend.start(request)?)?;
-    apply_review_result(&config, adapter.as_ref(), &issue_ref, &issue, &job)?;
+    apply_review_result(&config, adapter.as_ref(), &issue_ref, &issue, &job, None)?;
 
     let decision = review_gate_decision(&job);
     println!(
@@ -1447,7 +1447,7 @@ fn review_once(
             backend.poll(backend.start(request)?)?
         }
     };
-    apply_review_result(&config, adapter.as_ref(), &issue_ref, &issue, &job)?;
+    apply_review_result(&config, adapter.as_ref(), &issue_ref, &issue, &job, None)?;
 
     let decision = review_gate_decision(&job);
     println!(
@@ -2177,8 +2177,12 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
             continue;
         }
 
-        let mut pending_review_jobs: Vec<(usize, TrackerIssue, thread::JoinHandle<ReviewJob>)> =
-            Vec::new();
+        let mut pending_review_jobs: Vec<(
+            usize,
+            TrackerIssue,
+            LaneClaim,
+            thread::JoinHandle<ReviewJob>,
+        )> = Vec::new();
 
         for (slot, selected_issue) in selected.into_iter().enumerate() {
             let worker_slot = slot + 1;
@@ -2256,7 +2260,6 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                                 &latest,
                                 &worker_key,
                             )?;
-                            let _claim = claim;
                             let workflow_for_job = workflow.clone();
                             let config_for_job = config.clone();
                             let issue_for_job = latest.clone();
@@ -2284,7 +2287,7 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                                     )
                                 })
                             });
-                            pending_review_jobs.push((worker_slot, latest, handle));
+                            pending_review_jobs.push((worker_slot, latest, claim, handle));
                         }
                         ReviewRunEligibility::AlreadyQueued { worker_key } => {
                             println!(
@@ -2341,7 +2344,7 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
             }
         }
 
-        for (worker_slot, latest, handle) in pending_review_jobs {
+        for (worker_slot, latest, claim, handle) in pending_review_jobs {
             let mut job = match handle.join() {
                 Ok(job) => job,
                 Err(_) => ReviewJob::failed_unavailable(
@@ -2353,7 +2356,14 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
             let ledger_path =
                 write_review_job_ledger_record(&config.observability.logs_root, &latest, &job)?;
             job.ledger_path = Some(ledger_path.clone());
-            apply_review_result(&config, adapter.as_ref(), &latest.identifier, &latest, &job)?;
+            apply_review_result(
+                &config,
+                adapter.as_ref(),
+                &latest.identifier,
+                &latest,
+                &job,
+                Some(&claim),
+            )?;
             let decision = review_gate_decision(&job);
             println!(
                 "review_loop_action=reconciled issue={} worker_slot={} backend={} outcome={:?} target_state={:?} ledger={}",
@@ -3460,8 +3470,19 @@ fn apply_review_result(
     issue_ref: &str,
     issue: &TrackerIssue,
     job: &jade_symphony::review::ReviewJob,
+    claim: Option<&LaneClaim>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let decision = review_gate_decision(job);
+    if let Some(value) = terminal_review_loop_claim_value(claim, job, &decision) {
+        write_terminal_review_claim(
+            config,
+            adapter,
+            issue_ref,
+            &issue.state,
+            &value,
+            "review loop terminal claim evidence",
+        )?;
+    }
     if let Some(target_state) = decision.target_state {
         if !transition_allowed_for_review_agent(target_state, &decision) {
             return Err("review agent transition is not allowed for this review decision".into());
@@ -3490,9 +3511,6 @@ fn apply_review_result(
             reason: "review result workpad evidence",
         },
     );
-    if review_claim_should_be_released(job, decision.target_state) {
-        clear_review_claim_field(config, adapter, issue_ref, job)?;
-    }
     if let Some(target_state) = decision.target_state {
         adapter.set_state(issue_ref, target_state)?;
         append_tracker_mutation_audit(
@@ -3511,37 +3529,29 @@ fn apply_review_result(
     Ok(())
 }
 
-fn review_claim_should_be_released(
+fn terminal_review_loop_claim_value(
+    claim: Option<&LaneClaim>,
     job: &jade_symphony::review::ReviewJob,
-    target_state: Option<&str>,
-) -> bool {
-    matches!(
-        job.state,
-        ReviewJobState::Failed | ReviewJobState::TimedOut | ReviewJobState::Cancelled
-    ) && target_state == Some("agent_review")
-}
-
-fn clear_review_claim_field(
-    config: &RuntimeConfig,
-    adapter: &dyn TrackerAdapter,
-    issue_ref: &str,
-    job: &jade_symphony::review::ReviewJob,
-) -> Result<(), Box<dyn std::error::Error>> {
-    adapter.clear_project_field(issue_ref, "Review Agent")?;
-    append_tracker_mutation_audit(
-        config,
-        TrackerMutationAudit {
-            command: "review-loop",
-            mutation_type: "claim_field_clear",
-            issue_ref: Some(issue_ref),
-            target: Some("Review Agent".into()),
-            from_state: Some(format!("{:?}", job.state)),
-            to_state: None,
-            reason: "terminal review backend result",
+    decision: &ReviewGateDecision,
+) -> Option<String> {
+    let claim = claim?;
+    let (state, result) = match decision.outcome {
+        ReviewOutcome::PassedToHumanReview => (LaneClaimState::Done, "passed"),
+        ReviewOutcome::NeedsRework => (LaneClaimState::Done, "rejected"),
+        ReviewOutcome::InconclusiveNeedsRework => (LaneClaimState::Failed, "inconclusive"),
+        ReviewOutcome::NeedsHumanInput => (LaneClaimState::Failed, "blocked"),
+        ReviewOutcome::Cancelled => (LaneClaimState::Failed, "cancelled"),
+        ReviewOutcome::StillRunning => match job.state {
+            ReviewJobState::Failed | ReviewJobState::TimedOut => {
+                (LaneClaimState::Failed, "unavailable")
+            }
+            ReviewJobState::Cancelled => (LaneClaimState::Failed, "cancelled"),
+            ReviewJobState::Queued | ReviewJobState::Running | ReviewJobState::Completed => {
+                return None;
+            }
         },
-    );
-    println!("review_loop_action=clear_claim_field issue={issue_ref} field=\"Review Agent\"");
-    Ok(())
+    };
+    Some(terminal_review_claim_value(claim, state, result))
 }
 
 fn transition_issue_to_rework_with_diagnostic(
@@ -7839,7 +7849,11 @@ fn lane_claim_for_issue(
 ) -> LaneClaim {
     existing
         .and_then(|value| LaneClaim::parse(value).ok())
-        .filter(|claim| claim.lane == lane && claim.issue == issue.identifier)
+        .filter(|claim| {
+            claim.lane == lane
+                && claim.issue == issue.identifier
+                && claim.state == LaneClaimState::Active
+        })
         .unwrap_or_else(|| {
             LaneClaim::active(&issue.identifier, lane, actor, source, current_time_ms())
         })
@@ -12397,6 +12411,65 @@ mod tests {
 
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].identifier, "#68");
+    }
+
+    #[test]
+    fn review_claim_for_issue_replaces_terminal_review_claim() {
+        let mut issue = review_issue_with_ref("#67", "Retry review");
+        let terminal_claim = LaneClaim::active(
+            "#67",
+            LaneClaimLane::Review,
+            LaneClaimActor::Gemini,
+            LaneClaimSource::Loop,
+            42,
+        )
+        .with_worker("review:#67:gemini-cli")
+        .with_state(LaneClaimState::Failed);
+        issue.project_fields.insert(
+            "Review Agent".into(),
+            serde_json::Value::String(format!("{} result=inconclusive", terminal_claim.render())),
+        );
+
+        let claim = review_claim_for_issue(&issue, "review:#67:gemini-cli");
+
+        assert_eq!(claim.state, LaneClaimState::Active);
+        assert_ne!(claim.run, terminal_claim.run);
+    }
+
+    #[test]
+    fn review_loop_terminal_claim_records_pass_result() {
+        let claim = LaneClaim::active(
+            "#67",
+            LaneClaimLane::Review,
+            LaneClaimActor::Gemini,
+            LaneClaimSource::Loop,
+            42,
+        )
+        .with_worker("review:#67:gemini-cli");
+        let decision = ReviewGateDecision {
+            outcome: ReviewOutcome::PassedToHumanReview,
+            target_state: Some("human_review"),
+            message: "passed".into(),
+        };
+        let job = ReviewJob {
+            id: "job".into(),
+            issue_ref: "#67".into(),
+            backend: "gemini-cli".into(),
+            state: ReviewJobState::Completed,
+            artifact_path: None,
+            ledger_path: None,
+            report: None,
+            error: None,
+        };
+
+        let value = terminal_review_loop_claim_value(Some(&claim), &job, &decision).unwrap();
+
+        assert!(value.contains("state=done"));
+        assert!(value.contains("result=passed"));
+        assert_eq!(
+            LaneClaim::parse(&value).unwrap(),
+            claim.with_state(LaneClaimState::Done)
+        );
     }
 
     #[test]

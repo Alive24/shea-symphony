@@ -1385,11 +1385,7 @@ fn review_fake(
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
     let request = ReviewRequest {
         issue: issue.clone(),
-        prompt: render_prompt(
-            workflow.prompt_for_lane(AgentLane::ReviewAgent),
-            &issue,
-            None,
-        )?,
+        prompt: render_automatic_review_prompt(&workflow, &issue)?,
         workspace: config.workspace.root.clone(),
         artifact_root: config.observability.logs_root.join("reviews"),
     };
@@ -1421,11 +1417,7 @@ fn review_once(
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
     let request = ReviewRequest {
         issue: issue.clone(),
-        prompt: render_prompt(
-            workflow.prompt_for_lane(AgentLane::ReviewAgent),
-            &issue,
-            None,
-        )?,
+        prompt: render_automatic_review_prompt(&workflow, &issue)?,
         workspace: config.workspace.root.clone(),
         artifact_root: config.observability.logs_root.join("reviews"),
     };
@@ -2798,11 +2790,7 @@ fn run_review_job(
 ) -> Result<ReviewJob, Box<dyn std::error::Error>> {
     let request = ReviewRequest {
         issue: issue.clone(),
-        prompt: render_prompt(
-            workflow.prompt_for_lane(AgentLane::ReviewAgent),
-            issue,
-            None,
-        )?,
+        prompt: render_automatic_review_prompt(workflow, issue)?,
         workspace: review_workspace_for_issue(config, issue),
         artifact_root: config.observability.logs_root.join("reviews"),
     };
@@ -2850,6 +2838,32 @@ fn review_workspace_for_issue(config: &RuntimeConfig, issue: &TrackerIssue) -> P
     run_loop_handoff_plan(config, issue)
         .map(|handoff| handoff.workspace_path)
         .unwrap_or_else(|_| config.workspace.root.clone())
+}
+
+fn render_automatic_review_prompt(
+    workflow: &WorkflowDefinition,
+    issue: &TrackerIssue,
+) -> Result<String, jade_symphony::prompt::PromptError> {
+    let mut prompt = render_prompt(
+        workflow.prompt_for_lane(AgentLane::ReviewAgent),
+        issue,
+        None,
+    )?;
+    prompt.push_str(
+        "\n\n## Automatic Headless Review Boundary\n\n\
+This Gemini process is running under Jade Symphony automatic `review loop` or `review once`.\n\
+Jade Symphony CLI has already claimed or will own any Review Agent claim, workpad write,\n\
+issue body update, and Project state transition outside this process.\n\n\
+Do not run mutating Jade Symphony or GitHub commands, including `review claim`, `review pass`,\n\
+`review reject`, `set-state`, `workpad`, `forge`, `gh issue edit`, `gh issue comment`, raw\n\
+Project GraphQL mutations, or Project UI changes. Do not activate or follow any manual review\n\
+skill that tells you to mutate Project state.\n\n\
+Return review evidence in stdout only. Use finding lines with `[Confirmed]`, `[Plausible]`,\n\
+`[Rejected]`, or `[Needs Context]` when there are findings. If there are no blocking findings,\n\
+say that the automatic review passed and summarize the evidence. Leave routing and evidence\n\
+persistence to the Jade Symphony wrapper after this process exits.\n",
+    );
+    Ok(prompt)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -11942,6 +11956,28 @@ mod tests {
             options.fake_outcome,
             Some(FakeReviewOutcome::ConfirmedFinding)
         );
+    }
+
+    #[test]
+    fn automatic_review_prompt_forbids_project_mutations() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\n---\nReview {{ issue.identifier }}",
+        )
+        .unwrap();
+        let prompt = render_automatic_review_prompt(
+            &workflow,
+            &review_issue_with_ref("#282", "Headless review"),
+        )
+        .unwrap();
+
+        assert!(prompt.contains("Review #282"));
+        assert!(prompt.contains("Automatic Headless Review Boundary"));
+        assert!(prompt.contains("Do not run mutating Jade Symphony or GitHub commands"));
+        assert!(prompt.contains("`review claim`, `review pass`"));
+        assert!(prompt.contains("`gh issue edit`, `gh issue comment`"));
+        assert!(prompt.contains("Return review evidence in stdout only"));
+        assert!(prompt.contains("Leave routing and evidence"));
     }
 
     #[test]

@@ -97,6 +97,18 @@ A subissue may move to `Done` after all of these are true:
 Subissue `Done` means the slice has landed in the parent branch. It does not mean
 the parent work is approved for `main`.
 
+## Parent Execution Gate
+
+Parent issues with native GitHub subissues are not ordinary executable `Todo` or
+`Rework` items. The Main queue, `main loop`, and manual `main claim` path must
+skip or reject the parent until every native subissue has Project status `Done`.
+
+GitHub native sub-issue links define the subissue set dynamically. If a new
+native subissue is added, the parent becomes blocked again until that new
+subissue is also `Done`. GitHub issue `closed` state is useful context but is
+not enough for this gate; Jade Symphony checks Project status so the operator
+lane evidence and merge semantics stay aligned.
+
 ## Parent Human Review Gate
 
 The parent issue remains the final Human Review unit.

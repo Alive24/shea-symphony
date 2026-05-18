@@ -70,7 +70,7 @@ evidence and runs `gh pr ready`; `doctor --auto-fix` never marks PRs ready.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `main once` | Execute one selected issue through the configured backend. | Fixture-safe by default when the workflow has `tracker.fixture_path`. |
-| `main loop` | Poll/select/claim/run/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; tmux sessions stay active instead of auto-handing off; Agent Review handoff requires a verified Project-visible, ready, non-draft PR; native subissue PRs target the parent integration branch when topology evidence is present. |
+| `main loop` | Poll/select/claim/run/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; tmux sessions stay active instead of auto-handing off; Agent Review handoff requires a verified Project-visible, ready, non-draft PR; native subissue PRs target the parent integration branch when topology evidence is present; parent issues with native subissues are skipped until every native subissue has Project status `Done`. |
 
 Examples:
 
@@ -113,6 +113,12 @@ cargo run -- main claim workflows/jade-symphony.md '#265' --worker codex-manual-
 cargo run -- review claim workflows/jade-symphony.md '#265' --worker gemini-manual-review --write
 cargo run -- merge claim workflows/jade-symphony.md '#265' --worker codex-manual-merge --write
 ```
+
+For parent tracking issues with native GitHub subissues, `main claim` uses the
+same execution gate as `main loop`: it rejects `Todo` or `Rework` parents while
+any native subissue is missing from the Project read or has a non-`Done` Project
+status. This is independent from tracker blocker relationships so native
+subissue changes cannot silently bypass parent dispatch safety.
 
 Live write-mode claim, session, and lane loop commands refuse to run unless the
 canonical checkout is attached to `main` and exactly matches `origin/main` after

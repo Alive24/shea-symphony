@@ -368,6 +368,7 @@ impl GithubProjectV2Adapter {
 
     fn load_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError> {
         let mut issues = apply_github_read_filters(self.load_mapped_issues()?, &self.config);
+        self.enrich_native_subissue_project_statuses(&mut issues)?;
         self.enrich_native_issue_blockers_for_claimable_issues(&mut issues)?;
         Ok(issues)
     }
@@ -398,6 +399,28 @@ impl GithubProjectV2Adapter {
         {
             client.enrich_native_issue_blockers(std::slice::from_mut(issue))?;
         }
+
+        Ok(())
+    }
+
+    fn enrich_native_subissue_project_statuses(
+        &self,
+        issues: &mut [TrackerIssue],
+    ) -> Result<(), TrackerError> {
+        if !self.fixture_issues.is_empty() || self.config.tracker.fixture_path.is_some() {
+            enrich_native_subissue_project_statuses_from_project_read(issues);
+            return Ok(());
+        }
+
+        enrich_native_subissue_project_statuses_from_project_read(issues);
+        let client = GithubProjectV2GhClient::new(&self.config);
+        for issue in issues
+            .iter_mut()
+            .filter(|issue| github_issue_needs_native_subissue_prefetch(issue, &self.config))
+        {
+            client.enrich_native_subissues(std::slice::from_mut(issue))?;
+        }
+        enrich_native_subissue_project_statuses_from_project_read(issues);
 
         Ok(())
     }
@@ -453,6 +476,30 @@ fn github_issue_needs_native_blocker_prefetch(
         || state == tracker_state_key(&config.tracker.state_map.rework)
 }
 
+fn github_issue_needs_native_subissue_prefetch(
+    issue: &TrackerIssue,
+    config: &RuntimeConfig,
+) -> bool {
+    if has_native_subissue_fields(issue) {
+        return false;
+    }
+    let state = tracker_state_key(&issue.state);
+    let main_lane_state = state == tracker_state_key(&config.tracker.state_map.todo)
+        || state == tracker_state_key(&config.tracker.state_map.rework)
+        || state == tracker_state_key(&config.tracker.state_map.in_progress);
+    main_lane_state
+        && issue
+            .description
+            .as_deref()
+            .map(|description| description.to_ascii_lowercase().contains("subissue"))
+            .unwrap_or(false)
+}
+
+fn has_native_subissue_fields(issue: &TrackerIssue) -> bool {
+    issue.project_fields.contains_key("GitHub Native Subissues")
+        || issue.project_fields.contains_key("Native Subissues")
+}
+
 fn status_is_mapped(status: &str, config: &RuntimeConfig) -> bool {
     mapped_status_names(config)
         .iter()
@@ -485,14 +532,18 @@ impl TrackerAdapter for GithubProjectV2Adapter {
     }
 
     fn get_issue(&self, issue_ref: &str) -> Result<Option<TrackerIssue>, TrackerError> {
-        let mut issue = self
-            .load_mapped_issues()?
+        let mut issues = self.load_mapped_issues()?;
+        enrich_native_subissue_project_statuses_from_project_read(&mut issues);
+        let project_states = project_state_map(&issues);
+        let mut issue = issues
             .into_iter()
             .find(|issue| issue.id == issue_ref || issue.identifier == issue_ref)
             .map(|mut issue| {
                 if self.fixture_issues.is_empty() && self.config.tracker.fixture_path.is_none() {
-                    GithubProjectV2GhClient::new(&self.config)
-                        .enrich_native_issue_blockers(std::slice::from_mut(&mut issue))?;
+                    let client = GithubProjectV2GhClient::new(&self.config);
+                    client.enrich_native_subissues(std::slice::from_mut(&mut issue))?;
+                    enrich_native_subissue_project_statuses_for_issue(&mut issue, &project_states);
+                    client.enrich_native_issue_blockers(std::slice::from_mut(&mut issue))?;
                 }
                 Ok(issue)
             })
@@ -502,8 +553,9 @@ impl TrackerAdapter for GithubProjectV2Adapter {
     }
 
     fn fetch_issues_by_states(&self, states: &[String]) -> Result<Vec<TrackerIssue>, TrackerError> {
-        let mut issues =
-            MemoryTracker::new(self.load_mapped_issues()?).fetch_issues_by_states(states)?;
+        let mut mapped_issues = self.load_mapped_issues()?;
+        self.enrich_native_subissue_project_statuses(&mut mapped_issues)?;
+        let mut issues = MemoryTracker::new(mapped_issues).fetch_issues_by_states(states)?;
         self.enrich_native_issue_blockers_for_claimable_issues(&mut issues)?;
         Ok(issues)
     }
@@ -737,6 +789,24 @@ impl GithubProjectV2GhClient {
         Ok(())
     }
 
+    fn enrich_native_subissues(&self, issues: &mut [TrackerIssue]) -> Result<(), TrackerError> {
+        for issue in issues {
+            let Some(number) = github_issue_number(&issue.identifier) else {
+                continue;
+            };
+            let native_subissues = self.fetch_native_subissues(number)?;
+            if !native_subissues.is_empty() {
+                insert_native_subissue_status_fields(
+                    &mut issue.project_fields,
+                    native_subissues,
+                    &BTreeMap::new(),
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     fn fetch_native_issue_blockers(
         &self,
         issue_number: u64,
@@ -759,6 +829,30 @@ impl GithubProjectV2GhClient {
         ])?;
 
         github_native_blocker_refs_from_response(&response, issue_number)
+    }
+
+    fn fetch_native_subissues(
+        &self,
+        issue_number: u64,
+    ) -> Result<Vec<NativeSubissueRef>, TrackerError> {
+        let owner = self
+            .config
+            .tracker
+            .owner
+            .as_deref()
+            .ok_or_else(|| TrackerError::Payload("tracker.owner is required".into()))?;
+        let repo = self
+            .config
+            .tracker
+            .repo
+            .as_deref()
+            .ok_or_else(|| TrackerError::Payload("tracker.repo is required".into()))?;
+        let response = run_gh_api_json(vec![
+            "api".into(),
+            format!("repos/{owner}/{repo}/issues/{issue_number}/sub_issues"),
+        ])?;
+
+        native_subissue_refs_from_rest_response(&response)
     }
 
     fn set_state(&self, issue_ref: &str, normalized_state: &str) -> Result<(), TrackerError> {
@@ -1614,6 +1708,7 @@ query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
                 }}
               }}
               parent {{
+                id
                 number
                 title
                 state
@@ -1621,6 +1716,7 @@ query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
               }}
               subIssues(first: 50) {{
                 nodes {{
+                  id
                   number
                   title
                   state
@@ -1636,18 +1732,6 @@ query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
                   isDraft
                   baseRefName
                   headRefName
-                }}
-              }}
-              parent {{
-                id
-                number
-                state
-              }}
-              subIssues(first: 20) {{
-                nodes {{
-                  id
-                  number
-                  state
                 }}
               }}
               comments(last: 50) {{
@@ -2305,6 +2389,57 @@ fn native_issue_refs(nodes: Option<&serde_json::Value>) -> Vec<serde_json::Value
         .collect()
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NativeSubissueRef {
+    id: Option<String>,
+    identifier: String,
+    title: Option<String>,
+    github_state: Option<String>,
+    url: Option<String>,
+    project_state: Option<String>,
+}
+
+fn native_subissue_refs_from_rest_response(
+    response: &serde_json::Value,
+) -> Result<Vec<NativeSubissueRef>, TrackerError> {
+    let nodes = response.as_array().ok_or_else(|| {
+        TrackerError::Payload("GitHub native subissues response was not an array".into())
+    })?;
+
+    Ok(nodes
+        .iter()
+        .filter_map(|node| {
+            let number = node.get("number").and_then(serde_json::Value::as_u64)?;
+            Some(NativeSubissueRef {
+                id: node
+                    .get("node_id")
+                    .or_else(|| node.get("id"))
+                    .and_then(|value| {
+                        value
+                            .as_str()
+                            .map(str::to_string)
+                            .or_else(|| value.as_u64().map(|number| number.to_string()))
+                    }),
+                identifier: format!("#{number}"),
+                title: node
+                    .get("title")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
+                github_state: node
+                    .get("state")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
+                url: node
+                    .get("html_url")
+                    .or_else(|| node.get("url"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
+                project_state: None,
+            })
+        })
+        .collect())
+}
+
 fn insert_native_subissue_fields(
     project_fields: &mut BTreeMap<String, serde_json::Value>,
     content: &serde_json::Value,
@@ -2314,10 +2449,30 @@ fn insert_native_subissue_fields(
     }
     let native_subissues = native_issue_refs(content.pointer("/subIssues/nodes"));
     if !native_subissues.is_empty() {
-        project_fields.insert(
-            "GitHub Native Subissues".into(),
-            serde_json::Value::Array(native_subissues),
-        );
+        let native_subissues = native_subissues
+            .into_iter()
+            .filter_map(|value| {
+                let identifier = value
+                    .get("identifier")
+                    .and_then(serde_json::Value::as_str)?
+                    .to_string();
+                Some(NativeSubissueRef {
+                    id: value
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                    identifier,
+                    title: None,
+                    github_state: value
+                        .get("state")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                    url: None,
+                    project_state: None,
+                })
+            })
+            .collect();
+        insert_native_subissue_status_fields(project_fields, native_subissues, &BTreeMap::new());
     }
 
     if let Some(parent) = content.get("parent").filter(|parent| !parent.is_null()) {
@@ -2362,17 +2517,7 @@ fn insert_native_subissue_fields(
         })
         .collect::<Vec<_>>();
 
-    if !subissues.is_empty() {
-        project_fields.insert(
-            "Native Subissues".into(),
-            serde_json::Value::String(
-                subissues
-                    .iter()
-                    .map(|(issue, _)| issue.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            ),
-        );
+    if !subissues.is_empty() && !project_fields.contains_key("Native Subissues") {
         project_fields.insert(
             "Native Subissue States".into(),
             serde_json::Value::String(
@@ -2384,6 +2529,219 @@ fn insert_native_subissue_fields(
             ),
         );
     }
+}
+
+fn enrich_native_subissue_project_statuses_from_project_read(issues: &mut [TrackerIssue]) {
+    let project_states = project_state_map(issues);
+
+    for issue in issues {
+        enrich_native_subissue_project_statuses_for_issue(issue, &project_states);
+    }
+}
+
+fn project_state_map(issues: &[TrackerIssue]) -> BTreeMap<String, String> {
+    issues
+        .iter()
+        .map(|issue| (issue.identifier.clone(), issue.state.clone()))
+        .collect()
+}
+
+fn enrich_native_subissue_project_statuses_for_issue(
+    issue: &mut TrackerIssue,
+    project_states: &BTreeMap<String, String>,
+) {
+    let mut native_subissues = native_subissues_from_project_fields(issue);
+    if native_subissues.is_empty() {
+        return;
+    }
+    for subissue in &mut native_subissues {
+        if subissue.project_state.is_none() {
+            subissue.project_state = project_states.get(&subissue.identifier).cloned();
+        }
+    }
+    insert_native_subissue_status_fields(
+        &mut issue.project_fields,
+        native_subissues,
+        project_states,
+    );
+}
+
+fn native_subissues_from_project_fields(issue: &TrackerIssue) -> Vec<NativeSubissueRef> {
+    let mut subissues = Vec::new();
+    if let Some(values) = issue
+        .project_fields
+        .get("GitHub Native Subissues")
+        .and_then(serde_json::Value::as_array)
+    {
+        for value in values {
+            if let Some(identifier) = issue_ref_from_value(value) {
+                push_native_subissue_ref(
+                    &mut subissues,
+                    NativeSubissueRef {
+                        id: value
+                            .get("id")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_string),
+                        identifier,
+                        title: value
+                            .get("title")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_string),
+                        github_state: value
+                            .get("state")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_string),
+                        url: value
+                            .get("url")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_string),
+                        project_state: value
+                            .get("project_state")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_string),
+                    },
+                );
+            }
+        }
+    }
+    if let Some(subissues_text) = issue
+        .project_fields
+        .get("Native Subissues")
+        .and_then(serde_json::Value::as_str)
+    {
+        for identifier in subissues_text
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            push_native_subissue_ref(
+                &mut subissues,
+                NativeSubissueRef {
+                    id: None,
+                    identifier: identifier.to_string(),
+                    title: None,
+                    github_state: None,
+                    url: None,
+                    project_state: None,
+                },
+            );
+        }
+    }
+
+    subissues
+}
+
+fn issue_ref_from_value(value: &serde_json::Value) -> Option<String> {
+    value
+        .get("identifier")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .or_else(|| value.as_str().map(str::to_string))
+        .or_else(|| {
+            value
+                .get("number")
+                .and_then(serde_json::Value::as_u64)
+                .map(|number| format!("#{number}"))
+        })
+}
+
+fn insert_native_subissue_status_fields(
+    project_fields: &mut BTreeMap<String, serde_json::Value>,
+    native_subissues: Vec<NativeSubissueRef>,
+    project_states: &BTreeMap<String, String>,
+) {
+    if native_subissues.is_empty() {
+        return;
+    }
+
+    let mut normalized = Vec::new();
+    for mut subissue in native_subissues {
+        if subissue.project_state.is_none() {
+            subissue.project_state = project_states.get(&subissue.identifier).cloned();
+        }
+        push_native_subissue_ref(&mut normalized, subissue);
+    }
+
+    project_fields.insert(
+        "GitHub Native Subissues".into(),
+        serde_json::Value::Array(
+            normalized
+                .iter()
+                .map(|subissue| {
+                    serde_json::json!({
+                        "id": subissue.id,
+                        "identifier": subissue.identifier,
+                        "title": subissue.title,
+                        "state": subissue.github_state,
+                        "url": subissue.url,
+                        "project_state": subissue.project_state,
+                    })
+                })
+                .collect(),
+        ),
+    );
+    project_fields.insert(
+        "Native Subissues".into(),
+        serde_json::Value::String(
+            normalized
+                .iter()
+                .map(|subissue| subissue.identifier.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
+    );
+    project_fields.insert(
+        "Native Subissue Project States".into(),
+        serde_json::Value::String(
+            normalized
+                .iter()
+                .map(|subissue| {
+                    format!(
+                        "{}={}",
+                        subissue.identifier,
+                        subissue.project_state.as_deref().unwrap_or("missing")
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
+    );
+}
+
+fn push_native_subissue_ref(
+    subissues: &mut Vec<NativeSubissueRef>,
+    mut candidate: NativeSubissueRef,
+) {
+    if let Some(existing) = subissues
+        .iter_mut()
+        .find(|subissue| issue_refs_match(&subissue.identifier, &candidate.identifier))
+    {
+        if existing.id.is_none() {
+            existing.id = candidate.id.take();
+        }
+        if existing.title.is_none() {
+            existing.title = candidate.title.take();
+        }
+        if existing.github_state.is_none() {
+            existing.github_state = candidate.github_state.take();
+        }
+        if existing.url.is_none() {
+            existing.url = candidate.url.take();
+        }
+        if existing.project_state.is_none() {
+            existing.project_state = candidate.project_state.take();
+        }
+        return;
+    }
+    subissues.push(candidate);
+}
+
+fn issue_refs_match(left: &str, right: &str) -> bool {
+    normalize_issue_ref(left) == normalize_issue_ref(right)
+}
+
+fn normalize_issue_ref(value: &str) -> String {
+    value.trim().trim_start_matches('#').to_string()
 }
 
 fn github_issue_description_with_workpad(
@@ -3650,6 +4008,41 @@ mod tests {
         let found = tracker.fetch_issues_by_states(&["todo".into()]).unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].state, "Todo");
+    }
+
+    #[test]
+    fn enriches_native_subissues_with_project_statuses_from_project_read() {
+        let mut parent = issue("Todo");
+        parent.identifier = "#243".into();
+        parent.project_fields.insert(
+            "GitHub Native Subissues".into(),
+            serde_json::json!([
+                {"identifier": "#272", "state": "closed"},
+                {"identifier": "#273", "state": "open"}
+            ]),
+        );
+        let mut done = issue("Done");
+        done.identifier = "#272".into();
+        let mut active = issue("Agent Review");
+        active.identifier = "#273".into();
+        let mut issues = vec![parent, done, active];
+
+        enrich_native_subissue_project_statuses_from_project_read(&mut issues);
+
+        assert_eq!(
+            issues[0]
+                .project_fields
+                .get("Native Subissue Project States")
+                .and_then(serde_json::Value::as_str),
+            Some("#272=Done, #273=Agent Review")
+        );
+        let native = issues[0]
+            .project_fields
+            .get("GitHub Native Subissues")
+            .and_then(serde_json::Value::as_array)
+            .unwrap();
+        assert_eq!(native[0]["project_state"], "Done");
+        assert_eq!(native[1]["project_state"], "Agent Review");
     }
 
     #[test]

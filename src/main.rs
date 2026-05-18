@@ -54,8 +54,8 @@ use jade_symphony::merge_lane::{
     merge_lane_workpad, merge_pull_request, pull_request_status_from_linked, MergeLaneDecisionKind,
 };
 use jade_symphony::model::{
-    normalize_state, GateDecision, GateDecisionKind, LatestStatus, SessionStatusSnapshot,
-    TrackerIssue,
+    native_subissue_gate_blocker, normalize_state, GateDecision, GateDecisionKind, LatestStatus,
+    SessionStatusSnapshot, TrackerIssue,
 };
 use jade_symphony::observability_api::serve_once;
 use jade_symphony::orchestrator::Orchestrator;
@@ -1919,7 +1919,7 @@ fn lane_claim_command(
     let issue = adapter
         .get_issue(&issue_ref)?
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
-    validate_lane_claim_state(&issue, lane)?;
+    validate_lane_claim_state(&issue, lane, &config)?;
 
     let existing_value = project_text_field(&issue, lane.claim_field());
     let claim = lane_claim_for_manual_worker(
@@ -1980,6 +1980,7 @@ fn lane_claim_command(
 fn validate_lane_claim_state(
     issue: &TrackerIssue,
     lane: AgentSessionLaneArg,
+    config: &RuntimeConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let normalized = issue.normalized_state();
     let valid = match lane {
@@ -1990,6 +1991,17 @@ fn validate_lane_claim_state(
         AgentSessionLaneArg::Merge => normalized == "merging",
     };
     if valid {
+        if matches!(lane, AgentSessionLaneArg::Main) {
+            let terminal_states = config.terminal_state_set().into_iter().collect();
+            if let Some(reason) = native_subissue_gate_blocker(issue, &terminal_states) {
+                return Err(format!(
+                    "{} claim cannot claim {}; {reason}",
+                    lane.label(),
+                    issue.identifier
+                )
+                .into());
+            }
+        }
         return Ok(());
     }
 
@@ -4339,6 +4351,8 @@ fn project_inspect(
         .list_linked_pull_requests(&issue.identifier)
         .unwrap_or_else(|_| issue.linked_pull_requests.clone());
     let gate = evaluate_issue_for_current_source(&config, &issue)?;
+    let terminal_states = config.terminal_state_set().into_iter().collect();
+    let native_subissue_blocker = native_subissue_gate_blocker(&issue, &terminal_states);
 
     println!("project_inspect=ok");
     println!("read_only=true");
@@ -4349,7 +4363,13 @@ fn project_inspect(
         println!("lane={}", lane.label());
     }
     println!("gate={:?}", gate.kind);
-    println!("dispatchable={}", gate.is_dispatchable());
+    println!(
+        "dispatchable={}",
+        gate.is_dispatchable() && native_subissue_blocker.is_none()
+    );
+    if let Some(reason) = &native_subissue_blocker {
+        println!("native_subissue_gate={reason}");
+    }
     if !gate.missing.is_empty() {
         println!("missing={}", gate.missing.join(", "));
     }
@@ -7731,6 +7751,7 @@ enum PoolClaimEligibility {
     OwnedBySelf,
     ClaimedByOther { owner: String },
     WrongLaneState { state: String },
+    ParentNativeSubissuesIncomplete { reason: String },
 }
 
 impl PoolClaimEligibility {
@@ -7743,6 +7764,7 @@ impl PoolClaimEligibility {
             Self::Claimable | Self::OwnedBySelf => "claimable".into(),
             Self::ClaimedByOther { owner } => format!("claimed_by_other:{owner}"),
             Self::WrongLaneState { state } => format!("wrong_lane_state:{state}"),
+            Self::ParentNativeSubissuesIncomplete { reason } => reason.clone(),
         }
     }
 }
@@ -7786,6 +7808,12 @@ fn pool_claim_eligibility(
         return PoolClaimEligibility::WrongLaneState {
             state: issue.state.clone(),
         };
+    }
+    if lane == WorkerLane::Main {
+        let terminal_states = config.terminal_state_set().into_iter().collect();
+        if let Some(reason) = native_subissue_gate_blocker(issue, &terminal_states) {
+            return PoolClaimEligibility::ParentNativeSubissuesIncomplete { reason };
+        }
     }
 
     match project_text_field(issue, lane.claim_field()) {
@@ -14586,9 +14614,30 @@ mod tests {
 
     #[test]
     fn manual_main_claim_accepts_rework() {
+        let config = test_config();
         let issue = tracker_issue("Rework");
 
-        validate_lane_claim_state(&issue, AgentSessionLaneArg::Main).unwrap();
+        validate_lane_claim_state(&issue, AgentSessionLaneArg::Main, &config).unwrap();
+    }
+
+    #[test]
+    fn manual_main_claim_rejects_parent_with_incomplete_native_subissues() {
+        let config = test_config();
+        let mut issue = tracker_issue("Todo");
+        issue.project_fields.insert(
+            "GitHub Native Subissues".into(),
+            serde_json::json!([
+                {"identifier": "#272", "project_state": "Done"},
+                {"identifier": "#273", "project_state": "Agent Review"}
+            ]),
+        );
+
+        let error = validate_lane_claim_state(&issue, AgentSessionLaneArg::Main, &config)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("blocked by incomplete native subissues"));
+        assert!(error.contains("#273=Agent Review"));
     }
 
     #[test]

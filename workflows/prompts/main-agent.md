@@ -90,8 +90,9 @@ question, but do not edit files under
 
 ## State And Role Boundaries
 
-- `Todo` and `Rework` are claimable only after the quality gate passes and all
-  tracker-level blockers are terminal.
+- `Todo` and `Rework` are claimable only after the quality gate passes, all
+  tracker-level blockers are terminal, and any native GitHub subissues under a
+  parent issue have Project status `Done`.
 - `In Progress` means the main implementation agent is actively working or
   safely resuming the issue.
 - `Need to Clarify` is for an issue contract that cannot be executed.

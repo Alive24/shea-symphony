@@ -87,8 +87,12 @@ gh issue view 258 --repo Alive24/jade-symphony
 gh pr view 123 --repo Alive24/jade-symphony --json number,isDraft,url,state
 ```
 
-Do not use raw Project reads for status, claim locks, dependency relationships,
-or linked PR state in normal Doctor flow.
+Use those raw reads only as diagnostic content fallbacks when the CLI lacks the
+needed issue or PR content surface, and record the CLI gap when the result
+changes the repair recommendation. Do not use raw Project reads for status,
+claim locks, dependency relationships, workpads, or linked PR state in normal
+Doctor flow. See `docs/github-access-policy.md` for the current inventory and
+fallback classification.
 
 ## Classification
 

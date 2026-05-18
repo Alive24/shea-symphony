@@ -128,9 +128,11 @@ pub enum ProjectStateFailureKind {
     Auth,
     Network,
     RateLimit,
+    ResourceLimit,
     Schema,
     PartialResponse,
     Payload,
+    MissingCapability,
     Unknown,
 }
 
@@ -140,9 +142,11 @@ impl ProjectStateFailureKind {
             Self::Auth => "auth",
             Self::Network => "network",
             Self::RateLimit => "rate_limit",
+            Self::ResourceLimit => "resource_limit",
             Self::Schema => "schema",
             Self::PartialResponse => "partial_response",
             Self::Payload => "payload",
+            Self::MissingCapability => "missing_capability",
             Self::Unknown => "unknown",
         }
     }
@@ -155,7 +159,7 @@ pub fn classify_project_state_error(error: &TrackerError) -> ProjectStateFailure
         TrackerError::IntegrationUnavailable(message) => {
             classify_project_state_failure_message(message)
         }
-        TrackerError::NotImplemented(_) => ProjectStateFailureKind::Unknown,
+        TrackerError::NotImplemented(_) => ProjectStateFailureKind::MissingCapability,
     }
 }
 
@@ -167,6 +171,15 @@ pub fn classify_project_state_failure_message(message: &str) -> ProjectStateFail
         || normalized.contains("http 429")
     {
         ProjectStateFailureKind::RateLimit
+    } else if normalized.contains("resource limit")
+        || normalized.contains("resource limitation")
+        || normalized.contains("maximum node limit")
+        || normalized.contains("max node limit")
+        || normalized.contains("exceeds maximum")
+        || normalized.contains("query has complexity")
+        || normalized.contains("query is too complex")
+    {
+        ProjectStateFailureKind::ResourceLimit
     } else if normalized.contains("authentication")
         || normalized.contains("authenticate")
         || normalized.contains("auth login")
@@ -203,6 +216,12 @@ pub fn classify_project_state_failure_message(message: &str) -> ProjectStateFail
         || normalized.contains("invalid github api json")
     {
         ProjectStateFailureKind::Payload
+    } else if normalized.contains("does not support")
+        || normalized.contains("not implemented")
+        || normalized.contains("missing cli capability")
+        || normalized.contains("cli gap")
+    {
+        ProjectStateFailureKind::MissingCapability
     } else {
         ProjectStateFailureKind::Unknown
     }
@@ -972,23 +991,18 @@ impl GithubProjectV2GhClient {
             .ok_or_else(|| TrackerError::Payload("tracker.repo is required".into()))?;
 
         for assignee in assignees {
-            let output = Command::new("gh")
-                .args([
-                    "issue",
-                    "edit",
-                    &number.to_string(),
-                    "--repo",
-                    &format!("{owner}/{repo}"),
-                    "--add-assignee",
-                    assignee,
-                ])
-                .output()
-                .map_err(|error| TrackerError::IntegrationUnavailable(error.to_string()))?;
-            if !output.status.success() {
-                return Err(TrackerError::IntegrationUnavailable(
-                    String::from_utf8_lossy(&output.stderr).trim().to_string(),
-                ));
-            }
+            GithubCliAccess::run_status(
+                vec![
+                    "issue".into(),
+                    "edit".into(),
+                    number.to_string(),
+                    "--repo".into(),
+                    format!("{owner}/{repo}"),
+                    "--add-assignee".into(),
+                    assignee.clone(),
+                ],
+                "GitHub issue assignment",
+            )?;
         }
 
         Ok(())
@@ -1030,26 +1044,22 @@ impl GithubProjectV2GhClient {
             std::env::temp_dir().join(format!("jade-symphony-issue-body-{number}-{nonce}.md"));
         fs::write(&body_path, body)
             .map_err(|error| TrackerError::IntegrationUnavailable(error.to_string()))?;
-        let output = Command::new("gh")
-            .args([
-                "issue",
-                "edit",
-                &number.to_string(),
-                "--repo",
-                &format!("{owner}/{repo}"),
-                "--title",
-                title,
-                "--body-file",
-            ])
-            .arg(&body_path)
-            .output()
-            .map_err(|error| TrackerError::IntegrationUnavailable(error.to_string()))?;
+        let result = GithubCliAccess::run_status(
+            vec![
+                "issue".into(),
+                "edit".into(),
+                number.to_string(),
+                "--repo".into(),
+                format!("{owner}/{repo}"),
+                "--title".into(),
+                title.to_string(),
+                "--body-file".into(),
+                body_path.to_string_lossy().to_string(),
+            ],
+            "GitHub issue edit",
+        );
         let _ = fs::remove_file(&body_path);
-        if !output.status.success() {
-            return Err(TrackerError::IntegrationUnavailable(
-                String::from_utf8_lossy(&output.stderr).trim().to_string(),
-            ));
-        }
+        result?;
 
         Ok(())
     }
@@ -1248,10 +1258,8 @@ impl GithubProjectV2GhClient {
         issue_id: &str,
         marker: &str,
     ) -> Result<Vec<(String, String)>, TrackerError> {
-        let response = self.graphql(
-            GITHUB_ISSUE_COMMENTS_QUERY,
-            &[("issueId", issue_id.to_string())],
-        )?;
+        let query = github_issue_comments_query();
+        let response = self.graphql(&query, &[("issueId", issue_id.to_string())])?;
         Ok(response
             .pointer("/data/node/comments/nodes")
             .and_then(serde_json::Value::as_array)
@@ -1468,6 +1476,118 @@ fn gh_available() -> bool {
         .unwrap_or(false)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GithubCliApi {
+    Graphql,
+    RestJson,
+}
+
+impl GithubCliApi {
+    fn operation_label(self) -> &'static str {
+        match self {
+            Self::Graphql => "GitHub GraphQL operation",
+            Self::RestJson => "GitHub REST operation",
+        }
+    }
+
+    fn invalid_json_label(self) -> &'static str {
+        match self {
+            Self::Graphql => "invalid GitHub GraphQL JSON",
+            Self::RestJson => "invalid GitHub API JSON",
+        }
+    }
+
+    fn validate_response(self, response: &serde_json::Value) -> Result<(), TrackerError> {
+        if self == Self::Graphql {
+            if let Some(message) = graphql_error_message(response) {
+                return Err(TrackerError::IntegrationUnavailable(message));
+            }
+        }
+        Ok(())
+    }
+}
+
+struct GithubCliAccess;
+
+impl GithubCliAccess {
+    const MAX_ATTEMPTS: usize = 3;
+
+    fn run_json(api: GithubCliApi, args: Vec<String>) -> Result<serde_json::Value, TrackerError> {
+        let mut last_error = None;
+
+        for attempt in 1..=Self::MAX_ATTEMPTS {
+            match Self::run_json_once(api, &args) {
+                Ok(response) => return Ok(response),
+                Err(error) if project_state_error_is_retryable(&error) => {
+                    last_error = Some(error);
+                    if attempt < Self::MAX_ATTEMPTS {
+                        thread::sleep(project_state_retry_delay(attempt));
+                    } else {
+                        break;
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        let error = last_error.unwrap_or_else(|| {
+            TrackerError::IntegrationUnavailable(format!("{} failed", api.operation_label()))
+        });
+        let kind = classify_project_state_error(&error);
+        Err(TrackerError::IntegrationUnavailable(format!(
+            "{} failed after {} attempts kind={}: {error}",
+            api.operation_label(),
+            Self::MAX_ATTEMPTS,
+            kind.as_str()
+        )))
+    }
+
+    fn run_status(args: Vec<String>, operation: &str) -> Result<(), TrackerError> {
+        let output = Command::new("gh")
+            .args(args)
+            .output()
+            .map_err(|error| TrackerError::IntegrationUnavailable(error.to_string()))?;
+
+        if !output.status.success() {
+            let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let kind = classify_project_state_failure_message(&message);
+            return Err(TrackerError::IntegrationUnavailable(format!(
+                "{operation} failed kind={}: {message}",
+                kind.as_str()
+            )));
+        }
+
+        Ok(())
+    }
+
+    fn run_json_once(
+        api: GithubCliApi,
+        args: &[String],
+    ) -> Result<serde_json::Value, TrackerError> {
+        let output = Command::new("gh")
+            .args(args)
+            .output()
+            .map_err(|error| TrackerError::IntegrationUnavailable(error.to_string()))?;
+
+        if !output.status.success() {
+            let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let kind = classify_project_state_failure_message(&message);
+            return Err(TrackerError::IntegrationUnavailable(format!(
+                "{} failed kind={}: {message}",
+                api.operation_label(),
+                kind.as_str()
+            )));
+        }
+
+        let response: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|error| {
+                TrackerError::Payload(format!("{}: {error}", api.invalid_json_label()))
+            })?;
+        api.validate_response(&response)?;
+        Ok(response)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum GithubAuthMode {
     Fixture,
@@ -1535,99 +1655,11 @@ fn github_auth_gap(mode: GithubAuthMode) -> Option<String> {
 }
 
 fn run_gh_graphql(args: Vec<String>) -> Result<serde_json::Value, TrackerError> {
-    const MAX_ATTEMPTS: usize = 3;
-    let mut last_error = None;
-
-    for attempt in 1..=MAX_ATTEMPTS {
-        match run_gh_graphql_once(&args) {
-            Ok(response) => return Ok(response),
-            Err(error) if project_state_error_is_retryable(&error) => {
-                last_error = Some(error);
-                if attempt < MAX_ATTEMPTS {
-                    thread::sleep(project_state_retry_delay(attempt));
-                } else {
-                    break;
-                }
-            }
-            Err(error) => return Err(error),
-        }
-    }
-
-    let error = last_error.unwrap_or_else(|| {
-        TrackerError::IntegrationUnavailable("GitHub GraphQL operation failed".into())
-    });
-    let kind = classify_project_state_error(&error);
-    Err(TrackerError::IntegrationUnavailable(format!(
-        "GitHub GraphQL operation failed after {MAX_ATTEMPTS} attempts kind={}: {error}",
-        kind.as_str()
-    )))
-}
-
-fn run_gh_graphql_once(args: &[String]) -> Result<serde_json::Value, TrackerError> {
-    let output = Command::new("gh")
-        .args(args)
-        .output()
-        .map_err(|error| TrackerError::IntegrationUnavailable(error.to_string()))?;
-
-    if !output.status.success() {
-        return Err(TrackerError::IntegrationUnavailable(
-            String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        ));
-    }
-
-    let response: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| TrackerError::Payload(format!("invalid gh GraphQL JSON: {error}")))?;
-
-    if let Some(message) = graphql_error_message(&response) {
-        return Err(TrackerError::IntegrationUnavailable(message));
-    }
-
-    Ok(response)
+    GithubCliAccess::run_json(GithubCliApi::Graphql, args)
 }
 
 fn run_gh_api_json(args: Vec<String>) -> Result<serde_json::Value, TrackerError> {
-    const MAX_ATTEMPTS: usize = 3;
-    let mut last_error = None;
-
-    for attempt in 1..=MAX_ATTEMPTS {
-        match run_gh_api_json_once(&args) {
-            Ok(response) => return Ok(response),
-            Err(error) if project_state_error_is_retryable(&error) => {
-                last_error = Some(error);
-                if attempt < MAX_ATTEMPTS {
-                    thread::sleep(project_state_retry_delay(attempt));
-                } else {
-                    break;
-                }
-            }
-            Err(error) => return Err(error),
-        }
-    }
-
-    let error = last_error.unwrap_or_else(|| {
-        TrackerError::IntegrationUnavailable("GitHub API operation failed".into())
-    });
-    let kind = classify_project_state_error(&error);
-    Err(TrackerError::IntegrationUnavailable(format!(
-        "GitHub API operation failed after {MAX_ATTEMPTS} attempts kind={}: {error}",
-        kind.as_str()
-    )))
-}
-
-fn run_gh_api_json_once(args: &[String]) -> Result<serde_json::Value, TrackerError> {
-    let output = Command::new("gh")
-        .args(args)
-        .output()
-        .map_err(|error| TrackerError::IntegrationUnavailable(error.to_string()))?;
-
-    if !output.status.success() {
-        return Err(TrackerError::IntegrationUnavailable(
-            String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        ));
-    }
-
-    serde_json::from_slice(&output.stdout)
-        .map_err(|error| TrackerError::Payload(format!("invalid gh API JSON: {error}")))
+    GithubCliAccess::run_json(GithubCliApi::RestJson, args)
 }
 
 fn project_state_error_is_retryable(error: &TrackerError) -> bool {
@@ -1645,20 +1677,30 @@ fn project_state_retry_delay(attempt: usize) -> Duration {
     })
 }
 
+const GITHUB_PROJECT_ITEM_PAGE_SIZE: usize = 25;
+const GITHUB_PROJECT_FIELD_VALUE_PAGE_SIZE: usize = 30;
+const GITHUB_PROJECT_LABEL_PAGE_SIZE: usize = 25;
+const GITHUB_PROJECT_ASSIGNEE_PAGE_SIZE: usize = 10;
+const GITHUB_PROJECT_SUBISSUE_PAGE_SIZE: usize = 50;
+const GITHUB_PROJECT_LINKED_PR_PAGE_SIZE: usize = 10;
+const GITHUB_PROJECT_COMMENT_PAGE_SIZE: usize = 20;
+const GITHUB_PROJECT_METADATA_FIELD_PAGE_SIZE: usize = 50;
+const GITHUB_WORKPAD_COMMENT_PAGE_SIZE: usize = 50;
+
 fn github_project_query(owner_field: &str) -> String {
     format!(
         r#"
 query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
   {owner_field}(login: $owner) {{
     projectV2(number: $number) {{
-      items(first: 50, after: $cursor) {{
+      items(first: {GITHUB_PROJECT_ITEM_PAGE_SIZE}, after: $cursor) {{
         pageInfo {{
           hasNextPage
           endCursor
         }}
         nodes {{
           id
-          fieldValues(first: 50) {{
+          fieldValues(first: {GITHUB_PROJECT_FIELD_VALUE_PAGE_SIZE}) {{
             nodes {{
               ... on ProjectV2ItemFieldSingleSelectValue {{
                 name
@@ -1697,12 +1739,12 @@ query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
               state
               createdAt
               updatedAt
-              labels(first: 50) {{
+              labels(first: {GITHUB_PROJECT_LABEL_PAGE_SIZE}) {{
                 nodes {{
                   name
                 }}
               }}
-              assignees(first: 20) {{
+              assignees(first: {GITHUB_PROJECT_ASSIGNEE_PAGE_SIZE}) {{
                 nodes {{
                   login
                 }}
@@ -1714,7 +1756,7 @@ query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
                 state
                 url
               }}
-              subIssues(first: 50) {{
+              subIssues(first: {GITHUB_PROJECT_SUBISSUE_PAGE_SIZE}) {{
                 nodes {{
                   id
                   number
@@ -1723,7 +1765,7 @@ query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
                   url
                 }}
               }}
-              closedByPullRequestsReferences(first: 10) {{
+              closedByPullRequestsReferences(first: {GITHUB_PROJECT_LINKED_PR_PAGE_SIZE}) {{
                 nodes {{
                   id
                   number
@@ -1734,7 +1776,7 @@ query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
                   headRefName
                 }}
               }}
-              comments(last: 50) {{
+              comments(first: {GITHUB_PROJECT_COMMENT_PAGE_SIZE}) {{
                 nodes {{
                   body
                 }}
@@ -1757,7 +1799,7 @@ query JadeSymphonyProjectMetadata($owner: String!, $number: Int!) {{
   {owner_field}(login: $owner) {{
     projectV2(number: $number) {{
       id
-      fields(first: 100) {{
+      fields(first: {GITHUB_PROJECT_METADATA_FIELD_PAGE_SIZE}) {{
         nodes {{
           ... on ProjectV2FieldCommon {{
             id
@@ -1825,20 +1867,24 @@ mutation JadeSymphonyClearProjectField($projectId: ID!, $itemId: ID!, $fieldId: 
 }
 "#;
 
-const GITHUB_ISSUE_COMMENTS_QUERY: &str = r#"
-query JadeSymphonyIssueComments($issueId: ID!) {
-  node(id: $issueId) {
-    ... on Issue {
-      comments(first: 100) {
-        nodes {
+fn github_issue_comments_query() -> String {
+    format!(
+        r#"
+query JadeSymphonyIssueComments($issueId: ID!) {{
+  node(id: $issueId) {{
+    ... on Issue {{
+      comments(first: {GITHUB_WORKPAD_COMMENT_PAGE_SIZE}) {{
+        nodes {{
           id
           body
-        }
-      }
-    }
-  }
+        }}
+      }}
+    }}
+  }}
+}}
+"#
+    )
 }
-"#;
 
 const GITHUB_UPDATE_ISSUE_COMMENT_MUTATION: &str = r#"
 mutation JadeSymphonyUpdateIssueComment($commentId: ID!, $body: String!) {
@@ -4907,6 +4953,10 @@ Prompt
             ProjectStateFailureKind::RateLimit
         );
         assert_eq!(
+            classify_project_state_failure_message("GraphQL resource limit exceeded"),
+            ProjectStateFailureKind::ResourceLimit
+        );
+        assert_eq!(
             classify_project_state_failure_message("could not resolve host api.github.com"),
             ProjectStateFailureKind::Network
         );
@@ -4921,6 +4971,12 @@ Prompt
                 "partial ProjectV2 response missing status field \"Status\" for issue #7".into()
             )),
             ProjectStateFailureKind::PartialResponse
+        );
+        assert_eq!(
+            classify_project_state_error(&TrackerError::NotImplemented(
+                "missing CLI capability for raw issue content reads".into()
+            )),
+            ProjectStateFailureKind::MissingCapability
         );
     }
 

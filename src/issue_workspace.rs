@@ -682,6 +682,34 @@ mod tests {
     }
 
     #[test]
+    fn workspace_discovery_tolerates_unrelated_unknown_persisted_status() {
+        let mut unrelated = session("/tmp/issue-999");
+        unrelated.issue_id = Some("I_999".into());
+        unrelated.issue_identifier = Some("#999".into());
+        unrelated.status = SessionStatus::UnknownPersisted("recorded_legacy".into());
+        let report = discover_issue_workspaces_from_parts(
+            &issue(),
+            &[unrelated, session("/tmp/issue-253")],
+            &[GitWorktree {
+                path: PathBuf::from("/tmp/issue-253"),
+                head: Some("def".into()),
+                branch: Some("feature/issue-253-worktree-discovery".into()),
+                prunable: None,
+            }],
+            "<!-- jade-symphony-workpad -->",
+        );
+
+        assert!(report
+            .candidates
+            .iter()
+            .any(|candidate| candidate.path == Path::new("/tmp/issue-253")));
+        assert!(!report
+            .candidates
+            .iter()
+            .any(|candidate| candidate.path == Path::new("/tmp/issue-999")));
+    }
+
+    #[test]
     fn validates_adoption_against_repo_worktree_and_issue_branch() {
         let candidate = validate_workspace_adoption(
             &issue(),

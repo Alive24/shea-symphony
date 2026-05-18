@@ -166,32 +166,26 @@ impl LaneClaim {
     pub fn render(&self) -> String {
         let mut tokens = vec![
             "v=1".to_string(),
-            format!("lane={}", self.lane.as_str()),
-            format!("actor={}", self.actor.as_str()),
+            claim_token("lane", self.lane.as_str()),
+            claim_token("actor", self.actor.as_str()),
         ];
         if let Some(worker) = self.worker.as_deref() {
-            tokens.push(format!("worker={worker}"));
+            tokens.push(claim_token("worker", worker));
         }
         tokens.extend([
-            format!("source={}", self.source.as_str()),
-            format!("issue={}", self.issue),
-            format!("run={}", self.run),
-            format!("state={}", self.state.as_str()),
-            format!("thread={}", self.thread),
-            format!("registry={}", self.registry),
+            claim_token("source", self.source.as_str()),
+            claim_token("issue", &self.issue),
+            claim_token("run", &self.run),
+            claim_token("state", self.state.as_str()),
+            claim_token("thread", &self.thread),
+            claim_token("registry", &self.registry),
         ]);
         tokens.join(" ")
     }
 
     pub fn parse(input: &str) -> Result<Self, LaneClaimParseError> {
         let mut values = BTreeMap::new();
-        for token in input.split_whitespace() {
-            let Some((key, value)) = token.split_once('=') else {
-                return Err(LaneClaimParseError::InvalidToken(token.into()));
-            };
-            if key.is_empty() || value.is_empty() {
-                return Err(LaneClaimParseError::InvalidToken(token.into()));
-            }
+        for (key, value) in parse_claim_tokens(input)? {
             values.insert(key, value);
         }
 
@@ -215,13 +209,162 @@ impl LaneClaim {
 }
 
 fn required<'a>(
-    values: &'a BTreeMap<&str, &str>,
+    values: &'a BTreeMap<String, String>,
     key: &'static str,
 ) -> Result<&'a str, LaneClaimParseError> {
     values
         .get(key)
-        .copied()
+        .map(String::as_str)
         .ok_or(LaneClaimParseError::MissingKey(key))
+}
+
+fn claim_token(key: &str, value: &str) -> String {
+    format!("{key}={}", render_claim_value(value))
+}
+
+fn render_claim_value(value: &str) -> String {
+    if value.is_empty()
+        || value
+            .chars()
+            .any(|character| character.is_whitespace() || matches!(character, '"' | '\\'))
+    {
+        let mut rendered = String::with_capacity(value.len() + 2);
+        rendered.push('"');
+        for character in value.chars() {
+            match character {
+                '\\' => rendered.push_str("\\\\"),
+                '"' => rendered.push_str("\\\""),
+                '\n' => rendered.push_str("\\n"),
+                '\r' => rendered.push_str("\\r"),
+                '\t' => rendered.push_str("\\t"),
+                other => rendered.push(other),
+            }
+        }
+        rendered.push('"');
+        rendered
+    } else {
+        value.to_string()
+    }
+}
+
+fn parse_claim_tokens(input: &str) -> Result<Vec<(String, String)>, LaneClaimParseError> {
+    let mut tokens = Vec::new();
+    let mut chars = input.char_indices().peekable();
+
+    while let Some((_, character)) = chars.peek().copied() {
+        if character.is_whitespace() {
+            chars.next();
+            continue;
+        }
+
+        let token_start = chars.peek().map(|(index, _)| *index).unwrap_or(input.len());
+        let mut key = String::new();
+        while let Some((_, character)) = chars.peek().copied() {
+            if character == '=' {
+                chars.next();
+                break;
+            }
+            if character.is_whitespace() {
+                return Err(invalid_token_from(input, token_start, chars.peek()));
+            }
+            key.push(character);
+            chars.next();
+        }
+
+        if key.is_empty() {
+            return Err(invalid_token_from(input, token_start, chars.peek()));
+        }
+
+        let Some((_, next)) = chars.peek().copied() else {
+            return Err(LaneClaimParseError::InvalidToken(key));
+        };
+
+        let value = if next == '"' {
+            chars.next();
+            parse_quoted_claim_value(input, token_start, &mut chars)?
+        } else {
+            parse_unquoted_claim_value(&mut chars)
+        };
+
+        if value.is_empty() {
+            return Err(LaneClaimParseError::InvalidToken(format!("{key}=")));
+        }
+
+        tokens.push((key, value));
+    }
+
+    Ok(tokens)
+}
+
+fn parse_quoted_claim_value(
+    input: &str,
+    token_start: usize,
+    chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>,
+) -> Result<String, LaneClaimParseError> {
+    let mut value = String::new();
+    let mut closed = false;
+
+    while let Some((_, character)) = chars.next() {
+        match character {
+            '"' => {
+                closed = true;
+                break;
+            }
+            '\\' => {
+                let Some((_, escaped)) = chars.next() else {
+                    return Err(invalid_token_slice(input, token_start, input.len()));
+                };
+                match escaped {
+                    'n' => value.push('\n'),
+                    'r' => value.push('\r'),
+                    't' => value.push('\t'),
+                    '"' => value.push('"'),
+                    '\\' => value.push('\\'),
+                    other => value.push(other),
+                }
+            }
+            other => value.push(other),
+        }
+    }
+
+    if !closed {
+        return Err(invalid_token_slice(input, token_start, input.len()));
+    }
+
+    if let Some((_, character)) = chars.peek().copied() {
+        if !character.is_whitespace() {
+            return Err(invalid_token_from(input, token_start, chars.peek()));
+        }
+    }
+
+    Ok(value)
+}
+
+fn parse_unquoted_claim_value(
+    chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>,
+) -> String {
+    let mut value = String::new();
+    while let Some((_, character)) = chars.peek().copied() {
+        if character.is_whitespace() {
+            break;
+        }
+        value.push(character);
+        chars.next();
+    }
+    value
+}
+
+fn invalid_token_from(
+    input: &str,
+    token_start: usize,
+    cursor: Option<&(usize, char)>,
+) -> LaneClaimParseError {
+    let token_end = cursor.map(|(index, _)| *index).unwrap_or(input.len());
+    invalid_token_slice(input, token_start, token_end)
+}
+
+fn invalid_token_slice(input: &str, token_start: usize, token_end: usize) -> LaneClaimParseError {
+    LaneClaimParseError::InvalidToken(input[token_start..token_end].into())
 }
 
 fn parse_lane(value: &str) -> Result<LaneClaimLane, LaneClaimParseError> {
@@ -338,6 +481,61 @@ mod tests {
         let rendered = claim.render();
         assert!(rendered.contains(" worker=codex-manual-main "));
         assert_eq!(LaneClaim::parse(&rendered).unwrap(), claim);
+    }
+
+    #[test]
+    fn renders_and_parses_quoted_worker_display_label() {
+        let claim = LaneClaim::active(
+            "#297",
+            LaneClaimLane::Main,
+            LaneClaimActor::Codex,
+            LaneClaimSource::Manual,
+            1_778_904_900_123,
+        )
+        .with_worker("Codex Manual Main");
+
+        let rendered = claim.render();
+
+        assert!(rendered.contains(" worker=\"Codex Manual Main\" "));
+        assert_eq!(LaneClaim::parse(&rendered).unwrap(), claim);
+    }
+
+    #[test]
+    fn renders_and_parses_escaped_worker_display_label() {
+        let claim = LaneClaim::active(
+            "#297",
+            LaneClaimLane::Review,
+            LaneClaimActor::Gemini,
+            LaneClaimSource::Manual,
+            1_778_904_900_123,
+        )
+        .with_worker("Manual \"Gemini\" Review\\A");
+
+        let rendered = claim.render();
+
+        assert!(rendered.contains(" worker=\"Manual \\\"Gemini\\\" Review\\\\A\" "));
+        assert_eq!(LaneClaim::parse(&rendered).unwrap(), claim);
+    }
+
+    #[test]
+    fn parses_existing_unquoted_claim_values() {
+        let claim = LaneClaim::parse(
+            "v=1 lane=main actor=codex worker=codex-manual-main source=manual issue=#297 run=20260518T0640Z-issue297-main-73cb state=active thread=unknown registry=run/20260518T0640Z-issue297-main-73cb",
+        )
+        .unwrap();
+
+        assert_eq!(claim.worker.as_deref(), Some("codex-manual-main"));
+        assert_eq!(claim.issue, "#297");
+    }
+
+    #[test]
+    fn rejects_unclosed_quoted_claim_value() {
+        let error = LaneClaim::parse(
+            "v=1 lane=main actor=codex worker=\"Codex Manual Main source=manual issue=#297 run=run state=active thread=unknown registry=run/run",
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, LaneClaimParseError::InvalidToken(_)));
     }
 
     #[test]

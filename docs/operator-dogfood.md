@@ -113,6 +113,10 @@ and log tails, and reports a conservative session classification such as
 `failed`, `completed`, `stale`, or `unknown`. The status surface includes only
 compact evidence snippets plus attach/log locations; attach manually when raw
 scrollback is needed.
+Persisted session registry statuses that are not recognized by the current
+binary are read as `unknown` without rewriting or dropping the record. Status
+and doctor diagnostics preserve the raw drifted value so operators can inspect
+the evidence without running a repair or migration first.
 `doctor` reads the same registry and reports stale, orphaned, or attention
 requiring sessions next to tracker/runtime findings. `clean audit` treats the
 session registry, rendered prompts, and tmux logs as recovery evidence, and only
@@ -158,7 +162,10 @@ printed `run=` without pretending a tmux pane exists. Then start the runtime
 with `session start WORKFLOW '#issue' --lane review --run <RUN_ID> --write`.
 Session startup validates the existing Review Agent claim and writes attach/log
 evidence without moving the issue to `Human Review`; this tmux path is an
-explicit manual fallback, not the automatic review-loop default.
+explicit manual fallback, not the automatic review-loop default. The worker
+value may be a display label such as `Manual Gemini Review`; use the claim
+command so Jade Symphony can quote, escape, and validate the stored pointer
+before Project mutation.
 
 If Gemini cannot start, the review workpad should name the configured command,
 whether worker `PATH` could resolve it, the required operator action, and the
@@ -211,15 +218,15 @@ the target set explicit. Use `--yes` only after the printed target paths are
 known and intentional.
 
 The packaged skills preserve the same lane boundaries as the Jade Symphony CLI:
-Issue Forge and Reflect handle conversation, draft shaping, and promotion
-discussion, including Human Review -> Rework revision discussion; the CLI owns
-`forge create`, `forge promote`, `forge rework`, and `forge validate`. Manual
-Main stops at `Agent Review`; Manual Review owns evidence-backed review
-routing; Human Review briefs the operator for UAT and final acceptance but waits
-for explicit confirmation before any state change; Manual Merge owns approved
-merge-lane work. `doctor` reports read-only local install-health warnings and
-points operators back to the #242 install/update path rather than repairing
-skill files itself.
+Issue Forge, Reflect, and Dream handle conversation, draft shaping, backlog
+mining, and promotion discussion, including Human Review -> Rework revision
+discussion; the CLI owns `forge create`, `forge promote`, `forge rework`, and
+`forge validate`. Manual Main stops at `Agent Review`; Manual Review owns
+evidence-backed review routing; Human Review briefs the operator for UAT and
+final acceptance but waits for explicit confirmation before any state change;
+Manual Merge owns approved merge-lane work. `doctor` reports read-only local
+install-health warnings and points operators back to the #242 install/update
+path rather than repairing skill files itself.
 
 ## Inspect And Resume
 
@@ -238,8 +245,8 @@ healthy read prints `project_state_access=ok`, `trusted=true`, the issue count,
 and a state summary, plus a read-only `canonical_checkout` cleanliness line for
 the launch checkout. A failed read prints `project_state_access=blocked`,
 `trusted=false`, and a `failure_kind` such as `auth`, `network`, `rate_limit`,
-`schema`, `partial_response`, or `payload`; treat that as a blocker, not as an
-empty queue.
+`resource_limit`, `schema`, `partial_response`, `payload`, or
+`missing_capability`; treat that as a blocker, not as an empty queue.
 
 The canonical checkout is only the harness launch directory. Do not use it as a
 Main, Review, or Merge issue worktree, and do not leave runtime state, logs,
@@ -252,9 +259,12 @@ the operator moves them to an issue worktree or artifact location.
 Use `project issue` for per-issue Project status, Project fields, blocker
 relationships, claim locks, and linked PRs. Raw `gh issue view` and `gh pr view`
 remain acceptable for ordinary issue/PR body text, comments, and diff context,
-but normal dogfood should not read or mutate Project fields, status, claim locks,
-or relationships through raw Project GraphQL or the Project UI. Those are
-break-glass recovery paths.
+when the CLI does not expose the needed content read; record that as a CLI gap
+when it affects a workflow decision. Normal dogfood should not read or mutate
+Project fields, status, claim locks, relationships, workpads, or linked-PR
+handoff state through raw Project GraphQL or the Project UI. Those are
+break-glass recovery paths. The current inventory and classification live in
+`docs/github-access-policy.md`.
 
 For parent tracking issues with native GitHub subissues, use
 `docs/parent-subissue-topology.md` as the design source. Native sub-issue links
@@ -303,15 +313,43 @@ it validates the source issue is `Human Review`, rejects active lane claims,
 records a diagnostic workpad if they are present, preserves terminal lane claims
 as audit pointers, replaces the issue content, writes Rework revision evidence
 to the workpad, and sets `Rework` as the final mutation. Do not use raw Project
-mutation, `set-state`, or `forge promote` for this normal path. Missing linked
-PRs or missing local worktrees are downstream Main Agent recovery work after the
-issue is in `Rework`.
+mutation, `project set-state`, or `forge promote` for this normal path. Missing
+linked PRs or missing local worktrees are downstream Main Agent recovery work
+after the issue is in `Rework`.
+
+When the operator wants to preflight a candidate body for an existing issue
+without running the promotion command, use `forge validate --issue '#123'
+--status Todo --title "<candidate title>" --body-file <path>`. That mode is
+read-only: it validates the candidate title/body while reusing live assignee and
+Project context from the issue, and reports candidate contract gaps separately
+from live-context gaps.
 
 Use `debug` when you need one read-only operator report before a supervised
 dogfood, repair, review, or merge session. It summarizes the current Project
 queue, doctor health, smoke readiness, runtime/session state, cleanup/audit
 status, and lane-specific next commands without claiming work, starting workers,
 repairing state, cleaning artifacts, or implying unattended readiness.
+
+## Issue Forge Dream
+
+Issue Forge Dream is the slow backlog-mining companion to Reflect. Use Dream
+when the operator wants to sleep on broader Jade Symphony history: recent
+Project state, run logs, workpads, Doctor findings, repo-owned skills, memory
+summaries, bootstrap docs, and recent docs/code drift.
+
+Dream creates enriched `Backlog` seeds by default unless the operator requests
+report-only mode. It never creates `Todo` issues directly. Dream Logs live under
+`docs/dream-log/YYYY-MM-DD-<run-count>-<slug>/`, with
+`docs/dream-log/INDEX.md` as the compact global entrypoint. A normal Dream run
+reads the index plus the most recent five Dream runs, writes bounded `RUN.md`
+and `topic-*.md` evidence, records lightweight Gemini review status, and reports
+whether it slept enough plus the next useful Dream theme.
+
+Dream Logs are advisory. Dream, Reflect, and Issue Forge may read them actively;
+Main reads only Dream Logs explicitly referenced by an issue contract; Review
+reads them only when the PR or issue body involves Dream-derived context; Merge
+usually ignores them; Doctor may use them only as advisory context, not
+workflow invariants.
 
 Use the repo-owned Doctor skill at
 `.codex/skills/jade-symphony-doctor/SKILL.md` when an operator-selected issue or
@@ -402,7 +440,9 @@ worker=<worker> source=<loop|manual|goal> issue=#N run=<id>
 state=<active|done|stale|failed|superseded> thread=<codex-link|unknown>
 registry=run/<id>`. Keep full paths and terminal logs in the session registry
 or workpad, and update terminal completed work to `state=done` instead of
-clearing useful claim evidence by default.
+clearing useful claim evidence by default. Display labels with spaces are stored
+with reversible quoting, for example `worker="Codex Manual Main"`; raw Project
+field edits are a break-glass repair path, not normal claim ownership.
 For supervised merge terminals, use `merge claim WORKFLOW '#issue' --worker
 <worker> --write` on a `Merging` issue; the claim records truthful non-tmux
 manual evidence for the `run=`. Then use `session start WORKFLOW '#issue'

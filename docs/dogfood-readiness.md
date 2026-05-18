@@ -18,7 +18,7 @@ Jade Symphony is not ready for unattended live GitHub Project v2 execution yet.
 | Linear tracker | Implemented behind the same trait for fixture-backed planning plus live GraphQL reads, state updates, marker workpad comments, follow-up issue creation, and project assignment. Credential-gated smoke coverage is still missing. |
 | Issue Quality Gate | Implemented as a Markdown contract check plus deterministic source-alignment preflight where workflow/repo context is available. It verifies the template `UAT Required` field, relationship-first dependency semantics, target repository, referenced local paths, and supported verification command shapes. Structured `blocked_by` tracker relationships are authoritative for dispatch blocking; missing Markdown dependency boilerplate no longer blocks otherwise independent work, while body-only blocker claims still require clarification or a structured relationship. Optional local command-backed LLM gate mode exists as disabled/advisory/required; richer semantic validation and hosted providers are still follow-ups. |
 | Issue Forge | The Jade Symphony CLI exposes a compact `forge` command group: `forge validate`, `forge create`, `forge promote`, and `forge rework`. Conversation, reflection, promotion, and Human Review -> Rework revision discussion are owned by Codex skills. `forge create --status Backlog` uses a lighter Backlog seed gate, `forge create --status Todo` uses the full Issue Quality Gate, creation always adds the issue to the configured Project with the requested initial status, and live `Todo` creation requires `--assignee` before adding executable Project items. `forge promote` updates an existing Backlog issue in place with explicit dry-run and failure-checkpoint reporting, owns the structured Promotion Note comment requirement, accepts optional operator readback summaries, and keeps the Backlog-to-Todo status mutation as the final write. `forge rework` revises live `Human Review` issues into `Rework` with prepared body/evidence inputs, active-claim fail-closed diagnostic workpads, terminal claim preservation, workpad evidence before status mutation, and no PR/worktree requirement. Text/number/date field setup is not implemented yet. |
-| Local skill suite | Repo-owned Jade Symphony skills live under `skills/jade-symphony/` with dated release metadata and an interactive installer for Codex and Gemini local skill roots. The suite packages Issue Forge, Issue Forge Reflect, Manual Main, Manual Review, Manual Merge, and a Doctor/Fix stub while preserving CLI authority, lane boundaries, issue checklist rules, workpad expectations, and status-transition ordering. `doctor` now reports read-only local install-health warnings for Codex and Gemini skill roots, while install/update writes remain owned by the #242 suite installer path. |
+| Local skill suite | Repo-owned Jade Symphony skills live under `skills/jade-symphony/` with dated release metadata and an interactive installer for Codex and Gemini local skill roots. The suite packages Issue Forge, Issue Forge Reflect, Issue Forge Dream, Manual Main, Manual Review, Human Review, Manual Merge, and a Doctor/Fix stub while preserving CLI authority, lane boundaries, issue checklist rules, workpad expectations, and status-transition ordering. Dream adds slow advisory backlog mining with bounded `docs/dream-log/` evidence and default Backlog seed creation; it never creates Todo issues directly. `doctor` now reports read-only local install-health warnings for Codex and Gemini skill roots, while install/update writes remain owned by the #242 suite installer path. |
 | Orchestrator | Deterministic dispatch planning and a CLI `main loop` skeleton with bounded modes, idle polling, claim-helper use, dependency preflight for `Todo` / `Rework`, parent execution gating that skips or rejects native parent issues until every native subissue has Project status `Done`, runtime-state persistence, tracker-visible advisory ownership markers, resume preflight, retry backoff records, stall detection, live PR handoff plus tracker PR link recording in non-fixture GitHub mode, ready/non-draft PR enforcement before Agent Review handoff, parent/subissue branch target selection for native subissues and parent final PRs, guarded `merge once` and bounded `merge loop` lanes for `Merging` issues, first-slice `--pool` selection guarded by `Main Agent` / `Merging Agent` Project fields, read-only `debug` readiness reporting, and a bounded operator launcher script exist. No long-running worker supervision, automated stall restart, full multi-worker runtime resume reconciliation, unbounded merge idle polling, or full state reconciliation yet. |
 | Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, grouped read-only `clean plan` / `clean audit` cleanup and persistence classification, guarded terminal cleanup planning, repository-local git identity application, workspace/branch/PR handoff planning with explicit branch target evidence, live git worktree/branch creation, issue-level `workspace list` / `workspace show` / `workspace adopt` discovery across registry, workpad, PR, and local git worktree evidence, reuse-first `workspace ensure` preparation for Review/Merge inspection under the configured workspace root with durable Workspace Evidence, dirty/no-op guards before branch push, optional configured verification commands before PR handoff, branch push, PR create-or-reuse, tracker PR link recording, main loop handoff evidence, profile-scoped workspace keys, parsed-but-unused SSH worker host config, a namespaced artifact layout, and dry-run cleanup planning exist. Automatic runtime cleanup, write-mode artifact cleanup, and live SSH execution are not wired yet. |
 | Execution profiles | First-slice profile discovery exists. Workflow config can point to a cockpit-tools Codex `codex_instances.json` file, and Jade Symphony treats each instance `name` as a profile/worker identity while ignoring account binding fields. If the cockpit-tools file is missing, explicit `profiles.entries` are used. This is not a full account manager. |
@@ -91,17 +91,19 @@ These must exist before Jade Symphony can safely dogfood against real GitHub
 Project v2 issues:
 
 1. Harden read-only GitHub Project v2 adapter.
-   - Keep loading ProjectV2 items through `gh api graphql` or replace it with a
-     direct HTTP client behind the same adapter.
+   - Keep loading ProjectV2 items through the centralized GitHub access helper
+     in `src/tracker.rs`; it may call `gh api graphql` or a future direct HTTP
+     client, but callers should not open-code Project queries.
    - Use `project state` as the canonical dogfood diagnostic before claim or
      merge work; failed reads print a classified blocker instead of looking like
      an empty queue.
    - Use `project issue` for per-issue Project status, fields, claim locks,
      blockers, and linked PRs. Direct `gh issue view` / `gh pr view` is still
-     allowed for raw issue and PR context, but not for normal Project state
-     reads.
-   - Retry transient network and rate-limit failures, and fail partial Project
-     payloads loudly when required item fields are missing.
+     allowed for raw issue and PR context when the CLI lacks an equivalent
+     content read, but not for normal Project state reads.
+   - Retry transient network and rate-limit failures, classify GraphQL resource
+     limits separately, and fail partial Project payloads loudly when required
+     item fields are missing.
    - Filter to real GitHub Issues, not draft items or PR items.
    - Resolve configured status field and option IDs.
    - Normalize issue body, labels, assignees, linked PRs, project fields, and
@@ -313,15 +315,18 @@ Project v2 issues:
 10. Issue Forge tracker completion.
    - `forge validate` can validate body files or existing issues for `Backlog`
      or `Todo`, using the seed gate for Backlog and the full Issue Quality Gate
-     for Todo.
+     for Todo. It also supports `--issue` plus candidate `--title` and
+     `--body`/`--body-file` overrides so a dry validation can reuse live issue
+     assignee and Project context while checking replacement contract text.
+     Validation output separates candidate-side gaps from live-context gaps.
    - `forge create` creates tracker issues, always inserts them into the
      configured Project, supports `--status Backlog|Todo`, and accepts repeatable
      `--project-field NAME=VALUE` assignments.
    - `forge promote` reads a Backlog issue, validates an explicit replacement
-     title/body with the Todo gate, requires structured Promotion Note inputs,
-     edits the same issue in place, writes the Promotion Note comment, sets
-     Project status to `Todo` as the final mutation, and then performs read-only
-     status readback verification.
+     title/body with the same Todo validation categories, requires structured
+     Promotion Note inputs, edits the same issue in place, writes the Promotion
+     Note comment, sets Project status to `Todo` as the final mutation, and then
+     performs read-only status readback verification.
    - Reflection, discussion, and repair are skill-owned workflows, not
      Jade Symphony CLI subcommands.
    - Remaining work: text/number/date field writes and richer Project selection
@@ -507,3 +512,8 @@ evidence is available for the existing handoff path. Manual recovery uses lane
 claim commands first, then `session start --run <RUN_ID>` with the same registry
 and lane prompt contracts. The registry is operator evidence for terminal
 sessions only; it does not replace Project state.
+Worker display labels supplied to `main claim`, `review claim`, or
+`merge claim` may contain spaces. Jade Symphony stores those labels with
+reversible quoting in the structured claim pointer, validates the rendered
+claim before Project mutation, and expects operators to use the CLI claim path
+instead of raw Project field edits for normal claim ownership.

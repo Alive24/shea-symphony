@@ -1412,8 +1412,8 @@ fn audit_session_consistency(
                 AuditSeverity::Warning,
                 "tmux_session_needs_operator_attention",
                 &format!(
-                    "Registered tmux session `{}` is `{}` from {} evidence.",
-                    session.session_id, session.status, session.evidence_source
+                    "Registered tmux session `{}` is `{}` from {} evidence: {}.",
+                    session.session_id, session.status, session.evidence_source, session.evidence
                 ),
                 "Use the recorded attach command or log path to decide whether to resume, retry, or route the issue with evidence.",
             ));
@@ -1833,6 +1833,29 @@ mod tests {
         let report = audit_project_issues(&[issue]);
 
         assert!(report.is_clean());
+    }
+
+    #[test]
+    fn reports_raw_unknown_session_status_drift() {
+        let mut drifted = session(Some("#202"), "unknown");
+        drifted.evidence = "unknown persisted session status recorded_legacy".into();
+        let context = ProjectDoctorContext {
+            runtime_state: None,
+            sessions: vec![drifted],
+            now_ms: 20_000,
+            stale_after_ms: 10_000,
+        };
+        let report =
+            audit_project_issues_with_context(&[issue("#202", "In Progress")], Some(&context));
+
+        let violation = report
+            .violations
+            .iter()
+            .find(|violation| violation.code == "tmux_session_needs_operator_attention")
+            .unwrap();
+        assert!(violation
+            .message
+            .contains("unknown persisted session status recorded_legacy"));
     }
 
     #[test]

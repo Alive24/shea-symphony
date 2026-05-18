@@ -45,11 +45,13 @@ question, but do not edit files under
 
 1. Refresh tracker state, Project fields, claim locks, linked PR state, local
    git state, and any existing issue workpad through Jade Symphony CLI before
-   implementation. Direct `gh issue view` / `gh pr view` is acceptable for raw
-   issue and PR content, but do not use raw Project GraphQL or the Project UI
-   for normal Project state reads or mutations.
+   implementation. Direct `gh issue view` / `gh pr view` is acceptable only as
+   a read-only CLI-gap diagnostic for raw issue and PR content; record the gap
+   when it affects workflow decisions. Do not use raw Project GraphQL or the
+   Project UI for normal Project state reads or mutations.
    Manual lane ownership must use `main claim ... --worker <worker> --write`;
-   session startup must use `session start ... --lane main --run <RUN_ID>`.
+   worker display labels with spaces are allowed through the CLI claim path.
+   Session startup must use `session start ... --lane main --run <RUN_ID>`.
    Session startup validates the claim and must not write Project claim fields.
 2. Confirm the issue is still executable with the Issue Quality Gate. If the
    issue is not executable, leave a precise workpad note, move it to

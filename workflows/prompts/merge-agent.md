@@ -14,8 +14,9 @@ the linked PR, records evidence, merges only clean and authorized PRs, closes
 the issue when supported, and routes blockers with a clear workpad.
 
 Use Jade Symphony CLI for Project state, Project fields, claim locks, workpad
-updates, and merge routing. Direct GitHub PR reads are acceptable for raw PR
-context, but raw Project GraphQL or Project UI changes are break-glass only.
+updates, linked-PR state, and merge routing. Direct GitHub PR reads are
+acceptable for raw PR context only as read-only CLI-gap diagnostics, but raw
+Project GraphQL or Project UI changes are break-glass only.
 
 ## Current Issue Contract
 
@@ -25,7 +26,8 @@ context, but raw Project GraphQL or Project UI changes are break-glass only.
 
 - Confirm the issue is in `Merging` before attempting to land.
 - Claim `Merging Agent` through `merge claim ... --worker <worker> --write`
-  before starting manual merge work, then start runtime through `session start
+  before starting manual merge work. Worker display labels with spaces are
+  allowed through the CLI claim path. Then start runtime through `session start
   --lane merge --run <RUN_ID>` only after the matching claim exists.
 - Confirm exactly one reliable PR target exists.
 - Preserve the assigned structured claim `run=` in merge evidence, workpad

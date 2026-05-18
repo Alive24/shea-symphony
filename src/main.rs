@@ -1506,12 +1506,17 @@ fn forge_validate(
             .get_issue(&issue_ref)?
             .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
         let status = status.unwrap_or_else(|| forge_status_from_issue(&config, &issue));
-        (
-            status,
-            issue.title,
-            issue.description.unwrap_or_default(),
-            issue.assignees,
-        )
+        let title = if title.trim().is_empty() {
+            issue.title.clone()
+        } else {
+            title
+        };
+        let markdown = if markdown.trim().is_empty() {
+            issue.description.clone().unwrap_or_default()
+        } else {
+            markdown
+        };
+        (status, title, markdown, issue.assignees)
     } else {
         let assignees = issue_contract_assignees(&markdown);
         (
@@ -1555,6 +1560,29 @@ fn forge_validation_report(
             validate_forge_create_report_with_assignees(title, markdown, config, intended_assignees)
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ForgeMissingCategories {
+    candidate_missing: Vec<String>,
+    live_context_missing: Vec<String>,
+}
+
+fn forge_missing_categories(report: &ForgeValidationReport) -> ForgeMissingCategories {
+    let (live_context_missing, candidate_missing): (Vec<_>, Vec<_>) = report
+        .decision
+        .missing
+        .iter()
+        .cloned()
+        .partition(|missing| is_live_context_missing(missing));
+    ForgeMissingCategories {
+        candidate_missing,
+        live_context_missing,
+    }
+}
+
+fn is_live_context_missing(missing: &str) -> bool {
+    matches!(missing, "live GitHub issue assignee")
 }
 
 fn validate_backlog_seed(title: &str, markdown: &str) -> ForgeValidationReport {
@@ -1854,7 +1882,7 @@ fn review_claim(
         project_text_field(&issue, "Review Agent").as_deref(),
     )
     .with_worker(&worker);
-    let claim_value = claim.render();
+    let claim_value = render_parseable_lane_claim(&claim)?;
     if !write {
         println!(
             "review_claim_dry_run action=claim_field issue_ref={} field=\"Review Agent\" value={claim_value}",
@@ -1930,7 +1958,7 @@ fn lane_claim_command(
         worker.trim(),
         existing_value.as_deref(),
     )?;
-    let claim_value = claim.render();
+    let claim_value = render_parseable_lane_claim(&claim)?;
 
     if !write {
         println!(
@@ -2072,6 +2100,19 @@ fn lane_claim_for_manual_worker(
         current_time_ms(),
     )
     .with_worker(worker))
+}
+
+fn render_parseable_lane_claim(claim: &LaneClaim) -> Result<String, Box<dyn std::error::Error>> {
+    let value = claim.render();
+    let parsed = LaneClaim::parse(&value)
+        .map_err(|error| format!("rendered lane claim is not parseable: {error}; value={value}"))?;
+    if parsed != *claim {
+        return Err(format!(
+            "rendered lane claim did not round-trip; rendered={value} parsed={parsed:?} original={claim:?}"
+        )
+        .into());
+    }
+    Ok(value)
 }
 
 fn record_manual_lane_claim_evidence(
@@ -3271,7 +3312,7 @@ fn write_review_claim_field(
     worker_key: &str,
 ) -> Result<LaneClaim, Box<dyn std::error::Error>> {
     let claim = review_claim_for_issue(issue, worker_key);
-    let claim_value = claim.render();
+    let claim_value = render_parseable_lane_claim(&claim)?;
     adapter.set_project_field(
         &issue.identifier,
         &ProjectFieldAssignment {
@@ -3371,7 +3412,7 @@ This Gemini process is running under Jade Symphony automatic `review loop` or `r
 Jade Symphony CLI has already claimed or will own any Review Agent claim, workpad write,\n\
 issue body update, and Project state transition outside this process.\n\n\
 Do not run mutating Jade Symphony or GitHub commands, including `review claim`, `review pass`,\n\
-`review reject`, `set-state`, `workpad`, `forge`, `gh issue edit`, `gh issue comment`, raw\n\
+`review reject`, `project set-state`, `project workpad`, `forge`, `gh issue edit`, `gh issue comment`, raw\n\
 Project GraphQL mutations, or Project UI changes. Do not activate or follow any manual review\n\
 skill that tells you to mutate Project state.\n\n\
 Return review evidence in stdout only. Start with exactly one line: `Review Result: PASS`,\n\
@@ -7858,7 +7899,7 @@ fn write_lane_claim_field(
     claim: &LaneClaim,
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let claim_value = claim.render();
+    let claim_value = render_parseable_lane_claim(claim)?;
     if !write {
         println!(
             "{}_pool_dry_run action=claim_field issue={} field={:?} value={:?}",
@@ -7907,7 +7948,7 @@ fn write_lane_claim_state(
     state: LaneClaimState,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let updated = claim.with_state(state);
-    let value = updated.render();
+    let value = render_parseable_lane_claim(&updated)?;
     adapter.set_project_field(
         &issue.identifier,
         &ProjectFieldAssignment {
@@ -10806,20 +10847,11 @@ impl TryFrom<Cli> for Command {
                         }),
                         ForgeCommandArgs::Validate(args) => {
                             if let Some(issue_ref) = args.issue_ref {
-                                if args.title.is_some()
-                                    || args.markdown.body.is_some()
-                                    || args.markdown.body_file.is_some()
-                                {
-                                    return Err(
-                                        "forge validate --issue cannot be combined with --title, --body, or --body-file"
-                                            .into(),
-                                    );
-                                }
                                 Ok(Self::ForgeValidate {
                                     workflow_path: args.workflow,
                                     status: args.status,
-                                    title: String::new(),
-                                    markdown: String::new(),
+                                    title: args.title.unwrap_or_default(),
+                                    markdown: read_optional_forge_markdown_arg(args.markdown)?,
                                     issue_ref: Some(issue_ref),
                                 })
                             } else {
@@ -10904,6 +10936,16 @@ fn read_forge_markdown_arg(args: ForgeMarkdownArgs) -> Result<String, String> {
         (None, Some(path)) => std::fs::read_to_string(&path)
             .map_err(|error| format!("failed to read {}: {error}", path.display())),
         _ => Err(usage()),
+    }
+}
+
+fn read_optional_forge_markdown_arg(args: ForgeMarkdownArgs) -> Result<String, String> {
+    match (args.body, args.body_file) {
+        (Some(value), None) => Ok(value),
+        (None, Some(path)) => std::fs::read_to_string(&path)
+            .map_err(|error| format!("failed to read {}: {error}", path.display())),
+        (None, None) => Ok(String::new()),
+        (Some(_), Some(_)) => Err(usage()),
     }
 }
 
@@ -11030,18 +11072,35 @@ fn promotion_note_input(args: PromotionNoteArgs) -> Result<PromotionNoteInput, S
 }
 
 fn print_forge_validation(report: &ForgeValidationReport) {
+    let categories = forge_missing_categories(report);
     println!("title={}", report.title);
     println!("gate={:?}", report.decision.kind);
     println!("dispatchable={}", report.decision.is_dispatchable());
     if !report.decision.missing.is_empty() {
         println!("missing={}", report.decision.missing.join(", "));
     }
+    println!(
+        "candidate_missing={}",
+        missing_category_value(&categories.candidate_missing)
+    );
+    println!(
+        "live_context_missing={}",
+        missing_category_value(&categories.live_context_missing)
+    );
     if !report.decision.assumptions.is_empty() {
         println!("assumptions={}", report.decision.assumptions.join("; "));
     }
     if let Some(question) = &report.question {
         println!("question={}", question.question);
         println!("why={}", question.why_it_matters);
+    }
+}
+
+fn missing_category_value(values: &[String]) -> String {
+    if values.is_empty() {
+        "none".into()
+    } else {
+        values.join(", ")
     }
 }
 
@@ -12611,6 +12670,32 @@ mod tests {
                 write: true
             }
         );
+    }
+
+    #[test]
+    fn manual_lane_claim_with_display_worker_round_trips_to_session_start_validation() {
+        let mut issue = tracker_issue_with_ref("#297", "Support quoted worker labels", "Todo");
+        let claim = lane_claim_for_manual_worker(
+            &issue,
+            AgentSessionLaneArg::Main,
+            LaneClaimActor::Codex,
+            LaneClaimSource::Manual,
+            "Codex Manual Main",
+            None,
+        )
+        .unwrap();
+        let claim_value = render_parseable_lane_claim(&claim).unwrap();
+
+        assert!(claim_value.contains("worker=\"Codex Manual Main\""));
+        issue
+            .project_fields
+            .insert("Main Agent".into(), serde_json::Value::String(claim_value));
+
+        let parsed =
+            matching_lane_claim_for_session(&issue, AgentSessionLaneArg::Main, &claim.run).unwrap();
+
+        assert_eq!(parsed.worker.as_deref(), Some("Codex Manual Main"));
+        assert_eq!(parsed, claim);
     }
 
     #[test]
@@ -14750,6 +14835,45 @@ mod tests {
     }
 
     #[test]
+    fn parses_forge_validate_issue_with_candidate_body_flags() {
+        let temp = tempfile::tempdir().unwrap();
+        let body_path = temp.path().join("candidate.md");
+        std::fs::write(&body_path, forge_contract()).unwrap();
+
+        let command = Command::parse(vec![
+            "forge".into(),
+            "validate".into(),
+            "--workflow".into(),
+            "examples/github-project-workflow.md".into(),
+            "--issue".into(),
+            "#293".into(),
+            "--status".into(),
+            "todo".into(),
+            "--title".into(),
+            "Candidate promoted title".into(),
+            "--body-file".into(),
+            body_path.display().to_string(),
+        ])
+        .unwrap();
+
+        let Command::ForgeValidate {
+            status,
+            title,
+            markdown,
+            issue_ref,
+            ..
+        } = command
+        else {
+            panic!("expected forge validate command");
+        };
+
+        assert_eq!(status, Some(ForgeStatusArg::Todo));
+        assert_eq!(title, "Candidate promoted title");
+        assert!(markdown.contains("## Issue Goal"));
+        assert_eq!(issue_ref.as_deref(), Some("#293"));
+    }
+
+    #[test]
     fn rejects_removed_flat_forge_commands() {
         let error = Command::parse(vec![
             "forge-create".into(),
@@ -14806,6 +14930,63 @@ mod tests {
         .unwrap();
 
         assert!(report.decision.is_dispatchable());
+    }
+
+    #[test]
+    fn forge_validate_candidate_context_uses_live_issue_assignee() {
+        let config = live_github_config(false);
+        let assignees = vec!["Alive24".to_string()];
+        let report = forge_validation_report(
+            ForgeStatusArg::Todo,
+            "Candidate promoted title",
+            &forge_contract(),
+            &config,
+            &assignees,
+        )
+        .unwrap();
+        let categories = forge_missing_categories(&report);
+
+        assert!(report.decision.is_dispatchable());
+        assert!(categories.candidate_missing.is_empty());
+        assert!(categories.live_context_missing.is_empty());
+    }
+
+    #[test]
+    fn forge_validate_candidate_context_reports_unassigned_live_issue() {
+        let config = live_github_config(false);
+        let report = forge_validation_report(
+            ForgeStatusArg::Todo,
+            "Candidate promoted title",
+            &forge_contract(),
+            &config,
+            &[],
+        )
+        .unwrap();
+        let categories = forge_missing_categories(&report);
+
+        assert_eq!(
+            categories.live_context_missing,
+            vec!["live GitHub issue assignee".to_string()]
+        );
+        assert!(categories.candidate_missing.is_empty());
+    }
+
+    #[test]
+    fn forge_validate_candidate_context_reports_candidate_gaps_separately() {
+        let config = live_github_config(false);
+        let assignees = vec!["Alive24".to_string()];
+        let report = forge_validation_report(
+            ForgeStatusArg::Todo,
+            "Thin issue",
+            "make forge better",
+            &config,
+            &assignees,
+        )
+        .unwrap();
+        let categories = forge_missing_categories(&report);
+
+        assert!(!categories.candidate_missing.is_empty());
+        assert!(categories.live_context_missing.is_empty());
     }
 
     #[test]

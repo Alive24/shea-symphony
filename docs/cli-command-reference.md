@@ -11,10 +11,13 @@ workflow path when `JADE_SYMPHONY_WORKFLOW` is set, or when
 
 For normal dogfood, Jade Symphony CLI is the authority for GitHub Project v2
 workflow reads and mutations. Direct `gh issue view` / `gh pr view` is still
-acceptable for raw issue or PR content, but Project status, Project fields,
-relationships, claim locks, workpads, and state transitions should go through
-the commands in this reference. Manual Project UI or raw Project GraphQL changes
-are break-glass recovery actions, not the standard path.
+acceptable for raw issue or PR content when the CLI lacks the needed content
+read, but Project status, Project fields, relationships, claim locks, workpads,
+linked-PR handoff checks, and state transitions should go through the commands
+in this reference. Manual Project UI or raw Project GraphQL changes are
+break-glass recovery actions, not the standard path. See
+`docs/github-access-policy.md` for the current raw GitHub inventory and
+REST-first / GraphQL-required boundaries.
 
 The canonical `workflows/jade-symphony.md` file is a workflow index/config. It
 references lane-specific prompts in `workflows/prompts/` so Main, Review, and
@@ -100,9 +103,12 @@ runtime/log/prompt/evidence/draft artifacts are moved to artifact quarantine
 with a warning; unclassified untracked files block for operator repair.
 New lane claims are written as single-line `v=1` key/value audit pointers, for
 example `v=1 lane=main actor=codex worker=codex-manual-main source=manual
-issue=#244 run=... state=active thread=unknown registry=run/...`. The Project
-field stores the compact pointer; the session registry and workpad store the
-durable paths, logs, and handoff evidence for the same `run=`.
+issue=#244 run=... state=active thread=unknown registry=run/...`. Worker display
+labels may contain spaces; the CLI stores those values with reversible quoting,
+such as `worker="Codex Manual Main"`, and validates the rendered pointer before
+writing Project fields. The Project field stores the compact pointer; the
+session registry and workpad store the durable paths, logs, and handoff evidence
+for the same `run=`.
 
 Manual claim and session control are separate operations. Claim commands write
 the lane claim Project field, create a matching `codex-app-manual` registry
@@ -110,7 +116,7 @@ record with status `recorded`, and do not change Project Status:
 
 ```bash
 cargo run -- main claim workflows/jade-symphony.md '#265' --worker codex-manual-main --write
-cargo run -- review claim workflows/jade-symphony.md '#265' --worker gemini-manual-review --write
+cargo run -- review claim workflows/jade-symphony.md '#265' --worker "Manual Gemini Review" --write
 cargo run -- merge claim workflows/jade-symphony.md '#265' --worker codex-manual-merge --write
 ```
 
@@ -168,6 +174,9 @@ joining the terminal unless `--exec` is provided.
 durable session registry. `doctor` flags stale, failed, orphaned, usage-limited,
 or runtime/session mismatch cases, while `clean audit` classifies the registry,
 rendered prompts, tmux logs, and individual sessions without deleting them.
+Unknown persisted registry status values are tolerated on read: they classify
+as `unknown`, keep the raw status value in diagnostics, and are not migrated,
+repaired, or rewritten by normal read-only commands.
 
 ## Workspace Discovery
 
@@ -265,7 +274,7 @@ cargo run -- project inspect workflows/jade-symphony.md '#123'
 
 | Command | Purpose | Boundary |
 | --- | --- | --- |
-| `forge validate` | Validate a body file or existing issue for `Backlog` or `Todo`. | Read-only; `Todo` uses the full Issue Quality Gate, `Backlog` uses the lighter seed gate. |
+| `forge validate` | Validate a body file, an existing issue, or candidate title/body content against live issue context for `Backlog` or `Todo`. | Read-only; `Todo` uses the full Issue Quality Gate, `Backlog` uses the lighter seed gate; output separates candidate contract gaps from live context gaps. |
 | `forge create` | Create a Project-backed issue in `Backlog` or `Todo`. | Dry-run by default unless `--write` is supplied; initializes the Project item to the requested status and verifies readback; live `Todo` creation requires `--assignee`. |
 | `forge promote` | Promote one existing Backlog issue in place by editing title/body, writing a structured Promotion Note comment, then moving it to `Todo`. | Dry-run by default unless `--write` is supplied; requires structured note inputs, keeps the `Todo` status mutation last, and reports the checkpoint where any failure stopped. |
 | `forge rework` | Revise one live `Human Review` issue into an explicit `Rework` contract. | Dry-run by default unless `--write` is supplied; requires a replacement title/body, evidence file, and operator confirmation; rejects active lane claims and keeps the `Rework` status mutation last. |
@@ -275,12 +284,19 @@ Examples:
 ```bash
 cargo run -- forge validate --workflow workflows/jade-symphony.md --status Backlog --title "Backlog seed" --body-file /tmp/issue.md
 cargo run -- forge validate --workflow workflows/jade-symphony.md --status Todo --title "Executable issue" --body-file /tmp/issue.md
+cargo run -- forge validate --workflow workflows/jade-symphony.md --issue '#293' --status Todo --title "Candidate promoted title" --body-file /tmp/candidate.md
 cargo run -- forge create --workflow workflows/jade-symphony.md --status Backlog --title "Backlog: follow-up title" --body-file /tmp/issue.md --dry-run
 cargo run -- forge create --workflow workflows/jade-symphony.md --status Todo --title "Follow-up title" --body-file /tmp/issue.md --assignee Alive24 --write
 cargo run -- forge promote '#241' --workflow workflows/jade-symphony.md --title "Executable title" --body-file /tmp/issue.md --operator-confirmation "promote it" --decision "Use the CLI-owned promotion note template." --scope-change "Backlog seed is now an executable Todo issue." --dependency-context "Dependencies: none; related context is non-blocking." --readback-summary "Operator confirmed the dry-run preview before write." --dry-run
 cargo run -- forge promote '#241' --workflow examples/promote-fixture-workflow.md --title "Harden Issue Forge Reflect promotion fixture" --body-file examples/fixtures/promoted-issue.md --operator-confirmation "promote it" --decision "Keep the promotion in place." --scope-change "Backlog seed becomes an executable Todo issue." --dependency-context "Dependencies: none." --readback-summary "Dry-run preview verified before write." --dry-run
 cargo run -- forge rework '#282' --workflow workflows/jade-symphony.md --title "Rework: revised execution contract" --body-file /tmp/rework-body.md --evidence-file /tmp/rework-evidence.md --operator-confirmation "route Human Review back to Rework" --dry-run
 ```
+
+Use `forge validate --issue '#123'` without overrides to validate the current
+live issue body. Add `--title` plus `--body` or `--body-file` when validating a
+candidate replacement contract against the live issue's assignee and Project
+context. `forge promote --dry-run` uses the same validation output categories,
+then adds the promotion-note preview and promotion-specific checks.
 
 `forge promote` owns the Promotion Note requirement. The command refuses missing
 or empty `--operator-confirmation`, `--decision`, `--scope-change`, and
@@ -337,7 +353,7 @@ changes.
 | `review fake` | Fixture/fake review transition helper. | Local testing path. |
 | `review once` | Run one configured review backend for one issue. | Direct backend command for one issue. |
 | `review loop` | Bounded review worker selection/reconciliation. | For `gemini-cli`, runs headless Gemini by default with stdin prompt transport, JSON output capture, configured model/tools, and durable review-job evidence. |
-| `review claim` | Claim one `Agent Review` item's `Review Agent` text field for manual/operator review. | Requires `--worker` and `--write`; refuses non-`Agent Review` issues and writes a structured claim pointer. |
+| `review claim` | Claim one `Agent Review` item's `Review Agent` text field for manual/operator review. | Requires `--worker` and `--write`; refuses non-`Agent Review` issues and writes a structured, round-trip-validated claim pointer. |
 | `review pass` | Record manual independent review pass evidence and move to `Human Review`. | Requires `--write`, a durable evidence file containing the exact current `Review Agent` claim, and preserves the field as terminal pass evidence. |
 | `review reject` | Record failed/inconclusive manual review evidence and route to `Agent Review`, `Rework`, or `Need Human Input`. | Refuses `Human Review`, requires exact claim evidence, and preserves the field as terminal reject/failed evidence. |
 | `review session` | Hidden legacy review session alias. | Does not write the `Review Agent` claim; use `review claim` or `review loop` for claim ownership. |
@@ -388,13 +404,39 @@ aliases, missing `SKILL.md`, stale metadata, and stale Jade Symphony CLI naming.
 It points back to this installer path for repair instead of mutating local
 skills directly.
 
-The suite packages Issue Forge, Issue Forge Reflect, Manual Main, Manual Review,
-Human Review, Manual Merge, and a Doctor/Fix stub. Human Review is an
-operator-owned briefing and UAT decision skill: it records a structured decision
-note and routes to `Merging`, `Rework`, or `Need Human Input` only after
-explicit operator confirmation. `forge reflect` remains a skill behavior, not a
-Jade Symphony CLI subcommand. `forge create`, `forge promote`, and `forge
-validate` remain deterministic CLI executor surfaces.
+The suite packages Issue Forge, Issue Forge Reflect, Issue Forge Dream, Manual
+Main, Manual Review, Human Review, Manual Merge, and a Doctor/Fix stub. Human
+Review is an operator-owned briefing and UAT decision skill: it records a
+structured decision note and routes to `Merging`, `Rework`, or
+`Need Human Input` only after explicit operator confirmation. `forge reflect`
+and `forge dream` remain skill behaviors, not Jade Symphony CLI subcommands.
+`forge create`, `forge promote`, `forge rework`, and `forge validate` remain
+deterministic CLI executor surfaces.
+
+## Issue Forge Dream
+
+Issue Forge Dream is a Codex/Gemini skill workflow for slow, deep backlog
+mining. It reads broader Jade Symphony context, writes bounded advisory logs,
+runs a lightweight Gemini review by default when available, and creates
+evidence-backed `Backlog` seeds unless the operator asks for report-only mode.
+
+Dream writes repo-owned logs under `docs/dream-log/`:
+
+- `docs/dream-log/INDEX.md` is the compact global entrypoint.
+- Each run directory uses `docs/dream-log/YYYY-MM-DD-<run-count>-<slug>/`.
+- `RUN.md` records the source inventory, created backlog mapping, sleep-enough
+  judgment, Gemini review status, and next useful theme.
+- `topic-*.md` records bounded topic triage with evidence anchors, coverage
+  checks, promotion path, and Dream confidence.
+- `gemini-review.md` records the lightweight review summary or unavailable
+  reason.
+- `created-backlog.md` is optional when several seeds are created.
+
+Dream-created Backlog seeds should include evidence anchors, existing coverage
+checked, promotion guidance, and Dream confidence. Low-confidence candidates
+stay Watchlist or very light Backlog. Dream never creates `Todo` issues
+directly and Dream Logs are not execution authority for Main, Review, Merge, or
+Doctor lanes.
 
 ## Merge Lane
 

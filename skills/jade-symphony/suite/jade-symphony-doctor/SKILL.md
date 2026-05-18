@@ -11,9 +11,9 @@ metadata:
 Use this skill for read-first operator triage around `doctor`, `debug`,
 install-health, and local recovery findings.
 
-This is a stub slot in the `2026.05.17` skill suite. Full automatic
-install-health checks and prompts remain future work for issue #256. Do not
-smuggle #256 implementation into unrelated lane work.
+This skill is a read-first operator triage entrypoint. The Jade Symphony CLI
+`doctor` command reports local install-health warnings, while the skill keeps
+repair decisions explicit and operator-confirmed.
 
 ## Repository
 
@@ -60,5 +60,6 @@ Report:
   documented Jade Symphony CLI repair command.
 - Do not silently overwrite local skills; use the suite installer, show target
   paths, and require confirmation before writing.
-- Keep automatic install-health repair out of this issue slice; track it under
-  #256.
+- Keep automatic install-health repair out of this skill; `doctor` should
+  diagnose and point to the #242 install/update path rather than rewriting
+  local skill files.

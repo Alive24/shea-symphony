@@ -20,7 +20,8 @@ Use Doctor v1 when:
   runtime evidence is incomplete.
 - cleanup could discard useful worktree or runtime evidence.
 - local Jade Symphony skill install symptoms are blocking an operator, while
-  full integrity checking remains owned by #256.
+  `doctor` owns read-only integrity warnings and #242 owns install/update
+  writes.
 - installable skill suite packaging questions appear, while dated suite
   packaging remains owned by #242.
 
@@ -100,7 +101,7 @@ Every Doctor session should choose one primary classification:
 | `draft_pr_handoff` | A linked PR is draft before Agent Review handoff. | Use documented ready repair only after confirmation. |
 | `stale_lane_claim` | A lane claim is stale, mismatched, failed, superseded, or missing registry evidence. | Preserve prior claim and request confirmation before superseding it. |
 | `dirty_runtime_or_worktree` | Runtime state, session registry, or issue worktree is dirty or ambiguous. | Inspect, preserve evidence, and avoid cleanup until confirmed. |
-| `skill_install_symptom` | Local skill alias, path, metadata, or discoverability is broken. | Diagnose only; route full integrity checking to #256. |
+| `skill_install_symptom` | Local skill alias, path, metadata, or discoverability is broken. | Diagnose only; use `doctor` install-health warnings and route writes to #242. |
 | `installable_suite_followup` | Packaging as a dated installable skill suite is relevant. | Route implementation to #242. |
 | `issue_contract_gap` | The issue contract lacks execution-critical scope, verification, or dependency facts. | Move or recommend moving to `Need to Clarify`. |
 | `no_repair_needed` | Evidence shows the item is healthy. | Return to the normal lane flow. |
@@ -130,7 +131,7 @@ Use this format for durable issue-comment evidence:
 - Safe no-write commands to run next:
   - ...
 - Related follow-ups:
-  - #256 covers full local skill install integrity checks and is related but non-blocking.
+  - `doctor` covers full local skill install integrity checks and those findings are related but non-blocking.
   - #242 covers dated installable skill suite packaging and is related but non-blocking.
 ```
 
@@ -154,10 +155,11 @@ workpad context. Do not reset when repair can preserve evidence.
 
 ## Relationship To #256 And #242
 
-#256 is the follow-up for doctor checks that verify local Jade Symphony skill
-install health. Doctor v1 may classify a symptom as `skill_install_symptom` and
-collect evidence, but it must not implement a full alias, symlink, or metadata
-integrity checker.
+`doctor` verifies local Jade Symphony skill install health by reporting
+warning-level Codex and Gemini root findings for aliases, symlinks, missing
+files, stale metadata, and stale naming. Doctor triage may classify a symptom as
+`skill_install_symptom` and collect evidence, but it must not repair local skill
+files.
 
 #242 is the follow-up for packaging Jade Symphony as a dated installable skill
 suite. Doctor v1 may point to that follow-up when packaging is the next step,

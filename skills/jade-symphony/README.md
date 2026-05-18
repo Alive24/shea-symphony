@@ -58,6 +58,7 @@ Human Review briefs the operator after Review Agent pass evidence, guides
 operator-owned UAT, records a structured decision note, and routes only after
 explicit confirmation. Accepted Human Review goes to `Merging`, not `Done`.
 
-The Doctor skill is a stub slot for operator triage and install-health checks.
-Full automatic doctor install-health repair remains out of scope for this
-release and belongs to follow-up issue #256.
+The Doctor skill is a read-first operator triage slot. The Jade Symphony CLI
+`doctor` command reports local install-health warnings, while automatic repair
+remains out of scope and install/update writes stay behind the confirmed #242
+installer path.

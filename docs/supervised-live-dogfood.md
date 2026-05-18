@@ -69,12 +69,13 @@ normal work:
 
 ```bash
 cargo run -- project-state workflows/jade-symphony.md
+cargo run -- doctor workflows/jade-symphony.md
 cargo run -- run-loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 
 Proceed only when tracker access is trusted, the selected issue is claimable,
-and the dry-run shows no blocking integration gaps. `dogfood-smoke` is kept as
-a hidden legacy fixture helper, not a product dogfood lane.
+and the dry-run shows no blocking integration gaps. Use `debug` when a compact
+human-readable readiness report is useful.
 
 ## One Implementation Tick
 

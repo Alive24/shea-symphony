@@ -310,15 +310,18 @@ Project v2 issues:
 10. Issue Forge tracker completion.
    - `forge validate` can validate body files or existing issues for `Backlog`
      or `Todo`, using the seed gate for Backlog and the full Issue Quality Gate
-     for Todo.
+     for Todo. It also supports `--issue` plus candidate `--title` and
+     `--body`/`--body-file` overrides so a dry validation can reuse live issue
+     assignee and Project context while checking replacement contract text.
+     Validation output separates candidate-side gaps from live-context gaps.
    - `forge create` creates tracker issues, always inserts them into the
      configured Project, supports `--status Backlog|Todo`, and accepts repeatable
      `--project-field NAME=VALUE` assignments.
    - `forge promote` reads a Backlog issue, validates an explicit replacement
-     title/body with the Todo gate, requires structured Promotion Note inputs,
-     edits the same issue in place, writes the Promotion Note comment, sets
-     Project status to `Todo` as the final mutation, and then performs read-only
-     status readback verification.
+     title/body with the same Todo validation categories, requires structured
+     Promotion Note inputs, edits the same issue in place, writes the Promotion
+     Note comment, sets Project status to `Todo` as the final mutation, and then
+     performs read-only status readback verification.
    - Reflection, discussion, and repair are skill-owned workflows, not
      Jade Symphony CLI subcommands.
    - Remaining work: text/number/date field writes and richer Project selection

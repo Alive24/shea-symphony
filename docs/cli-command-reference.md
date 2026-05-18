@@ -255,6 +255,7 @@ cargo run -- project inspect workflows/jade-symphony.md '#123'
 | `forge validate` | Validate a body file or existing issue for `Backlog` or `Todo`. | Read-only; `Todo` uses the full Issue Quality Gate, `Backlog` uses the lighter seed gate. |
 | `forge create` | Create a Project-backed issue in `Backlog` or `Todo`. | Dry-run by default unless `--write` is supplied; initializes the Project item to the requested status and verifies readback; live `Todo` creation requires `--assignee`. |
 | `forge promote` | Promote one existing Backlog issue in place by editing title/body, writing a structured Promotion Note comment, then moving it to `Todo`. | Dry-run by default unless `--write` is supplied; requires structured note inputs, keeps the `Todo` status mutation last, and reports the checkpoint where any failure stopped. |
+| `forge rework` | Revise one live `Human Review` issue into an explicit `Rework` contract. | Dry-run by default unless `--write` is supplied; requires a replacement title/body, evidence file, and operator confirmation; rejects active lane claims and keeps the `Rework` status mutation last. |
 
 Examples:
 
@@ -265,6 +266,7 @@ cargo run -- forge create --workflow workflows/jade-symphony.md --status Backlog
 cargo run -- forge create --workflow workflows/jade-symphony.md --status Todo --title "Follow-up title" --body-file /tmp/issue.md --assignee Alive24 --write
 cargo run -- forge promote '#241' --workflow workflows/jade-symphony.md --title "Executable title" --body-file /tmp/issue.md --operator-confirmation "promote it" --decision "Use the CLI-owned promotion note template." --scope-change "Backlog seed is now an executable Todo issue." --dependency-context "Dependencies: none; related context is non-blocking." --readback-summary "Operator confirmed the dry-run preview before write." --dry-run
 cargo run -- forge promote '#241' --workflow examples/promote-fixture-workflow.md --title "Harden Issue Forge Reflect promotion fixture" --body-file examples/fixtures/promoted-issue.md --operator-confirmation "promote it" --decision "Keep the promotion in place." --scope-change "Backlog seed becomes an executable Todo issue." --dependency-context "Dependencies: none." --readback-summary "Dry-run preview verified before write." --dry-run
+cargo run -- forge rework '#282' --workflow workflows/jade-symphony.md --title "Rework: revised execution contract" --body-file /tmp/rework-body.md --evidence-file /tmp/rework-evidence.md --operator-confirmation "route Human Review back to Rework" --dry-run
 ```
 
 `forge promote` owns the Promotion Note requirement. The command refuses missing
@@ -299,6 +301,17 @@ uses this short Markdown shape:
 
 - ...
 ```
+
+`forge rework` owns the Human Review -> Rework contract-revision path. The
+interactive decision still belongs in the Issue Forge skill layer; the CLI
+accepts prepared files and confirmation, verifies the source issue is in
+`Human Review`, rejects active `Main Agent`, `Review Agent`, or `Merging Agent`
+claims with a diagnostic workpad, preserves terminal `state=done` or other
+terminal claim values as audit pointers, replaces the title/body, writes Rework
+revision evidence to the workpad, and only then sets Project status to
+`Rework`. It does not require a linked PR or local worktree, and it does not
+create or recover either one; the next Main Agent owns that repair setup after
+claiming `Rework`.
 
 ## Review Agent Lane
 

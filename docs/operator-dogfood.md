@@ -212,8 +212,9 @@ known and intentional.
 
 The packaged skills preserve the same lane boundaries as the Jade Symphony CLI:
 Issue Forge and Reflect handle conversation, draft shaping, and promotion
-discussion; the CLI owns `forge create`, `forge promote`, and `forge validate`.
-Manual Main stops at `Agent Review`; Manual Review owns evidence-backed review
+discussion, including Human Review -> Rework revision discussion; the CLI owns
+`forge create`, `forge promote`, `forge rework`, and `forge validate`. Manual
+Main stops at `Agent Review`; Manual Review owns evidence-backed review
 routing; Human Review briefs the operator for UAT and final acceptance but waits
 for explicit confirmation before any state change; Manual Merge owns approved
 merge-lane work. Automatic doctor install-health checks remain future work for
@@ -281,6 +282,17 @@ writes the Promotion Note, moves status from `Backlog` to `Todo` as the final
 mutation, and only then performs read-only status readback. Do not start
 Main/Review/Merge work in that same promotion session unless the operator
 explicitly starts a new cycle.
+
+Human Review -> Rework revision is also Issue Forge-owned. Use discussion to
+prepare the full replacement Rework body, evidence file, title, and explicit
+operator confirmation, then run `forge rework`. The command is non-interactive:
+it validates the source issue is `Human Review`, rejects active lane claims,
+records a diagnostic workpad if they are present, preserves terminal lane claims
+as audit pointers, replaces the issue content, writes Rework revision evidence
+to the workpad, and sets `Rework` as the final mutation. Do not use raw Project
+mutation, `set-state`, or `forge promote` for this normal path. Missing linked
+PRs or missing local worktrees are downstream Main Agent recovery work after the
+issue is in `Rework`.
 
 Use `debug` when you need one read-only operator report before a supervised
 dogfood, repair, review, or merge session. It summarizes the current Project

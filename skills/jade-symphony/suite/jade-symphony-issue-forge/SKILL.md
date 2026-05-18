@@ -45,10 +45,17 @@ Follow this order:
 4. Ask another short clarification round while useful ambiguity remains.
 5. Draft the issue contract.
 6. Ask for explicit operator confirmation before creating or promoting.
-7. Validate with `jade-symphony forge validate` or create with
-   `jade-symphony forge create` after confirmation.
+7. Validate with `jade-symphony forge validate`, create with
+   `jade-symphony forge create`, or route Human Review contract revisions with
+   `jade-symphony forge rework` after confirmation.
 8. If the gate returns `NeedToClarify`, repair only the missing pieces and retry.
 9. Report the issue URL, number, Project status, and any dogfood findings.
+
+For a live issue already in `Human Review` whose execution contract must
+change, do not use `forge promote` or raw Project mutation. Discuss the revised
+scope with the operator, prepare a full replacement Rework body and evidence
+file, require explicit confirmation, then run `forge rework`. The CLI stays
+non-interactive and owns the guarded body/evidence/status writes.
 
 ## Discuss Flow
 

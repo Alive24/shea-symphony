@@ -45,11 +45,16 @@ Before doing any work:
 Handle only:
 
 - `Todo` issues that pass the issue quality gate and dependency checks.
+- `Rework` issues that are Main-lane repair work after Agent Review or
+  Human Review contract revision, once dependencies and issue quality pass.
 - `In Progress` issues already claimed by this Main Agent session or clearly
   resumable from prior interrupted Main Agent work.
 
 Do not use this skill for merge-lane `Rework` or `Merging` work. Use
-`$jade-symphony-manual-merge` for those.
+`$jade-symphony-manual-merge` for those. When `Rework` came from
+`forge rework`, missing linked PR or missing local worktree evidence is not a
+claim blocker; the Main Agent owns PR/workspace recovery inside the issue
+scope.
 
 ## Preflight
 

@@ -15,6 +15,10 @@ use crate::lane_claim::{LaneClaim, LaneClaimState};
 use crate::model::{normalize_state, TrackerIssue};
 use crate::workspace::safe_identifier;
 
+const AGENT_REVIEW_WORKPAD_TEMPLATE: &str =
+    include_str!("../workflows/template/workpad/agent-review.md");
+const LOG_BLOCK_LIMIT: usize = 2_000;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReviewFindingClass {
     Confirmed,
@@ -848,9 +852,13 @@ fn terminal_review_failure_marker_matches(value: &str, worker_key: &str) -> bool
     let worker_key = worker_key.to_lowercase();
     value.contains(&worker_key)
         && (value.contains("job state: failed")
+            || value.contains("job state: `failed`")
             || value.contains("job state: timedout")
+            || value.contains("job state: `timedout`")
             || value.contains("job state: timed out")
-            || value.contains("job state: cancelled"))
+            || value.contains("job state: `timed out`")
+            || value.contains("job state: cancelled")
+            || value.contains("job state: `cancelled`"))
         && (value.contains("required operator action")
             || value.contains("review backend")
             || value.contains("gemini review command")
@@ -860,81 +868,211 @@ fn terminal_review_failure_marker_matches(value: &str, worker_key: &str) -> bool
 
 pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
     let decision = review_gate_decision_for_actor(job, ReviewActor::IndependentReviewAgent);
-    let mut lines = vec![
-        "## Agent Review".to_string(),
-        String::new(),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        format!("- Worker key: {}", review_worker_key(issue, &job.backend)),
-        format!("- Reviewer backend: {}", job.backend),
-        format!("- Job state: {:?}", job.state),
-        format!("- Decision: {}", decision.message),
-    ];
-
-    if let Some(path) = &job.artifact_path {
-        lines.push(format!("- Artifact: {}", path.display()));
-    }
-    if let Some(path) = &job.ledger_path {
-        lines.push(format!("- Review job ledger: {}", path.display()));
-    }
-    lines.push(String::new());
-    lines.push(format!("### Review Attempt {}", job.id));
+    let mut attempt_details = Vec::new();
     if let Some(error) = &job.error {
-        lines.push(format!("- Error: {error}"));
+        attempt_details.push(format!("- Error: {error}"));
     }
     if let Some(report) = &job.report {
         if let Some(status) = report.exit_status.as_deref() {
-            lines.push(format!("- Exit status: `{status}`"));
+            attempt_details.push(format!("- Exit status: `{status}`"));
         }
         if let Some(session_id) = report.session_id.as_deref() {
-            lines.push(format!("- Gemini session id: `{session_id}`"));
+            attempt_details.push(format!("- Gemini session id: `{session_id}`"));
         }
     }
-    if let Some(actions) = review_required_operator_actions(job) {
-        lines.push(String::new());
-        lines.push("### Required Operator Action".into());
-        lines.extend(actions);
-    }
-    if let Some(pause) = review_usage_limit_pause(job) {
-        lines.push(format!("- Usage-limit classifier: `{}`", pause.classifier));
-        lines.push(format!("- Usage-limit evidence: {}", pause.evidence));
-        lines.push("- Review did not pass; unavailable or inconclusive review must not move to Human Review.".into());
-    }
-    if let Some(report) = &job.report {
-        if let Some(reason) = report.inconclusive_reason() {
-            lines.push(String::new());
-            lines.push("### Inconclusive Review Diagnostic".into());
-            lines.push(format!("- Reason: {reason}"));
-            lines.push(
-                "- Automatic Review Agent output did not establish a conclusive pass.".into(),
-            );
-            lines.push("- Route to `Rework`; do not move to `Human Review`.".into());
-        }
+    if attempt_details.is_empty() {
+        attempt_details.push("- No attempt details captured yet.".into());
     }
 
-    lines.push(String::new());
-    lines.push("### Findings".into());
-    match &job.report {
+    let operator_action_section = if let Some(actions) = review_required_operator_actions(job) {
+        render_section("Required Operator Action", &actions.join("\n"))
+    } else {
+        String::new()
+    };
+
+    let usage_limit_section = review_usage_limit_pause(job)
+        .map(|pause| {
+            render_section(
+                "Usage Limit Diagnostic",
+                &[
+                    format!("- Usage-limit classifier: `{}`", pause.classifier),
+                    format!("- Usage-limit evidence: {}", pause.evidence),
+                    "- Review did not pass; unavailable or inconclusive review must not move to Human Review.".into(),
+                ]
+                .join("\n"),
+            )
+        })
+        .unwrap_or_default();
+
+    let inconclusive_section = job
+        .report
+        .as_ref()
+        .and_then(|report| report.inconclusive_reason())
+        .map(|reason| {
+            render_section(
+                "Inconclusive Review Diagnostic",
+                &[
+                    format!("- Reason: {reason}"),
+                    "- Automatic Review Agent output did not establish a conclusive pass.".into(),
+                    "- Route to `Rework`; do not move to `Human Review`.".into(),
+                ]
+                .join("\n"),
+            )
+        })
+        .unwrap_or_default();
+
+    let findings = match &job.report {
         Some(report) if report.findings.is_empty() => {
-            lines.push("- No confirmed, plausible, rejected, or needs-context findings.".into());
+            "- No confirmed, plausible, rejected, or needs-context findings.".into()
         }
-        Some(report) => {
-            for finding in &report.findings {
-                lines.push(format!(
+        Some(report) => report
+            .findings
+            .iter()
+            .map(|finding| {
+                format!(
                     "- {:?}: {} - {}",
                     finding.class, finding.title, finding.body
-                ));
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        None => "- No report captured yet.".into(),
+    };
+
+    let agent_review_note = job
+        .report
+        .as_ref()
+        .and_then(agent_review_note)
+        .unwrap_or_else(|| "- No Agent Review note captured.".into());
+
+    let stdout_section = job
+        .report
+        .as_ref()
+        .and_then(|report| render_log_section("Stdout", report.stdout.as_deref()))
+        .unwrap_or_default();
+    let stderr_section = job
+        .report
+        .as_ref()
+        .and_then(|report| render_log_section("Stderr", report.stderr.as_deref()))
+        .unwrap_or_default();
+
+    let pass_evidence_section = if decision.outcome == ReviewOutcome::PassedToHumanReview {
+        render_section(
+            "Review Pass Evidence",
+            "- Review pass evidence: `recorded`\nEvidence recorded. Independent Review Agent may move this issue to Human Review; the main implementation agent must not.",
+        )
+    } else {
+        String::new()
+    };
+
+    render_template(
+        AGENT_REVIEW_WORKPAD_TEMPLATE,
+        &[
+            ("generated_at", current_unix_timestamp_ms()),
+            ("issue_ref", issue.identifier.clone()),
+            ("issue_title", issue.title.clone()),
+            ("worker_key", review_worker_key(issue, &job.backend)),
+            ("reviewer_backend", job.backend.clone()),
+            ("job_state", format!("{:?}", job.state)),
+            ("decision", decision.message),
+            (
+                "target_state",
+                decision.target_state.unwrap_or("none").to_string(),
+            ),
+            (
+                "artifact_line",
+                job.artifact_path
+                    .as_ref()
+                    .map(|path| format!("- Artifact: `{}`", path.display()))
+                    .unwrap_or_else(|| "- Artifact: `not recorded`".into()),
+            ),
+            (
+                "ledger_line",
+                job.ledger_path
+                    .as_ref()
+                    .map(|path| format!("- Review job ledger: `{}`", path.display()))
+                    .unwrap_or_else(|| "- Review job ledger: `not recorded`".into()),
+            ),
+            ("job_id", job.id.clone()),
+            ("attempt_details", attempt_details.join("\n")),
+            ("operator_action_section", operator_action_section),
+            ("usage_limit_section", usage_limit_section),
+            ("inconclusive_section", inconclusive_section),
+            ("agent_review_note", agent_review_note),
+            ("findings", findings),
+            ("stdout_section", stdout_section),
+            ("stderr_section", stderr_section),
+            ("pass_evidence_section", pass_evidence_section),
+        ],
+    )
+}
+
+fn render_template(template: &str, replacements: &[(&str, String)]) -> String {
+    let mut rendered = template.to_string();
+    for (key, value) in replacements {
+        rendered = rendered.replace(&format!("{{{{{key}}}}}"), value);
+    }
+    rendered.trim_end().to_string()
+}
+
+fn render_section(title: &str, body: &str) -> String {
+    if body.trim().is_empty() {
+        return String::new();
+    }
+    format!("### {title}\n\n{}\n\n", body.trim())
+}
+
+fn render_log_section(title: &str, content: Option<&str>) -> Option<String> {
+    let content = content?.trim();
+    if content.is_empty() {
+        return None;
+    }
+    Some(render_section(
+        title,
+        &format!("```text\n{}\n```", truncate_log(content)),
+    ))
+}
+
+fn agent_review_note(report: &AgentReviewReport) -> Option<String> {
+    if let Some(stdout) = report.stdout.as_deref() {
+        if let Some(value) = extract_gemini_json_envelope(stdout) {
+            if let Some(note) = value
+                .get("response")
+                .or_else(|| value.get("note"))
+                .and_then(|response| response.as_str())
+                .map(str::trim)
+                .filter(|response| !response.is_empty())
+            {
+                return Some(note.to_string());
             }
         }
-        None => lines.push("- No report captured yet.".into()),
     }
 
-    if decision.outcome == ReviewOutcome::PassedToHumanReview {
-        lines.push(String::new());
-        lines.push("- Review pass evidence: `recorded`".into());
-        lines.push("Evidence recorded. Independent Review Agent may move this issue to Human Review; the main implementation agent must not.".into());
+    report
+        .summary
+        .as_deref()
+        .map(str::trim)
+        .filter(|summary| !summary.is_empty())
+        .map(str::to_string)
+}
+
+fn truncate_log(content: &str) -> String {
+    if content.len() <= LOG_BLOCK_LIMIT {
+        return content.to_string();
     }
 
-    lines.join("\n")
+    let mut end = LOG_BLOCK_LIMIT;
+    while !content.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{} [... truncated]", &content[..end])
+}
+
+fn current_unix_timestamp_ms() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().to_string())
+        .unwrap_or_else(|_| "unknown".into())
 }
 
 fn review_required_operator_actions(job: &ReviewJob) -> Option<Vec<String>> {
@@ -1838,6 +1976,42 @@ mod tests {
     }
 
     #[test]
+    fn review_workpad_uses_agent_review_template_with_note_and_target_state() {
+        let job = ReviewJob {
+            id: "gemini-1".into(),
+            issue_ref: "#1".into(),
+            backend: "gemini-cli".into(),
+            state: ReviewJobState::Completed,
+            artifact_path: Some("/tmp/review-output.json".into()),
+            ledger_path: Some("/tmp/reviews/jobs/1-gemini.json".into()),
+            report: Some(AgentReviewReport {
+                reviewer_backend: "gemini-cli".into(),
+                findings: Vec::new(),
+                summary: Some("Review Result: PASS".into()),
+                stdout: Some(
+                    "{\"session_id\":\"gemini-session\",\"response\":\"Review Result: PASS\\n\\nAgent note body.\"}"
+                        .into(),
+                ),
+                stderr: Some("warning only".into()),
+                exit_status: Some("0".into()),
+                session_id: Some("gemini-session".into()),
+            }),
+            error: None,
+        };
+
+        let body = render_review_workpad(&issue(), &job);
+
+        assert!(body.contains("Generated at: `"));
+        assert!(body.contains("Target state after review routing: `human_review`"));
+        assert!(body.contains("### Agent Review Note"));
+        assert!(body.contains("Agent note body."));
+        assert!(body.contains("### Stdout"));
+        assert!(body.contains("### Stderr"));
+        assert!(body.contains("warning only"));
+        assert!(body.contains("Review job ledger: `/tmp/reviews/jobs/1-gemini.json`"));
+    }
+
+    #[test]
     fn review_job_ledger_record_captures_decision_and_paths() {
         let job = ReviewJob {
             id: "job".into(),
@@ -1929,7 +2103,7 @@ mod tests {
 
         let body = render_review_workpad(&issue(), &job);
 
-        assert!(body.contains("Review job ledger: /tmp/reviews/jobs/1-job.json"));
+        assert!(body.contains("Review job ledger: `/tmp/reviews/jobs/1-job.json`"));
     }
 
     #[test]

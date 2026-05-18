@@ -1743,7 +1743,8 @@ fn review_manual_pass(
         .into());
     }
 
-    let (current_claim_value, current_claim) = validate_manual_review_claim(&issue, &evidence)?;
+    let (current_claim_value, current_claim) =
+        validate_manual_review_pass_claim(&issue, &evidence)?;
     let terminal_claim_value =
         terminal_review_claim_value(&current_claim, LaneClaimState::Done, "passed");
     let target_state = "human_review";
@@ -1848,7 +1849,8 @@ fn review_manual_reject(
         .into());
     }
 
-    let (current_claim_value, current_claim) = validate_manual_review_claim(&issue, &evidence)?;
+    let (current_claim_value, current_claim) =
+        validate_active_manual_review_claim(&issue, &evidence)?;
     let (terminal_state, terminal_result) = reject_terminal_claim_outcome(&normalized_target);
     let terminal_claim_value =
         terminal_review_claim_value(&current_claim, terminal_state, terminal_result);
@@ -1955,9 +1957,44 @@ fn render_manual_review_workpad(
     lines.join("\n")
 }
 
-fn validate_manual_review_claim(
+fn validate_manual_review_pass_claim(
     issue: &TrackerIssue,
     evidence: &str,
+) -> Result<(String, LaneClaim), Box<dyn std::error::Error>> {
+    let (current, claim) = parse_manual_review_claim(issue)?;
+    if claim.state == LaneClaimState::Active
+        || (claim.state == LaneClaimState::Done
+            && review_claim_result_value(&current) == Some("passed"))
+    {
+        validate_manual_review_evidence_contains_claim(&current, evidence)?;
+        return Ok((current, claim));
+    }
+    Err(format!(
+        "current Review Agent claim must be active, or already state=done result=passed for idempotent pass repair; found state={} result={}",
+        claim.state.as_str(),
+        review_claim_result_value(&current).unwrap_or("missing")
+    )
+    .into())
+}
+
+fn validate_active_manual_review_claim(
+    issue: &TrackerIssue,
+    evidence: &str,
+) -> Result<(String, LaneClaim), Box<dyn std::error::Error>> {
+    let (current, claim) = parse_manual_review_claim(issue)?;
+    if claim.state != LaneClaimState::Active {
+        return Err(format!(
+            "current Review Agent claim must be active before routing, found state={}",
+            claim.state.as_str()
+        )
+        .into());
+    }
+    validate_manual_review_evidence_contains_claim(&current, evidence)?;
+    Ok((current, claim))
+}
+
+fn parse_manual_review_claim(
+    issue: &TrackerIssue,
 ) -> Result<(String, LaneClaim), Box<dyn std::error::Error>> {
     let current = project_text_field(issue, "Review Agent")
         .ok_or("manual review routing requires a current Review Agent claim")?;
@@ -1974,19 +2011,25 @@ fn validate_manual_review_claim(
         )
         .into());
     }
-    if claim.state != LaneClaimState::Active {
-        return Err(format!(
-            "current Review Agent claim must be active before routing, found state={}",
-            claim.state.as_str()
-        )
-        .into());
-    }
-    if !evidence.contains(&current) {
+    Ok((current, claim))
+}
+
+fn validate_manual_review_evidence_contains_claim(
+    current: &str,
+    evidence: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !evidence.contains(current) {
         return Err(
             "manual review evidence must include the exact current Review Agent claim value".into(),
         );
     }
-    Ok((current, claim))
+    Ok(())
+}
+
+fn review_claim_result_value(value: &str) -> Option<&str> {
+    value
+        .split_whitespace()
+        .find_map(|token| token.strip_prefix("result="))
 }
 
 fn terminal_review_claim_value(claim: &LaneClaim, state: LaneClaimState, result: &str) -> String {
@@ -12072,11 +12115,53 @@ mod tests {
         let issue = tracker_issue_with_review_claim();
         let claim = project_text_field(&issue, "Review Agent").unwrap();
 
-        assert!(validate_manual_review_claim(&issue, &format!("claim: {claim}")).is_ok());
-        let error = validate_manual_review_claim(&issue, "claim: Manual Gemini A")
+        assert!(validate_active_manual_review_claim(&issue, &format!("claim: {claim}")).is_ok());
+        let error = validate_active_manual_review_claim(&issue, "claim: Manual Gemini A")
             .unwrap_err()
             .to_string();
         assert!(error.contains("exact current Review Agent claim"));
+    }
+
+    #[test]
+    fn manual_review_pass_allows_terminal_passed_claim_repair() {
+        let mut issue = tracker_issue_with_review_claim();
+        let claim = project_text_field(&issue, "Review Agent").unwrap();
+        let terminal = terminal_review_claim_value(
+            &LaneClaim::parse(&claim).unwrap(),
+            LaneClaimState::Done,
+            "passed",
+        );
+        issue.project_fields.insert(
+            "Review Agent".into(),
+            serde_json::Value::String(terminal.clone()),
+        );
+
+        let (current, parsed) =
+            validate_manual_review_pass_claim(&issue, &format!("claim: {terminal}")).unwrap();
+
+        assert_eq!(current, terminal);
+        assert_eq!(parsed.state, LaneClaimState::Done);
+    }
+
+    #[test]
+    fn manual_review_reject_still_requires_active_claim() {
+        let mut issue = tracker_issue_with_review_claim();
+        let claim = project_text_field(&issue, "Review Agent").unwrap();
+        let terminal = terminal_review_claim_value(
+            &LaneClaim::parse(&claim).unwrap(),
+            LaneClaimState::Done,
+            "passed",
+        );
+        issue.project_fields.insert(
+            "Review Agent".into(),
+            serde_json::Value::String(terminal.clone()),
+        );
+
+        let error = validate_active_manual_review_claim(&issue, &format!("claim: {terminal}"))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("must be active before routing"));
     }
 
     #[test]

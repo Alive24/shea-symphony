@@ -113,6 +113,10 @@ and log tails, and reports a conservative session classification such as
 `failed`, `completed`, `stale`, or `unknown`. The status surface includes only
 compact evidence snippets plus attach/log locations; attach manually when raw
 scrollback is needed.
+Persisted session registry statuses that are not recognized by the current
+binary are read as `unknown` without rewriting or dropping the record. Status
+and doctor diagnostics preserve the raw drifted value so operators can inspect
+the evidence without running a repair or migration first.
 `doctor` reads the same registry and reports stale, orphaned, or attention
 requiring sessions next to tracker/runtime findings. `clean audit` treats the
 session registry, rendered prompts, and tmux logs as recovery evidence, and only

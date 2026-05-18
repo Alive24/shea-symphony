@@ -162,6 +162,9 @@ joining the terminal unless `--exec` is provided.
 durable session registry. `doctor` flags stale, failed, orphaned, usage-limited,
 or runtime/session mismatch cases, while `clean audit` classifies the registry,
 rendered prompts, tmux logs, and individual sessions without deleting them.
+Unknown persisted registry status values are tolerated on read: they classify
+as `unknown`, keep the raw status value in diagnostics, and are not migrated,
+repaired, or rewritten by normal read-only commands.
 
 ## Workspace Discovery
 

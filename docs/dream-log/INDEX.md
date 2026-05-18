@@ -10,6 +10,17 @@ instructions, or a CLI invariant.
 
 ## Current Runs
 
+- `2026-05-19-01-openai-symphony-parity/`
+  - Themes: Codex app-server continuation parity, tracker-scoped dynamic tool
+    execution, last-known-good workflow reload, OpenAI Symphony reference gaps.
+  - Created Backlog: #321, #322, #323.
+  - Watchlist: persistent observability API/dashboard, pending live worker
+    runtime snapshot wiring.
+  - Slept enough: no; next theme should compare retry timers, stall detection,
+    worker supervision, and continuation scheduling against #305/#312/#318.
+  - Gemini review: ran; duplicate risk, evidence quality, Backlog safety,
+    observability Watchlist, and lane-authority checks passed.
+
 - `2026-05-18-02-dream-cli-skill-drift/`
   - Themes: Codex tmux config-migration prompts, repo-owned skill command
     example drift, duplicate filtering against current Backlog/Todo.

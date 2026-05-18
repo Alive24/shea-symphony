@@ -100,9 +100,12 @@ runtime/log/prompt/evidence/draft artifacts are moved to artifact quarantine
 with a warning; unclassified untracked files block for operator repair.
 New lane claims are written as single-line `v=1` key/value audit pointers, for
 example `v=1 lane=main actor=codex worker=codex-manual-main source=manual
-issue=#244 run=... state=active thread=unknown registry=run/...`. The Project
-field stores the compact pointer; the session registry and workpad store the
-durable paths, logs, and handoff evidence for the same `run=`.
+issue=#244 run=... state=active thread=unknown registry=run/...`. Worker display
+labels may contain spaces; the CLI stores those values with reversible quoting,
+such as `worker="Codex Manual Main"`, and validates the rendered pointer before
+writing Project fields. The Project field stores the compact pointer; the
+session registry and workpad store the durable paths, logs, and handoff evidence
+for the same `run=`.
 
 Manual claim and session control are separate operations. Claim commands write
 the lane claim Project field, create a matching `codex-app-manual` registry
@@ -110,7 +113,7 @@ record with status `recorded`, and do not change Project Status:
 
 ```bash
 cargo run -- main claim workflows/jade-symphony.md '#265' --worker codex-manual-main --write
-cargo run -- review claim workflows/jade-symphony.md '#265' --worker gemini-manual-review --write
+cargo run -- review claim workflows/jade-symphony.md '#265' --worker "Manual Gemini Review" --write
 cargo run -- merge claim workflows/jade-symphony.md '#265' --worker codex-manual-merge --write
 ```
 
@@ -324,7 +327,7 @@ changes.
 | `review fake` | Fixture/fake review transition helper. | Local testing path. |
 | `review once` | Run one configured review backend for one issue. | Direct backend command for one issue. |
 | `review loop` | Bounded review worker selection/reconciliation. | For `gemini-cli`, runs headless Gemini by default with stdin prompt transport, JSON output capture, configured model/tools, and durable review-job evidence. |
-| `review claim` | Claim one `Agent Review` item's `Review Agent` text field for manual/operator review. | Requires `--worker` and `--write`; refuses non-`Agent Review` issues and writes a structured claim pointer. |
+| `review claim` | Claim one `Agent Review` item's `Review Agent` text field for manual/operator review. | Requires `--worker` and `--write`; refuses non-`Agent Review` issues and writes a structured, round-trip-validated claim pointer. |
 | `review pass` | Record manual independent review pass evidence and move to `Human Review`. | Requires `--write`, a durable evidence file containing the exact current `Review Agent` claim, and preserves the field as terminal pass evidence. |
 | `review reject` | Record failed/inconclusive manual review evidence and route to `Agent Review`, `Rework`, or `Need Human Input`. | Refuses `Human Review`, requires exact claim evidence, and preserves the field as terminal reject/failed evidence. |
 | `review session` | Hidden legacy review session alias. | Does not write the `Review Agent` claim; use `review claim` or `review loop` for claim ownership. |

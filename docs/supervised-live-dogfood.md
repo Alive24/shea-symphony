@@ -191,6 +191,8 @@ Expected outcomes:
 - manual review claims use `review claim`, and terminal manual review routing
   validates the exact evidence claim before preserving the `Review Agent` field
   as a terminal structured audit pointer;
+- worker display labels such as `Manual Gemini Review` are stored through
+  CLI-owned quoting/escaping; avoid raw Project edits for normal claim repair;
 - passed independent review may move the issue to `Human Review`;
 - confirmed findings move the issue to `Rework`;
 - completed but inconclusive automatic review moves to `Rework` with a missing

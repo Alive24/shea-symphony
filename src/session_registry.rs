@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 use crate::config::RuntimeConfig;
@@ -49,8 +49,7 @@ pub struct AgentSessionRecord {
     pub updated_at_ms: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionStatus {
     Starting,
     Running,
@@ -63,6 +62,7 @@ pub enum SessionStatus {
     Recorded,
     Stale,
     Unknown,
+    UnknownPersisted(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,8 +93,58 @@ impl SessionStatus {
             Self::Completed => "completed",
             Self::Recorded => "recorded",
             Self::Stale => "stale",
-            Self::Unknown => "unknown",
+            Self::Unknown | Self::UnknownPersisted(_) => "unknown",
         }
+    }
+
+    pub fn raw_persisted_unknown(&self) -> Option<&str> {
+        match self {
+            Self::UnknownPersisted(raw) => Some(raw.as_str()),
+            _ => None,
+        }
+    }
+
+    fn from_persisted_str(value: &str) -> Self {
+        match value {
+            "starting" => Self::Starting,
+            "running" => Self::Running,
+            "waiting_for_trust" => Self::WaitingForTrust,
+            "waiting_for_approval" => Self::WaitingForApproval,
+            "waiting_for_human_input" => Self::WaitingForHumanInput,
+            "usage_limited" => Self::UsageLimited,
+            "failed" => Self::Failed,
+            "completed" => Self::Completed,
+            "recorded" => Self::Recorded,
+            "stale" => Self::Stale,
+            "unknown" => Self::Unknown,
+            other => Self::UnknownPersisted(other.to_string()),
+        }
+    }
+
+    fn persisted_str(&self) -> &str {
+        match self {
+            Self::UnknownPersisted(raw) => raw.as_str(),
+            _ => self.as_str(),
+        }
+    }
+}
+
+impl Serialize for SessionStatus {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.persisted_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for SessionStatus {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(Self::from_persisted_str(&value))
     }
 }
 
@@ -278,10 +328,16 @@ pub fn classify_session_record(
         };
     }
 
+    let evidence = if let Some(raw) = record.status.raw_persisted_unknown() {
+        format!("unknown persisted session status {raw}")
+    } else {
+        format!("registry status {}", record.status.as_str())
+    };
+
     SessionStatusProbe {
         status: record.status.clone(),
         source: SessionStatusSource::Registry,
-        evidence: format!("registry status {}", record.status.as_str()),
+        evidence,
     }
 }
 
@@ -553,6 +609,54 @@ mod tests {
 
         assert_eq!(loaded.sessions.len(), 1);
         assert_eq!(loaded.sessions[0].updated_at_ms, 20);
+    }
+
+    #[test]
+    fn loads_unknown_persisted_status_as_unknown_with_raw_diagnostic() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(SESSION_REGISTRY_FILE);
+        let mut value = serde_json::to_value(SessionRegistry {
+            sessions: vec![fixture_record()],
+        })
+        .unwrap();
+        value["sessions"][0]["status"] = serde_json::Value::String("recorded_legacy".into());
+        fs::write(&path, serde_json::to_string_pretty(&value).unwrap()).unwrap();
+
+        let loaded = load_session_registry(&path).unwrap();
+        let record = &loaded.sessions[0];
+        let probe = classify_session_record(record, None, None, 2_000, 10_000);
+
+        assert_eq!(record.status.as_str(), "unknown");
+        assert_eq!(
+            record.status.raw_persisted_unknown(),
+            Some("recorded_legacy")
+        );
+        assert_eq!(probe.status.as_str(), "unknown");
+        assert_eq!(
+            probe.evidence,
+            "unknown persisted session status recorded_legacy"
+        );
+    }
+
+    #[test]
+    fn saving_another_record_preserves_unknown_persisted_status_value() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(SESSION_REGISTRY_FILE);
+        let mut value = serde_json::to_value(SessionRegistry {
+            sessions: vec![fixture_record()],
+        })
+        .unwrap();
+        value["sessions"][0]["status"] = serde_json::Value::String("recorded_legacy".into());
+        fs::write(&path, serde_json::to_string_pretty(&value).unwrap()).unwrap();
+        let mut second = fixture_record();
+        second.session_name = "jade-main-299-attempt-1-second".into();
+        second.issue_identifier = Some("#299".into());
+
+        save_session_record(&path, second).unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+
+        assert!(content.contains(r#""status": "recorded_legacy""#));
+        assert!(content.contains(r#""status": "running""#));
     }
 
     #[test]

@@ -130,6 +130,8 @@ After the briefing, guide the operator one step at a time.
   explicitly asks for the full list.
 - Give exactly one next action, explain why it is the next action, and tell the
   operator what feedback to provide after running it.
+- Tell the operator which directory to run the action from. For PR UAT, this is
+  normally the reviewed PR/issue worktree, not the canonical `main` checkout.
 - Wait for the operator's result before moving to the next UAT action.
 - After each operator result, classify it as `pass`, `fail`, `deferred`, or
   `needs clarification`, then choose the next action.
@@ -159,12 +161,34 @@ Walk the operator through UAT items from the issue body.
 - If UAT fails, recommend `Rework` with the smallest actionable finding.
 - Do not check UAT boxes based only on Review Agent evidence.
 
+First resolve the correct execution directory.
+
+- If the issue has an unmerged PR, UAT commands that validate the PR's code must
+  run from the linked PR/issue worktree or another checkout of that PR branch.
+- Do not ask the operator to run PR-specific UAT from the canonical `main`
+  checkout unless the PR has already been merged into `main`.
+- Prefer the worktree recorded in the issue workpad or `project issue` readback.
+  If no usable worktree is available, ask the operator whether to create or
+  select one before continuing.
+- If the operator accidentally runs a UAT command from canonical `main`, classify
+  the result as `needs clarification`, explain that it tested old code, and ask
+  them to rerun from the PR worktree.
+
 For command-based UAT, prefer the exact workflow or fixture named by the issue
 and Review Agent evidence.
 
+- Treat memory-tracker or fixture-only write-mode commands as operator-run
+  smoke / functional verification evidence by default, not strict UAT. They are
+  useful for confidence and can support acceptance, but they do not by
+  themselves prove a real live workflow produced a real Project/PR result.
+- Strict UAT should involve a human-selected live path or other operator-owned
+  acceptance action that produces or confirms a real result. If the issue only
+  provides high-safety fixtures, ask the operator whether those smoke results
+  are sufficient for Human Review acceptance or whether to defer live UAT to the
+  next lane.
 - A controlled fixture workflow is valid UAT when the issue asks for a safe
-  rehearsal path or fixture. Do not replace it with the live canonical workflow
-  unless the issue explicitly requires live Project mutation.
+  rehearsal path or fixture and the operator explicitly accepts fixture
+  rehearsal as the UAT boundary. Otherwise record it as smoke evidence.
 - The canonical workflow (`workflows/jade-symphony.md`) is a live lane command.
   Before asking the operator to run it in write mode, first ask for a dry-run
   and confirm the selected issue/PR is expected and safe.

@@ -64,7 +64,7 @@ gh pr view <pr> --repo Alive24/jade-symphony --json number,title,state,url,headR
 ```
 
 If the PR is not listed in `closingIssuesReferences`, do not assume it is
-missing. Check issue comments and Jade Symphony workpad evidence for the
+missing. Check issue comments, Main Workpad evidence, and lane timeline comments for the
 canonical link.
 
 ## Selection
@@ -81,7 +81,7 @@ Pick the issue only when all are true:
 - Status is `Rework` or `Merging`.
 - `Merging Agent` field is empty or belongs to this session.
 - A linked PR can be identified from Project data, issue comments, PR closing
-  references, or workpad evidence.
+  references, Main Workpad evidence, or lane timeline comments.
 - Prior review and human approval evidence exists, or the issue is routed to
   `Need Human Input` instead of merged.
 
@@ -123,8 +123,9 @@ query before making a routing decision. Only merge after the status returns
 
 Project `Status` changes must be the final mutating step of the session. Before
 moving an issue to `Done`, `Need Human Input`, or another routing state, finish
-merge evidence, PR/issue reconciliation, workpad comments, and safe branch
-cleanup. After status changes, do only readback verification such as
+merge evidence, PR/issue reconciliation, append-only `Jade Symphony Merge Run`
+timeline comments, and safe branch cleanup. After status changes, do only
+readback verification such as
 `project issue`, `project state`, or `doctor`.
 
 ## Hard Boundaries
@@ -136,3 +137,5 @@ cleanup. After status changes, do only readback verification such as
 - Never merge without approval evidence.
 - Never hide unknown mergeability, missing PR linkage, or missing context.
 - Never mark `Human Review` yourself as a substitute for actual review approval.
+- Never edit, overwrite, or restructure the Main Agent Workpad; merge evidence
+  belongs in standalone timeline comments.

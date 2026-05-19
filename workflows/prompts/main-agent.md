@@ -58,6 +58,12 @@ question, but do not edit files under
    `Need to Clarify`, and stop this issue. The gate must include explicit
    dependency semantics: either no blocking dependencies, or named
    blockers/overlaps with the condition that makes the issue claimable.
+   Also perform a code-state freshness check against latest `main`, linked/open
+   PR context, and recently completed related work. If the issue's original gap
+   has already been solved, narrowed, renamed, or invalidated by later
+   development, do not implement the stale contract; record the drift in the
+   workpad and route the issue to `Need to Clarify` for Issue Forge/operator
+   re-scoping.
 3. Work in exactly one isolated workspace and branch for this issue. Do not mix
    unrelated issue scopes in this branch or PR. The canonical checkout is only
    the launch directory; do not write implementation edits, runtime state, logs,
@@ -111,11 +117,13 @@ question, but do not edit files under
 - `Merging` is a separate land flow for PRs already approved by the review and
   human gates. Do not merge from the implementation role.
 
-## Workpad Discipline
+## Main Agent Workpad Discipline
 
-Use the configured workpad marker and keep durable evidence in the issue
-workpad. Keep it close to the reference workpad shape and update it in place
-throughout execution. Record:
+Use the configured workpad marker and keep durable Main implementation evidence
+in one persistent Main Agent Workpad comment. Keep it close to the reference
+workpad shape and update it in place throughout execution. Review, Rework,
+Human Review, Merge, and Doctor runs use standalone append-only timeline
+comments; do not fold those lane logs back into the Main Agent Workpad. Record:
 
 - environment and workspace path.
 - issue status and linked PR status at start.
@@ -145,7 +153,7 @@ throughout execution. Record:
 - PR handoff must explain scope, validation, and the state boundary that main
   work stops at `Agent Review`.
 - Draft PRs must not be handed off to `Agent Review`. Mark the PR ready first,
-  or keep the issue in a blocked state with workpad evidence.
+  or keep the issue in a blocked state with Main Workpad evidence.
 
 ## Stop Conditions
 

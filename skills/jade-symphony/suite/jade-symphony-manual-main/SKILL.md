@@ -96,7 +96,8 @@ For the selected issue:
 
 1. Claim through the `Main Agent` field and transition to `In Progress`.
 2. Create or resume the isolated worktree and feature branch.
-3. Read the issue body, workpad comments, canonical docs, and relevant code.
+3. Read the issue body, Main Agent Workpad, append-only timeline comments,
+   canonical docs, and relevant code.
 4. Implement only the accepted issue scope.
 5. Run the strongest practical verification for the touched area.
 6. Update issue or PR evidence with changes, verification, risks, and follow-ups.
@@ -116,7 +117,7 @@ worktree/PR update, workpad write, PR readiness check, linked-PR verification,
 and evidence update that justifies that state. After the status changes, do only
 readback verification such as `project issue` or `doctor`.
 
-## Workpad Evidence
+## Main Agent Workpad Evidence
 
 Keep exactly one durable Jade Symphony workpad updated in place. It must include:
 
@@ -127,6 +128,11 @@ Keep exactly one durable Jade Symphony workpad updated in place. It must include
 - verification commands and results.
 - PR URL, linked-PR confirmation, and ready/not-draft status.
 - final handoff summary explaining why Main stops at `Agent Review`.
+
+Only the Main Agent owns this persistent Workpad comment. Review, Rework, Human
+Review, Merge, and Doctor runs write separate append-only Jade Symphony timeline
+comments and must not overwrite, restructure, or fold their run logs into the
+Main Agent Workpad.
 
 Do not treat the workpad as a replacement for the issue body's Review checklist.
 The issue body should retain unchecked `Expected Outcome`, `Completion Criteria`,

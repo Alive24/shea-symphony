@@ -52,7 +52,7 @@ workflows/template/workpad/human-review.md
   says otherwise.
 - Never mutate Project state until the operator explicitly confirms the decision
   after the briefing and UAT discussion.
-- Use Jade Symphony CLI for Project reads, workpad writes, and confirmed state
+- Use Jade Symphony CLI for Project reads, timeline evidence writes, and confirmed state
   routing. Do not bypass it with raw Project mutations.
 
 ## CLI Topology Transition

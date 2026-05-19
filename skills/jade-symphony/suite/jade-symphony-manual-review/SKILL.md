@@ -39,14 +39,16 @@ do not work on the same issue. `Review Agent` is a Project text field. Use Jade
 Symphony CLI review commands to write the structured text claim; do not use
 legacy labels such as `Gemini A` or `Manual Gemini A`.
 
-When you finish, write evidence headed exactly:
+When you finish, save the manual note section headed exactly:
 
 ```md
 ## Manual Agent Review Evidence
 ```
 
-Do not claim that `review loop` passed unless `jade-symphony review loop`
-itself produced that result.
+`review pass` or `review reject` wraps that note in a standalone
+`## Jade Symphony Agent Review Run` timeline comment. Do not claim that
+`review loop` passed unless `jade-symphony review loop` itself produced that
+result.
 
 ## Workflow
 
@@ -120,6 +122,10 @@ asks you to release an abandoned or mistaken active claim.
 
 ## Evidence Template
 
+`review pass` and `review reject` write this evidence as a standalone
+append-only `Jade Symphony Agent Review Run` timeline comment. Do not edit,
+overwrite, or restructure the Main Agent Workpad.
+
 ```md
 ## Manual Agent Review Evidence
 
@@ -170,6 +176,6 @@ This is manual/operator-supplied Review Agent evidence. It is not automatic
   `forge promote`. If the reviewed contract must change, hand the operator
   decision to Issue Forge and use the deterministic `forge rework` flow with a
   replacement body, evidence file, and explicit confirmation.
-- Do not check issue body checklist items unless PR diff, workpad evidence,
-  command output, or operator evidence supports them.
+- Do not check issue body checklist items unless PR diff, Main Agent Workpad,
+  timeline comment evidence, command output, or operator evidence supports them.
 - Do not check `UAT` checklist items.

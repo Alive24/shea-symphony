@@ -187,7 +187,8 @@ Expected outcomes:
   with `--prompt`, `--output-format json`, workflow-configured model, and
   workflow-configured interim allowed tools, writes the prompt through stdin,
   and records stdout, stderr, exit status, Gemini session id when present, a
-  review output artifact, and a durable job ledger;
+  review output artifact, durable job ledger, and append-only Agent Review
+  timeline comment;
 - manual review claims use `review claim`, and terminal manual review routing
   validates the exact evidence claim before preserving the `Review Agent` field
   as a terminal structured audit pointer;
@@ -215,12 +216,13 @@ Do not use review commands to bypass human acceptance.
 
 Human Review requires durable pass evidence from the independent Review Agent.
 For GitHub Project #9, do not assume the `Review Agent` claim field is enough:
-doctor expects the canonical review workpad pass marker in the issue comment
-stream, or an explicit manual review pass Project field if a future tracker schema adds
-one.
-Manual Gemini or operator-supplied review notes must be labeled as manual
-evidence, for example with `## Manual Agent Review Evidence`, so operators can
-distinguish them from automatic `review loop` pass evidence.
+doctor expects the canonical Agent Review timeline comment pass marker in the
+issue comment stream, or an explicit manual review pass Project field if a
+future tracker schema adds one.
+Manual Gemini or operator-supplied review notes are wrapped by `review pass` or
+`review reject` into a `## Jade Symphony Agent Review Run` timeline comment;
+label the inner note as manual evidence so operators can distinguish it from
+automatic `review loop` pass evidence.
 
 After a human accepts work and moves the issue to `Merging`, use the guarded
 merge lane:
@@ -236,7 +238,8 @@ The merge lane should:
 - require exactly one verified linked PR;
 - check PR state, base branch, checks, review/approval signal, and mergeability;
 - merge clean approved work;
-- route dirty or failing work to `Rework` with workpad evidence;
+- route dirty or failing work to `Rework` with a standalone Merge/Rework
+  timeline comment;
 - retry transient missing or `UNKNOWN` mergeability instead of treating it as a
   human decision;
 - include a `Required Human Input` question whenever a blocker really needs a
@@ -275,7 +278,7 @@ When something goes wrong:
 - keep one issue, one branch, one PR.
 
 If a branch is dirty because `main` advanced, repair the existing PR branch,
-record workpad evidence, and rerun verification before merging.
+record merge/rework timeline evidence, and rerun verification before merging.
 
 ## Stop Conditions
 

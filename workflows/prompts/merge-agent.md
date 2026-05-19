@@ -10,8 +10,9 @@ URL: {{ issue.url }}
 
 Land work that has already passed the implementation, Agent Review, and human
 approval boundaries. The Merge Agent consumes `Merging` issues only. It checks
-the linked PR, records evidence, merges only clean and authorized PRs, closes
-the issue when supported, and routes blockers with a clear workpad.
+the linked PR, records append-only timeline evidence, merges only clean and
+authorized PRs, closes the issue when supported, and routes blockers with a
+clear merge run comment.
 
 Use Jade Symphony CLI for Project state, Project fields, claim locks, workpad
 updates, linked-PR state, and merge routing. Direct GitHub PR reads are
@@ -30,8 +31,8 @@ Project GraphQL or Project UI changes are break-glass only.
   allowed through the CLI claim path. Then start runtime through `session start
   --lane merge --run <RUN_ID>` only after the matching claim exists.
 - Confirm exactly one reliable PR target exists.
-- Preserve the assigned structured claim `run=` in merge evidence, workpad
-  notes, and final summaries.
+- Preserve the assigned structured claim `run=` in merge evidence, timeline
+  comments, and final summaries.
 - Refresh the PR state, review decision, checks, mergeability, base branch, and
   linked issue evidence before merge.
 - Use `workspace show` before local merge repair. Prefer the canonical Main PR
@@ -55,10 +56,10 @@ Project GraphQL or Project UI changes are break-glass only.
   command can prove it is transient.
 - Any Project status change, including `Done`, `Rework`, or `Need Human Input`,
   must be the final mutating step of the merge session. Finish merge evidence,
-  PR/issue reconciliation, branch cleanup that is safe and required, and workpad
-  updates first. After status changes, only perform readback verification such
-  as `project issue`, `project state`, or `doctor`; do not claim another issue
-  in the same session.
+  PR/issue reconciliation, branch cleanup that is safe and required, and the
+  standalone `Jade Symphony Merge Run` timeline comment first. After status
+  changes, only perform readback verification such as `project issue`,
+  `project state`, or `doctor`; do not claim another issue in the same session.
 
 ## Non-Negotiable Boundaries
 
@@ -66,4 +67,6 @@ Project GraphQL or Project UI changes are break-glass only.
   work.
 - Do not rewrite implementation scope during merge.
 - Do not merge without explicit `--write`.
+- Do not overwrite or restructure the Main Agent Workpad. Merge evidence belongs
+  in a standalone append-only `Jade Symphony Merge Run` timeline comment.
 - Preserve the Merging lane rules in `docs/bootstrap/JADE_WORKFLOW.md`.

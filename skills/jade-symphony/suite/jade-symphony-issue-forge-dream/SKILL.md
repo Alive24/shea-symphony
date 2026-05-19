@@ -103,7 +103,7 @@ cargo run -- doctor workflows/jade-symphony.md
 Then sample relevant sources:
 
 - current `Todo`, `Rework`, `Backlog`, and `Agent Review` items;
-- recent `Done` issues and linked PR/workpad evidence;
+- recent `Done` issues and linked PR, Main Workpad, and timeline evidence;
 - run logs, session registry evidence, Doctor findings, and debug reports;
 - `docs/dream-log/INDEX.md` plus the most recent five Dream run directories;
 - repo-owned skills under `skills/jade-symphony/suite/`;

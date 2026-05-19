@@ -184,8 +184,8 @@ that section as local path-like references.
 The `Expected Outcome`, `Completion Criteria`, `Functional Verification`,
 `UAT`, and `Context Verification` sections must use Markdown checkboxes. These
 checkboxes are the Review Agent evidence checklist; write each item so it can be
-objectively checked or left unchecked from PR diff, workpad evidence, command
-output, or operator evidence.
+objectively checked or left unchecked from PR diff, Main Workpad evidence,
+timeline comments, command output, or operator evidence.
 
 ## Creation Workflow
 

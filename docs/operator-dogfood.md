@@ -125,6 +125,26 @@ If an operator switches the workflow back to `agent.backend: dry-run`, the
 mutating tick exits before runtime-state writes, worktree creation, Project
 claims, or workpad mutation.
 
+## Evidence Timeline
+
+Jade Symphony uses two issue-comment evidence surfaces:
+
+- `Main Agent Workpad`: one persistent marker comment owned by the Main Agent.
+  It is updated in place for implementation plan, work log, verification, PR,
+  workspace, and handoff evidence.
+- Append-only timeline comments: every Review, Rework, Merge, Human Review, and
+  Doctor run writes a standalone comment with a human-readable GMT timestamp,
+  lane, actor, input state, target state, result, PR when relevant, and evidence
+  summary.
+
+Review, Merge, Human Review, and Doctor flows must not overwrite or restructure
+the Main Agent Workpad. They should reference Main evidence, then write their
+own `Jade Symphony Agent Review Run`, `Jade Symphony Rework Run`,
+`Jade Symphony Merge Run`, `Jade Symphony Human Review Decision`, or
+`Jade Symphony Doctor Triage` timeline comment. Historical issues may still
+contain older mixed Workpad evidence; do not migrate or delete it during normal
+dogfood.
+
 ## Review Backend Setup
 
 For live Agent Review, make the Gemini command visible to the worker process.
@@ -167,10 +187,10 @@ value may be a display label such as `Manual Gemini Review`; use the claim
 command so Jade Symphony can quote, escape, and validate the stored pointer
 before Project mutation.
 
-If Gemini cannot start, the review workpad should name the configured command,
-whether worker `PATH` could resolve it, the required operator action, and the
-retry command. Do not move an issue to `Human Review` unless the Review Agent
-actually records passing review evidence.
+If Gemini cannot start, the Agent Review timeline comment should name the
+configured command, whether worker `PATH` could resolve it, the required
+operator action, and the retry command. Do not move an issue to `Human Review`
+unless the Review Agent actually records passing review evidence.
 If the linked PR is still draft, do not run normal review. Record invalid
 handoff evidence and send the work back to Main/operator repair; `doctor repair
 <issue> --mark-pr-ready --confirm-handoff-ready --write` is the explicit repair
@@ -185,13 +205,15 @@ artifact, session registry entry, and log path, then route with `review pass` or
 If Gemini returns successfully but says it could not inspect the PR, workspace,
 diff, code changes, or required handoff evidence, treat that as an automatic
 Review Agent inconclusive result, not a pass. `review loop` records the
-inconclusive reason in the ledger/workpad and routes the issue to `Rework` so
-the missing evidence can be repaired before another independent review pass.
+inconclusive reason in the ledger/timeline comment and routes the issue to
+`Rework` so the missing evidence can be repaired before another independent
+review pass.
 
-Manual Gemini or operator-supplied review notes must use an explicit manual
-evidence marker such as `## Manual Agent Review Evidence`. They are not the same
-thing as automatic `review loop` pass evidence and should not be used to satisfy
-the automatic Review Agent boundary unless the workflow explicitly says so.
+Manual Gemini or operator-supplied review notes must be routed through
+`review pass` or `review reject`, which wraps the note in a
+`## Jade Symphony Agent Review Run` timeline comment. Mark the inner note as
+manual evidence so operators can distinguish it from automatic `review loop`
+pass evidence.
 
 Use `workflows/jade-symphony.md` for supervised review workers. Do not keep the
 active review workflow only under `/tmp` or `/private/tmp`; the CLI prints
@@ -357,9 +379,9 @@ diagnostic so local work is not discarded silently.
 `doctor` treats Human Review as valid only when independent review pass evidence
 is durable. Project fields named `review_pass_evidence_recorded` or
 `review_pass_evidence` satisfy that check when a tracker exposes them; in the
-current GitHub Project #9 schema, the canonical source is the review workpad text
-written into the issue comment stream. A `Review Agent` claim by itself is not
-pass evidence.
+current GitHub Project #9 schema, the canonical source is an Agent Review
+timeline comment in the issue comment stream. A `Review Agent` claim by itself
+is not pass evidence.
 
 For a manual Gemini/operator review, claim and route through the CLI:
 
@@ -370,8 +392,9 @@ target/debug/jade-symphony review reject workflows/jade-symphony.md '#226' --evi
 ```
 
 The evidence file for `review pass` or `review reject` must include the exact
-structured `Review Agent` claim from `review claim`. `review pass` writes the
-review pass marker before moving to `Human Review`; `review reject` refuses
+structured `Review Agent` claim from `review claim`. `review pass` writes an
+append-only Agent Review timeline comment with the review pass marker before
+moving to `Human Review`; `review reject` refuses
 `Human Review` and may route only to `Agent Review`, `Rework`, or
 `Need Human Input`. Both commands preserve the `Review Agent` field as terminal
 audit evidence instead of clearing it.

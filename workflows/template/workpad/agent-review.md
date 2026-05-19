@@ -1,9 +1,11 @@
-## Agent Review
+## Jade Symphony Agent Review Run
 
 - Generated at: `{{generated_at}}`
 - Issue: {{issue_ref}} {{issue_title}}
 - Worker key: `{{worker_key}}`
 - Reviewer backend: `{{reviewer_backend}}`
+- Lane: `review`
+- Input state: `Agent Review`
 - Job state: `{{job_state}}`
 - Decision: {{decision}}
 - Target state after review routing: `{{target_state}}`

@@ -1181,7 +1181,7 @@ fn forge_rework_with_adapter(
         if !input.dry_run {
             let diagnostic = render_forge_rework_blocked_workpad(&source, &error.to_string());
             adapter
-                .upsert_workpad(&source.identifier, &diagnostic)
+                .add_issue_comment(&source.identifier, &diagnostic)
                 .map_err(|write_error| {
                     format!("forge rework stopped at active_claim_diagnostic: {write_error}")
                 })?;
@@ -1189,7 +1189,7 @@ fn forge_rework_with_adapter(
                 config,
                 TrackerMutationAudit {
                     command: "forge rework",
-                    mutation_type: "workpad_write",
+                    mutation_type: "timeline_comment",
                     issue_ref: Some(&source.identifier),
                     target: Some("Rework Revision Blocker".into()),
                     from_state: Some(source.state.clone()),
@@ -1282,13 +1282,13 @@ fn forge_rework_with_adapter(
         &readbacks,
     );
     adapter
-        .upsert_workpad(&content_verified.identifier, &workpad)
-        .map_err(|error| format!("forge rework stopped at evidence_workpad: {error}"))?;
+        .add_issue_comment(&content_verified.identifier, &workpad)
+        .map_err(|error| format!("forge rework stopped at evidence_comment: {error}"))?;
     append_tracker_mutation_audit(
         config,
         TrackerMutationAudit {
             command: "forge rework",
-            mutation_type: "workpad_write",
+            mutation_type: "timeline_comment",
             issue_ref: Some(&content_verified.identifier),
             target: Some("Rework Revision Evidence".into()),
             from_state: Some(source.state.clone()),
@@ -1389,9 +1389,14 @@ fn render_forge_rework_workpad(
     generated_readbacks: &[String],
 ) -> String {
     let mut lines = vec![
-        "## Rework Revision Evidence".to_string(),
+        "## Jade Symphony Rework Run".to_string(),
         String::new(),
+        format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", issue.identifier, issue.title),
+        "- Lane: `main`".into(),
+        "- Run type: `human_review_rework_revision`".into(),
+        "- Input state: `Human Review`".into(),
+        "- Target state after run: `Rework`".into(),
         format!("- Replacement Rework title/status: `{rework_title}` / `Rework`"),
         format!("- Operator confirmation: {operator_confirmation:?}"),
         "- Source state validated as `Human Review` before mutation.".into(),
@@ -1423,10 +1428,14 @@ fn render_forge_rework_workpad(
 
 fn render_forge_rework_blocked_workpad(issue: &TrackerIssue, reason: &str) -> String {
     [
-        "## Rework Revision Blocker".to_string(),
+        "## Jade Symphony Rework Run".to_string(),
         String::new(),
+        format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", issue.identifier, issue.title),
+        "- Lane: `main`".into(),
+        "- Run type: `human_review_rework_revision`".into(),
         "- Source state: `Human Review`".into(),
+        "- Target state after run: `unchanged`".into(),
         format!("- Blocker: {reason}"),
         "- No replacement body was written.".into(),
         "- Project status was not changed to `Rework`.".into(),
@@ -2222,7 +2231,7 @@ fn review_manual_pass(
     );
     if !write {
         println!(
-            "review_pass_dry_run action=workpad issue_ref={} evidence=manual_review_pass",
+            "review_pass_dry_run action=timeline_comment issue_ref={} evidence=manual_review_pass",
             issue.identifier
         );
         println!(
@@ -2235,12 +2244,12 @@ fn review_manual_pass(
         );
         return Ok(());
     }
-    adapter.upsert_workpad(&issue.identifier, &workpad)?;
+    adapter.add_issue_comment(&issue.identifier, &workpad)?;
     append_tracker_mutation_audit(
         &config,
         TrackerMutationAudit {
             command: "review pass",
-            mutation_type: "workpad_write",
+            mutation_type: "timeline_comment",
             issue_ref: Some(&issue.identifier),
             target: None,
             from_state: Some(issue.state.clone()),
@@ -2328,7 +2337,7 @@ fn review_manual_reject(
     );
     if !write {
         println!(
-            "review_reject_dry_run action=workpad issue_ref={} evidence=manual_review_reject",
+            "review_reject_dry_run action=timeline_comment issue_ref={} evidence=manual_review_reject",
             issue.identifier
         );
         println!(
@@ -2341,12 +2350,12 @@ fn review_manual_reject(
         );
         return Ok(());
     }
-    adapter.upsert_workpad(&issue.identifier, &workpad)?;
+    adapter.add_issue_comment(&issue.identifier, &workpad)?;
     append_tracker_mutation_audit(
         &config,
         TrackerMutationAudit {
             command: "review reject",
-            mutation_type: "workpad_write",
+            mutation_type: "timeline_comment",
             issue_ref: Some(&issue.identifier),
             target: None,
             from_state: Some(issue.state.clone()),
@@ -2392,12 +2401,15 @@ fn render_manual_review_workpad(
     terminal_claim_value: &str,
 ) -> String {
     let mut lines = vec![
-        "## Agent Review".to_string(),
+        "## Jade Symphony Agent Review Run".to_string(),
         String::new(),
+        format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", issue.identifier, issue.title),
+        "- Lane: `review`".into(),
+        "- Input state: `Agent Review`".into(),
         "- Reviewer backend: manual-operator".into(),
         format!("- Decision: Manual independent review {decision}."),
-        format!("- Target state: `{target_state}`"),
+        format!("- Target state after review routing: `{target_state}`"),
         format!("- Review Agent claim: `{current_claim_value}`"),
         format!("- Terminal Review Agent claim: `{terminal_claim_value}`"),
         String::new(),
@@ -2561,7 +2573,7 @@ fn review_freshness(input: ReviewFreshnessInput) -> Result<(), Box<dyn std::erro
             .unwrap_or("none")
     );
     println!("rationale={}", report.decision.rationale);
-    println!("\n--- workpad evidence ---\n");
+    println!("\n--- review freshness evidence ---\n");
     println!("{}", render_review_freshness_workpad(&report));
     Ok(())
 }
@@ -2661,7 +2673,7 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                         "review",
                         if options.write { "running" } else { "waiting" },
                         "review_selected",
-                        Some("review workpad and reconcile".into()),
+                        Some("write review timeline and reconcile".into()),
                     ));
                     println!(
                     "review_loop_iteration={iterations} worker_slot={worker_slot} issue={} worker_key={worker_key} mode={}",
@@ -2692,7 +2704,7 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                         }
                         print_review_claim_field_dry_run(&selected_issue, &worker_key);
                         println!(
-                            "review_loop_dry_run action=workpad issue={} evidence=review_job",
+                            "review_loop_dry_run action=timeline_comment issue={} evidence=review_job",
                             selected_issue.identifier
                         );
                         println!(
@@ -3036,12 +3048,12 @@ fn merge_once_tick(
     }
 
     let workpad = merge_lane_workpad(&issue, &decision, None);
-    adapter.upsert_workpad(&issue.identifier, &workpad)?;
+    adapter.add_issue_comment(&issue.identifier, &workpad)?;
     append_tracker_mutation_audit(
         &config,
         TrackerMutationAudit {
             command: "merge once",
-            mutation_type: "workpad_write",
+            mutation_type: "timeline_comment",
             issue_ref: Some(&issue.identifier),
             target: decision.pr_url.clone(),
             from_state: Some(issue.state.clone()),
@@ -3086,12 +3098,12 @@ fn record_done_merge_lane_completion(
     issue: &TrackerIssue,
     workpad: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    adapter.upsert_workpad(&issue.identifier, workpad)?;
+    adapter.add_issue_comment(&issue.identifier, workpad)?;
     append_tracker_mutation_audit(
         config,
         TrackerMutationAudit {
             command: "merge once",
-            mutation_type: "workpad_write",
+            mutation_type: "timeline_comment",
             issue_ref: Some(&issue.identifier),
             target: issue
                 .linked_pull_requests
@@ -3176,17 +3188,17 @@ fn print_merge_dry_run_actions(decision: &jade_symphony::merge_lane::MergeLaneDe
     match decision.kind {
         MergeLaneDecisionKind::ReadyToMerge => {
             println!("merge_once_dry_run action=merge");
-            println!("merge_once_dry_run action=workpad evidence=merge_result");
+            println!("merge_once_dry_run action=timeline_comment evidence=merge_result");
             println!("merge_once_dry_run action=set_state target_state=done");
             println!("merge_once_dry_run action=close_issue");
         }
         MergeLaneDecisionKind::AlreadyMerged => {
-            println!("merge_once_dry_run action=workpad evidence=already_merged");
+            println!("merge_once_dry_run action=timeline_comment evidence=already_merged");
             println!("merge_once_dry_run action=set_state target_state=done");
             println!("merge_once_dry_run action=close_issue");
         }
         _ => {
-            println!("merge_once_dry_run action=workpad evidence=preflight_blocker");
+            println!("merge_once_dry_run action=timeline_comment evidence=preflight_blocker");
             if let Some(target_state) = decision.target_state {
                 println!("merge_once_dry_run action=set_state target_state={target_state}");
             }
@@ -3212,10 +3224,13 @@ fn record_review_invalid_handoff(
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let workpad = [
-        "## Jade Symphony Workpad".to_string(),
+        "## Jade Symphony Agent Review Run".to_string(),
         String::new(),
         "### Agent Review Invalid Handoff".to_string(),
         format!("- Issue: {} {}", issue.identifier, issue.title),
+        "- Lane: `review`".to_string(),
+        "- Input state: `Agent Review`".to_string(),
+        "- Target state after review routing: `unchanged`".to_string(),
         "- Actor role: `review_agent`".to_string(),
         "- Decision: `inconclusive_invalid_handoff`".to_string(),
         format!("- Reason: {reason}"),
@@ -3225,12 +3240,12 @@ fn record_review_invalid_handoff(
     .join("\n");
 
     if write {
-        adapter.upsert_workpad(&issue.identifier, &workpad)?;
+        adapter.add_issue_comment(&issue.identifier, &workpad)?;
         append_tracker_mutation_audit(
             config,
             TrackerMutationAudit {
                 command: "review loop",
-                mutation_type: "workpad_write",
+                mutation_type: "timeline_comment",
                 issue_ref: Some(&issue.identifier),
                 target: Some("invalid_handoff".into()),
                 from_state: Some(issue.state.clone()),
@@ -3240,7 +3255,7 @@ fn record_review_invalid_handoff(
         );
     } else {
         println!(
-            "review_loop_dry_run action=workpad issue={} evidence=invalid_handoff",
+            "review_loop_dry_run action=timeline_comment issue={} evidence=invalid_handoff",
             issue.identifier
         );
     }
@@ -3396,7 +3411,7 @@ fn render_automatic_review_prompt(
     prompt.push_str(
         "\n\n## Automatic Headless Review Boundary\n\n\
 This Gemini process is running under Jade Symphony automatic `review loop` or `review once`.\n\
-Jade Symphony CLI has already claimed or will own any Review Agent claim, workpad write,\n\
+Jade Symphony CLI has already claimed or will own any Review Agent claim, timeline comment write,\n\
 issue body update, and Project state transition outside this process.\n\n\
 Do not run mutating Jade Symphony or GitHub commands, including `review claim`, `review pass`,\n\
 `review reject`, `project set-state`, `project workpad`, `forge`, `gh issue edit`, `gh issue comment`, raw\n\
@@ -3590,12 +3605,18 @@ fn start_agent_session_with_claim(
         agent_command: &agent_command,
         git_identity: &git_identity,
     });
-    adapter.upsert_workpad(&issue.identifier, &workpad)?;
+    let mutation_type = if lane == AgentSessionLaneArg::Main {
+        adapter.upsert_workpad(&issue.identifier, &workpad)?;
+        "workpad_write"
+    } else {
+        adapter.add_issue_comment(&issue.identifier, &workpad)?;
+        "timeline_comment"
+    };
     append_tracker_mutation_audit(
         config,
         TrackerMutationAudit {
             command: audit_command,
-            mutation_type: "workpad_write",
+            mutation_type,
             issue_ref: Some(&issue.identifier),
             target: summary.session_id.clone(),
             from_state: Some(issue.state.clone()),
@@ -3897,10 +3918,16 @@ fn agent_session_workpad(input: AgentSessionWorkpadInput<'_>) -> String {
         .as_ref()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "n/a".into());
+    let title = match input.lane {
+        AgentSessionLaneArg::Main => "## Jade Symphony Workpad",
+        AgentSessionLaneArg::Review => "## Jade Symphony Agent Review Run",
+        AgentSessionLaneArg::Merge => "## Jade Symphony Merge Run",
+    };
     [
-        "## Jade Symphony Workpad".to_string(),
+        title.to_string(),
         String::new(),
         "### Local tmux Agent Session".to_string(),
+        format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", input.issue.identifier, input.issue.title),
         format!("- Lane: `{}`", input.lane.label()),
         format!(
@@ -3960,12 +3987,12 @@ fn apply_review_result(
     }
 
     let workpad = render_review_workpad(issue, job);
-    adapter.upsert_workpad(issue_ref, &workpad)?;
+    adapter.add_issue_comment(issue_ref, &workpad)?;
     append_tracker_mutation_audit(
         config,
         TrackerMutationAudit {
             command: "review loop",
-            mutation_type: "workpad_write",
+            mutation_type: "timeline_comment",
             issue_ref: Some(issue_ref),
             target: job
                 .ledger_path
@@ -3973,7 +4000,7 @@ fn apply_review_result(
                 .map(|path| path.display().to_string()),
             from_state: Some(issue.state.clone()),
             to_state: decision.target_state.map(ToOwned::to_owned),
-            reason: "review result workpad evidence",
+            reason: "review result timeline evidence",
         },
     );
     if let Some(target_state) = decision.target_state {
@@ -4134,12 +4161,12 @@ fn transition_issue_to_rework_with_diagnostic(
     diagnostic: &ReworkDiagnostic,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let workpad = render_rework_diagnostic_workpad(issue, diagnostic);
-    adapter.upsert_workpad(&issue.identifier, &workpad)?;
+    adapter.add_issue_comment(&issue.identifier, &workpad)?;
     append_tracker_mutation_audit(
         config,
         TrackerMutationAudit {
             command: "review loop",
-            mutation_type: "workpad_write",
+            mutation_type: "timeline_comment",
             issue_ref: Some(&issue.identifier),
             target: diagnostic.review_ledger_path.clone(),
             from_state: Some(issue.state.clone()),
@@ -4666,12 +4693,12 @@ fn apply_doctor_auto_fix(
         );
         if write {
             let workpad = render_human_review_repair_workpad(violation);
-            adapter.upsert_workpad(&violation.issue_ref, &workpad)?;
+            adapter.add_issue_comment(&violation.issue_ref, &workpad)?;
             append_tracker_mutation_audit(
                 config,
                 TrackerMutationAudit {
                     command: "doctor --auto-fix",
-                    mutation_type: "workpad_write",
+                    mutation_type: "timeline_comment",
                     issue_ref: Some(&violation.issue_ref),
                     target: None,
                     from_state: Some(violation.state.clone()),
@@ -4694,7 +4721,7 @@ fn apply_doctor_auto_fix(
             );
         } else {
             println!(
-                "doctor_auto_fix_dry_run action=workpad issue={} evidence=human_review_missing_review_evidence",
+                "doctor_auto_fix_dry_run action=timeline_comment issue={} evidence=human_review_missing_review_evidence",
                 violation.issue_ref
             );
             println!(
@@ -4869,12 +4896,12 @@ fn doctor_repair_issue(
     if repair.move_need_human_input {
         let workpad = render_doctor_repair_workpad(issue, report, "move_need_human_input");
         if repair.write {
-            adapter.upsert_workpad(&issue.identifier, &workpad)?;
+            adapter.add_issue_comment(&issue.identifier, &workpad)?;
             append_tracker_mutation_audit(
                 config,
                 TrackerMutationAudit {
                     command: "doctor repair",
-                    mutation_type: "workpad_write",
+                    mutation_type: "timeline_comment",
                     issue_ref: Some(&issue.identifier),
                     target: None,
                     from_state: Some(issue.state.clone()),
@@ -4897,7 +4924,7 @@ fn doctor_repair_issue(
             );
         } else {
             println!(
-                "doctor_repair_dry_run action=workpad issue={} evidence=doctor_repair",
+                "doctor_repair_dry_run action=timeline_comment issue={} evidence=doctor_repair",
                 issue.identifier
             );
             println!(
@@ -4923,12 +4950,12 @@ fn doctor_repair_issue(
         let pr_ref = draft_pull_request_repair_target(issue)?;
         let workpad = render_doctor_repair_workpad(issue, report, "mark_pr_ready");
         if repair.write {
-            adapter.upsert_workpad(&issue.identifier, &workpad)?;
+            adapter.add_issue_comment(&issue.identifier, &workpad)?;
             append_tracker_mutation_audit(
                 config,
                 TrackerMutationAudit {
                     command: "doctor repair",
-                    mutation_type: "workpad_write",
+                    mutation_type: "timeline_comment",
                     issue_ref: Some(&issue.identifier),
                     target: Some(pr_ref.clone()),
                     from_state: Some(issue.state.clone()),
@@ -4959,7 +4986,7 @@ fn doctor_repair_issue(
             );
         } else {
             println!(
-                "doctor_repair_dry_run action=workpad issue={} evidence=doctor_repair_mark_pr_ready",
+                "doctor_repair_dry_run action=timeline_comment issue={} evidence=doctor_repair_mark_pr_ready",
                 issue.identifier
             );
             println!(
@@ -5021,12 +5048,12 @@ fn doctor_repair_human_review(
         );
         if write {
             let workpad = render_human_review_repair_workpad(violation);
-            adapter.upsert_workpad(&violation.issue_ref, &workpad)?;
+            adapter.add_issue_comment(&violation.issue_ref, &workpad)?;
             append_tracker_mutation_audit(
                 &config,
                 TrackerMutationAudit {
                     command: "doctor-repair-human-review",
-                    mutation_type: "workpad_write",
+                    mutation_type: "timeline_comment",
                     issue_ref: Some(&violation.issue_ref),
                     target: None,
                     from_state: Some(violation.state.clone()),
@@ -5049,7 +5076,7 @@ fn doctor_repair_human_review(
             );
         } else {
             println!(
-                "doctor_repair_human_review_dry_run action=workpad issue={} evidence=human_review_missing_review_evidence",
+                "doctor_repair_human_review_dry_run action=timeline_comment issue={} evidence=human_review_missing_review_evidence",
                 violation.issue_ref
             );
             println!(
@@ -5619,7 +5646,7 @@ fn clean_audit_command(workflow_path: PathBuf) -> Result<(), Box<dyn std::error:
         "attach_to_tracker",
         "workpad_draft",
         layout.class_path(ArtifactClass::WorkpadDraft),
-        "draft should be represented by tracker workpad evidence",
+        "draft should be represented by tracker-visible evidence",
     );
     print_clean_audit_path(
         "promote_to_repo",
@@ -8416,6 +8443,39 @@ fn current_time_ms() -> u64 {
         .unwrap_or(0)
 }
 
+fn current_gmt_timestamp() -> String {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    format_gmt_timestamp(seconds)
+}
+
+fn format_gmt_timestamp(seconds_since_unix_epoch: u64) -> String {
+    let days = (seconds_since_unix_epoch / 86_400) as i64;
+    let seconds_of_day = seconds_since_unix_epoch % 86_400;
+    let (year, month, day) = civil_from_days(days);
+    let hour = seconds_of_day / 3_600;
+    let minute = (seconds_of_day % 3_600) / 60;
+    let second = seconds_of_day % 60;
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02} GMT")
+}
+
+fn civil_from_days(days_since_unix_epoch: i64) -> (i64, u32, u32) {
+    let days = days_since_unix_epoch + 719_468;
+    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
+    let day_of_era = days - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    year += if month <= 2 { 1 } else { 0 };
+    (year, month as u32, day as u32)
+}
+
 fn lane_claim_for_issue(
     issue: &TrackerIssue,
     lane: LaneClaimLane,
@@ -8869,7 +8929,8 @@ fn run_loop_handoff_workpad(
         "- Source: `jade-symphony main loop`".to_string(),
         String::new(),
         "### Run-Loop Handoff Checklist".to_string(),
-        "- [x] Read the issue contract, Project state, and existing workpad evidence.".to_string(),
+        "- [x] Read the issue contract, Project state, Main Workpad, and timeline evidence."
+            .to_string(),
         "- [x] Prepare or resume the isolated issue workspace and branch.".to_string(),
         "- [x] Run the configured Main Agent backend for the implementation slice.".to_string(),
         "- [x] Verify handoff evidence and prepare the PR for Agent Review.".to_string(),
@@ -9625,7 +9686,7 @@ enum CliCommand {
     #[command(
         next_help_heading = "Project / Agent internals",
         about = "Discover and record per-issue git worktrees",
-        long_about = "Discover and record per-issue git worktrees.\n\n`workspace` is the safe local-worktree coordination surface for Main, Review, and Merge lanes. It discovers existing issue worktrees from the session registry, workpad evidence, linked PR/branch hints, and `git worktree list`. It can ensure missing Review/Merge inspection worktrees under the configured workspace root, but it never runs `gh pr checkout`, switches branches, or changes the canonical repository checkout.\n\nUse `workspace show` before local Review or Merge inspection. Use `workspace adopt` only when an operator has selected an existing worktree that should become the canonical workspace evidence for the issue. Use `workspace ensure` only when no suitable candidate exists and local inspection is required."
+        long_about = "Discover and record per-issue git worktrees.\n\n`workspace` is the safe local-worktree coordination surface for Main, Review, and Merge lanes. It discovers existing issue worktrees from the session registry, Main Workpad/timeline evidence, linked PR/branch hints, and `git worktree list`. It can ensure missing Review/Merge inspection worktrees under the configured workspace root, but it never runs `gh pr checkout`, switches branches, or changes the canonical repository checkout.\n\nUse `workspace show` before local Review or Merge inspection. Use `workspace adopt` only when an operator has selected an existing worktree that should become the canonical workspace evidence for the issue. Use `workspace ensure` only when no suitable candidate exists and local inspection is required."
     )]
     Workspace(WorkspaceArgs),
     #[command(name = "session")]
@@ -9847,7 +9908,7 @@ struct WorkspaceArgs {
 enum WorkspaceCommandArgs {
     #[command(
         about = "List discovered issue worktrees and orphan hints",
-        long_about = "List discovered issue worktrees and orphan hints.\n\nThis is a read-only Project-wide inventory. It scans tracker issues, session registry records, workpad evidence, linked PR/branch hints, and local `git worktree list` output. It reports candidates per issue and orphan-looking worktrees whose branch/path implies an issue not currently present in the fetched Project state."
+        long_about = "List discovered issue worktrees and orphan hints.\n\nThis is a read-only Project-wide inventory. It scans tracker issues, session registry records, Main Workpad/timeline evidence, linked PR/branch hints, and local `git worktree list` output. It reports candidates per issue and orphan-looking worktrees whose branch/path implies an issue not currently present in the fetched Project state."
     )]
     List(WorkspaceListArgs),
     #[command(
@@ -11504,6 +11565,7 @@ mod tests {
         issues: RefCell<BTreeMap<String, TrackerIssue>>,
         linked_pull_requests: RefCell<Vec<jade_symphony::model::LinkedPullRequest>>,
         fail_workpad: bool,
+        fail_comment: bool,
         fail_link_pr: bool,
         confirm_link_pr: bool,
     }
@@ -11515,6 +11577,7 @@ mod tests {
                 issues: RefCell::new(BTreeMap::new()),
                 linked_pull_requests: RefCell::new(Vec::new()),
                 fail_workpad: false,
+                fail_comment: false,
                 fail_link_pr: false,
                 confirm_link_pr: true,
             }
@@ -11579,11 +11642,8 @@ mod tests {
                 );
             }
             assert!(
-                markdown.contains("## Rework Diagnostic")
-                    || markdown.contains("## Rework Revision Evidence")
-                    || markdown.contains("## Rework Revision Blocker")
-                    || markdown.contains("### Merge Lane Handoff")
-                    || markdown.contains("## Agent Review")
+                markdown.contains("## Jade Symphony Workpad")
+                    || markdown.contains("### Workspace Evidence")
             );
             self.operations
                 .borrow_mut()
@@ -11612,7 +11672,20 @@ mod tests {
             issue_ref: &str,
             markdown: &str,
         ) -> Result<(), jade_symphony::tracker::TrackerError> {
-            assert!(markdown.contains("## Promotion Note"));
+            if self.fail_comment {
+                return Err(
+                    jade_symphony::tracker::TrackerError::IntegrationUnavailable(
+                        "comment failed".into(),
+                    ),
+                );
+            }
+            assert!(
+                markdown.contains("## Promotion Note")
+                    || markdown.contains("## Jade Symphony Agent Review Run")
+                    || markdown.contains("## Jade Symphony Rework Run")
+                    || markdown.contains("## Jade Symphony Merge Run")
+                    || markdown.contains("## Jade Symphony Doctor Triage")
+            );
             self.operations
                 .borrow_mut()
                 .push(format!("comment:{issue_ref}"));
@@ -13282,7 +13355,7 @@ mod tests {
             adapter.operations(),
             vec![
                 "update_issue_content:#67",
-                "workpad:#67",
+                "comment:#67",
                 "set_state:#67:human_review"
             ]
         );
@@ -14254,16 +14327,16 @@ mod tests {
         assert_eq!(
             adapter.operations(),
             vec![
-                "workpad:#29".to_string(),
+                "comment:#29".to_string(),
                 "set_state:#29:rework".to_string()
             ]
         );
     }
 
     #[test]
-    fn rework_transition_does_not_set_state_when_workpad_write_fails() {
+    fn rework_transition_does_not_set_state_when_timeline_comment_fails() {
         let adapter = RecordingAdapter {
-            fail_workpad: true,
+            fail_comment: true,
             ..Default::default()
         };
         let issue = tracker_issue("Agent Review");
@@ -14285,7 +14358,7 @@ mod tests {
     fn merge_completion_closes_issue_after_workpad_and_done_state() {
         let adapter = RecordingAdapter::default();
         let issue = tracker_issue("Merging");
-        let workpad = "## Jade Symphony Workpad\n\n### Merge Lane Handoff\n";
+        let workpad = "## Jade Symphony Merge Run\n\n### Merge Action\n";
 
         let config = test_config();
         record_done_merge_lane_completion(&config, &adapter, &issue, workpad).unwrap();
@@ -14293,7 +14366,7 @@ mod tests {
         assert_eq!(
             adapter.operations(),
             vec![
-                "workpad:#29".to_string(),
+                "comment:#29".to_string(),
                 "set_state:#29:done".to_string(),
                 "close_issue:#29".to_string()
             ]
@@ -14590,7 +14663,7 @@ mod tests {
             adapter.operations(),
             vec![
                 "update_issue_content:#282".to_string(),
-                "workpad:#282".to_string(),
+                "comment:#282".to_string(),
                 "set_state:#282:rework".to_string(),
             ]
         );
@@ -14642,7 +14715,7 @@ mod tests {
         .to_string();
 
         assert!(error.contains("active Review Agent claim"));
-        assert_eq!(adapter.operations(), vec!["workpad:#282".to_string()]);
+        assert_eq!(adapter.operations(), vec!["comment:#282".to_string()]);
     }
 
     #[test]

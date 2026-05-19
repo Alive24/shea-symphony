@@ -400,7 +400,9 @@ mod tests {
         assert!(workflow.workflow_index.contains("Workflow Index"));
         assert!(workflow.prompt_template.len() > 3_000);
         assert!(workflow.prompt_template.contains("## Operating Loop"));
-        assert!(workflow.prompt_template.contains("## Workpad Discipline"));
+        assert!(workflow
+            .prompt_template
+            .contains("## Main Agent Workpad Discipline"));
         assert!(workflow.prompt_template.contains("Issue Quality Gate"));
         assert!(workflow.prompt_template.contains("one issue per branch"));
         assert!(workflow

@@ -62,7 +62,7 @@ not replace the CLI repair commands or authorize automatic Project mutation.
 `doctor repair ISSUE` is non-destructive by default. It prints safe,
 uncertain, and dangerous actions for the issue using tracker state, Project
 fields, runtime-state evidence, branch/PR hints, and doctor findings. The
-`--move-need-human-input --write` path writes workpad evidence before changing
+`--move-need-human-input --write` path writes Doctor timeline evidence before changing
 tracker state.
 `--mark-pr-ready --confirm-handoff-ready --write` is an explicit operator repair
 for `Agent Review` issues whose linked PR is still draft. It writes repair
@@ -178,7 +178,7 @@ Use `workspace` when a lane needs to find or record the local git worktree for
 an issue before starting review or merge repair. This command group is a safe
 coordination surface for per-issue worktrees; it is not a generic checkout tool.
 Discovery combines Project issue/PR hints, session registry records, canonical
-workpad evidence, and local `git worktree list --porcelain` output.
+Main Workpad evidence, timeline comments, and local `git worktree list --porcelain` output.
 
 | Command | Purpose | Boundary |
 | --- | --- | --- |
@@ -214,7 +214,7 @@ These commands can mutate live tracker state and require `--write`.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `project set-state` | Move one issue to a normalized workflow state. | Refuses `Human Review` from the main implementation role. |
-| `project workpad` | Upsert the canonical issue workpad comment. | Use for durable evidence before state transitions. |
+| `project workpad` | Upsert the canonical Main Agent Workpad marker comment. | Use for Main implementation evidence. Review, Rework, Merge, Human Review, and Doctor evidence should be append-only timeline comments created by their lane commands. |
 | `create-follow-up` | Create a follow-up issue from a body file. | Lower-level creation path; prefer `forge create` for quality-gated issues. |
 | `project add` | Add an existing GitHub issue node to the configured Project. | Initializes configured Project status where supported. |
 

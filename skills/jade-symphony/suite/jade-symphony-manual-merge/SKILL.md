@@ -115,8 +115,12 @@ For `Merging` issues:
 3. Confirm mergeability and checks are clean, or wait/retry if mergeability is
    transiently `UNKNOWN`.
 4. Merge using the repository's accepted merge method.
-5. Delete the remote branch only when safe and after the merge succeeds.
-6. Record merge evidence and reconcile issue/Project state to `Done`.
+5. Record merge evidence and reconcile issue/Project state to `Done`.
+
+Do not delete the local PR branch during merge. Jade Symphony issue worktrees
+intentionally keep that branch checked out for audit and recovery, so branch and
+worktree cleanup belongs to explicit Jade Symphony `clean` / workspace cleanup
+surfaces.
 
 If `mergeStateStatus` is `UNKNOWN`, wait briefly and re-run the same `gh pr view`
 query before making a routing decision. Only merge after the status returns
@@ -136,8 +140,10 @@ different merge-lane-only repair path.
 Project `Status` changes must be the final mutating step of the session. Before
 moving an issue to `Done`, `Need Human Input`, or another routing state, finish
 merge evidence, PR/issue reconciliation, append-only `Jade Symphony Merge Run`
-timeline comments, and safe branch cleanup. After status changes, do only
-readback verification such as
+timeline comments. Do not delete the local PR branch during merge: issue
+worktrees intentionally keep that branch checked out for audit and recovery.
+Use Jade Symphony `clean` / workspace cleanup surfaces later for explicit
+cleanup decisions. After status changes, do only readback verification such as
 `project issue`, `project state`, or `doctor`.
 
 ## Hard Boundaries

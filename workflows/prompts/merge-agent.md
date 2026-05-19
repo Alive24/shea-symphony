@@ -62,10 +62,13 @@ Project GraphQL or Project UI changes are break-glass only.
   command can prove it is transient.
 - Any Project status change, including `Done` or `Need Human Input`,
   must be the final mutating step of the merge session. Finish merge evidence,
-  PR/issue reconciliation, branch cleanup that is safe and required, and the
-  standalone `Jade Symphony Merge Run` timeline comment first. After status
-  changes, only perform readback verification such as `project issue`,
-  `project state`, or `doctor`; do not claim another issue in the same session.
+  PR/issue reconciliation, and the standalone `Jade Symphony Merge Run`
+  timeline comment first. Do not delete the local PR branch during merge:
+  Jade Symphony issue worktrees intentionally keep that branch checked out for
+  audit and recovery, and cleanup belongs to the explicit `clean` / workspace
+  cleanup surface. After status changes, only perform readback verification
+  such as `project issue`, `project state`, or `doctor`; do not claim another
+  issue in the same session.
 
 ## Non-Negotiable Boundaries
 

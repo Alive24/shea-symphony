@@ -357,15 +357,12 @@ pub fn merge_pull_request(
     runner: &dyn HandoffCommandRunner,
     cwd: &Path,
 ) -> Result<CommandOutput, MergeLaneError> {
+    // Issue worktrees intentionally keep the PR branch checked out for audit and
+    // recovery. Branch/worktree cleanup belongs to the explicit clean surface,
+    // not to the merge success path.
     let output = runner.run(
         "gh",
-        &[
-            "pr".into(),
-            "merge".into(),
-            pr_ref.into(),
-            "--merge".into(),
-            "--delete-branch".into(),
-        ],
+        &["pr".into(), "merge".into(), pr_ref.into(), "--merge".into()],
         cwd,
     )?;
     require_success("gh", &output)?;
@@ -1040,6 +1037,38 @@ mod tests {
                 "60".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn merge_pull_request_preserves_local_issue_worktree_branch() {
+        let runner = RecordingRunner {
+            program: RefCell::new(None),
+            args: RefCell::new(Vec::new()),
+            output: CommandOutput {
+                status: 0,
+                stdout: "merged".into(),
+                stderr: String::new(),
+            },
+        };
+
+        let output = merge_pull_request("60", &runner, Path::new(".")).unwrap();
+
+        assert_eq!(output.status, 0);
+        assert_eq!(runner.program.borrow().as_deref(), Some("gh"));
+        assert_eq!(
+            *runner.args.borrow(),
+            vec![
+                "pr".to_string(),
+                "merge".to_string(),
+                "60".to_string(),
+                "--merge".to_string()
+            ]
+        );
+        assert!(!runner
+            .args
+            .borrow()
+            .iter()
+            .any(|arg| arg == "--delete-branch"));
     }
 
     #[test]

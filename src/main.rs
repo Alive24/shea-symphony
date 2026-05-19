@@ -8498,6 +8498,7 @@ fn run_loop_resume_preflight(
                 due_in_ms,
             });
         }
+        return Ok(ResumePreflightAction::Continue);
     }
 
     if let Some(stall) = detect_runtime_stall(state, now_ms, config.codex.stall_timeout_ms) {
@@ -14068,6 +14069,24 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn resume_preflight_continues_after_retry_is_due_even_when_old() {
+        let config = test_config();
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let mut state = active_runtime_state("#29");
+        record_runtime_retry(&mut state, 1_000, 5_000, "backend not ready");
+
+        let action = run_loop_resume_preflight(
+            &tracker,
+            &config,
+            Some(&state),
+            config.codex.stall_timeout_ms + 10_000,
+        )
+        .unwrap();
+
+        assert_eq!(action, ResumePreflightAction::Continue);
     }
 
     #[test]

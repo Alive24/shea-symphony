@@ -52,8 +52,10 @@ workflows/template/workpad/human-review.md
   says otherwise.
 - Never mutate Project state until the operator explicitly confirms the decision
   after the briefing and UAT discussion.
-- Use Jade Symphony CLI for Project reads, timeline evidence writes, and confirmed state
-  routing. Do not bypass it with raw Project mutations.
+- Use Jade Symphony CLI for Project reads and confirmed state routing. Do not
+  bypass it with raw Project mutations.
+- Human Review decision notes are append-only timeline evidence. They must not
+  overwrite or restructure the canonical Main Agent Workpad.
 
 ## CLI Topology Transition
 
@@ -62,20 +64,26 @@ language in explanations:
 
 - `project state`
 - `project issue`
-- `project workpad`
 - `project set-state`
 
+Do not use `project workpad` for Human Review decision notes. That command
+upserts the canonical Main Agent Workpad marker comment and is reserved for
+Main implementation evidence, including Main-lane Rework rounds.
+
 During live use, if the current binary still exposes flat commands, use those
-commands and say so in the workpad note:
+commands and say so in the decision note:
 
 ```bash
 cargo run -- project state workflows/jade-symphony.md
 cargo run -- project issue workflows/jade-symphony.md '#<issue>' --json
-cargo run -- project workpad workflows/jade-symphony.md '#<issue>' /path/to/human-review-note.md --write
 cargo run -- project set-state workflows/jade-symphony.md '#<issue>' merging --write
 ```
 
 Do not turn the topology transition into custom GitHub Project mutations.
+Until Jade Symphony CLI exposes a first-class append-only timeline comment
+command, record this as a CLI surface gap in the decision note and use
+`gh issue comment` only for the Human Review decision note. Project status
+changes must still go through `project set-state`.
 
 ## Required Reads
 
@@ -114,6 +122,33 @@ If the issue is not in `Human Review`, or if Review Agent pass evidence or a
 reliable linked PR is missing, stop before UAT and recommend the smallest safe
 route such as `Need Human Input`, `Agent Review`, or no state change.
 
+## Interactive Guidance
+
+After the briefing, guide the operator one step at a time.
+
+- Do not dump the whole UAT checklist as a single todo list unless the operator
+  explicitly asks for the full list.
+- Give exactly one next action, explain why it is the next action, and tell the
+  operator what feedback to provide after running it.
+- Wait for the operator's result before moving to the next UAT action.
+- After each operator result, classify it as `pass`, `fail`, `deferred`, or
+  `needs clarification`, then choose the next action.
+- Keep a running Human Review note draft in the conversation so the final
+  decision note is assembled from actual operator feedback, not reconstructed
+  from memory.
+- If a command output is ambiguous, ask for the smallest missing fact instead of
+  advancing the workflow.
+- Only move from UAT guidance to decision confirmation after the required
+  operator-owned checks have explicit pass/fail/deferred notes.
+
+Recommended step format:
+
+```text
+Next action: <one command or inspection>
+Why: <one sentence>
+Please reply with: pass/fail/deferred plus the key output lines, or paste the error.
+```
+
 ## Guide UAT
 
 Walk the operator through UAT items from the issue body.
@@ -123,6 +158,20 @@ Walk the operator through UAT items from the issue body.
 - If UAT cannot be performed, record what is missing.
 - If UAT fails, recommend `Rework` with the smallest actionable finding.
 - Do not check UAT boxes based only on Review Agent evidence.
+
+For command-based UAT, prefer the exact workflow or fixture named by the issue
+and Review Agent evidence.
+
+- A controlled fixture workflow is valid UAT when the issue asks for a safe
+  rehearsal path or fixture. Do not replace it with the live canonical workflow
+  unless the issue explicitly requires live Project mutation.
+- The canonical workflow (`workflows/jade-symphony.md`) is a live lane command.
+  Before asking the operator to run it in write mode, first ask for a dry-run
+  and confirm the selected issue/PR is expected and safe.
+- If the dry-run selects an unexpected live issue, stop and ask whether to
+  defer, create a safer smoke target, or route to `Need Human Input`.
+- If both fixture and live workflow checks are useful, run fixture checks first;
+  treat live workflow dry-run/write as an explicit extra operator decision.
 
 ## Prepare Decision Note
 
@@ -154,16 +203,34 @@ changing state. Examples:
 
 Do not infer confirmation from discussion, enthusiasm, or a partial UAT answer.
 
+## Record Decision Evidence
+
+After explicit confirmation, write the completed decision note as append-only
+timeline evidence before any state change.
+
+Preferred future route: use the first-class Jade Symphony CLI append-only
+timeline/comment command once it exists.
+
+Current safe route: do not use `project workpad`; instead write an issue comment
+with the completed note and explicitly include:
+
+- `CLI gap: no append-only Human Review timeline command is available yet`;
+- `Project state mutation will be performed through Jade Symphony CLI`;
+- the operator's exact confirmation phrase.
+
+Current fallback example:
+
+```bash
+gh issue comment <issue> --repo Alive24/jade-symphony --body-file /path/to/human-review-note.md
+```
+
 ## Route With CLI
 
-After explicit confirmation, write the completed decision note through the Jade
-Symphony workpad surface first. Then, if the decision requires a state change,
-set state as the final mutation.
+After decision evidence is recorded, set state as the final mutation.
 
 Current grouped-command examples:
 
 ```bash
-cargo run -- project workpad workflows/jade-symphony.md '#<issue>' /path/to/human-review-note.md --write
 cargo run -- project set-state workflows/jade-symphony.md '#<issue>' merging --write
 cargo run -- project set-state workflows/jade-symphony.md '#<issue>' rework --write
 cargo run -- project set-state workflows/jade-symphony.md '#<issue>' need_human_input --write

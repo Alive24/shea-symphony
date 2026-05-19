@@ -126,8 +126,10 @@ If `mergeStateStatus` is `BEHIND`, prefer the same safe branch-update behavior
 as automated `merge once`: update the PR branch without rewriting history,
 record evidence, and leave the issue in `Merging` for a later retry. If
 `mergeStateStatus` is `DIRTY` or checks are failing, do not default to `Rework`;
-record one concrete `Need Human Input` question unless the operator confirms the
-repair is merge-lane-only and safely verifiable.
+attempt repair only when the existing PR worktree is clean and the base can be
+merged without rewriting history or leaving uncommitted changes. Otherwise,
+record one concrete `Need Human Input` question unless the operator confirms a
+different merge-lane-only repair path.
 
 ## Status Transition Ordering
 

@@ -50,9 +50,12 @@ Project GraphQL or Project UI changes are break-glass only.
 
 - `BEHIND` or stale PR branches should be safely updated by the merge lane when
   possible, with diagnostic evidence, then left in `Merging` for a later retry.
-- Dirty, conflicted, or failing PRs do not default to `Rework`; route them to
-  `Need Human Input` with diagnostic evidence unless the repair is proven to be
-  merge-lane-only and safely verifiable.
+- Dirty or conflicted PRs do not default to `Rework`; first attempt repair only
+  when a clean local PR worktree is available and the base can be merged without
+  rewriting history or leaving uncommitted changes. If that proof is missing,
+  route to `Need Human Input` with diagnostic evidence.
+- Failing checks route to `Need Human Input` unless a later issue adds a
+  similarly bounded, verified merge-lane-only repair path.
 - Missing or ambiguous verified PR targets and missing approvals go to
   `Need Human Input` with one concrete question.
 - Transient unknown mergeability can remain in `Merging` for retry when the

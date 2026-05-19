@@ -340,6 +340,7 @@ changes.
 | `review fake` | Fixture/fake review transition helper. | Local testing path. |
 | `review once` | Run one configured review backend for one issue. | Direct backend command for one issue. |
 | `review loop` | Bounded review worker selection/reconciliation. | For `gemini-cli`, runs headless Gemini by default with stdin prompt transport, JSON output capture, configured model/tools, and durable review-job evidence. |
+| `review status` | Read review-loop and review-runner status from local ledgers, runtime/session registry, and Project claim cross-checks. | Read-only; never claims, repairs, retries, kills jobs, writes workpads, or changes Project state. |
 | `review claim` | Claim one `Agent Review` item's `Review Agent` text field for manual/operator review. | Requires `--worker` and `--write`; refuses non-`Agent Review` issues and writes a structured, round-trip-validated claim pointer. |
 | `review pass` | Record manual independent review pass evidence and move to `Human Review`. | Requires `--write`, a durable evidence file containing the exact current `Review Agent` claim, and preserves the field as terminal pass evidence. |
 | `review reject` | Record failed/inconclusive manual review evidence and route to `Agent Review`, `Rework`, or `Need Human Input`. | Refuses `Human Review`, requires exact claim evidence, and preserves the field as terminal reject/failed evidence. |
@@ -355,6 +356,9 @@ Example:
 ```bash
 cargo run -- review loop examples/review-fixture-workflow.md --max-iterations 1 --dry-run
 cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --write
+cargo run -- review status workflows/jade-symphony.md
+cargo run -- review status workflows/jade-symphony.md --issue '#226' --recent 3 --verbose
+cargo run -- review status workflows/jade-symphony.md --json
 cargo run -- review claim workflows/jade-symphony.md '#226' --worker "Manual Gemini Review" --write
 cargo run -- session start workflows/jade-symphony.md '#226' --lane review --run <RUN_ID> --write
 cargo run -- session list workflows/jade-symphony.md

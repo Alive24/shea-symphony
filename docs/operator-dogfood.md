@@ -179,6 +179,30 @@ review_lane:
 target/debug/jade-symphony review loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
+During supervised review-loop dogfood, use the read-only status surface before
+dropping to raw logs or process inspection:
+
+```bash
+target/debug/jade-symphony review status workflows/jade-symphony.md
+target/debug/jade-symphony review status workflows/jade-symphony.md --issue '#<issue>' --recent 3 --verbose
+target/debug/jade-symphony review status workflows/jade-symphony.md --json
+```
+
+Default output is a compact table of running review slots and recent terminal
+jobs. It includes issue, title when available, job id, backend, pid when known,
+elapsed time, artifact and ledger pointers, claim summary, last event or
+decision, outcome, and the last five sanitized stderr lines in a short detail
+block. `--json` prints the complete structured payload for scripts. The command
+does not mutate Project state, claims, workpads, ledgers, or processes; it only
+composes local review job ledgers, runtime/session registry evidence, and
+Project `Review Agent` claim readbacks.
+
+Use the anomaly block to decide the next human action. It calls out stale
+Project claims without active local jobs, missing or dead pids, long-running
+jobs past the configured review timeout, backend binary/auth/configuration
+failures, missing artifacts, inconclusive or needs-rework outcomes, and jobs
+that still appear active after the issue left `Agent Review`.
+
 For supervised manual review terminals, first use
 `review claim WORKFLOW '#issue' --worker <worker> --write` on an `Agent Review`
 issue. The claim records minimum `codex-app-manual` registry evidence for the

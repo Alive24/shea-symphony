@@ -176,6 +176,13 @@ Project v2 issues:
      logs root with issue, worker, backend, artifact, decision, summary/error,
      and finding count; review and Rework workpads link to that ledger when
      available.
+   - `review status` is the read-only operator surface for live review-loop
+     inspection. It composes review job ledgers, runtime/session registry
+     evidence, and Project `Review Agent` claim cross-checks into compact human
+     output or JSON, with anomalies for stale claims, missing/dead pids,
+     long-running jobs, backend availability/auth/configuration failures,
+     missing artifacts, inconclusive or needs-rework outcomes, and issue-state
+     mismatches.
    - Confirmed findings route to `Rework`.
    - Completed automatic reviews that say the PR, workspace, diff, code changes,
      or handoff evidence could not be inspected route to `Rework` with an

@@ -81,6 +81,10 @@ use jade_symphony::review::{
     ReviewBackend, ReviewFreshnessInput, ReviewGateDecision, ReviewJob, ReviewJobState,
     ReviewOutcome, ReviewRequest, ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
 };
+use jade_symphony::review_status::{
+    load_review_status, render_project_inspect_review_summary, render_review_status_human,
+    ReviewStatusOptions, DEFAULT_RECENT_REVIEW_JOBS,
+};
 use jade_symphony::rework::rework_transition_expected;
 #[cfg(test)]
 use jade_symphony::rework::{render_rework_diagnostic_workpad, ReworkDiagnostic};
@@ -266,6 +270,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::ReviewFreshness { input } => review_freshness(input),
         Command::ReviewLoop { options } => review_loop(options),
+        Command::ReviewStatus { options } => review_status(options),
         Command::MergeSession {
             workflow_path,
             issue_ref,
@@ -2862,6 +2867,44 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
+fn review_status(options: ReviewStatusCliOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let workflow = WorkflowDefinition::load(&options.workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &options.workflow_path)?;
+    config.validate()?;
+    let adapter = adapter_from_config(&config);
+    let issues = if let Some(issue_ref) = &options.issue_filter {
+        adapter
+            .get_issue(issue_ref)?
+            .map(|issue| vec![issue])
+            .ok_or_else(|| format!("issue not found: {issue_ref}"))?
+    } else {
+        let mut states = config.tracker.active_states.clone();
+        if !states.iter().any(|state| {
+            normalize_state(state) == normalize_state(&config.tracker.state_map.agent_review)
+        }) {
+            states.push(config.tracker.state_map.agent_review.clone());
+        }
+        adapter.fetch_issues_by_states(&states)?
+    };
+    let payload = load_review_status(
+        &config,
+        &issues,
+        &ReviewStatusOptions {
+            issue_filter: options.issue_filter.clone(),
+            recent_limit: options.recent_limit,
+            verbose: options.verbose,
+        },
+        unix_timestamp_ms(),
+    )?;
+
+    if options.json {
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        println!("{}", render_review_status_human(&payload, options.verbose));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MergeOnceOutcome {
     NoMergingIssue,
@@ -4690,6 +4733,21 @@ fn project_inspect(
                 pr_ref,
                 pr.state.as_deref().unwrap_or("unknown")
             );
+        }
+    }
+    let review_status_options = ReviewStatusOptions {
+        issue_filter: Some(issue.identifier.clone()),
+        recent_limit: 1,
+        verbose: false,
+    };
+    if let Ok(payload) = load_review_status(
+        &config,
+        std::slice::from_ref(&issue),
+        &review_status_options,
+        unix_timestamp_ms(),
+    ) {
+        if let Some(summary) = render_project_inspect_review_summary(&payload) {
+            println!("review_status_summary={summary}");
         }
     }
     for gap in adapter.integration_gaps() {
@@ -9667,6 +9725,9 @@ enum Command {
     ReviewLoop {
         options: ReviewLoopOptions,
     },
+    ReviewStatus {
+        options: ReviewStatusCliOptions,
+    },
     MergeSession {
         workflow_path: PathBuf,
         issue_ref: String,
@@ -9768,6 +9829,15 @@ struct ReviewLoopOptions {
     write: bool,
     fake_outcome: Option<FakeReviewOutcome>,
     max_concurrent: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReviewStatusCliOptions {
+    workflow_path: PathBuf,
+    issue_filter: Option<String>,
+    recent_limit: usize,
+    verbose: bool,
+    json: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10640,6 +10710,24 @@ struct ReviewLoopArgs {
 }
 
 #[derive(Debug, Args)]
+struct ReviewStatusArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long = "issue", help = "Filter status to one issue, for example #313")]
+    issue_filter: Option<String>,
+    #[arg(
+        long = "recent",
+        default_value_t = DEFAULT_RECENT_REVIEW_JOBS,
+        help = "Number of recent completed or failed review jobs to show"
+    )]
+    recent_limit: usize,
+    #[arg(long, help = "Show more paths and anomaly details")]
+    verbose: bool,
+    #[arg(long, help = "Print the complete structured review status payload")]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
 struct ReviewArgs {
     #[command(subcommand)]
     command: ReviewCommandArgs,
@@ -10655,6 +10743,7 @@ enum ReviewCommandArgs {
     Session(LaneSessionAliasArgs),
     Freshness(ReviewFreshnessArgs),
     Loop(ReviewLoopArgs),
+    Status(ReviewStatusArgs),
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -11272,6 +11361,20 @@ fn command_from_review_args(command: ReviewCommandArgs) -> Result<Command, Strin
                     write: args.write,
                     fake_outcome: args.fake_outcome.map(Into::into),
                     max_concurrent: args.max_concurrent,
+                },
+            })
+        }
+        ReviewCommandArgs::Status(args) => {
+            if args.recent_limit == 0 {
+                return Err(usage());
+            }
+            Ok(Command::ReviewStatus {
+                options: ReviewStatusCliOptions {
+                    workflow_path: args.workflow_path,
+                    issue_filter: args.issue_filter,
+                    recent_limit: args.recent_limit,
+                    verbose: args.verbose,
+                    json: args.json,
                 },
             })
         }
@@ -13287,6 +13390,35 @@ mod tests {
         };
 
         assert_eq!(options.iteration_limit(), Some(1));
+    }
+
+    #[test]
+    fn parses_review_status_flags() {
+        let command = Command::parse(vec![
+            "review".into(),
+            "status".into(),
+            "examples/review-fixture-workflow.md".into(),
+            "--issue".into(),
+            "#313".into(),
+            "--recent".into(),
+            "3".into(),
+            "--verbose".into(),
+            "--json".into(),
+        ])
+        .unwrap();
+
+        let Command::ReviewStatus { options } = command else {
+            panic!("expected review status command");
+        };
+
+        assert_eq!(
+            options.workflow_path,
+            PathBuf::from("examples/review-fixture-workflow.md")
+        );
+        assert_eq!(options.issue_filter.as_deref(), Some("#313"));
+        assert_eq!(options.recent_limit, 3);
+        assert!(options.verbose);
+        assert!(options.json);
     }
 
     #[test]

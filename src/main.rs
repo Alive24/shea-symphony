@@ -6794,6 +6794,16 @@ struct HandoffVerification {
     summary: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MainSessionReconciliation {
+    Terminal(Box<IssueExecutionResult>),
+    Active {
+        status: String,
+        source: String,
+        evidence: String,
+    },
+}
+
 fn execute_issue_once(
     workflow: &WorkflowDefinition,
     config: &RuntimeConfig,
@@ -7502,22 +7512,73 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 None
             };
 
+            let session_reconciliation =
+                reconcile_pending_main_session(&config, &latest, &handoff, &runtime_state)?;
+            if let Some(MainSessionReconciliation::Active {
+                status,
+                source,
+                evidence,
+            }) = &session_reconciliation
+            {
+                append_runtime_supervision_event(
+                    &config,
+                    Some(&runtime_state),
+                    "MainSessionStillActive",
+                    &format!(
+                        "issue={} status={} source={} evidence={}",
+                        latest.identifier, status, source, evidence
+                    ),
+                )?;
+                println!(
+                    "run_loop_action=session_observed issue={} status={} source={} evidence={:?}",
+                    latest.identifier, status, source, evidence
+                );
+                print_latest_status(&LatestStatus {
+                    lane: "main".into(),
+                    category: status.clone(),
+                    action: "session_observed".into(),
+                    issue_identifier: Some(latest.identifier.clone()),
+                    issue_title: Some(latest.title.clone()),
+                    actor_label: Some(config.identity.actor_label.clone()),
+                    workspace: runtime_state
+                        .workspace_path
+                        .as_ref()
+                        .map(|path| path.display().to_string()),
+                    branch: runtime_state.branch_name.clone(),
+                    session_id: runtime_state.backend_session_id.clone(),
+                    next: runtime_state.backend_attach_command.clone(),
+                });
+                break;
+            }
+
             print_latest_status(&latest_status_for_issue(
                 &config,
                 &latest,
                 "main",
-                "running",
-                "backend",
+                if session_reconciliation.is_some() {
+                    "reconciling"
+                } else {
+                    "running"
+                },
+                if session_reconciliation.is_some() {
+                    "session_terminal"
+                } else {
+                    "backend"
+                },
                 Some("save result".into()),
             ));
-            let mut result = execute_issue_once_with_workspace_key(
-                &workflow,
-                &config,
-                &latest,
-                &handoff.workspace_key,
-                runtime_state.attempt_count,
-                Some(&main_claim),
-            )?;
+            let mut result = match session_reconciliation {
+                Some(MainSessionReconciliation::Terminal(result)) => *result,
+                Some(MainSessionReconciliation::Active { .. }) => unreachable!(),
+                None => execute_issue_once_with_workspace_key(
+                    &workflow,
+                    &config,
+                    &latest,
+                    &handoff.workspace_key,
+                    runtime_state.attempt_count,
+                    Some(&main_claim),
+                )?,
+            };
             if result.success {
                 if let Some(worktree) = live_worktree {
                     let runner = ProcessHandoffCommandRunner;
@@ -9047,6 +9108,170 @@ fn run_loop_runtime_state_with_transition(
         reason: reason.into(),
     });
     state
+}
+
+fn reconcile_pending_main_session(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    handoff: &IssueHandoffPlan,
+    state: &RuntimeState,
+) -> Result<Option<MainSessionReconciliation>, Box<dyn std::error::Error>> {
+    let Some(active_issue) = state.active_issue.as_ref() else {
+        return Ok(None);
+    };
+    if active_issue.identifier != issue.identifier {
+        return Ok(None);
+    }
+    if state.last_event.as_deref() != Some("SessionRunning") {
+        return Ok(None);
+    }
+
+    let Some(session_id) = state.backend_session_id.as_deref() else {
+        return Ok(Some(MainSessionReconciliation::Active {
+            status: "unknown".into(),
+            source: "runtime".into(),
+            evidence: "runtime state records SessionRunning without backend session id".into(),
+        }));
+    };
+
+    let registry = load_session_registry(&session_registry_path(config))?;
+    let Some(record) = registry
+        .sessions
+        .iter()
+        .rev()
+        .find(|record| record.session_name == session_id)
+    else {
+        return Ok(Some(MainSessionReconciliation::Active {
+            status: "unknown".into(),
+            source: "runtime".into(),
+            evidence: format!("runtime session {session_id} is missing from session registry"),
+        }));
+    };
+
+    let is_tmux_session = record.backend == "tmux";
+    let pane_tail = if is_tmux_session {
+        capture_tmux_pane_tail(
+            &config.tmux.command,
+            &record.pane_target,
+            DEFAULT_SESSION_STATUS_LINES,
+        )
+        .ok()
+    } else {
+        None
+    };
+    let log_tail = if is_tmux_session {
+        read_log_tail(&record.log_path, DEFAULT_SESSION_STATUS_LINES)?
+    } else {
+        None
+    };
+    let probe = classify_session_record(
+        record,
+        pane_tail.as_deref(),
+        log_tail.as_deref(),
+        unix_timestamp_ms(),
+        DEFAULT_SESSION_STALE_AFTER_MS,
+    );
+
+    match probe.status {
+        SessionStatus::Completed => Ok(Some(MainSessionReconciliation::Terminal(Box::new(
+            result_from_reconciled_main_session(
+                config,
+                handoff,
+                state,
+                record,
+                true,
+                None,
+                probe.evidence,
+            ),
+        )))),
+        SessionStatus::Failed => Ok(Some(MainSessionReconciliation::Terminal(Box::new(
+            result_from_reconciled_main_session(
+                config,
+                handoff,
+                state,
+                record,
+                false,
+                None,
+                format!("main session failed: {}", probe.evidence),
+            ),
+        )))),
+        SessionStatus::UsageLimited => Ok(Some(MainSessionReconciliation::Terminal(Box::new(
+            result_from_reconciled_main_session(
+                config,
+                handoff,
+                state,
+                record,
+                false,
+                Some(UsageLimitPause {
+                    classifier: "usage_limit".into(),
+                    evidence: probe.evidence.clone(),
+                }),
+                format!("main session usage-limited: {}", probe.evidence),
+            ),
+        )))),
+        _ => Ok(Some(MainSessionReconciliation::Active {
+            status: probe.status.as_str().into(),
+            source: probe.source.as_str().into(),
+            evidence: probe.evidence,
+        })),
+    }
+}
+
+fn result_from_reconciled_main_session(
+    config: &RuntimeConfig,
+    handoff: &IssueHandoffPlan,
+    state: &RuntimeState,
+    record: &AgentSessionRecord,
+    success: bool,
+    usage_limit_pause: Option<UsageLimitPause>,
+    message: String,
+) -> IssueExecutionResult {
+    IssueExecutionResult {
+        workspace_path: state
+            .workspace_path
+            .clone()
+            .unwrap_or_else(|| handoff.workspace_path.clone()),
+        backend: state.backend.clone(),
+        profile_id: state.profile_id.clone(),
+        instance_name: state.instance_name.clone(),
+        success,
+        pending_session: false,
+        session_id: state
+            .backend_session_id
+            .clone()
+            .or_else(|| Some(record.session_name.clone())),
+        run_id: state.run_id.clone().or_else(|| record.run_id.clone()),
+        backend_log_path: state
+            .backend_log_path
+            .clone()
+            .or_else(|| Some(record.log_path.clone())),
+        backend_attach_command: state
+            .backend_attach_command
+            .clone()
+            .or_else(|| Some(record.attach_command.clone())),
+        message,
+        usage_limit_pause,
+        prompt_artifact_path: Some(record.prompt_artifact_path.clone()),
+        actor_role: state
+            .actor_role
+            .clone()
+            .unwrap_or_else(|| config.identity.actor_role.clone()),
+        actor_label: state
+            .actor_label
+            .clone()
+            .unwrap_or_else(|| config.identity.actor_label.clone()),
+        git_author: state
+            .git_author
+            .clone()
+            .or_else(|| config.identity.git.author()),
+        git_identity: GitIdentityApplyResult {
+            status: jade_symphony::workspace::GitIdentityApplyStatus::NotConfigured,
+            author: state.git_author.clone(),
+            applied_keys: Vec::new(),
+        },
+        live_handoff: None,
+        handoff_verification: None,
+    }
 }
 
 fn run_loop_handoff_plan(
@@ -14525,6 +14750,97 @@ mod tests {
         assert!(workpad.contains("Session status: `running`"));
         assert!(workpad.contains("Attach command: `tmux attach-session -t jade-main-220`"));
         assert!(workpad.contains("Session log: `/tmp/jade/logs/tmux/jade-main-220.log`"));
+    }
+
+    #[test]
+    fn main_loop_reconciles_completed_pending_session_without_relaunching_backend() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = main_loop_test_config();
+        config.artifacts.root = temp.path().join("artifacts");
+        config.observability.logs_root = temp.path().join("logs");
+        let issue = tracker_issue("In Progress");
+        let claim = test_claim(&issue);
+        let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+        let mut state = run_loop_runtime_state_for_issue(None, &issue, &config, "Claimed", &claim);
+        state.last_event = Some("SessionRunning".into());
+        state.workspace_path = Some(handoff.workspace_path.clone());
+        state.backend = "tmux".into();
+        state.backend_session_id = Some("jade-main-29".into());
+        state.backend_attach_command = Some("tmux attach-session -t jade-main-29".into());
+        state.backend_log_path = Some(temp.path().join("jade-main-29.log"));
+
+        save_session_record(
+            &session_registry_path(&config),
+            AgentSessionRecord {
+                issue_id: Some(issue.id.clone()),
+                issue_identifier: Some(issue.identifier.clone()),
+                issue_title: Some(issue.title.clone()),
+                lane: "main".into(),
+                run_id: state.run_id.clone(),
+                thread: None,
+                session_source: None,
+                claim_value: None,
+                actor_role: state.actor_role.clone(),
+                actor_label: state.actor_label.clone(),
+                git_author: state.git_author.clone(),
+                profile_id: state.profile_id.clone(),
+                instance_name: state.instance_name.clone(),
+                worktree: handoff.workspace_path.clone(),
+                branch: Some(handoff.branch_name.clone()),
+                backend: "codex".into(),
+                session_name: "jade-main-29".into(),
+                pane_target: String::new(),
+                prompt_artifact_path: temp.path().join("prompt.md"),
+                log_path: temp.path().join("jade-main-29.log"),
+                attach_command: "tmux attach-session -t jade-main-29".into(),
+                attempt: 1,
+                status: SessionStatus::Completed,
+                started_at_ms: 1,
+                updated_at_ms: 2,
+            },
+        )
+        .unwrap();
+
+        let reconciliation = reconcile_pending_main_session(&config, &issue, &handoff, &state)
+            .unwrap()
+            .expect("expected completed session reconciliation");
+
+        let MainSessionReconciliation::Terminal(result) = reconciliation else {
+            panic!("expected terminal completed reconciliation");
+        };
+        assert!(result.success);
+        assert!(!result.pending_session);
+        assert_eq!(result.session_id.as_deref(), Some("jade-main-29"));
+        assert!(result.message.contains("registry status completed"));
+    }
+
+    #[test]
+    fn main_loop_keeps_missing_pending_session_registry_active_instead_of_relaunching() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = main_loop_test_config();
+        config.artifacts.root = temp.path().join("artifacts");
+        let issue = tracker_issue("In Progress");
+        let claim = test_claim(&issue);
+        let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+        let mut state = run_loop_runtime_state_for_issue(None, &issue, &config, "Claimed", &claim);
+        state.last_event = Some("SessionRunning".into());
+        state.backend_session_id = Some("jade-main-missing".into());
+
+        let reconciliation = reconcile_pending_main_session(&config, &issue, &handoff, &state)
+            .unwrap()
+            .expect("expected active missing-registry reconciliation");
+
+        let MainSessionReconciliation::Active {
+            status,
+            source,
+            evidence,
+        } = reconciliation
+        else {
+            panic!("expected active reconciliation");
+        };
+        assert_eq!(status, "unknown");
+        assert_eq!(source, "runtime");
+        assert!(evidence.contains("missing from session registry"));
     }
 
     #[test]

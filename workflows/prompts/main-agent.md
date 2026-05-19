@@ -96,6 +96,13 @@ question, but do not edit files under
 13. Return to tracker selection only after this issue has a PR/workpad handoff
     or a documented blocked state.
 
+When this prompt is delivered by `main loop` through a supervised tmux session,
+the loop may later reconcile the recorded session instead of launching a new
+agent. Make your terminal result easy for the CLI and operator to classify:
+leave the Main Workpad, verification summary, PR URL, linked-PR expectation,
+and handoff boundary explicit before you stop. A message that merely says
+"done" is not enough handoff evidence.
+
 ## State And Role Boundaries
 
 - `Todo` and `Rework` are claimable only after the quality gate passes and all

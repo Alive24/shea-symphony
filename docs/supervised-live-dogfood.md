@@ -97,6 +97,12 @@ That write tick requires a real main-agent backend. The canonical workflow uses
 prints the `tmux attach-session` command, records the prompt artifact, session
 registry entry, and log path, and keeps the issue active. A running tmux session
 alone is not completion evidence and must not move the issue to `Agent Review`.
+Run another bounded `main loop --write` tick after the Main Agent session
+finishes. The loop first reconciles the recorded runtime/session registry entry;
+only a terminal completed session proceeds to verification, PR publication,
+linked-PR readback, PR readiness, and the final `Agent Review` state change.
+Active, waiting, unknown, or missing-registry sessions are kept out of duplicate
+launch and out of `Agent Review`.
 Codex tmux startup captures the pane before sending the issue prompt. By
 default, if a Jade Symphony-created issue worktree shows the Codex workspace trust
 prompt, Jade Symphony sends two `C-m` submissions and waits until the pane reaches a

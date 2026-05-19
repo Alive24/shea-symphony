@@ -77,7 +77,7 @@ impl Orchestrator {
         }
 
         let snapshot = RuntimeSnapshot {
-            running: selected
+            planned: selected
                 .iter()
                 .map(|issue| RunningSnapshot {
                     issue_id: issue.id.clone(),
@@ -90,6 +90,7 @@ impl Orchestrator {
                     instance_name: None,
                 })
                 .collect(),
+            running: Vec::new(),
             retrying: Vec::new(),
             codex_totals: Default::default(),
             polling: crate::model::PollingSnapshot {

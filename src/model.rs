@@ -204,6 +204,8 @@ impl TokenTotals {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct RuntimeSnapshot {
     #[serde(default)]
+    pub planned: Vec<RunningSnapshot>,
+    #[serde(default)]
     pub running: Vec<RunningSnapshot>,
     #[serde(default)]
     pub retrying: Vec<RetrySnapshot>,

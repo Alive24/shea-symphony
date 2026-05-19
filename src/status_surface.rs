@@ -14,7 +14,8 @@ pub fn render_snapshot(snapshot: &RuntimeSnapshot) -> String {
             .unwrap_or_else(|| "n/a".into())
     ));
     lines.push(format!(
-        "activity: running={} retrying={} skipped={}",
+        "activity: planned={} running={} retrying={} skipped={}",
+        snapshot.planned.len(),
         snapshot.running.len(),
         snapshot.retrying.len(),
         snapshot.skipped.len(),
@@ -35,6 +36,7 @@ pub fn render_snapshot(snapshot: &RuntimeSnapshot) -> String {
         lines.push(format!("event_log={path}"));
     }
 
+    render_planned(snapshot, &mut lines);
     render_running(snapshot, &mut lines);
     render_sessions(snapshot, &mut lines);
     render_retrying(snapshot, &mut lines);
@@ -72,6 +74,26 @@ pub fn render_latest_status_bar(status: &LatestStatus) -> String {
         parts.push(format!("next={next}"));
     }
     parts.join(" | ")
+}
+
+fn render_planned(snapshot: &RuntimeSnapshot, lines: &mut Vec<String>) {
+    if snapshot.planned.is_empty() {
+        return;
+    }
+
+    lines.push("planned issues:".into());
+    for entry in &snapshot.planned {
+        lines.push(format!(
+            "- {} {} state={} backend={} profile={} workspace={} session={}",
+            entry.issue_id,
+            entry.identifier,
+            entry.state,
+            entry.backend,
+            entry.profile_id.as_deref().unwrap_or("n/a"),
+            entry.workspace_path.as_deref().unwrap_or("n/a"),
+            entry.session_id.as_deref().unwrap_or("n/a"),
+        ));
+    }
 }
 
 fn render_running(snapshot: &RuntimeSnapshot, lines: &mut Vec<String>) {
@@ -183,13 +205,23 @@ mod tests {
     fn renders_operator_readable_snapshot() {
         let rendered = render_snapshot(&RuntimeSnapshot::default());
         assert!(rendered.contains("JADE SYMPHONY STATUS"));
-        assert!(rendered.contains("activity: running=0"));
+        assert!(rendered.contains("activity: planned=0 running=0"));
         assert!(rendered.contains("tokens: input=0"));
     }
 
     #[test]
     fn renders_runtime_categories_and_gaps() {
         let rendered = render_snapshot(&RuntimeSnapshot {
+            planned: vec![RunningSnapshot {
+                issue_id: "GHI_0".into(),
+                identifier: "#0".into(),
+                state: "Todo".into(),
+                backend: "codex".into(),
+                workspace_path: None,
+                session_id: None,
+                profile_id: None,
+                instance_name: None,
+            }],
             running: vec![RunningSnapshot {
                 issue_id: "GHI_1".into(),
                 identifier: "#1".into(),
@@ -259,6 +291,7 @@ mod tests {
         });
 
         assert!(rendered.contains("Latest: main | #1 | handoff | pr_created"));
+        assert!(rendered.contains("planned issues:"));
         assert!(rendered.contains("running issues:"));
         assert!(rendered.contains("tmux sessions:"));
         assert!(rendered.contains("status=waiting_for_approval"));

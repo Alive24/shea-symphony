@@ -92,6 +92,12 @@ The canonical workflow now uses the local `tmux` main-agent backend. A write
 tick starts an attachable tmux session, records its attach command and log path,
 persists a session registry record under the configured artifact root, and
 leaves the issue active until real implementation/handoff evidence exists.
+When the recorded Main session later reaches a terminal completed state,
+another bounded `main loop --write` tick reconciles it through verification, PR
+publication, linked-PR readback, PR readiness, Main Workpad evidence, and final
+`Agent Review` handoff. Non-terminal, waiting, unknown, or missing-registry
+session evidence is treated as incomplete work and does not launch a duplicate
+Main Agent.
 For Codex-backed tmux sessions, Jade Symphony captures the pane before prompt injection.
 If the Codex workspace trust prompt is visible in a Jade Symphony-created issue worktree,
 the backend sends two `C-m` submissions, waits for a ready Codex viewport, and

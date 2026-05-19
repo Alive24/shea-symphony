@@ -50,8 +50,9 @@ use jade_symphony::lane_claim::{
     LaneClaim, LaneClaimActor, LaneClaimLane, LaneClaimSource, LaneClaimState,
 };
 use jade_symphony::merge_lane::{
-    expected_merge_base_branch, fetch_pull_request_status_with_recheck, merge_lane_decision,
-    merge_lane_workpad, merge_pull_request, pull_request_status_from_linked, MergeLaneDecisionKind,
+    expected_merge_base_branch, fetch_pull_request_status_with_recheck, fixture_merge_output,
+    merge_lane_decision, merge_lane_workpad, merge_pull_request, pull_request_status_from_linked,
+    repair_dirty_pull_request, update_pull_request_branch, MergeLaneDecisionKind,
 };
 use jade_symphony::model::{
     normalize_state, GateDecision, GateDecisionKind, LatestStatus, SessionStatusSnapshot,
@@ -2937,7 +2938,7 @@ fn merge_once_tick(
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
-    if write {
+    if write && config.tracker.fixture_path.is_none() {
         enforce_canonical_checkout_before_write(&config, "merge_loop")?;
     }
     let _merge_prompt = workflow.prompt_for_lane(AgentLane::MergeAgent);
@@ -3031,12 +3032,169 @@ fn merge_once_tick(
         return Ok(MergeOnceOutcome::DryRun);
     }
 
+    if decision.kind == MergeLaneDecisionKind::StaleBranch {
+        let pr_ref = decision
+            .pr_url
+            .as_deref()
+            .ok_or("stale-branch decision missing pull request URL")?;
+        let output = update_pull_request_branch(pr_ref, &runner, &std::env::current_dir()?)?;
+        if output.status == 0 {
+            let workpad = merge_lane_workpad(&issue, &decision, Some(&output));
+            adapter.add_issue_comment(&issue.identifier, &workpad)?;
+            append_tracker_mutation_audit(
+                &config,
+                TrackerMutationAudit {
+                    command: "merge once",
+                    mutation_type: "timeline_comment",
+                    issue_ref: Some(&issue.identifier),
+                    target: decision.pr_url.clone(),
+                    from_state: Some(issue.state.clone()),
+                    to_state: None,
+                    reason: "merge lane stale branch update evidence",
+                },
+            );
+            println!(
+                "merge_once_action=stale_branch_updated issue={} target_state=merging",
+                issue.identifier
+            );
+            return Ok(MergeOnceOutcome::Skipped);
+        }
+
+        let mut failed_update = decision.clone();
+        failed_update.kind = MergeLaneDecisionKind::MergeDirty;
+        failed_update.target_state = Some("need_human_input");
+        failed_update.reason = format!(
+            "safe PR branch update failed with status {}: stdout={} stderr={}",
+            output.status,
+            single_line(&output.stdout),
+            single_line(&output.stderr)
+        );
+        let workpad = merge_lane_workpad(&issue, &failed_update, Some(&output));
+        adapter.add_issue_comment(&issue.identifier, &workpad)?;
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: "merge once",
+                mutation_type: "timeline_comment",
+                issue_ref: Some(&issue.identifier),
+                target: failed_update.pr_url.clone(),
+                from_state: Some(issue.state.clone()),
+                to_state: failed_update.target_state.map(ToOwned::to_owned),
+                reason: "merge lane stale branch update failure evidence",
+            },
+        );
+        adapter.set_state(&issue.identifier, "need_human_input")?;
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: "merge once",
+                mutation_type: "state_change",
+                issue_ref: Some(&issue.identifier),
+                target: failed_update.pr_url.clone(),
+                from_state: Some(issue.state.clone()),
+                to_state: Some("need_human_input".into()),
+                reason: "merge lane stale branch update failed",
+            },
+        );
+        println!(
+            "merge_once_action=routed issue={} target_state=need_human_input",
+            issue.identifier
+        );
+        return Ok(MergeOnceOutcome::Routed);
+    }
+
+    if decision.kind == MergeLaneDecisionKind::MergeDirty {
+        let pr_ref = decision
+            .pr_url
+            .as_deref()
+            .ok_or("dirty-merge decision missing pull request URL")?;
+        let head_ref_name = status
+            .as_ref()
+            .and_then(|status| status.head_ref_name.as_deref())
+            .or_else(|| {
+                linked_pull_requests
+                    .first()
+                    .and_then(|pull_request| pull_request.head_ref_name.as_deref())
+            });
+        let repair = repair_dirty_pull_request(
+            pr_ref,
+            head_ref_name,
+            expected_base,
+            &runner,
+            &std::env::current_dir()?,
+            merge_rehearsal_mode(&config, &issue),
+        )?;
+        if repair.repaired {
+            let mut repaired_decision = decision.clone();
+            repaired_decision.reason = repair.reason.clone();
+            let workpad = merge_lane_workpad(&issue, &repaired_decision, Some(&repair.output));
+            adapter.add_issue_comment(&issue.identifier, &workpad)?;
+            append_tracker_mutation_audit(
+                &config,
+                TrackerMutationAudit {
+                    command: "merge once",
+                    mutation_type: "timeline_comment",
+                    issue_ref: Some(&issue.identifier),
+                    target: repaired_decision.pr_url.clone(),
+                    from_state: Some(issue.state.clone()),
+                    to_state: None,
+                    reason: "merge lane safe conflict repair evidence",
+                },
+            );
+            println!(
+                "merge_once_action=safe_conflict_repaired issue={} target_state=merging",
+                issue.identifier
+            );
+            return Ok(MergeOnceOutcome::Skipped);
+        }
+
+        let mut failed_repair = decision.clone();
+        failed_repair.target_state = Some("need_human_input");
+        failed_repair.reason = repair.reason.clone();
+        let workpad = merge_lane_workpad(&issue, &failed_repair, Some(&repair.output));
+        adapter.add_issue_comment(&issue.identifier, &workpad)?;
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: "merge once",
+                mutation_type: "timeline_comment",
+                issue_ref: Some(&issue.identifier),
+                target: failed_repair.pr_url.clone(),
+                from_state: Some(issue.state.clone()),
+                to_state: failed_repair.target_state.map(ToOwned::to_owned),
+                reason: "merge lane conflict repair failure evidence",
+            },
+        );
+        adapter.set_state(&issue.identifier, "need_human_input")?;
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: "merge once",
+                mutation_type: "state_change",
+                issue_ref: Some(&issue.identifier),
+                target: failed_repair.pr_url.clone(),
+                from_state: Some(issue.state.clone()),
+                to_state: Some("need_human_input".into()),
+                reason: "merge lane conflict repair needs human input",
+            },
+        );
+        println!(
+            "merge_once_action=routed issue={} target_state=need_human_input",
+            issue.identifier
+        );
+        return Ok(MergeOnceOutcome::Routed);
+    }
+
     if decision.kind.is_merge_ready() {
         let pr_ref = decision
             .pr_url
             .as_deref()
             .ok_or("merge-ready decision missing pull request URL")?;
-        let output = merge_pull_request(pr_ref, &runner, &std::env::current_dir()?)?;
+        let output = if merge_rehearsal_mode(&config, &issue) {
+            fixture_merge_output(pr_ref)
+        } else {
+            merge_pull_request(pr_ref, &runner, &std::env::current_dir()?)?
+        };
         let workpad = merge_lane_workpad(&issue, &decision, Some(&output));
         record_done_merge_lane_completion(&config, adapter.as_ref(), &issue, &workpad)?;
         println!(
@@ -3154,6 +3312,10 @@ fn close_completed_issue(
     }
 }
 
+fn single_line(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn merge_preflight_status(
     config: &RuntimeConfig,
     issue: &TrackerIssue,
@@ -3183,6 +3345,10 @@ fn merge_preflight_status(
     }
 }
 
+fn merge_rehearsal_mode(config: &RuntimeConfig, issue: &TrackerIssue) -> bool {
+    config.tracker.fixture_path.is_some() || issue.tracker_kind == "memory"
+}
+
 fn print_merge_dry_run_actions(decision: &jade_symphony::merge_lane::MergeLaneDecision) {
     match decision.kind {
         MergeLaneDecisionKind::ReadyToMerge => {
@@ -3195,6 +3361,16 @@ fn print_merge_dry_run_actions(decision: &jade_symphony::merge_lane::MergeLaneDe
             println!("merge_once_dry_run action=timeline_comment evidence=already_merged");
             println!("merge_once_dry_run action=set_state target_state=done");
             println!("merge_once_dry_run action=close_issue");
+        }
+        MergeLaneDecisionKind::StaleBranch => {
+            println!("merge_once_dry_run action=update_pr_branch");
+            println!("merge_once_dry_run action=timeline_comment evidence=stale_branch_update");
+            println!("merge_once_dry_run action=keep_state target_state=merging");
+        }
+        MergeLaneDecisionKind::MergeDirty => {
+            println!("merge_once_dry_run action=attempt_safe_conflict_repair");
+            println!("merge_once_dry_run action=timeline_comment evidence=conflict_repair_result");
+            println!("merge_once_dry_run fallback=set_state target_state=need_human_input");
         }
         _ => {
             println!("merge_once_dry_run action=timeline_comment evidence=preflight_blocker");

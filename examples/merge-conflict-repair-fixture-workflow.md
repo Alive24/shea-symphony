@@ -6,7 +6,7 @@ tracker:
   project_owner: Alive24
   project_number: 9
   status_field: Status
-  fixture_path: fixtures/merge-issues.json
+  fixture_path: fixtures/merge-conflict-repair-issues.json
   state_map:
     backlog: Backlog
     todo: Todo
@@ -35,7 +35,7 @@ tracker:
     source: issue_comment
     marker: "<!-- jade-symphony-workpad -->"
 workspace:
-  root: /tmp/jade-symphony-merge-fixture-workspaces
+  root: /tmp/jade-symphony-merge-conflict-fixture-workspaces
 agent:
   backend: dry-run
   max_concurrent_agents: 1
@@ -48,12 +48,11 @@ review:
   backend: fake
   gemini_command: gemini
 observability:
-  logs_root: /tmp/jade-symphony-merge-fixture-logs
+  logs_root: /tmp/jade-symphony-merge-conflict-fixture-logs
 ---
 
-Fixture workflow for `merge once` and bounded `merge loop` rehearsal.
+Fixture workflow for controlled `DIRTY` PR merge-lane repair rehearsal.
 
-This workflow never performs a live GitHub merge. In write mode, fixture merge
-commands record the same timeline/state/close sequence as a live successful
-merge while using synthetic command evidence, so operators can rehearse the
-merge lane end-to-end without landing a real pull request.
+This workflow never changes a live branch. In write mode, the merge lane records
+synthetic safe-conflict-repair evidence and keeps the issue in `Merging` so the
+next loop can re-evaluate mergeability, matching the live retry contract.

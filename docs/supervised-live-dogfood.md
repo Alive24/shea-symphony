@@ -54,9 +54,10 @@ cargo run -- doctor --interactive
 
 Review the output before mutating anything. In particular, check for:
 
-- `Rework` items produced by failed merge attempts;
 - issues in `Merging`;
-- other issues in `Rework`;
+- `Rework` items that need Main/Review-directed repair;
+- historical merge-lane recovery items only when an operator explicitly chose
+  that path;
 - active `In Progress` work;
 - Agent Review issues missing PR evidence;
 - dirty Merging PRs;
@@ -238,8 +239,11 @@ The merge lane should:
 - require exactly one verified linked PR;
 - check PR state, base branch, checks, review/approval signal, and mergeability;
 - merge clean approved work;
-- route dirty or failing work to `Rework` with a standalone Merge/Rework
-  timeline comment;
+- safely update `BEHIND` PR branches and leave the issue in `Merging` for the
+  next retry;
+- route dirty or failing work to `Need Human Input` with a standalone merge
+  timeline comment unless a future command can prove safe merge-lane-only
+  repair;
 - retry transient missing or `UNKNOWN` mergeability instead of treating it as a
   human decision;
 - include a `Required Human Input` question whenever a blocker really needs a

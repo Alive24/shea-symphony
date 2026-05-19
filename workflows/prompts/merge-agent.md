@@ -48,13 +48,19 @@ Project GraphQL or Project UI changes are break-glass only.
 
 ## Blocker Routing
 
-- Dirty, conflicted, stale, or failing PRs go to `Rework` with diagnostic
-  evidence.
+- `BEHIND` or stale PR branches should be safely updated by the merge lane when
+  possible, with diagnostic evidence, then left in `Merging` for a later retry.
+- Dirty or conflicted PRs do not default to `Rework`; first attempt repair only
+  when a clean local PR worktree is available and the base can be merged without
+  rewriting history or leaving uncommitted changes. If that proof is missing,
+  route to `Need Human Input` with diagnostic evidence.
+- Failing checks route to `Need Human Input` unless a later issue adds a
+  similarly bounded, verified merge-lane-only repair path.
 - Missing or ambiguous verified PR targets and missing approvals go to
   `Need Human Input` with one concrete question.
 - Transient unknown mergeability can remain in `Merging` for retry when the
   command can prove it is transient.
-- Any Project status change, including `Done`, `Rework`, or `Need Human Input`,
+- Any Project status change, including `Done` or `Need Human Input`,
   must be the final mutating step of the merge session. Finish merge evidence,
   PR/issue reconciliation, branch cleanup that is safe and required, and the
   standalone `Jade Symphony Merge Run` timeline comment first. After status

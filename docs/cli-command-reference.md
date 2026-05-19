@@ -429,16 +429,20 @@ Doctor lanes.
 
 | Command | Purpose | Boundary |
 | --- | --- | --- |
-| `merge once` | Inspect one `Merging` issue, verify a single linked PR, and either merge or route blockers. | Live merge requires explicit `--write`; dirty/failing PRs route to `Rework`, transient `UNKNOWN` mergeability stays in `Merging` for retry, and `Need Human Input` workpads include a concrete question. |
+| `merge once` | Inspect one `Merging` issue, verify a single linked PR, and either merge, safely refresh a stale branch, attempt safe conflict repair, or route blockers. | Live merge requires explicit `--write`; fixture workflows synthesize merge or conflict-repair command evidence without touching GitHub. `BEHIND` PRs are updated with `gh pr update-branch` and left in `Merging` for retry, transient `UNKNOWN` mergeability stays in `Merging`, `DIRTY` PRs first try a clean local PR-worktree repair when available, and unrepaired dirty/failing blockers route to `Need Human Input` with a concrete question instead of defaulting to `Rework`. |
 
 Examples:
 
 ```bash
 cargo run -- merge once workflows/jade-symphony.md --dry-run
+cargo run -- merge loop examples/merge-fixture-workflow.md --max-iterations 1 --write
+cargo run -- merge loop examples/merge-conflict-repair-fixture-workflow.md --max-iterations 1 --write
 ```
 
 `merge once` is separate from main implementation and review work. It should
-only consume issues already in `Merging`.
+only consume issues already in `Merging`. `Rework` remains a Main/Review repair
+lane unless an operator explicitly chooses a historical merge-lane recovery
+path.
 
 ## Live Dogfood Boundary
 

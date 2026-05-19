@@ -226,12 +226,11 @@ pub fn render_rework_diagnostic_workpad(
     lines.push("### Role Boundary".into());
     if review_origin {
         lines.push("- Review Agent records the independent review result and may route confirmed findings to `Rework`.".into());
-        lines.push("- Main implementation agent repairs confirmed Rework and then stops at `Agent Review`.".into());
+        lines.push("- This comment is append-only trigger evidence; it does not replace the canonical Main Agent Workpad.".into());
+        lines.push("- Main implementation agent repairs confirmed Rework in the existing Main Agent Workpad, then stops at `Agent Review`.".into());
     } else {
-        lines.push(
-            "- Main implementation agent repairs confirmed Rework and then stops at `Agent Review`."
-                .into(),
-        );
+        lines.push("- This comment is append-only Rework diagnostic evidence; it does not replace the canonical Main Agent Workpad.".into());
+        lines.push("- Main implementation agent records implementation repair evidence in the existing Main Agent Workpad and then stops at `Agent Review`.".into());
     }
     lines.push(
         "- `Human Review` remains reserved for independent Review Agent pass evidence.".into(),
@@ -379,6 +378,8 @@ mod tests {
         assert!(workpad.contains("Review artifact: `/tmp/review-artifact.json`"));
         assert!(workpad.contains("Review job ledger: `/tmp/reviews/jobs/50-review-1.json`"));
         assert!(workpad.contains("Confirmed: Missing test - Add ordering coverage."));
+        assert!(workpad.contains("does not replace the canonical Main Agent Workpad"));
+        assert!(workpad.contains("repairs confirmed Rework in the existing Main Agent Workpad"));
         assert!(workpad.contains("review stdout"));
         assert!(workpad.contains("review stderr"));
     }

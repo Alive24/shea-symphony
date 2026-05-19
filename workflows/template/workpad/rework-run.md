@@ -2,27 +2,36 @@
 
 - Generated at: `<YYYY-MM-DD HH:MM:SS GMT>`
 - Issue: #<issue> <title>
-- Lane: `main`
-- Run type: `rework`
+- Lane: `review` | `human_review` | `merge` | `main`
+- Run type: `rework_trigger_diagnostic`
 - Trigger: Agent Review finding | Human Review feedback | merge-lane repair
-- Input state: `Rework`
-- Target state after run: `Agent Review` | `Need Human Input` | unchanged
+- Input state: `Agent Review` | `Human Review` | `Merging`
+- Target state after run: `Rework`
 - Actor: <worker>
 - Run ID: `<run-id>`
 - PR: #<pr> <url>
 
-### Rework Scope
+### Purpose
+
+- Record why this issue entered `Rework`.
+- Preserve the review/human/merge finding that the next Main Agent round must address.
+- Do not use this comment as the canonical Main implementation workpad.
+
+### Rework Trigger
 
 - ...
 
-### Changes Made
+### Required Main Follow-Up
 
 - ...
 
-### Verification
+### Evidence
 
 - ...
 
-### Handoff
+### Boundary
 
-- ...
+- Main-lane rework implementation must update the existing `Main Agent Workpad`
+  in place.
+- This comment is append-only timeline evidence and must not overwrite or
+  replace the Main Agent Workpad.

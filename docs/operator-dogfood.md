@@ -131,15 +131,19 @@ Jade Symphony uses two issue-comment evidence surfaces:
 
 - `Main Agent Workpad`: one persistent marker comment owned by the Main Agent.
   It is updated in place for implementation plan, work log, verification, PR,
-  workspace, and handoff evidence.
+  workspace, and handoff evidence. Main-lane `Rework` continues to update this
+  same Workpad as the current-state implementation surface.
 - Append-only timeline comments: every Review, Rework, Merge, Human Review, and
   Doctor run writes a standalone comment with a human-readable GMT timestamp,
   lane, actor, input state, target state, result, PR when relevant, and evidence
-  summary.
+  summary. `Jade Symphony Rework Run` comments explain why the issue entered
+  `Rework`; they do not replace the Main Agent Workpad for implementation
+  evidence.
 
 Review, Merge, Human Review, and Doctor flows must not overwrite or restructure
-the Main Agent Workpad. They should reference Main evidence, then write their
-own `Jade Symphony Agent Review Run`, `Jade Symphony Rework Run`,
+the Main Agent Workpad. Rework-trigger diagnostics should reference Main
+evidence, then write their own `Jade Symphony Agent Review Run`,
+`Jade Symphony Rework Run`,
 `Jade Symphony Merge Run`, `Jade Symphony Human Review Decision`, or
 `Jade Symphony Doctor Triage` timeline comment. Historical issues may still
 contain older mixed Workpad evidence; do not migrate or delete it during normal

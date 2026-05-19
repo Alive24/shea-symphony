@@ -121,9 +121,20 @@ question, but do not edit files under
 
 Use the configured workpad marker and keep durable Main implementation evidence
 in one persistent Main Agent Workpad comment. Keep it close to the reference
-workpad shape and update it in place throughout execution. Review, Rework,
-Human Review, Merge, and Doctor runs use standalone append-only timeline
-comments; do not fold those lane logs back into the Main Agent Workpad. Record:
+workpad shape and update it in place throughout execution.
+
+Main-lane `Rework` is still Main implementation work. When this issue is in
+`Rework` because Agent Review findings or Human Review contract revision require
+implementation changes, resume and update the same Main Agent Workpad with a new
+`### Rework Round` / `### Work Log` entry, changed files, verification, PR
+readiness, and final Agent Review handoff. Do not create a second canonical
+Main Workpad for the rework implementation.
+
+Standalone `Jade Symphony Rework Run` comments are append-only trigger or
+diagnostic records explaining why the issue entered `Rework`; they are not the
+current-state implementation evidence surface. Review, Merge, Human Review, and
+Doctor runs also use standalone append-only timeline comments; do not fold those
+lane logs back into the Main Agent Workpad. Record:
 
 - environment and workspace path.
 - issue status and linked PR status at start.

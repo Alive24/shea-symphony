@@ -133,10 +133,18 @@ Keep exactly one durable Jade Symphony workpad updated in place. It must include
 - PR URL, linked-PR confirmation, and ready/not-draft status.
 - final handoff summary explaining why Main stops at `Agent Review`.
 
-Only the Main Agent owns this persistent Workpad comment. Review, Rework, Human
-Review, Merge, and Doctor runs write separate append-only Jade Symphony timeline
-comments and must not overwrite, restructure, or fold their run logs into the
-Main Agent Workpad.
+Main-lane `Rework` is still Main implementation work. If the issue was returned
+from Agent Review or revised from Human Review, update this same Main Agent
+Workpad with the new rework round, current plan/work log, changed files,
+verification, PR readiness, and handoff evidence. Do not create a second
+canonical Main Workpad for Main-lane rework.
+
+Standalone `Jade Symphony Rework Run` comments are append-only trigger or
+diagnostic records explaining why the issue entered `Rework`; they are not the
+current-state implementation evidence surface. Review, Merge, Human Review, and
+Doctor runs write their own append-only Jade Symphony timeline comments and
+must not overwrite, restructure, or fold their run logs into the Main Agent
+Workpad.
 
 Do not treat the workpad as a replacement for the issue body's Review checklist.
 The issue body should retain unchecked `Expected Outcome`, `Completion Criteria`,

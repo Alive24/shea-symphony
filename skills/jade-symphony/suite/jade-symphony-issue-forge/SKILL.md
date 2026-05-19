@@ -146,6 +146,10 @@ Use this structure:
 
 ...
 
+### Code-State Freshness
+
+...
+
 ## Deliverable Shape
 
 ...
@@ -174,7 +178,8 @@ Use this structure:
 
 ### Context Verification
 
-- [ ] ...
+- [ ] Confirm the issue still matches latest `main`, relevant open PRs, and
+      recently completed work before dispatch.
 ```
 
 Only include `External References` when needed. Do not put explanatory text

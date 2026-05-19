@@ -680,7 +680,7 @@ fn run_tmux_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError
             let mut command = Command::new(&tmux);
             command
                 .envs(prepared.env.iter())
-                .args(["send-keys", "-t", target, "Enter"]);
+                .args(["send-keys", "-t", target, "C-m"]);
             command
         }),
     ] {
@@ -1382,10 +1382,9 @@ mod tests {
         assert!(summary.pending_session, "{fake_log}");
         assert_before(&fake_log, "capture-pane", "load-buffer");
         assert_before(&fake_log, "send-keys -t", "load-buffer");
-        assert_eq!(fake_log.matches(" C-m").count(), 2, "{fake_log}");
         assert!(fake_log.contains("load-buffer"), "{fake_log}");
         assert!(fake_log.contains("paste-buffer"), "{fake_log}");
-        assert!(fake_log.contains(" Enter"), "{fake_log}");
+        assert_eq!(fake_log.matches(" C-m").count(), 3, "{fake_log}");
     }
 
     #[cfg(unix)]
@@ -1445,7 +1444,7 @@ mod tests {
         assert_before(&fake_log, "capture-pane", "load-buffer");
         assert!(fake_log.contains("load-buffer"), "{fake_log}");
         assert!(fake_log.contains("paste-buffer"), "{fake_log}");
-        assert!(fake_log.contains(" Enter"), "{fake_log}");
+        assert!(fake_log.contains(" C-m"), "{fake_log}");
     }
 
     #[cfg(unix)]

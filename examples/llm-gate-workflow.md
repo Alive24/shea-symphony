@@ -23,7 +23,7 @@ quality_gate:
     mode: required
     command: sh examples/fixtures/llm-gate-ready.sh
     timeout_ms: 5000
-agent:
+main_lane:
   backend: dry-run
 ---
 

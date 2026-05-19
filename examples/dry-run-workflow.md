@@ -38,7 +38,7 @@ polling:
   interval_ms: 5000
 workspace:
   root: /tmp/jade-symphony-dry-run-workspaces
-agent:
+main_lane:
   backend: dry-run
   max_concurrent_agents: 2
   max_turns: 3
@@ -50,7 +50,7 @@ codex:
   command: codex app-server
 claude:
   command: claude
-review:
+review_lane:
   backend: fake
   gemini_command: gemini
   timeout_ms: 600000

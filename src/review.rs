@@ -680,13 +680,13 @@ fn write_gemini_review_artifact(
 fn diagnose_gemini_spawn_failure(command: &str, error: &std::io::Error) -> String {
     match error.kind() {
         ErrorKind::NotFound if command_uses_path_lookup(command) => format!(
-            "review backend startup failed: configured command: `{command}`; resolved executable: not found in worker PATH; suggested fix: configure `review.gemini_command` with an absolute Gemini path such as `/opt/homebrew/bin/gemini`, or export a worker PATH that can resolve `{command}`; retry: rerun `review loop` after updating the workflow or environment."
+            "review backend startup failed: configured command: `{command}`; resolved executable: not found in worker PATH; suggested fix: configure `review_lane.gemini_command` with an absolute Gemini path such as `/opt/homebrew/bin/gemini`, or export a worker PATH that can resolve `{command}`; retry: rerun `review loop` after updating the workflow or environment."
         ),
         ErrorKind::NotFound => format!(
             "review backend startup failed: configured command: `{command}`; resolved executable: path was not found or could not be executed; suggested fix: verify the configured Gemini path exists and is executable; retry: rerun `review loop` after updating the workflow or environment."
         ),
         ErrorKind::PermissionDenied => format!(
-            "review backend startup failed: configured command: `{command}`; resolved executable: permission denied; suggested fix: make the Gemini command executable or configure `review.gemini_command` to an executable path; retry: rerun `review loop` after fixing permissions."
+            "review backend startup failed: configured command: `{command}`; resolved executable: permission denied; suggested fix: make the Gemini command executable or configure `review_lane.gemini_command` to an executable path; retry: rerun `review loop` after fixing permissions."
         ),
         _ => format!(
             "review backend startup failed: configured command: `{command}`; spawn error: {error}; suggested fix: inspect the Gemini CLI installation, auth/configuration, and worker environment; retry: rerun `review loop` after fixing the backend."
@@ -1288,7 +1288,7 @@ fn review_required_operator_actions(job: &ReviewJob) -> Option<Vec<String>> {
     {
         return Some(vec![
             "- Fix the Review Agent backend command or worker PATH shown in the error above.".into(),
-            "- For Gemini CLI, prefer an absolute `review.gemini_command` path or export a worker PATH that resolves `gemini`.".into(),
+        "- For Gemini CLI, prefer an absolute `review_lane.gemini_command` path or export a worker PATH that resolves `gemini`.".into(),
             "- This issue must not move to `Human Review` until an independent Review Agent records passing review evidence.".into(),
             "- Retry: rerun `review loop` for this issue after updating the workflow or environment.".into(),
         ]);
@@ -2031,14 +2031,14 @@ mod tests {
         let job = ReviewJob::failed_unavailable(
             "#1",
             "gemini-cli",
-            "review backend failed: review backend startup failed: configured command: `gemini`; resolved executable: not found in worker PATH; suggested fix: configure `review.gemini_command` with an absolute Gemini path; retry: rerun `review loop` after updating the workflow or environment.",
+            "review backend failed: review backend startup failed: configured command: `gemini`; resolved executable: not found in worker PATH; suggested fix: configure `review_lane.gemini_command` with an absolute Gemini path; retry: rerun `review loop` after updating the workflow or environment.",
         );
 
         let workpad = render_review_workpad(&issue(), &job);
 
         assert!(workpad.contains("### Required Operator Action"));
         assert!(workpad.contains("Fix the Review Agent backend command or worker PATH"));
-        assert!(workpad.contains("absolute `review.gemini_command` path"));
+        assert!(workpad.contains("absolute `review_lane.gemini_command` path"));
         assert!(workpad.contains("Retry: rerun `review loop`"));
         assert!(workpad.contains("must not"));
     }

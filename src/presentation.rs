@@ -17,8 +17,8 @@ pub struct RunLoopPanel<'a> {
     pub handoff: Option<&'a IssueHandoffPlan>,
     pub actor_role: &'a str,
     pub mode: &'a str,
-    pub pool: usize,
-    pub selected_pool: usize,
+    pub max_concurrent: usize,
+    pub selected_count: usize,
 }
 
 pub fn render_run_loop_panel(panel: RunLoopPanel<'_>) -> String {
@@ -27,8 +27,8 @@ pub fn render_run_loop_panel(panel: RunLoopPanel<'_>) -> String {
         rows: vec![
             row("mode", panel.mode),
             row("actor", panel.actor_role),
-            row("pool", format!("{}", panel.pool)),
-            row("selected_pool", format!("{}", panel.selected_pool)),
+            row("max_concurrent", format!("{}", panel.max_concurrent)),
+            row("selected_count", format!("{}", panel.selected_count)),
         ],
     }];
 
@@ -310,8 +310,8 @@ mod tests {
             handoff: Some(&handoff),
             actor_role: "Main Agent",
             mode: "dry-run",
-            pool: 1,
-            selected_pool: 1,
+            max_concurrent: 1,
+            selected_count: 1,
         });
 
         assert!(rendered.contains("JADE SYMPHONY OPERATOR PANEL"));

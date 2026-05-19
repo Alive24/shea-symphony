@@ -81,7 +81,7 @@ Examples:
 cargo run -- main once examples/dry-run-workflow.md
 cargo run -- main loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
 cargo run -- main loop examples/dry-run-workflow.md --max-iterations 1 --dry-run --display tui
-cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --pool 2 --dry-run
+cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
 cargo run -- clean plan workflows/jade-symphony.md
 cargo run -- clean audit workflows/jade-symphony.md
 ```
@@ -89,7 +89,7 @@ cargo run -- clean audit workflows/jade-symphony.md
 Use `--display tui` for an opt-in operator panel on `main loop`, `project state`,
 and `doctor`. The default output stays line-oriented for logs and scripts.
 
-`main loop --pool N` is a supervised planning and claim-locking slice. Dry-run
+`main loop --max-concurrent N` is a supervised planning and claim-locking slice. Dry-run
 mode previews up to `N` eligible main-lane issues after skipping items whose
 `Main Agent` Project field is already owned by another worker. Write mode still
 processes one main work item at a time because the runtime state tracks one
@@ -139,7 +139,7 @@ status in a durable session registry under the configured artifact root. The
 registry is terminal-session evidence only; tracker state remains the issue
 lifecycle source of truth. The issue stays in the active main lane until later
 completion evidence satisfies the existing handoff rules. If an operator
-overrides the workflow back to `agent.backend: dry-run`, `main loop --write`
+overrides the workflow back to `main_lane.backend: dry-run`, `main loop --write`
 exits non-zero before loading runtime state, creating worktrees, claiming
 Project fields, or writing workpads.
 
@@ -158,7 +158,7 @@ and run. Manual claim evidence is truthful non-tmux registry evidence; `session
 start` is the step that creates attach/log evidence for a real tmux session and
 never writes claim fields. Main and Merge default to `tmux.agent_command`;
 Review uses `tmux.review_agent_command` when set and otherwise uses
-`review.gemini_command` for `review.backend: gemini-cli`. The rendered prompt
+`review_lane.gemini_command` for `review_lane.backend: gemini-cli`. The rendered prompt
 includes the assigned `run=` and registry pointer so the spawned agent can
 preserve that value in its handoff evidence.
 `session list WORKFLOW` shows active tmux sessions with attach commands, and

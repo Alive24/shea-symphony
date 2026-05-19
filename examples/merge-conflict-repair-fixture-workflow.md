@@ -36,7 +36,7 @@ tracker:
     marker: "<!-- jade-symphony-workpad -->"
 workspace:
   root: /tmp/jade-symphony-merge-conflict-fixture-workspaces
-agent:
+main_lane:
   backend: dry-run
   max_concurrent_agents: 1
   max_turns: 1
@@ -44,7 +44,7 @@ codex:
   command: codex app-server
 claude:
   command: claude
-review:
+review_lane:
   backend: fake
   gemini_command: gemini
 observability:

@@ -29,12 +29,12 @@ polling:
   interval_ms: 5000
 workspace:
   root: /tmp/jade-symphony-review-workspaces
-agent:
+main_lane:
   backend: dry-run
   max_concurrent_agents: 1
   max_turns: 1
   max_retry_backoff_ms: 300000
-review:
+review_lane:
   backend: fake
   gemini_command: gemini
   timeout_ms: 600000

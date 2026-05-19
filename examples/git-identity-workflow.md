@@ -17,7 +17,7 @@ workspace:
   root: /tmp/jade-symphony-git-identity-workspaces
 hooks:
   after_create: git init
-agent:
+main_lane:
   backend: dry-run
   max_concurrent_agents: 1
   max_turns: 3

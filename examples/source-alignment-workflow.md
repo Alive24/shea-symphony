@@ -10,7 +10,7 @@ tracker:
     allow_unassigned: true
 workspace:
   root: /tmp/jade-symphony-source-alignment-workspaces
-agent:
+main_lane:
   backend: dry-run
 ---
 

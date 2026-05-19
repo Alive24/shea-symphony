@@ -121,7 +121,7 @@ the evidence without running a repair or migration first.
 requiring sessions next to tracker/runtime findings. `clean audit` treats the
 session registry, rendered prompts, and tmux logs as recovery evidence, and only
 classifies completed sessions as cleanup candidates.
-If an operator switches the workflow back to `agent.backend: dry-run`, the
+If an operator switches the workflow back to `main_lane.backend: dry-run`, the
 mutating tick exits before runtime-state writes, worktree creation, Project
 claims, or workpad mutation.
 
@@ -167,7 +167,7 @@ Then configure the workflow or operator environment with that path before
 running review automation:
 
 ```yaml
-review:
+review_lane:
   backend: gemini-cli
   gemini_command: /opt/homebrew/bin/gemini
   gemini_model: gemini-3.1-pro-preview
@@ -444,7 +444,7 @@ Interrupted tmux recovery flow:
    `needs_human_decision`; completed sessions and terminal clean worktrees may
    become cleanup candidates.
 
-For supervised parallel operators, pass `--pool N` to preview eligible slots and
+For supervised parallel operators, pass `--max-concurrent N` to preview eligible slots and
 apply lane-specific claim checks. Main work uses the `Main Agent` Project field
 as a soft claim-lock hint while still processing one active runtime issue per
 loop tick. Merge work uses the `Merging Agent` Project field and can process
@@ -471,8 +471,8 @@ step. Treat these as the glanceable status bar; detailed line logs and JSONL
 events remain the durable audit trail.
 
 ```bash
-target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --pool 2 --dry-run
-target/debug/jade-symphony merge loop workflows/jade-symphony.md --max-iterations 1 --pool 2 --dry-run
+target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
+target/debug/jade-symphony merge loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
 ```
 
 ## Logical Actor Audit

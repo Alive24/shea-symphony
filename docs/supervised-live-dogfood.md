@@ -93,7 +93,7 @@ cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
 That write tick requires a real main-agent backend. The canonical workflow uses
-`agent.backend: tmux`, so a successful tick starts an attachable local session,
+`main_lane.backend: tmux`, so a successful tick starts an attachable local session,
 prints the `tmux attach-session` command, records the prompt artifact, session
 registry entry, and log path, and keeps the issue active. A running tmux session
 alone is not completion evidence and must not move the issue to `Agent Review`.
@@ -202,7 +202,7 @@ Expected outcomes:
 - failed, timed-out, unavailable, unparsed, or infrastructure-blocked review
   stays out of `Human Review` with durable evidence.
 
-If the review workflow uses `review.gemini_command: $JADE_GEMINI_COMMAND`,
+If the review workflow uses `review_lane.gemini_command: $JADE_GEMINI_COMMAND`,
 set that environment variable to an absolute Gemini CLI path before starting
 the review loop. This avoids worker processes with a narrower `PATH` recording
 a backend-unavailable failure for an otherwise installed Gemini CLI.

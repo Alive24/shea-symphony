@@ -2879,16 +2879,19 @@ fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::error::Error
     let max = options
         .iteration_limit()
         .ok_or("merge loop requires --max-iterations or --once")?;
-    let pool = options.pool_size();
+    let workflow = WorkflowDefinition::load(&options.workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &options.workflow_path)?;
+    config.validate()?;
+    let max_concurrent = options.worker_limit(&config);
     let mut stopped = false;
 
     for iteration in 1..=max {
         println!(
-            "merge_loop_iteration={} mode={} pool={pool}",
+            "merge_loop_iteration={} mode={} max_concurrent={max_concurrent}",
             iteration,
             if options.write { "write" } else { "dry-run" }
         );
-        for slot in 1..=pool {
+        for slot in 1..=max_concurrent {
             match merge_once_tick(options.workflow_path.clone(), options.write)? {
                 MergeOnceOutcome::NoMergingIssue => {
                     println!(
@@ -2899,7 +2902,7 @@ fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::error::Error
                 }
                 MergeOnceOutcome::DryRun if !options.write => {
                     println!("merge_loop_action=dry_run_tick iterations={iteration} slot={slot}");
-                    if pool > 1 {
+                    if max_concurrent > 1 {
                         println!(
                             "merge_loop=stopped reason=dry_run_would_repeat_without_mutation iterations={iteration}"
                         );
@@ -7079,10 +7082,15 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 .to_string(),
         );
 
-        let pool = options.pool_size(&config);
+        let max_concurrent = options.worker_limit(&config);
         let worker_id = worker_identity(&config, WorkerLane::Main);
-        let selected =
-            select_pool_worker_issues(&plan.selected, WorkerLane::Main, &worker_id, pool, &config);
+        let selected = select_pool_worker_issues(
+            &plan.selected,
+            WorkerLane::Main,
+            &worker_id,
+            max_concurrent,
+            &config,
+        );
 
         let Some(issue) = selected.first().cloned() else {
             plan.snapshot.latest_status = Some(LatestStatus {
@@ -7106,8 +7114,8 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                         handoff: None,
                         actor_role: "Main Agent",
                         mode: if options.write { "write" } else { "dry-run" },
-                        pool,
-                        selected_pool: 0,
+                        max_concurrent,
+                        selected_count: 0,
                     })
                 );
             } else {
@@ -7139,8 +7147,8 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                         handoff: None,
                         actor_role: "Main Agent",
                         mode: if options.write { "write" } else { "dry-run" },
-                        pool,
-                        selected_pool: selected.len(),
+                        max_concurrent,
+                        selected_count: selected.len(),
                     })
                 );
             }
@@ -7165,12 +7173,12 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             }),
         ));
         println!(
-            "run_loop_iteration={} issue={} title={:?} mode={} pool={} selected_pool={}",
+            "run_loop_iteration={} issue={} title={:?} mode={} max_concurrent={} selected_count={}",
             iterations,
             issue.identifier,
             issue.title,
             if options.write { "write" } else { "dry-run" },
-            pool,
+            max_concurrent,
             selected.len()
         );
 
@@ -7228,8 +7236,8 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                         handoff: Some(&handoff),
                         actor_role: "Main Agent",
                         mode: "dry-run",
-                        pool,
-                        selected_pool: selected.len(),
+                        max_concurrent,
+                        selected_count: selected.len(),
                     })
                 );
             }
@@ -8645,7 +8653,7 @@ fn ensure_write_mode_main_agent_backend(
     Err(io::Error::new(
         io::ErrorKind::InvalidInput,
         format!(
-            "write-mode {command} is blocked because workflow={} configures agent.backend=dry-run; configure a real main-agent backend such as tmux, codex, or claude-code before using --write",
+            "write-mode {command} is blocked because workflow={} configures main_lane.backend=dry-run; configure a real main-agent backend such as tmux, codex, or claude-code before using --write",
             workflow_path.display()
         ),
     )
@@ -9741,7 +9749,7 @@ struct RunLoopOptions {
     max_iterations: Option<usize>,
     once: bool,
     write: bool,
-    pool: Option<usize>,
+    max_concurrent: Option<usize>,
     display: DisplayMode,
 }
 
@@ -9794,7 +9802,7 @@ struct MergeLoopOptions {
     max_iterations: Option<usize>,
     once: bool,
     write: bool,
-    pool: Option<usize>,
+    max_concurrent: Option<usize>,
 }
 
 impl ReviewLoopOptions {
@@ -9822,8 +9830,10 @@ impl MergeLoopOptions {
         }
     }
 
-    fn pool_size(&self) -> usize {
-        self.pool.unwrap_or(1).max(1)
+    fn worker_limit(&self, config: &RuntimeConfig) -> usize {
+        self.max_concurrent
+            .unwrap_or(config.merge_lane.max_concurrent_workers)
+            .max(1)
     }
 }
 
@@ -9836,8 +9846,10 @@ impl RunLoopOptions {
         }
     }
 
-    fn pool_size(&self, _config: &RuntimeConfig) -> usize {
-        self.pool.unwrap_or(1).max(1)
+    fn worker_limit(&self, config: &RuntimeConfig) -> usize {
+        self.max_concurrent
+            .unwrap_or(config.agent.max_concurrent_agents)
+            .max(1)
     }
 }
 
@@ -10079,8 +10091,8 @@ struct RunLoopArgs {
     once: bool,
     #[arg(long)]
     write: bool,
-    #[arg(long)]
-    pool: Option<usize>,
+    #[arg(long = "max-concurrent")]
+    max_concurrent: Option<usize>,
     #[arg(long, value_enum, default_value_t = CliDisplayMode::Plain)]
     display: CliDisplayMode,
     #[arg(long = "dry-run")]
@@ -10254,8 +10266,8 @@ struct MergeLoopArgs {
     once: bool,
     #[arg(long)]
     write: bool,
-    #[arg(long)]
-    pool: Option<usize>,
+    #[arg(long = "max-concurrent")]
+    max_concurrent: Option<usize>,
     #[arg(long = "dry-run")]
     _dry_run: bool,
 }
@@ -10832,7 +10844,7 @@ impl ForgeStatusArg {
 }
 
 fn run_loop_command(args: RunLoopArgs) -> Result<Command, String> {
-    if args.max_iterations == Some(0) || args.pool == Some(0) {
+    if args.max_iterations == Some(0) || args.max_concurrent == Some(0) {
         return Err(usage());
     }
     Ok(Command::RunLoop {
@@ -10841,7 +10853,7 @@ fn run_loop_command(args: RunLoopArgs) -> Result<Command, String> {
             max_iterations: args.max_iterations,
             once: args.once,
             write: args.write,
-            pool: args.pool,
+            max_concurrent: args.max_concurrent,
             display: args.display.into(),
         },
     })
@@ -10849,7 +10861,7 @@ fn run_loop_command(args: RunLoopArgs) -> Result<Command, String> {
 
 fn merge_loop_command(args: MergeLoopArgs) -> Result<Command, String> {
     if args.max_iterations == Some(0)
-        || args.pool == Some(0)
+        || args.max_concurrent == Some(0)
         || (!args.once && args.max_iterations.is_none())
     {
         return Err(usage());
@@ -10860,7 +10872,7 @@ fn merge_loop_command(args: MergeLoopArgs) -> Result<Command, String> {
             max_iterations: args.max_iterations,
             once: args.once,
             write: args.write,
-            pool: args.pool,
+            max_concurrent: args.max_concurrent,
         },
     })
 }
@@ -12543,7 +12555,7 @@ mod tests {
     fn review_session_uses_gemini_command_when_no_tmux_override_exists() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\ntracker:\n  kind: memory\nagent:\n  backend: tmux\ntmux:\n  agent_command: codex\nreview:\n  backend: gemini-cli\n  gemini_command: /opt/homebrew/bin/gemini\n---\nPrompt",
+            "---\ntracker:\n  kind: memory\nmain_lane:\n  backend: tmux\ntmux:\n  agent_command: codex\nreview_lane:\n  backend: gemini-cli\n  gemini_command: /opt/homebrew/bin/gemini\n---\nPrompt",
         )
         .unwrap();
         let config =
@@ -12567,7 +12579,7 @@ mod tests {
     fn review_session_prefers_tmux_review_command_override() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\ntracker:\n  kind: memory\nagent:\n  backend: tmux\ntmux:\n  agent_command: codex\n  review_agent_command: custom-gemini --model pro\nreview:\n  backend: gemini-cli\n  gemini_command: /opt/homebrew/bin/gemini\n---\nPrompt",
+            "---\ntracker:\n  kind: memory\nmain_lane:\n  backend: tmux\ntmux:\n  agent_command: codex\n  review_agent_command: custom-gemini --model pro\nreview_lane:\n  backend: gemini-cli\n  gemini_command: /opt/homebrew/bin/gemini\n---\nPrompt",
         )
         .unwrap();
         let config =
@@ -13284,7 +13296,7 @@ mod tests {
             "examples/github-project-workflow.md".into(),
             "--max-iterations".into(),
             "3".into(),
-            "--pool".into(),
+            "--max-concurrent".into(),
             "2".into(),
             "--write".into(),
         ])
@@ -13299,8 +13311,8 @@ mod tests {
             PathBuf::from("examples/github-project-workflow.md")
         );
         assert_eq!(options.max_iterations, Some(3));
-        assert_eq!(options.pool, Some(2));
-        assert_eq!(options.pool_size(), 2);
+        assert_eq!(options.max_concurrent, Some(2));
+        assert_eq!(options.worker_limit(&test_config()), 2);
         assert!(options.write);
     }
 
@@ -13341,14 +13353,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_zero_merge_loop_pool() {
+    fn rejects_zero_merge_loop_max_concurrent() {
         assert!(Command::parse(vec![
             "merge".into(),
             "loop".into(),
             "WORKFLOW.md".into(),
             "--max-iterations".into(),
             "1".into(),
-            "--pool".into(),
+            "--max-concurrent".into(),
             "0".into(),
         ])
         .is_err());
@@ -13611,7 +13623,7 @@ mod tests {
             "examples/dry-run-workflow.md".into(),
             "--max-iterations".into(),
             "3".into(),
-            "--pool".into(),
+            "--max-concurrent".into(),
             "4".into(),
             "--display".into(),
             "tui".into(),
@@ -13628,8 +13640,8 @@ mod tests {
             PathBuf::from("examples/dry-run-workflow.md")
         );
         assert_eq!(options.max_iterations, Some(3));
-        assert_eq!(options.pool, Some(4));
-        assert_eq!(options.pool_size(&test_config()), 4);
+        assert_eq!(options.max_concurrent, Some(4));
+        assert_eq!(options.worker_limit(&test_config()), 4);
         assert_eq!(options.display, DisplayMode::Tui);
         assert!(!options.once);
         assert!(!options.write);
@@ -13697,14 +13709,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_zero_run_loop_pool() {
+    fn rejects_zero_run_loop_max_concurrent() {
         let error = Command::parse(vec![
             "main".into(),
             "loop".into(),
             "WORKFLOW.md".into(),
             "--max-iterations".into(),
             "1".into(),
-            "--pool".into(),
+            "--max-concurrent".into(),
             "0".into(),
         ])
         .unwrap_err();
@@ -15396,7 +15408,7 @@ mod tests {
             workflow_path: PathBuf::from("WORKFLOW.md"),
             max_iterations: None,
             once: false,
-            pool: None,
+            max_concurrent: None,
             write: false,
             display: DisplayMode::Plain,
         };
@@ -15418,7 +15430,7 @@ mod tests {
         std::fs::write(
             &workflow_path,
             format!(
-                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {}\nobservability:\n  logs_root: {}\nagent:\n  backend: dry-run\n---\nPrompt",
+                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {}\nobservability:\n  logs_root: {}\nmain_lane:\n  backend: dry-run\n---\nPrompt",
                 workspace_root.display(),
                 logs_root.display()
             ),
@@ -15429,7 +15441,7 @@ mod tests {
             workflow_path: workflow_path.clone(),
             max_iterations: Some(1),
             once: false,
-            pool: None,
+            max_concurrent: None,
             write: true,
             display: DisplayMode::Plain,
         })
@@ -15437,7 +15449,7 @@ mod tests {
         .to_string();
 
         assert!(error.contains("write-mode main loop is blocked"));
-        assert!(error.contains("agent.backend=dry-run"));
+        assert!(error.contains("main_lane.backend=dry-run"));
         assert!(error.contains(workflow_path.to_string_lossy().as_ref()));
         assert!(
             !workspace_root.exists(),
@@ -15455,7 +15467,7 @@ mod tests {
         std::fs::write(
             &workflow_path,
             format!(
-                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {}\nobservability:\n  logs_root: {}\nagent:\n  backend: dry-run\n---\nPrompt",
+                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {}\nobservability:\n  logs_root: {}\nmain_lane:\n  backend: dry-run\n---\nPrompt",
                 workspace_root.display(),
                 logs_root.display()
             ),
@@ -15466,7 +15478,7 @@ mod tests {
             workflow_path,
             max_iterations: Some(1),
             once: false,
-            pool: None,
+            max_concurrent: None,
             write: false,
             display: DisplayMode::Plain,
         })
@@ -15479,7 +15491,7 @@ mod tests {
             workflow_path: PathBuf::from("WORKFLOW.md"),
             max_iterations: Some(2),
             once: false,
-            pool: None,
+            max_concurrent: None,
             write: true,
             display: DisplayMode::Plain,
         };
@@ -15498,7 +15510,7 @@ mod tests {
             workflow_path: PathBuf::from("WORKFLOW.md"),
             max_iterations: None,
             once: false,
-            pool: None,
+            max_concurrent: None,
             write: true,
             display: DisplayMode::Plain,
         };

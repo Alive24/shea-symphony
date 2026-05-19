@@ -23,9 +23,7 @@
 
 {{agent_review_note}}
 
-### Findings
-
-{{findings}}
+{{findings_section}}
 
 {{stdout_section}}
 {{stderr_section}}

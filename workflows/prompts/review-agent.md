@@ -60,13 +60,24 @@ Project GraphQL or Project UI changes are break-glass only.
   verification evidence.
 - Evaluate every checkbox under the issue body's `Expected Outcome`,
   `Completion Criteria`, `Functional Verification`, `UAT`, and
-  `Context Verification` sections.
+  `Context Verification` sections, but keep ownership boundaries clear:
+  `UAT` is Human Review-owned unless the issue explicitly asks the Main Agent to
+  implement a UAT harness, fixture, or workflow capability.
+- Missing Human-owned `UAT` execution is not a confirmed implementation defect
+  and must not by itself produce `Review Result: REWORK`. Report it as UAT
+  readiness or Human Review follow-up evidence instead.
+- If the issue scope requires implementing a UAT fixture, rehearsal path, or
+  dogfood workflow, missing that implementation can be a confirmed finding. In
+  that case, identify the missing implementation deliverable rather than using
+  "Missing UAT" as the blocker.
 - In manual review, when the review passes, update the issue body checklist in
-  place so satisfied items are checked. Leave unsatisfied, skipped, or
-  unsupported items unchecked and explain them in review evidence.
+  place so evidence-backed non-UAT review items are checked. Leave UAT,
+  unsatisfied, skipped, or unsupported items unchecked and explain them in
+  review evidence.
 - In automatic headless review, do not edit the issue body checklist yourself;
-  report which checklist items are evidence-backed in stdout and let the wrapper
-  or later Human Review handle persistence.
+  report which non-UAT checklist items are evidence-backed in stdout and let the
+  wrapper or later Human Review handle persistence. Report UAT items separately
+  as Human Review follow-up.
 - Do not check an item only because the Main Agent claimed it. Check it only
   when PR diff, Main Workpad evidence, timeline comments, command output, or operator evidence supports
   it.

@@ -51,9 +51,7 @@ pub struct AgentReviewReport {
 
 impl AgentReviewReport {
     pub fn blocks_progress(&self) -> bool {
-        self.findings
-            .iter()
-            .any(|finding| finding.class == ReviewFindingClass::Confirmed)
+        self.findings.iter().any(review_finding_blocks_progress)
     }
 
     pub fn is_inconclusive(&self) -> bool {
@@ -85,6 +83,43 @@ impl AgentReviewReport {
     pub fn blocks_human_review(&self) -> bool {
         self.blocks_progress()
     }
+}
+
+fn review_finding_blocks_progress(finding: &ReviewFinding) -> bool {
+    finding.class == ReviewFindingClass::Confirmed && !human_owned_uat_finding(finding)
+}
+
+fn human_owned_uat_finding(finding: &ReviewFinding) -> bool {
+    let text = format!("{} {}", finding.title, finding.body).to_ascii_lowercase();
+    if !text.contains("uat") {
+        return false;
+    }
+
+    let missing_uat = text.contains("missing uat")
+        || text.contains("uat was not run")
+        || text.contains("uat has not been run")
+        || text.contains("uat was skipped")
+        || text.contains("uat not run")
+        || text.contains("live uat");
+    if !missing_uat {
+        return false;
+    }
+
+    let implementation_deliverable = [
+        "uat harness",
+        "uat fixture",
+        "controlled rehearsal",
+        "rehearsal path",
+        "dogfood workflow",
+        "workflow capability",
+        "implemented",
+        "implementing",
+        "implementation deliverable",
+    ]
+    .iter()
+    .any(|pattern| text.contains(pattern));
+
+    !implementation_deliverable
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -963,29 +998,14 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
         })
         .unwrap_or_default();
 
-    let findings = match &job.report {
-        Some(report) if report.findings.is_empty() => {
-            "- No confirmed, plausible, rejected, or needs-context findings.".into()
-        }
-        Some(report) => report
-            .findings
-            .iter()
-            .map(|finding| {
-                format!(
-                    "- {:?}: {} - {}",
-                    finding.class, finding.title, finding.body
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        None => "- No report captured yet.".into(),
-    };
-
     let agent_review_note = job
         .report
         .as_ref()
         .and_then(agent_review_note)
         .unwrap_or_else(|| "- No Agent Review note captured.".into());
+    let has_agent_review_note = agent_review_note != "- No Agent Review note captured.";
+    let findings_section =
+        render_parsed_findings_section(job.report.as_ref(), has_agent_review_note);
 
     let stdout_section = job
         .report
@@ -1041,12 +1061,41 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
             ("usage_limit_section", usage_limit_section),
             ("inconclusive_section", inconclusive_section),
             ("agent_review_note", agent_review_note),
-            ("findings", findings),
+            ("findings_section", findings_section),
             ("stdout_section", stdout_section),
             ("stderr_section", stderr_section),
             ("pass_evidence_section", pass_evidence_section),
         ],
     )
+}
+
+fn render_parsed_findings_section(
+    report: Option<&AgentReviewReport>,
+    has_agent_review_note: bool,
+) -> String {
+    if has_agent_review_note {
+        return String::new();
+    }
+
+    let findings = match report {
+        Some(report) if report.findings.is_empty() => {
+            "- No confirmed, plausible, rejected, or needs-context findings.".into()
+        }
+        Some(report) => report
+            .findings
+            .iter()
+            .map(|finding| {
+                format!(
+                    "- {:?}: {} - {}",
+                    finding.class, finding.title, finding.body
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        None => "- No report captured yet.".into(),
+    };
+
+    render_section("Findings", &findings)
 }
 
 fn render_template(template: &str, replacements: &[(&str, String)]) -> String {
@@ -2121,6 +2170,30 @@ mod tests {
     }
 
     #[test]
+    fn human_owned_uat_finding_does_not_block_agent_review_pass() {
+        let job = completed_gemini_review(
+            "Review Result: REWORK\n\n[Confirmed] Missing UAT: Live UAT with `main loop --write` was not run.",
+        );
+
+        let decision = review_gate_decision(&job);
+
+        assert_eq!(decision.outcome, ReviewOutcome::PassedToHumanReview);
+        assert_eq!(decision.target_state, Some("human_review"));
+    }
+
+    #[test]
+    fn uat_implementation_deliverable_still_blocks_agent_review() {
+        let job = completed_gemini_review(
+            "Review Result: REWORK\n\n[Confirmed] Missing UAT fixture: The issue required implementing a controlled rehearsal path and UAT fixture, but the PR does not add it.",
+        );
+
+        let decision = review_gate_decision(&job);
+
+        assert_eq!(decision.outcome, ReviewOutcome::NeedsRework);
+        assert_eq!(decision.target_state, Some("rework"));
+    }
+
+    #[test]
     fn needs_context_result_without_parseable_findings_is_inconclusive() {
         let report = AgentReviewReport {
             reviewer_backend: "gemini-cli".into(),
@@ -2346,6 +2419,23 @@ mod tests {
         assert!(body.contains("<summary>Stderr</summary>"));
         assert!(body.contains("warning only"));
         assert!(body.contains("Review job ledger: `/tmp/reviews/jobs/1-gemini.json`"));
+    }
+
+    #[test]
+    fn review_workpad_does_not_duplicate_parsed_findings_when_note_exists() {
+        let response = "Review Result: REWORK\n\n### Findings\n- [Confirmed] Missing gate: The PR does not enforce the gate.\n\n### Evidence\n- `src/main.rs` was inspected.";
+        let mut job = completed_gemini_review(response);
+        job.report.as_mut().unwrap().stdout = Some(format!(
+            "{{\"response\":{}}}",
+            serde_json::to_string(response).unwrap()
+        ));
+
+        let body = render_review_workpad(&issue(), &job);
+
+        assert!(body.contains("### Review Response"));
+        assert!(body.contains("#### Findings"));
+        assert!(body.contains("[Confirmed] Missing gate"));
+        assert!(!body.contains("- Confirmed: Missing gate -"));
     }
 
     #[test]

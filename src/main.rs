@@ -41,10 +41,10 @@ use jade_symphony::handoff::{
 };
 use jade_symphony::issue_forge::{next_clarification_question, ForgeValidationReport};
 use jade_symphony::issue_workspace::{
-    discover_issue_workspaces_from_parts, git_worktree_list, infer_issue_ref_from_branch_or_path,
-    render_workspace_adoption_workpad, render_workspace_ensure_workpad,
-    validate_workspace_adoption, IssueWorkspaceCandidate, IssueWorkspaceReport,
-    WorkspaceMatchStrength,
+    discover_issue_workspaces, discover_issue_workspaces_from_parts, git_worktree_list,
+    infer_issue_ref_from_branch_or_path, render_workspace_adoption_workpad,
+    render_workspace_ensure_workpad, validate_workspace_adoption, IssueWorkspaceCandidate,
+    IssueWorkspaceReport, WorkspaceMatchStrength,
 };
 use jade_symphony::lane_claim::{
     LaneClaim, LaneClaimActor, LaneClaimLane, LaneClaimSource, LaneClaimState,
@@ -3393,6 +3393,20 @@ fn run_review_job(
 }
 
 fn review_workspace_for_issue(config: &RuntimeConfig, issue: &TrackerIssue) -> PathBuf {
+    if let Ok(repo_root) = std::env::current_dir() {
+        if let Ok(report) = discover_issue_workspaces(config, issue, &repo_root) {
+            if let Some(index) = report.canonical_index {
+                if let Some(candidate) = report.candidates.get(index) {
+                    if candidate.strength == WorkspaceMatchStrength::Strong
+                        && candidate.path.starts_with(&config.workspace.root)
+                    {
+                        return candidate.path.clone();
+                    }
+                }
+            }
+        }
+    }
+
     run_loop_handoff_plan(config, issue)
         .map(|handoff| handoff.workspace_path)
         .unwrap_or_else(|_| config.workspace.root.clone())
@@ -3420,6 +3434,10 @@ Return review evidence in stdout only. Start with exactly one line: `Review Resu
 `Review Result: REWORK`, or `Review Result: NEEDS_CONTEXT`. Use `PASS` only when there are no\n\
 blocking findings. Use `REWORK` only when confirmed implementation defects require Main Agent\n\
 changes. Use `NEEDS_CONTEXT` when missing evidence or ambiguity prevents an independent decision.\n\n\
+UAT is Human Review-owned unless this issue explicitly asks the Main Agent to implement a UAT\n\
+harness, fixture, rehearsal path, or workflow capability. Missing Human-owned UAT execution is\n\
+not a confirmed implementation defect and must not by itself produce `Review Result: REWORK`.\n\
+Report UAT readiness or Human Review follow-up separately under `Evidence`.\n\n\
 Only use `[Confirmed]`, `[Plausible]`, `[Rejected]`, or `[Needs Context]` for actual review\n\
 findings. Do not use those bracketed finding tags for positive verification evidence, checklist\n\
 items, or things that were implemented correctly; put positive observations under an `Evidence`\n\

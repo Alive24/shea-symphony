@@ -1,6 +1,6 @@
 ---
 name: jade-symphony-manual-main
-description: Use when manually running a Codex Main Agent session for Jade Symphony implementation work from a fresh Codex session. This skill claims Todo or resumable In Progress work through the Main Agent lane, preserves issue quality and dependency gates, creates or resumes isolated workspaces and PRs, and hands off only to Agent Review.
+description: Use when manually running a Codex Main Agent session for Jade Symphony implementation or Main-lane Rework from a fresh Codex session. This skill claims Todo, Main-lane Rework, or resumable In Progress work through the Main Agent lane, preserves issue quality and dependency gates, creates or resumes isolated workspaces and PRs, and hands off only to Agent Review.
 metadata:
   short-description: Jade Symphony manual Main Agent
   suite-version: 2026.05.17
@@ -77,8 +77,12 @@ record the reason if they are needed.
 
 Pick the issue only when all are true:
 
-- Status is `Todo`, or status is `In Progress` with matching/resumable Main
-  Agent evidence.
+- Status is `Todo`, Main-lane `Rework`, or `In Progress` with
+  matching/resumable Main Agent evidence.
+- If status is `Rework`, the trigger must be Agent Review findings or Human
+  Review contract revision that requires Main implementation repair. Merge-lane
+  conflicts, stale-base repair, Merging failures, or any issue with an active
+  `Merging Agent` claim are not Main-lane Rework.
 - `Main Agent` field is empty or belongs to this session.
 - Dependency relationships are terminal or explicitly non-blocking.
 - Issue Quality Gate is `Ready` or `ReadyWithAssumptions`.

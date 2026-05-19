@@ -64,7 +64,7 @@ review:
   gemini_model: gemini-3.1-pro-preview
   gemini_allowed_tools:
     - run_shell_command
-  timeout_ms: 600000
+  timeout_ms: 1200000
   max_concurrent_workers: 2
 verification:
   timeout_ms: 600000

@@ -50,6 +50,7 @@ pub enum MergeLaneDecisionKind {
     ReviewNotApproved,
     ChecksPending,
     ChecksFailing,
+    StaleBranch,
     MergeDirty,
     MergeabilityUnknown,
 }
@@ -172,8 +173,10 @@ pub fn merge_lane_decision(
             kind: MergeLaneDecisionKind::ChecksFailing,
             issue_ref: issue.identifier.clone(),
             pr_url: Some(status.url.clone()),
-            target_state: Some("rework"),
-            reason: format!("check `{failing}` is failing"),
+            target_state: Some("need_human_input"),
+            reason: format!(
+                "check `{failing}` is failing; merge lane needs operator classification before repair"
+            ),
         };
     }
 
@@ -188,14 +191,25 @@ pub fn merge_lane_decision(
     }
 
     match status.merge_state_status.as_deref() {
-        Some("DIRTY") | Some("BEHIND") => {
+        Some("BEHIND") => {
+            return MergeLaneDecision {
+                kind: MergeLaneDecisionKind::StaleBranch,
+                issue_ref: issue.identifier.clone(),
+                pr_url: Some(status.url.clone()),
+                target_state: None,
+                reason:
+                    "pull request is behind the base branch; merge lane should safely update the PR branch and retry later"
+                        .into(),
+            };
+        }
+        Some("DIRTY") => {
             return MergeLaneDecision {
                 kind: MergeLaneDecisionKind::MergeDirty,
                 issue_ref: issue.identifier.clone(),
                 pr_url: Some(status.url.clone()),
-                target_state: Some("rework"),
+                target_state: Some("need_human_input"),
                 reason: format!(
-                    "pull request merge state is `{}`",
+                    "pull request merge state is `{}` and needs operator classification before merge-lane repair",
                     status.merge_state_status.as_deref().unwrap_or_default()
                 ),
             };
@@ -346,6 +360,18 @@ pub fn merge_pull_request(
     )?;
     require_success("gh", &output)?;
     Ok(output)
+}
+
+pub fn update_pull_request_branch(
+    pr_ref: &str,
+    runner: &dyn HandoffCommandRunner,
+    cwd: &Path,
+) -> Result<CommandOutput, MergeLaneError> {
+    Ok(runner.run(
+        "gh",
+        &["pr".into(), "update-branch".into(), pr_ref.into()],
+        cwd,
+    )?)
 }
 
 pub fn merge_lane_workpad(
@@ -535,13 +561,19 @@ fn required_human_input_section(decision: &MergeLaneDecision) -> Vec<String> {
             "Should the closed pull request be reopened, replaced, or should the issue leave Merging?"
         }
         MergeLaneDecisionKind::DraftPullRequest => {
-            "Should the draft pull request stay in Merging, move back to Rework, or wait for the author to mark it ready?"
+            "Should the draft pull request be marked ready, or should this issue leave Merging until the author finishes handoff?"
         }
         MergeLaneDecisionKind::BaseMismatch => {
             "Should the pull request base branch be changed, or is this issue targeting a different release branch?"
         }
         MergeLaneDecisionKind::ReviewNotApproved => {
             "Should the review decision block merge, or should the issue move back to Rework for follow-up?"
+        }
+        MergeLaneDecisionKind::ChecksFailing => {
+            "Are the failing checks caused by a merge-lane-only problem that may be repaired here, or does implementation need human-directed follow-up?"
+        }
+        MergeLaneDecisionKind::MergeDirty => {
+            "Is this conflict safe merge-lane repair, or does it require human input before changing the PR branch?"
         }
         MergeLaneDecisionKind::MergeabilityUnknown => {
             "How should this non-standard mergeability state be classified for the merge lane?"
@@ -680,6 +712,25 @@ mod tests {
         }
     }
 
+    struct RecordingRunner {
+        program: RefCell<Option<String>>,
+        args: RefCell<Vec<String>>,
+        output: CommandOutput,
+    }
+
+    impl HandoffCommandRunner for RecordingRunner {
+        fn run(
+            &self,
+            program: &str,
+            args: &[String],
+            _cwd: &Path,
+        ) -> Result<CommandOutput, GitHandoffError> {
+            self.program.replace(Some(program.into()));
+            self.args.replace(args.to_vec());
+            Ok(self.output.clone())
+        }
+    }
+
     #[test]
     fn clean_approved_pr_is_ready_to_merge() {
         let issue = issue("Merging", vec![pr()]);
@@ -724,7 +775,7 @@ mod tests {
     }
 
     #[test]
-    fn dirty_pr_routes_to_rework() {
+    fn dirty_pr_routes_to_need_human_input() {
         let issue = issue("Merging", vec![pr()]);
         let mut status = clean_status();
         status.merge_state_status = Some("DIRTY".into());
@@ -737,11 +788,12 @@ mod tests {
         );
 
         assert_eq!(decision.kind, MergeLaneDecisionKind::MergeDirty);
-        assert_eq!(decision.target_state, Some("rework"));
+        assert_eq!(decision.target_state, Some("need_human_input"));
+        assert!(decision.reason.contains("operator classification"));
     }
 
     #[test]
-    fn dirty_pr_without_github_review_decision_routes_to_rework() {
+    fn dirty_pr_without_github_review_decision_routes_to_need_human_input() {
         let issue = issue("Merging", vec![pr()]);
         let mut status = clean_status();
         status.merge_state_status = Some("DIRTY".into());
@@ -755,7 +807,51 @@ mod tests {
         );
 
         assert_eq!(decision.kind, MergeLaneDecisionKind::MergeDirty);
-        assert_eq!(decision.target_state, Some("rework"));
+        assert_eq!(decision.target_state, Some("need_human_input"));
+    }
+
+    #[test]
+    fn behind_pr_stays_in_merging_for_safe_update_and_retry() {
+        let issue = issue("Merging", vec![pr()]);
+        let mut status = clean_status();
+        status.merge_state_status = Some("BEHIND".into());
+        let decision = merge_lane_decision(
+            &issue,
+            "Merging",
+            "main",
+            &issue.linked_pull_requests,
+            Some(&status),
+        );
+
+        assert_eq!(decision.kind, MergeLaneDecisionKind::StaleBranch);
+        assert_eq!(decision.target_state, None);
+        assert!(decision.reason.contains("safely update"));
+    }
+
+    #[test]
+    fn stale_branch_update_uses_github_non_rewrite_command() {
+        let runner = RecordingRunner {
+            program: RefCell::new(None),
+            args: RefCell::new(Vec::new()),
+            output: CommandOutput {
+                status: 0,
+                stdout: "updated".into(),
+                stderr: String::new(),
+            },
+        };
+
+        let output = update_pull_request_branch("60", &runner, Path::new(".")).unwrap();
+
+        assert_eq!(output.status, 0);
+        assert_eq!(runner.program.borrow().as_deref(), Some("gh"));
+        assert_eq!(
+            *runner.args.borrow(),
+            vec![
+                "pr".to_string(),
+                "update-branch".to_string(),
+                "60".to_string()
+            ]
+        );
     }
 
     #[test]
@@ -771,7 +867,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_then_dirty_after_recheck_routes_to_rework() {
+    fn unknown_then_dirty_after_recheck_routes_to_need_human_input() {
         let runner = SequenceRunner {
             outputs: RefCell::new(vec![pr_json("UNKNOWN"), pr_json("DIRTY")]),
         };
@@ -787,7 +883,27 @@ mod tests {
         );
 
         assert_eq!(decision.kind, MergeLaneDecisionKind::MergeDirty);
-        assert_eq!(decision.target_state, Some("rework"));
+        assert_eq!(decision.target_state, Some("need_human_input"));
+    }
+
+    #[test]
+    fn unknown_then_behind_after_recheck_stays_in_merging_for_update() {
+        let runner = SequenceRunner {
+            outputs: RefCell::new(vec![pr_json("UNKNOWN"), pr_json("BEHIND")]),
+        };
+        let status =
+            fetch_pull_request_status_with_recheck("60", &runner, Path::new("."), 2).unwrap();
+        let issue = issue("Merging", vec![pr()]);
+        let decision = merge_lane_decision(
+            &issue,
+            "Merging",
+            "main",
+            &issue.linked_pull_requests,
+            Some(&status),
+        );
+
+        assert_eq!(decision.kind, MergeLaneDecisionKind::StaleBranch);
+        assert_eq!(decision.target_state, None);
     }
 
     #[test]
@@ -835,7 +951,7 @@ mod tests {
     }
 
     #[test]
-    fn failing_check_routes_to_rework() {
+    fn failing_check_routes_to_need_human_input() {
         let issue = issue("Merging", vec![pr()]);
         let mut status = clean_status();
         status.checks[0].conclusion = Some("FAILURE".into());
@@ -848,7 +964,7 @@ mod tests {
         );
 
         assert_eq!(decision.kind, MergeLaneDecisionKind::ChecksFailing);
-        assert_eq!(decision.target_state, Some("rework"));
+        assert_eq!(decision.target_state, Some("need_human_input"));
     }
 
     #[test]

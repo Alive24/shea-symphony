@@ -51,7 +51,8 @@ use jade_symphony::lane_claim::{
 };
 use jade_symphony::merge_lane::{
     expected_merge_base_branch, fetch_pull_request_status_with_recheck, merge_lane_decision,
-    merge_lane_workpad, merge_pull_request, pull_request_status_from_linked, MergeLaneDecisionKind,
+    merge_lane_workpad, merge_pull_request, pull_request_status_from_linked,
+    update_pull_request_branch, MergeLaneDecisionKind,
 };
 use jade_symphony::model::{
     normalize_state, GateDecision, GateDecisionKind, LatestStatus, SessionStatusSnapshot,
@@ -3032,6 +3033,77 @@ fn merge_once_tick(
         return Ok(MergeOnceOutcome::DryRun);
     }
 
+    if decision.kind == MergeLaneDecisionKind::StaleBranch {
+        let pr_ref = decision
+            .pr_url
+            .as_deref()
+            .ok_or("stale-branch decision missing pull request URL")?;
+        let output = update_pull_request_branch(pr_ref, &runner, &std::env::current_dir()?)?;
+        if output.status == 0 {
+            let workpad = merge_lane_workpad(&issue, &decision, Some(&output));
+            adapter.add_issue_comment(&issue.identifier, &workpad)?;
+            append_tracker_mutation_audit(
+                &config,
+                TrackerMutationAudit {
+                    command: "merge once",
+                    mutation_type: "timeline_comment",
+                    issue_ref: Some(&issue.identifier),
+                    target: decision.pr_url.clone(),
+                    from_state: Some(issue.state.clone()),
+                    to_state: None,
+                    reason: "merge lane stale branch update evidence",
+                },
+            );
+            println!(
+                "merge_once_action=stale_branch_updated issue={} target_state=merging",
+                issue.identifier
+            );
+            return Ok(MergeOnceOutcome::Skipped);
+        }
+
+        let mut failed_update = decision.clone();
+        failed_update.kind = MergeLaneDecisionKind::MergeDirty;
+        failed_update.target_state = Some("need_human_input");
+        failed_update.reason = format!(
+            "safe PR branch update failed with status {}: stdout={} stderr={}",
+            output.status,
+            single_line(&output.stdout),
+            single_line(&output.stderr)
+        );
+        let workpad = merge_lane_workpad(&issue, &failed_update, Some(&output));
+        adapter.add_issue_comment(&issue.identifier, &workpad)?;
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: "merge once",
+                mutation_type: "timeline_comment",
+                issue_ref: Some(&issue.identifier),
+                target: failed_update.pr_url.clone(),
+                from_state: Some(issue.state.clone()),
+                to_state: failed_update.target_state.map(ToOwned::to_owned),
+                reason: "merge lane stale branch update failure evidence",
+            },
+        );
+        adapter.set_state(&issue.identifier, "need_human_input")?;
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: "merge once",
+                mutation_type: "state_change",
+                issue_ref: Some(&issue.identifier),
+                target: failed_update.pr_url.clone(),
+                from_state: Some(issue.state.clone()),
+                to_state: Some("need_human_input".into()),
+                reason: "merge lane stale branch update failed",
+            },
+        );
+        println!(
+            "merge_once_action=routed issue={} target_state=need_human_input",
+            issue.identifier
+        );
+        return Ok(MergeOnceOutcome::Routed);
+    }
+
     if decision.kind.is_merge_ready() {
         let pr_ref = decision
             .pr_url
@@ -3155,6 +3227,10 @@ fn close_completed_issue(
     }
 }
 
+fn single_line(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn merge_preflight_status(
     config: &RuntimeConfig,
     issue: &TrackerIssue,
@@ -3196,6 +3272,11 @@ fn print_merge_dry_run_actions(decision: &jade_symphony::merge_lane::MergeLaneDe
             println!("merge_once_dry_run action=timeline_comment evidence=already_merged");
             println!("merge_once_dry_run action=set_state target_state=done");
             println!("merge_once_dry_run action=close_issue");
+        }
+        MergeLaneDecisionKind::StaleBranch => {
+            println!("merge_once_dry_run action=update_pr_branch");
+            println!("merge_once_dry_run action=timeline_comment evidence=stale_branch_update");
+            println!("merge_once_dry_run action=keep_state target_state=merging");
         }
         _ => {
             println!("merge_once_dry_run action=timeline_comment evidence=preflight_blocker");

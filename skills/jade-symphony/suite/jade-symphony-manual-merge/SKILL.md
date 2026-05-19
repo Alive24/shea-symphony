@@ -45,9 +45,11 @@ Before doing any work:
 
 Handle only:
 
-- `Rework` issues when the rework came from failed merging, stale base, dirty
-  mergeability, conflict repair, failing merge checks, or missing merge evidence.
 - `Merging` issues that are ready to land or need merge-lane diagnosis.
+- Historical or explicitly operator-selected merge-lane recovery issues that
+  are already in `Rework`. New automated merge-loop routing should prefer
+  staying in `Merging` for safe stale-branch retry or moving to
+  `Need Human Input` for ambiguous conflict/check failures.
 
 Do not use this skill for fresh `Todo` implementation. Use
 `$jade-symphony-manual-main` for that.
@@ -71,10 +73,11 @@ canonical link.
 
 Prefer work in this order:
 
-1. `Rework` that clearly came from failed merging.
-2. `Merging` issues with clean, approved PRs.
-3. `Merging` issues needing diagnosis because mergeability, checks, PR linkage,
+1. `Merging` issues with clean, approved PRs.
+2. `Merging` issues needing diagnosis because mergeability, checks, PR linkage,
    or evidence is unclear.
+3. Historical or explicitly operator-selected merge-lane recovery issues that
+   are already in `Rework`.
 
 Pick the issue only when all are true:
 
@@ -85,9 +88,9 @@ Pick the issue only when all are true:
 - Prior review and human approval evidence exists, or the issue is routed to
   `Need Human Input` instead of merged.
 
-## Merge-Lane Rework
+## Merge-Lane Recovery
 
-For `Rework` caused by failed merging:
+For historical or operator-selected merge-lane recovery:
 
 1. Claim through the `Merging Agent` field.
 2. Resume the existing PR branch/worktree when possible.
@@ -118,6 +121,13 @@ For `Merging` issues:
 If `mergeStateStatus` is `UNKNOWN`, wait briefly and re-run the same `gh pr view`
 query before making a routing decision. Only merge after the status returns
 `CLEAN`.
+
+If `mergeStateStatus` is `BEHIND`, prefer the same safe branch-update behavior
+as automated `merge once`: update the PR branch without rewriting history,
+record evidence, and leave the issue in `Merging` for a later retry. If
+`mergeStateStatus` is `DIRTY` or checks are failing, do not default to `Rework`;
+record one concrete `Need Human Input` question unless the operator confirms the
+repair is merge-lane-only and safely verifiable.
 
 ## Status Transition Ordering
 

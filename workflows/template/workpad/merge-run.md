@@ -6,7 +6,7 @@
 - Actor role: `merge_agent`
 - Run ID: `<run-id>`
 - Input state: `Merging`
-- Target state after merge routing: `Done` | `Rework` | `Need Human Input` | unchanged
+- Target state after merge routing: `Done` | `Need Human Input` | unchanged
 - Result: Merged | Routed | Skipped | Blocked
 - PR: #<pr> <url>
 

@@ -738,8 +738,18 @@ fn wait_for_codex_tmux_readiness(
 ) -> Result<(), String> {
     let mut saw_trust_prompt = false;
     let mut last_capture = String::new();
+    let attempts = prepared
+        .env
+        .get("JADE_SYMPHONY_CODEX_TMUX_READINESS_ATTEMPTS")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(80);
+    let interval_ms = prepared
+        .env
+        .get("JADE_SYMPHONY_CODEX_TMUX_READINESS_INTERVAL_MS")
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(250);
 
-    for _ in 0..20 {
+    for _ in 0..attempts {
         let capture = capture_tmux_pane(prepared, tmux, target, DEFAULT_TMUX_CAPTURE_LINES)?;
         if codex_viewport_ready(&capture) {
             return Ok(());
@@ -749,7 +759,7 @@ fn wait_for_codex_tmux_readiness(
             break;
         }
         last_capture = capture;
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(interval_ms));
     }
 
     if !saw_trust_prompt {
@@ -780,13 +790,13 @@ fn wait_for_codex_tmux_readiness(
         thread::sleep(Duration::from_millis(150));
     }
 
-    for _ in 0..20 {
+    for _ in 0..attempts {
         let capture = capture_tmux_pane(prepared, tmux, target, DEFAULT_TMUX_CAPTURE_LINES)?;
         if codex_viewport_ready(&capture) {
             return Ok(());
         }
         last_capture = capture;
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(interval_ms));
     }
 
     Err(format!(
@@ -1356,6 +1366,14 @@ mod tests {
         prepared
             .env
             .insert("FAKE_TMUX_STATE".into(), state_path.display().to_string());
+        prepared.env.insert(
+            "JADE_SYMPHONY_CODEX_TMUX_READINESS_ATTEMPTS".into(),
+            "2".into(),
+        );
+        prepared.env.insert(
+            "JADE_SYMPHONY_CODEX_TMUX_READINESS_INTERVAL_MS".into(),
+            "1".into(),
+        );
 
         let events = backend.run(prepared).unwrap();
         let summary = backend.summarize(&events);
@@ -1592,6 +1610,14 @@ mod tests {
         prepared
             .env
             .insert("FAKE_TMUX_STATE".into(), state_path.display().to_string());
+        prepared.env.insert(
+            "JADE_SYMPHONY_CODEX_TMUX_READINESS_ATTEMPTS".into(),
+            "2".into(),
+        );
+        prepared.env.insert(
+            "JADE_SYMPHONY_CODEX_TMUX_READINESS_INTERVAL_MS".into(),
+            "1".into(),
+        );
 
         let events = backend.run(prepared).unwrap();
         let summary = backend.summarize(&events);

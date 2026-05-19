@@ -52,7 +52,7 @@ agent:
 tmux:
   command: tmux
   agent_command: codex
-  review_agent_command: $JADE_GEMINI_COMMAND
+  review_agent_command: /opt/homebrew/bin/gemini
   session_prefix: jade
 codex:
   command: codex app-server
@@ -60,7 +60,7 @@ claude:
   command: claude
 review:
   backend: gemini-cli
-  gemini_command: $JADE_GEMINI_COMMAND
+  gemini_command: /opt/homebrew/bin/gemini
   gemini_model: gemini-3.1-pro-preview
   gemini_allowed_tools:
     - run_shell_command

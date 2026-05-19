@@ -7709,8 +7709,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             );
 
             let workpad = run_loop_handoff_workpad(&latest, &result, &handoff, Some(&ownership));
-            adapter.upsert_workpad(&latest.identifier, &workpad)?;
-            append_tracker_mutation_audit(
+            adapter.upsert_workpad(&latest.identifier, &workpad)?;            append_tracker_mutation_audit(
                 &config,
                 TrackerMutationAudit {
                     command: "main loop",
@@ -7779,7 +7778,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                         "main implementation agent cannot set requested review state".into(),
                     );
                 }
-                let evidence = run_loop_agent_review_handoff_evidence(&latest, &result, &handoff);
+                let evidence = run_loop_agent_review_handoff_evidence(&latest, &result, &handoff, Some(&workpad));
                 let handoff_report = evaluate_agent_review_handoff(&evidence);
                 let handoff_workpad =
                     render_agent_review_handoff_workpad(&latest, &evidence, &handoff_report);
@@ -9546,7 +9545,7 @@ fn run_loop_handoff_workpad(
         format!("- Issue: {} {}", issue.identifier, issue.title),
         "- Source: `jade-symphony main loop`".to_string(),
         String::new(),
-        "### Run-Loop Handoff Checklist".to_string(),
+        "### Plan".to_string(),
         "- [x] Read the issue contract, Project state, Main Workpad, and timeline evidence."
             .to_string(),
         "- [x] Prepare or resume the isolated issue workspace and branch.".to_string(),
@@ -9779,6 +9778,7 @@ fn run_loop_agent_review_handoff_evidence(
     issue: &TrackerIssue,
     result: &IssueExecutionResult,
     handoff: &IssueHandoffPlan,
+    main_workpad_markdown: Option<&str>,
 ) -> AgentReviewHandoffEvidence {
     let mut evidence = AgentReviewHandoffEvidence::from_plan(
         handoff,
@@ -9791,6 +9791,7 @@ fn run_loop_agent_review_handoff_evidence(
         ),
         "main agent completed local run",
     );
+    evidence.record_main_workpad_markdown(main_workpad_markdown);
     evidence.pull_request_url = result
         .live_handoff
         .as_ref()
@@ -14937,7 +14938,7 @@ mod tests {
 
         let workpad = run_loop_handoff_workpad(&issue, &result, &handoff, None);
 
-        assert!(workpad.contains("### Run-Loop Handoff Checklist"));
+        assert!(workpad.contains("### Plan"));
         assert!(workpad.contains("### Work Log"));
         assert!(workpad.contains("- [x] Read the issue contract"));
         assert!(workpad.contains("### Planned Handoff"));
@@ -15280,7 +15281,9 @@ mod tests {
             handoff_verification: None,
         };
 
-        let evidence = run_loop_agent_review_handoff_evidence(&issue, &result, &handoff);
+        let workpad = run_loop_handoff_workpad(&issue, &result, &handoff);
+        let evidence =
+            run_loop_agent_review_handoff_evidence(&issue, &result, &handoff, Some(&workpad));
         let report = evaluate_agent_review_handoff(&evidence);
 
         assert!(!report.is_ready());
@@ -15332,7 +15335,9 @@ mod tests {
             handoff_verification: None,
         };
 
-        let evidence = run_loop_agent_review_handoff_evidence(&issue, &result, &handoff);
+        let workpad = run_loop_handoff_workpad(&issue, &result, &handoff);
+        let evidence =
+            run_loop_agent_review_handoff_evidence(&issue, &result, &handoff, Some(&workpad));
         let report = evaluate_agent_review_handoff(&evidence);
 
         assert!(report.is_ready());
@@ -15341,6 +15346,58 @@ mod tests {
             evidence.pull_request_url.as_deref(),
             Some("https://github.com/Alive24/jade-symphony/pull/57")
         );
+    }
+
+    #[test]
+    fn run_loop_agent_review_handoff_blocks_draft_pr_and_missing_workpad_evidence() {
+        let config = test_config();
+        let mut issue = tracker_issue("In Progress");
+        issue
+            .linked_pull_requests
+            .push(jade_symphony::model::LinkedPullRequest {
+                id: Some("PR_57".into()),
+                number: Some(57),
+                url: Some("https://github.com/Alive24/jade-symphony/pull/57".into()),
+                state: Some("OPEN".into()),
+                is_draft: Some(false),
+                ..Default::default()
+            });
+        let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+        let result = successful_live_handoff_result(&handoff);
+
+        let missing_workpad_evidence =
+            run_loop_agent_review_handoff_evidence(&issue, &result, &handoff, None);
+        let missing_workpad_report = evaluate_agent_review_handoff(&missing_workpad_evidence);
+
+        assert!(!missing_workpad_report.is_ready());
+        assert!(missing_workpad_report
+            .missing
+            .contains(&"Main Workpad `### Plan`".into()));
+        assert!(missing_workpad_report
+            .missing
+            .contains(&"Main Workpad `### Work Log`".into()));
+
+        let mut draft_result = successful_live_handoff_result(&handoff);
+        if let Some(live_handoff) = draft_result.live_handoff.as_mut() {
+            live_handoff.pull_request_ready = Some(PullRequestReadyStatus {
+                pr_url: "https://github.com/Alive24/jade-symphony/pull/45".into(),
+                was_draft: true,
+                marked_ready: false,
+            });
+        }
+        let draft_workpad = run_loop_handoff_workpad(&issue, &draft_result, &handoff);
+        let draft_evidence = run_loop_agent_review_handoff_evidence(
+            &issue,
+            &draft_result,
+            &handoff,
+            Some(&draft_workpad),
+        );
+        let draft_report = evaluate_agent_review_handoff(&draft_evidence);
+
+        assert!(!draft_report.is_ready());
+        assert!(draft_report
+            .missing
+            .contains(&"non-draft pull request".into()));
     }
 
     #[test]

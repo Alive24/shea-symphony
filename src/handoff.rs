@@ -45,6 +45,8 @@ pub struct AgentReviewHandoffEvidence {
     pub pull_request_url: Option<String>,
     pub project_pr_link_verified: Option<bool>,
     pub pull_request_is_draft: Option<bool>,
+    pub main_workpad_has_plan: Option<bool>,
+    pub main_workpad_has_work_log: Option<bool>,
     pub validation_summary: String,
     pub last_transition: String,
     pub no_pr_blocker: Option<String>,
@@ -119,10 +121,23 @@ impl AgentReviewHandoffEvidence {
             pull_request_url: None,
             project_pr_link_verified: None,
             pull_request_is_draft: None,
+            main_workpad_has_plan: None,
+            main_workpad_has_work_log: None,
             validation_summary: validation_summary.into(),
             last_transition: last_transition.into(),
             no_pr_blocker: None,
         }
+    }
+
+    pub fn record_main_workpad_markdown(&mut self, markdown: Option<&str>) {
+        let Some(markdown) = markdown else {
+            self.main_workpad_has_plan = Some(false);
+            self.main_workpad_has_work_log = Some(false);
+            return;
+        };
+
+        self.main_workpad_has_plan = Some(markdown_has_heading(markdown, "### Plan"));
+        self.main_workpad_has_work_log = Some(markdown_has_heading(markdown, "### Work Log"));
     }
 }
 
@@ -145,6 +160,16 @@ pub fn evaluate_agent_review_handoff(
     }
     if evidence.last_transition.trim().is_empty() {
         missing.push("last transition".into());
+    }
+    match evidence.main_workpad_has_plan {
+        Some(true) => {}
+        Some(false) => missing.push("Main Workpad `### Plan`".into()),
+        None => missing.push("Main Workpad `### Plan` evidence".into()),
+    }
+    match evidence.main_workpad_has_work_log {
+        Some(true) => {}
+        Some(false) => missing.push("Main Workpad `### Work Log`".into()),
+        None => missing.push("Main Workpad `### Work Log` evidence".into()),
     }
 
     let has_pr = evidence
@@ -178,6 +203,8 @@ pub fn evaluate_agent_review_handoff(
         && has_pr
         && evidence.project_pr_link_verified == Some(true)
         && evidence.pull_request_is_draft == Some(false)
+        && evidence.main_workpad_has_plan == Some(true)
+        && evidence.main_workpad_has_work_log == Some(true)
     {
         AgentReviewHandoffReport {
             status: AgentReviewHandoffStatus::Ready,
@@ -234,6 +261,20 @@ pub fn render_agent_review_handoff_workpad(
                 .map(|is_draft| is_draft.to_string())
                 .unwrap_or_else(|| "unknown".into())
         ),
+        format!(
+            "- Main Workpad has `### Plan`: `{}`",
+            evidence
+                .main_workpad_has_plan
+                .map(|present| present.to_string())
+                .unwrap_or_else(|| "unknown".into())
+        ),
+        format!(
+            "- Main Workpad has `### Work Log`: `{}`",
+            evidence
+                .main_workpad_has_work_log
+                .map(|present| present.to_string())
+                .unwrap_or_else(|| "unknown".into())
+        ),
         format!("- Validation: {}", evidence.validation_summary),
         format!("- Last transition: {}", evidence.last_transition),
     ];
@@ -256,6 +297,16 @@ pub fn render_agent_review_handoff_workpad(
     lines.push("- Main implementation agent must never set `Human Review`.".into());
 
     lines.join("\n")
+}
+
+fn markdown_has_heading(markdown: &str, heading: &str) -> bool {
+    markdown.lines().any(|line| {
+        let trimmed = line.trim();
+        trimmed == heading
+            || trimmed
+                .strip_prefix(heading)
+                .is_some_and(|rest| rest.starts_with(' '))
+    })
 }
 
 pub fn plan_issue_handoff(
@@ -761,6 +812,9 @@ mod tests {
         evidence.pull_request_url = Some("https://github.com/Alive24/jade-symphony/pull/21".into());
         evidence.project_pr_link_verified = Some(true);
         evidence.pull_request_is_draft = Some(false);
+        evidence.record_main_workpad_markdown(Some(
+            "## Jade Symphony Workpad\n\n### Plan\n\n### Work Log",
+        ));
 
         let report = evaluate_agent_review_handoff(&evidence);
 
@@ -775,6 +829,9 @@ mod tests {
             AgentReviewHandoffEvidence::from_plan(&plan, "cargo test passed", "completed");
         evidence.pull_request_url = Some("https://github.com/Alive24/jade-symphony/pull/21".into());
         evidence.pull_request_is_draft = Some(false);
+        evidence.record_main_workpad_markdown(Some(
+            "## Jade Symphony Workpad\n\n### Plan\n\n### Work Log",
+        ));
 
         let report = evaluate_agent_review_handoff(&evidence);
 
@@ -792,6 +849,9 @@ mod tests {
         evidence.pull_request_url = Some("https://github.com/Alive24/jade-symphony/pull/21".into());
         evidence.project_pr_link_verified = Some(true);
         evidence.pull_request_is_draft = Some(true);
+        evidence.record_main_workpad_markdown(Some(
+            "## Jade Symphony Workpad\n\n### Plan\n\n### Work Log",
+        ));
 
         let report = evaluate_agent_review_handoff(&evidence);
 
@@ -806,6 +866,9 @@ mod tests {
             AgentReviewHandoffEvidence::from_plan(&plan, "cargo test passed", "completed");
         evidence.pull_request_url = Some("https://github.com/Alive24/jade-symphony/pull/21".into());
         evidence.project_pr_link_verified = Some(true);
+        evidence.record_main_workpad_markdown(Some(
+            "## Jade Symphony Workpad\n\n### Plan\n\n### Work Log",
+        ));
 
         let report = evaluate_agent_review_handoff(&evidence);
 

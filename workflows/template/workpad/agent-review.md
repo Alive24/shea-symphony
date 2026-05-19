@@ -19,7 +19,7 @@
 {{operator_action_section}}
 {{usage_limit_section}}
 {{inconclusive_section}}
-### Agent Review Note
+### Review Response
 
 {{agent_review_note}}
 

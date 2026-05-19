@@ -1071,7 +1071,10 @@ fn render_log_section(title: &str, content: Option<&str>) -> Option<String> {
     }
     Some(render_section(
         title,
-        &format!("```text\n{}\n```", truncate_log(content)),
+        &format!(
+            "<details>\n<summary>{title}</summary>\n\n```text\n{}\n```\n\n</details>",
+            truncate_log(content)
+        ),
     ))
 }
 
@@ -1447,7 +1450,7 @@ pub fn transition_allowed_for_review_agent(
 }
 
 fn parse_finding_line(line: &str) -> Option<ReviewFinding> {
-    let trimmed = line.trim();
+    let trimmed = trim_finding_list_marker(line);
     if !trimmed.starts_with('[') {
         return None;
     }
@@ -1509,7 +1512,7 @@ fn parse_review_result(output: &str) -> Option<ParsedReviewResult> {
 }
 
 fn parse_loose_finding_line(line: &str) -> Option<ReviewFinding> {
-    let trimmed = line.trim();
+    let trimmed = trim_finding_list_marker(line);
     if !trimmed.starts_with('[') {
         return None;
     }
@@ -1537,6 +1540,15 @@ fn parse_loose_finding_line(line: &str) -> Option<ReviewFinding> {
         title: summarize_finding_title(rest),
         body: rest.to_string(),
     })
+}
+
+fn trim_finding_list_marker(line: &str) -> &str {
+    let trimmed = line.trim();
+    trimmed
+        .strip_prefix("- ")
+        .or_else(|| trimmed.strip_prefix("* "))
+        .unwrap_or(trimmed)
+        .trim_start()
 }
 
 fn synthetic_review_result_finding(
@@ -2071,6 +2083,21 @@ mod tests {
     }
 
     #[test]
+    fn rework_result_classifies_bulleted_loose_confirmed_findings() {
+        let findings = classify_findings(
+            "Review Result: REWORK\n\n### Findings\n- [Confirmed] The issue requires a controlled Merging rehearsal path.\n- [Confirmed] Safe merge-lane conflict repair was deferred.",
+        );
+
+        assert_eq!(findings.len(), 2);
+        assert_eq!(findings[0].class, ReviewFindingClass::Confirmed);
+        assert_eq!(
+            findings[0].title,
+            "The issue requires a controlled Merging rehearsal path"
+        );
+        assert_eq!(findings[1].class, ReviewFindingClass::Confirmed);
+    }
+
+    #[test]
     fn rework_result_without_parseable_findings_still_blocks_progress() {
         let findings = classify_findings(
             "Review Result: REWORK\n\nThe implementation is missing the required claim gate.",
@@ -2310,10 +2337,13 @@ mod tests {
         assert!(body.contains("Generated at: `"));
         assert!(body.contains("GMT`"));
         assert!(body.contains("Target state after review routing: `human_review`"));
-        assert!(body.contains("### Agent Review Note"));
+        assert!(body.contains("### Review Response"));
         assert!(body.contains("Agent note body."));
         assert!(body.contains("### Stdout"));
+        assert!(body.contains("<details>"));
+        assert!(body.contains("<summary>Stdout</summary>"));
         assert!(body.contains("### Stderr"));
+        assert!(body.contains("<summary>Stderr</summary>"));
         assert!(body.contains("warning only"));
         assert!(body.contains("Review job ledger: `/tmp/reviews/jobs/1-gemini.json`"));
     }

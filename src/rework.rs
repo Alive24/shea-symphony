@@ -160,12 +160,19 @@ pub fn render_rework_diagnostic_workpad(
     issue: &TrackerIssue,
     diagnostic: &ReworkDiagnostic,
 ) -> String {
+    let review_origin = diagnostic.source.starts_with("agent_review:");
+    let title = if review_origin {
+        "## Jade Symphony Agent Review Run"
+    } else {
+        "## Jade Symphony Rework Run"
+    };
+    let lane = if review_origin { "review" } else { "main" };
     let mut lines = vec![
-        "## Jade Symphony Rework Run".to_string(),
+        title.to_string(),
         String::new(),
         format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", issue.identifier, issue.title),
-        "- Lane: `main`".into(),
+        format!("- Lane: `{lane}`"),
         "- Run type: `review_rework_diagnostic`".into(),
         format!("- Input state: `{}`", issue.state),
         "- Target state after run: `Rework`".into(),
@@ -217,10 +224,15 @@ pub fn render_rework_diagnostic_workpad(
 
     lines.push(String::new());
     lines.push("### Role Boundary".into());
-    lines.push(
-        "- Main implementation agent repairs confirmed Rework and then stops at `Agent Review`."
-            .into(),
-    );
+    if review_origin {
+        lines.push("- Review Agent records the independent review result and may route confirmed findings to `Rework`.".into());
+        lines.push("- Main implementation agent repairs confirmed Rework and then stops at `Agent Review`.".into());
+    } else {
+        lines.push(
+            "- Main implementation agent repairs confirmed Rework and then stops at `Agent Review`."
+                .into(),
+        );
+    }
     lines.push(
         "- `Human Review` remains reserved for independent Review Agent pass evidence.".into(),
     );
@@ -238,9 +250,14 @@ fn push_log_block(lines: &mut Vec<String>, label: &str, content: Option<&str>) {
 
     lines.push(String::new());
     lines.push(format!("### {label}"));
+    lines.push("<details>".into());
+    lines.push(format!("<summary>{label}</summary>"));
+    lines.push(String::new());
     lines.push("```text".into());
     lines.push(truncate_log(content));
     lines.push("```".into());
+    lines.push(String::new());
+    lines.push("</details>".into());
 }
 
 fn truncate_log(content: &str) -> String {

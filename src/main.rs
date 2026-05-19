@@ -80,10 +80,9 @@ use jade_symphony::review::{
     ReviewBackend, ReviewFreshnessInput, ReviewGateDecision, ReviewJob, ReviewJobState,
     ReviewOutcome, ReviewRequest, ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
 };
-use jade_symphony::rework::{
-    render_rework_diagnostic_workpad, rework_diagnostic_from_review, rework_transition_expected,
-    ReworkDiagnostic,
-};
+use jade_symphony::rework::rework_transition_expected;
+#[cfg(test)]
+use jade_symphony::rework::{render_rework_diagnostic_workpad, ReworkDiagnostic};
 use jade_symphony::runtime_state::{
     clear_runtime_state, detect_runtime_stall, load_runtime_state, mark_runtime_state_updated,
     record_runtime_retry, runtime_state_path, save_runtime_state, RuntimeIssueState,
@@ -3980,8 +3979,7 @@ fn apply_review_result(
             return Err("review agent transition is not allowed for this review decision".into());
         }
         if rework_transition_expected(&decision) {
-            let diagnostic = rework_diagnostic_from_review(issue, job, &decision);
-            transition_issue_to_rework_with_diagnostic(config, adapter, issue, &diagnostic)?;
+            transition_review_issue_to_rework_with_workpad(config, adapter, issue, job)?;
             return Ok(());
         }
     }
@@ -4154,6 +4152,7 @@ fn terminal_review_loop_claim_value(
     Some(terminal_review_claim_value(claim, state, result))
 }
 
+#[cfg(test)]
 fn transition_issue_to_rework_with_diagnostic(
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
@@ -4172,6 +4171,45 @@ fn transition_issue_to_rework_with_diagnostic(
             from_state: Some(issue.state.clone()),
             to_state: Some("rework".into()),
             reason: "review rework diagnostic",
+        },
+    );
+    adapter.set_state(&issue.identifier, "rework")?;
+    append_tracker_mutation_audit(
+        config,
+        TrackerMutationAudit {
+            command: "review loop",
+            mutation_type: "state_change",
+            issue_ref: Some(&issue.identifier),
+            target: None,
+            from_state: Some(issue.state.clone()),
+            to_state: Some("rework".into()),
+            reason: "confirmed review finding",
+        },
+    );
+    Ok(())
+}
+
+fn transition_review_issue_to_rework_with_workpad(
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    issue: &TrackerIssue,
+    job: &ReviewJob,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let workpad = render_review_workpad(issue, job);
+    adapter.add_issue_comment(&issue.identifier, &workpad)?;
+    append_tracker_mutation_audit(
+        config,
+        TrackerMutationAudit {
+            command: "review loop",
+            mutation_type: "timeline_comment",
+            issue_ref: Some(&issue.identifier),
+            target: job
+                .ledger_path
+                .as_ref()
+                .map(|path| path.display().to_string()),
+            from_state: Some(issue.state.clone()),
+            to_state: Some("rework".into()),
+            reason: "review result timeline evidence",
         },
     );
     adapter.set_state(&issue.identifier, "rework")?;

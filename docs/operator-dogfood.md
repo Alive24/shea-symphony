@@ -444,11 +444,17 @@ Interrupted tmux recovery flow:
    `needs_human_decision`; completed sessions and terminal clean worktrees may
    become cleanup candidates.
 
-For supervised parallel operators, pass `--max-concurrent N` to preview eligible slots and
-apply lane-specific claim checks. Main work uses the `Main Agent` Project field
-as a soft claim-lock hint while still processing one active runtime issue per
-loop tick. Merge work uses the `Merging Agent` Project field and can process
-multiple guarded merge slots in one bounded loop.
+For supervised parallel operators, pass `--max-concurrent N` to preview eligible
+slots and apply lane-specific claim checks. Main work uses the `Main Agent`
+Project field as the claim lock and the runtime-state file as the local worker
+slot ledger. In write mode, `main loop` first counts active Main runtime entries
+that still point at `In Progress` issues, archives clean stale handoff entries,
+and then starts up to the remaining capacity in the same bounded iteration.
+Existing single-entry runtime-state files still load, but once multiple Main
+workers are active the file stores an `active_workers` list so one issue cannot
+overwrite another issue's tmux/session evidence. Merge work uses the `Merging
+Agent` Project field and can process multiple guarded merge slots in one
+bounded loop.
 Lane claim fields are latest-run audit pointers, not append-only logs. New
 values use `v=1 lane=<main|review|merge> actor=<codex|gemini|claude|human>
 worker=<worker> source=<loop|manual|goal> issue=#N run=<id>

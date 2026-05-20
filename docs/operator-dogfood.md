@@ -107,6 +107,11 @@ other handoff evidence is valid, `main loop --write` may run `gh pr ready`
 before moving the issue to `Agent Review`; if relationship verification or
 readiness mutation fails, keep the issue out of `Agent Review`, route to
 `Need Human Input`, and preserve the blocker in the workpad.
+When Main handoff reaches `Agent Review`, Jade Symphony keeps tmux logs and
+attach commands as audit evidence while marking matching Main session registry
+entries completed and clearing matching active runtime state. A still-open tmux
+pane is not by itself active work after that reconciliation; attach only when
+the registry or doctor evidence says the run is still blocked or failed.
 Routine status output reads the durable session registry, probes bounded pane
 and log tails, and reports a conservative session classification such as
 `running`, `waiting_for_trust`, `waiting_for_approval`, `usage_limited`,

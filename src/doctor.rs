@@ -1442,6 +1442,25 @@ mod tests {
     }
 
     #[test]
+    fn accepts_completed_main_session_for_agent_review_issue() {
+        let mut issue = issue("#57", "Agent Review");
+        issue.linked_pull_requests.push(linked_pr(
+            "https://github.com/Alive24/jade-symphony/pull/57",
+            "OPEN",
+        ));
+        let context = ProjectDoctorContext {
+            runtime_state: None,
+            sessions: vec![session(Some("#57"), "completed")],
+            now_ms: 20_000,
+            stale_after_ms: 10_000,
+        };
+
+        let report = audit_project_issues_with_context(&[issue], Some(&context));
+
+        assert!(report.is_clean());
+    }
+
+    #[test]
     fn reports_raw_unknown_session_status_drift() {
         let mut drifted = session(Some("#202"), "unknown");
         drifted.evidence = "unknown persisted session status recorded_legacy".into();

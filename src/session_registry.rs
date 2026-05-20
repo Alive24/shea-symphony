@@ -284,6 +284,17 @@ pub fn classify_session_record(
     now_ms: u64,
     stale_after_ms: u64,
 ) -> SessionStatusProbe {
+    if matches!(
+        record.status,
+        SessionStatus::Completed | SessionStatus::Recorded
+    ) {
+        return SessionStatusProbe {
+            status: record.status.clone(),
+            source: SessionStatusSource::Registry,
+            evidence: registry_status_evidence(record),
+        };
+    }
+
     if let Some(probe) =
         pane_tail.and_then(|tail| classify_session_output(tail, SessionStatusSource::Pane))
     {
@@ -328,16 +339,18 @@ pub fn classify_session_record(
         };
     }
 
-    let evidence = if let Some(raw) = record.status.raw_persisted_unknown() {
-        format!("unknown persisted session status {raw}")
-    } else {
-        format!("registry status {}", record.status.as_str())
-    };
-
     SessionStatusProbe {
         status: record.status.clone(),
         source: SessionStatusSource::Registry,
-        evidence,
+        evidence: registry_status_evidence(record),
+    }
+}
+
+fn registry_status_evidence(record: &AgentSessionRecord) -> String {
+    if let Some(raw) = record.status.raw_persisted_unknown() {
+        format!("unknown persisted session status {raw}")
+    } else {
+        format!("registry status {}", record.status.as_str())
     }
 }
 
@@ -764,5 +777,24 @@ mod tests {
         assert_eq!(probe.status, SessionStatus::Recorded);
         assert_eq!(probe.source, SessionStatusSource::Registry);
         assert_eq!(probe.evidence, "registry status recorded");
+    }
+
+    #[test]
+    fn completed_handoff_registry_status_overrides_live_pane_tail() {
+        let mut record = fixture_record();
+        record.status = SessionStatus::Completed;
+        record.updated_at_ms = 20_000;
+
+        let probe = classify_session_record(
+            &record,
+            Some("approval required to run cargo test"),
+            None,
+            25_000,
+            10_000,
+        );
+
+        assert_eq!(probe.status, SessionStatus::Completed);
+        assert_eq!(probe.source, SessionStatusSource::Registry);
+        assert_eq!(probe.evidence, "registry status completed");
     }
 }

@@ -91,8 +91,8 @@ use jade_symphony::runtime_state::{
 };
 use jade_symphony::session_registry::{
     capture_tmux_pane_tail, classify_session_record, load_session_registry, read_log_tail,
-    save_session_record, session_registry_path, unix_timestamp_ms, AgentSessionRecord,
-    SessionStatus,
+    save_session_record, save_session_registry, session_registry_path, unix_timestamp_ms,
+    AgentSessionRecord, SessionStatus,
 };
 use jade_symphony::status_surface::{render_latest_status_bar, render_snapshot};
 use jade_symphony::tracker::{
@@ -614,6 +614,7 @@ fn set_state(
         .map(|issue| issue.state)
         .filter(|current| !current.is_empty());
     adapter.set_state(&issue_ref, &state)?;
+    reconcile_main_handoff_runtime_state(&config, &issue_ref, &state)?;
     append_tracker_mutation_audit(
         &config,
         TrackerMutationAudit {
@@ -628,6 +629,80 @@ fn set_state(
     );
     println!("set_state=ok issue_ref={issue_ref} state={state}");
     Ok(())
+}
+
+fn reconcile_main_handoff_runtime_state(
+    config: &RuntimeConfig,
+    issue_ref: &str,
+    target_state: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if normalize_state(target_state) != "agent_review" {
+        return Ok(());
+    }
+
+    let now_ms = current_time_ms();
+    let registry_path = session_registry_path(config);
+    let mut registry = load_session_registry(&registry_path)?;
+    let mut completed_sessions = 0usize;
+
+    for record in &mut registry.sessions {
+        if record.lane == "main"
+            && record
+                .issue_identifier
+                .as_deref()
+                .is_some_and(|identifier| issue_refs_match_local(identifier, issue_ref))
+            && !matches!(
+                record.status,
+                SessionStatus::Completed | SessionStatus::Recorded | SessionStatus::Failed
+            )
+        {
+            record.status = SessionStatus::Completed;
+            record.updated_at_ms = now_ms;
+            completed_sessions += 1;
+        }
+    }
+
+    if completed_sessions > 0 {
+        save_session_registry(&registry_path, &registry)?;
+    }
+
+    let runtime_state = load_runtime_state(config)?;
+    let runtime_matches_main_issue = runtime_state.as_ref().is_some_and(|state| {
+        state
+            .active_issue
+            .as_ref()
+            .is_some_and(|issue| issue_refs_match_local(&issue.identifier, issue_ref))
+            && state.lane.as_deref().is_none_or(|lane| lane == "main")
+    });
+    if runtime_matches_main_issue {
+        clear_runtime_state(config)?;
+    }
+
+    if completed_sessions > 0 || runtime_matches_main_issue {
+        append_runtime_supervision_event(
+            config,
+            runtime_state.as_ref(),
+            "MainHandoffRuntimeReconciled",
+            &format!(
+                "issue={} target_state=agent_review sessions_completed={} runtime_cleared={}",
+                issue_ref, completed_sessions, runtime_matches_main_issue
+            ),
+        )?;
+        println!(
+            "main_handoff_runtime_reconcile issue={} sessions_completed={} runtime_cleared={}",
+            issue_ref, completed_sessions, runtime_matches_main_issue
+        );
+    }
+
+    Ok(())
+}
+
+fn issue_refs_match_local(left: &str, right: &str) -> bool {
+    normalize_issue_ref_local(left) == normalize_issue_ref_local(right)
+}
+
+fn normalize_issue_ref_local(value: &str) -> String {
+    value.trim().trim_start_matches('#').to_string()
 }
 
 fn upsert_workpad(
@@ -7790,6 +7865,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 LaneClaimState::Done,
             )?;
             adapter.set_state(&latest.identifier, "agent_review")?;
+            reconcile_main_handoff_runtime_state(&config, &latest.identifier, "agent_review")?;
             append_tracker_mutation_audit(
                 &config,
                 TrackerMutationAudit {
@@ -12034,6 +12110,52 @@ mod tests {
         state
     }
 
+    fn runtime_reconcile_test_config(root: &Path) -> RuntimeConfig {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            &format!(
+                "---\ntracker:\n  kind: memory\nartifacts:\n  root: {:?}\n  namespace: Alive24/jade-symphony\nobservability:\n  logs_root: {:?}\n---\nPrompt",
+                root.display().to_string(),
+                root.join("logs").display().to_string()
+            ),
+        )
+        .unwrap();
+        RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap()
+    }
+
+    fn main_tmux_session_record(
+        issue_identifier: &str,
+        status: SessionStatus,
+    ) -> AgentSessionRecord {
+        AgentSessionRecord {
+            issue_id: Some("ISSUE_338".into()),
+            issue_identifier: Some(issue_identifier.into()),
+            issue_title: Some("Reconcile completed main tmux sessions after handoff".into()),
+            lane: "main".into(),
+            run_id: Some("20260520T0403Z-issue338-main-c91b".into()),
+            thread: None,
+            session_source: Some("loop".into()),
+            claim_value: None,
+            actor_role: Some("codex".into()),
+            actor_label: Some("Codex manual main issue-338".into()),
+            git_author: None,
+            profile_id: None,
+            instance_name: None,
+            worktree: PathBuf::from("/tmp/issue-338"),
+            branch: Some("feature/issue-338".into()),
+            backend: "tmux".into(),
+            session_name: "jade-main-338-attempt-1-reconcile".into(),
+            pane_target: "jade-main-338-attempt-1-reconcile".into(),
+            prompt_artifact_path: PathBuf::from("/tmp/prompt.md"),
+            log_path: PathBuf::from("/tmp/session.log"),
+            attach_command: "tmux attach-session -t jade-main-338-attempt-1-reconcile".into(),
+            attempt: 1,
+            status,
+            started_at_ms: 1_000,
+            updated_at_ms: 1_000,
+        }
+    }
+
     fn init_clean_git_workspace(path: &Path) {
         let output = ProcessCommand::new("git")
             .arg("init")
@@ -14123,6 +14245,46 @@ mod tests {
                 archive_reason: "tracker_state_handoff".into(),
             }
         );
+    }
+
+    #[test]
+    fn main_handoff_reconcile_completes_session_and_clears_matching_runtime_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = runtime_reconcile_test_config(temp.path());
+        let mut state = active_runtime_state("#338");
+        state.backend = "tmux".into();
+        state.backend_session_id = Some("jade-main-338-attempt-1-reconcile".into());
+        state.lane = Some("main".into());
+        save_runtime_state(&config, &state).unwrap();
+        save_session_registry(
+            &session_registry_path(&config),
+            &jade_symphony::session_registry::SessionRegistry {
+                sessions: vec![main_tmux_session_record("#338", SessionStatus::Running)],
+            },
+        )
+        .unwrap();
+
+        reconcile_main_handoff_runtime_state(&config, "#338", "agent_review").unwrap();
+
+        assert_eq!(load_runtime_state(&config).unwrap(), None);
+        let registry = load_session_registry(&session_registry_path(&config)).unwrap();
+        assert_eq!(registry.sessions[0].status, SessionStatus::Completed);
+        assert!(registry.sessions[0].updated_at_ms > 1_000);
+    }
+
+    #[test]
+    fn main_handoff_reconcile_does_not_clear_non_main_runtime_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = runtime_reconcile_test_config(temp.path());
+        let mut state = active_runtime_state("#338");
+        state.backend = "tmux".into();
+        state.backend_session_id = Some("jade-review-338-attempt-1-review".into());
+        state.lane = Some("review".into());
+        save_runtime_state(&config, &state).unwrap();
+
+        reconcile_main_handoff_runtime_state(&config, "#338", "agent_review").unwrap();
+
+        assert_eq!(load_runtime_state(&config).unwrap(), Some(state));
     }
 
     #[test]

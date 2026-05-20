@@ -132,13 +132,20 @@ Jade Symphony uses two issue-comment evidence surfaces:
 - `Main Agent Workpad`: one persistent marker comment owned by the Main Agent.
   It is updated in place for implementation plan, work log, verification, PR,
   workspace, and handoff evidence. Main-lane `Rework` continues to update this
-  same Workpad as the current-state implementation surface.
+  same Workpad as the current-state implementation surface. New canonical Main
+  Workpad writes supersede older canonical Workpad blocks so stale planned PR
+  fields such as `Live PR: not-created` do not survive after live PR evidence
+  exists.
 - Append-only timeline comments: every Review, Rework, Merge, Human Review, and
   Doctor run writes a standalone comment with a human-readable GMT timestamp,
   lane, actor, input state, target state, result, PR when relevant, and evidence
   summary. `Jade Symphony Rework Run` comments explain why the issue entered
   `Rework`; they do not replace the Main Agent Workpad for implementation
   evidence.
+
+PR linkage repair should be quiet when normal GitHub/Project readback already
+shows the PR. A visible linkage repair comment is a fallback for cases where
+GitHub Project v2 cannot otherwise expose the PR, not routine timeline noise.
 
 Review, Merge, Human Review, and Doctor flows must not overwrite or restructure
 the Main Agent Workpad. Rework-trigger diagnostics should reference Main

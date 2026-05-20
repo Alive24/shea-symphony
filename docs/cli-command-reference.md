@@ -214,7 +214,8 @@ These commands can mutate live tracker state and require `--write`.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `project set-state` | Move one issue to a normalized workflow state. | Refuses `Human Review` from the main implementation role. |
-| `project workpad` | Upsert the canonical Main Agent Workpad marker comment. | Use for Main implementation evidence, including Main-lane `Rework` implementation rounds. Append-only `Jade Symphony Rework Run` comments explain why Rework was triggered; Review, Merge, Human Review, and Doctor evidence should remain append-only timeline comments created by their lane commands. |
+| `project workpad` | Upsert the canonical Main Agent Workpad marker comment. | Use for Main implementation evidence, including Main-lane `Rework` implementation rounds. Repeated canonical workpad writes replace the prior canonical workpad entry instead of creating multiple top-level `Jade Symphony Workpad` blocks. Append-only `Jade Symphony Rework Run` comments explain why Rework was triggered; Review, Merge, Human Review, and Doctor evidence should remain append-only timeline comments created by their lane commands. |
+| `project link-pr` | Repair PR linkage when Project readback cannot already see the PR. | First checks linked-PR readback and skips the fallback comment when linkage is already visible; if GitHub Project v2 still cannot expose the PR, it may post a linkage repair comment as a fallback. |
 | `create-follow-up` | Create a follow-up issue from a body file. | Lower-level creation path; prefer `forge create` for quality-gated issues. |
 | `project add` | Add an existing GitHub issue node to the configured Project. | Initializes configured Project status where supported. |
 

@@ -674,20 +674,27 @@ fn link_pr(
 
     let config = load_config(&workflow_path)?;
     let adapter = adapter_from_config(&config);
-    link_pr_with_adapter(adapter.as_ref(), &issue_ref, &pr_ref, true)?;
-    append_tracker_mutation_audit(
-        &config,
-        TrackerMutationAudit {
-            command: "link-pr",
-            mutation_type: "pr_link",
-            issue_ref: Some(&issue_ref),
-            target: Some(pr_ref.clone()),
-            from_state: None,
-            to_state: None,
-            reason: "explicit CLI PR link",
-        },
-    );
-    println!("link_pr=ok issue_ref={issue_ref} pr_ref={pr_ref}");
+    let repaired = link_pr_with_adapter(adapter.as_ref(), &issue_ref, &pr_ref, true)?;
+    if repaired {
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: "link-pr",
+                mutation_type: "pr_link",
+                issue_ref: Some(&issue_ref),
+                target: Some(pr_ref.clone()),
+                from_state: None,
+                to_state: None,
+                reason: "explicit CLI PR link",
+            },
+        );
+    }
+    let action = if repaired {
+        "repair_comment"
+    } else {
+        "already_visible"
+    };
+    println!("link_pr=ok issue_ref={issue_ref} pr_ref={pr_ref} action={action}");
     Ok(())
 }
 
@@ -698,6 +705,10 @@ fn link_pr_with_adapter(
     write: bool,
 ) -> Result<bool, TrackerError> {
     if write {
+        let linked = adapter.list_linked_pull_requests(issue_ref)?;
+        if linked_pull_requests_contain(&linked, pr_ref) {
+            return Ok(false);
+        }
         adapter.link_pull_request(issue_ref, pr_ref)?;
         Ok(true)
     } else {
@@ -7640,7 +7651,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             runtime_state.last_event.as_deref().unwrap_or("unknown")
         );
 
-        let workpad = run_loop_handoff_workpad(&latest, &result, &handoff);
+        let workpad = run_loop_handoff_workpad(&latest, &result, &handoff, Some(&ownership));
         adapter.upsert_workpad(&latest.identifier, &workpad)?;
         append_tracker_mutation_audit(
             &config,
@@ -9161,8 +9172,9 @@ fn run_loop_handoff_workpad(
     issue: &TrackerIssue,
     result: &IssueExecutionResult,
     handoff: &IssueHandoffPlan,
+    ownership: Option<&RuntimeOwnershipMarker>,
 ) -> String {
-    [
+    let mut lines = vec![
         "## Jade Symphony Workpad".to_string(),
         String::new(),
         "### Context".to_string(),
@@ -9247,8 +9259,14 @@ fn run_loop_handoff_workpad(
         "### Main-Agent Boundary".to_string(),
         "- Locally complete main-agent work stops at `Agent Review`.".to_string(),
         "- `Human Review` is reserved for independent Review Agent pass evidence.".to_string(),
-    ]
-    .join("\n")
+    ];
+
+    if let Some(ownership) = ownership {
+        lines.push(String::new());
+        lines.push(render_runtime_ownership_marker(ownership));
+    }
+
+    lines.join("\n")
 }
 
 fn rework_continuation_workpad_line(handoff: &IssueHandoffPlan) -> String {
@@ -9306,6 +9324,13 @@ fn record_live_handoff_pr_link(
         return Ok(());
     };
 
+    let linked = adapter
+        .list_linked_pull_requests(issue_ref)
+        .map_err(|error| format!("handoff PR link verification failed: {error}"))?;
+    if linked_pull_requests_contain(&linked, &handoff.publication.pr_url) {
+        return Ok(());
+    }
+
     adapter
         .link_pull_request(issue_ref, &handoff.publication.pr_url)
         .map_err(|error| format!("handoff PR link repair failed: {error}"))?;
@@ -9356,13 +9381,24 @@ fn linked_pull_requests_contain(
     pr_url: &str,
 ) -> bool {
     let expected_url = pr_url.trim();
-    let expected_number = pull_request_number_from_url(expected_url);
+    let expected_number = pull_request_number_from_ref(expected_url);
     linked_pull_requests.iter().any(|linked| {
         linked
             .url
             .as_deref()
             .is_some_and(|url| url.trim() == expected_url)
             || expected_number.is_some() && linked.number == expected_number
+    })
+}
+
+fn pull_request_number_from_ref(reference: &str) -> Option<u64> {
+    pull_request_number_from_url(reference).or_else(|| {
+        reference
+            .trim()
+            .trim_start_matches('#')
+            .trim_start_matches("PR_")
+            .parse()
+            .ok()
     })
 }
 
@@ -14245,6 +14281,7 @@ mod tests {
             &issue,
             &result,
             &run_loop_handoff_plan(&config, &issue).unwrap(),
+            None,
         );
 
         assert_eq!(state.last_event.as_deref(), Some("SessionRunning"));
@@ -14350,7 +14387,7 @@ mod tests {
             handoff_verification: Some("skipped:not_configured".into()),
         };
 
-        let workpad = run_loop_handoff_workpad(&issue, &result, &handoff);
+        let workpad = run_loop_handoff_workpad(&issue, &result, &handoff, None);
 
         assert!(workpad.contains("### Run-Loop Handoff Checklist"));
         assert!(workpad.contains("### Work Log"));
@@ -14388,6 +14425,34 @@ mod tests {
             adapter.operations(),
             vec!["link_pr:#29:https://github.com/Alive24/jade-symphony/pull/45"]
         );
+    }
+
+    #[test]
+    fn live_run_loop_handoff_skips_link_comment_when_pr_already_visible() {
+        let config = test_config();
+        let issue = tracker_issue("In Progress");
+        let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+        let mut result = successful_live_handoff_result(&handoff);
+        let adapter = RecordingAdapter::default();
+        adapter
+            .linked_pull_requests
+            .borrow_mut()
+            .push(jade_symphony::model::LinkedPullRequest {
+                number: Some(45),
+                url: Some("https://github.com/Alive24/jade-symphony/pull/45".into()),
+                state: Some("OPEN".into()),
+                is_draft: Some(false),
+                ..Default::default()
+            });
+
+        assert!(apply_live_handoff_pr_link(
+            &adapter,
+            &issue.identifier,
+            &mut result
+        ));
+
+        assert!(result.success);
+        assert!(adapter.operations().is_empty());
     }
 
     #[test]
@@ -15060,6 +15125,24 @@ mod tests {
 
         assert!(link_pr_with_adapter(&adapter, "#127", "PR_128", true).unwrap());
         assert_eq!(adapter.operations(), vec!["link_pr:#127:PR_128"]);
+    }
+
+    #[test]
+    fn link_pr_helper_skips_repair_when_project_readback_already_has_pr() {
+        let adapter = RecordingAdapter::default();
+        adapter
+            .linked_pull_requests
+            .borrow_mut()
+            .push(jade_symphony::model::LinkedPullRequest {
+                number: Some(128),
+                url: Some("https://github.com/Alive24/jade-symphony/pull/128".into()),
+                state: Some("OPEN".into()),
+                is_draft: Some(false),
+                ..Default::default()
+            });
+
+        assert!(!link_pr_with_adapter(&adapter, "#127", "PR_128", true).unwrap());
+        assert!(adapter.operations().is_empty());
     }
 
     #[test]

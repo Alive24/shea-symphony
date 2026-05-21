@@ -15319,7 +15319,7 @@ mod tests {
             handoff_verification: None,
         };
 
-        let workpad = run_loop_handoff_workpad(&issue, &result, &handoff);
+        let workpad = run_loop_handoff_workpad(&issue, &result, &handoff, None);
         let evidence =
             run_loop_agent_review_handoff_evidence(&issue, &result, &handoff, Some(&workpad));
         let report = evaluate_agent_review_handoff(&evidence);
@@ -15373,7 +15373,7 @@ mod tests {
             handoff_verification: None,
         };
 
-        let workpad = run_loop_handoff_workpad(&issue, &result, &handoff);
+        let workpad = run_loop_handoff_workpad(&issue, &result, &handoff, None);
         let evidence =
             run_loop_agent_review_handoff_evidence(&issue, &result, &handoff, Some(&workpad));
         let report = evaluate_agent_review_handoff(&evidence);
@@ -15423,7 +15423,7 @@ mod tests {
                 marked_ready: false,
             });
         }
-        let draft_workpad = run_loop_handoff_workpad(&issue, &draft_result, &handoff);
+        let draft_workpad = run_loop_handoff_workpad(&issue, &draft_result, &handoff, None);
         let draft_evidence = run_loop_agent_review_handoff_evidence(
             &issue,
             &draft_result,

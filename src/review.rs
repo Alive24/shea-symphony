@@ -166,6 +166,8 @@ pub struct ReviewJobLedgerRecord {
     pub summary: Option<String>,
     pub error: Option<String>,
     pub finding_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gemini_health: Option<GeminiReviewHealthDiagnostic>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -184,6 +186,90 @@ pub struct ReviewGateDecision {
     pub outcome: ReviewOutcome,
     pub target_state: Option<&'static str>,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GeminiReviewHealthCategory {
+    QuotaRateLimit,
+    TransientBackend,
+    NonRecoveringConfig,
+    NonRecoveringPolicy,
+}
+
+impl GeminiReviewHealthCategory {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::QuotaRateLimit => "quota_rate_limit",
+            Self::TransientBackend => "transient_backend",
+            Self::NonRecoveringConfig => "non_recovering_config",
+            Self::NonRecoveringPolicy => "non_recovering_policy",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GeminiReviewRecoveryPolicy {
+    WaitAndRetry,
+    RetryWithBackoff,
+    RequiresHumanInput,
+}
+
+impl GeminiReviewRecoveryPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::WaitAndRetry => "wait_and_retry",
+            Self::RetryWithBackoff => "retry_with_backoff",
+            Self::RequiresHumanInput => "requires_human_input",
+        }
+    }
+
+    pub fn is_recoverable(self) -> bool {
+        matches!(self, Self::WaitAndRetry | Self::RetryWithBackoff)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GeminiReviewHealthDiagnostic {
+    pub category: GeminiReviewHealthCategory,
+    pub recovery_policy: GeminiReviewRecoveryPolicy,
+    pub reason_code: String,
+    pub message: String,
+    pub operator_status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_after_ms: Option<u64>,
+}
+
+impl GeminiReviewHealthDiagnostic {
+    pub fn signature(&self) -> String {
+        format!("{}:{}", self.category.as_str(), self.reason_code)
+    }
+
+    pub fn is_recoverable(&self) -> bool {
+        self.recovery_policy.is_recoverable()
+    }
+
+    pub fn to_error_message(&self) -> String {
+        let retry_after = self
+            .retry_after_ms
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".into());
+        format!(
+            "Gemini review backend health check classified category={} reason={} recovery_policy={} retry_after_ms={}: {}",
+            self.category.as_str(),
+            self.reason_code,
+            self.recovery_policy.as_str(),
+            retry_after,
+            self.message
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewRepeatedFailureEvidence {
+    pub repeat_count: usize,
+    pub first_job_id: String,
+    pub previous_job_id: String,
+    pub signature: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -705,6 +791,401 @@ fn command_uses_path_lookup(command: &str) -> bool {
     !path.is_absolute() && !command.contains(std::path::MAIN_SEPARATOR)
 }
 
+pub fn gemini_prelaunch_health_diagnostic(
+    command: &str,
+    model: Option<&str>,
+    allowed_tools: &[String],
+) -> Option<GeminiReviewHealthDiagnostic> {
+    let command = command.trim();
+    if command.is_empty() {
+        return Some(GeminiReviewHealthDiagnostic {
+            category: GeminiReviewHealthCategory::NonRecoveringConfig,
+            recovery_policy: GeminiReviewRecoveryPolicy::RequiresHumanInput,
+            reason_code: "missing_command".into(),
+            message: "Gemini review command is empty before launch.".into(),
+            operator_status: "Blocked on review backend configuration.".into(),
+            retry_after_ms: None,
+        });
+    }
+
+    if let Some(model) = model.map(str::trim) {
+        if model.is_empty() {
+            return Some(GeminiReviewHealthDiagnostic {
+                category: GeminiReviewHealthCategory::NonRecoveringConfig,
+                recovery_policy: GeminiReviewRecoveryPolicy::RequiresHumanInput,
+                reason_code: "empty_model".into(),
+                message: "Gemini review model is configured as an empty string.".into(),
+                operator_status: "Blocked on review backend model configuration.".into(),
+                retry_after_ms: None,
+            });
+        }
+    }
+
+    if allowed_tools.iter().any(|tool| tool.trim().is_empty()) {
+        return Some(GeminiReviewHealthDiagnostic {
+            category: GeminiReviewHealthCategory::NonRecoveringPolicy,
+            recovery_policy: GeminiReviewRecoveryPolicy::RequiresHumanInput,
+            reason_code: "empty_allowed_tool".into(),
+            message: "Gemini review allowed-tools configuration contains an empty tool name."
+                .into(),
+            operator_status: "Blocked on review allowed-tools configuration.".into(),
+            retry_after_ms: None,
+        });
+    }
+
+    let resolved = if command_uses_path_lookup(command) {
+        find_executable_in_path(command)
+    } else {
+        Some(PathBuf::from(command))
+    };
+    let Some(path) = resolved else {
+        return Some(GeminiReviewHealthDiagnostic {
+            category: GeminiReviewHealthCategory::NonRecoveringConfig,
+            recovery_policy: GeminiReviewRecoveryPolicy::RequiresHumanInput,
+            reason_code: "command_not_found".into(),
+            message: format!("Gemini review command `{command}` was not found before launch."),
+            operator_status: "Blocked until the Gemini command path or worker PATH is fixed."
+                .into(),
+            retry_after_ms: None,
+        });
+    };
+
+    match fs::metadata(&path) {
+        Ok(metadata) if metadata.is_file() && is_executable(&metadata) => None,
+        Ok(metadata) if !metadata.is_file() => Some(GeminiReviewHealthDiagnostic {
+            category: GeminiReviewHealthCategory::NonRecoveringConfig,
+            recovery_policy: GeminiReviewRecoveryPolicy::RequiresHumanInput,
+            reason_code: "command_not_file".into(),
+            message: format!(
+                "Gemini review command `{}` resolves to `{}`, which is not a file.",
+                command,
+                path.display()
+            ),
+            operator_status:
+                "Blocked until `review_lane.gemini_command` points at an executable file.".into(),
+            retry_after_ms: None,
+        }),
+        Ok(_) => Some(GeminiReviewHealthDiagnostic {
+            category: GeminiReviewHealthCategory::NonRecoveringConfig,
+            recovery_policy: GeminiReviewRecoveryPolicy::RequiresHumanInput,
+            reason_code: "command_not_executable".into(),
+            message: format!(
+                "Gemini review command `{}` resolves to `{}` but is not executable.",
+                command,
+                path.display()
+            ),
+            operator_status: "Blocked until the Gemini command is made executable or reconfigured."
+                .into(),
+            retry_after_ms: None,
+        }),
+        Err(error) if error.kind() == ErrorKind::NotFound => Some(GeminiReviewHealthDiagnostic {
+            category: GeminiReviewHealthCategory::NonRecoveringConfig,
+            recovery_policy: GeminiReviewRecoveryPolicy::RequiresHumanInput,
+            reason_code: "command_not_found".into(),
+            message: format!(
+                "Gemini review command `{}` resolves to `{}` but the path does not exist.",
+                command,
+                path.display()
+            ),
+            operator_status: "Blocked until the Gemini command path or worker PATH is fixed."
+                .into(),
+            retry_after_ms: None,
+        }),
+        Err(error) => Some(GeminiReviewHealthDiagnostic {
+            category: GeminiReviewHealthCategory::NonRecoveringConfig,
+            recovery_policy: GeminiReviewRecoveryPolicy::RequiresHumanInput,
+            reason_code: "command_metadata_error".into(),
+            message: format!(
+                "Gemini review command `{}` resolves to `{}` but could not be inspected: {}.",
+                command,
+                path.display(),
+                error
+            ),
+            operator_status: "Blocked until the Gemini command path can be inspected.".into(),
+            retry_after_ms: None,
+        }),
+    }
+}
+
+fn find_executable_in_path(command: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|path| {
+        std::env::split_paths(&path)
+            .map(|dir| dir.join(command))
+            .find(|candidate| {
+                fs::metadata(candidate)
+                    .map(|metadata| metadata.is_file() && is_executable(&metadata))
+                    .unwrap_or(false)
+            })
+    })
+}
+
+#[cfg(unix)]
+fn is_executable(metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(metadata: &fs::Metadata) -> bool {
+    metadata.is_file()
+}
+
+pub fn gemini_review_health_diagnostic(job: &ReviewJob) -> Option<GeminiReviewHealthDiagnostic> {
+    if !job.backend.to_ascii_lowercase().contains("gemini") {
+        return None;
+    }
+    if !matches!(job.state, ReviewJobState::Failed | ReviewJobState::TimedOut) {
+        return None;
+    }
+
+    let text = review_failure_text(job);
+    classify_gemini_review_health_text(&text, job.state == ReviewJobState::TimedOut)
+}
+
+pub fn review_failure_signature(job: &ReviewJob) -> Option<String> {
+    gemini_review_health_diagnostic(job)
+        .map(|diagnostic| diagnostic.signature())
+        .or_else(|| {
+            job.error.as_deref().and_then(|error| {
+                error
+                    .lines()
+                    .map(str::trim)
+                    .find(|line| !line.is_empty())
+                    .map(|line| {
+                        format!(
+                            "generic:{}",
+                            line.split_whitespace().collect::<Vec<_>>().join(" ")
+                        )
+                    })
+            })
+        })
+}
+
+fn review_failure_text(job: &ReviewJob) -> String {
+    let mut parts = Vec::new();
+    if let Some(error) = job.error.as_deref() {
+        parts.push(error);
+    }
+    if let Some(report) = job.report.as_ref() {
+        if let Some(stderr) = report.stderr.as_deref() {
+            parts.push(stderr);
+        }
+        if let Some(stdout) = report.stdout.as_deref() {
+            parts.push(stdout);
+        }
+        if let Some(summary) = report.summary.as_deref() {
+            parts.push(summary);
+        }
+    }
+    parts.join("\n")
+}
+
+fn classify_gemini_review_health_text(
+    text: &str,
+    timed_out: bool,
+) -> Option<GeminiReviewHealthDiagnostic> {
+    let normalized = normalize_diagnostic_text(text);
+    if normalized.is_empty() && !timed_out {
+        return None;
+    }
+
+    if let Some(pause) = classify_usage_limit_text(text) {
+        return Some(GeminiReviewHealthDiagnostic {
+            category: GeminiReviewHealthCategory::QuotaRateLimit,
+            recovery_policy: GeminiReviewRecoveryPolicy::WaitAndRetry,
+            reason_code: pause.classifier,
+            message: "Gemini review backend reported quota or rate limiting.".into(),
+            operator_status:
+                "Waiting for quota/rate-limit recovery, then retrying review automatically.".into(),
+            retry_after_ms: parse_retry_after_ms(text),
+        });
+    }
+
+    if contains_any(
+        &normalized,
+        &[
+            "allowed-tools",
+            "allowed tools",
+            "tool is not allowed",
+            "not allowed to use",
+            "policy refusal",
+            "policy refused",
+            "blocked by policy",
+            "permission denied by policy",
+            "approval mode",
+        ],
+    ) {
+        return Some(GeminiReviewHealthDiagnostic {
+            category: GeminiReviewHealthCategory::NonRecoveringPolicy,
+            recovery_policy: GeminiReviewRecoveryPolicy::RequiresHumanInput,
+            reason_code: "policy_or_allowed_tools".into(),
+            message: "Gemini review backend reported a policy or allowed-tools refusal.".into(),
+            operator_status:
+                "Blocked until review policy or allowed-tools configuration is changed.".into(),
+            retry_after_ms: None,
+        });
+    }
+
+    if contains_any(
+        &normalized,
+        &[
+            "review backend startup failed",
+            "not found in worker path",
+            "configured command",
+            "permission denied",
+            "auth required",
+            "authentication required",
+            "not authenticated",
+            "login required",
+            "unknown model",
+            "invalid model",
+            "unsupported model",
+            "model not found",
+            "model is not supported",
+            "model unavailable for",
+            "could not inspect",
+            "command `",
+        ],
+    ) {
+        return Some(GeminiReviewHealthDiagnostic {
+            category: GeminiReviewHealthCategory::NonRecoveringConfig,
+            recovery_policy: GeminiReviewRecoveryPolicy::RequiresHumanInput,
+            reason_code: "command_config_or_auth".into(),
+            message:
+                "Gemini review backend reported command, authentication, or model configuration failure."
+                    .into(),
+            operator_status:
+                "Blocked until Gemini command, auth, or model configuration is repaired.".into(),
+            retry_after_ms: None,
+        });
+    }
+
+    if timed_out
+        || contains_any(
+            &normalized,
+            &[
+                "temporarily unavailable",
+                "service unavailable",
+                "backend unavailable",
+                "server unavailable",
+                "overloaded",
+                "capacity",
+                "try again later",
+                "please retry",
+                "internal error",
+                "deadline exceeded",
+                "connection reset",
+                "connection refused",
+                "network error",
+                "http 500",
+                "http 502",
+                "http 503",
+                "http 504",
+                " 500 ",
+                " 502 ",
+                " 503 ",
+                " 504 ",
+            ],
+        )
+    {
+        return Some(GeminiReviewHealthDiagnostic {
+            category: GeminiReviewHealthCategory::TransientBackend,
+            recovery_policy: GeminiReviewRecoveryPolicy::RetryWithBackoff,
+            reason_code: if timed_out {
+                "timeout".into()
+            } else {
+                "transient_backend".into()
+            },
+            message: "Gemini review backend appears temporarily unavailable or capacity-limited."
+                .into(),
+            operator_status: "Retrying with backoff while keeping review loop ownership visible."
+                .into(),
+            retry_after_ms: parse_retry_after_ms(text),
+        });
+    }
+
+    None
+}
+
+fn normalize_diagnostic_text(text: &str) -> String {
+    text.to_ascii_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn contains_any(text: &str, patterns: &[&str]) -> bool {
+    patterns.iter().any(|pattern| text.contains(pattern))
+}
+
+fn parse_retry_after_ms(text: &str) -> Option<u64> {
+    let normalized = text
+        .replace(['=', ':', ',', ';', '(', ')'], " ")
+        .to_ascii_lowercase();
+    let tokens = normalized.split_whitespace().collect::<Vec<_>>();
+    for (index, token) in tokens.iter().enumerate() {
+        if *token == "retry-after" || (*token == "retry" && tokens.get(index + 1) == Some(&"after"))
+        {
+            let value_index = if *token == "retry-after" {
+                index + 1
+            } else {
+                index + 2
+            };
+            if let (Some(number), Some(unit)) = (
+                tokens
+                    .get(value_index)
+                    .and_then(|value| value.parse::<u64>().ok()),
+                tokens.get(value_index + 1),
+            ) {
+                return Some(duration_with_unit_ms(number, unit));
+            }
+            if let Some(value) = parse_duration_token_ms(tokens.get(value_index).copied()) {
+                return Some(value);
+            }
+        }
+        if *token == "retry" && tokens.get(index + 1) == Some(&"in") {
+            let value_index = index + 2;
+            if let (Some(number), Some(unit)) = (
+                tokens
+                    .get(value_index)
+                    .and_then(|value| value.parse::<u64>().ok()),
+                tokens.get(value_index + 1),
+            ) {
+                return Some(duration_with_unit_ms(number, unit));
+            }
+            if let Some(value) = parse_duration_token_ms(tokens.get(value_index).copied()) {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
+fn parse_duration_token_ms(token: Option<&str>) -> Option<u64> {
+    let token = token?;
+    if let Ok(seconds) = token.parse::<u64>() {
+        return Some(seconds.saturating_mul(1_000));
+    }
+    let split_at = token
+        .find(|ch: char| !ch.is_ascii_digit())
+        .unwrap_or(token.len());
+    if split_at == 0 {
+        return None;
+    }
+    let number = token[..split_at].parse::<u64>().ok()?;
+    Some(duration_with_unit_ms(number, &token[split_at..]))
+}
+
+fn duration_with_unit_ms(number: u64, unit: &str) -> u64 {
+    match unit.trim_matches('.') {
+        "ms" | "millisecond" | "milliseconds" => number,
+        "m" | "min" | "mins" | "minute" | "minutes" => number.saturating_mul(60_000),
+        "h" | "hr" | "hrs" | "hour" | "hours" => number.saturating_mul(3_600_000),
+        _ => number.saturating_mul(1_000),
+    }
+}
+
 pub fn classify_findings(output: &str) -> Vec<ReviewFinding> {
     let result = parse_review_result(output);
     let mut findings = output
@@ -802,28 +1283,127 @@ pub fn review_gate_decision_for_actor(job: &ReviewJob, actor: ReviewActor) -> Re
                 message: "Agent review completed without a report.".into(),
             },
         },
-        ReviewJobState::Failed | ReviewJobState::TimedOut
-            if review_required_operator_actions(job).is_some() =>
-        {
+        ReviewJobState::Failed | ReviewJobState::TimedOut => {
+            if let Some(diagnostic) = gemini_review_health_diagnostic(job) {
+                if diagnostic.is_recoverable() {
+                    return ReviewGateDecision {
+                        outcome: ReviewOutcome::BackendUnavailable,
+                        target_state: Some("agent_review"),
+                        message: format!(
+                            "Gemini review backend is {}; issue remains in Agent Review for {}.",
+                            diagnostic.category.as_str(),
+                            diagnostic.recovery_policy.as_str()
+                        ),
+                    };
+                }
+
+                return ReviewGateDecision {
+                    outcome: ReviewOutcome::NeedsHumanInput,
+                    target_state: Some("need_human_input"),
+                    message: format!(
+                        "Gemini review backend is blocked by {}; human input is required.",
+                        diagnostic.category.as_str()
+                    ),
+                };
+            }
+
+            if review_required_operator_actions(job).is_some() {
+                return ReviewGateDecision {
+                    outcome: ReviewOutcome::BackendUnavailable,
+                    target_state: Some("agent_review"),
+                    message:
+                        "Agent Review backend is blocked by required operator action; issue remains in Agent Review."
+                            .into(),
+                };
+            }
+
             ReviewGateDecision {
-                outcome: ReviewOutcome::BackendUnavailable,
-                target_state: Some("agent_review"),
-                message:
-                    "Agent Review backend is blocked by required operator action; issue remains in Agent Review."
-                        .into(),
+                outcome: ReviewOutcome::NeedsHumanInput,
+                target_state: Some("need_human_input"),
+                message: "Agent review failed or timed out; human input is required.".into(),
             }
         }
-        ReviewJobState::Failed | ReviewJobState::TimedOut => ReviewGateDecision {
-            outcome: ReviewOutcome::NeedsHumanInput,
-            target_state: Some("need_human_input"),
-            message: "Agent review failed or timed out; human input is required.".into(),
-        },
         ReviewJobState::Cancelled => ReviewGateDecision {
             outcome: ReviewOutcome::Cancelled,
             target_state: Some("agent_review"),
             message: "Agent review was cancelled; issue remains in Agent Review.".into(),
         },
     }
+}
+
+pub fn render_repeated_review_failure_workpad(
+    issue: &TrackerIssue,
+    job: &ReviewJob,
+    repeat: &ReviewRepeatedFailureEvidence,
+) -> String {
+    let decision = review_gate_decision_for_actor(job, ReviewActor::IndependentReviewAgent);
+    let diagnostic = gemini_review_health_diagnostic(job);
+    let mut lines = vec![
+        "## Jade Symphony Agent Review Run".to_string(),
+        String::new(),
+        "### Repeated Backend Failure".into(),
+        format!("- Generated at: `{}`", current_gmt_timestamp()),
+        format!("- Issue: {} {}", issue.identifier, issue.title),
+        format!("- Worker key: `{}`", review_worker_key(issue, &job.backend)),
+        format!("- Reviewer backend: `{}`", job.backend),
+        format!("- Job state: `{:?}`", job.state),
+        format!("- Current job id: `{}`", job.id),
+        format!("- First same-cause job id: `{}`", repeat.first_job_id),
+        format!("- Previous same-cause job id: `{}`", repeat.previous_job_id),
+        format!("- Same-cause repeat count: `{}`", repeat.repeat_count),
+        format!("- Failure signature: `{}`", repeat.signature),
+        format!("- Decision: {}", decision.message),
+        format!(
+            "- Target state after review routing: `{}`",
+            decision.target_state.unwrap_or("none")
+        ),
+        "- Evidence policy: compact repeat line only; full diagnostic was already recorded for the first same-cause attempt.".into(),
+    ];
+
+    if let Some(path) = job.ledger_path.as_ref() {
+        lines.push(format!("- Review job ledger: `{}`", path.display()));
+    }
+
+    if let Some(diagnostic) = diagnostic {
+        lines.push(format!(
+            "- Gemini health: `{}` / `{}`",
+            diagnostic.category.as_str(),
+            diagnostic.recovery_policy.as_str()
+        ));
+        lines.push(format!("- Operator status: {}", diagnostic.operator_status));
+        if let Some(retry_after_ms) = diagnostic.retry_after_ms {
+            lines.push(format!("- Retry-after: `{retry_after_ms}ms`"));
+        }
+    }
+
+    lines.join("\n")
+}
+
+pub fn render_gemini_health_section(job: &ReviewJob) -> String {
+    let Some(diagnostic) = gemini_review_health_diagnostic(job) else {
+        return String::new();
+    };
+
+    let retry_after = diagnostic
+        .retry_after_ms
+        .map(|value| format!("- Retry-after: `{value}ms`"))
+        .unwrap_or_else(|| "- Retry-after: `not detected`".into());
+
+    render_section(
+        "Gemini Backend Health",
+        &[
+            format!("- Classification: `{}`", diagnostic.category.as_str()),
+            format!("- Reason: `{}`", diagnostic.reason_code),
+            format!(
+                "- Recovery policy: `{}`",
+                diagnostic.recovery_policy.as_str()
+            ),
+            format!("- Status: {}", diagnostic.operator_status),
+            retry_after,
+            format!("- Diagnostic: {}", diagnostic.message),
+        ]
+        .join("\n"),
+    )
 }
 
 pub fn review_worker_key(issue: &TrackerIssue, backend: &str) -> String {
@@ -944,6 +1524,8 @@ fn terminal_review_failure_marker_matches(value: &str, worker_key: &str) -> bool
             || value.contains("job state: `cancelled`"))
         && (value.contains("required operator action")
             || value.contains("review backend")
+            || value.contains("repeated backend failure")
+            || value.contains("gemini backend health")
             || value.contains("gemini review command")
             || value.contains("retry: rerun `review loop`")
             || value.contains("retry: rerun review loop"))
@@ -972,6 +1554,7 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
     } else {
         String::new()
     };
+    let gemini_health_section = render_gemini_health_section(job);
 
     let usage_limit_section = review_usage_limit_pause(job)
         .map(|pause| {
@@ -1068,6 +1651,7 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
             ("job_id", job.id.clone()),
             ("attempt_details", attempt_details.join("\n")),
             ("operator_action_section", operator_action_section),
+            ("gemini_health_section", gemini_health_section),
             ("usage_limit_section", usage_limit_section),
             ("inconclusive_section", inconclusive_section),
             ("agent_review_note", agent_review_note),
@@ -1315,6 +1899,20 @@ fn civil_from_days(days_since_unix_epoch: i64) -> (i64, u32, u32) {
 
 fn review_required_operator_actions(job: &ReviewJob) -> Option<Vec<String>> {
     let error = job.error.as_deref().unwrap_or_default();
+    if let Some(diagnostic) = gemini_review_health_diagnostic(job) {
+        if diagnostic.is_recoverable() {
+            return None;
+        }
+
+        return Some(vec![
+            format!("- Gemini backend health: `{}`.", diagnostic.category.as_str()),
+            format!("- Reason: `{}`.", diagnostic.reason_code),
+            format!("- Status: {}", diagnostic.operator_status),
+            "- This issue must not move to `Human Review` until an independent Review Agent records passing review evidence.".into(),
+            "- Human intervention is required before automatic review can continue.".into(),
+        ]);
+    }
+
     if job.state == ReviewJobState::TimedOut {
         return Some(vec![
             "- Review backend timed out before producing evidence.".into(),
@@ -1399,6 +1997,7 @@ pub fn review_job_ledger_record(
             .as_ref()
             .map(|report| report.findings.len())
             .unwrap_or_default(),
+        gemini_health: gemini_review_health_diagnostic(job),
     }
 }
 
@@ -2085,14 +2684,14 @@ mod tests {
         let workpad = render_review_workpad(&issue(), &job);
 
         assert!(workpad.contains("### Required Operator Action"));
-        assert!(workpad.contains("Fix the Review Agent backend command or worker PATH"));
-        assert!(workpad.contains("absolute `review_lane.gemini_command` path"));
-        assert!(workpad.contains("Retry: rerun `review loop`"));
+        assert!(workpad.contains("Gemini backend health: `non_recovering_config`"));
+        assert!(workpad.contains("Human intervention is required"));
+        assert!(workpad.contains("Gemini Backend Health"));
         assert!(workpad.contains("must not"));
     }
 
     #[test]
-    fn actionable_backend_startup_failure_remains_in_agent_review() {
+    fn non_recovering_backend_startup_failure_needs_human_input() {
         let job = ReviewJob::failed_unavailable(
             "#1",
             "gemini-cli",
@@ -2101,9 +2700,9 @@ mod tests {
 
         let decision = review_gate_decision(&job);
 
-        assert_eq!(decision.outcome, ReviewOutcome::BackendUnavailable);
-        assert_eq!(decision.target_state, Some("agent_review"));
-        assert!(decision.message.contains("required operator action"));
+        assert_eq!(decision.outcome, ReviewOutcome::NeedsHumanInput);
+        assert_eq!(decision.target_state, Some("need_human_input"));
+        assert!(decision.message.contains("non_recovering_config"));
     }
 
     #[test]
@@ -2122,8 +2721,118 @@ mod tests {
         assert!(workpad.contains("<summary>Error: Gemini review command exited with status 1"));
         assert!(workpad.contains("```text\nGemini review command exited with status 1"));
         assert!(!workpad.contains("- Error: Gemini review command exited with status 1"));
-        assert!(workpad.contains("started but exited unsuccessfully"));
-        assert!(workpad.contains("Inspect stderr/auth/configuration"));
+        assert!(workpad.contains("Gemini Backend Health"));
+        assert!(workpad.contains("non_recovering_config"));
+        assert!(workpad.contains("Human intervention is required"));
+    }
+
+    #[test]
+    fn classifies_quota_rate_limit_as_wait_and_retry() {
+        let job = ReviewJob::failed_unavailable(
+            "#1",
+            "gemini-cli",
+            "HTTP 429 quota exceeded; retry-after: 2 minutes",
+        );
+
+        let diagnostic = gemini_review_health_diagnostic(&job).unwrap();
+        let decision = review_gate_decision(&job);
+
+        assert_eq!(
+            diagnostic.category,
+            GeminiReviewHealthCategory::QuotaRateLimit
+        );
+        assert_eq!(
+            diagnostic.recovery_policy,
+            GeminiReviewRecoveryPolicy::WaitAndRetry
+        );
+        assert_eq!(diagnostic.retry_after_ms, Some(120_000));
+        assert_eq!(decision.outcome, ReviewOutcome::BackendUnavailable);
+        assert_eq!(decision.target_state, Some("agent_review"));
+    }
+
+    #[test]
+    fn classifies_transient_capacity_as_retry_with_backoff() {
+        let job = ReviewJob::failed_unavailable(
+            "#1",
+            "gemini-cli",
+            "Gemini review command exited with status 1: HTTP 503 service unavailable, please retry later",
+        );
+
+        let diagnostic = gemini_review_health_diagnostic(&job).unwrap();
+        let decision = review_gate_decision(&job);
+
+        assert_eq!(
+            diagnostic.category,
+            GeminiReviewHealthCategory::TransientBackend
+        );
+        assert_eq!(
+            diagnostic.recovery_policy,
+            GeminiReviewRecoveryPolicy::RetryWithBackoff
+        );
+        assert_eq!(decision.outcome, ReviewOutcome::BackendUnavailable);
+        assert_eq!(decision.target_state, Some("agent_review"));
+    }
+
+    #[test]
+    fn classifies_policy_refusal_as_human_input() {
+        let job = ReviewJob::failed_unavailable(
+            "#1",
+            "gemini-cli",
+            "Gemini review command exited with status 1: tool is not allowed by policy",
+        );
+
+        let diagnostic = gemini_review_health_diagnostic(&job).unwrap();
+        let decision = review_gate_decision(&job);
+
+        assert_eq!(
+            diagnostic.category,
+            GeminiReviewHealthCategory::NonRecoveringPolicy
+        );
+        assert_eq!(
+            diagnostic.recovery_policy,
+            GeminiReviewRecoveryPolicy::RequiresHumanInput
+        );
+        assert_eq!(decision.outcome, ReviewOutcome::NeedsHumanInput);
+        assert_eq!(decision.target_state, Some("need_human_input"));
+    }
+
+    #[test]
+    fn prelaunch_health_detects_missing_absolute_gemini_command() {
+        let diagnostic = gemini_prelaunch_health_diagnostic(
+            "/definitely/missing/jade-symphony-gemini",
+            Some("gemini-3.1-pro-preview"),
+            &["run_shell_command".into()],
+        )
+        .unwrap();
+
+        assert_eq!(
+            diagnostic.category,
+            GeminiReviewHealthCategory::NonRecoveringConfig
+        );
+        assert_eq!(diagnostic.reason_code, "command_not_found");
+    }
+
+    #[test]
+    fn repeated_failure_workpad_is_compact() {
+        let mut job = ReviewJob::failed_unavailable(
+            "#1",
+            "gemini-cli",
+            "HTTP 429 quota exceeded; retry-after: 60 seconds",
+        );
+        job.id = "gemini-repeat-2".into();
+        let repeat = ReviewRepeatedFailureEvidence {
+            repeat_count: 2,
+            first_job_id: "gemini-repeat-1".into(),
+            previous_job_id: "gemini-repeat-1".into(),
+            signature: "quota_rate_limit:http_429".into(),
+        };
+
+        let workpad = render_repeated_review_failure_workpad(&issue(), &job, &repeat);
+
+        assert!(workpad.contains("### Repeated Backend Failure"));
+        assert!(workpad.contains("compact repeat line only"));
+        assert!(workpad.contains("Same-cause repeat count: `2`"));
+        assert!(!workpad.contains("```text"));
     }
 
     #[test]

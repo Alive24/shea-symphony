@@ -1018,6 +1018,7 @@ mod tests {
                 summary: Some("Review is running".into()),
                 error: None,
                 finding_count: 0,
+                gemini_health: None,
             },
         }
     }

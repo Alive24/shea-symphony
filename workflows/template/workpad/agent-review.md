@@ -22,6 +22,7 @@
 {{attempt_details}}
 
 {{operator_action_section}}
+{{gemini_health_section}}
 {{usage_limit_section}}
 {{inconclusive_section}}
 ### Review Response

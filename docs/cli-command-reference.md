@@ -396,7 +396,7 @@ changes.
 | --- | --- | --- |
 | `review fake` | Fixture/fake review transition helper. | Local testing path. |
 | `review once` | Run one configured review backend for one issue. | Direct backend command for one issue. |
-| `review loop` | Bounded review worker selection/reconciliation. | For `gemini-cli`, runs headless Gemini by default with stdin prompt transport, JSON output capture, configured model/tools, and durable review-job evidence. |
+| `review loop` | Bounded review worker selection/reconciliation. | For `gemini-cli`, runs headless Gemini by default with stdin prompt transport, JSON output capture, configured model/tools, durable review-job evidence, and health-aware retry routing. |
 | `review status` | Read review-loop and review-runner status from local ledgers, runtime/session registry, and Project claim cross-checks. | Read-only; never claims, repairs, retries, kills jobs, writes workpads, or changes Project state. |
 | `review claim` | Claim one `Agent Review` item's `Review Agent` text field for manual/operator review. | Requires `--worker` and `--write`; refuses non-`Agent Review` issues and writes a structured, round-trip-validated claim pointer. |
 | `review pass` | Record manual independent review pass evidence and move to `Human Review`. | Requires `--write`, a durable evidence file containing the exact current `Review Agent` claim, and preserves the field as terminal pass evidence. |
@@ -428,6 +428,14 @@ claim printed by `review claim` or recorded by `review loop`. Terminal routing
 updates that same field to an audit pointer such as `state=done result=passed`,
 `state=done result=rejected`, `state=failed result=inconclusive`, or
 `state=failed result=blocked`; it does not clear the field.
+
+Gemini-backed `review loop` distinguishes recoverable backend health from
+operator-action blockers. Quota, rate-limit, and resource-exhausted responses
+wait and retry when the loop is allowed to continue; transient capacity,
+network, timeout, or 5xx failures retry with bounded backoff while keeping the
+issue in `Agent Review`. Command, auth, model, policy, or allowed-tools
+configuration failures route to `Need Human Input`. Repeated same-cause Gemini
+failures append compact repeat evidence instead of duplicating full logs.
 
 ## Local Skill Suite
 

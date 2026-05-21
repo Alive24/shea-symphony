@@ -153,6 +153,12 @@ pub struct ReviewJobLedgerRecord {
     pub worker_key: String,
     pub backend: String,
     pub state: ReviewJobState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at_ms: Option<u64>,
     pub artifact_path: Option<PathBuf>,
     pub ledger_path: PathBuf,
     pub decision_outcome: ReviewOutcome,
@@ -1337,6 +1343,9 @@ pub fn review_job_ledger_record(
         worker_key: review_worker_key(issue, &job.backend),
         backend: job.backend.clone(),
         state: job.state.clone(),
+        pid: None,
+        started_at_ms: None,
+        updated_at_ms: None,
         artifact_path: job.artifact_path.clone(),
         ledger_path,
         decision_outcome: decision.outcome,

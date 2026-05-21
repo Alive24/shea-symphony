@@ -7,8 +7,9 @@ diagnosing stuck tracker, PR, claim, worktree, runtime, and skill-install
 symptoms. It is intentionally read-first and confirmation-gated.
 
 Doctor v1 complements the existing `doctor`, `project state`, `project issue`,
-`debug`, `workspace`, and `session` commands. It does not replace them and
-does not expand automatic repair authority.
+`debug`, `workspace`, and `session` commands. It does not replace them. After
+diagnosis, it must give a concrete repair recommendation and may execute the
+confirmed repair in the same Codex session when the workflow contract allows it.
 
 ## Entry Points
 
@@ -36,13 +37,14 @@ Doctor v1 defaults to:
 1. read live Project and local runtime state.
 2. preserve evidence.
 3. classify the stuck state.
-4. recommend one small next step.
-5. list any repair actions that need explicit confirmation.
+4. recommend one small executable repair path.
+5. state whether it can be executed in the current session.
+6. list any repair actions that still need explicit confirmation.
 
 Doctor v1 must not perform automatic Project mutation, PR linkage repair, stale
-claim repair, worktree cleanup, runtime cleanup, or PR ready transitions. Those
-actions require an explicit operator confirmation or a documented command with a
-`--write` flag.
+claim repair, worktree cleanup, runtime cleanup, local skill writes, or PR ready
+transitions. Those actions require an explicit operator request, an explicit
+operator confirmation, or a documented command with a `--write` flag.
 
 Jade Symphony CLI remains the normal authority for Project status, claim locks,
 relationships, workpads, and workflow status. Raw `gh project` or GraphQL writes
@@ -105,8 +107,8 @@ Every Doctor session should choose one primary classification:
 | `draft_pr_handoff` | A linked PR is draft before Agent Review handoff. | Use documented ready repair only after confirmation. |
 | `stale_lane_claim` | A lane claim is stale, mismatched, failed, superseded, or missing registry evidence. | Preserve prior claim and request confirmation before superseding it. |
 | `dirty_runtime_or_worktree` | Runtime state, session registry, or issue worktree is dirty or ambiguous. | Inspect, preserve evidence, and avoid cleanup until confirmed. |
-| `skill_install_symptom` | Local skill alias, path, metadata, or discoverability is broken. | Diagnose only; use `doctor` install-health warnings and route writes to #242. |
-| `installable_suite_followup` | Packaging as a dated installable skill suite is relevant. | Route implementation to #242. |
+| `skill_install_symptom` | Local skill alias, path, metadata, or discoverability is broken. | Show target paths and recommend the exact suite validate/install or targeted local-copy repair; execute only after request or confirmation. |
+| `installable_suite_followup` | Packaging as a dated installable skill suite is relevant. | Patch the repo-owned suite when requested, then validate before local install. |
 | `issue_contract_gap` | The issue contract lacks execution-critical scope, verification, or dependency facts. | Move or recommend moving to `Need to Clarify`. |
 | `no_repair_needed` | Evidence shows the item is healthy. | Return to the normal lane flow. |
 
@@ -140,6 +142,8 @@ operator-authored notes with `project timeline-comment`; do not use
   - `cargo run -- project issue workflows/jade-symphony.md '#258' --json`: ...
   - `cargo run -- doctor workflows/jade-symphony.md repair '#258'`: ...
 - Recommended next step: ...
+- Explicit repair recommendation: ...
+- Can execute in this session: `yes` | `no`
 - Repair actions requiring explicit confirmation:
   - ...
 - Safe no-write commands to run next:
@@ -167,17 +171,38 @@ These repairs require explicit confirmation or a documented `--write` path:
 Prefer the smallest repair that preserves issue, PR, worktree, session, and
 workpad context. Do not reset when repair can preserve evidence.
 
+If the operator has already requested the specific repair in the current
+conversation, such as updating the local Doctor skill, that request satisfies
+the confirmation gate for that bounded target. Still print or record the target
+paths and do not broaden the write to unrelated skills.
+
+## Same-Session Execution
+
+Doctor diagnosis may continue into repair work in the original Codex session
+when all are true:
+
+- the target issue, PR, worktree, or local skill path is known.
+- prior lane evidence remains valid or the owning lane workflow is adopted.
+- the action has explicit operator confirmation or a documented `--write` path.
+- durable evidence will be recorded before terminal Project routing changes.
+
+Use the owning skill or lane workflow before doing normal Main, Review, Human
+Review, or Merging work. Doctor coordinates the repair path; it does not turn a
+diagnosis-only step into hidden implementation or merge authority.
+
 ## Relationship To #256 And #242
 
 `doctor` verifies local Jade Symphony skill install health by reporting
 warning-level Codex and Gemini root findings for aliases, symlinks, missing
 files, stale metadata, and stale naming. Doctor triage may classify a symptom as
-`skill_install_symptom` and collect evidence, but it must not repair local skill
-files.
+`skill_install_symptom`, collect evidence, show target paths, and recommend a
+targeted install/update. It may perform that local write only after operator
+request or confirmation.
 
-#242 is the follow-up for packaging Jade Symphony as a dated installable skill
-suite. Doctor v1 may point to that follow-up when packaging is the next step,
-but it must not implement the suite packaging or release layout.
+#242 remains the owning track for broad dated skill-suite packaging. If the
+operator asks for a bounded installable-skill update, Doctor may patch the
+repo-owned suite copy and validate/install that specific skill without turning
+the task into a full suite release.
 
 ## Outcomes
 

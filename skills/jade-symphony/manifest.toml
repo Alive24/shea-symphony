@@ -50,4 +50,4 @@ summary = "Manual Merging Agent lane for approved merge and merge-lane repair wo
 name = "jade-symphony-doctor"
 path = "suite/jade-symphony-doctor"
 targets = ["codex", "gemini"]
-summary = "Doctor and repair triage stub for local Need Human Input and install-health workflows."
+summary = "Doctor triage for Need Human Input, issue or PR blockers, install-health gaps, and confirmed same-session repairs."

@@ -1,19 +1,17 @@
 ---
 name: jade-symphony-doctor
-description: Use when triaging Jade Symphony doctor output, local install-health gaps, or Need Human Input recovery paths without starting implementation, review, or merge lane work.
+description: Use when diagnosing Jade Symphony doctor findings, Need Human Input items, issue or PR blockers, and install-health gaps, then giving an explicit repair recommendation and executing confirmed safe repairs in the same session when the workflow contract allows it.
 metadata:
   short-description: Jade Symphony doctor triage
-  suite-version: 2026.05.17
+  suite-version: 2026.05.18
 ---
 
 # Jade Symphony Doctor
 
 Use this skill for read-first operator triage around `doctor`, `debug`,
-install-health, and local recovery findings.
-
-This skill is a read-first operator triage entrypoint. The Jade Symphony CLI
-`doctor` command reports local install-health warnings, while the skill keeps
-repair decisions explicit and operator-confirmed.
+install-health, local recovery findings, and stuck `Need Human Input` issues.
+After diagnosis, give one explicit repair recommendation and say whether it can
+be executed in the current Codex session.
 
 ## Repository
 
@@ -50,8 +48,40 @@ Report:
 
 - the exact doctor/debug finding;
 - whether it is a blocker or warning;
-- the safest CLI-owned repair path;
-- any operator decision needed before writing.
+- the safest CLI-owned or installer-owned repair path;
+- the exact target issue, PR, worktree, or local skill path;
+- whether the repair can be executed in this same session;
+- any operator decision still needed before writing.
+
+When an operator has already asked for a specific repair, such as updating the
+local Doctor skill, treat that request as confirmation for that bounded write
+after printing the target paths. Do not broaden the repair to unrelated skills
+unless the operator asked for the whole suite.
+
+For worktree or session ambiguity, use the current grouped command:
+
+```bash
+cargo run -- workspace show workflows/jade-symphony.md '#258'
+cargo run -- session list workflows/jade-symphony.md
+git worktree list --porcelain
+```
+
+## Explicit Repair Shape
+
+Do not stop at "route to #242", "use manual merge", or "needs operator". End
+with one concrete next action:
+
+- a lane handoff command, such as `$jade-symphony-manual-main`,
+  `$jade-symphony-manual-review`, or `$jade-symphony-manual-merge`;
+- a Jade Symphony CLI repair command, such as `project set-state`,
+  `project link-pr`, `doctor ... repair`, or `project timeline-comment`;
+- a local install-health command, such as suite dry-run, validate, or a targeted
+  copy/install path;
+- one operator question when the evidence still depends on a human decision.
+
+If the repair is confirmed and fits the workflow contract, continue in the same
+Codex session. Switch to the owning skill or lane workflow before doing normal
+Main, Review, Human Review, or Merging work.
 
 ## Boundaries
 
@@ -64,6 +94,7 @@ Report:
   `project workpad`, which is reserved for the persistent Main Agent Workpad.
 - Do not silently overwrite local skills; use the suite installer, show target
   paths, and require confirmation before writing.
-- Keep automatic install-health repair out of this skill; `doctor` should
-  diagnose and point to the #242 install/update path rather than rewriting
-  local skill files.
+- Local skill writes are allowed only when the operator explicitly asked for
+  them or confirmed the printed target paths. Prefer targeted Doctor-skill
+  updates when the request is only about Doctor; use the full suite installer
+  only when the operator asks for the whole suite.

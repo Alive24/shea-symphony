@@ -1,6 +1,6 @@
 ---
 name: jade-symphony-doctor
-description: Diagnose Jade Symphony Need Human Input items and operator-selected issues without mutating Project state by default.
+description: Diagnose Jade Symphony doctor findings, Need Human Input items, issue or PR blockers, and install-health gaps, then give an explicit repair recommendation and execute confirmed safe repairs in the same session when the workflow contract allows it.
 metadata:
   short-description: Jade Symphony Doctor triage
 ---
@@ -8,11 +8,15 @@ metadata:
 # Jade Symphony Doctor
 
 Use this skill when a Jade Symphony operator asks to diagnose a stuck workflow
-state, a `Need Human Input` item, or a specific issue/PR/worktree that needs a
-safe next step before normal Main, Review, or Merging work can continue.
+state, a `Need Human Input` item, doctor warning, install-health finding, or a
+specific issue/PR/worktree that needs a safe next step before normal Main,
+Review, or Merging work can continue.
 
-Doctor owns diagnosis, classification, and evidence capture. It does not own
-normal implementation, independent review approval, human approval, or merging.
+Doctor owns diagnosis, classification, evidence capture, and a concrete repair
+recommendation. It may continue in the original Codex session to execute a
+confirmed repair when the required lane, CLI command, and workflow evidence are
+clear. It does not replace normal implementation, independent review approval,
+human approval, or merge authority.
 
 ## Repository
 
@@ -44,9 +48,7 @@ Use this skill for:
 - PR linkage gaps before Main, Review, or Merge handoff.
 - stale or ambiguous lane claim fields.
 - dirty runtime state, session registry, or issue worktree symptoms.
-- local skill install symptoms, while leaving full integrity checking to #256.
-- installable skill suite questions, while leaving dated suite packaging to
-  #242.
+- local skill install symptoms and installable skill suite drift.
 
 Do not use this skill to claim new `Todo` implementation work. Use
 `$jade-symphony-manual-main` for Main Agent implementation and
@@ -58,8 +60,12 @@ Jade Symphony CLI is the authority for Project state, claim locks,
 relationships, workpads, and workflow status.
 
 Start read-only. Do not mutate Project status, claim fields, PR readiness,
-worktrees, or runtime artifacts unless the operator explicitly confirms the
-specific repair or the command has a documented `--write` path.
+worktrees, local skills, or runtime artifacts until one of these is true:
+
+- the operator explicitly asked for that repair in the current session;
+- the operator confirms the specific proposed repair after diagnosis;
+- the repair is a documented Jade Symphony CLI path whose `--write` behavior is
+  already required by the active workflow step.
 
 Break-glass raw `gh project` or GraphQL mutations are allowed only when the CLI
 lacks the needed repair surface. Record the reason, exact command family, and
@@ -82,7 +88,8 @@ cargo run -- project issue workflows/jade-symphony.md '#258' --json
 cargo run -- doctor workflows/jade-symphony.md repair '#258'
 ```
 
-If the issue appears to be implementation-claimable, also run:
+If the issue appears to be implementation-claimable or contract-blocked, also
+run:
 
 ```bash
 cargo run -- forge validate --workflow workflows/jade-symphony.md --issue '#258'
@@ -92,8 +99,16 @@ If worktree or session evidence is ambiguous, add the narrowest relevant reads:
 
 ```bash
 cargo run -- workspace show workflows/jade-symphony.md '#258'
-cargo run -- agent-session list workflows/jade-symphony.md
+cargo run -- session list workflows/jade-symphony.md
 git worktree list --porcelain
+```
+
+For install-health or installable-suite findings, show the target paths before
+any write:
+
+```bash
+node scripts/install-jade-symphony-skills.js --dry-run
+node scripts/install-jade-symphony-skills.js --validate
 ```
 
 Use `gh issue view` and `gh pr view` only for ordinary issue/PR content when
@@ -119,10 +134,11 @@ when they change the recommended next step.
   worktree evidence is dirty or ambiguous enough that cleanup could discard
   useful work.
 - `skill_install_symptom`: local skill alias, install path, metadata, or
-  discoverability appears broken. Diagnose and route to #256 unless the repair
-  is only documentation.
+  discoverability appears broken. Diagnose, show target paths, and recommend the
+  exact suite install or targeted local copy repair. Execute only after explicit
+  operator request or confirmation.
 - `installable_suite_followup`: dated installable skill packaging is relevant
-  but belongs to #242.
+  and needs repo-owned suite changes before local install.
 - `issue_contract_gap`: the issue cannot safely execute because required
   context, verification, dependencies, or scope boundaries are missing.
 - `no_repair_needed`: evidence shows the item is healthy and the next step is a
@@ -131,7 +147,8 @@ when they change the recommended next step.
 ## Doctor Triage Note
 
 When the operator asks for a durable result, write or propose this note as a
-GitHub issue comment through the configured workpad/comment path.
+GitHub issue comment through the configured timeline-comment path. Do not use
+`project workpad`, which is reserved for persistent lane workpads.
 
 ```markdown
 ### Doctor Triage Note
@@ -146,6 +163,8 @@ GitHub issue comment through the configured workpad/comment path.
   - `cargo run -- project issue workflows/jade-symphony.md '#258' --json`: ...
   - `cargo run -- doctor workflows/jade-symphony.md repair '#258'`: ...
 - Recommended next step: ...
+- Explicit repair recommendation: ...
+- Can execute in this session: `yes` | `no`
 - Repair actions requiring explicit confirmation:
   - ...
 - Safe no-write commands to run next:
@@ -157,6 +176,31 @@ GitHub issue comment through the configured workpad/comment path.
 
 The note must name what was read, what was inferred, and what remains unsafe to
 do without explicit confirmation.
+
+## Repair Recommendation And Execution
+
+After diagnosis, do not stop at a vague routing label. Always provide one
+explicit next action:
+
+- a lane handoff command, such as `$jade-symphony-manual-main`,
+  `$jade-symphony-manual-review`, or `$jade-symphony-manual-merge`;
+- a Jade Symphony CLI repair command, such as `project set-state`,
+  `project link-pr`, `doctor ... repair`, or `project timeline-comment`;
+- a local install-health command, such as a suite dry-run, validate, or
+  confirmed install/update path;
+- one operator question when the evidence still depends on a human decision.
+
+If the repair is confirmed and fits the workflow contract, continue in the same
+Codex session instead of forcing a new session. Before executing, state:
+
+- the target issue/PR or local skill path;
+- the owning lane or installer path;
+- the exact command or file copy target;
+- why the prior review, human approval, or local evidence remains valid.
+
+Switch to the owning skill or lane workflow when the repair is normal Main,
+Review, Human Review, or Merging work. Doctor may coordinate the handoff and
+continue the session, but it must preserve those authority boundaries.
 
 ## Repair Boundaries
 
@@ -180,15 +224,23 @@ Requires explicit operator confirmation or a documented `--write` path:
 - worktree cleanup, archive, or deletion.
 - runtime state cleanup.
 - moving an issue to `Need Human Input`.
+- local skill install or overwrite writes.
+
+Allowed after explicit operator request or confirmation:
+
+- executing a documented Jade Symphony CLI repair command.
+- performing merge-lane-only conflict repair through the Merging workflow.
+- copying or installing a repo-owned skill suite entry into the shown local
+  Codex/Gemini target path.
+- writing a Doctor triage or repair evidence note with
+  `project timeline-comment`.
 
 Out of scope for Doctor v1:
 
-- automatic PR linkage repair.
-- automatic stale claim repair.
-- automatic worktree cleanup.
-- automatic Project mutation.
-- full local skill integrity checking from #256.
-- full dated installable skill suite packaging from #242.
+- unconfirmed automatic PR linkage repair.
+- unconfirmed automatic stale claim repair.
+- unconfirmed automatic worktree cleanup.
+- unconfirmed automatic Project mutation.
 - replacing `doctor`, `project state`, or `project issue`.
 
 ## Handoff

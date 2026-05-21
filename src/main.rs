@@ -9521,6 +9521,14 @@ fn recover_registered_main_sessions(
         let state = runtime_state_from_session_record(record);
         match runtime_session_probe_from_record(config, record, now_ms) {
             Ok(probe) if session_status_counts_as_active_worker(&probe.status) => {
+                if !recover_registry_issue_allows_active_retention(
+                    adapter,
+                    config,
+                    &state,
+                    issue_identifier,
+                )? {
+                    continue;
+                }
                 *active_main_workers += 1;
                 append_runtime_supervision_event(
                     config,
@@ -9602,6 +9610,35 @@ fn recover_registered_main_sessions(
         }
     }
     Ok(())
+}
+
+fn recover_registry_issue_allows_active_retention(
+    adapter: &dyn jade_symphony::tracker::TrackerAdapter,
+    config: &RuntimeConfig,
+    state: &RuntimeState,
+    issue_identifier: &str,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    match adapter.get_issue(issue_identifier) {
+        Ok(Some(issue)) => Ok(normalize_state(&issue.state) == "in progress"),
+        Ok(None) => Ok(false),
+        Err(error) => {
+            let reason = format!(
+                "tracker_read_failed: {}",
+                compact_evidence(&error.to_string())
+            );
+            append_runtime_supervision_event(
+                config,
+                Some(state),
+                "RuntimeRecoverReadSkipped",
+                &format!("issue={issue_identifier} reason={reason}"),
+            )?;
+            println!(
+                "run_loop_resume_preflight action=recover_registry_read_skipped issue={} reason={}",
+                issue_identifier, reason
+            );
+            Ok(true)
+        }
+    }
 }
 
 fn recover_registry_issue_for_restart(
@@ -16367,6 +16404,37 @@ mod tests {
         assert_eq!(summary.active_main_workers, 1);
         assert_eq!(summary.recoverable_states.len(), 0);
         assert_eq!(summary.retained_states.len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resume_preflight_registry_active_session_skips_non_in_progress_tracker_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
+        config.observability.logs_root = temp.path().join("logs");
+        config.tmux.command = fake_tmux_capture_script(
+            temp.path(),
+            "Codex\n◦ Running cargo test\n› Improve documentation in @filename",
+        );
+        let tracker = MemoryTracker::new(vec![tracker_issue("Agent Review")]);
+        let mut record = main_tmux_session_record("#29", SessionStatus::Running);
+        record.session_name = "jade-main-29-attempt-1".into();
+        record.pane_target = "jade-main-29-attempt-1".into();
+        record.log_path = temp.path().join("session.log");
+        save_session_registry(
+            &session_registry_path(&config),
+            &jade_symphony::session_registry::SessionRegistry {
+                sessions: vec![record],
+            },
+        )
+        .unwrap();
+
+        let summary = run_loop_resume_preflight_many(&tracker, &config, &[], 2_000, true).unwrap();
+
+        assert_eq!(summary.active_main_workers, 0);
+        assert_eq!(summary.recoverable_states.len(), 0);
+        assert_eq!(summary.retained_states.len(), 0);
     }
 
     #[cfg(unix)]

@@ -1,9 +1,9 @@
 ---
 name: jade-symphony-manual-merge
-description: Use when manually running a Merging Agent session for Jade Symphony merge-lane work from a fresh session. Claims Rework caused by failed merging and Merging issues, repairs existing PR branches when safe, records evidence, and lands approved PRs without sending merge-lane repair back through Agent Review.
+description: Use when manually running a Merging Agent session for Jade Symphony merge-lane work from a fresh session. Claims Merging issues or operator-selected historical merge-lane recovery issues, repairs existing PR branches when safe, records evidence, and lands approved PRs without sending merge-lane repair back through Agent Review.
 metadata:
   short-description: Jade Symphony manual Merging Agent
-  suite-version: 2026.05.17
+  suite-version: 2026.05.22
 ---
 
 # Jade Symphony Manual Merging Agent
@@ -77,7 +77,8 @@ Prefer work in this order:
 2. `Merging` issues needing diagnosis because mergeability, checks, PR linkage,
    or evidence is unclear.
 3. Historical or explicitly operator-selected merge-lane recovery issues that
-   are already in `Rework`.
+   are already in `Rework`; do not create new Rework routing for merge-loop
+   transport repair.
 
 Pick the issue only when all are true:
 
@@ -104,6 +105,16 @@ For historical or operator-selected merge-lane recovery:
 
 Do not send merge-lane-only repair back to `Agent Review` just because the
 branch was rebased or conflicts were resolved.
+
+For automated interrupted merge-loop recovery, prefer:
+
+```bash
+cargo run -- merge loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 2 --write --recover
+```
+
+`merge loop --recover` adopts interrupted structured merge-loop/goal claims
+first, then continues normal merge selection. It must not adopt manual claims,
+and it must not route merge repair through `Rework`.
 
 ## Merging
 

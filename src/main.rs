@@ -3308,7 +3308,7 @@ enum MergeOnceOutcome {
 }
 
 fn merge_once(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std::error::Error>> {
-    merge_once_tick(workflow_path, write).map(|_| ())
+    merge_once_tick(workflow_path, write, false).map(|_| ())
 }
 
 fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
@@ -3323,12 +3323,17 @@ fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::error::Error
 
     for iteration in 1..=max {
         println!(
-            "merge_loop_iteration={} mode={} max_concurrent={max_concurrent}",
+            "merge_loop_iteration={} mode={} recover={} max_concurrent={max_concurrent}",
             iteration,
-            if options.write { "write" } else { "dry-run" }
+            if options.write { "write" } else { "dry-run" },
+            options.recover
         );
         for slot in 1..=max_concurrent {
-            match merge_once_tick(options.workflow_path.clone(), options.write)? {
+            match merge_once_tick(
+                options.workflow_path.clone(),
+                options.write,
+                options.recover,
+            )? {
                 MergeOnceOutcome::NoMergingIssue => {
                     println!(
                         "merge_loop=stopped reason=no_merging_issue iterations={iteration} slot={slot}"
@@ -3376,6 +3381,7 @@ fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::error::Error
 fn merge_once_tick(
     workflow_path: PathBuf,
     write: bool,
+    recover: bool,
 ) -> Result<MergeOnceOutcome, Box<dyn std::error::Error>> {
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
@@ -3395,19 +3401,34 @@ fn merge_once_tick(
 
     issues.sort_by_key(|issue| issue.priority.unwrap_or(i64::MAX));
     let worker_id = worker_identity(&config, WorkerLane::Merging);
-    let Some(selected) =
-        select_pool_worker_issues(&issues, WorkerLane::Merging, &worker_id, 1, &config)
-            .into_iter()
-            .next()
+    let Some(selected) = select_merge_worker_issues(&issues, &worker_id, 1, &config, recover)
+        .into_iter()
+        .next()
     else {
         println!("merge_once=stopped reason=no_unclaimed_merging_issue");
         return Ok(MergeOnceOutcome::NoMergingIssue);
     };
-    let issue = adapter
-        .get_issue(&selected.identifier)?
-        .unwrap_or(selected.clone());
+    let latest_issue = adapter.get_issue(&selected.issue.identifier)?;
+    let (issue, recovery_reason) = match latest_issue {
+        Some(issue) => {
+            let recovery_reason = recover
+                .then(|| merge_recovery_reason(&issue, &worker_id, &config))
+                .flatten();
+            (issue, recovery_reason)
+        }
+        None => {
+            let recovery_reason = recover.then_some(selected.recovery_reason).flatten();
+            (selected.issue.clone(), recovery_reason)
+        }
+    };
+    if let Some(reason) = recovery_reason.as_deref() {
+        println!(
+            "merge_loop_recovery_candidate issue={} reason={}",
+            issue.identifier, reason
+        );
+    }
     let eligibility = pool_claim_eligibility(&issue, WorkerLane::Merging, &worker_id, &config);
-    if !eligibility.is_claimable() {
+    if !eligibility.is_claimable() && recovery_reason.is_none() {
         println!(
             "merge_once_action=skipped issue={} reason={}",
             issue.identifier,
@@ -8853,6 +8874,90 @@ fn select_pool_worker_issues(
     selected
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct MergeWorkerSelection {
+    issue: TrackerIssue,
+    recovery_reason: Option<String>,
+}
+
+fn select_merge_worker_issues(
+    issues: &[TrackerIssue],
+    worker_id: &str,
+    pool: usize,
+    config: &RuntimeConfig,
+    recover: bool,
+) -> Vec<MergeWorkerSelection> {
+    let limit = pool.max(1);
+    let mut selected = Vec::new();
+
+    if recover {
+        let mut recovery_candidates = issues
+            .iter()
+            .filter_map(|issue| {
+                merge_recovery_reason(issue, worker_id, config).map(|reason| MergeWorkerSelection {
+                    issue: issue.clone(),
+                    recovery_reason: Some(reason),
+                })
+            })
+            .collect::<Vec<_>>();
+        recovery_candidates.sort_by_key(|candidate| candidate.issue.priority.unwrap_or(i64::MAX));
+        for candidate in recovery_candidates {
+            if selected.len() >= limit {
+                break;
+            }
+            selected.push(candidate);
+        }
+    }
+
+    let remaining = limit.saturating_sub(selected.len());
+    if remaining > 0 {
+        for issue in
+            select_pool_worker_issues(issues, WorkerLane::Merging, worker_id, remaining, config)
+        {
+            if selected.iter().any(|candidate: &MergeWorkerSelection| {
+                candidate.issue.identifier == issue.identifier
+            }) {
+                continue;
+            }
+            selected.push(MergeWorkerSelection {
+                issue,
+                recovery_reason: None,
+            });
+        }
+    }
+
+    selected
+}
+
+fn merge_recovery_reason(
+    issue: &TrackerIssue,
+    worker_id: &str,
+    config: &RuntimeConfig,
+) -> Option<String> {
+    let normalized_state = issue.normalized_state();
+    if normalized_state != normalize_state(&config.tracker.state_map.merging) {
+        return None;
+    }
+
+    let owner = project_text_field(issue, WorkerLane::Merging.claim_field())?;
+    let claim = LaneClaim::parse(&owner).ok()?;
+    if claim.lane != LaneClaimLane::Merge
+        || claim.issue != issue.identifier
+        || claim.state != LaneClaimState::Active
+        || !matches!(claim.source, LaneClaimSource::Loop | LaneClaimSource::Goal)
+        || claim.worker.as_deref() == Some(worker_id)
+    {
+        return None;
+    }
+
+    Some(format!(
+        "recover_active_merge_claim previous_worker={} run={} source={}",
+        claim.worker.as_deref().unwrap_or("unknown"),
+        claim.run,
+        claim.source.as_str()
+    ))
+}
+
 fn write_lane_claim_field(
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
@@ -11649,6 +11754,7 @@ struct MergeLoopOptions {
     max_iterations: Option<usize>,
     once: bool,
     write: bool,
+    recover: bool,
     max_concurrent: Option<usize>,
 }
 
@@ -12156,6 +12262,11 @@ struct MergeLoopArgs {
     once: bool,
     #[arg(long)]
     write: bool,
+    #[arg(
+        long,
+        help = "Recover interrupted Merge loop claims first, then continue normal merge selection"
+    )]
+    recover: bool,
     #[arg(long = "max-concurrent")]
     max_concurrent: Option<usize>,
     #[arg(long = "dry-run")]
@@ -12800,6 +12911,7 @@ fn merge_loop_command(args: MergeLoopArgs) -> Result<Command, String> {
             max_iterations: args.max_iterations,
             once: args.once,
             write: args.write,
+            recover: args.recover,
             max_concurrent: args.max_concurrent,
         },
     })
@@ -15398,6 +15510,7 @@ mod tests {
             "--max-concurrent".into(),
             "2".into(),
             "--write".into(),
+            "--recover".into(),
         ])
         .unwrap();
 
@@ -15413,6 +15526,7 @@ mod tests {
         assert_eq!(options.max_concurrent, Some(2));
         assert_eq!(options.worker_limit(&test_config()), 2);
         assert!(options.write);
+        assert!(options.recover);
     }
 
     #[test]
@@ -15928,6 +16042,65 @@ mod tests {
 
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].identifier, "#6");
+    }
+
+    #[test]
+    fn merge_recover_selection_prioritizes_interrupted_loop_claims() {
+        let config = test_config();
+        let worker = "Jade Symphony Agent";
+        let interrupted_claim = LaneClaim::active(
+            "#6",
+            LaneClaimLane::Merge,
+            LaneClaimActor::Codex,
+            LaneClaimSource::Loop,
+            1_779_000_000_000,
+        )
+        .with_worker("previous merger");
+        let mut interrupted = tracker_issue_with_ref("#6", "Interrupted merge", "Merging");
+        interrupted.priority = Some(20);
+        interrupted.project_fields.insert(
+            "Merging Agent".into(),
+            serde_json::Value::String(interrupted_claim.render()),
+        );
+        let mut unclaimed = tracker_issue_with_ref("#7", "Ready merge", "Merging");
+        unclaimed.priority = Some(1);
+
+        let selected =
+            select_merge_worker_issues(&[unclaimed, interrupted], worker, 1, &config, true);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].issue.identifier, "#6");
+        assert!(selected[0]
+            .recovery_reason
+            .as_deref()
+            .unwrap()
+            .contains("previous_worker=previous merger"));
+    }
+
+    #[test]
+    fn merge_recover_selection_does_not_adopt_manual_claims() {
+        let config = test_config();
+        let worker = "Jade Symphony Agent";
+        let manual_claim = LaneClaim::active(
+            "#6",
+            LaneClaimLane::Merge,
+            LaneClaimActor::Codex,
+            LaneClaimSource::Manual,
+            1_779_000_000_000,
+        )
+        .with_worker("manual merger");
+        let mut manual = tracker_issue_with_ref("#6", "Manual merge", "Merging");
+        manual.project_fields.insert(
+            "Merging Agent".into(),
+            serde_json::Value::String(manual_claim.render()),
+        );
+        let unclaimed = tracker_issue_with_ref("#7", "Ready merge", "Merging");
+
+        let selected = select_merge_worker_issues(&[manual, unclaimed], worker, 2, &config, true);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].issue.identifier, "#7");
+        assert!(selected[0].recovery_reason.is_none());
     }
 
     #[test]

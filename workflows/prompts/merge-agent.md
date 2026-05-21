@@ -65,6 +65,9 @@ Project GraphQL or Project UI changes are break-glass only.
   `Need Human Input` with one concrete question.
 - Transient unknown mergeability can remain in `Merging` for retry when the
   command can prove it is transient.
+- Interrupted automated merge-loop work is recovered with
+  `merge loop --recover`: adopt structured loop/goal merge claims first, leave
+  manual claims alone, and continue normal merge selection after recovery.
 - Any Project status change, including `Done` or `Need Human Input`,
   must be the final mutating step of the merge session. Finish merge evidence,
   PR/issue reconciliation, and the standalone `Jade Symphony Merge Run`

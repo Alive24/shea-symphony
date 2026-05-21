@@ -516,6 +516,7 @@ Doctor lanes.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `merge once` | Inspect one `Merging` issue, verify a single linked PR, and either merge, safely refresh a stale branch, attempt safe conflict repair, or route blockers. | Live merge requires explicit `--write`; fixture workflows synthesize merge or conflict-repair command evidence without touching GitHub. Native subissues expect the parent integration branch as the PR base; parent final PRs expect `main`. `BEHIND` PRs are updated with `gh pr update-branch` and left in `Merging` for retry, transient `UNKNOWN` mergeability stays in `Merging`, `DIRTY` PRs first try a clean local PR-worktree repair when available, and unrepaired dirty/failing blockers route to `Need Human Input` with a concrete question instead of defaulting to `Rework`. |
+| `merge loop` | Repeat guarded merge ticks for an explicit bounded iteration count. | Requires `--max-iterations` or `--once`; `--max-concurrent N` processes up to `N` merge slots while respecting `Merging Agent` claim fields; `--recover` adopts interrupted structured merge-loop/goal claims first, then continues normal merge selection. |
 
 Examples:
 
@@ -523,12 +524,19 @@ Examples:
 cargo run -- merge once workflows/jade-symphony.md --dry-run
 cargo run -- merge loop examples/merge-fixture-workflow.md --max-iterations 1 --write
 cargo run -- merge loop examples/merge-conflict-repair-fixture-workflow.md --max-iterations 1 --write
+cargo run -- merge loop workflows/jade-symphony.md --max-iterations 2 --max-concurrent 2 --write --recover
 ```
 
 `merge once` is separate from main implementation and review work. It should
 only consume issues already in `Merging`. `Rework` remains a Main/Review repair
 lane unless an operator explicitly chooses a historical merge-lane recovery
 path.
+`merge loop --recover` is the standard crash-recovery path for interrupted
+in-process merge runs. Because merge work has no long-lived tmux session to
+probe, recovery is tracker-first: it only adopts structured active merge claims
+created by loop or goal sources, leaves manual claims alone, keeps the issue in
+`Merging` for safe stale-base updates or merge-lane repairs, and falls back to
+normal unclaimed merge selection after recoverable claims have been handled.
 
 ## Live Dogfood Boundary
 

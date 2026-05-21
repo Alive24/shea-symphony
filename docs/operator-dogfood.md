@@ -525,7 +525,19 @@ moving the issue to `Rework`, clearing dirty worktrees, or advancing to
 `Agent Review`. It reuses a tracker/runtime/discovery-backed git worktree under
 the configured workspace root and leaves normal handoff to a later successful
 Main result.
-4. Run `target/debug/jade-symphony clean audit workflows/jade-symphony.md` only
+4. For interrupted Merge-lane loop work where the issue is still `Merging`, run
+   a bounded recovery tick:
+
+```bash
+target/debug/jade-symphony merge loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 2 --write --recover
+```
+
+`merge loop --recover` adopts interrupted structured merge-loop/goal claims
+first, then continues normal merge selection. It leaves manual claims alone,
+keeps safe stale-base refreshes or merge-lane repairs in `Merging`, and routes
+serious blockers to `Need Human Input` rather than `Rework`.
+
+5. Run `target/debug/jade-symphony clean audit workflows/jade-symphony.md` only
    after evidence is preserved. Active or uncertain sessions stay
    `needs_human_decision`; completed sessions and terminal clean worktrees may
    become cleanup candidates.

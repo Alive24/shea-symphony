@@ -42,6 +42,11 @@ the lane prompt and start the tmux runtime when a supervised terminal is needed.
 Session commands validate the existing claim and write attach/log evidence
 without approving reviews, merging PRs, or closing issues.
 
+Merge-lane crash recovery should normally use `merge loop --recover` on a
+bounded write tick. It adopts interrupted structured merge-loop/goal claims
+first, leaves manual claims alone, keeps merge-lane transport repair inside
+`Merging` or `Need Human Input`, and never routes merge repair through `Rework`.
+
 Lane prompt files:
 
 - `workflows/prompts/main-agent.md`: implementation agent contract; stops at

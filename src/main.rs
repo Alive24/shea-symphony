@@ -7721,7 +7721,8 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             );
 
             let workpad = run_loop_handoff_workpad(&latest, &result, &handoff, Some(&ownership));
-            adapter.upsert_workpad(&latest.identifier, &workpad)?;            append_tracker_mutation_audit(
+            adapter.upsert_workpad(&latest.identifier, &workpad)?;
+            append_tracker_mutation_audit(
                 &config,
                 TrackerMutationAudit {
                     command: "main loop",
@@ -7790,7 +7791,12 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                         "main implementation agent cannot set requested review state".into(),
                     );
                 }
-                let evidence = run_loop_agent_review_handoff_evidence(&latest, &result, &handoff, Some(&workpad));
+                let evidence = run_loop_agent_review_handoff_evidence(
+                    &latest,
+                    &result,
+                    &handoff,
+                    Some(&workpad),
+                );
                 let handoff_report = evaluate_agent_review_handoff(&evidence);
                 let handoff_workpad =
                     render_agent_review_handoff_workpad(&latest, &evidence, &handoff_report);

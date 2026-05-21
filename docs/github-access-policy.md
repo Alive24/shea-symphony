@@ -14,6 +14,10 @@ helpers.
   that REST cannot provide in the required shape.
 - Keep ProjectV2 GraphQL shallow: small page sizes, explicit field selection,
   split metadata from item-page queries, and paginate with cursors.
+- Keep high-frequency queue scans distinct from rich targeted issue reads:
+  queue scans should carry lane-safe Project fields and gate data, while issue
+  body, comment/workpad, linked-PR, and detailed topology hydration belongs to
+  `project issue`, `project inspect`, or targeted Doctor/lane diagnostics.
 - Route GitHub CLI execution through `GithubCliAccess` in `src/tracker.rs` so
   retry, JSON parsing, auth, rate-limit, resource-limit, partial-response, and
   missing-capability diagnostics stay consistent.

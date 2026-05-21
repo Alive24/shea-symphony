@@ -334,6 +334,9 @@ the launch checkout. A failed read prints `project_state_access=blocked`,
 `trusted=false`, and a `failure_kind` such as `auth`, `network`, `rate_limit`,
 `resource_limit`, `schema`, `partial_response`, `payload`, or
 `missing_capability`; treat that as a blocker, not as an empty queue.
+This is a queue scan surface: it keeps lane-safe status, claim, assignee,
+priority, dependency, and parent/subissue gate data while avoiding issue bodies,
+comment/workpad streams, and rich linked-PR hydration.
 
 The canonical checkout is only the harness launch directory. Do not use it as a
 Main, Review, or Merge issue worktree, and do not leave runtime state, logs,
@@ -344,13 +347,15 @@ artifact quarantine with a warning, and unclassified untracked files block until
 the operator moves them to an issue worktree or artifact location.
 
 Use `project issue` for per-issue Project status, Project fields, blocker
-relationships, claim locks, and linked PRs. Raw `gh issue view` and `gh pr view`
-remain acceptable for ordinary issue/PR body text, comments, and diff context,
-when the CLI does not expose the needed content read; record that as a CLI gap
-when it affects a workflow decision. Normal dogfood should not read or mutate
-Project fields, status, claim locks, relationships, workpads, or linked-PR
-handoff state through raw Project GraphQL or the Project UI. Those are
-break-glass recovery paths. The current inventory and classification live in
+relationships, claim locks, rich issue body, workpad/timeline comments, native
+topology evidence, and linked PRs. `project inspect` uses the same targeted rich
+read for readiness checks. Raw `gh issue view` and `gh pr view` remain
+acceptable for ordinary issue/PR body text, comments, and diff context, when the
+CLI does not expose the needed content read; record that as a CLI gap when it
+affects a workflow decision. Normal dogfood should not read or mutate Project
+fields, status, claim locks, relationships, workpads, or linked-PR handoff state
+through raw Project GraphQL or the Project UI. Those are break-glass recovery
+paths. The current inventory and classification live in
 `docs/github-access-policy.md`.
 
 For parent tracking issues with native GitHub subissues, use

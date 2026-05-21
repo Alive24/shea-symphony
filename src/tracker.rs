@@ -12,8 +12,21 @@ use crate::model::{normalize_state, BlockerRef, LinkedPullRequest, TrackerIssue}
 
 pub trait TrackerAdapter {
     fn kind(&self) -> &'static str;
+    fn list_queue_scan_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError> {
+        self.list_dispatchable_issues()
+    }
+    fn list_project_summary_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError> {
+        self.list_queue_scan_issues()
+    }
     fn list_dispatchable_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError>;
     fn get_issue(&self, issue_ref: &str) -> Result<Option<TrackerIssue>, TrackerError>;
+    fn hydrate_issue_evidence(
+        &self,
+        issue: TrackerIssue,
+        _project_context: &[TrackerIssue],
+    ) -> Result<TrackerIssue, TrackerError> {
+        Ok(self.get_issue(&issue.identifier)?.unwrap_or(issue))
+    }
     fn fetch_issues_by_states(&self, states: &[String]) -> Result<Vec<TrackerIssue>, TrackerError>;
     fn set_state(&self, issue_ref: &str, normalized_state: &str) -> Result<(), TrackerError>;
     fn upsert_workpad(&self, issue_ref: &str, markdown: &str) -> Result<(), TrackerError>;
@@ -385,19 +398,22 @@ impl GithubProjectV2Adapter {
         }
     }
 
-    fn load_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError> {
-        let mut issues = apply_github_read_filters(self.load_mapped_issues()?, &self.config);
+    fn load_issues(&self, mode: GithubProjectReadMode) -> Result<Vec<TrackerIssue>, TrackerError> {
+        let mut issues = apply_github_read_filters(self.load_mapped_issues(mode)?, &self.config);
         self.enrich_native_subissue_project_statuses(&mut issues)?;
         self.enrich_native_issue_blockers_for_claimable_issues(&mut issues)?;
         Ok(issues)
     }
 
-    fn load_mapped_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError> {
+    fn load_mapped_issues(
+        &self,
+        mode: GithubProjectReadMode,
+    ) -> Result<Vec<TrackerIssue>, TrackerError> {
         let issues =
             if !self.fixture_issues.is_empty() || self.config.tracker.fixture_path.is_some() {
                 self.fixture_issues.clone()
             } else {
-                GithubProjectV2GhClient::new(&self.config).fetch_project_issues()?
+                GithubProjectV2GhClient::new(&self.config).fetch_project_issues(mode)?
             };
 
         Ok(apply_github_status_filters(issues, &self.config))
@@ -546,33 +562,48 @@ impl TrackerAdapter for GithubProjectV2Adapter {
         "github_project_v2"
     }
 
+    fn list_queue_scan_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError> {
+        self.load_issues(GithubProjectReadMode::QueueScan)
+    }
+
+    fn list_project_summary_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError> {
+        self.list_queue_scan_issues()
+    }
+
     fn list_dispatchable_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError> {
-        self.load_issues()
+        self.list_queue_scan_issues()
     }
 
     fn get_issue(&self, issue_ref: &str) -> Result<Option<TrackerIssue>, TrackerError> {
-        let mut issues = self.load_mapped_issues()?;
+        let mut issues = self.load_mapped_issues(GithubProjectReadMode::QueueScan)?;
         enrich_native_subissue_project_statuses_from_project_read(&mut issues);
-        let project_states = project_state_map(&issues);
-        let mut issue = issues
+        let project_context = issues.clone();
+        let issue = issues
             .into_iter()
             .find(|issue| issue.id == issue_ref || issue.identifier == issue_ref)
-            .map(|mut issue| {
-                if self.fixture_issues.is_empty() && self.config.tracker.fixture_path.is_none() {
-                    let client = GithubProjectV2GhClient::new(&self.config);
-                    client.enrich_native_subissues(std::slice::from_mut(&mut issue))?;
-                    enrich_native_subissue_project_statuses_for_issue(&mut issue, &project_states);
-                    client.enrich_native_issue_blockers(std::slice::from_mut(&mut issue))?;
-                }
-                Ok(issue)
-            })
+            .map(|issue| self.hydrate_issue_evidence(issue, &project_context))
             .transpose()?;
 
-        Ok(issue.take())
+        Ok(issue)
+    }
+
+    fn hydrate_issue_evidence(
+        &self,
+        mut issue: TrackerIssue,
+        project_context: &[TrackerIssue],
+    ) -> Result<TrackerIssue, TrackerError> {
+        if self.fixture_issues.is_empty() && self.config.tracker.fixture_path.is_none() {
+            let project_states = project_state_map(project_context);
+            let client = GithubProjectV2GhClient::new(&self.config);
+            client.enrich_issue_evidence(&mut issue, &project_states)?;
+            enrich_native_subissue_project_statuses_for_issue(&mut issue, &project_states);
+            client.enrich_native_issue_blockers(std::slice::from_mut(&mut issue))?;
+        }
+        Ok(issue)
     }
 
     fn fetch_issues_by_states(&self, states: &[String]) -> Result<Vec<TrackerIssue>, TrackerError> {
-        let mut mapped_issues = self.load_mapped_issues()?;
+        let mut mapped_issues = self.load_mapped_issues(GithubProjectReadMode::QueueScan)?;
         self.enrich_native_subissue_project_statuses(&mut mapped_issues)?;
         let mut issues = MemoryTracker::new(mapped_issues).fetch_issues_by_states(states)?;
         self.enrich_native_issue_blockers_for_claimable_issues(&mut issues)?;
@@ -751,7 +782,10 @@ impl GithubProjectV2GhClient {
         }
     }
 
-    fn fetch_project_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError> {
+    fn fetch_project_issues(
+        &self,
+        mode: GithubProjectReadMode,
+    ) -> Result<Vec<TrackerIssue>, TrackerError> {
         if !gh_available() {
             return Err(TrackerError::IntegrationUnavailable(
                 "GitHub Project v2 live reads require the `gh` CLI on PATH".into(),
@@ -770,14 +804,16 @@ impl GithubProjectV2GhClient {
         let mut cursor = None;
 
         loop {
-            let response = self.graphql_project_page(true, cursor.as_deref()).or_else(|org_error| {
-                self.graphql_project_page(false, cursor.as_deref())
-                    .map_err(|user_error| {
-                        TrackerError::IntegrationUnavailable(format!(
-                            "failed to query ProjectV2 as organization or user: org={org_error}; user={user_error}"
-                        ))
-                    })
-            })?;
+            let response = self
+                .graphql_project_page(true, cursor.as_deref(), mode)
+                .or_else(|org_error| {
+                    self.graphql_project_page(false, cursor.as_deref(), mode)
+                        .map_err(|user_error| {
+                            TrackerError::IntegrationUnavailable(format!(
+                                "failed to query ProjectV2 as organization or user: org={org_error}; user={user_error}"
+                            ))
+                        })
+                })?;
 
             let (mut page_issues, next_cursor, has_next_page) =
                 issues_from_project_response(&response, &self.config)?;
@@ -791,6 +827,52 @@ impl GithubProjectV2GhClient {
         }
 
         Ok(issues)
+    }
+
+    fn enrich_issue_evidence(
+        &self,
+        issue: &mut TrackerIssue,
+        project_states: &BTreeMap<String, String>,
+    ) -> Result<(), TrackerError> {
+        let Some(number) = github_issue_number(&issue.identifier) else {
+            return Ok(());
+        };
+        let content = self.fetch_issue_evidence(number)?;
+        merge_github_issue_evidence(issue, &content, &self.config)?;
+        enrich_native_subissue_project_statuses_for_issue(issue, project_states);
+        Ok(())
+    }
+
+    fn fetch_issue_evidence(&self, issue_number: u64) -> Result<serde_json::Value, TrackerError> {
+        let owner = self
+            .config
+            .tracker
+            .owner
+            .as_deref()
+            .ok_or_else(|| TrackerError::Payload("tracker.owner is required".into()))?;
+        let repo = self
+            .config
+            .tracker
+            .repo
+            .as_deref()
+            .ok_or_else(|| TrackerError::Payload("tracker.repo is required".into()))?;
+        let response = self.graphql_magic(
+            &github_issue_evidence_query(),
+            &[
+                ("owner", owner.to_string()),
+                ("repo", repo.to_string()),
+                ("number", issue_number.to_string()),
+            ],
+            &["number"],
+        )?;
+        response
+            .pointer("/data/repository/issue")
+            .cloned()
+            .ok_or_else(|| {
+                TrackerError::Payload(format!(
+                    "GitHub issue evidence response missing issue #{issue_number}"
+                ))
+            })
     }
 
     fn enrich_native_issue_blockers(
@@ -1183,7 +1265,7 @@ impl GithubProjectV2GhClient {
     }
 
     fn resolve_issue(&self, issue_ref: &str) -> Result<TrackerIssue, TrackerError> {
-        self.fetch_project_issues()?
+        self.fetch_project_issues(GithubProjectReadMode::QueueScan)?
             .into_iter()
             .find(|issue| issue.id == issue_ref || issue.identifier == issue_ref)
             .ok_or_else(|| {
@@ -1234,7 +1316,9 @@ impl GithubProjectV2GhClient {
         &self,
         issue_ref: &str,
     ) -> Result<Vec<LinkedPullRequest>, TrackerError> {
-        let issue = self.resolve_issue(issue_ref)?;
+        let mut issue = self.resolve_issue(issue_ref)?;
+        let project_states = BTreeMap::new();
+        self.enrich_issue_evidence(&mut issue, &project_states)?;
         Ok(issue.linked_pull_requests)
     }
 
@@ -1350,6 +1434,7 @@ impl GithubProjectV2GhClient {
         &self,
         organization_owner: bool,
         cursor: Option<&str>,
+        mode: GithubProjectReadMode,
     ) -> Result<serde_json::Value, TrackerError> {
         let owner = self
             .config
@@ -1369,9 +1454,9 @@ impl GithubProjectV2GhClient {
             format!(
                 "query={}",
                 if organization_owner {
-                    github_project_query("organization")
+                    github_project_query("organization", mode)
                 } else {
-                    github_project_query("user")
+                    github_project_query("user", mode)
                 }
             ),
             "-F".to_string(),
@@ -1687,7 +1772,17 @@ const GITHUB_PROJECT_COMMENT_PAGE_SIZE: usize = 100;
 const GITHUB_PROJECT_METADATA_FIELD_PAGE_SIZE: usize = 50;
 const GITHUB_WORKPAD_COMMENT_PAGE_SIZE: usize = 50;
 
-fn github_project_query(owner_field: &str) -> String {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GithubProjectReadMode {
+    QueueScan,
+    RichEvidence,
+}
+
+fn github_project_query(owner_field: &str, mode: GithubProjectReadMode) -> String {
+    let rich_issue_fields = match mode {
+        GithubProjectReadMode::QueueScan => String::new(),
+        GithubProjectReadMode::RichEvidence => rich_issue_evidence_fields(),
+    };
     format!(
         r#"
 query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
@@ -1734,7 +1829,6 @@ query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
               id
               number
               title
-              body
               url
               state
               createdAt
@@ -1765,6 +1859,22 @@ query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
                   url
                 }}
               }}
+{rich_issue_fields}
+            }}
+          }}
+        }}
+      }}
+    }}
+  }}
+}}
+"#
+    )
+}
+
+fn rich_issue_evidence_fields() -> String {
+    format!(
+        r#"
+              body
               closedByPullRequestsReferences(first: {GITHUB_PROJECT_LINKED_PR_PAGE_SIZE}) {{
                 nodes {{
                   id
@@ -1785,15 +1895,55 @@ query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
                 nodes {{
                   body
                 }}
-              }}
-            }}
-          }}
+              }}"#
+    )
+}
+
+fn github_issue_evidence_query() -> String {
+    format!(
+        r#"
+query JadeSymphonyIssueEvidence($owner: String!, $repo: String!, $number: Int!) {{
+  repository(owner: $owner, name: $repo) {{
+    issue(number: $number) {{
+      id
+      number
+      title
+      url
+      state
+      createdAt
+      updatedAt
+      labels(first: {GITHUB_PROJECT_LABEL_PAGE_SIZE}) {{
+        nodes {{
+          name
         }}
       }}
+      assignees(first: {GITHUB_PROJECT_ASSIGNEE_PAGE_SIZE}) {{
+        nodes {{
+          login
+        }}
+      }}
+      parent {{
+        id
+        number
+        title
+        state
+        url
+      }}
+      subIssues(first: {GITHUB_PROJECT_SUBISSUE_PAGE_SIZE}) {{
+        nodes {{
+          id
+          number
+          title
+          state
+          url
+        }}
+      }}
+{}
     }}
   }}
 }}
-"#
+"#,
+        rich_issue_evidence_fields()
     )
 }
 
@@ -2437,6 +2587,67 @@ fn issue_from_project_item(
             .and_then(serde_json::Value::as_str)
             .map(ToOwned::to_owned),
     }))
+}
+
+fn merge_github_issue_evidence(
+    issue: &mut TrackerIssue,
+    content: &serde_json::Value,
+    config: &RuntimeConfig,
+) -> Result<(), TrackerError> {
+    let number = content.get("number").and_then(serde_json::Value::as_u64);
+    if let Some(number) = number {
+        issue.identifier = format!("#{number}");
+    }
+    if let Some(id) = content.get("id").and_then(serde_json::Value::as_str) {
+        issue.id = id.to_string();
+    }
+    if let Some(title) = content.get("title").and_then(serde_json::Value::as_str) {
+        issue.title = title.to_string();
+    }
+    if let Some(url) = content.get("url").and_then(serde_json::Value::as_str) {
+        issue.url = Some(url.to_string());
+    }
+    if let Some(issue_state) = content.get("state").and_then(serde_json::Value::as_str) {
+        issue.project_fields.insert(
+            "GitHub Issue State".into(),
+            serde_json::Value::String(issue_state.to_string()),
+        );
+    }
+
+    insert_native_subissue_fields(&mut issue.project_fields, content);
+    issue.blocked_by = blocker_refs_from_project_fields(&issue.project_fields);
+    issue.linked_pull_requests = merge_linked_pull_requests(
+        pull_requests_from_issue(content),
+        linked_pull_requests_from_workpads(
+            &comment_bodies(content.pointer("/comments/nodes")),
+            config.tracker.owner.as_deref(),
+            config.tracker.repo.as_deref(),
+        ),
+    );
+    issue.description =
+        github_issue_description_with_workpad(content, &config.tracker.workpad.marker);
+    issue.labels = string_nodes(content.pointer("/labels/nodes"), "name")
+        .into_iter()
+        .map(|label| label.to_lowercase())
+        .collect();
+    issue.assignees = string_nodes(content.pointer("/assignees/nodes"), "login");
+    issue.created_at = content
+        .get("createdAt")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned);
+    issue.updated_at = content
+        .get("updatedAt")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned);
+
+    if number.is_none() {
+        return Err(TrackerError::Payload(format!(
+            "GitHub issue evidence for {} missing number",
+            issue.identifier
+        )));
+    }
+
+    Ok(())
 }
 
 fn native_issue_ref(issue: Option<&serde_json::Value>) -> Option<serde_json::Value> {
@@ -4158,6 +4369,170 @@ mod tests {
             .unwrap();
         assert_eq!(native[0]["project_state"], "Done");
         assert_eq!(native[1]["project_state"], "Agent Review");
+    }
+
+    #[test]
+    fn github_queue_scan_query_omits_rich_issue_evidence() {
+        let query = github_project_query("organization", GithubProjectReadMode::QueueScan);
+
+        assert!(query.contains("fieldValues"));
+        assert!(query.contains("assignees"));
+        assert!(query.contains("subIssues"));
+        assert!(!query.contains("body"));
+        assert!(!query.contains("closedByPullRequestsReferences"));
+        assert!(!query.contains("comments(first"));
+        assert!(!query.contains("recentComments"));
+
+        let rich_query = github_project_query("organization", GithubProjectReadMode::RichEvidence);
+        assert!(rich_query.contains("body"));
+        assert!(rich_query.contains("closedByPullRequestsReferences"));
+        assert!(rich_query.contains("comments(first"));
+        assert!(rich_query.contains("recentComments"));
+    }
+
+    #[test]
+    fn queue_scan_project_response_does_not_require_body_comments_or_prs() {
+        let config = github_config(
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
+        );
+        let response = serde_json::json!({
+            "data": {
+                "organization": {
+                    "projectV2": {
+                        "items": {
+                            "nodes": [
+                                {
+                                    "id": "PVTI_7",
+                                    "content": {
+                                        "__typename": "Issue",
+                                        "id": "I_7",
+                                        "number": 7,
+                                        "title": "Queue scan",
+                                        "url": "https://github.com/Alive24/jade-symphony/issues/7",
+                                        "state": "OPEN",
+                                        "createdAt": "2026-05-21T00:00:00Z",
+                                        "updatedAt": "2026-05-21T00:00:00Z",
+                                        "labels": {"nodes": [{"name": "Tracker"}]},
+                                        "assignees": {"nodes": [{"login": "Alive24"}]},
+                                        "parent": null,
+                                        "subIssues": {"nodes": []}
+                                    },
+                                    "fieldValues": {
+                                        "nodes": [
+                                            {
+                                                "name": "Todo",
+                                                "field": {"name": "Status"}
+                                            }
+                                        ]
+                                    }
+                                }
+                            ],
+                            "pageInfo": {
+                                "hasNextPage": false,
+                                "endCursor": null
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        let (issues, cursor, has_next_page) = issues_from_project_response(&response, &config)
+            .expect("queue scan payload should parse without rich issue evidence");
+
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].identifier, "#7");
+        assert_eq!(issues[0].state, "Todo");
+        assert_eq!(issues[0].description, None);
+        assert!(issues[0].linked_pull_requests.is_empty());
+        assert_eq!(issues[0].assignees, vec!["Alive24"]);
+        assert_eq!(cursor, None);
+        assert!(!has_next_page);
+    }
+
+    #[test]
+    fn rich_issue_evidence_hydration_merges_body_comments_prs_and_topology() {
+        let config = github_config(
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
+        );
+        let mut issue = issue("Todo");
+        issue.identifier = "#350".into();
+        issue
+            .project_fields
+            .insert("Status".into(), serde_json::Value::String("Todo".into()));
+        let content = serde_json::json!({
+            "id": "I_350",
+            "number": 350,
+            "title": "Rich targeted read",
+            "url": "https://github.com/Alive24/jade-symphony/issues/350",
+            "state": "OPEN",
+            "createdAt": "2026-05-21T00:00:00Z",
+            "updatedAt": "2026-05-21T00:10:00Z",
+            "labels": {"nodes": [{"name": "Tracker"}]},
+            "assignees": {"nodes": [{"login": "Alive24"}]},
+            "parent": {
+                "id": "I_347",
+                "number": 347,
+                "title": "Parent tracker hardening",
+                "state": "OPEN",
+                "url": "https://github.com/Alive24/jade-symphony/issues/347"
+            },
+            "subIssues": {
+                "nodes": [
+                    {
+                        "id": "I_351",
+                        "number": 351,
+                        "title": "Sibling",
+                        "state": "OPEN",
+                        "url": "https://github.com/Alive24/jade-symphony/issues/351"
+                    }
+                ]
+            },
+            "body": "Issue body evidence.",
+            "closedByPullRequestsReferences": {
+                "nodes": [
+                    {
+                        "id": "PR_9",
+                        "number": 9,
+                        "url": "https://github.com/Alive24/jade-symphony/pull/9",
+                        "state": "OPEN",
+                        "isDraft": false,
+                        "baseRefName": "integration/issue-347-github-projectv2-rest-first-tracker",
+                        "headRefName": "feature/issue-350"
+                    }
+                ]
+            },
+            "comments": {
+                "nodes": [
+                    {"body": "<!-- jade-symphony-workpad -->\n## Jade Symphony Workpad\n\nWorkpad evidence."}
+                ]
+            },
+            "recentComments": {
+                "nodes": [
+                    {"body": "## Jade Symphony Agent Review Run\n\nReview pass evidence: `recorded`"}
+                ]
+            }
+        });
+
+        merge_github_issue_evidence(&mut issue, &content, &config).unwrap();
+
+        let description = issue.description.as_deref().unwrap();
+        assert!(description.contains("Issue body evidence."));
+        assert!(description.contains("## Jade Symphony Workpad"));
+        assert!(description.contains("## Jade Symphony Agent Review Run"));
+        assert_eq!(issue.linked_pull_requests.len(), 1);
+        assert_eq!(issue.linked_pull_requests[0].number, Some(9));
+        assert_eq!(
+            issue
+                .project_fields
+                .get("Native Parent Issue")
+                .and_then(serde_json::Value::as_str),
+            Some("#347")
+        );
+        assert_eq!(
+            crate::model::native_subissue_statuses(&issue)[0].identifier,
+            "#351"
+        );
     }
 
     #[test]

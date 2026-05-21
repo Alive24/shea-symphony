@@ -175,6 +175,10 @@ identify the intended PR, but the issue must expose that PR through the
 Project/issue linked-PR read surface before Main handoff, Review routing, or
 Merge landing. If Jade Symphony cannot verify the relationship after a repair
 attempt, it routes the issue to `Need Human Input` with the blocker preserved.
+When Main handoff reuses an existing PR for the issue branch, the CLI preserves
+the current PR body but appends a missing `Closes #<issue>` reference before
+readback so GitHub can establish a native issue/PR relationship instead of
+relying only on a timeline comment.
 
 The canonical `workflows/jade-symphony.md` file uses the local `tmux` main-agent
 backend. A launched tmux session records its session name, log path, workspace,

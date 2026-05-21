@@ -121,8 +121,10 @@ Project v2 issues:
    - PR relationship verification is first-class for lane transitions:
      Project/issue linked-PR reads must expose the PR before Main handoff,
      Review routing, or Merge landing. Workpad/comment URLs are discovery
-     evidence only; if Jade Symphony can identify a PR but cannot verify or
-     repair the relationship, the issue must stop in `Need Human Input`.
+     evidence only; Main handoff repairs reused PR bodies that are missing a
+     `Closes #<issue>` relationship, and if Jade Symphony can identify a PR but
+     cannot verify or repair the relationship, the issue must stop in
+     `Need Human Input`.
    - Remaining work: idempotency checks around project-item addition and richer
      reconciliation after writes.
 

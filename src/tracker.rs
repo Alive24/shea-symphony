@@ -2675,10 +2675,14 @@ fn issue_from_project_item(
     }
     insert_native_subissue_fields(&mut project_fields, content);
     let blocked_by = blocker_refs_from_project_fields(&project_fields);
+    let comment_bodies = github_issue_comment_bodies(content)
+        .into_iter()
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
     let linked_pull_requests = merge_linked_pull_requests(
         pull_requests_from_issue(content),
         linked_pull_requests_from_workpads(
-            &comment_bodies(content.pointer("/comments/nodes")),
+            &comment_bodies,
             config.tracker.owner.as_deref(),
             config.tracker.repo.as_deref(),
         ),
@@ -3365,16 +3369,6 @@ fn string_nodes(nodes: Option<&serde_json::Value>, field: &str) -> Vec<String> {
         .into_iter()
         .flatten()
         .filter_map(|node| node.get(field).and_then(serde_json::Value::as_str))
-        .map(ToOwned::to_owned)
-        .collect()
-}
-
-fn comment_bodies(nodes: Option<&serde_json::Value>) -> Vec<String> {
-    nodes
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|node| node.get("body").and_then(serde_json::Value::as_str))
         .map(ToOwned::to_owned)
         .collect()
 }
@@ -5377,7 +5371,13 @@ Prompt
                         "subIssues": { "nodes": [] },
                         "closedByPullRequestsReferences": { "nodes": [] },
                         "comments": { "nodes": [] },
-                        "recentComments": { "nodes": [] },
+                        "recentComments": {
+                            "nodes": [
+                                {
+                                    "body": "Jade Symphony linked pull request: https://github.com/Alive24/jade-symphony/pull/355"
+                                }
+                            ]
+                        },
                         "projectItems": {
                             "nodes": [
                                 {
@@ -5422,6 +5422,10 @@ Prompt
                 "v=1 issue=#349 lane=main".into()
             ))
         );
+        assert!(issue
+            .linked_pull_requests
+            .iter()
+            .any(|pr| pr.number == Some(355)));
     }
 
     #[test]

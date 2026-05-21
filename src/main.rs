@@ -816,7 +816,7 @@ fn forge_create(options: ForgeCreateOptions) -> Result<(), Box<dyn std::error::E
     }
 
     let adapter = adapter_from_config(&config);
-    let issue_id = write_forge_created_issue(
+    let create_result = write_forge_created_issue(
         &config,
         adapter.as_ref(),
         ForgeCreateWriteInput {
@@ -830,9 +830,8 @@ fn forge_create(options: ForgeCreateOptions) -> Result<(), Box<dyn std::error::E
     )?;
 
     println!(
-        "forge_create=ok issue_id={issue_id} status={} project_fields={}",
-        status.as_str(),
-        project_fields.len()
+        "{}",
+        render_forge_create_success(&create_result, status, project_fields.len())
     );
     Ok(())
 }
@@ -846,11 +845,17 @@ struct ForgeCreateWriteInput<'a> {
     project_fields: &'a [ProjectFieldAssignment],
 }
 
+#[derive(Debug, Clone)]
+struct ForgeCreateResult {
+    issue_id: String,
+    readback: Option<TrackerIssue>,
+}
+
 fn write_forge_created_issue(
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
     input: ForgeCreateWriteInput<'_>,
-) -> Result<String, Box<dyn std::error::Error>> {
+) -> Result<ForgeCreateResult, Box<dyn std::error::Error>> {
     let existing_issues = adapter.list_dispatchable_issues()?;
     if let Some(duplicate) = find_duplicate_issue_title(&existing_issues, &input.title) {
         return Err(format!(
@@ -911,8 +916,8 @@ fn write_forge_created_issue(
         );
     }
 
-    verify_forge_created_issue_status(adapter, &issue_id, input.status)?;
-    Ok(issue_id)
+    let readback = verify_forge_created_issue_status(adapter, &issue_id, input.status)?;
+    Ok(ForgeCreateResult { issue_id, readback })
 }
 
 fn verify_forge_created_issue_status(
@@ -922,6 +927,7 @@ fn verify_forge_created_issue_status(
 ) -> Result<Option<TrackerIssue>, Box<dyn std::error::Error>> {
     let expected = normalize_state(status.normalized_state());
     let mut last_state = None;
+    let mut last_issue = None;
 
     for attempt in 0..3 {
         if let Some(issue) = adapter.get_issue(issue_id)? {
@@ -929,7 +935,8 @@ fn verify_forge_created_issue_status(
             if actual == expected {
                 return Ok(Some(issue));
             }
-            last_state = Some(issue.state);
+            last_state = Some(issue.state.clone());
+            last_issue = Some(issue);
         } else if adapter.kind() == "memory" {
             return Ok(None);
         }
@@ -941,19 +948,73 @@ fn verify_forge_created_issue_status(
 
     if let Some(actual) = last_state {
         Err(format!(
-            "forge create stopped at readback: expected Project status {}, got {:?} for issue {}",
+            "forge create stopped at readback: expected Project status {}, got {:?} for {}",
             status.as_str(),
             actual,
-            issue_id
+            render_forge_created_issue_location(issue_id, last_issue.as_ref())
         )
         .into())
     } else {
         Err(format!(
-            "forge create stopped at readback: issue {} was not found in the configured Project after creation",
-            issue_id
+            "forge create stopped at readback: {} was not found in the configured Project after creation",
+            render_forge_created_issue_location(issue_id, None)
         )
         .into())
     }
+}
+
+fn render_forge_create_success(
+    result: &ForgeCreateResult,
+    status: ForgeStatusArg,
+    project_fields_count: usize,
+) -> String {
+    let mut fields = vec![
+        "forge_create=ok".to_string(),
+        format!("issue_id={}", result.issue_id),
+    ];
+    if let Some(readback) = result.readback.as_ref() {
+        append_forge_created_issue_readback_fields(&mut fields, &result.issue_id, readback);
+    }
+    fields.push(format!("status={}", status.as_str()));
+    if let Some(readback) = result.readback.as_ref() {
+        fields.push(format!(
+            "project_status={}",
+            forge_created_issue_project_status(readback)
+        ));
+    }
+    fields.push(format!("project_fields={project_fields_count}"));
+    fields.join(" ")
+}
+
+fn render_forge_created_issue_location(issue_id: &str, readback: Option<&TrackerIssue>) -> String {
+    let mut fields = vec![format!("issue_id={issue_id}")];
+    if let Some(readback) = readback {
+        append_forge_created_issue_readback_fields(&mut fields, issue_id, readback);
+    }
+    fields.join(" ")
+}
+
+fn append_forge_created_issue_readback_fields(
+    fields: &mut Vec<String>,
+    issue_id: &str,
+    readback: &TrackerIssue,
+) {
+    if !readback.identifier.is_empty() && readback.identifier != issue_id {
+        fields.push(format!("issue={}", readback.identifier));
+    }
+    if let Some(url) = readback.url.as_deref().filter(|url| !url.is_empty()) {
+        fields.push(format!("url={url}"));
+    }
+}
+
+fn forge_created_issue_project_status(readback: &TrackerIssue) -> String {
+    readback
+        .project_fields
+        .get("Status")
+        .and_then(|status| status.as_str())
+        .filter(|status| !status.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| readback.state.clone())
 }
 
 fn forge_promote(
@@ -16247,7 +16308,7 @@ mod tests {
         config.observability.logs_root = temp.path().join("logs");
         let adapter = RecordingAdapter::default();
 
-        let issue_id = write_forge_created_issue(
+        let create_result = write_forge_created_issue(
             &config,
             &adapter,
             ForgeCreateWriteInput {
@@ -16261,7 +16322,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(issue_id, "dry-run:Create Backlog seed");
+        assert_eq!(create_result.issue_id, "dry-run:Create Backlog seed");
         assert_eq!(
             adapter.operations(),
             vec![
@@ -16271,12 +16332,73 @@ mod tests {
         );
         assert_eq!(
             adapter
-                .get_issue(&issue_id)
+                .get_issue(&create_result.issue_id)
                 .unwrap()
                 .unwrap()
                 .normalized_state(),
             "backlog"
         );
+    }
+
+    #[test]
+    fn forge_create_success_reports_readback_metadata_when_available() {
+        let mut issue = tracker_issue_with_ref("#305", "Created issue", "Backlog");
+        issue.id = "I_kwDOSZP6c88AAAABC".into();
+        issue.url = Some("https://github.com/Alive24/jade-symphony/issues/305".into());
+        issue
+            .project_fields
+            .insert("Status".into(), "Backlog".into());
+
+        let output = render_forge_create_success(
+            &ForgeCreateResult {
+                issue_id: issue.id.clone(),
+                readback: Some(issue),
+            },
+            ForgeStatusArg::Backlog,
+            0,
+        );
+
+        assert_eq!(
+            output,
+            "forge_create=ok issue_id=I_kwDOSZP6c88AAAABC issue=#305 url=https://github.com/Alive24/jade-symphony/issues/305 status=Backlog project_status=Backlog project_fields=0"
+        );
+    }
+
+    #[test]
+    fn forge_create_success_omits_unavailable_issue_metadata() {
+        let output = render_forge_create_success(
+            &ForgeCreateResult {
+                issue_id: "memory:Create issue".into(),
+                readback: None,
+            },
+            ForgeStatusArg::Todo,
+            2,
+        );
+
+        assert_eq!(
+            output,
+            "forge_create=ok issue_id=memory:Create issue status=Todo project_fields=2"
+        );
+    }
+
+    #[test]
+    fn forge_create_readback_failure_reports_known_issue_location() {
+        let adapter = RecordingAdapter::default();
+        let mut issue = tracker_issue_with_ref("#305", "Created issue", "Need to Clarify");
+        issue.id = "I_kwDOSZP6c88AAAABC".into();
+        issue.url = Some("https://github.com/Alive24/jade-symphony/issues/305".into());
+        adapter
+            .issues
+            .borrow_mut()
+            .insert(issue.id.clone(), issue.clone());
+
+        let error = verify_forge_created_issue_status(&adapter, &issue.id, ForgeStatusArg::Backlog)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("issue_id=I_kwDOSZP6c88AAAABC"));
+        assert!(error.contains("issue=#305"));
+        assert!(error.contains("url=https://github.com/Alive24/jade-symphony/issues/305"));
     }
 
     #[test]

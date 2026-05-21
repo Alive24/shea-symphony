@@ -277,7 +277,7 @@ cargo run -- project inspect workflows/jade-symphony.md '#123'
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `forge validate` | Validate a body file, an existing issue, or candidate title/body content against live issue context for `Backlog` or `Todo`. | Read-only; `Todo` uses the full Issue Quality Gate, `Backlog` uses the lighter seed gate; output separates candidate contract gaps from live context gaps. |
-| `forge create` | Create a Project-backed issue in `Backlog` or `Todo`. | Dry-run by default unless `--write` is supplied; initializes the Project item to the requested status and verifies readback; live `Todo` creation requires `--assignee`. |
+| `forge create` | Create a Project-backed issue in `Backlog` or `Todo`. | Dry-run by default unless `--write` is supplied; initializes the Project item to the requested status and verifies readback; write success keeps `issue_id` and adds readback issue number, URL, and `project_status` when the tracker provides them; live `Todo` creation requires `--assignee`. |
 | `forge promote` | Promote one existing Backlog issue in place by editing title/body, writing a structured Promotion Note comment, then moving it to `Todo`. | Dry-run by default unless `--write` is supplied; requires structured note inputs, keeps the `Todo` status mutation last, and reports the checkpoint where any failure stopped. |
 | `forge rework` | Revise one live `Human Review` issue into an explicit `Rework` contract. | Dry-run by default unless `--write` is supplied; requires a replacement title/body, evidence file, and operator confirmation; rejects active lane claims and keeps the `Rework` status mutation last. |
 
@@ -293,6 +293,16 @@ cargo run -- forge promote '#241' --workflow workflows/jade-symphony.md --title 
 cargo run -- forge promote '#241' --workflow examples/promote-fixture-workflow.md --title "Harden Issue Forge Reflect promotion fixture" --body-file examples/fixtures/promoted-issue.md --operator-confirmation "promote it" --decision "Keep the promotion in place." --scope-change "Backlog seed becomes an executable Todo issue." --dependency-context "Dependencies: none." --readback-summary "Dry-run preview verified before write." --dry-run
 cargo run -- forge rework '#282' --workflow workflows/jade-symphony.md --title "Rework: revised execution contract" --body-file /tmp/rework-body.md --evidence-file /tmp/rework-evidence.md --operator-confirmation "route Human Review back to Rework" --dry-run
 ```
+
+Successful `forge create --write` output is a single parseable line. It keeps
+the machine-facing tracker node id while exposing live tracker readback metadata
+for operator lookup:
+
+```text
+forge_create=ok issue_id=I_kw... issue=#305 url=https://github.com/Alive24/jade-symphony/issues/305 status=Backlog project_status=Backlog project_fields=0
+```
+
+Dry-run output does not invent issue numbers or URLs.
 
 Use `forge validate --issue '#123'` without overrides to validate the current
 live issue body. Add `--title` plus `--body` or `--body-file` when validating a

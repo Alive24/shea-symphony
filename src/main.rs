@@ -9861,7 +9861,7 @@ fn active_runtime_session_for_issue(
         return Ok(Some(active_session));
     }
 
-    let Some(probe) = runtime_session_probe_for_state(config, state, now_ms)? else {
+    let Some(probe) = runtime_session_probe_for_state(config, state, now_ms).unwrap_or(None) else {
         return Ok(None);
     };
     if !session_status_counts_as_active_worker(&probe.status) {
@@ -16746,6 +16746,43 @@ mod tests {
         assert!(summary.recoverable_states[0]
             .reason
             .contains("registry_session_unavailable"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resume_preflight_many_recovers_runtime_state_unavailable_tmux_session() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
+        config.observability.logs_root = temp.path().join("logs");
+        config.tmux.command = fake_tmux_unavailable_script(temp.path());
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let mut record = main_tmux_session_record("#29", SessionStatus::Running);
+        record.session_name = "jade-main-29-attempt-1".into();
+        record.pane_target = "jade-main-29-attempt-1".into();
+        record.log_path = temp.path().join("session.log");
+        save_session_registry(
+            &session_registry_path(&config),
+            &jade_symphony::session_registry::SessionRegistry {
+                sessions: vec![record],
+            },
+        )
+        .unwrap();
+        let mut state = active_runtime_state("#29");
+        state.backend = "tmux".into();
+        state.last_event = Some("SessionRunning".into());
+        state.backend_session_id = Some("jade-main-29-attempt-1".into());
+
+        let summary =
+            run_loop_resume_preflight_many(&tracker, &config, &[state], 2_000, true).unwrap();
+
+        assert_eq!(summary.active_main_workers, 0);
+        assert_eq!(summary.blocked, None);
+        assert_eq!(summary.retained_states.len(), 1);
+        assert_eq!(summary.recoverable_states.len(), 1);
+        assert!(summary.recoverable_states[0]
+            .reason
+            .contains("tmux_pane_unavailable"));
     }
 
     #[cfg(unix)]

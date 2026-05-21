@@ -9517,12 +9517,6 @@ fn recover_registered_main_sessions(
         {
             continue;
         }
-        let Some(issue) = adapter.get_issue(issue_identifier)? else {
-            continue;
-        };
-        if normalize_state(&issue.state) != "in progress" {
-            continue;
-        }
 
         let state = runtime_state_from_session_record(record);
         match runtime_session_probe_from_record(config, record, now_ms) {
@@ -9550,12 +9544,15 @@ fn recover_registered_main_sessions(
                 );
                 retained_states.push(state);
             }
-            Ok(probe)
-                if matches!(
-                    probe.status,
-                    SessionStatus::Stale | SessionStatus::Failed | SessionStatus::UsageLimited
-                ) =>
-            {
+            Ok(probe) => {
+                if !matches!(probe.status, SessionStatus::Stale | SessionStatus::Failed) {
+                    continue;
+                }
+                let Some(issue) =
+                    recover_registry_issue_for_restart(adapter, config, &state, issue_identifier)?
+                else {
+                    continue;
+                };
                 let reason = format!(
                     "registry_session_recoverable session={} status={} source={} evidence={}",
                     record.session_name,
@@ -9563,52 +9560,120 @@ fn recover_registered_main_sessions(
                     probe.source.as_str(),
                     compact_evidence(&probe.evidence)
                 );
-                append_runtime_supervision_event(
+                recover_registered_session_candidate(
                     config,
-                    Some(&state),
-                    "RuntimeRecoverable",
-                    &format!("issue={issue_identifier} reason={reason}"),
+                    recoverable_states,
+                    retained_states,
+                    RecoverRegisteredSessionCandidateInput {
+                        state: &state,
+                        issue,
+                        issue_identifier,
+                        session_name: &record.session_name,
+                        reason: &reason,
+                        status: Some((&probe.status, probe.source.as_str())),
+                    },
                 )?;
-                println!(
-                    "run_loop_resume_preflight action=recoverable_registry_session issue={} session={} status={} source={}",
-                    issue_identifier,
-                    record.session_name,
-                    probe.status.as_str(),
-                    probe.source.as_str()
-                );
-                recoverable_states.push(RuntimeRecoveryCandidate {
-                    state: state.clone(),
-                    issue,
-                    reason,
-                });
-                retained_states.push(state);
             }
-            Ok(_) => {}
             Err(error) => {
+                let Some(issue) =
+                    recover_registry_issue_for_restart(adapter, config, &state, issue_identifier)?
+                else {
+                    continue;
+                };
                 let reason = format!(
                     "registry_session_unavailable session={} reason={}",
                     record.session_name,
                     compact_evidence(&error.to_string())
                 );
-                append_runtime_supervision_event(
+                recover_registered_session_candidate(
                     config,
-                    Some(&state),
-                    "RuntimeRecoverable",
-                    &format!("issue={issue_identifier} reason={reason}"),
+                    recoverable_states,
+                    retained_states,
+                    RecoverRegisteredSessionCandidateInput {
+                        state: &state,
+                        issue,
+                        issue_identifier,
+                        session_name: &record.session_name,
+                        reason: &reason,
+                        status: None,
+                    },
                 )?;
-                println!(
-                    "run_loop_resume_preflight action=recoverable_registry_session issue={} session={} status=unavailable",
-                    issue_identifier, record.session_name
-                );
-                recoverable_states.push(RuntimeRecoveryCandidate {
-                    state: state.clone(),
-                    issue,
-                    reason,
-                });
-                retained_states.push(state);
             }
         }
     }
+    Ok(())
+}
+
+fn recover_registry_issue_for_restart(
+    adapter: &dyn jade_symphony::tracker::TrackerAdapter,
+    config: &RuntimeConfig,
+    state: &RuntimeState,
+    issue_identifier: &str,
+) -> Result<Option<TrackerIssue>, Box<dyn std::error::Error>> {
+    match adapter.get_issue(issue_identifier) {
+        Ok(Some(issue)) if normalize_state(&issue.state) == "in progress" => Ok(Some(issue)),
+        Ok(_) => Ok(None),
+        Err(error) => {
+            let reason = format!(
+                "tracker_read_failed: {}",
+                compact_evidence(&error.to_string())
+            );
+            append_runtime_supervision_event(
+                config,
+                Some(state),
+                "RuntimeRecoverReadSkipped",
+                &format!("issue={issue_identifier} reason={reason}"),
+            )?;
+            println!(
+                "run_loop_resume_preflight action=recover_registry_read_skipped issue={} reason={}",
+                issue_identifier, reason
+            );
+            Ok(None)
+        }
+    }
+}
+
+struct RecoverRegisteredSessionCandidateInput<'a> {
+    state: &'a RuntimeState,
+    issue: TrackerIssue,
+    issue_identifier: &'a str,
+    session_name: &'a str,
+    reason: &'a str,
+    status: Option<(&'a SessionStatus, &'a str)>,
+}
+
+fn recover_registered_session_candidate(
+    config: &RuntimeConfig,
+    recoverable_states: &mut Vec<RuntimeRecoveryCandidate>,
+    retained_states: &mut Vec<RuntimeState>,
+    input: RecoverRegisteredSessionCandidateInput<'_>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    append_runtime_supervision_event(
+        config,
+        Some(input.state),
+        "RuntimeRecoverable",
+        &format!("issue={} reason={}", input.issue_identifier, input.reason),
+    )?;
+    if let Some((status, source)) = input.status {
+        println!(
+            "run_loop_resume_preflight action=recoverable_registry_session issue={} session={} status={} source={}",
+            input.issue_identifier,
+            input.session_name,
+            status.as_str(),
+            source
+        );
+    } else {
+        println!(
+            "run_loop_resume_preflight action=recoverable_registry_session issue={} session={} status=unavailable",
+            input.issue_identifier, input.session_name
+        );
+    }
+    recoverable_states.push(RuntimeRecoveryCandidate {
+        state: input.state.clone(),
+        issue: input.issue,
+        reason: input.reason.to_string(),
+    });
+    retained_states.push(input.state.clone());
     Ok(())
 }
 
@@ -13673,6 +13738,7 @@ mod tests {
         fail_comment: bool,
         fail_link_pr: bool,
         confirm_link_pr: bool,
+        fail_get_issue: bool,
     }
 
     impl Default for RecordingAdapter {
@@ -13685,6 +13751,7 @@ mod tests {
                 fail_comment: false,
                 fail_link_pr: false,
                 confirm_link_pr: true,
+                fail_get_issue: false,
             }
         }
     }
@@ -13710,6 +13777,13 @@ mod tests {
             &self,
             issue_ref: &str,
         ) -> Result<Option<TrackerIssue>, jade_symphony::tracker::TrackerError> {
+            if self.fail_get_issue {
+                return Err(
+                    jade_symphony::tracker::TrackerError::IntegrationUnavailable(
+                        "simulated get_issue failure".into(),
+                    ),
+                );
+            }
             Ok(self.issues.borrow().get(issue_ref).cloned())
         }
 
@@ -16259,6 +16333,40 @@ mod tests {
             runtime_state_issue_identifier(&summary.retained_states[0]),
             Some("#29")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resume_preflight_registry_active_session_does_not_require_live_issue_read() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
+        config.observability.logs_root = temp.path().join("logs");
+        config.tmux.command = fake_tmux_capture_script(
+            temp.path(),
+            "Codex\n◦ Running cargo test\n› Improve documentation in @filename",
+        );
+        let tracker = RecordingAdapter {
+            fail_get_issue: true,
+            ..Default::default()
+        };
+        let mut record = main_tmux_session_record("#29", SessionStatus::Running);
+        record.session_name = "jade-main-29-attempt-1".into();
+        record.pane_target = "jade-main-29-attempt-1".into();
+        record.log_path = temp.path().join("session.log");
+        save_session_registry(
+            &session_registry_path(&config),
+            &jade_symphony::session_registry::SessionRegistry {
+                sessions: vec![record],
+            },
+        )
+        .unwrap();
+
+        let summary = run_loop_resume_preflight_many(&tracker, &config, &[], 2_000, true).unwrap();
+
+        assert_eq!(summary.active_main_workers, 1);
+        assert_eq!(summary.recoverable_states.len(), 0);
+        assert_eq!(summary.retained_states.len(), 1);
     }
 
     #[cfg(unix)]

@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -192,6 +192,7 @@ pub fn classify_project_state_failure_message(message: &str) -> ProjectStateFail
     } else if normalized.contains("could not resolve host")
         || normalized.contains("failed to connect")
         || normalized.contains("connection timed out")
+        || normalized.contains("timed out after")
         || normalized.contains("connection reset")
         || normalized.contains("network")
         || normalized.contains("tls")
@@ -1511,6 +1512,7 @@ struct GithubCliAccess;
 
 impl GithubCliAccess {
     const MAX_ATTEMPTS: usize = 3;
+    const TIMEOUT: Duration = Duration::from_secs(30);
 
     fn run_json(api: GithubCliApi, args: Vec<String>) -> Result<serde_json::Value, TrackerError> {
         let mut last_error = None;
@@ -1543,10 +1545,7 @@ impl GithubCliAccess {
     }
 
     fn run_status(args: Vec<String>, operation: &str) -> Result<(), TrackerError> {
-        let output = Command::new("gh")
-            .args(args)
-            .output()
-            .map_err(|error| TrackerError::IntegrationUnavailable(error.to_string()))?;
+        let output = run_gh_command(&args, operation)?;
 
         if !output.status.success() {
             let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -1564,10 +1563,7 @@ impl GithubCliAccess {
         api: GithubCliApi,
         args: &[String],
     ) -> Result<serde_json::Value, TrackerError> {
-        let output = Command::new("gh")
-            .args(args)
-            .output()
-            .map_err(|error| TrackerError::IntegrationUnavailable(error.to_string()))?;
+        let output = run_gh_command(args, api.operation_label())?;
 
         if !output.status.success() {
             let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -1585,6 +1581,102 @@ impl GithubCliAccess {
             })?;
         api.validate_response(&response)?;
         Ok(response)
+    }
+}
+
+fn run_gh_command(args: &[String], operation: &str) -> Result<Output, TrackerError> {
+    run_command_with_timeout("gh", args, operation, GithubCliAccess::TIMEOUT)
+}
+
+fn run_command_with_timeout(
+    program: &str,
+    args: &[String],
+    operation: &str,
+    timeout: Duration,
+) -> Result<Output, TrackerError> {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let base = format!("jade-symphony-command-{}-{suffix}", std::process::id());
+    let stdout_path = std::env::temp_dir().join(format!("{base}.stdout"));
+    let stderr_path = std::env::temp_dir().join(format!("{base}.stderr"));
+    let stdout_file = fs::File::create(&stdout_path).map_err(|error| {
+        TrackerError::IntegrationUnavailable(format!("{operation} stdout capture failed: {error}"))
+    })?;
+    let stderr_file = fs::File::create(&stderr_path).map_err(|error| {
+        let _ = fs::remove_file(&stdout_path);
+        TrackerError::IntegrationUnavailable(format!("{operation} stderr capture failed: {error}"))
+    })?;
+
+    let mut child = Command::new(program)
+        .args(args)
+        .env("GH_PROMPT_DISABLED", "1")
+        .stdout(Stdio::from(stdout_file))
+        .stderr(Stdio::from(stderr_file))
+        .spawn()
+        .map_err(|error| {
+            let _ = fs::remove_file(&stdout_path);
+            let _ = fs::remove_file(&stderr_path);
+            TrackerError::IntegrationUnavailable(error.to_string())
+        })?;
+
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = fs::read(&stdout_path).map_err(|error| {
+                    TrackerError::IntegrationUnavailable(format!(
+                        "{operation} stdout read failed: {error}"
+                    ))
+                })?;
+                let stderr = fs::read(&stderr_path).map_err(|error| {
+                    TrackerError::IntegrationUnavailable(format!(
+                        "{operation} stderr read failed: {error}"
+                    ))
+                })?;
+                let _ = fs::remove_file(&stdout_path);
+                let _ = fs::remove_file(&stderr_path);
+                return Ok(Output {
+                    status,
+                    stdout,
+                    stderr,
+                });
+            }
+            Ok(None) if started.elapsed() >= timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = fs::remove_file(&stdout_path);
+                let _ = fs::remove_file(&stderr_path);
+                return Err(TrackerError::IntegrationUnavailable(format!(
+                    "{operation} timed out after {}ms",
+                    timeout.as_millis()
+                )));
+            }
+            Ok(None) => {
+                let elapsed = started.elapsed();
+                if elapsed >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = fs::remove_file(&stdout_path);
+                    let _ = fs::remove_file(&stderr_path);
+                    return Err(TrackerError::IntegrationUnavailable(format!(
+                        "{operation} timed out after {}ms",
+                        timeout.as_millis()
+                    )));
+                }
+                thread::sleep((timeout - elapsed).min(Duration::from_millis(100)));
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = fs::remove_file(&stdout_path);
+                let _ = fs::remove_file(&stderr_path);
+                return Err(TrackerError::IntegrationUnavailable(format!(
+                    "{operation} wait failed: {error}"
+                )));
+            }
+        }
     }
 }
 
@@ -5076,6 +5168,12 @@ Prompt
         );
         assert_eq!(
             classify_project_state_failure_message(
+                "GitHub GraphQL operation timed out after 30000ms"
+            ),
+            ProjectStateFailureKind::Network
+        );
+        assert_eq!(
+            classify_project_state_failure_message(
                 "GitHub GraphQL returned errors: Field 'foo' doesn't exist on type ProjectV2"
             ),
             ProjectStateFailureKind::Schema
@@ -5092,6 +5190,25 @@ Prompt
             )),
             ProjectStateFailureKind::MissingCapability
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_timeout_returns_transient_tracker_error() {
+        let args = vec!["-c".into(), "sleep 0.05".into()];
+        let error = run_command_with_timeout(
+            "sh",
+            &args,
+            "GitHub GraphQL operation",
+            Duration::from_millis(1),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            classify_project_state_error(&error),
+            ProjectStateFailureKind::Network
+        );
+        assert!(error.to_string().contains("timed out after"));
     }
 
     #[test]

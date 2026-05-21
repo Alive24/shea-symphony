@@ -33,6 +33,7 @@ pub struct PullRequestHandoffPlan {
 pub struct ReworkContinuationEvidence {
     pub pull_request_url: String,
     pub pull_request_state: String,
+    pub branch_name: Option<String>,
     pub source: String,
 }
 
@@ -331,12 +332,20 @@ pub fn plan_issue_handoff_for_profile(
 
     let branch_name = match issue.branch_name.as_deref() {
         Some(existing_branch) if is_rework => existing_branch.to_string(),
-        None if let Some(continuation) = &continuation => {
-            return Err(HandoffError::MissingReworkContinuationBranch {
+        None if let Some(continuation) = &continuation => continuation
+            .branch_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|branch_name| !branch_name.is_empty())
+            .map(|branch_name| {
+                guard_branch_for_issue(branch_name, &issue.identifier)?;
+                Ok::<_, HandoffError>(branch_name.to_string())
+            })
+            .transpose()?
+            .ok_or_else(|| HandoffError::MissingReworkContinuationBranch {
                 issue_ref: issue.identifier.clone(),
                 pull_request_url: continuation.pull_request_url.clone(),
-            });
-        }
+            })?,
         _ => branch_name_for_issue(&issue.identifier, &issue.title),
     };
 
@@ -384,13 +393,25 @@ fn rework_continuation_evidence(
         }
         1 => {
             let pull_request = open.remove(0);
+            let branch_name = pull_request
+                .head_ref_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|branch_name| !branch_name.is_empty())
+                .map(ToOwned::to_owned);
+            let source = if branch_name.is_some() {
+                "linked_pull_request_head_ref"
+            } else {
+                "linked_pull_request"
+            };
             Ok(Some(ReworkContinuationEvidence {
                 pull_request_url: pull_request_url(pull_request),
                 pull_request_state: pull_request
                     .state
                     .clone()
                     .unwrap_or_else(|| "unknown".into()),
-                source: "linked_pull_request".into(),
+                branch_name,
+                source: source.into(),
             }))
         }
         _ => Err(HandoffError::AmbiguousReworkContinuation {
@@ -619,6 +640,13 @@ mod tests {
         }
     }
 
+    fn linked_pr_with_head(number: u64, state: &str, head_ref_name: &str) -> LinkedPullRequest {
+        LinkedPullRequest {
+            head_ref_name: Some(head_ref_name.into()),
+            ..linked_pr(number, state)
+        }
+    }
+
     #[test]
     fn creates_deterministic_workspace_and_branch_plan() {
         let plan = plan_issue_handoff(Path::new("/tmp/jade-workspaces"), &issue(), "main").unwrap();
@@ -721,6 +749,55 @@ mod tests {
                 .as_ref()
                 .map(|continuation| continuation.pull_request_url.as_str()),
             Some("https://github.com/Alive24/jade-symphony/pull/45")
+        );
+    }
+
+    #[test]
+    fn reuses_linked_pull_request_head_branch_for_rework_continuation() {
+        let mut issue = issue();
+        issue.state = "Rework".into();
+        issue.linked_pull_requests = vec![linked_pr_with_head(
+            45,
+            "OPEN",
+            "feature/issue-21-existing-work",
+        )];
+
+        let plan = plan_issue_handoff(Path::new("/tmp/workspaces"), &issue, "main").unwrap();
+
+        assert_eq!(plan.branch_name, "feature/issue-21-existing-work");
+        assert_eq!(
+            plan.pull_request.head_branch,
+            "feature/issue-21-existing-work"
+        );
+        assert_eq!(
+            plan.continuation
+                .as_ref()
+                .and_then(|continuation| continuation.branch_name.as_deref()),
+            Some("feature/issue-21-existing-work")
+        );
+        assert_eq!(
+            plan.continuation
+                .as_ref()
+                .map(|continuation| continuation.source.as_str()),
+            Some("linked_pull_request_head_ref")
+        );
+    }
+
+    #[test]
+    fn rejects_rework_linked_pull_request_head_for_different_issue() {
+        let mut issue = issue();
+        issue.state = "Rework".into();
+        issue.linked_pull_requests = vec![linked_pr_with_head(45, "OPEN", "feature/issue-20-auth")];
+
+        let err = plan_issue_handoff(Path::new("/tmp/workspaces"), &issue, "main").unwrap_err();
+
+        assert_eq!(
+            err,
+            HandoffError::BranchIssueMismatch {
+                branch_name: "feature/issue-20-auth".into(),
+                expected_issue: "21".into(),
+                found_issue: "20".into(),
+            }
         );
     }
 

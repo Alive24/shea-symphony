@@ -104,6 +104,7 @@ use jade_symphony::workflow::{AgentLane, WorkflowDefinition};
 use jade_symphony::workspace::{
     apply_local_git_identity, prepare_workspace, profile_scoped_identifier, remove_issue_workspace,
     run_after_run, run_before_run, run_workspace_command, safe_identifier, GitIdentityApplyResult,
+    Workspace,
 };
 
 const DEFAULT_RUN_LOOP_BASE_BRANCH: &str = "main";
@@ -6827,8 +6828,19 @@ fn execute_issue_once_with_workspace_key(
     attempt: u32,
     claim: Option<&LaneClaim>,
 ) -> Result<IssueExecutionResult, Box<dyn std::error::Error>> {
-    let profile = selected_execution_profile(&config.profiles)?;
     let workspace = prepare_workspace(&config.workspace.root, workspace_key, &config.hooks)?;
+    execute_issue_once_in_workspace(workflow, config, issue, workspace, attempt, claim)
+}
+
+fn execute_issue_once_in_workspace(
+    workflow: &WorkflowDefinition,
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    workspace: Workspace,
+    attempt: u32,
+    claim: Option<&LaneClaim>,
+) -> Result<IssueExecutionResult, Box<dyn std::error::Error>> {
+    let profile = selected_execution_profile(&config.profiles)?;
     let git_identity = apply_local_git_identity(&workspace.path, &config.identity.git)?;
     run_before_run(&workspace.path, &config.hooks)?;
 
@@ -9281,12 +9293,29 @@ fn run_loop_handoff_plan(
         .ok()
         .flatten()
         .map(|profile| profile.workspace_namespace);
-    plan_issue_handoff_for_profile(
+    let mut plan = plan_issue_handoff_for_profile(
         &config.workspace.root,
         issue,
         DEFAULT_RUN_LOOP_BASE_BRANCH,
         profile.as_deref(),
-    )
+    )?;
+
+    if issue.normalized_state() == "rework" {
+        if let Ok(repo_root) = std::env::current_dir() {
+            if let Ok(report) = discover_issue_workspaces(config, issue, &repo_root) {
+                if let Some(candidate) = report
+                    .canonical_index
+                    .and_then(|index| report.candidates.get(index))
+                {
+                    if candidate.branch.as_deref() == Some(plan.branch_name.as_str()) {
+                        plan.workspace_path = candidate.path.clone();
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(plan)
 }
 
 fn run_loop_runtime_ownership(
@@ -9636,8 +9665,11 @@ fn run_loop_handoff_workpad(
 fn rework_continuation_workpad_line(handoff: &IssueHandoffPlan) -> String {
     match &handoff.continuation {
         Some(continuation) => format!(
-            "- Rework continuation: `{}` from `{}` ({})",
-            continuation.pull_request_url, continuation.source, continuation.pull_request_state
+            "- Rework continuation: `{}` from `{}` ({}) branch=`{}`",
+            continuation.pull_request_url,
+            continuation.source,
+            continuation.pull_request_state,
+            continuation.branch_name.as_deref().unwrap_or("unknown")
         ),
         None => "- Rework continuation: `not-used`".to_string(),
     }

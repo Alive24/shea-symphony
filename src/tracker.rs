@@ -1511,8 +1511,8 @@ impl GithubCliApi {
 struct GithubCliAccess;
 
 impl GithubCliAccess {
-    const MAX_ATTEMPTS: usize = 3;
-    const TIMEOUT: Duration = Duration::from_secs(30);
+    const MAX_ATTEMPTS: usize = 2;
+    const TIMEOUT: Duration = Duration::from_secs(10);
 
     fn run_json(api: GithubCliApi, args: Vec<String>) -> Result<serde_json::Value, TrackerError> {
         let mut last_error = None;

@@ -24,6 +24,7 @@ pub mod review;
 pub mod rework;
 pub mod runtime_state;
 pub mod session_registry;
+pub mod skill_status;
 pub mod status_surface;
 pub mod tracker;
 pub mod workflow;

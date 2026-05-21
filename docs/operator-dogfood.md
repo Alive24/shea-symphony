@@ -243,6 +243,25 @@ Use `--codex-dir`, `--gemini-dir`, `--skip-codex`, or `--skip-gemini` to make
 the target set explicit. Use `--yes` only after the printed target paths are
 known and intentional.
 
+Skills are per-repo rendered installs, not one global generic skill set. Before
+starting a lane that depends on local skills, inspect readiness without writing:
+
+```bash
+cargo run -- skills status workflows/jade-symphony.md
+cargo run -- skills status workflows/jade-symphony.md --json
+cargo run -- skills status workflows/jade-symphony.md --session-skills-file /path/to/session-skills.txt
+```
+
+`skills status` discovers the source suite from `--suite-path`,
+`JADE_SYMPHONY_SKILL_SUITE`, the current repo's `skills/jade-symphony/suite`,
+then installed-only mode when no source suite exists. It reports expected/source
+skills, Codex installs, Gemini installs when configured or discoverable,
+rendered metadata freshness, broken links, alias/file-shaped installs, missing
+`SKILL.md`, and optional current-session visibility. If no session skill input
+is provided, session visibility is `unknown`; that is diagnostic context, not a
+failure. Gemini absence is not a failure unless the operator explicitly requires
+Gemini for the current environment.
+
 The packaged skills preserve the same lane boundaries as the Jade Symphony CLI:
 Issue Forge, Reflect, and Dream handle conversation, draft shaping, backlog
 mining, and promotion discussion, including Human Review -> Rework revision

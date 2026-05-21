@@ -263,6 +263,13 @@ subissues are complete.
 
 These commands can mutate live tracker state and require `--write`.
 
+GitHub Project v2 field writes are REST-first where GitHub supports the field
+kind and the Project read exposes REST item and field IDs. Status and lane claim
+text fields use the REST item update path first, then fall back to the existing
+GraphQL mutations when REST capability data is missing. Project metadata and
+field IDs are cached only within the current CLI process and refreshed once when
+a lookup appears stale.
+
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `project set-state` | Move one issue to a normalized workflow state. | Refuses `Human Review` from the main implementation role. |

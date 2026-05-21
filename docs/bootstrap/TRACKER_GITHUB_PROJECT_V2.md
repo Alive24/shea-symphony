@@ -69,11 +69,43 @@ Project v2 single-select status updates require option IDs.
 
 The adapter should:
 
-1. Load the ProjectV2 fields.
+1. Load the ProjectV2 fields through REST first when available.
 2. Find the configured `Status` single-select field.
 3. Cache the field ID and option IDs for the current run.
 4. Map normalized states to configured option names.
 5. Use the option ID when updating status.
+6. Refresh cached metadata once when a required field or option lookup fails,
+   then report the missing field/option explicitly if the refreshed metadata is
+   still stale.
+
+The cache is process-local to the tracker client. It covers the Project node ID,
+REST owner kind, configured `Status` field, Status option IDs, supported
+single-select/text/number/date field metadata, and lane claim text fields such
+as `Main Agent`, `Review Agent`, and `Merging Agent` when those fields exist.
+It is not a daemon and does not persist across CLI invocations.
+
+## REST-First Field And Item Access
+
+When GitHub REST Projects v2 exposes the required data, the adapter should use:
+
+- `GET /orgs/{org}/projectsV2/{project_number}` or
+  `GET /users/{username}/projectsV2/{project_number}` for Project metadata.
+- `GET /orgs/{org}/projectsV2/{project_number}/fields` or the user equivalent
+  for field metadata and single-select options.
+- `GET /orgs/{org}/projectsV2/{project_number}/items` or the user equivalent
+  with requested REST field IDs for item field overlays.
+- `PATCH .../items/{item_id}` with a `fields` array for supported Status and
+  lane-claim field updates.
+
+REST pagination must be consumed completely. The CLI path uses `gh api
+--paginate --slurp` for REST array endpoints and flattens every returned page
+before parsing fields or items.
+
+GraphQL remains the fallback for unsupported REST data, missing REST item IDs,
+missing REST field IDs, item addition, workpad/comment mutation, and rich issue
+relationships that REST does not expose in the required tracker shape. Fallback
+reasons should be visible in code paths, tests, or operator diagnostics rather
+than silently dropping fields.
 
 ## Status Write Authority
 

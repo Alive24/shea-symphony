@@ -203,6 +203,11 @@ rendered prompts, tmux logs, and individual sessions without deleting them.
 Unknown persisted registry status values are tolerated on read: they classify
 as `unknown`, keep the raw status value in diagnostics, and are not migrated,
 repaired, or rewritten by normal read-only commands.
+After a successful Main handoff to `Agent Review`, Jade Symphony preserves the
+tmux log and attach command but reconciles matching Main session records to
+`completed` and clears matching active runtime state. This keeps `doctor` from
+treating a completed handoff pane as active work while preserving recovery
+evidence.
 
 ## Workspace Discovery
 

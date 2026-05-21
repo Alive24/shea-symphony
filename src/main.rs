@@ -35,9 +35,9 @@ use jade_symphony::git_handoff::{
     PullRequestReadyStatus,
 };
 use jade_symphony::handoff::{
-    evaluate_agent_review_handoff, plan_issue_handoff_for_profile,
-    render_agent_review_handoff_workpad, AgentReviewHandoffEvidence, HandoffError,
-    IssueHandoffPlan,
+    evaluate_agent_review_handoff, expected_merge_base_branch_for_issue,
+    plan_issue_handoff_for_profile, render_agent_review_handoff_workpad,
+    AgentReviewHandoffEvidence, HandoffError, IssueHandoffPlan,
 };
 use jade_symphony::issue_forge::{next_clarification_question, ForgeValidationReport};
 use jade_symphony::issue_workspace::{
@@ -55,8 +55,8 @@ use jade_symphony::merge_lane::{
     repair_dirty_pull_request, update_pull_request_branch, MergeLaneDecisionKind,
 };
 use jade_symphony::model::{
-    normalize_state, GateDecision, GateDecisionKind, LatestStatus, SessionStatusSnapshot,
-    TrackerIssue,
+    native_subissue_gate_blocker, normalize_state, GateDecision, GateDecisionKind, LatestStatus,
+    SessionStatusSnapshot, TrackerIssue,
 };
 use jade_symphony::observability_api::serve_once;
 use jade_symphony::orchestrator::Orchestrator;
@@ -74,12 +74,15 @@ use jade_symphony::quality_gate::{
     evaluate_issue_with_source_alignment, LlmGateMode, LlmGateOptions,
 };
 use jade_symphony::review::{
-    classify_review_freshness, gemini_cli_headless_args, poll_review_job_until_terminal,
-    render_review_freshness_workpad, render_review_workpad, review_gate_decision,
-    review_run_eligibility, transition_allowed_for_main_agent, transition_allowed_for_review_agent,
+    classify_review_freshness, gemini_cli_headless_args, gemini_prelaunch_health_diagnostic,
+    gemini_review_health_diagnostic, poll_review_job_until_terminal,
+    render_repeated_review_failure_workpad, render_review_freshness_workpad, render_review_workpad,
+    review_failure_signature, review_gate_decision, review_run_eligibility, review_worker_key,
+    transition_allowed_for_main_agent, transition_allowed_for_review_agent,
     write_review_job_ledger_record, FakeReviewBackend, FakeReviewOutcome, GeminiCliReviewBackend,
-    ReviewBackend, ReviewFreshnessInput, ReviewGateDecision, ReviewJob, ReviewJobState,
-    ReviewOutcome, ReviewRequest, ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
+    GeminiReviewRecoveryPolicy, ReviewBackend, ReviewFreshnessInput, ReviewGateDecision, ReviewJob,
+    ReviewJobState, ReviewOutcome, ReviewRepeatedFailureEvidence, ReviewRequest, ReviewReworkClass,
+    ReviewRunEligibility, ReviewStaleReason,
 };
 use jade_symphony::review_status::{
     load_review_status, render_project_inspect_review_summary, render_review_status_human,
@@ -96,8 +99,8 @@ use jade_symphony::runtime_state::{
 };
 use jade_symphony::session_registry::{
     capture_tmux_pane_tail, classify_session_record, load_session_registry, read_log_tail,
-    save_session_record, session_registry_path, unix_timestamp_ms, AgentSessionRecord,
-    SessionStatus,
+    save_session_record, save_session_registry, session_registry_path, unix_timestamp_ms,
+    AgentSessionRecord, SessionStatus,
 };
 use jade_symphony::skill_status::{
     build_skill_readiness_report, doctor_skill_readiness_summary, render_skill_readiness_report,
@@ -632,6 +635,7 @@ fn set_state(
         .map(|issue| issue.state)
         .filter(|current| !current.is_empty());
     adapter.set_state(&issue_ref, &state)?;
+    reconcile_main_handoff_runtime_state(&config, &issue_ref, &state)?;
     append_tracker_mutation_audit(
         &config,
         TrackerMutationAudit {
@@ -646,6 +650,80 @@ fn set_state(
     );
     println!("set_state=ok issue_ref={issue_ref} state={state}");
     Ok(())
+}
+
+fn reconcile_main_handoff_runtime_state(
+    config: &RuntimeConfig,
+    issue_ref: &str,
+    target_state: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if normalize_state(target_state) != "agent_review" {
+        return Ok(());
+    }
+
+    let now_ms = current_time_ms();
+    let registry_path = session_registry_path(config);
+    let mut registry = load_session_registry(&registry_path)?;
+    let mut completed_sessions = 0usize;
+
+    for record in &mut registry.sessions {
+        if record.lane == "main"
+            && record
+                .issue_identifier
+                .as_deref()
+                .is_some_and(|identifier| issue_refs_match_local(identifier, issue_ref))
+            && !matches!(
+                record.status,
+                SessionStatus::Completed | SessionStatus::Recorded | SessionStatus::Failed
+            )
+        {
+            record.status = SessionStatus::Completed;
+            record.updated_at_ms = now_ms;
+            completed_sessions += 1;
+        }
+    }
+
+    if completed_sessions > 0 {
+        save_session_registry(&registry_path, &registry)?;
+    }
+
+    let runtime_state = load_runtime_states(config)?.into_iter().find(|state| {
+        state
+            .active_issue
+            .as_ref()
+            .is_some_and(|issue| issue_refs_match_local(&issue.identifier, issue_ref))
+            && state.lane.as_deref().is_none_or(|lane| lane == "main")
+    });
+    let runtime_matches_main_issue = runtime_state.is_some();
+    if runtime_matches_main_issue {
+        remove_runtime_state_for_issue(config, issue_ref)?;
+    }
+
+    if completed_sessions > 0 || runtime_matches_main_issue {
+        append_runtime_supervision_event(
+            config,
+            runtime_state.as_ref(),
+            "MainHandoffRuntimeReconciled",
+            &format!(
+                "issue={} target_state=agent_review sessions_completed={} runtime_cleared={}",
+                issue_ref, completed_sessions, runtime_matches_main_issue
+            ),
+        )?;
+        println!(
+            "main_handoff_runtime_reconcile issue={} sessions_completed={} runtime_cleared={}",
+            issue_ref, completed_sessions, runtime_matches_main_issue
+        );
+    }
+
+    Ok(())
+}
+
+fn issue_refs_match_local(left: &str, right: &str) -> bool {
+    normalize_issue_ref_local(left) == normalize_issue_ref_local(right)
+}
+
+fn normalize_issue_ref_local(value: &str) -> String {
+    value.trim().trim_start_matches('#').to_string()
 }
 
 fn upsert_workpad(
@@ -1936,7 +2014,15 @@ fn review_fake(
     };
     let backend = FakeReviewBackend::new(outcome);
     let job = backend.poll(backend.start(request)?)?;
-    apply_review_result(&config, adapter.as_ref(), &issue_ref, &issue, &job, None)?;
+    apply_review_result(
+        &config,
+        adapter.as_ref(),
+        &issue_ref,
+        &issue,
+        &job,
+        None,
+        None,
+    )?;
 
     let decision = review_gate_decision(&job);
     println!(
@@ -1992,7 +2078,15 @@ fn review_once(
             backend.poll(backend.start(request)?)?
         }
     };
-    apply_review_result(&config, adapter.as_ref(), &issue_ref, &issue, &job, None)?;
+    apply_review_result(
+        &config,
+        adapter.as_ref(),
+        &issue_ref,
+        &issue,
+        &job,
+        None,
+        None,
+    )?;
 
     let decision = review_gate_decision(&job);
     println!(
@@ -2101,7 +2195,7 @@ fn lane_claim_command(
     let issue = adapter
         .get_issue(&issue_ref)?
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
-    validate_lane_claim_state(&issue, lane)?;
+    validate_lane_claim_state(&issue, lane, &config)?;
 
     let existing_value = project_text_field(&issue, lane.claim_field());
     let claim = lane_claim_for_manual_worker(
@@ -2162,6 +2256,7 @@ fn lane_claim_command(
 fn validate_lane_claim_state(
     issue: &TrackerIssue,
     lane: AgentSessionLaneArg,
+    config: &RuntimeConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let normalized = issue.normalized_state();
     let valid = match lane {
@@ -2172,6 +2267,17 @@ fn validate_lane_claim_state(
         AgentSessionLaneArg::Merge => normalized == "merging",
     };
     if valid {
+        if matches!(lane, AgentSessionLaneArg::Main) {
+            let terminal_states = config.terminal_state_set().into_iter().collect();
+            if let Some(reason) = native_subissue_gate_blocker(issue, &terminal_states) {
+                return Err(format!(
+                    "{} claim cannot claim {}; {reason}",
+                    lane.label(),
+                    issue.identifier
+                )
+                .into());
+            }
+        }
         return Ok(());
     }
 
@@ -2760,9 +2866,81 @@ fn review_freshness(input: ReviewFreshnessInput) -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReviewLoopFailureMemory {
+    signature: String,
+    first_job_id: String,
+    previous_job_id: String,
+    repeat_count: usize,
+}
+
+fn review_loop_repeated_failure_evidence(
+    memory: &mut BTreeMap<String, ReviewLoopFailureMemory>,
+    issue: &TrackerIssue,
+    job: &ReviewJob,
+) -> Option<ReviewRepeatedFailureEvidence> {
+    if !matches!(job.state, ReviewJobState::Failed | ReviewJobState::TimedOut) {
+        memory.remove(&review_worker_key(issue, &job.backend));
+        return None;
+    }
+
+    let worker_key = review_worker_key(issue, &job.backend);
+    let signature = review_failure_signature(job)?;
+    match memory.get_mut(&worker_key) {
+        Some(previous) if previous.signature == signature => {
+            previous.repeat_count = previous.repeat_count.saturating_add(1);
+            let evidence = ReviewRepeatedFailureEvidence {
+                repeat_count: previous.repeat_count,
+                first_job_id: previous.first_job_id.clone(),
+                previous_job_id: previous.previous_job_id.clone(),
+                signature,
+            };
+            previous.previous_job_id = job.id.clone();
+            Some(evidence)
+        }
+        _ => {
+            memory.insert(
+                worker_key,
+                ReviewLoopFailureMemory {
+                    signature,
+                    first_job_id: job.id.clone(),
+                    previous_job_id: job.id.clone(),
+                    repeat_count: 1,
+                },
+            );
+            None
+        }
+    }
+}
+
+fn review_loop_recovery_delay_ms(
+    config: &RuntimeConfig,
+    job: &ReviewJob,
+    repeat_count: usize,
+) -> Option<u64> {
+    let diagnostic = gemini_review_health_diagnostic(job)?;
+    if !diagnostic.is_recoverable() {
+        return None;
+    }
+
+    let base_delay = diagnostic
+        .retry_after_ms
+        .unwrap_or(config.polling.interval_ms)
+        .max(1);
+    let multiplier = if diagnostic.retry_after_ms.is_some() {
+        1
+    } else {
+        let exponent = repeat_count.saturating_sub(1).min(5) as u32;
+        2u64.saturating_pow(exponent)
+    };
+    let cap = config.agent.max_retry_backoff_ms.max(1);
+    Some(base_delay.saturating_mul(multiplier).min(cap).max(1))
+}
+
 fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
     let limit = options.iteration_limit();
     let mut iterations = 0usize;
+    let mut failure_memory = BTreeMap::<String, ReviewLoopFailureMemory>::new();
 
     loop {
         if let Some(max) = limit {
@@ -3013,6 +3191,8 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
             let ledger_path =
                 write_review_job_ledger_record(&config.observability.logs_root, &latest, &job)?;
             job.ledger_path = Some(ledger_path.clone());
+            let repeat_evidence =
+                review_loop_repeated_failure_evidence(&mut failure_memory, &latest, &job);
             apply_review_result(
                 &config,
                 adapter.as_ref(),
@@ -3020,6 +3200,7 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                 &latest,
                 &job,
                 Some(&claim),
+                repeat_evidence.as_ref(),
             )?;
             let decision = review_gate_decision(&job);
             println!(
@@ -3031,6 +3212,41 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                 decision.target_state,
                 ledger_path.display()
             );
+            if let Some(diagnostic) = gemini_review_health_diagnostic(&job) {
+                println!(
+                    "review_loop_health issue={} category={} recovery_policy={} retry_after_ms={} repeat_count={}",
+                    latest.identifier,
+                    diagnostic.category.as_str(),
+                    diagnostic.recovery_policy.as_str(),
+                    diagnostic
+                        .retry_after_ms
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "unknown".into()),
+                    repeat_evidence
+                        .as_ref()
+                        .map(|evidence| evidence.repeat_count)
+                        .unwrap_or(1)
+                );
+            }
+            if !options.once {
+                let repeat_count = repeat_evidence
+                    .as_ref()
+                    .map(|evidence| evidence.repeat_count)
+                    .unwrap_or(1);
+                if let Some(delay_ms) = review_loop_recovery_delay_ms(&config, &job, repeat_count) {
+                    let policy = gemini_review_health_diagnostic(&job)
+                        .map(|diagnostic| diagnostic.recovery_policy)
+                        .unwrap_or(GeminiReviewRecoveryPolicy::RetryWithBackoff);
+                    println!(
+                        "review_loop_action=wait issue={} reason=gemini_backend_health policy={} delay_ms={} repeat_count={}",
+                        latest.identifier,
+                        policy.as_str(),
+                        delay_ms,
+                        repeat_count
+                    );
+                    thread::sleep(Duration::from_millis(delay_ms));
+                }
+            }
         }
 
         if !options.write && limit.is_none() {
@@ -3217,12 +3433,13 @@ fn merge_once_tick(
     )?;
     let linked_pull_requests = adapter.list_linked_pull_requests(&issue.identifier)?;
     let runner = ProcessHandoffCommandRunner;
-    let expected_base = expected_merge_base_branch(&config);
+    let default_expected_base = expected_merge_base_branch(&config);
+    let expected_base = expected_merge_base_branch_for_issue(&issue, default_expected_base);
     let status = merge_preflight_status(&config, &issue, &linked_pull_requests, &runner)?;
     let decision = merge_lane_decision(
         &issue,
         &merging_state,
-        expected_base,
+        &expected_base,
         &linked_pull_requests,
         status.as_ref(),
     );
@@ -3345,7 +3562,7 @@ fn merge_once_tick(
         let repair = repair_dirty_pull_request(
             pr_ref,
             head_ref_name,
-            expected_base,
+            &expected_base,
             &runner,
             &std::env::current_dir()?,
             merge_rehearsal_mode(&config, &issue),
@@ -3794,6 +4011,17 @@ fn run_review_job(
 
     match config.review.backend.as_str() {
         "gemini-cli" => {
+            if let Some(diagnostic) = gemini_prelaunch_health_diagnostic(
+                &config.review.gemini_command,
+                config.review.gemini_model.as_deref(),
+                &config.review.gemini_allowed_tools,
+            ) {
+                return Ok(ReviewJob::failed_unavailable(
+                    issue.identifier.clone(),
+                    "gemini-cli",
+                    diagnostic.to_error_message(),
+                ));
+            }
             let backend = GeminiCliReviewBackend::with_headless_options(
                 config.review.gemini_command.clone(),
                 config.review.gemini_model.clone(),
@@ -4447,6 +4675,7 @@ fn apply_review_result(
     issue: &TrackerIssue,
     job: &jade_symphony::review::ReviewJob,
     claim: Option<&LaneClaim>,
+    repeat_evidence: Option<&ReviewRepeatedFailureEvidence>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let decision = review_gate_decision(job);
     if let Some(value) = terminal_review_loop_claim_value(claim, job, &decision) {
@@ -4472,7 +4701,9 @@ fn apply_review_result(
         }
     }
 
-    let workpad = render_review_workpad(issue, job);
+    let workpad = repeat_evidence
+        .map(|evidence| render_repeated_review_failure_workpad(issue, job, evidence))
+        .unwrap_or_else(|| render_review_workpad(issue, job));
     adapter.add_issue_comment(issue_ref, &workpad)?;
     append_tracker_mutation_audit(
         config,
@@ -4932,6 +5163,8 @@ fn project_inspect(
         .list_linked_pull_requests(&issue.identifier)
         .unwrap_or_else(|_| issue.linked_pull_requests.clone());
     let gate = evaluate_issue_for_current_source(&config, &issue)?;
+    let terminal_states = config.terminal_state_set().into_iter().collect();
+    let native_subissue_blocker = native_subissue_gate_blocker(&issue, &terminal_states);
 
     println!("project_inspect=ok");
     println!("read_only=true");
@@ -4942,7 +5175,13 @@ fn project_inspect(
         println!("lane={}", lane.label());
     }
     println!("gate={:?}", gate.kind);
-    println!("dispatchable={}", gate.is_dispatchable());
+    println!(
+        "dispatchable={}",
+        gate.is_dispatchable() && native_subissue_blocker.is_none()
+    );
+    if let Some(reason) = &native_subissue_blocker {
+        println!("native_subissue_gate={reason}");
+    }
     if !gate.missing.is_empty() {
         println!("missing={}", gate.missing.join(", "));
     }
@@ -8160,6 +8399,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     LaneClaimState::Done,
                 )?;
                 adapter.set_state(&latest.identifier, "agent_review")?;
+                reconcile_main_handoff_runtime_state(&config, &latest.identifier, "agent_review")?;
                 append_tracker_mutation_audit(
                     &config,
                     TrackerMutationAudit {
@@ -8409,6 +8649,7 @@ enum PoolClaimEligibility {
     OwnedBySelf,
     ClaimedByOther { owner: String },
     WrongLaneState { state: String },
+    ParentNativeSubissuesIncomplete { reason: String },
 }
 
 impl PoolClaimEligibility {
@@ -8421,6 +8662,7 @@ impl PoolClaimEligibility {
             Self::Claimable | Self::OwnedBySelf => "claimable".into(),
             Self::ClaimedByOther { owner } => format!("claimed_by_other:{owner}"),
             Self::WrongLaneState { state } => format!("wrong_lane_state:{state}"),
+            Self::ParentNativeSubissuesIncomplete { reason } => reason.clone(),
         }
     }
 }
@@ -8464,6 +8706,12 @@ fn pool_claim_eligibility(
         return PoolClaimEligibility::WrongLaneState {
             state: issue.state.clone(),
         };
+    }
+    if lane == WorkerLane::Main {
+        let terminal_states = config.terminal_state_set().into_iter().collect();
+        if let Some(reason) = native_subissue_gate_blocker(issue, &terminal_states) {
+            return PoolClaimEligibility::ParentNativeSubissuesIncomplete { reason };
+        }
     }
 
     match project_text_field(issue, lane.claim_field()) {
@@ -9934,6 +10182,8 @@ fn run_loop_handoff_workpad(
         format!("- Branch: `{}`", handoff.branch_name),
         format!("- PR title: `{}`", handoff.pull_request.title),
         format!("- PR base branch: `{}`", handoff.pull_request.base_branch),
+        format!("- Branch target role: `{:?}`", handoff.branch_target.role),
+        branch_target_workpad_line(handoff),
         rework_continuation_workpad_line(handoff),
         handoff_verification_workpad_line(result),
         live_handoff_workpad_line(result),
@@ -9949,6 +10199,27 @@ fn run_loop_handoff_workpad(
     }
 
     lines.join("\n")
+}
+
+fn branch_target_workpad_line(handoff: &IssueHandoffPlan) -> String {
+    let mut parts = Vec::new();
+    if let Some(parent_issue) = &handoff.branch_target.parent_issue {
+        parts.push(format!("native_parent={parent_issue}"));
+    }
+    if let Some(parent_integration_branch) = &handoff.branch_target.parent_integration_branch {
+        parts.push(format!(
+            "parent_integration_branch={parent_integration_branch}"
+        ));
+    }
+    if let Some(parent_final_base_branch) = &handoff.branch_target.parent_final_base_branch {
+        parts.push(format!("parent_final_base={parent_final_base_branch}"));
+    }
+
+    if parts.is_empty() {
+        "- Branch target evidence: `single-issue default`".to_string()
+    } else {
+        format!("- Branch target evidence: `{}`", parts.join(" "))
+    }
 }
 
 fn rework_continuation_workpad_line(handoff: &IssueHandoffPlan) -> String {
@@ -12889,6 +13160,52 @@ mod tests {
         state
     }
 
+    fn runtime_reconcile_test_config(root: &Path) -> RuntimeConfig {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            &format!(
+                "---\ntracker:\n  kind: memory\nartifacts:\n  root: {:?}\n  namespace: Alive24/jade-symphony\nobservability:\n  logs_root: {:?}\n---\nPrompt",
+                root.display().to_string(),
+                root.join("logs").display().to_string()
+            ),
+        )
+        .unwrap();
+        RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap()
+    }
+
+    fn main_tmux_session_record(
+        issue_identifier: &str,
+        status: SessionStatus,
+    ) -> AgentSessionRecord {
+        AgentSessionRecord {
+            issue_id: Some("ISSUE_338".into()),
+            issue_identifier: Some(issue_identifier.into()),
+            issue_title: Some("Reconcile completed main tmux sessions after handoff".into()),
+            lane: "main".into(),
+            run_id: Some("20260520T0403Z-issue338-main-c91b".into()),
+            thread: None,
+            session_source: Some("loop".into()),
+            claim_value: None,
+            actor_role: Some("codex".into()),
+            actor_label: Some("Codex manual main issue-338".into()),
+            git_author: None,
+            profile_id: None,
+            instance_name: None,
+            worktree: PathBuf::from("/tmp/issue-338"),
+            branch: Some("feature/issue-338".into()),
+            backend: "tmux".into(),
+            session_name: "jade-main-338-attempt-1-reconcile".into(),
+            pane_target: "jade-main-338-attempt-1-reconcile".into(),
+            prompt_artifact_path: PathBuf::from("/tmp/prompt.md"),
+            log_path: PathBuf::from("/tmp/session.log"),
+            attach_command: "tmux attach-session -t jade-main-338-attempt-1-reconcile".into(),
+            attempt: 1,
+            status,
+            started_at_ms: 1_000,
+            updated_at_ms: 1_000,
+        }
+    }
+
     fn init_clean_git_workspace(path: &Path) {
         let output = ProcessCommand::new("git")
             .arg("init")
@@ -14519,7 +14836,7 @@ mod tests {
             error: None,
         };
 
-        apply_review_result(&config, &adapter, "#67", &issue, &job, None).unwrap();
+        apply_review_result(&config, &adapter, "#67", &issue, &job, None, None).unwrap();
 
         let updated = adapter
             .issues
@@ -15150,6 +15467,51 @@ mod tests {
                 tracker_state: "Agent Review".into(),
                 archive_reason: "tracker_state_handoff".into(),
             }
+        );
+    }
+
+    #[test]
+    fn main_handoff_reconcile_completes_session_and_clears_matching_runtime_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = runtime_reconcile_test_config(temp.path());
+        let mut state = active_runtime_state("#338");
+        state.backend = "tmux".into();
+        state.backend_session_id = Some("jade-main-338-attempt-1-reconcile".into());
+        state.lane = Some("main".into());
+        upsert_runtime_state(&config, &state).unwrap();
+        save_session_registry(
+            &session_registry_path(&config),
+            &jade_symphony::session_registry::SessionRegistry {
+                sessions: vec![main_tmux_session_record("#338", SessionStatus::Running)],
+            },
+        )
+        .unwrap();
+
+        reconcile_main_handoff_runtime_state(&config, "#338", "agent_review").unwrap();
+
+        let runtime_states = load_runtime_states(&config).unwrap();
+        assert!(runtime_state_for_issue(&runtime_states, "#338").is_none());
+        let registry = load_session_registry(&session_registry_path(&config)).unwrap();
+        assert_eq!(registry.sessions[0].status, SessionStatus::Completed);
+        assert!(registry.sessions[0].updated_at_ms > 1_000);
+    }
+
+    #[test]
+    fn main_handoff_reconcile_does_not_clear_non_main_runtime_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = runtime_reconcile_test_config(temp.path());
+        let mut state = active_runtime_state("#338");
+        state.backend = "tmux".into();
+        state.backend_session_id = Some("jade-review-338-attempt-1-review".into());
+        state.lane = Some("review".into());
+        upsert_runtime_state(&config, &state).unwrap();
+
+        reconcile_main_handoff_runtime_state(&config, "#338", "agent_review").unwrap();
+
+        let runtime_states = load_runtime_states(&config).unwrap();
+        assert_eq!(
+            runtime_state_for_issue(&runtime_states, "#338"),
+            Some(&state)
         );
     }
 
@@ -16187,9 +16549,30 @@ mod tests {
 
     #[test]
     fn manual_main_claim_accepts_rework() {
+        let config = test_config();
         let issue = tracker_issue("Rework");
 
-        validate_lane_claim_state(&issue, AgentSessionLaneArg::Main).unwrap();
+        validate_lane_claim_state(&issue, AgentSessionLaneArg::Main, &config).unwrap();
+    }
+
+    #[test]
+    fn manual_main_claim_rejects_parent_with_incomplete_native_subissues() {
+        let config = test_config();
+        let mut issue = tracker_issue("Todo");
+        issue.project_fields.insert(
+            "GitHub Native Subissues".into(),
+            serde_json::json!([
+                {"identifier": "#272", "project_state": "Done"},
+                {"identifier": "#273", "project_state": "Agent Review"}
+            ]),
+        );
+
+        let error = validate_lane_claim_state(&issue, AgentSessionLaneArg::Main, &config)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("blocked by incomplete native subissues"));
+        assert!(error.contains("#273=Agent Review"));
     }
 
     #[test]

@@ -93,7 +93,7 @@ failure. Gemini absence is a blocker only when `--require-gemini` is used.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `main once` | Execute one selected issue through the configured backend. | Fixture-safe by default when the workflow has `tracker.fixture_path`. |
-| `main loop` | Poll/select/claim/run/reconcile/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; tmux sessions stay active until a later loop observes terminal evidence; Agent Review handoff requires a verified Project-visible, ready, non-draft PR. |
+| `main loop` | Poll/select/claim/run/reconcile/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; tmux sessions stay active until a later loop observes terminal evidence; Agent Review handoff requires a verified Project-visible, ready, non-draft PR; native subissue PRs target the parent integration branch when topology evidence is present; parent issues with native subissues are skipped until every native subissue has Project status `Done`. |
 
 Examples:
 
@@ -147,6 +147,12 @@ cargo run -- main claim workflows/jade-symphony.md '#265' --worker codex-manual-
 cargo run -- review claim workflows/jade-symphony.md '#265' --worker "Manual Gemini Review" --write
 cargo run -- merge claim workflows/jade-symphony.md '#265' --worker codex-manual-merge --write
 ```
+
+For parent tracking issues with native GitHub subissues, `main claim` uses the
+same execution gate as `main loop`: it rejects `Todo` or `Rework` parents while
+any native subissue is missing from the Project read or has a non-`Done` Project
+status. This is independent from tracker blocker relationships so native
+subissue changes cannot silently bypass parent dispatch safety.
 
 Live write-mode claim, session, and lane loop commands refuse to run unless the
 canonical checkout is attached to `main` and exactly matches `origin/main` after
@@ -205,6 +211,11 @@ rendered prompts, tmux logs, and individual sessions without deleting them.
 Unknown persisted registry status values are tolerated on read: they classify
 as `unknown`, keep the raw status value in diagnostics, and are not migrated,
 repaired, or rewritten by normal read-only commands.
+After a successful Main handoff to `Agent Review`, Jade Symphony preserves the
+tmux log and attach command but reconciles matching Main session records to
+`completed` and clears matching active runtime state. This keeps `doctor` from
+treating a completed handoff pane as active work while preserving recovery
+evidence.
 
 ## Workspace Discovery
 
@@ -240,6 +251,13 @@ issue workpad. `workspace adopt` is only
 for an operator-selected existing worktree; it must not be used as a shortcut
 for `gh pr checkout` in the canonical checkout. `doctor` warns when multiple
 strong candidates exist for one active issue.
+
+For native parent/subissue flows, `doctor` also checks the read-only integration
+branch topology from GitHub native parent/subissue links plus Jade-owned branch
+and merge evidence. It reports blockers for subissue PRs targeting `main`,
+missing or ambiguous parent integration branch evidence, `Done` subissues
+without parent-branch merge evidence, and parent `Human Review` before native
+subissues are complete.
 
 ## Tracker Writes
 
@@ -386,7 +404,7 @@ changes.
 | --- | --- | --- |
 | `review fake` | Fixture/fake review transition helper. | Local testing path. |
 | `review once` | Run one configured review backend for one issue. | Direct backend command for one issue. |
-| `review loop` | Bounded review worker selection/reconciliation. | For `gemini-cli`, runs headless Gemini by default with stdin prompt transport, JSON output capture, configured model/tools, and durable review-job evidence. |
+| `review loop` | Bounded review worker selection/reconciliation. | For `gemini-cli`, runs headless Gemini by default with stdin prompt transport, JSON output capture, configured model/tools, durable review-job evidence, and health-aware retry routing. |
 | `review status` | Read review-loop and review-runner status from local ledgers, runtime/session registry, and Project claim cross-checks. | Read-only; never claims, repairs, retries, kills jobs, writes workpads, or changes Project state. |
 | `review claim` | Claim one `Agent Review` item's `Review Agent` text field for manual/operator review. | Requires `--worker` and `--write`; refuses non-`Agent Review` issues and writes a structured, round-trip-validated claim pointer. |
 | `review pass` | Record manual independent review pass evidence and move to `Human Review`. | Requires `--write`, a durable evidence file containing the exact current `Review Agent` claim, and preserves the field as terminal pass evidence. |
@@ -418,6 +436,14 @@ claim printed by `review claim` or recorded by `review loop`. Terminal routing
 updates that same field to an audit pointer such as `state=done result=passed`,
 `state=done result=rejected`, `state=failed result=inconclusive`, or
 `state=failed result=blocked`; it does not clear the field.
+
+Gemini-backed `review loop` distinguishes recoverable backend health from
+operator-action blockers. Quota, rate-limit, and resource-exhausted responses
+wait and retry when the loop is allowed to continue; transient capacity,
+network, timeout, or 5xx failures retry with bounded backoff while keeping the
+issue in `Agent Review`. Command, auth, model, policy, or allowed-tools
+configuration failures route to `Need Human Input`. Repeated same-cause Gemini
+failures append compact repeat evidence instead of duplicating full logs.
 
 ## Local Skill Suite
 
@@ -480,7 +506,7 @@ Doctor lanes.
 
 | Command | Purpose | Boundary |
 | --- | --- | --- |
-| `merge once` | Inspect one `Merging` issue, verify a single linked PR, and either merge, safely refresh a stale branch, attempt safe conflict repair, or route blockers. | Live merge requires explicit `--write`; fixture workflows synthesize merge or conflict-repair command evidence without touching GitHub. `BEHIND` PRs are updated with `gh pr update-branch` and left in `Merging` for retry, transient `UNKNOWN` mergeability stays in `Merging`, `DIRTY` PRs first try a clean local PR-worktree repair when available, and unrepaired dirty/failing blockers route to `Need Human Input` with a concrete question instead of defaulting to `Rework`. |
+| `merge once` | Inspect one `Merging` issue, verify a single linked PR, and either merge, safely refresh a stale branch, attempt safe conflict repair, or route blockers. | Live merge requires explicit `--write`; fixture workflows synthesize merge or conflict-repair command evidence without touching GitHub. Native subissues expect the parent integration branch as the PR base; parent final PRs expect `main`. `BEHIND` PRs are updated with `gh pr update-branch` and left in `Merging` for retry, transient `UNKNOWN` mergeability stays in `Merging`, `DIRTY` PRs first try a clean local PR-worktree repair when available, and unrepaired dirty/failing blockers route to `Need Human Input` with a concrete question instead of defaulting to `Rework`. |
 
 Examples:
 

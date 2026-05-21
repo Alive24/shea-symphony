@@ -50,6 +50,11 @@ Handle only:
 - `In Progress` issues already claimed by this Main Agent session or clearly
   resumable from prior interrupted Main Agent work.
 
+Parent issues with native GitHub subissues are not claimable just because they
+are `Todo` or Main-lane `Rework`. Treat the native subissue set as dynamic and
+require every native subissue to have Project status `Done` before selecting or
+claiming the parent. A GitHub issue `closed` state is not enough for this gate.
+
 Do not use this skill for merge-lane `Rework` or `Merging` work. Use
 `$jade-symphony-manual-merge` for those. When `Rework` came from
 `forge rework`, missing linked PR or missing local worktree evidence is not a
@@ -85,6 +90,8 @@ Pick the issue only when all are true:
   `Merging Agent` claim are not Main-lane Rework.
 - `Main Agent` field is empty or belongs to this session.
 - Dependency relationships are terminal or explicitly non-blocking.
+- If it is a native parent issue, every native GitHub subissue has Project
+  status `Done`.
 - Issue Quality Gate is `Ready` or `ReadyWithAssumptions`.
 - The issue body has enough context to implement without inventing product
   decisions.

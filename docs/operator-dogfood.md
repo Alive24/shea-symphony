@@ -113,6 +113,11 @@ other handoff evidence is valid, `main loop --write` may run `gh pr ready`
 before moving the issue to `Agent Review`; if relationship verification or
 readiness mutation fails, keep the issue out of `Agent Review`, route to
 `Need Human Input`, and preserve the blocker in the workpad.
+When Main handoff reaches `Agent Review`, Jade Symphony keeps tmux logs and
+attach commands as audit evidence while marking matching Main session registry
+entries completed and clearing matching active runtime state. A still-open tmux
+pane is not by itself active work after that reconciliation; attach only when
+the registry or doctor evidence says the run is still blocked or failed.
 Routine status output reads the durable session registry, probes bounded pane
 and log tails, and reports a conservative session classification such as
 `running`, `waiting_for_trust`, `waiting_for_approval`, `usage_limited`,
@@ -351,7 +356,19 @@ break-glass recovery paths. The current inventory and classification live in
 For parent tracking issues with native GitHub subissues, use
 `docs/parent-subissue-topology.md` as the design source. Native sub-issue links
 define hierarchy, subissue PRs target the parent integration branch by default,
-and the parent issue remains the final Human Review unit.
+and the parent issue remains the final Human Review unit. `doctor` now reports
+read-only topology blockers for native subissue PRs targeting `main`, missing or
+ambiguous parent integration branch evidence, `Done` subissues without merge
+evidence into the parent branch, and parent `Human Review` before all native
+subissues are `Done` and merged.
+
+Lane handoff and merge flows must make branch target evidence explicit. A
+subissue keeps its normal `feature/issue-*` head branch but uses the parent
+integration branch as the PR base. A parent final PR uses the parent integration
+branch as its head and `main` as its base. Workpads and PR bodies should record
+the native parent issue, `parent_integration_branch`, PR base branch, and parent
+final base branch when applicable so Review, Doctor, and Merge read the same
+topology evidence.
 
 ## Issue Forge Reflect
 

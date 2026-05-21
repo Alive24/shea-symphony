@@ -3,7 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::config::RuntimeConfig;
-use crate::model::{normalize_state, RunningSnapshot, RuntimeSnapshot, SkippedIssue, TrackerIssue};
+use crate::model::{
+    native_subissue_gate_blocker, normalize_state, RunningSnapshot, RuntimeSnapshot, SkippedIssue,
+    TrackerIssue,
+};
 use crate::quality_gate::evaluate_issue_with_dependency_preflight;
 
 #[derive(Debug, Clone)]
@@ -40,6 +43,11 @@ impl Orchestrator {
 
             if issue_blocked_by_non_terminal(&issue, &terminal_states) {
                 skipped.push(skip(&issue, "issue has unresolved tracker dependencies"));
+                continue;
+            }
+
+            if let Some(reason) = native_subissue_gate_blocker(&issue, &terminal_states) {
+                skipped.push(skip(&issue, &reason));
                 continue;
             }
 
@@ -230,6 +238,15 @@ mod tests {
         }
     }
 
+    fn parent_issue_with_subissues(subissues: Vec<serde_json::Value>) -> TrackerIssue {
+        let mut parent = issue("243", 1);
+        parent.project_fields.insert(
+            "GitHub Native Subissues".into(),
+            serde_json::Value::Array(subissues),
+        );
+        parent
+    }
+
     #[test]
     fn dispatches_by_priority_and_limit() {
         let plan = Orchestrator::new(config()).plan_dispatch(vec![issue("2", 3), issue("1", 1)]);
@@ -276,5 +293,50 @@ mod tests {
         assert!(plan.selected.is_empty());
         assert_eq!(plan.snapshot.skipped[0].identifier, "#1");
         assert!(plan.snapshot.skipped[0].reason.contains("dependencies"));
+    }
+
+    #[test]
+    fn skips_parent_with_incomplete_native_subissues() {
+        let parent = parent_issue_with_subissues(vec![
+            serde_json::json!({"identifier": "#272", "project_state": "Done"}),
+            serde_json::json!({"identifier": "#273", "project_state": "Todo"}),
+        ]);
+
+        let plan = Orchestrator::new(config()).plan_dispatch(vec![parent]);
+
+        assert!(plan.selected.is_empty());
+        assert_eq!(plan.snapshot.skipped[0].identifier, "#243");
+        assert!(plan.snapshot.skipped[0]
+            .reason
+            .contains("blocked by incomplete native subissues"));
+        assert!(plan.snapshot.skipped[0].reason.contains("#273=Todo"));
+    }
+
+    #[test]
+    fn dispatches_parent_after_all_native_subissues_are_done() {
+        let parent = parent_issue_with_subissues(vec![
+            serde_json::json!({"identifier": "#272", "project_state": "Done"}),
+            serde_json::json!({"identifier": "#273", "project_state": "Done"}),
+        ]);
+
+        let plan = Orchestrator::new(config()).plan_dispatch(vec![parent]);
+
+        assert_eq!(plan.selected.len(), 1);
+        assert_eq!(plan.selected[0].identifier, "#243");
+    }
+
+    #[test]
+    fn treats_missing_native_subissue_project_state_as_incomplete() {
+        let parent = parent_issue_with_subissues(vec![
+            serde_json::json!({"identifier": "#272", "project_state": "Done"}),
+            serde_json::json!({"identifier": "#274", "state": "closed"}),
+        ]);
+
+        let plan = Orchestrator::new(config()).plan_dispatch(vec![parent]);
+
+        assert!(plan.selected.is_empty());
+        assert!(plan.snapshot.skipped[0]
+            .reason
+            .contains("#274=missing Project status"));
     }
 }

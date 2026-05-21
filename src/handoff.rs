@@ -17,6 +17,7 @@ pub struct IssueHandoffPlan {
     pub workspace_path: PathBuf,
     pub branch_name: String,
     pub pull_request: PullRequestHandoffPlan,
+    pub branch_target: BranchTargetEvidence,
     pub continuation: Option<ReworkContinuationEvidence>,
 }
 
@@ -27,6 +28,24 @@ pub struct PullRequestHandoffPlan {
     pub base_branch: String,
     pub issue_ref: String,
     pub body: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BranchTargetEvidence {
+    pub role: BranchTargetRole,
+    pub parent_issue: Option<String>,
+    pub parent_title: Option<String>,
+    pub parent_integration_branch: Option<String>,
+    pub pull_request_base_branch: String,
+    pub parent_final_base_branch: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BranchTargetRole {
+    SingleIssue,
+    Subissue,
+    ParentIssue,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,6 +62,7 @@ pub struct AgentReviewHandoffEvidence {
     pub workspace_key: String,
     pub workspace_path: PathBuf,
     pub branch_name: String,
+    pub branch_target: BranchTargetEvidence,
     pub pull_request_url: Option<String>,
     pub project_pr_link_verified: Option<bool>,
     pub pull_request_is_draft: Option<bool>,
@@ -119,6 +139,7 @@ impl AgentReviewHandoffEvidence {
             workspace_key: plan.workspace_key.clone(),
             workspace_path: plan.workspace_path.clone(),
             branch_name: plan.branch_name.clone(),
+            branch_target: plan.branch_target.clone(),
             pull_request_url: None,
             project_pr_link_verified: None,
             pull_request_is_draft: None,
@@ -244,6 +265,11 @@ pub fn render_agent_review_handoff_workpad(
         format!("- Workspace key: `{}`", evidence.workspace_key),
         format!("- Workspace path: `{}`", evidence.workspace_path.display()),
         format!("- Branch: `{}`", evidence.branch_name),
+        format!("- Branch target role: `{:?}`", evidence.branch_target.role),
+        format!(
+            "- PR base branch: `{}`",
+            evidence.branch_target.pull_request_base_branch
+        ),
         format!(
             "- Pull request: `{}`",
             evidence.pull_request_url.as_deref().unwrap_or("missing")
@@ -282,6 +308,19 @@ pub fn render_agent_review_handoff_workpad(
 
     if let Some(blocker) = &evidence.no_pr_blocker {
         lines.push(format!("- No-PR blocker: {}", blocker));
+    }
+    if let Some(parent_issue) = &evidence.branch_target.parent_issue {
+        lines.push(format!("- Native parent issue: `{parent_issue}`"));
+    }
+    if let Some(parent_integration_branch) = &evidence.branch_target.parent_integration_branch {
+        lines.push(format!(
+            "- Parent integration branch: `{parent_integration_branch}`"
+        ));
+    }
+    if let Some(parent_final_base_branch) = &evidence.branch_target.parent_final_base_branch {
+        lines.push(format!(
+            "- Parent final PR base branch: `{parent_final_base_branch}`"
+        ));
     }
 
     if !report.missing.is_empty() {
@@ -330,6 +369,7 @@ pub fn plan_issue_handoff_for_profile(
         guard_branch_for_issue(existing_branch, &issue.identifier)?;
     }
 
+    let branch_target = branch_target_evidence(issue, base_branch);
     let branch_name = match issue.branch_name.as_deref() {
         Some(existing_branch) if is_rework => existing_branch.to_string(),
         None if let Some(continuation) = &continuation => continuation
@@ -346,14 +386,22 @@ pub fn plan_issue_handoff_for_profile(
                 issue_ref: issue.identifier.clone(),
                 pull_request_url: continuation.pull_request_url.clone(),
             })?,
+        _ if branch_target.role == BranchTargetRole::ParentIssue => branch_target
+            .parent_integration_branch
+            .clone()
+            .unwrap_or_else(|| branch_name_for_issue(&issue.identifier, &issue.title)),
         _ => branch_name_for_issue(&issue.identifier, &issue.title),
     };
 
     let workspace_key =
         profile_workspace_key_for_issue(profile_id, &issue.identifier, &issue.title);
     let workspace_path = workspace_root.join(&workspace_key);
-    let pull_request =
-        PullRequestHandoffPlan::new(&issue.identifier, &issue.title, &branch_name, base_branch);
+    let pull_request = PullRequestHandoffPlan::new_with_branch_target(
+        &issue.identifier,
+        &issue.title,
+        &branch_name,
+        &branch_target,
+    );
 
     Ok(IssueHandoffPlan {
         issue_ref: issue.identifier.clone(),
@@ -362,8 +410,112 @@ pub fn plan_issue_handoff_for_profile(
         workspace_path,
         branch_name,
         pull_request,
+        branch_target,
         continuation,
     })
+}
+
+pub fn branch_target_evidence(
+    issue: &TrackerIssue,
+    default_base_branch: &str,
+) -> BranchTargetEvidence {
+    if let Some(parent_issue) = native_parent_issue(issue) {
+        let parent_title = native_parent_title(issue);
+        let parent_integration_branch =
+            explicit_parent_integration_branch(issue).unwrap_or_else(|| {
+                parent_integration_branch_name(&parent_issue, parent_title.as_deref())
+            });
+        return BranchTargetEvidence {
+            role: BranchTargetRole::Subissue,
+            parent_issue: Some(parent_issue),
+            parent_title,
+            parent_integration_branch: Some(parent_integration_branch.clone()),
+            pull_request_base_branch: parent_integration_branch,
+            parent_final_base_branch: Some(default_base_branch.to_string()),
+        };
+    }
+
+    if has_native_subissues(issue) {
+        let parent_integration_branch =
+            explicit_parent_integration_branch(issue).unwrap_or_else(|| {
+                parent_integration_branch_name(&issue.identifier, Some(&issue.title))
+            });
+        return BranchTargetEvidence {
+            role: BranchTargetRole::ParentIssue,
+            parent_issue: Some(issue.identifier.clone()),
+            parent_title: Some(issue.title.clone()),
+            parent_integration_branch: Some(parent_integration_branch),
+            pull_request_base_branch: default_base_branch.to_string(),
+            parent_final_base_branch: Some(default_base_branch.to_string()),
+        };
+    }
+
+    BranchTargetEvidence {
+        role: BranchTargetRole::SingleIssue,
+        parent_issue: None,
+        parent_title: None,
+        parent_integration_branch: None,
+        pull_request_base_branch: default_base_branch.to_string(),
+        parent_final_base_branch: None,
+    }
+}
+
+pub fn expected_merge_base_branch_for_issue(
+    issue: &TrackerIssue,
+    default_base_branch: &str,
+) -> String {
+    branch_target_evidence(issue, default_base_branch).pull_request_base_branch
+}
+
+pub fn parent_integration_branch_name(parent_issue: &str, parent_title: Option<&str>) -> String {
+    let issue_slug = issue_slug(parent_issue);
+    let title_slug = parent_title
+        .map(title_slug)
+        .filter(|slug| slug != "untitled")
+        .unwrap_or_else(|| "parent-integration".into());
+    format!("integration/{issue_slug}-{title_slug}")
+}
+
+fn native_parent_issue(issue: &TrackerIssue) -> Option<String> {
+    project_field_string(issue, "Native Parent Issue").filter(|value| !value.trim().is_empty())
+}
+
+fn native_parent_title(issue: &TrackerIssue) -> Option<String> {
+    project_field_string(issue, "Native Parent Title").filter(|value| !value.trim().is_empty())
+}
+
+fn has_native_subissues(issue: &TrackerIssue) -> bool {
+    project_field_string(issue, "Native Subissues")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn explicit_parent_integration_branch(issue: &TrackerIssue) -> Option<String> {
+    project_field_string(issue, "Parent Integration Branch")
+        .or_else(|| project_field_string(issue, "parent_integration_branch"))
+        .or_else(|| {
+            parent_integration_branch_from_text(issue.description.as_deref().unwrap_or_default())
+        })
+}
+
+fn project_field_string(issue: &TrackerIssue, name: &str) -> Option<String> {
+    issue
+        .project_fields
+        .get(name)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn parent_integration_branch_from_text(text: &str) -> Option<String> {
+    text.split(|ch: char| ch.is_whitespace() || ch == '`' || ch == '"' || ch == '\'')
+        .find(|token| token.starts_with("integration/issue-"))
+        .map(|token| {
+            token
+                .trim_matches(|ch: char| matches!(ch, ',' | '.' | ')' | ']' | '}'))
+                .to_string()
+        })
 }
 
 fn rework_continuation_evidence(
@@ -530,24 +682,69 @@ pub fn issue_number(issue_identifier: &str) -> Option<String> {
 
 impl PullRequestHandoffPlan {
     pub fn new(issue_ref: &str, issue_title: &str, head_branch: &str, base_branch: &str) -> Self {
+        let branch_target = BranchTargetEvidence {
+            role: BranchTargetRole::SingleIssue,
+            parent_issue: None,
+            parent_title: None,
+            parent_integration_branch: None,
+            pull_request_base_branch: base_branch.to_string(),
+            parent_final_base_branch: None,
+        };
+        Self::new_with_branch_target(issue_ref, issue_title, head_branch, &branch_target)
+    }
+
+    pub fn new_with_branch_target(
+        issue_ref: &str,
+        issue_title: &str,
+        head_branch: &str,
+        branch_target: &BranchTargetEvidence,
+    ) -> Self {
         let title = format!("{}: {}", issue_ref.trim(), issue_title.trim());
-        let body = render_pull_request_body(issue_ref, issue_title);
+        let body = render_pull_request_body(issue_ref, issue_title, branch_target);
 
         Self {
             title,
             head_branch: head_branch.into(),
-            base_branch: base_branch.into(),
+            base_branch: branch_target.pull_request_base_branch.clone(),
             issue_ref: issue_ref.into(),
             body,
         }
     }
 }
 
-fn render_pull_request_body(issue_ref: &str, issue_title: &str) -> String {
+fn render_pull_request_body(
+    issue_ref: &str,
+    issue_title: &str,
+    branch_target: &BranchTargetEvidence,
+) -> String {
+    let mut branch_lines = vec![
+        format!("- Branch target role: `{:?}`", branch_target.role),
+        format!(
+            "- PR base branch: `{}`",
+            branch_target.pull_request_base_branch
+        ),
+    ];
+    if let Some(parent_issue) = &branch_target.parent_issue {
+        branch_lines.push(format!("- Native parent issue: `{parent_issue}`"));
+    }
+    if let Some(parent_integration_branch) = &branch_target.parent_integration_branch {
+        branch_lines.push(format!(
+            "- Parent integration branch: `{parent_integration_branch}`"
+        ));
+    }
+    if let Some(parent_final_base_branch) = &branch_target.parent_final_base_branch {
+        branch_lines.push(format!(
+            "- Parent final PR base branch: `{parent_final_base_branch}`"
+        ));
+    }
+
     format!(
         "\
 ## Summary
 - Implements {issue_ref}: {issue_title}.
+
+## Branch Target Evidence
+{}
 
 ## Verification
 - cargo test
@@ -558,7 +755,8 @@ fn render_pull_request_body(issue_ref: &str, issue_title: &str) -> String {
 Main implementation work stops at Agent Review. Human Review remains reserved for an independent Review Agent after passing evidence is recorded.
 
 Closes {issue_ref}
-"
+",
+        branch_lines.join("\n")
     )
 }
 
@@ -667,6 +865,69 @@ mod tests {
         );
         assert_eq!(plan.pull_request.head_branch, plan.branch_name);
         assert_eq!(plan.pull_request.base_branch, "main");
+        assert_eq!(plan.branch_target.role, BranchTargetRole::SingleIssue);
+    }
+
+    #[test]
+    fn subissue_handoff_targets_parent_integration_branch() {
+        let mut issue = issue();
+        issue.identifier = "#274".into();
+        issue.title = "Teach lane flows about parent integration branches".into();
+        issue
+            .project_fields
+            .insert("Native Parent Issue".into(), serde_json::json!("#243"));
+        issue.project_fields.insert(
+            "Native Parent Title".into(),
+            serde_json::json!("Complete parent/subissue orchestration umbrella gating"),
+        );
+        issue.project_fields.insert(
+            "Parent Integration Branch".into(),
+            serde_json::json!("integration/issue-243-parent-subissue-orchestration"),
+        );
+
+        let plan = plan_issue_handoff(Path::new("/tmp/jade-workspaces"), &issue, "main").unwrap();
+
+        assert_eq!(plan.branch_target.role, BranchTargetRole::Subissue);
+        assert_eq!(
+            plan.branch_name,
+            "feature/issue-274-teach-lane-flows-about-parent-integration-branches"
+        );
+        assert_eq!(
+            plan.pull_request.base_branch,
+            "integration/issue-243-parent-subissue-orchestration"
+        );
+        assert!(plan.pull_request.body.contains(
+            "Parent integration branch: `integration/issue-243-parent-subissue-orchestration`"
+        ));
+    }
+
+    #[test]
+    fn parent_issue_handoff_uses_integration_branch_head_and_main_base() {
+        let mut issue = issue();
+        issue.identifier = "#243".into();
+        issue.title = "Complete parent/subissue orchestration umbrella gating".into();
+        issue.project_fields.insert(
+            "Native Subissues".into(),
+            serde_json::json!("#272, #273, #274"),
+        );
+        issue.project_fields.insert(
+            "Parent Integration Branch".into(),
+            serde_json::json!("integration/issue-243-parent-subissue-orchestration"),
+        );
+
+        let plan = plan_issue_handoff(Path::new("/tmp/jade-workspaces"), &issue, "main").unwrap();
+
+        assert_eq!(plan.branch_target.role, BranchTargetRole::ParentIssue);
+        assert_eq!(
+            plan.branch_name,
+            "integration/issue-243-parent-subissue-orchestration"
+        );
+        assert_eq!(plan.pull_request.head_branch, plan.branch_name);
+        assert_eq!(plan.pull_request.base_branch, "main");
+        assert_eq!(
+            plan.branch_target.parent_final_base_branch.as_deref(),
+            Some("main")
+        );
     }
 
     #[test]

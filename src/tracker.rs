@@ -2003,9 +2003,16 @@ fn replace_or_append_workpad_entry(
     let content = strip_workpad_marker(existing, marker);
     let mut replaced = false;
     let mut entries = Vec::new();
+    let incoming_is_canonical_workpad = is_canonical_workpad_entry(incoming_entry);
 
     for entry in split_workpad_entries(content) {
-        if workpad_entry_key(&entry).as_deref() == Some(incoming_key) {
+        let should_replace = if incoming_is_canonical_workpad {
+            is_canonical_workpad_entry(&entry)
+        } else {
+            workpad_entry_key(&entry).as_deref() == Some(incoming_key)
+        };
+
+        if should_replace {
             if !replaced {
                 entries.push(incoming_entry.to_string());
                 replaced = true;
@@ -2081,6 +2088,17 @@ fn workpad_entry_key(entry: &str) -> Option<String> {
         Some(h3) => format!("{h2}\n{h3}"),
         None => h2,
     })
+}
+
+fn is_canonical_workpad_entry(entry: &str) -> bool {
+    workpad_h2(entry).is_some_and(|h2| matches!(h2, "## Jade Symphony Workpad" | "## Workpad"))
+}
+
+fn workpad_h2(entry: &str) -> Option<&str> {
+    entry
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("## ") && !line.starts_with("### "))
 }
 
 fn strip_workpad_marker<'a>(markdown: &'a str, marker: &str) -> &'a str {
@@ -4284,6 +4302,24 @@ Prompt
         assert!(body.contains("- final"));
         assert!(!body.contains("- first"));
         assert!(!body.contains("- duplicate"));
+        assert!(body.contains("## Agent Review"));
+    }
+
+    #[test]
+    fn merge_workpad_body_replaces_legacy_workpad_and_stale_pr_evidence() {
+        let marker = "<!-- jade-symphony-workpad -->";
+        let existing = format!(
+            "{marker}\n## Workpad\n\n### Workspace Evidence\n- Workspace path: `/tmp/old`\n\n---\n\n## Jade Symphony Workpad\n\n### Planned Handoff\n- Live PR: `not-created`\n\n---\n\n## Agent Review\n\n### Manual Review Evidence\npass"
+        );
+        let incoming =
+            "## Jade Symphony Workpad\n\n### Planned Handoff\n- Live PR: `https://github.com/Alive24/jade-symphony/pull/337`";
+
+        let body = merge_workpad_body(&existing, incoming, marker);
+
+        assert_eq!(body.matches("## Jade Symphony Workpad").count(), 1);
+        assert!(!body.contains("## Workpad"));
+        assert!(!body.contains("not-created"));
+        assert!(body.contains("https://github.com/Alive24/jade-symphony/pull/337"));
         assert!(body.contains("## Agent Review"));
     }
 

@@ -21,6 +21,7 @@ pub mod profiles;
 pub mod prompt;
 pub mod quality_gate;
 pub mod review;
+pub mod review_status;
 pub mod rework;
 pub mod runtime_state;
 pub mod session_registry;

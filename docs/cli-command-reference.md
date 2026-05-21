@@ -89,13 +89,19 @@ cargo run -- clean audit workflows/jade-symphony.md
 Use `--display tui` for an opt-in operator panel on `main loop`, `project state`,
 and `doctor`. The default output stays line-oriented for logs and scripts.
 
-`main loop --max-concurrent N` is a supervised planning and claim-locking slice. Dry-run
-mode previews up to `N` eligible main-lane issues after skipping items whose
-`Main Agent` Project field is already owned by another worker. Write mode still
-processes one main work item at a time because the runtime state tracks one
-active issue, but it uses the same lane claim check and stamps `Main Agent`
-before tracker mutation. `main loop`, `review loop`, and `merge once` print
-compact `Latest:` status bars in addition to their detailed line logs.
+`main loop --max-concurrent N` is a supervised planning, claim-locking, and
+runtime-slot boundary. Dry-run mode previews up to `N` eligible main-lane issues
+after skipping items whose `Main Agent` Project field is already owned by
+another worker. Write mode counts active Main runtime entries first, then claims
+and starts up to the remaining capacity in the same bounded loop iteration. The
+runtime-state file is backward-compatible with the old single active issue
+shape, but can now persist multiple active Main worker entries without
+overwriting another issue's session, workspace, retry, or transition evidence.
+`doctor` evaluates those runtime entries per issue so legitimate parallel Main
+workers do not create false `runtime_active_issue_disagrees` warnings while
+still surfacing missing, stale, or conflicting ownership. `main loop`, `review
+loop`, and `merge once` print compact `Latest:` status bars in addition to their
+detailed line logs.
 `main loop --write`, `review loop --write`, and `merge loop --write` also
 enforce a clean canonical launch checkout before the first tracker mutation.
 Tracked dirty files block the lane; recognized untracked
@@ -214,8 +220,9 @@ These commands can mutate live tracker state and require `--write`.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `project set-state` | Move one issue to a normalized workflow state. | Refuses `Human Review` from the main implementation role. |
-| `project workpad` | Upsert the canonical Main Agent Workpad marker comment. | Use for Main implementation evidence, including Main-lane `Rework` implementation rounds. Append-only `Jade Symphony Rework Run` comments explain why Rework was triggered; Review, Merge, Human Review, and Doctor evidence should remain append-only timeline comments created by their lane commands. |
+| `project workpad` | Upsert the canonical Main Agent Workpad marker comment. | Use for Main implementation evidence, including Main-lane `Rework` implementation rounds. Repeated canonical workpad writes replace the prior canonical workpad entry instead of creating multiple top-level `Jade Symphony Workpad` blocks. Append-only `Jade Symphony Rework Run` comments explain why Rework was triggered; Review, Merge, Human Review, and Doctor evidence should remain append-only timeline comments created by their lane commands. |
 | `project timeline-comment` | Append one standalone issue timeline comment from a Markdown file. | Use for lane evidence that must not overwrite the Main Agent Workpad, especially Human Review decision notes or operator-authored Doctor/repair evidence. |
+| `project link-pr` | Repair PR linkage when Project readback cannot already see the PR. | First checks linked-PR readback and skips the fallback comment when linkage is already visible; if GitHub Project v2 still cannot expose the PR, it may post a linkage repair comment as a fallback. |
 | `create-follow-up` | Create a follow-up issue from a body file. | Lower-level creation path; prefer `forge create` for quality-gated issues. |
 | `project add` | Add an existing GitHub issue node to the configured Project. | Initializes configured Project status where supported. |
 
@@ -264,7 +271,7 @@ cargo run -- project inspect workflows/jade-symphony.md '#123'
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `forge validate` | Validate a body file, an existing issue, or candidate title/body content against live issue context for `Backlog` or `Todo`. | Read-only; `Todo` uses the full Issue Quality Gate, `Backlog` uses the lighter seed gate; output separates candidate contract gaps from live context gaps. |
-| `forge create` | Create a Project-backed issue in `Backlog` or `Todo`. | Dry-run by default unless `--write` is supplied; initializes the Project item to the requested status and verifies readback; live `Todo` creation requires `--assignee`. |
+| `forge create` | Create a Project-backed issue in `Backlog` or `Todo`. | Dry-run by default unless `--write` is supplied; initializes the Project item to the requested status and verifies readback; write success keeps `issue_id` and adds readback issue number, URL, and `project_status` when the tracker provides them; live `Todo` creation requires `--assignee`. |
 | `forge promote` | Promote one existing Backlog issue in place by editing title/body, writing a structured Promotion Note comment, then moving it to `Todo`. | Dry-run by default unless `--write` is supplied; requires structured note inputs, keeps the `Todo` status mutation last, and reports the checkpoint where any failure stopped. |
 | `forge rework` | Revise one live `Human Review` issue into an explicit `Rework` contract. | Dry-run by default unless `--write` is supplied; requires a replacement title/body, evidence file, and operator confirmation; rejects active lane claims and keeps the `Rework` status mutation last. |
 
@@ -280,6 +287,16 @@ cargo run -- forge promote '#241' --workflow workflows/jade-symphony.md --title 
 cargo run -- forge promote '#241' --workflow examples/promote-fixture-workflow.md --title "Harden Issue Forge Reflect promotion fixture" --body-file examples/fixtures/promoted-issue.md --operator-confirmation "promote it" --decision "Keep the promotion in place." --scope-change "Backlog seed becomes an executable Todo issue." --dependency-context "Dependencies: none." --readback-summary "Dry-run preview verified before write." --dry-run
 cargo run -- forge rework '#282' --workflow workflows/jade-symphony.md --title "Rework: revised execution contract" --body-file /tmp/rework-body.md --evidence-file /tmp/rework-evidence.md --operator-confirmation "route Human Review back to Rework" --dry-run
 ```
+
+Successful `forge create --write` output is a single parseable line. It keeps
+the machine-facing tracker node id while exposing live tracker readback metadata
+for operator lookup:
+
+```text
+forge_create=ok issue_id=I_kw... issue=#305 url=https://github.com/Alive24/jade-symphony/issues/305 status=Backlog project_status=Backlog project_fields=0
+```
+
+Dry-run output does not invent issue numbers or URLs.
 
 Use `forge validate --issue '#123'` without overrides to validate the current
 live issue body. Add `--title` plus `--body` or `--body-file` when validating a
@@ -342,6 +359,7 @@ changes.
 | `review fake` | Fixture/fake review transition helper. | Local testing path. |
 | `review once` | Run one configured review backend for one issue. | Direct backend command for one issue. |
 | `review loop` | Bounded review worker selection/reconciliation. | For `gemini-cli`, runs headless Gemini by default with stdin prompt transport, JSON output capture, configured model/tools, and durable review-job evidence. |
+| `review status` | Read review-loop and review-runner status from local ledgers, runtime/session registry, and Project claim cross-checks. | Read-only; never claims, repairs, retries, kills jobs, writes workpads, or changes Project state. |
 | `review claim` | Claim one `Agent Review` item's `Review Agent` text field for manual/operator review. | Requires `--worker` and `--write`; refuses non-`Agent Review` issues and writes a structured, round-trip-validated claim pointer. |
 | `review pass` | Record manual independent review pass evidence and move to `Human Review`. | Requires `--write`, a durable evidence file containing the exact current `Review Agent` claim, and preserves the field as terminal pass evidence. |
 | `review reject` | Record failed/inconclusive manual review evidence and route to `Agent Review`, `Rework`, or `Need Human Input`. | Refuses `Human Review`, requires exact claim evidence, and preserves the field as terminal reject/failed evidence. |
@@ -357,6 +375,9 @@ Example:
 ```bash
 cargo run -- review loop examples/review-fixture-workflow.md --max-iterations 1 --dry-run
 cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --write
+cargo run -- review status workflows/jade-symphony.md
+cargo run -- review status workflows/jade-symphony.md --issue '#226' --recent 3 --verbose
+cargo run -- review status workflows/jade-symphony.md --json
 cargo run -- review claim workflows/jade-symphony.md '#226' --worker "Manual Gemini Review" --write
 cargo run -- session start workflows/jade-symphony.md '#226' --lane review --run <RUN_ID> --write
 cargo run -- session list workflows/jade-symphony.md

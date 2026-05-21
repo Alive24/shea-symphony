@@ -132,13 +132,20 @@ Jade Symphony uses two issue-comment evidence surfaces:
 - `Main Agent Workpad`: one persistent marker comment owned by the Main Agent.
   It is updated in place for implementation plan, work log, verification, PR,
   workspace, and handoff evidence. Main-lane `Rework` continues to update this
-  same Workpad as the current-state implementation surface.
+  same Workpad as the current-state implementation surface. New canonical Main
+  Workpad writes supersede older canonical Workpad blocks so stale planned PR
+  fields such as `Live PR: not-created` do not survive after live PR evidence
+  exists.
 - Append-only timeline comments: every Review, Rework, Merge, Human Review, and
   Doctor run writes a standalone comment with a human-readable GMT timestamp,
   run id, lane, actor, input state, target state, result, PR when relevant, and
   evidence summary. `Jade Symphony Rework Run` comments explain why the issue
   entered `Rework`; they do not replace the Main Agent Workpad for
   implementation evidence.
+
+PR linkage repair should be quiet when normal GitHub/Project readback already
+shows the PR. A visible linkage repair comment is a fallback for cases where
+GitHub Project v2 cannot otherwise expose the PR, not routine timeline noise.
 
 Review, Merge, Human Review, and Doctor flows must not overwrite or restructure
 the Main Agent Workpad. Rework-trigger diagnostics should reference Main
@@ -178,6 +185,30 @@ review_lane:
 ```bash
 target/debug/jade-symphony review loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
+
+During supervised review-loop dogfood, use the read-only status surface before
+dropping to raw logs or process inspection:
+
+```bash
+target/debug/jade-symphony review status workflows/jade-symphony.md
+target/debug/jade-symphony review status workflows/jade-symphony.md --issue '#<issue>' --recent 3 --verbose
+target/debug/jade-symphony review status workflows/jade-symphony.md --json
+```
+
+Default output is a compact table of running review slots and recent terminal
+jobs. It includes issue, title when available, job id, backend, pid when known,
+elapsed time, artifact and ledger pointers, claim summary, last event or
+decision, outcome, and the last five sanitized stderr lines in a short detail
+block. `--json` prints the complete structured payload for scripts. The command
+does not mutate Project state, claims, workpads, ledgers, or processes; it only
+composes local review job ledgers, runtime/session registry evidence, and
+Project `Review Agent` claim readbacks.
+
+Use the anomaly block to decide the next human action. It calls out stale
+Project claims without active local jobs, missing or dead pids, long-running
+jobs past the configured review timeout, backend binary/auth/configuration
+failures, missing artifacts, inconclusive or needs-rework outcomes, and jobs
+that still appear active after the issue left `Agent Review`.
 
 For supervised manual review terminals, first use
 `review claim WORKFLOW '#issue' --worker <worker> --write` on an `Agent Review`
@@ -445,11 +476,17 @@ Interrupted tmux recovery flow:
    `needs_human_decision`; completed sessions and terminal clean worktrees may
    become cleanup candidates.
 
-For supervised parallel operators, pass `--max-concurrent N` to preview eligible slots and
-apply lane-specific claim checks. Main work uses the `Main Agent` Project field
-as a soft claim-lock hint while still processing one active runtime issue per
-loop tick. Merge work uses the `Merging Agent` Project field and can process
-multiple guarded merge slots in one bounded loop.
+For supervised parallel operators, pass `--max-concurrent N` to preview eligible
+slots and apply lane-specific claim checks. Main work uses the `Main Agent`
+Project field as the claim lock and the runtime-state file as the local worker
+slot ledger. In write mode, `main loop` first counts active Main runtime entries
+that still point at `In Progress` issues, archives clean stale handoff entries,
+and then starts up to the remaining capacity in the same bounded iteration.
+Existing single-entry runtime-state files still load, but once multiple Main
+workers are active the file stores an `active_workers` list so one issue cannot
+overwrite another issue's tmux/session evidence. Merge work uses the `Merging
+Agent` Project field and can process multiple guarded merge slots in one
+bounded loop.
 Lane claim fields are latest-run audit pointers, not append-only logs. New
 values use `v=1 lane=<main|review|merge> actor=<codex|gemini|claude|human>
 worker=<worker> source=<loop|manual|goal> issue=#N run=<id>

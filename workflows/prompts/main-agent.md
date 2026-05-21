@@ -121,7 +121,9 @@ question, but do not edit files under
 
 Use the configured workpad marker and keep durable Main implementation evidence
 in one persistent Main Agent Workpad comment. Keep it close to the reference
-workpad shape and update it in place throughout execution.
+workpad shape and update it in place throughout execution. Do not create
+competing top-level `Jade Symphony Workpad` blocks; supersede stale planned PR
+or handoff lines with current evidence before status handoff.
 
 Main-lane `Rework` is still Main implementation work. When this issue is in
 `Rework` because Agent Review findings or Human Review contract revision require

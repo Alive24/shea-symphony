@@ -371,7 +371,7 @@ pub fn render_workspace_ensure_workpad(
                 .map(|index| description[index..].trim())
         })
         .map(str::to_string)
-        .unwrap_or_else(|| format!("{marker}\n## Workpad"));
+        .unwrap_or_else(|| format!("{marker}\n## Jade Symphony Workpad"));
 
     let block = format!(
         "<!-- jade-symphony-workspace-ensure -->\n### Workspace Evidence\n- Issue: `{}`\n- Pull request: `{}`\n- Branch/ref: `{}`\n- Workspace path: `{}`\n- Action: `{}`\n- Source command: `workspace ensure`\n- Validation result: `clean local git worktree for Review/Merge inspection`\n<!-- /jade-symphony-workspace-ensure -->",

@@ -272,6 +272,17 @@ These commands can mutate live tracker state and require `--write`.
 | `create-follow-up` | Create a follow-up issue from a body file. | Lower-level creation path; prefer `forge create` for quality-gated issues. |
 | `project add` | Add an existing GitHub issue node to the configured Project. | Initializes configured Project status where supported. |
 
+Transient GitHub REST or GraphQL failures after a write are reconciled with a
+readback before the command fails. For claim fields, workpads, timeline
+comments, Project status, merge completion, and issue closure the CLI prints
+`tracker_recovery action=recovered ... next=continue` when readback proves the
+mutation landed. If readback cannot prove the outcome, the command fails with
+`recoverable_tracker_mutation_uncertain` and a `next=` hint; rerun the same
+lane command after waiting or read back the issue through `project issue`.
+Append-only lane evidence carries a hidden recovery marker, so rerunning the
+same lane/run skips already-recorded evidence instead of posting a duplicate
+large comment.
+
 Examples:
 
 ```bash

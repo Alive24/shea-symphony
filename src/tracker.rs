@@ -189,7 +189,15 @@ pub fn classify_project_state_failure_message(message: &str) -> ProjectStateFail
         || normalized.contains("http 403")
     {
         ProjectStateFailureKind::Auth
-    } else if normalized.contains("could not resolve host")
+    } else if normalized.contains("http 500")
+        || normalized.contains("http 502")
+        || normalized.contains("http 503")
+        || normalized.contains("http 504")
+        || normalized.contains("bad gateway")
+        || normalized.contains("service unavailable")
+        || normalized.contains("gateway timeout")
+        || normalized.contains("internal server error")
+        || normalized.contains("could not resolve host")
         || normalized.contains("failed to connect")
         || normalized.contains("connection timed out")
         || normalized.contains("connection reset")
@@ -5072,6 +5080,12 @@ Prompt
         );
         assert_eq!(
             classify_project_state_failure_message("could not resolve host api.github.com"),
+            ProjectStateFailureKind::Network
+        );
+        assert_eq!(
+            classify_project_state_failure_message(
+                "GitHub GraphQL operation failed: HTTP 502 Bad Gateway"
+            ),
             ProjectStateFailureKind::Network
         );
         assert_eq!(

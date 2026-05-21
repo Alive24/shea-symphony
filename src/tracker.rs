@@ -564,7 +564,9 @@ impl TrackerAdapter for GithubProjectV2Adapter {
                 return Ok(None);
             }
             self.enrich_native_subissue_project_statuses(std::slice::from_mut(&mut issue))?;
-            client.enrich_native_issue_blockers(std::slice::from_mut(&mut issue))?;
+            if github_issue_needs_native_blocker_prefetch(&issue, &self.config) {
+                client.enrich_native_issue_blockers(std::slice::from_mut(&mut issue))?;
+            }
             return Ok(Some(issue));
         }
 
@@ -577,9 +579,11 @@ impl TrackerAdapter for GithubProjectV2Adapter {
             .map(|mut issue| {
                 if self.fixture_issues.is_empty() && self.config.tracker.fixture_path.is_none() {
                     let client = GithubProjectV2GhClient::new(&self.config);
-                    client.enrich_native_subissues(std::slice::from_mut(&mut issue))?;
+                    self.enrich_native_subissue_project_statuses(std::slice::from_mut(&mut issue))?;
                     enrich_native_subissue_project_statuses_for_issue(&mut issue, &project_states);
-                    client.enrich_native_issue_blockers(std::slice::from_mut(&mut issue))?;
+                    if github_issue_needs_native_blocker_prefetch(&issue, &self.config) {
+                        client.enrich_native_issue_blockers(std::slice::from_mut(&mut issue))?;
+                    }
                 }
                 Ok(issue)
             })

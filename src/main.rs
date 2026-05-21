@@ -7591,7 +7591,13 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 break;
             }
         }
-        let issues = adapter.list_dispatchable_issues()?;
+        let recovery_only =
+            options.write && options.recover && !recoverable_runtime_states.is_empty();
+        let issues = if recovery_only {
+            Vec::new()
+        } else {
+            adapter.list_dispatchable_issues()?
+        };
         let orchestrator = Orchestrator::new(config.clone());
         let mut plan = orchestrator.plan_dispatch(issues);
         plan.integration_gaps.extend(adapter.integration_gaps());
@@ -7620,19 +7626,15 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         let worker_id = worker_identity(&config, WorkerLane::Main);
         let mut selected = Vec::new();
         if options.write && options.recover {
-            for state in &recoverable_runtime_states {
-                let Some(active_issue) = state.active_issue.as_ref() else {
-                    continue;
-                };
+            for candidate in &recoverable_runtime_states {
                 if selected.len() >= available_slots {
                     break;
                 }
-                let Some(issue) = adapter.get_issue(&active_issue.identifier)? else {
-                    continue;
-                };
-                if normalize_state(&issue.state) != "in progress" {
-                    continue;
-                }
+                let issue = candidate.issue.clone();
+                println!(
+                    "run_loop_recovery_candidate issue={} attempt={} reason={}",
+                    issue.identifier, candidate.state.attempt_count, candidate.reason
+                );
                 if selected.iter().any(|selected_issue: &TrackerIssue| {
                     selected_issue.identifier == issue.identifier
                 }) {
@@ -7839,9 +7841,13 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
 
-            let latest = adapter
-                .get_issue(&issue.identifier)?
-                .ok_or_else(|| format!("issue disappeared before claim: {}", issue.identifier))?;
+            let latest = if options.recover && normalize_state(&issue.state) == "in progress" {
+                issue.clone()
+            } else {
+                adapter.get_issue(&issue.identifier)?.ok_or_else(|| {
+                    format!("issue disappeared before claim: {}", issue.identifier)
+                })?
+            };
             let eligibility =
                 pool_claim_eligibility(&latest, WorkerLane::Main, &worker_id, &config);
             if !eligibility.is_claimable() {
@@ -8957,12 +8963,19 @@ enum ResumePreflightAction {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 struct RuntimePreflightSummary {
     retained_states: Vec<RuntimeState>,
     active_main_workers: usize,
-    recoverable_states: Vec<RuntimeState>,
+    recoverable_states: Vec<RuntimeRecoveryCandidate>,
     blocked: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct RuntimeRecoveryCandidate {
+    state: RuntimeState,
+    issue: TrackerIssue,
+    reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -9255,26 +9268,58 @@ fn run_loop_resume_preflight_many(
             continue;
         }
 
-        if recover && runtime_state_points_at_in_progress_issue(adapter, state)? {
-            if let Some(reason) = runtime_recovery_reason(config, state, now_ms)? {
-                let issue_identifier = state
-                    .active_issue
-                    .as_ref()
-                    .map(|issue| issue.identifier.as_str())
-                    .unwrap_or("unknown");
-                append_runtime_supervision_event(
-                    config,
-                    Some(state),
-                    "RuntimeRecoverable",
-                    &format!("issue={issue_identifier} reason={reason}"),
-                )?;
-                println!(
-                    "run_loop_resume_preflight action=recoverable issue={} reason={}",
-                    issue_identifier, reason
-                );
-                recoverable_states.push(state.clone());
-                retained_states.push(state.clone());
-                continue;
+        if recover {
+            let in_progress_issue = match runtime_state_in_progress_issue(adapter, state) {
+                Ok(issue) => issue,
+                Err(error) => {
+                    let issue_identifier = state
+                        .active_issue
+                        .as_ref()
+                        .map(|issue| issue.identifier.as_str())
+                        .unwrap_or("unknown");
+                    let reason = format!(
+                        "tracker_read_failed: {}",
+                        compact_evidence(&error.to_string())
+                    );
+                    append_runtime_supervision_event(
+                        config,
+                        Some(state),
+                        "RuntimeRecoverReadSkipped",
+                        &format!("issue={issue_identifier} reason={reason}"),
+                    )?;
+                    println!(
+                        "run_loop_resume_preflight action=recover_read_skipped issue={} reason={}",
+                        issue_identifier, reason
+                    );
+                    retained_states.push(state.clone());
+                    continue;
+                }
+            };
+            if let Some(issue) = in_progress_issue {
+                if let Some(reason) = runtime_recovery_reason(config, state, now_ms)? {
+                    let issue_identifier = state
+                        .active_issue
+                        .as_ref()
+                        .map(|issue| issue.identifier.as_str())
+                        .unwrap_or("unknown");
+                    append_runtime_supervision_event(
+                        config,
+                        Some(state),
+                        "RuntimeRecoverable",
+                        &format!("issue={issue_identifier} reason={reason}"),
+                    )?;
+                    println!(
+                        "run_loop_resume_preflight action=recoverable issue={} reason={}",
+                        issue_identifier, reason
+                    );
+                    recoverable_states.push(RuntimeRecoveryCandidate {
+                        state: state.clone(),
+                        issue,
+                        reason,
+                    });
+                    retained_states.push(state.clone());
+                    continue;
+                }
             }
         }
 
@@ -9335,20 +9380,29 @@ fn run_loop_resume_preflight_many(
                 stall,
             } => {
                 if recover {
+                    let Some(issue) = runtime_state_in_progress_issue(adapter, state)? else {
+                        retained_states.push(state.clone());
+                        continue;
+                    };
+                    let reason = format!(
+                        "runtime_stalled stalled_for_ms={} reason={}",
+                        stall.stalled_for_ms, stall.reason
+                    );
                     append_runtime_supervision_event(
                         config,
                         Some(state),
                         "RuntimeRecoverable",
-                        &format!(
-                            "issue={issue_identifier} stalled_for_ms={} reason={}",
-                            stall.stalled_for_ms, stall.reason
-                        ),
+                        &format!("issue={issue_identifier} reason={reason}"),
                     )?;
                     println!(
                         "run_loop_resume_preflight action=recoverable issue={} stalled_for_ms={}",
                         issue_identifier, stall.stalled_for_ms
                     );
-                    recoverable_states.push(state.clone());
+                    recoverable_states.push(RuntimeRecoveryCandidate {
+                        state: state.clone(),
+                        issue,
+                        reason,
+                    });
                     retained_states.push(state.clone());
                     continue;
                 }
@@ -9472,13 +9526,20 @@ fn runtime_state_points_at_in_progress_issue(
     adapter: &dyn jade_symphony::tracker::TrackerAdapter,
     state: &RuntimeState,
 ) -> Result<bool, Box<dyn std::error::Error>> {
+    Ok(runtime_state_in_progress_issue(adapter, state)?.is_some())
+}
+
+fn runtime_state_in_progress_issue(
+    adapter: &dyn jade_symphony::tracker::TrackerAdapter,
+    state: &RuntimeState,
+) -> Result<Option<TrackerIssue>, Box<dyn std::error::Error>> {
     let Some(active_issue) = state.active_issue.as_ref() else {
-        return Ok(false);
+        return Ok(None);
     };
     let Some(issue) = adapter.get_issue(&active_issue.identifier)? else {
-        return Ok(false);
+        return Ok(None);
     };
-    Ok(normalize_state(&issue.state) == "in progress")
+    Ok((normalize_state(&issue.state) == "in progress").then_some(issue))
 }
 
 fn stale_runtime_state_action(

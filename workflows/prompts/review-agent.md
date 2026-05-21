@@ -38,6 +38,11 @@ Project GraphQL or Project UI changes are break-glass only.
   transport and durable stdout/stderr/job-ledger evidence. Treat automatic
   headless review as report-only: the Jade Symphony CLI wrapper will record
   evidence and change state after the Gemini process exits.
+- If the Gemini backend itself reports quota, capacity, timeout, command,
+  auth, model, policy, or allowed-tools errors, report the failure plainly and
+  do not mutate Project state. The wrapper classifies backend health, preserves
+  retryable cases in `Agent Review`, and routes non-recovering configuration or
+  policy blockers to `Need Human Input`.
 - Supervised tmux Review sessions are optional manual fallback sessions; use
   them only when an operator explicitly starts `session start --lane review`.
 - Preserve the assigned structured claim `run=` in review evidence, timeline

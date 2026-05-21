@@ -74,12 +74,15 @@ use jade_symphony::quality_gate::{
     evaluate_issue_with_source_alignment, LlmGateMode, LlmGateOptions,
 };
 use jade_symphony::review::{
-    classify_review_freshness, gemini_cli_headless_args, poll_review_job_until_terminal,
-    render_review_freshness_workpad, render_review_workpad, review_gate_decision,
-    review_run_eligibility, transition_allowed_for_main_agent, transition_allowed_for_review_agent,
+    classify_review_freshness, gemini_cli_headless_args, gemini_prelaunch_health_diagnostic,
+    gemini_review_health_diagnostic, poll_review_job_until_terminal,
+    render_repeated_review_failure_workpad, render_review_freshness_workpad, render_review_workpad,
+    review_failure_signature, review_gate_decision, review_run_eligibility, review_worker_key,
+    transition_allowed_for_main_agent, transition_allowed_for_review_agent,
     write_review_job_ledger_record, FakeReviewBackend, FakeReviewOutcome, GeminiCliReviewBackend,
-    ReviewBackend, ReviewFreshnessInput, ReviewGateDecision, ReviewJob, ReviewJobState,
-    ReviewOutcome, ReviewRequest, ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
+    GeminiReviewRecoveryPolicy, ReviewBackend, ReviewFreshnessInput, ReviewGateDecision, ReviewJob,
+    ReviewJobState, ReviewOutcome, ReviewRepeatedFailureEvidence, ReviewRequest, ReviewReworkClass,
+    ReviewRunEligibility, ReviewStaleReason,
 };
 use jade_symphony::rework::rework_transition_expected;
 #[cfg(test)]
@@ -1791,7 +1794,15 @@ fn review_fake(
     };
     let backend = FakeReviewBackend::new(outcome);
     let job = backend.poll(backend.start(request)?)?;
-    apply_review_result(&config, adapter.as_ref(), &issue_ref, &issue, &job, None)?;
+    apply_review_result(
+        &config,
+        adapter.as_ref(),
+        &issue_ref,
+        &issue,
+        &job,
+        None,
+        None,
+    )?;
 
     let decision = review_gate_decision(&job);
     println!(
@@ -1847,7 +1858,15 @@ fn review_once(
             backend.poll(backend.start(request)?)?
         }
     };
-    apply_review_result(&config, adapter.as_ref(), &issue_ref, &issue, &job, None)?;
+    apply_review_result(
+        &config,
+        adapter.as_ref(),
+        &issue_ref,
+        &issue,
+        &job,
+        None,
+        None,
+    )?;
 
     let decision = review_gate_decision(&job);
     println!(
@@ -2578,9 +2597,81 @@ fn review_freshness(input: ReviewFreshnessInput) -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReviewLoopFailureMemory {
+    signature: String,
+    first_job_id: String,
+    previous_job_id: String,
+    repeat_count: usize,
+}
+
+fn review_loop_repeated_failure_evidence(
+    memory: &mut BTreeMap<String, ReviewLoopFailureMemory>,
+    issue: &TrackerIssue,
+    job: &ReviewJob,
+) -> Option<ReviewRepeatedFailureEvidence> {
+    if !matches!(job.state, ReviewJobState::Failed | ReviewJobState::TimedOut) {
+        memory.remove(&review_worker_key(issue, &job.backend));
+        return None;
+    }
+
+    let worker_key = review_worker_key(issue, &job.backend);
+    let signature = review_failure_signature(job)?;
+    match memory.get_mut(&worker_key) {
+        Some(previous) if previous.signature == signature => {
+            previous.repeat_count = previous.repeat_count.saturating_add(1);
+            let evidence = ReviewRepeatedFailureEvidence {
+                repeat_count: previous.repeat_count,
+                first_job_id: previous.first_job_id.clone(),
+                previous_job_id: previous.previous_job_id.clone(),
+                signature,
+            };
+            previous.previous_job_id = job.id.clone();
+            Some(evidence)
+        }
+        _ => {
+            memory.insert(
+                worker_key,
+                ReviewLoopFailureMemory {
+                    signature,
+                    first_job_id: job.id.clone(),
+                    previous_job_id: job.id.clone(),
+                    repeat_count: 1,
+                },
+            );
+            None
+        }
+    }
+}
+
+fn review_loop_recovery_delay_ms(
+    config: &RuntimeConfig,
+    job: &ReviewJob,
+    repeat_count: usize,
+) -> Option<u64> {
+    let diagnostic = gemini_review_health_diagnostic(job)?;
+    if !diagnostic.is_recoverable() {
+        return None;
+    }
+
+    let base_delay = diagnostic
+        .retry_after_ms
+        .unwrap_or(config.polling.interval_ms)
+        .max(1);
+    let multiplier = if diagnostic.retry_after_ms.is_some() {
+        1
+    } else {
+        let exponent = repeat_count.saturating_sub(1).min(5) as u32;
+        2u64.saturating_pow(exponent)
+    };
+    let cap = config.agent.max_retry_backoff_ms.max(1);
+    Some(base_delay.saturating_mul(multiplier).min(cap).max(1))
+}
+
 fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
     let limit = options.iteration_limit();
     let mut iterations = 0usize;
+    let mut failure_memory = BTreeMap::<String, ReviewLoopFailureMemory>::new();
 
     loop {
         if let Some(max) = limit {
@@ -2831,6 +2922,8 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
             let ledger_path =
                 write_review_job_ledger_record(&config.observability.logs_root, &latest, &job)?;
             job.ledger_path = Some(ledger_path.clone());
+            let repeat_evidence =
+                review_loop_repeated_failure_evidence(&mut failure_memory, &latest, &job);
             apply_review_result(
                 &config,
                 adapter.as_ref(),
@@ -2838,6 +2931,7 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                 &latest,
                 &job,
                 Some(&claim),
+                repeat_evidence.as_ref(),
             )?;
             let decision = review_gate_decision(&job);
             println!(
@@ -2849,6 +2943,41 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                 decision.target_state,
                 ledger_path.display()
             );
+            if let Some(diagnostic) = gemini_review_health_diagnostic(&job) {
+                println!(
+                    "review_loop_health issue={} category={} recovery_policy={} retry_after_ms={} repeat_count={}",
+                    latest.identifier,
+                    diagnostic.category.as_str(),
+                    diagnostic.recovery_policy.as_str(),
+                    diagnostic
+                        .retry_after_ms
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "unknown".into()),
+                    repeat_evidence
+                        .as_ref()
+                        .map(|evidence| evidence.repeat_count)
+                        .unwrap_or(1)
+                );
+            }
+            if !options.once {
+                let repeat_count = repeat_evidence
+                    .as_ref()
+                    .map(|evidence| evidence.repeat_count)
+                    .unwrap_or(1);
+                if let Some(delay_ms) = review_loop_recovery_delay_ms(&config, &job, repeat_count) {
+                    let policy = gemini_review_health_diagnostic(&job)
+                        .map(|diagnostic| diagnostic.recovery_policy)
+                        .unwrap_or(GeminiReviewRecoveryPolicy::RetryWithBackoff);
+                    println!(
+                        "review_loop_action=wait issue={} reason=gemini_backend_health policy={} delay_ms={} repeat_count={}",
+                        latest.identifier,
+                        policy.as_str(),
+                        delay_ms,
+                        repeat_count
+                    );
+                    thread::sleep(Duration::from_millis(delay_ms));
+                }
+            }
         }
 
         if !options.write && limit.is_none() {
@@ -3545,6 +3674,17 @@ fn run_review_job(
 
     match config.review.backend.as_str() {
         "gemini-cli" => {
+            if let Some(diagnostic) = gemini_prelaunch_health_diagnostic(
+                &config.review.gemini_command,
+                config.review.gemini_model.as_deref(),
+                &config.review.gemini_allowed_tools,
+            ) {
+                return Ok(ReviewJob::failed_unavailable(
+                    issue.identifier.clone(),
+                    "gemini-cli",
+                    diagnostic.to_error_message(),
+                ));
+            }
             let backend = GeminiCliReviewBackend::with_headless_options(
                 config.review.gemini_command.clone(),
                 config.review.gemini_model.clone(),
@@ -4156,6 +4296,7 @@ fn apply_review_result(
     issue: &TrackerIssue,
     job: &jade_symphony::review::ReviewJob,
     claim: Option<&LaneClaim>,
+    repeat_evidence: Option<&ReviewRepeatedFailureEvidence>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let decision = review_gate_decision(job);
     if let Some(value) = terminal_review_loop_claim_value(claim, job, &decision) {
@@ -4181,7 +4322,9 @@ fn apply_review_result(
         }
     }
 
-    let workpad = render_review_workpad(issue, job);
+    let workpad = repeat_evidence
+        .map(|evidence| render_repeated_review_failure_workpad(issue, job, evidence))
+        .unwrap_or_else(|| render_review_workpad(issue, job));
     adapter.add_issue_comment(issue_ref, &workpad)?;
     append_tracker_mutation_audit(
         config,
@@ -13582,7 +13725,7 @@ mod tests {
             error: None,
         };
 
-        apply_review_result(&config, &adapter, "#67", &issue, &job, None).unwrap();
+        apply_review_result(&config, &adapter, "#67", &issue, &job, None, None).unwrap();
 
         let updated = adapter
             .issues

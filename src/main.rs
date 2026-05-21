@@ -12084,9 +12084,16 @@ struct RunLoopArgs {
     write: bool,
     #[arg(
         long,
-        help = "Recover interrupted Main tmux sessions by restarting recoverable In Progress runtime slots"
+        conflicts_with = "no_recover",
+        help = "Enable recover-first handling for interrupted Main tmux sessions (default in --write mode)"
     )]
     recover: bool,
+    #[arg(
+        long = "no-recover",
+        conflicts_with = "recover",
+        help = "Disable default recover-first handling in --write mode"
+    )]
+    no_recover: bool,
     #[arg(long = "max-concurrent")]
     max_concurrent: Option<usize>,
     #[arg(long, value_enum, default_value_t = CliDisplayMode::Plain)]
@@ -12264,9 +12271,16 @@ struct MergeLoopArgs {
     write: bool,
     #[arg(
         long,
-        help = "Recover interrupted Merge loop claims first, then continue normal merge selection"
+        conflicts_with = "no_recover",
+        help = "Enable recover-first handling for interrupted Merge loop claims (default in --write mode)"
     )]
     recover: bool,
+    #[arg(
+        long = "no-recover",
+        conflicts_with = "recover",
+        help = "Disable default recover-first handling in --write mode"
+    )]
+    no_recover: bool,
     #[arg(long = "max-concurrent")]
     max_concurrent: Option<usize>,
     #[arg(long = "dry-run")]
@@ -12891,7 +12905,7 @@ fn run_loop_command(args: RunLoopArgs) -> Result<Command, String> {
             max_iterations: args.max_iterations,
             once: args.once,
             write: args.write,
-            recover: args.recover,
+            recover: loop_recover_enabled(args.write, args.recover, args.no_recover),
             max_concurrent: args.max_concurrent,
             display: args.display.into(),
         },
@@ -12911,10 +12925,14 @@ fn merge_loop_command(args: MergeLoopArgs) -> Result<Command, String> {
             max_iterations: args.max_iterations,
             once: args.once,
             write: args.write,
-            recover: args.recover,
+            recover: loop_recover_enabled(args.write, args.recover, args.no_recover),
             max_concurrent: args.max_concurrent,
         },
     })
+}
+
+fn loop_recover_enabled(write: bool, explicit_recover: bool, no_recover: bool) -> bool {
+    explicit_recover || (write && !no_recover)
 }
 
 fn command_from_project_args(command: ProjectCommandArgs) -> Result<Command, String> {
@@ -15510,7 +15528,6 @@ mod tests {
             "--max-concurrent".into(),
             "2".into(),
             "--write".into(),
-            "--recover".into(),
         ])
         .unwrap();
 
@@ -15527,6 +15544,27 @@ mod tests {
         assert_eq!(options.worker_limit(&test_config()), 2);
         assert!(options.write);
         assert!(options.recover);
+    }
+
+    #[test]
+    fn merge_loop_no_recover_disables_write_default() {
+        let command = Command::parse(vec![
+            "merge".into(),
+            "loop".into(),
+            "WORKFLOW.md".into(),
+            "--max-iterations".into(),
+            "1".into(),
+            "--write".into(),
+            "--no-recover".into(),
+        ])
+        .unwrap();
+
+        let Command::MergeLoop { options } = command else {
+            panic!("expected merge loop command");
+        };
+
+        assert!(options.write);
+        assert!(!options.recover);
     }
 
     #[test]
@@ -15862,13 +15900,12 @@ mod tests {
     }
 
     #[test]
-    fn parses_run_loop_recover_flag() {
+    fn run_loop_write_defaults_to_recover() {
         let command = Command::parse(vec![
             "main".into(),
             "loop".into(),
             "WORKFLOW.md".into(),
             "--write".into(),
-            "--recover".into(),
         ])
         .unwrap();
 
@@ -15878,6 +15915,25 @@ mod tests {
 
         assert!(options.write);
         assert!(options.recover);
+    }
+
+    #[test]
+    fn run_loop_no_recover_disables_write_default() {
+        let command = Command::parse(vec![
+            "main".into(),
+            "loop".into(),
+            "WORKFLOW.md".into(),
+            "--write".into(),
+            "--no-recover".into(),
+        ])
+        .unwrap();
+
+        let Command::RunLoop { options } = command else {
+            panic!("expected main loop command");
+        };
+
+        assert!(options.write);
+        assert!(!options.recover);
     }
 
     #[test]
@@ -15899,6 +15955,7 @@ mod tests {
 
         assert_eq!(options.iteration_limit(), Some(1));
         assert!(options.write);
+        assert!(options.recover);
     }
 
     #[test]

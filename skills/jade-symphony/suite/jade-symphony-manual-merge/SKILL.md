@@ -109,12 +109,13 @@ branch was rebased or conflicts were resolved.
 For automated interrupted merge-loop recovery, prefer:
 
 ```bash
-cargo run -- merge loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 2 --write --recover
+cargo run -- merge loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 2 --write
 ```
 
-`merge loop --recover` adopts interrupted structured merge-loop/goal claims
-first, then continues normal merge selection. It must not adopt manual claims,
-and it must not route merge repair through `Rework`.
+`merge loop --write` adopts interrupted structured merge-loop/goal claims first
+by default, then continues normal merge selection. It must not adopt manual
+claims, and it must not route merge repair through `Rework`. Use `--no-recover`
+only for debugging or a deliberately conservative operator pass.
 
 ## Merging
 

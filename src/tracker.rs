@@ -552,6 +552,22 @@ impl TrackerAdapter for GithubProjectV2Adapter {
     }
 
     fn get_issue(&self, issue_ref: &str) -> Result<Option<TrackerIssue>, TrackerError> {
+        if self.fixture_issues.is_empty()
+            && self.config.tracker.fixture_path.is_none()
+            && github_issue_number(issue_ref).is_some()
+        {
+            let client = GithubProjectV2GhClient::new(&self.config);
+            let Some(mut issue) = client.fetch_project_issue(issue_ref)? else {
+                return Ok(None);
+            };
+            if !status_is_mapped(&issue.state, &self.config) {
+                return Ok(None);
+            }
+            self.enrich_native_subissue_project_statuses(std::slice::from_mut(&mut issue))?;
+            client.enrich_native_issue_blockers(std::slice::from_mut(&mut issue))?;
+            return Ok(Some(issue));
+        }
+
         let mut issues = self.load_mapped_issues()?;
         enrich_native_subissue_project_statuses_from_project_read(&mut issues);
         let project_states = project_state_map(&issues);
@@ -825,6 +841,38 @@ impl GithubProjectV2GhClient {
         }
 
         Ok(())
+    }
+
+    fn fetch_project_issue(&self, issue_ref: &str) -> Result<Option<TrackerIssue>, TrackerError> {
+        let owner = self
+            .config
+            .tracker
+            .owner
+            .as_deref()
+            .ok_or_else(|| TrackerError::Payload("tracker.owner is required".into()))?;
+        let repo = self
+            .config
+            .tracker
+            .repo
+            .as_deref()
+            .ok_or_else(|| TrackerError::Payload("tracker.repo is required".into()))?;
+        let issue_number = github_issue_number(issue_ref).ok_or_else(|| {
+            TrackerError::Payload(format!(
+                "issue ref {issue_ref:?} is not a GitHub issue number"
+            ))
+        })?;
+
+        let response = self.graphql_magic(
+            &github_issue_project_item_query(),
+            &[
+                ("owner", owner.to_string()),
+                ("repo", repo.to_string()),
+                ("number", issue_number.to_string()),
+            ],
+            &["number"],
+        )?;
+
+        issue_from_repository_issue_response(&response, &self.config)
     }
 
     fn fetch_native_issue_blockers(
@@ -1235,6 +1283,13 @@ impl GithubProjectV2GhClient {
         &self,
         issue_ref: &str,
     ) -> Result<Vec<LinkedPullRequest>, TrackerError> {
+        if github_issue_number(issue_ref).is_some() {
+            return Ok(self
+                .fetch_project_issue(issue_ref)?
+                .map(|issue| issue.linked_pull_requests)
+                .unwrap_or_default());
+        }
+
         let issue = self.resolve_issue(issue_ref)?;
         Ok(issue.linked_pull_requests)
     }
@@ -1778,6 +1833,7 @@ const GITHUB_PROJECT_LINKED_PR_PAGE_SIZE: usize = 10;
 const GITHUB_PROJECT_COMMENT_PAGE_SIZE: usize = 100;
 const GITHUB_PROJECT_METADATA_FIELD_PAGE_SIZE: usize = 50;
 const GITHUB_WORKPAD_COMMENT_PAGE_SIZE: usize = 50;
+const GITHUB_ISSUE_PROJECT_ITEM_PAGE_SIZE: usize = 20;
 
 fn github_project_query(owner_field: &str) -> String {
     format!(
@@ -1876,6 +1932,111 @@ query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
               recentComments: comments(last: {GITHUB_PROJECT_COMMENT_PAGE_SIZE}) {{
                 nodes {{
                   body
+                }}
+              }}
+            }}
+          }}
+        }}
+      }}
+    }}
+  }}
+}}
+"#
+    )
+}
+
+fn github_issue_project_item_query() -> String {
+    format!(
+        r#"
+query JadeSymphonyIssueProjectItem($owner: String!, $repo: String!, $number: Int!) {{
+  repository(owner: $owner, name: $repo) {{
+    issue(number: $number) {{
+      __typename
+      id
+      number
+      title
+      body
+      url
+      state
+      createdAt
+      updatedAt
+      labels(first: {GITHUB_PROJECT_LABEL_PAGE_SIZE}) {{
+        nodes {{
+          name
+        }}
+      }}
+      assignees(first: {GITHUB_PROJECT_ASSIGNEE_PAGE_SIZE}) {{
+        nodes {{
+          login
+        }}
+      }}
+      parent {{
+        id
+        number
+        title
+        state
+        url
+      }}
+      subIssues(first: {GITHUB_PROJECT_SUBISSUE_PAGE_SIZE}) {{
+        nodes {{
+          id
+          number
+          title
+          state
+          url
+        }}
+      }}
+      closedByPullRequestsReferences(first: {GITHUB_PROJECT_LINKED_PR_PAGE_SIZE}) {{
+        nodes {{
+          id
+          number
+          url
+          state
+          isDraft
+          baseRefName
+          headRefName
+        }}
+      }}
+      comments(first: {GITHUB_PROJECT_COMMENT_PAGE_SIZE}) {{
+        nodes {{
+          body
+        }}
+      }}
+      recentComments: comments(last: {GITHUB_PROJECT_COMMENT_PAGE_SIZE}) {{
+        nodes {{
+          body
+        }}
+      }}
+      projectItems(first: {GITHUB_ISSUE_PROJECT_ITEM_PAGE_SIZE}) {{
+        nodes {{
+          id
+          project {{
+            number
+          }}
+          fieldValues(first: {GITHUB_PROJECT_FIELD_VALUE_PAGE_SIZE}) {{
+            nodes {{
+              ... on ProjectV2ItemFieldSingleSelectValue {{
+                name
+                field {{
+                  ... on ProjectV2SingleSelectField {{
+                    name
+                  }}
+                }}
+              }}
+              ... on ProjectV2ItemFieldTextValue {{
+                text
+                field {{
+                  ... on ProjectV2FieldCommon {{
+                    name
+                  }}
+                }}
+              }}
+              ... on ProjectV2ItemFieldNumberValue {{
+                number
+                field {{
+                  ... on ProjectV2FieldCommon {{
+                    name
+                  }}
                 }}
               }}
             }}
@@ -2434,6 +2595,42 @@ fn graphql_error_message(response: &serde_json::Value) -> Option<String> {
             messages.join("; ")
         ))
     }
+}
+
+fn issue_from_repository_issue_response(
+    response: &serde_json::Value,
+    config: &RuntimeConfig,
+) -> Result<Option<TrackerIssue>, TrackerError> {
+    let issue = response
+        .pointer("/data/repository/issue")
+        .ok_or_else(|| TrackerError::Payload("missing GitHub issue payload".into()))?;
+    if issue.is_null() {
+        return Ok(None);
+    }
+    let project_number = config
+        .tracker
+        .project_number
+        .ok_or_else(|| TrackerError::IntegrationUnavailable("missing project_number".into()))?;
+    let project_items = issue
+        .pointer("/projectItems/nodes")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| {
+            TrackerError::Payload("partial GitHub issue response missing projectItems".into())
+        })?;
+    let Some(project_item) = project_items.iter().find(|item| {
+        item.pointer("/project/number")
+            .and_then(serde_json::Value::as_u64)
+            == Some(project_number)
+    }) else {
+        return Ok(None);
+    };
+
+    let item = serde_json::json!({
+        "id": project_item.get("id").cloned().unwrap_or(serde_json::Value::Null),
+        "fieldValues": project_item.get("fieldValues").cloned().unwrap_or(serde_json::Value::Null),
+        "content": issue,
+    });
+    issue_from_project_item(&item, config)
 }
 
 fn issue_from_project_item(
@@ -5150,6 +5347,77 @@ Prompt
             Some("GitHub GraphQL returned errors: Could not resolve to a ProjectV2")
         );
         assert!(graphql_error_message(&serde_json::json!({"data": {}})).is_none());
+    }
+
+    #[test]
+    fn targeted_github_issue_response_parses_project_item_status() {
+        let config = github_config(
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 9\n---\nPrompt",
+        );
+        let response = serde_json::json!({
+            "data": {
+                "repository": {
+                    "issue": {
+                        "__typename": "Issue",
+                        "id": "I_349",
+                        "number": 349,
+                        "title": "Add ProjectV2 metadata cache",
+                        "body": "Issue body",
+                        "url": "https://github.com/Alive24/jade-symphony/issues/349",
+                        "state": "OPEN",
+                        "createdAt": "2026-05-21T00:00:00Z",
+                        "updatedAt": "2026-05-21T00:10:00Z",
+                        "labels": { "nodes": [{ "name": "area:tracker" }] },
+                        "assignees": { "nodes": [{ "login": "Alive24" }] },
+                        "parent": null,
+                        "subIssues": { "nodes": [] },
+                        "closedByPullRequestsReferences": { "nodes": [] },
+                        "comments": { "nodes": [] },
+                        "recentComments": { "nodes": [] },
+                        "projectItems": {
+                            "nodes": [
+                                {
+                                    "id": "PVTI_OTHER",
+                                    "project": { "number": 8 },
+                                    "fieldValues": { "nodes": [] }
+                                },
+                                {
+                                    "id": "PVTI_349",
+                                    "project": { "number": 9 },
+                                    "fieldValues": {
+                                        "nodes": [
+                                            {
+                                                "name": "In Progress",
+                                                "field": { "name": "Status" }
+                                            },
+                                            {
+                                                "text": "v=1 issue=#349 lane=main",
+                                                "field": { "name": "Main Agent" }
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        });
+
+        let issue = issue_from_repository_issue_response(&response, &config)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(issue.identifier, "#349");
+        assert_eq!(issue.item_id.as_deref(), Some("PVTI_349"));
+        assert_eq!(issue.state, "In Progress");
+        assert_eq!(issue.assignees, vec!["Alive24"]);
+        assert_eq!(
+            issue.project_fields.get("Main Agent"),
+            Some(&serde_json::Value::String(
+                "v=1 issue=#349 lane=main".into()
+            ))
+        );
     }
 
     #[test]

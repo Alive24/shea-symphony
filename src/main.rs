@@ -9462,12 +9462,187 @@ fn run_loop_resume_preflight_many(
         }
     }
 
+    if recover {
+        recover_registered_main_sessions(
+            adapter,
+            config,
+            now_ms,
+            &mut retained_states,
+            &mut active_main_workers,
+            &mut recoverable_states,
+        )?;
+    }
+
     Ok(RuntimePreflightSummary {
         retained_states,
         active_main_workers,
         recoverable_states,
         blocked,
     })
+}
+
+fn recover_registered_main_sessions(
+    adapter: &dyn jade_symphony::tracker::TrackerAdapter,
+    config: &RuntimeConfig,
+    now_ms: u64,
+    retained_states: &mut Vec<RuntimeState>,
+    active_main_workers: &mut usize,
+    recoverable_states: &mut Vec<RuntimeRecoveryCandidate>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let registry = load_session_registry(&session_registry_path(config))?;
+    for record in registry.sessions.iter().rev() {
+        if !registered_main_tmux_session(record) {
+            continue;
+        }
+        let Some(issue_identifier) = record.issue_identifier.as_deref() else {
+            continue;
+        };
+        if retained_states
+            .iter()
+            .any(|state| runtime_state_issue_identifier(state) == Some(issue_identifier))
+            || recoverable_states.iter().any(|candidate| {
+                runtime_state_issue_identifier(&candidate.state) == Some(issue_identifier)
+            })
+        {
+            continue;
+        }
+        let Some(issue) = adapter.get_issue(issue_identifier)? else {
+            continue;
+        };
+        if normalize_state(&issue.state) != "in progress" {
+            continue;
+        }
+
+        let state = runtime_state_from_session_record(record);
+        match runtime_session_probe_from_record(config, record, now_ms) {
+            Ok(probe) if session_status_counts_as_active_worker(&probe.status) => {
+                *active_main_workers += 1;
+                append_runtime_supervision_event(
+                    config,
+                    Some(&state),
+                    "RuntimeRecoverSkippedActiveRegistrySession",
+                    &format!(
+                        "issue={issue_identifier} session={} status={} source={} evidence={}",
+                        record.session_name,
+                        probe.status.as_str(),
+                        probe.source.as_str(),
+                        compact_evidence(&probe.evidence)
+                    ),
+                )?;
+                println!(
+                    "run_loop_resume_preflight action=active_registry_session issue={} session={} status={} source={} evidence={}",
+                    issue_identifier,
+                    record.session_name,
+                    probe.status.as_str(),
+                    probe.source.as_str(),
+                    compact_evidence(&probe.evidence)
+                );
+                retained_states.push(state);
+            }
+            Ok(probe)
+                if matches!(
+                    probe.status,
+                    SessionStatus::Stale | SessionStatus::Failed | SessionStatus::UsageLimited
+                ) =>
+            {
+                let reason = format!(
+                    "registry_session_recoverable session={} status={} source={} evidence={}",
+                    record.session_name,
+                    probe.status.as_str(),
+                    probe.source.as_str(),
+                    compact_evidence(&probe.evidence)
+                );
+                append_runtime_supervision_event(
+                    config,
+                    Some(&state),
+                    "RuntimeRecoverable",
+                    &format!("issue={issue_identifier} reason={reason}"),
+                )?;
+                println!(
+                    "run_loop_resume_preflight action=recoverable_registry_session issue={} session={} status={} source={}",
+                    issue_identifier,
+                    record.session_name,
+                    probe.status.as_str(),
+                    probe.source.as_str()
+                );
+                recoverable_states.push(RuntimeRecoveryCandidate {
+                    state: state.clone(),
+                    issue,
+                    reason,
+                });
+                retained_states.push(state);
+            }
+            Ok(_) => {}
+            Err(error) => {
+                let reason = format!(
+                    "registry_session_unavailable session={} reason={}",
+                    record.session_name,
+                    compact_evidence(&error.to_string())
+                );
+                append_runtime_supervision_event(
+                    config,
+                    Some(&state),
+                    "RuntimeRecoverable",
+                    &format!("issue={issue_identifier} reason={reason}"),
+                )?;
+                println!(
+                    "run_loop_resume_preflight action=recoverable_registry_session issue={} session={} status=unavailable",
+                    issue_identifier, record.session_name
+                );
+                recoverable_states.push(RuntimeRecoveryCandidate {
+                    state: state.clone(),
+                    issue,
+                    reason,
+                });
+                retained_states.push(state);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn registered_main_tmux_session(record: &AgentSessionRecord) -> bool {
+    record.lane.eq_ignore_ascii_case("main") && record.backend == "tmux"
+}
+
+fn runtime_state_issue_identifier(state: &RuntimeState) -> Option<&str> {
+    state
+        .active_issue
+        .as_ref()
+        .map(|issue| issue.identifier.as_str())
+}
+
+fn runtime_state_from_session_record(record: &AgentSessionRecord) -> RuntimeState {
+    let identifier = record
+        .issue_identifier
+        .clone()
+        .unwrap_or_else(|| "unknown".into());
+    let mut state = RuntimeState::active(
+        RuntimeIssueState {
+            id: record
+                .issue_id
+                .clone()
+                .unwrap_or_else(|| identifier.clone()),
+            identifier,
+        },
+        record.backend.clone(),
+    );
+    state.workspace_path = Some(record.worktree.clone());
+    state.branch_name = record.branch.clone();
+    state.backend_session_id = Some(record.session_name.clone());
+    state.lane = Some(record.lane.clone());
+    state.run_id = record.run_id.clone();
+    state.backend_log_path = Some(record.log_path.clone());
+    state.backend_attach_command = Some(record.attach_command.clone());
+    state.profile_id = record.profile_id.clone();
+    state.instance_name = record.instance_name.clone();
+    state.actor_role = record.actor_role.clone();
+    state.actor_label = record.actor_label.clone();
+    state.git_author = record.git_author.clone();
+    state.attempt_count = record.attempt;
+    state.updated_at_ms = Some(record.updated_at_ms);
+    state.last_event = Some("SessionRunning".into());
+    state
 }
 
 fn runtime_session_probe_for_state(
@@ -15914,8 +16089,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn resume_preflight_many_counts_running_tmux_session_in_recover_mode() {
-        use std::os::unix::fs::PermissionsExt;
-
         let temp = tempfile::tempdir().unwrap();
         let mut config = test_config();
         config.artifacts.root = temp.path().join("artifacts");
@@ -15924,11 +16097,6 @@ mod tests {
             temp.path(),
             "Codex\n◦ Running cargo run -- autopilot plan\n› Improve documentation in @filename",
         );
-        std::fs::set_permissions(
-            Path::new(&config.tmux.command),
-            std::fs::Permissions::from_mode(0o755),
-        )
-        .unwrap();
         let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
         let mut state = active_runtime_state("#29");
         state.backend = "tmux".into();
@@ -15965,7 +16133,85 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn resume_preflight_many_counts_registry_only_running_tmux_session_in_recover_mode() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
+        config.observability.logs_root = temp.path().join("logs");
+        config.tmux.command = fake_tmux_capture_script(
+            temp.path(),
+            "Codex\n◦ Running cargo test\n› Improve documentation in @filename",
+        );
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let mut record = main_tmux_session_record("#29", SessionStatus::Running);
+        record.session_name = "jade-main-29-attempt-1".into();
+        record.pane_target = "jade-main-29-attempt-1".into();
+        record.log_path = temp.path().join("session.log");
+        record.updated_at_ms = 1_000;
+        save_session_registry(
+            &session_registry_path(&config),
+            &jade_symphony::session_registry::SessionRegistry {
+                sessions: vec![record],
+            },
+        )
+        .unwrap();
+
+        let summary = run_loop_resume_preflight_many(
+            &tracker,
+            &config,
+            &[],
+            config.codex.stall_timeout_ms + 2_000,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(summary.active_main_workers, 1);
+        assert_eq!(summary.blocked, None);
+        assert_eq!(summary.retained_states.len(), 1);
+        assert_eq!(summary.recoverable_states.len(), 0);
+        assert_eq!(
+            runtime_state_issue_identifier(&summary.retained_states[0]),
+            Some("#29")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resume_preflight_many_recovers_registry_only_unavailable_tmux_session() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
+        config.observability.logs_root = temp.path().join("logs");
+        config.tmux.command = fake_tmux_unavailable_script(temp.path());
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let mut record = main_tmux_session_record("#29", SessionStatus::Running);
+        record.session_name = "jade-main-29-attempt-1".into();
+        record.pane_target = "jade-main-29-attempt-1".into();
+        record.log_path = temp.path().join("session.log");
+        save_session_registry(
+            &session_registry_path(&config),
+            &jade_symphony::session_registry::SessionRegistry {
+                sessions: vec![record],
+            },
+        )
+        .unwrap();
+
+        let summary = run_loop_resume_preflight_many(&tracker, &config, &[], 2_000, true).unwrap();
+
+        assert_eq!(summary.active_main_workers, 0);
+        assert_eq!(summary.blocked, None);
+        assert_eq!(summary.retained_states.len(), 1);
+        assert_eq!(summary.recoverable_states.len(), 1);
+        assert!(summary.recoverable_states[0]
+            .reason
+            .contains("registry_session_unavailable"));
+    }
+
+    #[cfg(unix)]
     fn fake_tmux_capture_script(root: &Path, output: &str) -> String {
+        use std::os::unix::fs::PermissionsExt;
+
         let path = root.join("fake-tmux");
         std::fs::write(
             &path,
@@ -15974,6 +16220,21 @@ mod tests {
             ),
         )
         .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path.display().to_string()
+    }
+
+    #[cfg(unix)]
+    fn fake_tmux_unavailable_script(root: &Path) -> String {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = root.join("fake-tmux-unavailable");
+        std::fs::write(
+            &path,
+            "#!/bin/sh\nif [ \"${1:-}\" = \"capture-pane\" ]; then\nexit 1\nfi\nexit 0\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path.display().to_string()
     }
 

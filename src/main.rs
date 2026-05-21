@@ -1256,7 +1256,7 @@ fn render_autopilot_plan_human(snapshot: &AutopilotPlanSnapshot) -> String {
         let selected = lane
             .selected_issue
             .as_ref()
-            .map(|issue| format!("{} {:?}", issue.identifier, issue.title))
+            .map(|issue| format!("{} {}", issue.identifier, single_line(&issue.title)))
             .unwrap_or_else(|| "none".into());
         lines.push(format!(
             "- {} status={} selected={} action={} target={} reason={}",
@@ -13986,6 +13986,43 @@ mod tests {
                 .map(|issue| issue.identifier.as_str()),
             Some("#338")
         );
+    }
+
+    #[test]
+    fn autopilot_plan_does_not_mutate_tracker_adapter() {
+        let config = test_config();
+        let issue = tracker_issue_with_ref("#338", "Ready merge", "Merging");
+        let adapter = RecordingAdapter::default();
+        adapter
+            .linked_pull_requests
+            .borrow_mut()
+            .push(jade_symphony::model::LinkedPullRequest {
+                number: Some(339),
+                url: Some("https://github.com/Alive24/jade-symphony/pull/339".into()),
+                state: Some("OPEN".into()),
+                is_draft: Some(false),
+                merge_state_status: Some("CLEAN".into()),
+                review_decision: Some("APPROVED".into()),
+                base_ref_name: Some("main".into()),
+                head_ref_name: Some("feature/issue-338".into()),
+                ..Default::default()
+            });
+
+        let plan = build_autopilot_plan_from_parts(AutopilotPlanInputs {
+            workflow_path: Path::new("/tmp/WORKFLOW.md"),
+            config: &config,
+            adapter: &adapter,
+            issues: vec![issue],
+            doctor_report: clean_autopilot_doctor(1),
+            canonical_checkout: clean_autopilot_canonical(),
+            runtime: clean_autopilot_runtime(),
+            integration_gaps: Vec::new(),
+        })
+        .unwrap();
+
+        assert!(plan.read_only);
+        assert_eq!(plan.readiness.status, "ready");
+        assert!(adapter.operations().is_empty());
     }
 
     #[test]

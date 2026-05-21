@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use thiserror::Error;
 
 use crate::config::RuntimeConfig;
@@ -67,6 +68,27 @@ impl RuntimeState {
             stall: None,
             last_event: None,
             last_transition: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeStateStore {
+    #[serde(default = "runtime_state_store_version")]
+    pub version: u32,
+    #[serde(default)]
+    pub active_workers: Vec<RuntimeState>,
+}
+
+fn runtime_state_store_version() -> u32 {
+    1
+}
+
+impl RuntimeStateStore {
+    pub fn new(active_workers: Vec<RuntimeState>) -> Self {
+        Self {
+            version: runtime_state_store_version(),
+            active_workers,
         }
     }
 }
@@ -160,6 +182,10 @@ pub fn load_runtime_state(
     load_runtime_state_from_path(&runtime_state_path(config))
 }
 
+pub fn load_runtime_states(config: &RuntimeConfig) -> Result<Vec<RuntimeState>, RuntimeStateError> {
+    load_runtime_states_from_path(&runtime_state_path(config))
+}
+
 pub fn save_runtime_state(
     config: &RuntimeConfig,
     state: &RuntimeState,
@@ -167,17 +193,96 @@ pub fn save_runtime_state(
     save_runtime_state_to_path(&runtime_state_path(config), state)
 }
 
+pub fn save_runtime_states(
+    config: &RuntimeConfig,
+    states: &[RuntimeState],
+) -> Result<(), RuntimeStateError> {
+    save_runtime_states_to_path(&runtime_state_path(config), states)
+}
+
+pub fn upsert_runtime_state(
+    config: &RuntimeConfig,
+    state: &RuntimeState,
+) -> Result<(), RuntimeStateError> {
+    let mut states = load_runtime_states(config)?;
+    upsert_runtime_state_entry(&mut states, state.clone());
+    save_runtime_states(config, &states)
+}
+
+pub fn remove_runtime_state_for_issue(
+    config: &RuntimeConfig,
+    issue_identifier: &str,
+) -> Result<(), RuntimeStateError> {
+    let mut states = load_runtime_states(config)?;
+    states.retain(|state| {
+        state
+            .active_issue
+            .as_ref()
+            .map(|issue| issue.identifier != issue_identifier)
+            .unwrap_or(true)
+    });
+    save_runtime_states(config, &states)
+}
+
 pub fn clear_runtime_state(config: &RuntimeConfig) -> Result<(), RuntimeStateError> {
     clear_runtime_state_at_path(&runtime_state_path(config))
+}
+
+pub fn runtime_state_for_issue<'a>(
+    states: &'a [RuntimeState],
+    issue_identifier: &str,
+) -> Option<&'a RuntimeState> {
+    states.iter().find(|state| {
+        state
+            .active_issue
+            .as_ref()
+            .map(|issue| issue.identifier == issue_identifier)
+            .unwrap_or(false)
+    })
+}
+
+pub fn upsert_runtime_state_entry(states: &mut Vec<RuntimeState>, state: RuntimeState) {
+    let Some(issue_identifier) = state
+        .active_issue
+        .as_ref()
+        .map(|issue| issue.identifier.clone())
+    else {
+        states.push(state);
+        return;
+    };
+
+    if let Some(existing) = states.iter_mut().find(|existing| {
+        existing
+            .active_issue
+            .as_ref()
+            .map(|issue| issue.identifier == issue_identifier)
+            .unwrap_or(false)
+    }) {
+        *existing = state;
+    } else {
+        states.push(state);
+    }
 }
 
 pub fn load_runtime_state_from_path(
     path: &Path,
 ) -> Result<Option<RuntimeState>, RuntimeStateError> {
-    match fs::read_to_string(path) {
-        Ok(content) => Ok(Some(serde_json::from_str(&content)?)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.into()),
+    Ok(load_runtime_states_from_path(path)?.into_iter().next())
+}
+
+pub fn load_runtime_states_from_path(path: &Path) -> Result<Vec<RuntimeState>, RuntimeStateError> {
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+
+    let value: Value = serde_json::from_str(&content)?;
+    if value.get("active_workers").is_some() {
+        let store: RuntimeStateStore = serde_json::from_value(value)?;
+        Ok(store.active_workers)
+    } else {
+        Ok(vec![serde_json::from_value(value)?])
     }
 }
 
@@ -191,6 +296,28 @@ pub fn save_runtime_state_to_path(
 
     let temp_path = path.with_extension("json.tmp");
     let content = serde_json::to_string_pretty(state)?;
+    fs::write(&temp_path, content)?;
+    fs::rename(temp_path, path)?;
+    Ok(())
+}
+
+pub fn save_runtime_states_to_path(
+    path: &Path,
+    states: &[RuntimeState],
+) -> Result<(), RuntimeStateError> {
+    if states.is_empty() {
+        return clear_runtime_state_at_path(path);
+    }
+    if states.len() == 1 {
+        return save_runtime_state_to_path(path, &states[0]);
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let temp_path = path.with_extension("json.tmp");
+    let content = serde_json::to_string_pretty(&RuntimeStateStore::new(states.to_vec()))?;
     fs::write(&temp_path, content)?;
     fs::rename(temp_path, path)?;
     Ok(())
@@ -307,6 +434,73 @@ mod tests {
 
         assert_eq!(loaded.profile_id, None);
         assert_eq!(loaded.instance_name, None);
+    }
+
+    #[test]
+    fn reads_legacy_runtime_state_as_single_worker_slot() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("runtime-state.json");
+        save_runtime_state_to_path(&path, &state()).unwrap();
+
+        let loaded = load_runtime_states_from_path(&path).unwrap();
+
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(
+            loaded[0]
+                .active_issue
+                .as_ref()
+                .map(|issue| issue.identifier.as_str()),
+            Some("#1")
+        );
+    }
+
+    #[test]
+    fn writes_and_reads_multiple_runtime_worker_slots() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("runtime-state.json");
+        let first = state();
+        let mut second = state();
+        second.active_issue = Some(RuntimeIssueState {
+            id: "GHI_2".into(),
+            identifier: "#2".into(),
+        });
+        second.backend_session_id = Some("session-2".into());
+
+        save_runtime_states_to_path(&path, &[first.clone(), second.clone()]).unwrap();
+        let loaded = load_runtime_states_from_path(&path).unwrap();
+        let store: RuntimeStateStore =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+
+        assert_eq!(store.version, 1);
+        assert_eq!(loaded, vec![first, second]);
+    }
+
+    #[test]
+    fn upsert_runtime_state_entry_replaces_matching_issue_only() {
+        let mut states = vec![state()];
+        let mut replacement = state();
+        replacement.backend_session_id = Some("new-session".into());
+        let mut second = state();
+        second.active_issue = Some(RuntimeIssueState {
+            id: "GHI_2".into(),
+            identifier: "#2".into(),
+        });
+
+        upsert_runtime_state_entry(&mut states, second.clone());
+        upsert_runtime_state_entry(&mut states, replacement);
+
+        assert_eq!(states.len(), 2);
+        assert_eq!(
+            runtime_state_for_issue(&states, "#1")
+                .and_then(|state| state.backend_session_id.as_deref()),
+            Some("new-session")
+        );
+        assert_eq!(
+            runtime_state_for_issue(&states, "#2")
+                .and_then(|state| state.active_issue.as_ref())
+                .map(|issue| issue.id.as_str()),
+            Some("GHI_2")
+        );
     }
 
     #[test]

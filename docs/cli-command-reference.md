@@ -39,6 +39,7 @@ workflows may still use an inline prompt body.
 | `project inspect` | Inspect one live issue's readiness facts without tracker mutation. | `cargo run -- project inspect workflows/jade-symphony.md '#235'` |
 | `doctor` | Audit Project/workflow/runtime invariants. | `cargo run -- doctor` |
 | `audit-project` | Compatibility alias for `doctor`. | `cargo run -- audit-project workflows/jade-symphony.md` |
+| `skills status` | Read-only per-repo skill readiness matrix across source suite, Codex, Gemini, metadata, links, and optional session input. | `cargo run -- skills status workflows/jade-symphony.md` |
 | `profiles` | List configured/discovered execution profiles. | `cargo run -- profiles examples/cockpit-profiles-workflow.md` |
 | `debug` | Read-only human report combining Project, doctor, smoke readiness, runtime/session, cleanup, and lane next-action signals. | `cargo run -- debug workflows/jade-symphony.md` |
 
@@ -67,6 +68,25 @@ tracker state.
 `--mark-pr-ready --confirm-handoff-ready --write` is an explicit operator repair
 for `Agent Review` issues whose linked PR is still draft. It writes repair
 evidence and runs `gh pr ready`; `doctor --auto-fix` never marks PRs ready.
+
+Skill readiness is diagnostic-first and read-only:
+
+```bash
+cargo run -- skills status workflows/jade-symphony.md
+cargo run -- skills status workflows/jade-symphony.md --json
+cargo run -- skills status workflows/jade-symphony.md --suite-path skills/jade-symphony/suite
+cargo run -- skills status workflows/jade-symphony.md --session-skills-file /path/to/session-skills.txt
+cargo run -- skills status workflows/jade-symphony.md --require-gemini
+```
+
+The command discovers expected skills from `--suite-path`,
+`JADE_SYMPHONY_SKILL_SUITE`, the current repo `skills/jade-symphony/suite`, or
+installed-only mode if no source suite exists. It inspects Codex local skills,
+Gemini local skills when configured or discoverable, rendered metadata drift,
+broken symlinks, file-shaped aliases, missing `SKILL.md`, and optional
+current-session visibility. Without `--session-skills` or
+`--session-skills-file`, current-session visibility is `unknown` and is not a
+failure. Gemini absence is a blocker only when `--require-gemini` is used.
 
 ## Main Implementation Runtime
 
@@ -234,6 +254,7 @@ These commands can mutate live tracker state and require `--write`.
 | --- | --- | --- |
 | `project set-state` | Move one issue to a normalized workflow state. | Refuses `Human Review` from the main implementation role. |
 | `project workpad` | Upsert the canonical Main Agent Workpad marker comment. | Use for Main implementation evidence, including Main-lane `Rework` implementation rounds. Repeated canonical workpad writes replace the prior canonical workpad entry instead of creating multiple top-level `Jade Symphony Workpad` blocks. Append-only `Jade Symphony Rework Run` comments explain why Rework was triggered; Review, Merge, Human Review, and Doctor evidence should remain append-only timeline comments created by their lane commands. |
+| `project timeline-comment` | Append one standalone issue timeline comment from a Markdown file. | Use for lane evidence that must not overwrite the Main Agent Workpad, especially Human Review decision notes or operator-authored Doctor/repair evidence. |
 | `project link-pr` | Repair PR linkage when Project readback cannot already see the PR. | First checks linked-PR readback and skips the fallback comment when linkage is already visible; if GitHub Project v2 still cannot expose the PR, it may post a linkage repair comment as a fallback. |
 | `create-follow-up` | Create a follow-up issue from a body file. | Lower-level creation path; prefer `forge create` for quality-gated issues. |
 | `project add` | Add an existing GitHub issue node to the configured Project. | Initializes configured Project status where supported. |
@@ -243,6 +264,7 @@ Examples:
 ```bash
 cargo run -- project set-state workflows/jade-symphony.md '#123' need_to_clarify --write
 cargo run -- project workpad workflows/jade-symphony.md '#123' /tmp/workpad.md --write
+cargo run -- project timeline-comment workflows/jade-symphony.md '#123' /tmp/human-review-note.md --write
 ```
 
 ## Clean Lane

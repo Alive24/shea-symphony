@@ -7,6 +7,7 @@ use thiserror::Error;
 use crate::config::RuntimeConfig;
 use crate::git_handoff::{CommandOutput, GitHandoffError, HandoffCommandRunner};
 use crate::handoff::branch_target_evidence;
+use crate::lane_claim::LaneClaim;
 use crate::model::{normalize_state, LinkedPullRequest, TrackerIssue};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -534,17 +535,29 @@ pub fn merge_lane_workpad(
         format!("- Issue: {} {}", issue.identifier, issue.title),
         "- Lane: `merge`".to_string(),
         "- Actor role: `merge_agent`".to_string(),
+        format!("- Actor: `{}`", merge_actor(issue)),
+        format!("- Run ID: `{}`", merge_run_id(issue)),
         "- Source: `jade-symphony merge once`".to_string(),
         "- Input state: `Merging`".to_string(),
         format!("- Decision: `{:?}`", decision.kind),
+        format!("- Result: `{}`", merge_result(decision)),
         format!("- Reason: {}", decision.reason),
         format!(
             "- Pull request: `{}`",
             decision.pr_url.as_deref().unwrap_or("missing")
         ),
         format!(
-            "- Target state: `{}`",
+            "- Target state after merge routing: `{}`",
             decision.target_state.unwrap_or("none")
+        ),
+        format!(
+            "- Evidence summary: merge decision `{}`; command evidence `{}`.",
+            merge_result(decision),
+            if merge_output.is_some() {
+                "recorded"
+            } else {
+                "not recorded"
+            }
         ),
         String::new(),
         "### Authority Boundary".to_string(),
@@ -584,6 +597,47 @@ pub fn merge_lane_workpad(
     }
 
     lines.join("\n")
+}
+
+fn merge_actor(issue: &TrackerIssue) -> String {
+    merge_claim(issue)
+        .map(|claim| claim.actor.as_str().to_string())
+        .unwrap_or_else(|| "not recorded".into())
+}
+
+fn merge_run_id(issue: &TrackerIssue) -> String {
+    merge_claim(issue)
+        .map(|claim| claim.run)
+        .unwrap_or_else(|| "not recorded".into())
+}
+
+fn merge_claim(issue: &TrackerIssue) -> Option<LaneClaim> {
+    issue
+        .project_fields
+        .get("Merging Agent")
+        .or_else(|| issue.project_fields.get("Merge Agent"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| LaneClaim::parse(value).ok())
+}
+
+fn merge_result(decision: &MergeLaneDecision) -> &'static str {
+    match decision.kind {
+        MergeLaneDecisionKind::ReadyToMerge | MergeLaneDecisionKind::AlreadyMerged => {
+            "merged_or_done"
+        }
+        MergeLaneDecisionKind::StaleBranch => "stale_branch_update",
+        MergeLaneDecisionKind::MergeDirty => "repair_or_blocked",
+        MergeLaneDecisionKind::WrongIssueState
+        | MergeLaneDecisionKind::MissingPullRequest
+        | MergeLaneDecisionKind::AmbiguousPullRequest
+        | MergeLaneDecisionKind::PullRequestClosed
+        | MergeLaneDecisionKind::DraftPullRequest
+        | MergeLaneDecisionKind::BaseMismatch
+        | MergeLaneDecisionKind::ReviewNotApproved
+        | MergeLaneDecisionKind::ChecksFailing
+        | MergeLaneDecisionKind::MergeabilityUnknown => "blocked",
+        MergeLaneDecisionKind::ChecksPending => "skipped",
+    }
 }
 
 fn current_gmt_timestamp() -> String {

@@ -3,13 +3,16 @@
 - Generated at: `<YYYY-MM-DD HH:MM:SS GMT>`
 - Issue: #<issue> <title>
 - Lane: `review` | `human_review` | `merge` | `main`
+- Actor role: `review_agent` | `human_review_revision` | `merge_agent` | `implementation_agent`
+- Actor: <worker or operator>
+- Run ID: `<run-id>`
 - Run type: `rework_trigger_diagnostic`
 - Trigger: Agent Review finding | Human Review feedback | merge-lane repair
 - Input state: `Agent Review` | `Human Review` | `Merging`
 - Target state after run: `Rework`
-- Actor: <worker>
-- Run ID: `<run-id>`
+- Result: Rework recorded | Blocked | Diagnostic only
 - PR: #<pr> <url>
+- Evidence summary: <short summary of evidence checked>
 
 ### Purpose
 

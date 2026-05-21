@@ -157,6 +157,13 @@ pub fn render_doctor_panel(report: &ProjectAuditReport) -> String {
         });
     }
 
+    if let Some(summary) = &report.skill_readiness_summary {
+        sections.push(PanelSection {
+            title: "Skill Readiness".into(),
+            rows: vec![row("summary", summary)],
+        });
+    }
+
     if !report.integration_gaps.is_empty() {
         sections.push(PanelSection {
             title: "Warnings".into(),
@@ -346,6 +353,7 @@ mod tests {
         let report = ProjectAuditReport {
             total_issues: 1,
             integration_gaps: Vec::new(),
+            skill_readiness_summary: None,
             violations: vec![ProjectAuditViolation {
                 issue_ref: "#57".into(),
                 title: "Missing PR".into(),

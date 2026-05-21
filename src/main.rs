@@ -2913,6 +2913,9 @@ fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::error::Error
                 }
                 MergeOnceOutcome::Merged => {
                     println!("merge_loop_action=merged iterations={iteration} slot={slot}");
+                    if options.write && config.tracker.fixture_path.is_none() {
+                        refresh_canonical_checkout_after_merge(&config)?;
+                    }
                 }
                 MergeOnceOutcome::Routed => {
                     println!("merge_loop_action=routed iterations={iteration} slot={slot}");
@@ -3251,6 +3254,32 @@ fn merge_once_tick(
     }
 
     Ok(MergeOnceOutcome::Skipped)
+}
+
+fn refresh_canonical_checkout_after_merge(
+    config: &RuntimeConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let root = std::env::current_dir()?;
+    println!("merge_loop_action=refresh_canonical_checkout reason=post_merge");
+    let output = ProcessCommand::new("git")
+        .args(["pull", "--ff-only"])
+        .current_dir(&root)
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "merge loop failed to refresh canonical checkout after merge: status={} stdout={} stderr={}",
+            output.status.code().unwrap_or(-1),
+            single_line(&String::from_utf8_lossy(&output.stdout)),
+            single_line(&String::from_utf8_lossy(&output.stderr))
+        )
+        .into());
+    }
+    println!(
+        "merge_loop_action=refreshed_canonical_checkout stdout=\"{}\"",
+        single_line(&String::from_utf8_lossy(&output.stdout))
+    );
+    enforce_canonical_checkout_before_write(config, "merge_loop")?;
+    Ok(())
 }
 
 fn record_done_merge_lane_completion(
@@ -8072,6 +8101,14 @@ fn pool_claim_eligibility(
                 if claim.lane == lane.claim_lane() && claim.state.is_terminal_audit_pointer() =>
             {
                 PoolClaimEligibility::Claimable
+            }
+            Ok(claim)
+                if claim.lane == lane.claim_lane()
+                    && claim.issue == issue.identifier
+                    && claim.state == LaneClaimState::Active
+                    && claim.worker.as_deref() == Some(worker_id) =>
+            {
+                PoolClaimEligibility::OwnedBySelf
             }
             Ok(claim) if claim.lane == lane.claim_lane() => {
                 PoolClaimEligibility::ClaimedByOther { owner: claim.run }
@@ -13888,6 +13925,31 @@ mod tests {
 
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].identifier, "#7");
+    }
+
+    #[test]
+    fn merge_pool_selection_reuses_structured_active_claim_for_same_worker() {
+        let config = test_config();
+        let worker = "Jade Symphony Agent";
+        let claim = LaneClaim::active(
+            "#6",
+            LaneClaimLane::Merge,
+            LaneClaimActor::Codex,
+            LaneClaimSource::Loop,
+            1_779_000_000_000,
+        )
+        .with_worker(worker);
+        let mut claimed_by_self = tracker_issue_with_ref("#6", "Claimed merge", "Merging");
+        claimed_by_self.project_fields.insert(
+            "Merging Agent".into(),
+            serde_json::Value::String(claim.render()),
+        );
+
+        let selected =
+            select_pool_worker_issues(&[claimed_by_self], WorkerLane::Merging, worker, 1, &config);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].identifier, "#6");
     }
 
     #[test]

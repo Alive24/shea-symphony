@@ -51,9 +51,7 @@ pub struct AgentReviewReport {
 
 impl AgentReviewReport {
     pub fn blocks_progress(&self) -> bool {
-        self.findings
-            .iter()
-            .any(|finding| finding.class == ReviewFindingClass::Confirmed)
+        self.findings.iter().any(review_finding_blocks_progress)
     }
 
     pub fn is_inconclusive(&self) -> bool {
@@ -87,6 +85,43 @@ impl AgentReviewReport {
     }
 }
 
+fn review_finding_blocks_progress(finding: &ReviewFinding) -> bool {
+    finding.class == ReviewFindingClass::Confirmed && !human_owned_uat_finding(finding)
+}
+
+fn human_owned_uat_finding(finding: &ReviewFinding) -> bool {
+    let text = format!("{} {}", finding.title, finding.body).to_ascii_lowercase();
+    if !text.contains("uat") {
+        return false;
+    }
+
+    let missing_uat = text.contains("missing uat")
+        || text.contains("uat was not run")
+        || text.contains("uat has not been run")
+        || text.contains("uat was skipped")
+        || text.contains("uat not run")
+        || text.contains("live uat");
+    if !missing_uat {
+        return false;
+    }
+
+    let implementation_deliverable = [
+        "uat harness",
+        "uat fixture",
+        "controlled rehearsal",
+        "rehearsal path",
+        "dogfood workflow",
+        "workflow capability",
+        "implemented",
+        "implementing",
+        "implementation deliverable",
+    ]
+    .iter()
+    .any(|pattern| text.contains(pattern));
+
+    !implementation_deliverable
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReviewJobState {
     Queued,
@@ -118,6 +153,12 @@ pub struct ReviewJobLedgerRecord {
     pub worker_key: String,
     pub backend: String,
     pub state: ReviewJobState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at_ms: Option<u64>,
     pub artifact_path: Option<PathBuf>,
     pub ledger_path: PathBuf,
     pub decision_outcome: ReviewOutcome,
@@ -645,13 +686,13 @@ fn write_gemini_review_artifact(
 fn diagnose_gemini_spawn_failure(command: &str, error: &std::io::Error) -> String {
     match error.kind() {
         ErrorKind::NotFound if command_uses_path_lookup(command) => format!(
-            "review backend startup failed: configured command: `{command}`; resolved executable: not found in worker PATH; suggested fix: configure `review.gemini_command` with an absolute Gemini path such as `/opt/homebrew/bin/gemini`, or export a worker PATH that can resolve `{command}`; retry: rerun `review loop` after updating the workflow or environment."
+            "review backend startup failed: configured command: `{command}`; resolved executable: not found in worker PATH; suggested fix: configure `review_lane.gemini_command` with an absolute Gemini path such as `/opt/homebrew/bin/gemini`, or export a worker PATH that can resolve `{command}`; retry: rerun `review loop` after updating the workflow or environment."
         ),
         ErrorKind::NotFound => format!(
             "review backend startup failed: configured command: `{command}`; resolved executable: path was not found or could not be executed; suggested fix: verify the configured Gemini path exists and is executable; retry: rerun `review loop` after updating the workflow or environment."
         ),
         ErrorKind::PermissionDenied => format!(
-            "review backend startup failed: configured command: `{command}`; resolved executable: permission denied; suggested fix: make the Gemini command executable or configure `review.gemini_command` to an executable path; retry: rerun `review loop` after fixing permissions."
+            "review backend startup failed: configured command: `{command}`; resolved executable: permission denied; suggested fix: make the Gemini command executable or configure `review_lane.gemini_command` to an executable path; retry: rerun `review loop` after fixing permissions."
         ),
         _ => format!(
             "review backend startup failed: configured command: `{command}`; spawn error: {error}; suggested fix: inspect the Gemini CLI installation, auth/configuration, and worker environment; retry: rerun `review loop` after fixing the backend."
@@ -963,29 +1004,14 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
         })
         .unwrap_or_default();
 
-    let findings = match &job.report {
-        Some(report) if report.findings.is_empty() => {
-            "- No confirmed, plausible, rejected, or needs-context findings.".into()
-        }
-        Some(report) => report
-            .findings
-            .iter()
-            .map(|finding| {
-                format!(
-                    "- {:?}: {} - {}",
-                    finding.class, finding.title, finding.body
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        None => "- No report captured yet.".into(),
-    };
-
     let agent_review_note = job
         .report
         .as_ref()
         .and_then(agent_review_note)
         .unwrap_or_else(|| "- No Agent Review note captured.".into());
+    let has_agent_review_note = agent_review_note != "- No Agent Review note captured.";
+    let findings_section =
+        render_parsed_findings_section(job.report.as_ref(), has_agent_review_note);
 
     let stdout_section = job
         .report
@@ -1041,12 +1067,41 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
             ("usage_limit_section", usage_limit_section),
             ("inconclusive_section", inconclusive_section),
             ("agent_review_note", agent_review_note),
-            ("findings", findings),
+            ("findings_section", findings_section),
             ("stdout_section", stdout_section),
             ("stderr_section", stderr_section),
             ("pass_evidence_section", pass_evidence_section),
         ],
     )
+}
+
+fn render_parsed_findings_section(
+    report: Option<&AgentReviewReport>,
+    has_agent_review_note: bool,
+) -> String {
+    if has_agent_review_note {
+        return String::new();
+    }
+
+    let findings = match report {
+        Some(report) if report.findings.is_empty() => {
+            "- No confirmed, plausible, rejected, or needs-context findings.".into()
+        }
+        Some(report) => report
+            .findings
+            .iter()
+            .map(|finding| {
+                format!(
+                    "- {:?}: {} - {}",
+                    finding.class, finding.title, finding.body
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        None => "- No report captured yet.".into(),
+    };
+
+    render_section("Findings", &findings)
 }
 
 fn render_template(template: &str, replacements: &[(&str, String)]) -> String {
@@ -1071,7 +1126,10 @@ fn render_log_section(title: &str, content: Option<&str>) -> Option<String> {
     }
     Some(render_section(
         title,
-        &format!("```text\n{}\n```", truncate_log(content)),
+        &format!(
+            "<details>\n<summary>{title}</summary>\n\n```text\n{}\n```\n\n</details>",
+            truncate_log(content)
+        ),
     ))
 }
 
@@ -1236,7 +1294,7 @@ fn review_required_operator_actions(job: &ReviewJob) -> Option<Vec<String>> {
     {
         return Some(vec![
             "- Fix the Review Agent backend command or worker PATH shown in the error above.".into(),
-            "- For Gemini CLI, prefer an absolute `review.gemini_command` path or export a worker PATH that resolves `gemini`.".into(),
+        "- For Gemini CLI, prefer an absolute `review_lane.gemini_command` path or export a worker PATH that resolves `gemini`.".into(),
             "- This issue must not move to `Human Review` until an independent Review Agent records passing review evidence.".into(),
             "- Retry: rerun `review loop` for this issue after updating the workflow or environment.".into(),
         ]);
@@ -1285,6 +1343,9 @@ pub fn review_job_ledger_record(
         worker_key: review_worker_key(issue, &job.backend),
         backend: job.backend.clone(),
         state: job.state.clone(),
+        pid: None,
+        started_at_ms: None,
+        updated_at_ms: None,
         artifact_path: job.artifact_path.clone(),
         ledger_path,
         decision_outcome: decision.outcome,
@@ -1447,7 +1508,7 @@ pub fn transition_allowed_for_review_agent(
 }
 
 fn parse_finding_line(line: &str) -> Option<ReviewFinding> {
-    let trimmed = line.trim();
+    let trimmed = trim_finding_list_marker(line);
     if !trimmed.starts_with('[') {
         return None;
     }
@@ -1509,7 +1570,7 @@ fn parse_review_result(output: &str) -> Option<ParsedReviewResult> {
 }
 
 fn parse_loose_finding_line(line: &str) -> Option<ReviewFinding> {
-    let trimmed = line.trim();
+    let trimmed = trim_finding_list_marker(line);
     if !trimmed.starts_with('[') {
         return None;
     }
@@ -1537,6 +1598,15 @@ fn parse_loose_finding_line(line: &str) -> Option<ReviewFinding> {
         title: summarize_finding_title(rest),
         body: rest.to_string(),
     })
+}
+
+fn trim_finding_list_marker(line: &str) -> &str {
+    let trimmed = line.trim();
+    trimmed
+        .strip_prefix("- ")
+        .or_else(|| trimmed.strip_prefix("* "))
+        .unwrap_or(trimmed)
+        .trim_start()
 }
 
 fn synthetic_review_result_finding(
@@ -1970,14 +2040,14 @@ mod tests {
         let job = ReviewJob::failed_unavailable(
             "#1",
             "gemini-cli",
-            "review backend failed: review backend startup failed: configured command: `gemini`; resolved executable: not found in worker PATH; suggested fix: configure `review.gemini_command` with an absolute Gemini path; retry: rerun `review loop` after updating the workflow or environment.",
+            "review backend failed: review backend startup failed: configured command: `gemini`; resolved executable: not found in worker PATH; suggested fix: configure `review_lane.gemini_command` with an absolute Gemini path; retry: rerun `review loop` after updating the workflow or environment.",
         );
 
         let workpad = render_review_workpad(&issue(), &job);
 
         assert!(workpad.contains("### Required Operator Action"));
         assert!(workpad.contains("Fix the Review Agent backend command or worker PATH"));
-        assert!(workpad.contains("absolute `review.gemini_command` path"));
+        assert!(workpad.contains("absolute `review_lane.gemini_command` path"));
         assert!(workpad.contains("Retry: rerun `review loop`"));
         assert!(workpad.contains("must not"));
     }
@@ -2071,6 +2141,21 @@ mod tests {
     }
 
     #[test]
+    fn rework_result_classifies_bulleted_loose_confirmed_findings() {
+        let findings = classify_findings(
+            "Review Result: REWORK\n\n### Findings\n- [Confirmed] The issue requires a controlled Merging rehearsal path.\n- [Confirmed] Safe merge-lane conflict repair was deferred.",
+        );
+
+        assert_eq!(findings.len(), 2);
+        assert_eq!(findings[0].class, ReviewFindingClass::Confirmed);
+        assert_eq!(
+            findings[0].title,
+            "The issue requires a controlled Merging rehearsal path"
+        );
+        assert_eq!(findings[1].class, ReviewFindingClass::Confirmed);
+    }
+
+    #[test]
     fn rework_result_without_parseable_findings_still_blocks_progress() {
         let findings = classify_findings(
             "Review Result: REWORK\n\nThe implementation is missing the required claim gate.",
@@ -2085,6 +2170,30 @@ mod tests {
     fn completed_rework_result_routes_to_rework() {
         let job = completed_gemini_review(
             "Review Result: REWORK\n\n[Confirmed] The PR does not implement the parent execution gates for `Todo` issues.",
+        );
+
+        let decision = review_gate_decision(&job);
+
+        assert_eq!(decision.outcome, ReviewOutcome::NeedsRework);
+        assert_eq!(decision.target_state, Some("rework"));
+    }
+
+    #[test]
+    fn human_owned_uat_finding_does_not_block_agent_review_pass() {
+        let job = completed_gemini_review(
+            "Review Result: REWORK\n\n[Confirmed] Missing UAT: Live UAT with `main loop --write` was not run.",
+        );
+
+        let decision = review_gate_decision(&job);
+
+        assert_eq!(decision.outcome, ReviewOutcome::PassedToHumanReview);
+        assert_eq!(decision.target_state, Some("human_review"));
+    }
+
+    #[test]
+    fn uat_implementation_deliverable_still_blocks_agent_review() {
+        let job = completed_gemini_review(
+            "Review Result: REWORK\n\n[Confirmed] Missing UAT fixture: The issue required implementing a controlled rehearsal path and UAT fixture, but the PR does not add it.",
         );
 
         let decision = review_gate_decision(&job);
@@ -2310,12 +2419,32 @@ mod tests {
         assert!(body.contains("Generated at: `"));
         assert!(body.contains("GMT`"));
         assert!(body.contains("Target state after review routing: `human_review`"));
-        assert!(body.contains("### Agent Review Note"));
+        assert!(body.contains("### Review Response"));
         assert!(body.contains("Agent note body."));
         assert!(body.contains("### Stdout"));
+        assert!(body.contains("<details>"));
+        assert!(body.contains("<summary>Stdout</summary>"));
         assert!(body.contains("### Stderr"));
+        assert!(body.contains("<summary>Stderr</summary>"));
         assert!(body.contains("warning only"));
         assert!(body.contains("Review job ledger: `/tmp/reviews/jobs/1-gemini.json`"));
+    }
+
+    #[test]
+    fn review_workpad_does_not_duplicate_parsed_findings_when_note_exists() {
+        let response = "Review Result: REWORK\n\n### Findings\n- [Confirmed] Missing gate: The PR does not enforce the gate.\n\n### Evidence\n- `src/main.rs` was inspected.";
+        let mut job = completed_gemini_review(response);
+        job.report.as_mut().unwrap().stdout = Some(format!(
+            "{{\"response\":{}}}",
+            serde_json::to_string(response).unwrap()
+        ));
+
+        let body = render_review_workpad(&issue(), &job);
+
+        assert!(body.contains("### Review Response"));
+        assert!(body.contains("#### Findings"));
+        assert!(body.contains("[Confirmed] Missing gate"));
+        assert!(!body.contains("- Confirmed: Missing gate -"));
     }
 
     #[test]

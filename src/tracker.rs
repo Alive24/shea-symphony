@@ -1683,7 +1683,7 @@ const GITHUB_PROJECT_LABEL_PAGE_SIZE: usize = 25;
 const GITHUB_PROJECT_ASSIGNEE_PAGE_SIZE: usize = 10;
 const GITHUB_PROJECT_SUBISSUE_PAGE_SIZE: usize = 50;
 const GITHUB_PROJECT_LINKED_PR_PAGE_SIZE: usize = 10;
-const GITHUB_PROJECT_COMMENT_PAGE_SIZE: usize = 20;
+const GITHUB_PROJECT_COMMENT_PAGE_SIZE: usize = 100;
 const GITHUB_PROJECT_METADATA_FIELD_PAGE_SIZE: usize = 50;
 const GITHUB_WORKPAD_COMMENT_PAGE_SIZE: usize = 50;
 
@@ -1777,6 +1777,11 @@ query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
                 }}
               }}
               comments(first: {GITHUB_PROJECT_COMMENT_PAGE_SIZE}) {{
+                nodes {{
+                  body
+                }}
+              }}
+              recentComments: comments(last: {GITHUB_PROJECT_COMMENT_PAGE_SIZE}) {{
                 nodes {{
                   body
                 }}
@@ -2107,9 +2112,16 @@ fn replace_or_append_workpad_entry(
     let content = strip_workpad_marker(existing, marker);
     let mut replaced = false;
     let mut entries = Vec::new();
+    let incoming_is_canonical_workpad = is_canonical_workpad_entry(incoming_entry);
 
     for entry in split_workpad_entries(content) {
-        if workpad_entry_key(&entry).as_deref() == Some(incoming_key) {
+        let should_replace = if incoming_is_canonical_workpad {
+            is_canonical_workpad_entry(&entry)
+        } else {
+            workpad_entry_key(&entry).as_deref() == Some(incoming_key)
+        };
+
+        if should_replace {
             if !replaced {
                 entries.push(incoming_entry.to_string());
                 replaced = true;
@@ -2185,6 +2197,17 @@ fn workpad_entry_key(entry: &str) -> Option<String> {
         Some(h3) => format!("{h2}\n{h3}"),
         None => h2,
     })
+}
+
+fn is_canonical_workpad_entry(entry: &str) -> bool {
+    workpad_h2(entry).is_some_and(|h2| matches!(h2, "## Jade Symphony Workpad" | "## Workpad"))
+}
+
+fn workpad_h2(entry: &str) -> Option<&str> {
+    entry
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("## ") && !line.starts_with("### "))
 }
 
 fn strip_workpad_marker<'a>(markdown: &'a str, marker: &str) -> &'a str {
@@ -2799,26 +2822,72 @@ fn github_issue_description_with_workpad(
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default()
         .to_string();
-    let workpad = canonical_workpad_comment_body(content.pointer("/comments/nodes"), marker);
+    let comment_bodies = github_issue_comment_bodies(content);
+    let workpad = canonical_workpad_comment_body(&comment_bodies, marker);
+    let timeline_comments = jade_symphony_timeline_comment_bodies(&comment_bodies, marker);
 
-    match (body.trim().is_empty(), workpad) {
-        (true, None) => None,
-        (false, None) => Some(body),
-        (true, Some(workpad)) => Some(workpad),
-        (false, Some(workpad)) => Some(format!("{body}\n\n{workpad}")),
+    let mut sections = Vec::new();
+    if !body.trim().is_empty() {
+        sections.push(body);
+    }
+    if let Some(workpad) = workpad {
+        sections.push(workpad);
+    }
+    sections.extend(timeline_comments);
+
+    if sections.is_empty() {
+        None
+    } else {
+        Some(sections.join("\n\n"))
     }
 }
 
-fn canonical_workpad_comment_body(
-    comments: Option<&serde_json::Value>,
-    marker: &str,
-) -> Option<String> {
-    comments?
-        .as_array()?
+fn github_issue_comment_bodies(content: &serde_json::Value) -> Vec<&str> {
+    let mut bodies = Vec::new();
+    for pointer in ["/comments/nodes", "/recentComments/nodes"] {
+        if let Some(nodes) = content
+            .pointer(pointer)
+            .and_then(serde_json::Value::as_array)
+        {
+            for comment in nodes {
+                if let Some(body) = comment.get("body").and_then(serde_json::Value::as_str) {
+                    if !bodies.contains(&body) {
+                        bodies.push(body);
+                    }
+                }
+            }
+        }
+    }
+    bodies
+}
+
+fn canonical_workpad_comment_body(comment_bodies: &[&str], marker: &str) -> Option<String> {
+    comment_bodies
         .iter()
-        .filter_map(|comment| comment.get("body").and_then(serde_json::Value::as_str))
         .find(|body| body.contains(marker) && !body.contains("Superseded Jade Symphony workpad"))
-        .map(ToOwned::to_owned)
+        .map(|body| (*body).to_string())
+}
+
+fn jade_symphony_timeline_comment_bodies(comment_bodies: &[&str], marker: &str) -> Vec<String> {
+    comment_bodies
+        .iter()
+        .filter(|body| !body.contains(marker))
+        .filter(|body| is_jade_symphony_timeline_comment(body))
+        .map(|body| (*body).to_string())
+        .collect()
+}
+
+fn is_jade_symphony_timeline_comment(body: &str) -> bool {
+    [
+        "## Jade Symphony Agent Review Run",
+        "## Jade Symphony Rework Run",
+        "## Jade Symphony Merge Run",
+        "## Jade Symphony Human Review Decision",
+        "## Jade Symphony Doctor Triage",
+        "## Manual Agent Review Evidence",
+    ]
+    .iter()
+    .any(|heading| body.contains(heading))
 }
 
 fn blocker_refs_from_project_fields(
@@ -4368,6 +4437,33 @@ mod tests {
     }
 
     #[test]
+    fn github_issue_description_includes_timeline_comments_for_review_evidence() {
+        let content = serde_json::json!({
+            "body": "issue body",
+            "comments": {
+                "nodes": [
+                    {"body": "<!-- jade-symphony-workpad -->\n## Jade Symphony Workpad"},
+                    {"body": "ordinary comment"}
+                ]
+            },
+            "recentComments": {
+                "nodes": [
+                    {"body": "ordinary recent comment"},
+                    {"body": "## Jade Symphony Agent Review Run\n\nReview pass evidence: `recorded`"}
+                ]
+            }
+        });
+
+        let description =
+            github_issue_description_with_workpad(&content, "<!-- jade-symphony-workpad -->")
+                .unwrap();
+
+        assert!(description.contains("## Jade Symphony Workpad"));
+        assert!(description.contains("## Jade Symphony Agent Review Run"));
+        assert!(description.contains("Review pass evidence: `recorded`"));
+    }
+
+    #[test]
     fn filters_github_read_issues_by_status_map_and_assignees() {
         let config = github_config(
             r#"---
@@ -4861,6 +4957,24 @@ Prompt
         assert!(body.contains("- final"));
         assert!(!body.contains("- first"));
         assert!(!body.contains("- duplicate"));
+        assert!(body.contains("## Agent Review"));
+    }
+
+    #[test]
+    fn merge_workpad_body_replaces_legacy_workpad_and_stale_pr_evidence() {
+        let marker = "<!-- jade-symphony-workpad -->";
+        let existing = format!(
+            "{marker}\n## Workpad\n\n### Workspace Evidence\n- Workspace path: `/tmp/old`\n\n---\n\n## Jade Symphony Workpad\n\n### Planned Handoff\n- Live PR: `not-created`\n\n---\n\n## Agent Review\n\n### Manual Review Evidence\npass"
+        );
+        let incoming =
+            "## Jade Symphony Workpad\n\n### Planned Handoff\n- Live PR: `https://github.com/Alive24/jade-symphony/pull/337`";
+
+        let body = merge_workpad_body(&existing, incoming, marker);
+
+        assert_eq!(body.matches("## Jade Symphony Workpad").count(), 1);
+        assert!(!body.contains("## Workpad"));
+        assert!(!body.contains("not-created"));
+        assert!(body.contains("https://github.com/Alive24/jade-symphony/pull/337"));
         assert!(body.contains("## Agent Review"));
     }
 

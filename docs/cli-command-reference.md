@@ -62,7 +62,7 @@ not replace the CLI repair commands or authorize automatic Project mutation.
 `doctor repair ISSUE` is non-destructive by default. It prints safe,
 uncertain, and dangerous actions for the issue using tracker state, Project
 fields, runtime-state evidence, branch/PR hints, and doctor findings. The
-`--move-need-human-input --write` path writes workpad evidence before changing
+`--move-need-human-input --write` path writes Doctor timeline evidence before changing
 tracker state.
 `--mark-pr-ready --confirm-handoff-ready --write` is an explicit operator repair
 for `Agent Review` issues whose linked PR is still draft. It writes repair
@@ -81,7 +81,7 @@ Examples:
 cargo run -- main once examples/dry-run-workflow.md
 cargo run -- main loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
 cargo run -- main loop examples/dry-run-workflow.md --max-iterations 1 --dry-run --display tui
-cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --pool 2 --dry-run
+cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
 cargo run -- clean plan workflows/jade-symphony.md
 cargo run -- clean audit workflows/jade-symphony.md
 ```
@@ -89,13 +89,19 @@ cargo run -- clean audit workflows/jade-symphony.md
 Use `--display tui` for an opt-in operator panel on `main loop`, `project state`,
 and `doctor`. The default output stays line-oriented for logs and scripts.
 
-`main loop --pool N` is a supervised planning and claim-locking slice. Dry-run
-mode previews up to `N` eligible main-lane issues after skipping items whose
-`Main Agent` Project field is already owned by another worker. Write mode still
-processes one main work item at a time because the runtime state tracks one
-active issue, but it uses the same lane claim check and stamps `Main Agent`
-before tracker mutation. `main loop`, `review loop`, and `merge once` print
-compact `Latest:` status bars in addition to their detailed line logs.
+`main loop --max-concurrent N` is a supervised planning, claim-locking, and
+runtime-slot boundary. Dry-run mode previews up to `N` eligible main-lane issues
+after skipping items whose `Main Agent` Project field is already owned by
+another worker. Write mode counts active Main runtime entries first, then claims
+and starts up to the remaining capacity in the same bounded loop iteration. The
+runtime-state file is backward-compatible with the old single active issue
+shape, but can now persist multiple active Main worker entries without
+overwriting another issue's session, workspace, retry, or transition evidence.
+`doctor` evaluates those runtime entries per issue so legitimate parallel Main
+workers do not create false `runtime_active_issue_disagrees` warnings while
+still surfacing missing, stale, or conflicting ownership. `main loop`, `review
+loop`, and `merge once` print compact `Latest:` status bars in addition to their
+detailed line logs.
 `main loop --write`, `review loop --write`, and `merge loop --write` also
 enforce a clean canonical launch checkout before the first tracker mutation.
 Tracked dirty files block the lane; recognized untracked
@@ -145,7 +151,7 @@ status in a durable session registry under the configured artifact root. The
 registry is terminal-session evidence only; tracker state remains the issue
 lifecycle source of truth. The issue stays in the active main lane until later
 completion evidence satisfies the existing handoff rules. If an operator
-overrides the workflow back to `agent.backend: dry-run`, `main loop --write`
+overrides the workflow back to `main_lane.backend: dry-run`, `main loop --write`
 exits non-zero before loading runtime state, creating worktrees, claiming
 Project fields, or writing workpads.
 
@@ -164,7 +170,7 @@ and run. Manual claim evidence is truthful non-tmux registry evidence; `session
 start` is the step that creates attach/log evidence for a real tmux session and
 never writes claim fields. Main and Merge default to `tmux.agent_command`;
 Review uses `tmux.review_agent_command` when set and otherwise uses
-`review.gemini_command` for `review.backend: gemini-cli`. The rendered prompt
+`review_lane.gemini_command` for `review_lane.backend: gemini-cli`. The rendered prompt
 includes the assigned `run=` and registry pointer so the spawned agent can
 preserve that value in its handoff evidence.
 `session list WORKFLOW` shows active tmux sessions with attach commands, and
@@ -184,7 +190,7 @@ Use `workspace` when a lane needs to find or record the local git worktree for
 an issue before starting review or merge repair. This command group is a safe
 coordination surface for per-issue worktrees; it is not a generic checkout tool.
 Discovery combines Project issue/PR hints, session registry records, canonical
-workpad evidence, and local `git worktree list --porcelain` output.
+Main Workpad evidence, timeline comments, and local `git worktree list --porcelain` output.
 
 | Command | Purpose | Boundary |
 | --- | --- | --- |
@@ -227,7 +233,8 @@ These commands can mutate live tracker state and require `--write`.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `project set-state` | Move one issue to a normalized workflow state. | Refuses `Human Review` from the main implementation role. |
-| `project workpad` | Upsert the canonical issue workpad comment. | Use for durable evidence before state transitions. |
+| `project workpad` | Upsert the canonical Main Agent Workpad marker comment. | Use for Main implementation evidence, including Main-lane `Rework` implementation rounds. Repeated canonical workpad writes replace the prior canonical workpad entry instead of creating multiple top-level `Jade Symphony Workpad` blocks. Append-only `Jade Symphony Rework Run` comments explain why Rework was triggered; Review, Merge, Human Review, and Doctor evidence should remain append-only timeline comments created by their lane commands. |
+| `project link-pr` | Repair PR linkage when Project readback cannot already see the PR. | First checks linked-PR readback and skips the fallback comment when linkage is already visible; if GitHub Project v2 still cannot expose the PR, it may post a linkage repair comment as a fallback. |
 | `create-follow-up` | Create a follow-up issue from a body file. | Lower-level creation path; prefer `forge create` for quality-gated issues. |
 | `project add` | Add an existing GitHub issue node to the configured Project. | Initializes configured Project status where supported. |
 
@@ -353,6 +360,7 @@ changes.
 | `review fake` | Fixture/fake review transition helper. | Local testing path. |
 | `review once` | Run one configured review backend for one issue. | Direct backend command for one issue. |
 | `review loop` | Bounded review worker selection/reconciliation. | For `gemini-cli`, runs headless Gemini by default with stdin prompt transport, JSON output capture, configured model/tools, and durable review-job evidence. |
+| `review status` | Read review-loop and review-runner status from local ledgers, runtime/session registry, and Project claim cross-checks. | Read-only; never claims, repairs, retries, kills jobs, writes workpads, or changes Project state. |
 | `review claim` | Claim one `Agent Review` item's `Review Agent` text field for manual/operator review. | Requires `--worker` and `--write`; refuses non-`Agent Review` issues and writes a structured, round-trip-validated claim pointer. |
 | `review pass` | Record manual independent review pass evidence and move to `Human Review`. | Requires `--write`, a durable evidence file containing the exact current `Review Agent` claim, and preserves the field as terminal pass evidence. |
 | `review reject` | Record failed/inconclusive manual review evidence and route to `Agent Review`, `Rework`, or `Need Human Input`. | Refuses `Human Review`, requires exact claim evidence, and preserves the field as terminal reject/failed evidence. |
@@ -368,6 +376,9 @@ Example:
 ```bash
 cargo run -- review loop examples/review-fixture-workflow.md --max-iterations 1 --dry-run
 cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --write
+cargo run -- review status workflows/jade-symphony.md
+cargo run -- review status workflows/jade-symphony.md --issue '#226' --recent 3 --verbose
+cargo run -- review status workflows/jade-symphony.md --json
 cargo run -- review claim workflows/jade-symphony.md '#226' --worker "Manual Gemini Review" --write
 cargo run -- session start workflows/jade-symphony.md '#226' --lane review --run <RUN_ID> --write
 cargo run -- session list workflows/jade-symphony.md
@@ -442,16 +453,20 @@ Doctor lanes.
 
 | Command | Purpose | Boundary |
 | --- | --- | --- |
-| `merge once` | Inspect one `Merging` issue, verify a single linked PR, and either merge or route blockers. | Live merge requires explicit `--write`; dirty/failing PRs route to `Rework`, transient `UNKNOWN` mergeability stays in `Merging` for retry, and `Need Human Input` workpads include a concrete question. Native subissues expect the parent integration branch as the PR base; parent final PRs expect `main`. |
+| `merge once` | Inspect one `Merging` issue, verify a single linked PR, and either merge, safely refresh a stale branch, attempt safe conflict repair, or route blockers. | Live merge requires explicit `--write`; fixture workflows synthesize merge or conflict-repair command evidence without touching GitHub. Native subissues expect the parent integration branch as the PR base; parent final PRs expect `main`. `BEHIND` PRs are updated with `gh pr update-branch` and left in `Merging` for retry, transient `UNKNOWN` mergeability stays in `Merging`, `DIRTY` PRs first try a clean local PR-worktree repair when available, and unrepaired dirty/failing blockers route to `Need Human Input` with a concrete question instead of defaulting to `Rework`. |
 
 Examples:
 
 ```bash
 cargo run -- merge once workflows/jade-symphony.md --dry-run
+cargo run -- merge loop examples/merge-fixture-workflow.md --max-iterations 1 --write
+cargo run -- merge loop examples/merge-conflict-repair-fixture-workflow.md --max-iterations 1 --write
 ```
 
 `merge once` is separate from main implementation and review work. It should
-only consume issues already in `Merging`.
+only consume issues already in `Merging`. `Rework` remains a Main/Review repair
+lane unless an operator explicitly chooses a historical merge-lane recovery
+path.
 
 ## Live Dogfood Boundary
 

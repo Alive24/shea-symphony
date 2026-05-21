@@ -23,8 +23,8 @@ fn skill_suite_lists_human_review_skill() {
 fn human_review_template_supports_all_decisions() {
     let template = repo_file("workflows/template/workpad/human-review.md");
 
-    assert!(template.starts_with("<!-- jade-symphony-workpad -->"));
-    assert!(template.contains("## Human Review Decision Note"));
+    assert!(!template.contains("<!-- jade-symphony-workpad -->"));
+    assert!(template.contains("## Jade Symphony Human Review Decision"));
     assert!(template.contains("Approve for Merging"));
     assert!(template.contains("Decision timestamp: <YYYY-MM-DD HH:MM timezone>"));
     assert!(template.contains("Request Rework"));

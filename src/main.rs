@@ -41,17 +41,18 @@ use jade_symphony::handoff::{
 };
 use jade_symphony::issue_forge::{next_clarification_question, ForgeValidationReport};
 use jade_symphony::issue_workspace::{
-    discover_issue_workspaces_from_parts, git_worktree_list, infer_issue_ref_from_branch_or_path,
-    render_workspace_adoption_workpad, render_workspace_ensure_workpad,
-    validate_workspace_adoption, IssueWorkspaceCandidate, IssueWorkspaceReport,
-    WorkspaceMatchStrength,
+    discover_issue_workspaces, discover_issue_workspaces_from_parts, git_worktree_list,
+    infer_issue_ref_from_branch_or_path, render_workspace_adoption_workpad,
+    render_workspace_ensure_workpad, validate_workspace_adoption, IssueWorkspaceCandidate,
+    IssueWorkspaceReport, WorkspaceMatchStrength,
 };
 use jade_symphony::lane_claim::{
     LaneClaim, LaneClaimActor, LaneClaimLane, LaneClaimSource, LaneClaimState,
 };
 use jade_symphony::merge_lane::{
-    expected_merge_base_branch, fetch_pull_request_status_with_recheck, merge_lane_decision,
-    merge_lane_workpad, merge_pull_request, pull_request_status_from_linked, MergeLaneDecisionKind,
+    expected_merge_base_branch, fetch_pull_request_status_with_recheck, fixture_merge_output,
+    merge_lane_decision, merge_lane_workpad, merge_pull_request, pull_request_status_from_linked,
+    repair_dirty_pull_request, update_pull_request_branch, MergeLaneDecisionKind,
 };
 use jade_symphony::model::{
     native_subissue_gate_blocker, normalize_state, GateDecision, GateDecisionKind, LatestStatus,
@@ -80,14 +81,18 @@ use jade_symphony::review::{
     ReviewBackend, ReviewFreshnessInput, ReviewGateDecision, ReviewJob, ReviewJobState,
     ReviewOutcome, ReviewRequest, ReviewReworkClass, ReviewRunEligibility, ReviewStaleReason,
 };
-use jade_symphony::rework::{
-    render_rework_diagnostic_workpad, rework_diagnostic_from_review, rework_transition_expected,
-    ReworkDiagnostic,
+use jade_symphony::review_status::{
+    load_review_status, render_project_inspect_review_summary, render_review_status_human,
+    ReviewStatusOptions, DEFAULT_RECENT_REVIEW_JOBS,
 };
+use jade_symphony::rework::rework_transition_expected;
+#[cfg(test)]
+use jade_symphony::rework::{render_rework_diagnostic_workpad, ReworkDiagnostic};
 use jade_symphony::runtime_state::{
-    clear_runtime_state, detect_runtime_stall, load_runtime_state, mark_runtime_state_updated,
-    record_runtime_retry, runtime_state_path, save_runtime_state, RuntimeIssueState,
-    RuntimeRetryState, RuntimeStallState, RuntimeState, RuntimeTransition,
+    detect_runtime_stall, load_runtime_states, mark_runtime_state_updated, record_runtime_retry,
+    remove_runtime_state_for_issue, runtime_state_for_issue, runtime_state_path,
+    save_runtime_states, upsert_runtime_state, RuntimeIssueState, RuntimeRetryState,
+    RuntimeStallState, RuntimeState, RuntimeTransition,
 };
 use jade_symphony::session_registry::{
     capture_tmux_pane_tail, classify_session_record, load_session_registry, read_log_tail,
@@ -266,6 +271,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::ReviewFreshness { input } => review_freshness(input),
         Command::ReviewLoop { options } => review_loop(options),
+        Command::ReviewStatus { options } => review_status(options),
         Command::MergeSession {
             workflow_path,
             issue_ref,
@@ -674,20 +680,27 @@ fn link_pr(
 
     let config = load_config(&workflow_path)?;
     let adapter = adapter_from_config(&config);
-    link_pr_with_adapter(adapter.as_ref(), &issue_ref, &pr_ref, true)?;
-    append_tracker_mutation_audit(
-        &config,
-        TrackerMutationAudit {
-            command: "link-pr",
-            mutation_type: "pr_link",
-            issue_ref: Some(&issue_ref),
-            target: Some(pr_ref.clone()),
-            from_state: None,
-            to_state: None,
-            reason: "explicit CLI PR link",
-        },
-    );
-    println!("link_pr=ok issue_ref={issue_ref} pr_ref={pr_ref}");
+    let repaired = link_pr_with_adapter(adapter.as_ref(), &issue_ref, &pr_ref, true)?;
+    if repaired {
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: "link-pr",
+                mutation_type: "pr_link",
+                issue_ref: Some(&issue_ref),
+                target: Some(pr_ref.clone()),
+                from_state: None,
+                to_state: None,
+                reason: "explicit CLI PR link",
+            },
+        );
+    }
+    let action = if repaired {
+        "repair_comment"
+    } else {
+        "already_visible"
+    };
+    println!("link_pr=ok issue_ref={issue_ref} pr_ref={pr_ref} action={action}");
     Ok(())
 }
 
@@ -698,6 +711,10 @@ fn link_pr_with_adapter(
     write: bool,
 ) -> Result<bool, TrackerError> {
     if write {
+        let linked = adapter.list_linked_pull_requests(issue_ref)?;
+        if linked_pull_requests_contain(&linked, pr_ref) {
+            return Ok(false);
+        }
         adapter.link_pull_request(issue_ref, pr_ref)?;
         Ok(true)
     } else {
@@ -1181,7 +1198,7 @@ fn forge_rework_with_adapter(
         if !input.dry_run {
             let diagnostic = render_forge_rework_blocked_workpad(&source, &error.to_string());
             adapter
-                .upsert_workpad(&source.identifier, &diagnostic)
+                .add_issue_comment(&source.identifier, &diagnostic)
                 .map_err(|write_error| {
                     format!("forge rework stopped at active_claim_diagnostic: {write_error}")
                 })?;
@@ -1189,7 +1206,7 @@ fn forge_rework_with_adapter(
                 config,
                 TrackerMutationAudit {
                     command: "forge rework",
-                    mutation_type: "workpad_write",
+                    mutation_type: "timeline_comment",
                     issue_ref: Some(&source.identifier),
                     target: Some("Rework Revision Blocker".into()),
                     from_state: Some(source.state.clone()),
@@ -1282,13 +1299,13 @@ fn forge_rework_with_adapter(
         &readbacks,
     );
     adapter
-        .upsert_workpad(&content_verified.identifier, &workpad)
-        .map_err(|error| format!("forge rework stopped at evidence_workpad: {error}"))?;
+        .add_issue_comment(&content_verified.identifier, &workpad)
+        .map_err(|error| format!("forge rework stopped at evidence_comment: {error}"))?;
     append_tracker_mutation_audit(
         config,
         TrackerMutationAudit {
             command: "forge rework",
-            mutation_type: "workpad_write",
+            mutation_type: "timeline_comment",
             issue_ref: Some(&content_verified.identifier),
             target: Some("Rework Revision Evidence".into()),
             from_state: Some(source.state.clone()),
@@ -1389,9 +1406,14 @@ fn render_forge_rework_workpad(
     generated_readbacks: &[String],
 ) -> String {
     let mut lines = vec![
-        "## Rework Revision Evidence".to_string(),
+        "## Jade Symphony Rework Run".to_string(),
         String::new(),
+        format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", issue.identifier, issue.title),
+        "- Lane: `main`".into(),
+        "- Run type: `human_review_rework_revision`".into(),
+        "- Input state: `Human Review`".into(),
+        "- Target state after run: `Rework`".into(),
         format!("- Replacement Rework title/status: `{rework_title}` / `Rework`"),
         format!("- Operator confirmation: {operator_confirmation:?}"),
         "- Source state validated as `Human Review` before mutation.".into(),
@@ -1423,10 +1445,14 @@ fn render_forge_rework_workpad(
 
 fn render_forge_rework_blocked_workpad(issue: &TrackerIssue, reason: &str) -> String {
     [
-        "## Rework Revision Blocker".to_string(),
+        "## Jade Symphony Rework Run".to_string(),
         String::new(),
+        format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", issue.identifier, issue.title),
+        "- Lane: `main`".into(),
+        "- Run type: `human_review_rework_revision`".into(),
         "- Source state: `Human Review`".into(),
+        "- Target state after run: `unchanged`".into(),
         format!("- Blocker: {reason}"),
         "- No replacement body was written.".into(),
         "- Project status was not changed to `Rework`.".into(),
@@ -2234,7 +2260,7 @@ fn review_manual_pass(
     );
     if !write {
         println!(
-            "review_pass_dry_run action=workpad issue_ref={} evidence=manual_review_pass",
+            "review_pass_dry_run action=timeline_comment issue_ref={} evidence=manual_review_pass",
             issue.identifier
         );
         println!(
@@ -2247,12 +2273,12 @@ fn review_manual_pass(
         );
         return Ok(());
     }
-    adapter.upsert_workpad(&issue.identifier, &workpad)?;
+    adapter.add_issue_comment(&issue.identifier, &workpad)?;
     append_tracker_mutation_audit(
         &config,
         TrackerMutationAudit {
             command: "review pass",
-            mutation_type: "workpad_write",
+            mutation_type: "timeline_comment",
             issue_ref: Some(&issue.identifier),
             target: None,
             from_state: Some(issue.state.clone()),
@@ -2340,7 +2366,7 @@ fn review_manual_reject(
     );
     if !write {
         println!(
-            "review_reject_dry_run action=workpad issue_ref={} evidence=manual_review_reject",
+            "review_reject_dry_run action=timeline_comment issue_ref={} evidence=manual_review_reject",
             issue.identifier
         );
         println!(
@@ -2353,12 +2379,12 @@ fn review_manual_reject(
         );
         return Ok(());
     }
-    adapter.upsert_workpad(&issue.identifier, &workpad)?;
+    adapter.add_issue_comment(&issue.identifier, &workpad)?;
     append_tracker_mutation_audit(
         &config,
         TrackerMutationAudit {
             command: "review reject",
-            mutation_type: "workpad_write",
+            mutation_type: "timeline_comment",
             issue_ref: Some(&issue.identifier),
             target: None,
             from_state: Some(issue.state.clone()),
@@ -2404,12 +2430,15 @@ fn render_manual_review_workpad(
     terminal_claim_value: &str,
 ) -> String {
     let mut lines = vec![
-        "## Agent Review".to_string(),
+        "## Jade Symphony Agent Review Run".to_string(),
         String::new(),
+        format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", issue.identifier, issue.title),
+        "- Lane: `review`".into(),
+        "- Input state: `Agent Review`".into(),
         "- Reviewer backend: manual-operator".into(),
         format!("- Decision: Manual independent review {decision}."),
-        format!("- Target state: `{target_state}`"),
+        format!("- Target state after review routing: `{target_state}`"),
         format!("- Review Agent claim: `{current_claim_value}`"),
         format!("- Terminal Review Agent claim: `{terminal_claim_value}`"),
         String::new(),
@@ -2573,7 +2602,7 @@ fn review_freshness(input: ReviewFreshnessInput) -> Result<(), Box<dyn std::erro
             .unwrap_or("none")
     );
     println!("rationale={}", report.decision.rationale);
-    println!("\n--- workpad evidence ---\n");
+    println!("\n--- review freshness evidence ---\n");
     println!("{}", render_review_freshness_workpad(&report));
     Ok(())
 }
@@ -2673,7 +2702,7 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                         "review",
                         if options.write { "running" } else { "waiting" },
                         "review_selected",
-                        Some("review workpad and reconcile".into()),
+                        Some("write review timeline and reconcile".into()),
                     ));
                     println!(
                     "review_loop_iteration={iterations} worker_slot={worker_slot} issue={} worker_key={worker_key} mode={}",
@@ -2704,7 +2733,7 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                         }
                         print_review_claim_field_dry_run(&selected_issue, &worker_key);
                         println!(
-                            "review_loop_dry_run action=workpad issue={} evidence=review_job",
+                            "review_loop_dry_run action=timeline_comment issue={} evidence=review_job",
                             selected_issue.identifier
                         );
                         println!(
@@ -2862,6 +2891,44 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
+fn review_status(options: ReviewStatusCliOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let workflow = WorkflowDefinition::load(&options.workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &options.workflow_path)?;
+    config.validate()?;
+    let adapter = adapter_from_config(&config);
+    let issues = if let Some(issue_ref) = &options.issue_filter {
+        adapter
+            .get_issue(issue_ref)?
+            .map(|issue| vec![issue])
+            .ok_or_else(|| format!("issue not found: {issue_ref}"))?
+    } else {
+        let mut states = config.tracker.active_states.clone();
+        if !states.iter().any(|state| {
+            normalize_state(state) == normalize_state(&config.tracker.state_map.agent_review)
+        }) {
+            states.push(config.tracker.state_map.agent_review.clone());
+        }
+        adapter.fetch_issues_by_states(&states)?
+    };
+    let payload = load_review_status(
+        &config,
+        &issues,
+        &ReviewStatusOptions {
+            issue_filter: options.issue_filter.clone(),
+            recent_limit: options.recent_limit,
+            verbose: options.verbose,
+        },
+        unix_timestamp_ms(),
+    )?;
+
+    if options.json {
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        println!("{}", render_review_status_human(&payload, options.verbose));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MergeOnceOutcome {
     NoMergingIssue,
@@ -2879,16 +2946,19 @@ fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::error::Error
     let max = options
         .iteration_limit()
         .ok_or("merge loop requires --max-iterations or --once")?;
-    let pool = options.pool_size();
+    let workflow = WorkflowDefinition::load(&options.workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &options.workflow_path)?;
+    config.validate()?;
+    let max_concurrent = options.worker_limit(&config);
     let mut stopped = false;
 
     for iteration in 1..=max {
         println!(
-            "merge_loop_iteration={} mode={} pool={pool}",
+            "merge_loop_iteration={} mode={} max_concurrent={max_concurrent}",
             iteration,
             if options.write { "write" } else { "dry-run" }
         );
-        for slot in 1..=pool {
+        for slot in 1..=max_concurrent {
             match merge_once_tick(options.workflow_path.clone(), options.write)? {
                 MergeOnceOutcome::NoMergingIssue => {
                     println!(
@@ -2899,7 +2969,7 @@ fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::error::Error
                 }
                 MergeOnceOutcome::DryRun if !options.write => {
                     println!("merge_loop_action=dry_run_tick iterations={iteration} slot={slot}");
-                    if pool > 1 {
+                    if max_concurrent > 1 {
                         println!(
                             "merge_loop=stopped reason=dry_run_would_repeat_without_mutation iterations={iteration}"
                         );
@@ -2909,6 +2979,9 @@ fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::error::Error
                 }
                 MergeOnceOutcome::Merged => {
                     println!("merge_loop_action=merged iterations={iteration} slot={slot}");
+                    if options.write && config.tracker.fixture_path.is_none() {
+                        refresh_canonical_checkout_after_merge(&config)?;
+                    }
                 }
                 MergeOnceOutcome::Routed => {
                     println!("merge_loop_action=routed iterations={iteration} slot={slot}");
@@ -2938,7 +3011,7 @@ fn merge_once_tick(
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
-    if write {
+    if write && config.tracker.fixture_path.is_none() {
         enforce_canonical_checkout_before_write(&config, "merge_loop")?;
     }
     let _merge_prompt = workflow.prompt_for_lane(AgentLane::MergeAgent);
@@ -3033,12 +3106,169 @@ fn merge_once_tick(
         return Ok(MergeOnceOutcome::DryRun);
     }
 
+    if decision.kind == MergeLaneDecisionKind::StaleBranch {
+        let pr_ref = decision
+            .pr_url
+            .as_deref()
+            .ok_or("stale-branch decision missing pull request URL")?;
+        let output = update_pull_request_branch(pr_ref, &runner, &std::env::current_dir()?)?;
+        if output.status == 0 {
+            let workpad = merge_lane_workpad(&issue, &decision, Some(&output));
+            adapter.add_issue_comment(&issue.identifier, &workpad)?;
+            append_tracker_mutation_audit(
+                &config,
+                TrackerMutationAudit {
+                    command: "merge once",
+                    mutation_type: "timeline_comment",
+                    issue_ref: Some(&issue.identifier),
+                    target: decision.pr_url.clone(),
+                    from_state: Some(issue.state.clone()),
+                    to_state: None,
+                    reason: "merge lane stale branch update evidence",
+                },
+            );
+            println!(
+                "merge_once_action=stale_branch_updated issue={} target_state=merging",
+                issue.identifier
+            );
+            return Ok(MergeOnceOutcome::Skipped);
+        }
+
+        let mut failed_update = decision.clone();
+        failed_update.kind = MergeLaneDecisionKind::MergeDirty;
+        failed_update.target_state = Some("need_human_input");
+        failed_update.reason = format!(
+            "safe PR branch update failed with status {}: stdout={} stderr={}",
+            output.status,
+            single_line(&output.stdout),
+            single_line(&output.stderr)
+        );
+        let workpad = merge_lane_workpad(&issue, &failed_update, Some(&output));
+        adapter.add_issue_comment(&issue.identifier, &workpad)?;
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: "merge once",
+                mutation_type: "timeline_comment",
+                issue_ref: Some(&issue.identifier),
+                target: failed_update.pr_url.clone(),
+                from_state: Some(issue.state.clone()),
+                to_state: failed_update.target_state.map(ToOwned::to_owned),
+                reason: "merge lane stale branch update failure evidence",
+            },
+        );
+        adapter.set_state(&issue.identifier, "need_human_input")?;
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: "merge once",
+                mutation_type: "state_change",
+                issue_ref: Some(&issue.identifier),
+                target: failed_update.pr_url.clone(),
+                from_state: Some(issue.state.clone()),
+                to_state: Some("need_human_input".into()),
+                reason: "merge lane stale branch update failed",
+            },
+        );
+        println!(
+            "merge_once_action=routed issue={} target_state=need_human_input",
+            issue.identifier
+        );
+        return Ok(MergeOnceOutcome::Routed);
+    }
+
+    if decision.kind == MergeLaneDecisionKind::MergeDirty {
+        let pr_ref = decision
+            .pr_url
+            .as_deref()
+            .ok_or("dirty-merge decision missing pull request URL")?;
+        let head_ref_name = status
+            .as_ref()
+            .and_then(|status| status.head_ref_name.as_deref())
+            .or_else(|| {
+                linked_pull_requests
+                    .first()
+                    .and_then(|pull_request| pull_request.head_ref_name.as_deref())
+            });
+        let repair = repair_dirty_pull_request(
+            pr_ref,
+            head_ref_name,
+            &expected_base,
+            &runner,
+            &std::env::current_dir()?,
+            merge_rehearsal_mode(&config, &issue),
+        )?;
+        if repair.repaired {
+            let mut repaired_decision = decision.clone();
+            repaired_decision.reason = repair.reason.clone();
+            let workpad = merge_lane_workpad(&issue, &repaired_decision, Some(&repair.output));
+            adapter.add_issue_comment(&issue.identifier, &workpad)?;
+            append_tracker_mutation_audit(
+                &config,
+                TrackerMutationAudit {
+                    command: "merge once",
+                    mutation_type: "timeline_comment",
+                    issue_ref: Some(&issue.identifier),
+                    target: repaired_decision.pr_url.clone(),
+                    from_state: Some(issue.state.clone()),
+                    to_state: None,
+                    reason: "merge lane safe conflict repair evidence",
+                },
+            );
+            println!(
+                "merge_once_action=safe_conflict_repaired issue={} target_state=merging",
+                issue.identifier
+            );
+            return Ok(MergeOnceOutcome::Skipped);
+        }
+
+        let mut failed_repair = decision.clone();
+        failed_repair.target_state = Some("need_human_input");
+        failed_repair.reason = repair.reason.clone();
+        let workpad = merge_lane_workpad(&issue, &failed_repair, Some(&repair.output));
+        adapter.add_issue_comment(&issue.identifier, &workpad)?;
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: "merge once",
+                mutation_type: "timeline_comment",
+                issue_ref: Some(&issue.identifier),
+                target: failed_repair.pr_url.clone(),
+                from_state: Some(issue.state.clone()),
+                to_state: failed_repair.target_state.map(ToOwned::to_owned),
+                reason: "merge lane conflict repair failure evidence",
+            },
+        );
+        adapter.set_state(&issue.identifier, "need_human_input")?;
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: "merge once",
+                mutation_type: "state_change",
+                issue_ref: Some(&issue.identifier),
+                target: failed_repair.pr_url.clone(),
+                from_state: Some(issue.state.clone()),
+                to_state: Some("need_human_input".into()),
+                reason: "merge lane conflict repair needs human input",
+            },
+        );
+        println!(
+            "merge_once_action=routed issue={} target_state=need_human_input",
+            issue.identifier
+        );
+        return Ok(MergeOnceOutcome::Routed);
+    }
+
     if decision.kind.is_merge_ready() {
         let pr_ref = decision
             .pr_url
             .as_deref()
             .ok_or("merge-ready decision missing pull request URL")?;
-        let output = merge_pull_request(pr_ref, &runner, &std::env::current_dir()?)?;
+        let output = if merge_rehearsal_mode(&config, &issue) {
+            fixture_merge_output(pr_ref)
+        } else {
+            merge_pull_request(pr_ref, &runner, &std::env::current_dir()?)?
+        };
         let workpad = merge_lane_workpad(&issue, &decision, Some(&output));
         record_done_merge_lane_completion(&config, adapter.as_ref(), &issue, &workpad)?;
         println!(
@@ -3049,12 +3279,12 @@ fn merge_once_tick(
     }
 
     let workpad = merge_lane_workpad(&issue, &decision, None);
-    adapter.upsert_workpad(&issue.identifier, &workpad)?;
+    adapter.add_issue_comment(&issue.identifier, &workpad)?;
     append_tracker_mutation_audit(
         &config,
         TrackerMutationAudit {
             command: "merge once",
-            mutation_type: "workpad_write",
+            mutation_type: "timeline_comment",
             issue_ref: Some(&issue.identifier),
             target: decision.pr_url.clone(),
             from_state: Some(issue.state.clone()),
@@ -3093,18 +3323,44 @@ fn merge_once_tick(
     Ok(MergeOnceOutcome::Skipped)
 }
 
+fn refresh_canonical_checkout_after_merge(
+    config: &RuntimeConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let root = std::env::current_dir()?;
+    println!("merge_loop_action=refresh_canonical_checkout reason=post_merge");
+    let output = ProcessCommand::new("git")
+        .args(["pull", "--ff-only"])
+        .current_dir(&root)
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "merge loop failed to refresh canonical checkout after merge: status={} stdout={} stderr={}",
+            output.status.code().unwrap_or(-1),
+            single_line(&String::from_utf8_lossy(&output.stdout)),
+            single_line(&String::from_utf8_lossy(&output.stderr))
+        )
+        .into());
+    }
+    println!(
+        "merge_loop_action=refreshed_canonical_checkout stdout=\"{}\"",
+        single_line(&String::from_utf8_lossy(&output.stdout))
+    );
+    enforce_canonical_checkout_before_write(config, "merge_loop")?;
+    Ok(())
+}
+
 fn record_done_merge_lane_completion(
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
     issue: &TrackerIssue,
     workpad: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    adapter.upsert_workpad(&issue.identifier, workpad)?;
+    adapter.add_issue_comment(&issue.identifier, workpad)?;
     append_tracker_mutation_audit(
         config,
         TrackerMutationAudit {
             command: "merge once",
-            mutation_type: "workpad_write",
+            mutation_type: "timeline_comment",
             issue_ref: Some(&issue.identifier),
             target: issue
                 .linked_pull_requests
@@ -3156,6 +3412,10 @@ fn close_completed_issue(
     }
 }
 
+fn single_line(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn merge_preflight_status(
     config: &RuntimeConfig,
     issue: &TrackerIssue,
@@ -3185,21 +3445,35 @@ fn merge_preflight_status(
     }
 }
 
+fn merge_rehearsal_mode(config: &RuntimeConfig, issue: &TrackerIssue) -> bool {
+    config.tracker.fixture_path.is_some() || issue.tracker_kind == "memory"
+}
+
 fn print_merge_dry_run_actions(decision: &jade_symphony::merge_lane::MergeLaneDecision) {
     match decision.kind {
         MergeLaneDecisionKind::ReadyToMerge => {
             println!("merge_once_dry_run action=merge");
-            println!("merge_once_dry_run action=workpad evidence=merge_result");
+            println!("merge_once_dry_run action=timeline_comment evidence=merge_result");
             println!("merge_once_dry_run action=set_state target_state=done");
             println!("merge_once_dry_run action=close_issue");
         }
         MergeLaneDecisionKind::AlreadyMerged => {
-            println!("merge_once_dry_run action=workpad evidence=already_merged");
+            println!("merge_once_dry_run action=timeline_comment evidence=already_merged");
             println!("merge_once_dry_run action=set_state target_state=done");
             println!("merge_once_dry_run action=close_issue");
         }
+        MergeLaneDecisionKind::StaleBranch => {
+            println!("merge_once_dry_run action=update_pr_branch");
+            println!("merge_once_dry_run action=timeline_comment evidence=stale_branch_update");
+            println!("merge_once_dry_run action=keep_state target_state=merging");
+        }
+        MergeLaneDecisionKind::MergeDirty => {
+            println!("merge_once_dry_run action=attempt_safe_conflict_repair");
+            println!("merge_once_dry_run action=timeline_comment evidence=conflict_repair_result");
+            println!("merge_once_dry_run fallback=set_state target_state=need_human_input");
+        }
         _ => {
-            println!("merge_once_dry_run action=workpad evidence=preflight_blocker");
+            println!("merge_once_dry_run action=timeline_comment evidence=preflight_blocker");
             if let Some(target_state) = decision.target_state {
                 println!("merge_once_dry_run action=set_state target_state={target_state}");
             }
@@ -3225,10 +3499,13 @@ fn record_review_invalid_handoff(
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let workpad = [
-        "## Jade Symphony Workpad".to_string(),
+        "## Jade Symphony Agent Review Run".to_string(),
         String::new(),
         "### Agent Review Invalid Handoff".to_string(),
         format!("- Issue: {} {}", issue.identifier, issue.title),
+        "- Lane: `review`".to_string(),
+        "- Input state: `Agent Review`".to_string(),
+        "- Target state after review routing: `unchanged`".to_string(),
         "- Actor role: `review_agent`".to_string(),
         "- Decision: `inconclusive_invalid_handoff`".to_string(),
         format!("- Reason: {reason}"),
@@ -3238,12 +3515,12 @@ fn record_review_invalid_handoff(
     .join("\n");
 
     if write {
-        adapter.upsert_workpad(&issue.identifier, &workpad)?;
+        adapter.add_issue_comment(&issue.identifier, &workpad)?;
         append_tracker_mutation_audit(
             config,
             TrackerMutationAudit {
                 command: "review loop",
-                mutation_type: "workpad_write",
+                mutation_type: "timeline_comment",
                 issue_ref: Some(&issue.identifier),
                 target: Some("invalid_handoff".into()),
                 from_state: Some(issue.state.clone()),
@@ -3253,7 +3530,7 @@ fn record_review_invalid_handoff(
         );
     } else {
         println!(
-            "review_loop_dry_run action=workpad issue={} evidence=invalid_handoff",
+            "review_loop_dry_run action=timeline_comment issue={} evidence=invalid_handoff",
             issue.identifier
         );
     }
@@ -3392,6 +3669,20 @@ fn run_review_job(
 }
 
 fn review_workspace_for_issue(config: &RuntimeConfig, issue: &TrackerIssue) -> PathBuf {
+    if let Ok(repo_root) = std::env::current_dir() {
+        if let Ok(report) = discover_issue_workspaces(config, issue, &repo_root) {
+            if let Some(index) = report.canonical_index {
+                if let Some(candidate) = report.candidates.get(index) {
+                    if candidate.strength == WorkspaceMatchStrength::Strong
+                        && candidate.path.starts_with(&config.workspace.root)
+                    {
+                        return candidate.path.clone();
+                    }
+                }
+            }
+        }
+    }
+
     run_loop_handoff_plan(config, issue)
         .map(|handoff| handoff.workspace_path)
         .unwrap_or_else(|_| config.workspace.root.clone())
@@ -3409,7 +3700,7 @@ fn render_automatic_review_prompt(
     prompt.push_str(
         "\n\n## Automatic Headless Review Boundary\n\n\
 This Gemini process is running under Jade Symphony automatic `review loop` or `review once`.\n\
-Jade Symphony CLI has already claimed or will own any Review Agent claim, workpad write,\n\
+Jade Symphony CLI has already claimed or will own any Review Agent claim, timeline comment write,\n\
 issue body update, and Project state transition outside this process.\n\n\
 Do not run mutating Jade Symphony or GitHub commands, including `review claim`, `review pass`,\n\
 `review reject`, `project set-state`, `project workpad`, `forge`, `gh issue edit`, `gh issue comment`, raw\n\
@@ -3419,6 +3710,10 @@ Return review evidence in stdout only. Start with exactly one line: `Review Resu
 `Review Result: REWORK`, or `Review Result: NEEDS_CONTEXT`. Use `PASS` only when there are no\n\
 blocking findings. Use `REWORK` only when confirmed implementation defects require Main Agent\n\
 changes. Use `NEEDS_CONTEXT` when missing evidence or ambiguity prevents an independent decision.\n\n\
+UAT is Human Review-owned unless this issue explicitly asks the Main Agent to implement a UAT\n\
+harness, fixture, rehearsal path, or workflow capability. Missing Human-owned UAT execution is\n\
+not a confirmed implementation defect and must not by itself produce `Review Result: REWORK`.\n\
+Report UAT readiness or Human Review follow-up separately under `Evidence`.\n\n\
 Only use `[Confirmed]`, `[Plausible]`, `[Rejected]`, or `[Needs Context]` for actual review\n\
 findings. Do not use those bracketed finding tags for positive verification evidence, checklist\n\
 items, or things that were implemented correctly; put positive observations under an `Evidence`\n\
@@ -3603,12 +3898,18 @@ fn start_agent_session_with_claim(
         agent_command: &agent_command,
         git_identity: &git_identity,
     });
-    adapter.upsert_workpad(&issue.identifier, &workpad)?;
+    let mutation_type = if lane == AgentSessionLaneArg::Main {
+        adapter.upsert_workpad(&issue.identifier, &workpad)?;
+        "workpad_write"
+    } else {
+        adapter.add_issue_comment(&issue.identifier, &workpad)?;
+        "timeline_comment"
+    };
     append_tracker_mutation_audit(
         config,
         TrackerMutationAudit {
             command: audit_command,
-            mutation_type: "workpad_write",
+            mutation_type,
             issue_ref: Some(&issue.identifier),
             target: summary.session_id.clone(),
             from_state: Some(issue.state.clone()),
@@ -3910,10 +4211,16 @@ fn agent_session_workpad(input: AgentSessionWorkpadInput<'_>) -> String {
         .as_ref()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "n/a".into());
+    let title = match input.lane {
+        AgentSessionLaneArg::Main => "## Jade Symphony Workpad",
+        AgentSessionLaneArg::Review => "## Jade Symphony Agent Review Run",
+        AgentSessionLaneArg::Merge => "## Jade Symphony Merge Run",
+    };
     [
-        "## Jade Symphony Workpad".to_string(),
+        title.to_string(),
         String::new(),
         "### Local tmux Agent Session".to_string(),
+        format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", input.issue.identifier, input.issue.title),
         format!("- Lane: `{}`", input.lane.label()),
         format!(
@@ -3966,19 +4273,18 @@ fn apply_review_result(
             return Err("review agent transition is not allowed for this review decision".into());
         }
         if rework_transition_expected(&decision) {
-            let diagnostic = rework_diagnostic_from_review(issue, job, &decision);
-            transition_issue_to_rework_with_diagnostic(config, adapter, issue, &diagnostic)?;
+            transition_review_issue_to_rework_with_workpad(config, adapter, issue, job)?;
             return Ok(());
         }
     }
 
     let workpad = render_review_workpad(issue, job);
-    adapter.upsert_workpad(issue_ref, &workpad)?;
+    adapter.add_issue_comment(issue_ref, &workpad)?;
     append_tracker_mutation_audit(
         config,
         TrackerMutationAudit {
             command: "review loop",
-            mutation_type: "workpad_write",
+            mutation_type: "timeline_comment",
             issue_ref: Some(issue_ref),
             target: job
                 .ledger_path
@@ -3986,7 +4292,7 @@ fn apply_review_result(
                 .map(|path| path.display().to_string()),
             from_state: Some(issue.state.clone()),
             to_state: decision.target_state.map(ToOwned::to_owned),
-            reason: "review result workpad evidence",
+            reason: "review result timeline evidence",
         },
     );
     if let Some(target_state) = decision.target_state {
@@ -4140,6 +4446,7 @@ fn terminal_review_loop_claim_value(
     Some(terminal_review_claim_value(claim, state, result))
 }
 
+#[cfg(test)]
 fn transition_issue_to_rework_with_diagnostic(
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
@@ -4147,17 +4454,56 @@ fn transition_issue_to_rework_with_diagnostic(
     diagnostic: &ReworkDiagnostic,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let workpad = render_rework_diagnostic_workpad(issue, diagnostic);
-    adapter.upsert_workpad(&issue.identifier, &workpad)?;
+    adapter.add_issue_comment(&issue.identifier, &workpad)?;
     append_tracker_mutation_audit(
         config,
         TrackerMutationAudit {
             command: "review loop",
-            mutation_type: "workpad_write",
+            mutation_type: "timeline_comment",
             issue_ref: Some(&issue.identifier),
             target: diagnostic.review_ledger_path.clone(),
             from_state: Some(issue.state.clone()),
             to_state: Some("rework".into()),
             reason: "review rework diagnostic",
+        },
+    );
+    adapter.set_state(&issue.identifier, "rework")?;
+    append_tracker_mutation_audit(
+        config,
+        TrackerMutationAudit {
+            command: "review loop",
+            mutation_type: "state_change",
+            issue_ref: Some(&issue.identifier),
+            target: None,
+            from_state: Some(issue.state.clone()),
+            to_state: Some("rework".into()),
+            reason: "confirmed review finding",
+        },
+    );
+    Ok(())
+}
+
+fn transition_review_issue_to_rework_with_workpad(
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    issue: &TrackerIssue,
+    job: &ReviewJob,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let workpad = render_review_workpad(issue, job);
+    adapter.add_issue_comment(&issue.identifier, &workpad)?;
+    append_tracker_mutation_audit(
+        config,
+        TrackerMutationAudit {
+            command: "review loop",
+            mutation_type: "timeline_comment",
+            issue_ref: Some(&issue.identifier),
+            target: job
+                .ledger_path
+                .as_ref()
+                .map(|path| path.display().to_string()),
+            from_state: Some(issue.state.clone()),
+            to_state: Some("rework".into()),
+            reason: "review result timeline evidence",
         },
     );
     adapter.set_state(&issue.identifier, "rework")?;
@@ -4451,6 +4797,21 @@ fn project_inspect(
             );
         }
     }
+    let review_status_options = ReviewStatusOptions {
+        issue_filter: Some(issue.identifier.clone()),
+        recent_limit: 1,
+        verbose: false,
+    };
+    if let Ok(payload) = load_review_status(
+        &config,
+        std::slice::from_ref(&issue),
+        &review_status_options,
+        unix_timestamp_ms(),
+    ) {
+        if let Some(summary) = render_project_inspect_review_summary(&payload) {
+            println!("review_status_summary={summary}");
+        }
+    }
     for gap in adapter.integration_gaps() {
         println!("integration_gap={gap}");
     }
@@ -4525,11 +4886,11 @@ fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::Error>> {
     let issues = adapter.fetch_issues_by_states(&all_mapped_tracker_states(&config))?;
     let mut integration_gaps = adapter.integration_gaps();
     append_canonical_checkout_gap(&config, &mut integration_gaps);
-    let runtime_state = match load_runtime_state(&config) {
-        Ok(state) => state,
+    let runtime_states = match load_runtime_states(&config) {
+        Ok(states) => states,
         Err(error) => {
             integration_gaps.push(format!("runtime_state_load_error: {error}"));
-            None
+            Vec::new()
         }
     };
     let sessions = match session_status_snapshots(&config) {
@@ -4540,7 +4901,8 @@ fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let context = ProjectDoctorContext {
-        runtime_state,
+        runtime_state: runtime_states.first().cloned(),
+        runtime_states,
         sessions,
         now_ms: current_time_ms(),
         stale_after_ms: options.stale_after_ms,
@@ -4687,12 +5049,12 @@ fn apply_doctor_auto_fix(
         );
         if write {
             let workpad = render_human_review_repair_workpad(violation);
-            adapter.upsert_workpad(&violation.issue_ref, &workpad)?;
+            adapter.add_issue_comment(&violation.issue_ref, &workpad)?;
             append_tracker_mutation_audit(
                 config,
                 TrackerMutationAudit {
                     command: "doctor --auto-fix",
-                    mutation_type: "workpad_write",
+                    mutation_type: "timeline_comment",
                     issue_ref: Some(&violation.issue_ref),
                     target: None,
                     from_state: Some(violation.state.clone()),
@@ -4715,7 +5077,7 @@ fn apply_doctor_auto_fix(
             );
         } else {
             println!(
-                "doctor_auto_fix_dry_run action=workpad issue={} evidence=human_review_missing_review_evidence",
+                "doctor_auto_fix_dry_run action=timeline_comment issue={} evidence=human_review_missing_review_evidence",
                 violation.issue_ref
             );
             println!(
@@ -4890,12 +5252,12 @@ fn doctor_repair_issue(
     if repair.move_need_human_input {
         let workpad = render_doctor_repair_workpad(issue, report, "move_need_human_input");
         if repair.write {
-            adapter.upsert_workpad(&issue.identifier, &workpad)?;
+            adapter.add_issue_comment(&issue.identifier, &workpad)?;
             append_tracker_mutation_audit(
                 config,
                 TrackerMutationAudit {
                     command: "doctor repair",
-                    mutation_type: "workpad_write",
+                    mutation_type: "timeline_comment",
                     issue_ref: Some(&issue.identifier),
                     target: None,
                     from_state: Some(issue.state.clone()),
@@ -4918,7 +5280,7 @@ fn doctor_repair_issue(
             );
         } else {
             println!(
-                "doctor_repair_dry_run action=workpad issue={} evidence=doctor_repair",
+                "doctor_repair_dry_run action=timeline_comment issue={} evidence=doctor_repair",
                 issue.identifier
             );
             println!(
@@ -4944,12 +5306,12 @@ fn doctor_repair_issue(
         let pr_ref = draft_pull_request_repair_target(issue)?;
         let workpad = render_doctor_repair_workpad(issue, report, "mark_pr_ready");
         if repair.write {
-            adapter.upsert_workpad(&issue.identifier, &workpad)?;
+            adapter.add_issue_comment(&issue.identifier, &workpad)?;
             append_tracker_mutation_audit(
                 config,
                 TrackerMutationAudit {
                     command: "doctor repair",
-                    mutation_type: "workpad_write",
+                    mutation_type: "timeline_comment",
                     issue_ref: Some(&issue.identifier),
                     target: Some(pr_ref.clone()),
                     from_state: Some(issue.state.clone()),
@@ -4980,7 +5342,7 @@ fn doctor_repair_issue(
             );
         } else {
             println!(
-                "doctor_repair_dry_run action=workpad issue={} evidence=doctor_repair_mark_pr_ready",
+                "doctor_repair_dry_run action=timeline_comment issue={} evidence=doctor_repair_mark_pr_ready",
                 issue.identifier
             );
             println!(
@@ -5042,12 +5404,12 @@ fn doctor_repair_human_review(
         );
         if write {
             let workpad = render_human_review_repair_workpad(violation);
-            adapter.upsert_workpad(&violation.issue_ref, &workpad)?;
+            adapter.add_issue_comment(&violation.issue_ref, &workpad)?;
             append_tracker_mutation_audit(
                 &config,
                 TrackerMutationAudit {
                     command: "doctor-repair-human-review",
-                    mutation_type: "workpad_write",
+                    mutation_type: "timeline_comment",
                     issue_ref: Some(&violation.issue_ref),
                     target: None,
                     from_state: Some(violation.state.clone()),
@@ -5070,7 +5432,7 @@ fn doctor_repair_human_review(
             );
         } else {
             println!(
-                "doctor_repair_human_review_dry_run action=workpad issue={} evidence=human_review_missing_review_evidence",
+                "doctor_repair_human_review_dry_run action=timeline_comment issue={} evidence=human_review_missing_review_evidence",
                 violation.issue_ref
             );
             println!(
@@ -5111,17 +5473,19 @@ fn debug_report(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>
     let doctor_issues = adapter.fetch_issues_by_states(&all_mapped_tracker_states(&config))?;
 
     let mut report_gaps = integration_gaps.clone();
-    let runtime_state = match load_runtime_state(&config) {
-        Ok(state) => state,
+    let runtime_states = match load_runtime_states(&config) {
+        Ok(states) => states,
         Err(error) => {
             report_gaps.push(format!("runtime_state_load_error: {error}"));
-            None
+            Vec::new()
         }
     };
-    let runtime_state_status = if runtime_state.is_some() {
-        "present"
+    let runtime_state_status = if runtime_states.is_empty() {
+        "none".to_string()
+    } else if runtime_states.len() == 1 {
+        "present".to_string()
     } else {
-        "none"
+        format!("present active_workers={}", runtime_states.len())
     };
     let sessions = match session_status_snapshots(&config) {
         Ok(sessions) => sessions,
@@ -5131,7 +5495,8 @@ fn debug_report(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>
         }
     };
     let context = ProjectDoctorContext {
-        runtime_state,
+        runtime_state: runtime_states.first().cloned(),
+        runtime_states,
         sessions: sessions.clone(),
         now_ms: current_time_ms(),
         stale_after_ms: 10_800_000,
@@ -5640,7 +6005,7 @@ fn clean_audit_command(workflow_path: PathBuf) -> Result<(), Box<dyn std::error:
         "attach_to_tracker",
         "workpad_draft",
         layout.class_path(ArtifactClass::WorkpadDraft),
-        "draft should be represented by tracker workpad evidence",
+        "draft should be represented by tracker-visible evidence",
     );
     print_clean_audit_path(
         "promote_to_repo",
@@ -6727,104 +7092,26 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         let workflow = WorkflowDefinition::load(&options.workflow_path)?;
         let config = RuntimeConfig::from_workflow(&workflow, &options.workflow_path)?;
         config.validate()?;
+        let max_concurrent = options.worker_limit(&config);
         if options.write {
             ensure_write_mode_main_agent_backend(&options.workflow_path, &config, "main loop")?;
             enforce_canonical_checkout_before_write(&config, "run_loop")?;
         }
         let adapter = adapter_from_config(&config);
+        let mut active_main_workers = 0usize;
         if options.write {
-            let runtime_state = load_runtime_state(&config)?;
-            match run_loop_resume_preflight(
+            let runtime_states = load_runtime_states(&config)?;
+            let preflight = run_loop_resume_preflight_many(
                 adapter.as_ref(),
                 &config,
-                runtime_state.as_ref(),
+                &runtime_states,
                 current_time_ms(),
-            )? {
-                ResumePreflightAction::Continue => {}
-                ResumePreflightAction::ArchiveStale {
-                    issue_identifier,
-                    tracker_state,
-                    archive_reason,
-                } => {
-                    let archive_path = match runtime_state.as_ref() {
-                        Some(state) => {
-                            Some(archive_runtime_state(&config, state, &archive_reason)?)
-                        }
-                        None => None,
-                    };
-                    clear_runtime_state(&config)?;
-                    append_runtime_supervision_event(
-                        &config,
-                        runtime_state.as_ref(),
-                        "RuntimeStateArchived",
-                        &format!(
-                            "issue={issue_identifier} tracker_state={tracker_state} reason={archive_reason} archive_path={}",
-                            archive_path
-                                .as_ref()
-                                .map(|path| path.display().to_string())
-                                .unwrap_or_else(|| "n/a".into())
-                        ),
-                    )?;
-                    println!(
-                        "run_loop_resume_preflight action=archive issue={} tracker_state={:?} reason={} archive_path={}",
-                        issue_identifier,
-                        tracker_state,
-                        archive_reason,
-                        archive_path
-                            .as_ref()
-                            .map(|path| path.display().to_string())
-                            .unwrap_or_else(|| "n/a".into())
-                    );
-                }
-                ResumePreflightAction::RetryLater {
-                    issue_identifier,
-                    retry,
-                    due_in_ms,
-                } => {
-                    append_runtime_supervision_event(
-                        &config,
-                        runtime_state.as_ref(),
-                        "RetryDeferred",
-                        &format!(
-                            "issue={issue_identifier} attempt={} due_in_ms={} error={}",
-                            retry.attempt, due_in_ms, retry.error
-                        ),
-                    )?;
-                    println!(
-                        "run_loop=stopped reason=retry_backoff issue={} due_in_ms={} attempt={}",
-                        issue_identifier, due_in_ms, retry.attempt
-                    );
-                    break;
-                }
-                ResumePreflightAction::Stalled {
-                    issue_identifier,
-                    stall,
-                } => {
-                    append_runtime_supervision_event(
-                        &config,
-                        runtime_state.as_ref(),
-                        "RuntimeStalled",
-                        &format!(
-                            "issue={issue_identifier} stalled_for_ms={} reason={}",
-                            stall.stalled_for_ms, stall.reason
-                        ),
-                    )?;
-                    println!(
-                        "run_loop=stopped reason=runtime_stalled issue={} stalled_for_ms={}",
-                        issue_identifier, stall.stalled_for_ms
-                    );
-                    break;
-                }
-                ResumePreflightAction::Block { reason } => {
-                    append_runtime_supervision_event(
-                        &config,
-                        runtime_state.as_ref(),
-                        "ResumeBlocked",
-                        &reason,
-                    )?;
-                    println!("run_loop=stopped reason=resume_preflight_blocked detail={reason}");
-                    break;
-                }
+            )?;
+            save_runtime_states(&config, &preflight.retained_states)?;
+            active_main_workers = preflight.active_main_workers;
+            if let Some(reason) = preflight.blocked {
+                println!("run_loop=stopped reason=resume_preflight_blocked detail={reason}");
+                break;
             }
         }
         let issues = adapter.list_dispatchable_issues()?;
@@ -6841,10 +7128,26 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 .to_string(),
         );
 
-        let pool = options.pool_size(&config);
+        let available_slots = if options.write {
+            max_concurrent.saturating_sub(active_main_workers)
+        } else {
+            max_concurrent
+        };
+        if options.write && available_slots == 0 {
+            println!(
+                "run_loop=stopped reason=max_concurrent_reached active_workers={} max_concurrent={}",
+                active_main_workers, max_concurrent
+            );
+            break;
+        }
         let worker_id = worker_identity(&config, WorkerLane::Main);
-        let selected =
-            select_pool_worker_issues(&plan.selected, WorkerLane::Main, &worker_id, pool, &config);
+        let selected = select_pool_worker_issues(
+            &plan.selected,
+            WorkerLane::Main,
+            &worker_id,
+            available_slots,
+            &config,
+        );
 
         let Some(issue) = selected.first().cloned() else {
             plan.snapshot.latest_status = Some(LatestStatus {
@@ -6868,8 +7171,8 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                         handoff: None,
                         actor_role: "Main Agent",
                         mode: if options.write { "write" } else { "dry-run" },
-                        pool,
-                        selected_pool: 0,
+                        max_concurrent,
+                        selected_count: 0,
                     })
                 );
             } else {
@@ -6889,6 +7192,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         };
+        let dispatch_candidates = selected.clone();
 
         let decision = evaluate_issue_for_current_source(&config, &issue)?;
         if !decision.is_dispatchable() {
@@ -6901,8 +7205,8 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                         handoff: None,
                         actor_role: "Main Agent",
                         mode: if options.write { "write" } else { "dry-run" },
-                        pool,
-                        selected_pool: selected.len(),
+                        max_concurrent,
+                        selected_count: selected.len(),
                     })
                 );
             }
@@ -6927,12 +7231,12 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             }),
         ));
         println!(
-            "run_loop_iteration={} issue={} title={:?} mode={} pool={} selected_pool={}",
+            "run_loop_iteration={} issue={} title={:?} mode={} max_concurrent={} selected_count={}",
             iterations,
             issue.identifier,
             issue.title,
             if options.write { "write" } else { "dry-run" },
-            pool,
+            max_concurrent,
             selected.len()
         );
 
@@ -6990,8 +7294,8 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                         handoff: Some(&handoff),
                         actor_role: "Main Agent",
                         mode: "dry-run",
-                        pool,
-                        selected_pool: selected.len(),
+                        max_concurrent,
+                        selected_count: selected.len(),
                     })
                 );
             }
@@ -7005,431 +7309,459 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        let latest = adapter
-            .get_issue(&issue.identifier)?
-            .ok_or_else(|| format!("issue disappeared before claim: {}", issue.identifier))?;
-        let eligibility = pool_claim_eligibility(&latest, WorkerLane::Main, &worker_id, &config);
-        if !eligibility.is_claimable() {
-            println!(
-                "run_loop_action=skip issue={} reason={}",
-                latest.identifier,
-                eligibility.skip_reason()
-            );
-            continue;
-        }
-        let latest_gate = evaluate_issue_for_current_source(&config, &latest)?;
-        if !latest_gate.is_dispatchable() {
-            handle_run_loop_gate_failure(
-                adapter.as_ref(),
-                &latest,
-                &latest_gate,
-                &options,
-                &config,
-            )?;
-            continue;
-        }
+        for (slot_index, issue) in dispatch_candidates.into_iter().enumerate() {
+            if slot_index > 0 {
+                print_latest_status(&latest_status_for_issue(
+                    &config,
+                    &issue,
+                    "main",
+                    "running",
+                    "selected",
+                    Some("claim or resume".into()),
+                ));
+                println!(
+                    "run_loop_iteration={} issue={} title={:?} mode=write max_concurrent={} selected_count={} slot={}",
+                    iterations,
+                    issue.identifier,
+                    issue.title,
+                    max_concurrent,
+                    selected.len(),
+                    slot_index + 1
+                );
+            }
 
-        let handoff = match run_loop_handoff_plan(&config, &latest) {
-            Ok(handoff) => handoff,
-            Err(error) => {
-                handle_run_loop_handoff_failure(
+            let latest = adapter
+                .get_issue(&issue.identifier)?
+                .ok_or_else(|| format!("issue disappeared before claim: {}", issue.identifier))?;
+            let eligibility =
+                pool_claim_eligibility(&latest, WorkerLane::Main, &worker_id, &config);
+            if !eligibility.is_claimable() {
+                println!(
+                    "run_loop_action=skip issue={} reason={}",
+                    latest.identifier,
+                    eligibility.skip_reason()
+                );
+                continue;
+            }
+            let latest_gate = evaluate_issue_for_current_source(&config, &latest)?;
+            if !latest_gate.is_dispatchable() {
+                handle_run_loop_gate_failure(
                     adapter.as_ref(),
                     &latest,
-                    &error,
+                    &latest_gate,
                     &options,
                     &config,
                 )?;
                 continue;
             }
-        };
 
-        let profile_login = selected_profile_github_login(&config)?;
-        let active_login = if live_github_tracker(&config) && profile_login.is_none() {
-            current_gh_login()?
-        } else {
-            None
-        };
-        match run_loop_assignee_ownership_decision(
-            &latest,
-            &config,
-            active_login.as_deref(),
-            profile_login.as_deref(),
-        ) {
-            AssigneeOwnershipDecision::Allowed => {}
-            AssigneeOwnershipDecision::Block { reason } => {
-                let workpad = run_loop_assignee_ownership_workpad(&latest, &reason);
-                adapter.upsert_workpad(&latest.identifier, &workpad)?;
-                print_latest_status(&latest_status_for_issue(
-                    &config,
-                    &latest,
-                    "main",
-                    "blocked",
-                    "assignee_ownership",
-                    Some("operator intervention".into()),
-                ));
-                println!(
-                    "run_loop_action=skip issue={} reason=assignee_ownership detail={}",
-                    latest.identifier, reason
-                );
-                continue;
-            }
-        }
+            let handoff = match run_loop_handoff_plan(&config, &latest) {
+                Ok(handoff) => handoff,
+                Err(error) => {
+                    handle_run_loop_handoff_failure(
+                        adapter.as_ref(),
+                        &latest,
+                        &error,
+                        &options,
+                        &config,
+                    )?;
+                    continue;
+                }
+            };
 
-        let existing_runtime_state = load_runtime_state(&config)?;
-        if let Some(state) = &existing_runtime_state {
-            if let Some(active_issue) = &state.active_issue {
-                println!(
-                    "run_loop_runtime_state action=loaded active_issue={} attempt={}",
-                    active_issue.identifier, state.attempt_count
-                );
-            }
-        }
-
-        let ownership = run_loop_runtime_ownership(&latest, &config, &handoff)?;
-        let claim_action = run_loop_claim_action(&latest, &config);
-        let main_claim = lane_claim_for_issue(
-            &latest,
-            WorkerLane::Main.claim_lane(),
-            LaneClaimActor::Codex,
-            LaneClaimSource::Loop,
-            project_text_field(&latest, WorkerLane::Main.claim_field()).as_deref(),
-        )
-        .with_worker(&worker_id);
-        if matches!(claim_action, RunLoopClaimAction::Resume) {
-            if let RuntimeOwnershipDecision::Mismatched { reason, .. } =
-                runtime_ownership_decision(latest.description.as_deref(), &ownership)
-            {
-                println!(
-                    "run_loop_action=skip issue={} reason=ownership_mismatch detail={reason}",
-                    latest.identifier
-                );
-                print_latest_status(&latest_status_for_issue(
-                    &config,
-                    &latest,
-                    "main",
-                    "blocked",
-                    "ownership_mismatch",
-                    Some("inspect runtime owner".into()),
-                ));
-                continue;
-            }
-        }
-
-        let event = match claim_action {
-            RunLoopClaimAction::Claim => {
-                write_lane_claim_field(
-                    &config,
-                    adapter.as_ref(),
-                    &latest,
-                    WorkerLane::Main,
-                    &main_claim,
-                    true,
-                )?;
-                adapter.set_state(&latest.identifier, "in_progress")?;
-                append_tracker_mutation_audit(
-                    &config,
-                    TrackerMutationAudit {
-                        command: "main loop",
-                        mutation_type: "state_change",
-                        issue_ref: Some(&latest.identifier),
-                        target: None,
-                        from_state: Some(latest.state.clone()),
-                        to_state: Some("in_progress".into()),
-                        reason: "main worker claim",
-                    },
-                );
-                println!(
-                    "run_loop_action=claim issue={} target_state=in_progress",
-                    latest.identifier
-                );
-                print_latest_status(&latest_status_for_issue(
-                    &config,
-                    &latest,
-                    "main",
-                    "running",
-                    "claimed",
-                    Some("write runtime ownership".into()),
-                ));
-                "Claimed"
-            }
-            RunLoopClaimAction::Resume => {
-                write_lane_claim_field(
-                    &config,
-                    adapter.as_ref(),
-                    &latest,
-                    WorkerLane::Main,
-                    &main_claim,
-                    true,
-                )?;
-                println!("run_loop_action=resume issue={}", latest.identifier);
-                print_latest_status(&latest_status_for_issue(
-                    &config,
-                    &latest,
-                    "main",
-                    "running",
-                    "resumed",
-                    Some("continue backend work".into()),
-                ));
-                "Resumed"
-            }
-            RunLoopClaimAction::StopAndReplan { current_state } => {
-                println!(
-                    "run_loop_action=skip issue={} reason=external_state_change current_state={:?}",
-                    latest.identifier, current_state
-                );
-                print_latest_status(&latest_status_for_issue(
-                    &config,
-                    &latest,
-                    "main",
-                    "waiting",
-                    "external_state_change",
-                    Some("replan".into()),
-                ));
-                continue;
-            }
-        };
-        let ownership_workpad = run_loop_ownership_workpad(&latest, &ownership, event, &main_claim);
-        adapter.upsert_workpad(&latest.identifier, &ownership_workpad)?;
-        append_tracker_mutation_audit(
-            &config,
-            TrackerMutationAudit {
-                command: "main loop",
-                mutation_type: "workpad_write",
-                issue_ref: Some(&latest.identifier),
-                target: ownership.profile_id.clone(),
-                from_state: Some(latest.state.clone()),
-                to_state: None,
-                reason: "runtime ownership evidence",
-            },
-        );
-        println!(
-            "run_loop_action=ownership issue={} profile={} branch={}",
-            latest.identifier,
-            ownership.profile_id.as_deref().unwrap_or("n/a"),
-            ownership.branch_name
-        );
-
-        let mut runtime_state = run_loop_runtime_state_for_issue(
-            existing_runtime_state.as_ref(),
-            &latest,
-            &config,
-            event,
-            &main_claim,
-        );
-        runtime_state.branch_name = Some(handoff.branch_name.clone());
-        mark_runtime_state_updated(&mut runtime_state, current_time_ms());
-        save_runtime_state(&config, &runtime_state)?;
-        println!(
-            "run_loop_runtime_state action=saved issue={} event={event}",
-            latest.identifier
-        );
-
-        let live_worktree = if run_loop_live_handoff_enabled(&config) {
-            let runner = ProcessHandoffCommandRunner;
-            let repo_root = std::env::current_dir()?;
-            let worktree = prepare_issue_worktree(&repo_root, &handoff, &runner)?;
-            println!(
-                "run_loop_action=worktree issue={} workspace={} branch={} created={}",
-                latest.identifier,
-                worktree.workspace_path.display(),
-                worktree.branch_name,
-                worktree.created
-            );
-            print_latest_status(&LatestStatus {
-                lane: "main".into(),
-                category: "running".into(),
-                action: "worktree_ready".into(),
-                issue_identifier: Some(latest.identifier.clone()),
-                issue_title: Some(latest.title.clone()),
-                actor_label: Some(config.identity.actor_label.clone()),
-                workspace: Some(worktree.workspace_path.display().to_string()),
-                branch: Some(worktree.branch_name.clone()),
-                session_id: runtime_state.backend_session_id.clone(),
-                next: Some("run backend".into()),
-            });
-            Some(worktree)
-        } else {
-            None
-        };
-
-        print_latest_status(&latest_status_for_issue(
-            &config,
-            &latest,
-            "main",
-            "running",
-            "backend",
-            Some("save result".into()),
-        ));
-        let mut result = execute_issue_once_with_workspace_key(
-            &workflow,
-            &config,
-            &latest,
-            &handoff.workspace_key,
-            runtime_state.attempt_count,
-            Some(&main_claim),
-        )?;
-        if result.success {
-            if let Some(worktree) = live_worktree {
-                let runner = ProcessHandoffCommandRunner;
-                let verification = run_handoff_verification(&handoff.workspace_path, &config);
-                println!(
-                    "run_loop_action=verify issue={} success={} summary={}",
-                    latest.identifier, verification.success, verification.summary
-                );
-                print_latest_status(&latest_status_for_issue(
-                    &config,
-                    &latest,
-                    "main",
-                    if verification.success {
-                        "handoff"
-                    } else {
-                        "failed"
-                    },
-                    "verify",
-                    Some(if verification.success {
-                        "publish PR".into()
-                    } else {
-                        "record failure".into()
-                    }),
-                ));
-                result.handoff_verification = Some(verification.summary.clone());
-                if verification.success {
-                    match publish_issue_pull_request(&handoff, &runner) {
-                        Ok(publication) => {
-                            println!(
-                                "run_loop_action=pr issue={} url={} created={}",
-                                latest.identifier, publication.pr_url, publication.pr_created
-                            );
-                            print_latest_status(&LatestStatus {
-                                lane: "main".into(),
-                                category: "handoff".into(),
-                                action: "pr_ready".into(),
-                                issue_identifier: Some(latest.identifier.clone()),
-                                issue_title: Some(latest.title.clone()),
-                                actor_label: Some(config.identity.actor_label.clone()),
-                                workspace: Some(worktree.workspace_path.display().to_string()),
-                                branch: Some(worktree.branch_name.clone()),
-                                session_id: result.session_id.clone(),
-                                next: Some("link PR".into()),
-                            });
-                            result.live_handoff = Some(RunLoopLiveHandoff {
-                                worktree,
-                                publication,
-                                verification: verification.summary,
-                                project_pr_link_verified: None,
-                                pull_request_ready: None,
-                            });
-                        }
-                        Err(error) => {
-                            result.success = false;
-                            result.message = format!("handoff publication failed: {error}");
-                        }
-                    }
-                } else {
-                    result.success = false;
-                    result.message =
-                        format!("handoff verification failed: {}", verification.summary);
+            let profile_login = selected_profile_github_login(&config)?;
+            let active_login = if live_github_tracker(&config) && profile_login.is_none() {
+                current_gh_login()?
+            } else {
+                None
+            };
+            match run_loop_assignee_ownership_decision(
+                &latest,
+                &config,
+                active_login.as_deref(),
+                profile_login.as_deref(),
+            ) {
+                AssigneeOwnershipDecision::Allowed => {}
+                AssigneeOwnershipDecision::Block { reason } => {
+                    let workpad = run_loop_assignee_ownership_workpad(&latest, &reason);
+                    adapter.upsert_workpad(&latest.identifier, &workpad)?;
+                    print_latest_status(&latest_status_for_issue(
+                        &config,
+                        &latest,
+                        "main",
+                        "blocked",
+                        "assignee_ownership",
+                        Some("operator intervention".into()),
+                    ));
+                    println!(
+                        "run_loop_action=skip issue={} reason=assignee_ownership detail={}",
+                        latest.identifier, reason
+                    );
+                    continue;
                 }
             }
-            if result.success {
-                let linked =
-                    apply_live_handoff_pr_link(adapter.as_ref(), &latest.identifier, &mut result);
-                if linked {
+
+            let existing_runtime_states = load_runtime_states(&config)?;
+            let existing_runtime_state =
+                runtime_state_for_issue(&existing_runtime_states, &latest.identifier);
+            if let Some(state) = existing_runtime_state {
+                if let Some(active_issue) = &state.active_issue {
+                    println!(
+                        "run_loop_runtime_state action=loaded active_issue={} attempt={}",
+                        active_issue.identifier, state.attempt_count
+                    );
+                }
+            }
+
+            let ownership = run_loop_runtime_ownership(&latest, &config, &handoff)?;
+            let claim_action = run_loop_claim_action(&latest, &config);
+            let main_claim = lane_claim_for_issue(
+                &latest,
+                WorkerLane::Main.claim_lane(),
+                LaneClaimActor::Codex,
+                LaneClaimSource::Loop,
+                project_text_field(&latest, WorkerLane::Main.claim_field()).as_deref(),
+            )
+            .with_worker(&worker_id);
+            if matches!(claim_action, RunLoopClaimAction::Resume) {
+                if let RuntimeOwnershipDecision::Mismatched { reason, .. } =
+                    runtime_ownership_decision(latest.description.as_deref(), &ownership)
+                {
+                    println!(
+                        "run_loop_action=skip issue={} reason=ownership_mismatch detail={reason}",
+                        latest.identifier
+                    );
+                    print_latest_status(&latest_status_for_issue(
+                        &config,
+                        &latest,
+                        "main",
+                        "blocked",
+                        "ownership_mismatch",
+                        Some("inspect runtime owner".into()),
+                    ));
+                    continue;
+                }
+            }
+
+            let event = match claim_action {
+                RunLoopClaimAction::Claim => {
+                    write_lane_claim_field(
+                        &config,
+                        adapter.as_ref(),
+                        &latest,
+                        WorkerLane::Main,
+                        &main_claim,
+                        true,
+                    )?;
+                    adapter.set_state(&latest.identifier, "in_progress")?;
                     append_tracker_mutation_audit(
                         &config,
                         TrackerMutationAudit {
                             command: "main loop",
-                            mutation_type: "pr_link",
+                            mutation_type: "state_change",
                             issue_ref: Some(&latest.identifier),
-                            target: result
-                                .live_handoff
-                                .as_ref()
-                                .map(|handoff| handoff.publication.pr_url.clone()),
+                            target: None,
                             from_state: Some(latest.state.clone()),
-                            to_state: None,
-                            reason: "live handoff PR link",
+                            to_state: Some("in_progress".into()),
+                            reason: "main worker claim",
                         },
                     );
                     println!(
-                        "run_loop_action=link_pr issue={} evidence=live_handoff",
+                        "run_loop_action=claim issue={} target_state=in_progress",
                         latest.identifier
                     );
+                    print_latest_status(&latest_status_for_issue(
+                        &config,
+                        &latest,
+                        "main",
+                        "running",
+                        "claimed",
+                        Some("write runtime ownership".into()),
+                    ));
+                    "Claimed"
                 }
-            }
+                RunLoopClaimAction::Resume => {
+                    write_lane_claim_field(
+                        &config,
+                        adapter.as_ref(),
+                        &latest,
+                        WorkerLane::Main,
+                        &main_claim,
+                        true,
+                    )?;
+                    println!("run_loop_action=resume issue={}", latest.identifier);
+                    print_latest_status(&latest_status_for_issue(
+                        &config,
+                        &latest,
+                        "main",
+                        "running",
+                        "resumed",
+                        Some("continue backend work".into()),
+                    ));
+                    "Resumed"
+                }
+                RunLoopClaimAction::StopAndReplan { current_state } => {
+                    println!(
+                    "run_loop_action=skip issue={} reason=external_state_change current_state={:?}",
+                    latest.identifier, current_state
+                );
+                    print_latest_status(&latest_status_for_issue(
+                        &config,
+                        &latest,
+                        "main",
+                        "waiting",
+                        "external_state_change",
+                        Some("replan".into()),
+                    ));
+                    continue;
+                }
+            };
+            let ownership_workpad =
+                run_loop_ownership_workpad(&latest, &ownership, event, &main_claim);
+            adapter.upsert_workpad(&latest.identifier, &ownership_workpad)?;
+            append_tracker_mutation_audit(
+                &config,
+                TrackerMutationAudit {
+                    command: "main loop",
+                    mutation_type: "workpad_write",
+                    issue_ref: Some(&latest.identifier),
+                    target: ownership.profile_id.clone(),
+                    from_state: Some(latest.state.clone()),
+                    to_state: None,
+                    reason: "runtime ownership evidence",
+                },
+            );
+            println!(
+                "run_loop_action=ownership issue={} profile={} branch={}",
+                latest.identifier,
+                ownership.profile_id.as_deref().unwrap_or("n/a"),
+                ownership.branch_name
+            );
+
+            let mut runtime_state = run_loop_runtime_state_for_issue(
+                existing_runtime_state,
+                &latest,
+                &config,
+                event,
+                &main_claim,
+            );
+            runtime_state.branch_name = Some(handoff.branch_name.clone());
+            mark_runtime_state_updated(&mut runtime_state, current_time_ms());
+            upsert_runtime_state(&config, &runtime_state)?;
+            println!(
+                "run_loop_runtime_state action=saved issue={} event={event}",
+                latest.identifier
+            );
+
+            let live_worktree = if run_loop_live_handoff_enabled(&config) {
+                let runner = ProcessHandoffCommandRunner;
+                let repo_root = std::env::current_dir()?;
+                let worktree = prepare_issue_worktree(&repo_root, &handoff, &runner)?;
+                println!(
+                    "run_loop_action=worktree issue={} workspace={} branch={} created={}",
+                    latest.identifier,
+                    worktree.workspace_path.display(),
+                    worktree.branch_name,
+                    worktree.created
+                );
+                print_latest_status(&LatestStatus {
+                    lane: "main".into(),
+                    category: "running".into(),
+                    action: "worktree_ready".into(),
+                    issue_identifier: Some(latest.identifier.clone()),
+                    issue_title: Some(latest.title.clone()),
+                    actor_label: Some(config.identity.actor_label.clone()),
+                    workspace: Some(worktree.workspace_path.display().to_string()),
+                    branch: Some(worktree.branch_name.clone()),
+                    session_id: runtime_state.backend_session_id.clone(),
+                    next: Some("run backend".into()),
+                });
+                Some(worktree)
+            } else {
+                None
+            };
+
+            print_latest_status(&latest_status_for_issue(
+                &config,
+                &latest,
+                "main",
+                "running",
+                "backend",
+                Some("save result".into()),
+            ));
+            let mut result = execute_issue_once_with_workspace_key(
+                &workflow,
+                &config,
+                &latest,
+                &handoff.workspace_key,
+                runtime_state.attempt_count,
+                Some(&main_claim),
+            )?;
             if result.success {
-                if let Some(handoff) = result.live_handoff.as_mut() {
-                    match ensure_pull_request_ready(
-                        &handoff.publication.pr_url,
-                        &ProcessHandoffCommandRunner,
-                        &handoff.worktree.workspace_path,
-                    ) {
-                        Ok(ready) => {
-                            println!(
+                if let Some(worktree) = live_worktree {
+                    let runner = ProcessHandoffCommandRunner;
+                    let verification = run_handoff_verification(&handoff.workspace_path, &config);
+                    println!(
+                        "run_loop_action=verify issue={} success={} summary={}",
+                        latest.identifier, verification.success, verification.summary
+                    );
+                    print_latest_status(&latest_status_for_issue(
+                        &config,
+                        &latest,
+                        "main",
+                        if verification.success {
+                            "handoff"
+                        } else {
+                            "failed"
+                        },
+                        "verify",
+                        Some(if verification.success {
+                            "publish PR".into()
+                        } else {
+                            "record failure".into()
+                        }),
+                    ));
+                    result.handoff_verification = Some(verification.summary.clone());
+                    if verification.success {
+                        match publish_issue_pull_request(&handoff, &runner) {
+                            Ok(publication) => {
+                                println!(
+                                    "run_loop_action=pr issue={} url={} created={}",
+                                    latest.identifier, publication.pr_url, publication.pr_created
+                                );
+                                print_latest_status(&LatestStatus {
+                                    lane: "main".into(),
+                                    category: "handoff".into(),
+                                    action: "pr_ready".into(),
+                                    issue_identifier: Some(latest.identifier.clone()),
+                                    issue_title: Some(latest.title.clone()),
+                                    actor_label: Some(config.identity.actor_label.clone()),
+                                    workspace: Some(worktree.workspace_path.display().to_string()),
+                                    branch: Some(worktree.branch_name.clone()),
+                                    session_id: result.session_id.clone(),
+                                    next: Some("link PR".into()),
+                                });
+                                result.live_handoff = Some(RunLoopLiveHandoff {
+                                    worktree,
+                                    publication,
+                                    verification: verification.summary,
+                                    project_pr_link_verified: None,
+                                    pull_request_ready: None,
+                                });
+                            }
+                            Err(error) => {
+                                result.success = false;
+                                result.message = format!("handoff publication failed: {error}");
+                            }
+                        }
+                    } else {
+                        result.success = false;
+                        result.message =
+                            format!("handoff verification failed: {}", verification.summary);
+                    }
+                }
+                if result.success {
+                    let linked = apply_live_handoff_pr_link(
+                        adapter.as_ref(),
+                        &latest.identifier,
+                        &mut result,
+                    );
+                    if linked {
+                        append_tracker_mutation_audit(
+                            &config,
+                            TrackerMutationAudit {
+                                command: "main loop",
+                                mutation_type: "pr_link",
+                                issue_ref: Some(&latest.identifier),
+                                target: result
+                                    .live_handoff
+                                    .as_ref()
+                                    .map(|handoff| handoff.publication.pr_url.clone()),
+                                from_state: Some(latest.state.clone()),
+                                to_state: None,
+                                reason: "live handoff PR link",
+                            },
+                        );
+                        println!(
+                            "run_loop_action=link_pr issue={} evidence=live_handoff",
+                            latest.identifier
+                        );
+                    }
+                }
+                if result.success {
+                    if let Some(handoff) = result.live_handoff.as_mut() {
+                        match ensure_pull_request_ready(
+                            &handoff.publication.pr_url,
+                            &ProcessHandoffCommandRunner,
+                            &handoff.worktree.workspace_path,
+                        ) {
+                            Ok(ready) => {
+                                println!(
                                 "run_loop_action=pr_ready issue={} url={} was_draft={} marked_ready={}",
                                 latest.identifier,
                                 ready.pr_url,
                                 ready.was_draft,
                                 ready.marked_ready
                             );
-                            handoff.pull_request_ready = Some(ready);
-                        }
-                        Err(error) => {
-                            result.success = false;
-                            result.message = format!("handoff PR ready check failed: {error}");
-                            println!(
+                                handoff.pull_request_ready = Some(ready);
+                            }
+                            Err(error) => {
+                                result.success = false;
+                                result.message = format!("handoff PR ready check failed: {error}");
+                                println!(
                                 "run_loop_action=blocked issue={} reason=pr_ready_check_failed error={}",
                                 latest.identifier, error
                             );
+                            }
                         }
                     }
                 }
             }
-        }
-        runtime_state = run_loop_runtime_state_with_result(runtime_state, &result);
-        mark_runtime_state_updated(&mut runtime_state, current_time_ms());
-        save_runtime_state(&config, &runtime_state)?;
-        println!(
-            "run_loop_runtime_state action=updated issue={} event={}",
-            latest.identifier,
-            runtime_state.last_event.as_deref().unwrap_or("unknown")
-        );
-
-        let workpad = run_loop_handoff_workpad(&latest, &result, &handoff);
-        adapter.upsert_workpad(&latest.identifier, &workpad)?;
-        append_tracker_mutation_audit(
-            &config,
-            TrackerMutationAudit {
-                command: "main loop",
-                mutation_type: "workpad_write",
-                issue_ref: Some(&latest.identifier),
-                target: result
-                    .live_handoff
-                    .as_ref()
-                    .map(|handoff| handoff.publication.pr_url.clone()),
-                from_state: Some(latest.state.clone()),
-                to_state: None,
-                reason: "main worker handoff evidence",
-            },
-        );
-
-        if result.pending_session {
-            append_runtime_supervision_event(
-                &config,
-                Some(&runtime_state),
-                "TmuxSessionRunning",
-                &format!(
-                    "issue={} session={} attach_command={} log_path={}",
-                    latest.identifier,
-                    result.session_id.as_deref().unwrap_or("n/a"),
-                    result.backend_attach_command.as_deref().unwrap_or("n/a"),
-                    result
-                        .backend_log_path
-                        .as_ref()
-                        .map(|path| path.display().to_string())
-                        .unwrap_or_else(|| "n/a".into())
-                ),
-            )?;
+            runtime_state = run_loop_runtime_state_with_result(runtime_state, &result);
+            mark_runtime_state_updated(&mut runtime_state, current_time_ms());
+            upsert_runtime_state(&config, &runtime_state)?;
             println!(
+                "run_loop_runtime_state action=updated issue={} event={}",
+                latest.identifier,
+                runtime_state.last_event.as_deref().unwrap_or("unknown")
+            );
+
+            let workpad = run_loop_handoff_workpad(&latest, &result, &handoff, Some(&ownership));
+            adapter.upsert_workpad(&latest.identifier, &workpad)?;
+            append_tracker_mutation_audit(
+                &config,
+                TrackerMutationAudit {
+                    command: "main loop",
+                    mutation_type: "workpad_write",
+                    issue_ref: Some(&latest.identifier),
+                    target: result
+                        .live_handoff
+                        .as_ref()
+                        .map(|handoff| handoff.publication.pr_url.clone()),
+                    from_state: Some(latest.state.clone()),
+                    to_state: None,
+                    reason: "main worker handoff evidence",
+                },
+            );
+
+            if result.pending_session {
+                append_runtime_supervision_event(
+                    &config,
+                    Some(&runtime_state),
+                    "TmuxSessionRunning",
+                    &format!(
+                        "issue={} session={} attach_command={} log_path={}",
+                        latest.identifier,
+                        result.session_id.as_deref().unwrap_or("n/a"),
+                        result.backend_attach_command.as_deref().unwrap_or("n/a"),
+                        result
+                            .backend_log_path
+                            .as_ref()
+                            .map(|path| path.display().to_string())
+                            .unwrap_or_else(|| "n/a".into())
+                    ),
+                )?;
+                println!(
                 "run_loop_action=session_started issue={} backend={} session={} attach_command=\"{}\" log_path={}",
                 latest.identifier,
                 result.backend,
@@ -7444,201 +7776,108 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     .map(|path| path.display().to_string())
                     .unwrap_or_else(|| "n/a".into())
             );
-            print_latest_status(&LatestStatus {
-                lane: "main".into(),
-                category: "running".into(),
-                action: "session_started".into(),
-                issue_identifier: Some(latest.identifier.clone()),
-                issue_title: Some(latest.title.clone()),
-                actor_label: Some(config.identity.actor_label.clone()),
-                workspace: Some(result.workspace_path.display().to_string()),
-                branch: runtime_state.branch_name.clone(),
-                session_id: result.session_id.clone(),
-                next: result.backend_attach_command.clone(),
-            });
-            break;
-        }
-
-        if result.success {
-            if !transition_allowed_for_main_agent("agent_review") {
-                return Err("main implementation agent cannot set requested review state".into());
-            }
-            let evidence = run_loop_agent_review_handoff_evidence(&latest, &result, &handoff);
-            let handoff_report = evaluate_agent_review_handoff(&evidence);
-            let handoff_workpad =
-                render_agent_review_handoff_workpad(&latest, &evidence, &handoff_report);
-            adapter.upsert_workpad(&latest.identifier, &handoff_workpad)?;
-            append_tracker_mutation_audit(
-                &config,
-                TrackerMutationAudit {
-                    command: "main loop",
-                    mutation_type: "workpad_write",
-                    issue_ref: Some(&latest.identifier),
-                    target: result
-                        .live_handoff
-                        .as_ref()
-                        .map(|handoff| handoff.publication.pr_url.clone()),
-                    from_state: Some(latest.state.clone()),
-                    to_state: Some("agent_review".into()),
-                    reason: "agent review handoff evidence",
-                },
-            );
-            if !handoff_report.is_ready() {
-                runtime_state = run_loop_runtime_state_with_transition(
-                    runtime_state,
-                    Some(latest.state.clone()),
-                    "need_human_input",
-                    "agent review handoff invariant failed",
-                );
-                save_runtime_state(&config, &runtime_state)?;
-                write_lane_claim_state(
-                    &config,
-                    adapter.as_ref(),
-                    &latest,
-                    WorkerLane::Main,
-                    &main_claim,
-                    LaneClaimState::Failed,
-                )?;
-                adapter.set_state(&latest.identifier, "need_human_input")?;
-                append_tracker_mutation_audit(
-                    &config,
-                    TrackerMutationAudit {
-                        command: "main loop",
-                        mutation_type: "state_change",
-                        issue_ref: Some(&latest.identifier),
-                        target: None,
-                        from_state: Some(latest.state.clone()),
-                        to_state: Some("need_human_input".into()),
-                        reason: "agent review handoff invariant failed",
-                    },
-                );
-                clear_runtime_state(&config)?;
-                println!(
-                    "run_loop_action=blocked issue={} target_state=need_human_input reason=handoff_invariant_failed",
-                    latest.identifier
-                );
-                print_latest_status(&latest_status_for_issue(
-                    &config,
-                    &latest,
-                    "main",
-                    "blocked",
-                    "handoff_invariant_failed",
-                    Some("Need Human Input".into()),
-                ));
+                print_latest_status(&LatestStatus {
+                    lane: "main".into(),
+                    category: "running".into(),
+                    action: "session_started".into(),
+                    issue_identifier: Some(latest.identifier.clone()),
+                    issue_title: Some(latest.title.clone()),
+                    actor_label: Some(config.identity.actor_label.clone()),
+                    workspace: Some(result.workspace_path.display().to_string()),
+                    branch: runtime_state.branch_name.clone(),
+                    session_id: result.session_id.clone(),
+                    next: result.backend_attach_command.clone(),
+                });
                 continue;
             }
-            runtime_state = run_loop_runtime_state_with_transition(
-                runtime_state,
-                Some(latest.state.clone()),
-                "agent_review",
-                "main agent completed",
-            );
-            mark_runtime_state_updated(&mut runtime_state, current_time_ms());
-            save_runtime_state(&config, &runtime_state)?;
-            write_lane_claim_state(
-                &config,
-                adapter.as_ref(),
-                &latest,
-                WorkerLane::Main,
-                &main_claim,
-                LaneClaimState::Done,
-            )?;
-            adapter.set_state(&latest.identifier, "agent_review")?;
-            append_tracker_mutation_audit(
-                &config,
-                TrackerMutationAudit {
-                    command: "main loop",
-                    mutation_type: "state_change",
-                    issue_ref: Some(&latest.identifier),
-                    target: result
-                        .live_handoff
-                        .as_ref()
-                        .map(|handoff| handoff.publication.pr_url.clone()),
-                    from_state: Some(latest.state.clone()),
-                    to_state: Some("agent_review".into()),
-                    reason: "main agent completed",
-                },
-            );
-            clear_runtime_state(&config)?;
-            println!(
-                "run_loop_action=handoff issue={} target_state=agent_review",
-                latest.identifier
-            );
-            print_latest_status(&latest_status_for_issue(
-                &config,
-                &latest,
-                "main",
-                "handoff",
-                "agent_review",
-                Some("Review Agent".into()),
-            ));
-        } else {
-            let retry_delay_ms = Orchestrator::new(config.clone())
-                .retry_delay_ms(runtime_state.attempt_count, false);
-            if let Some(pause) = &result.usage_limit_pause {
-                record_runtime_retry(
-                    &mut runtime_state,
-                    current_time_ms(),
-                    retry_delay_ms,
-                    format!("usage-limit pause: {}", pause.evidence),
-                );
-                save_runtime_state(&config, &runtime_state)?;
-                let pause_workpad =
-                    run_loop_usage_limit_pause_workpad(&latest, &result, pause, retry_delay_ms);
-                adapter.upsert_workpad(&latest.identifier, &pause_workpad)?;
+
+            if result.success {
+                if !transition_allowed_for_main_agent("agent_review") {
+                    return Err(
+                        "main implementation agent cannot set requested review state".into(),
+                    );
+                }
+                let evidence = run_loop_agent_review_handoff_evidence(&latest, &result, &handoff);
+                let handoff_report = evaluate_agent_review_handoff(&evidence);
+                let handoff_workpad =
+                    render_agent_review_handoff_workpad(&latest, &evidence, &handoff_report);
+                adapter.upsert_workpad(&latest.identifier, &handoff_workpad)?;
                 append_tracker_mutation_audit(
                     &config,
                     TrackerMutationAudit {
                         command: "main loop",
                         mutation_type: "workpad_write",
                         issue_ref: Some(&latest.identifier),
-                        target: Some(pause.classifier.clone()),
+                        target: result
+                            .live_handoff
+                            .as_ref()
+                            .map(|handoff| handoff.publication.pr_url.clone()),
                         from_state: Some(latest.state.clone()),
-                        to_state: None,
-                        reason: "usage-limit pause evidence",
+                        to_state: Some("agent_review".into()),
+                        reason: "agent review handoff evidence",
                     },
                 );
-                append_runtime_supervision_event(
-                    &config,
-                    Some(&runtime_state),
-                    "UsageLimitPaused",
-                    &format!(
-                        "issue={} classifier={} due_in_ms={} evidence={}",
-                        latest.identifier, pause.classifier, retry_delay_ms, pause.evidence
-                    ),
-                )?;
-                println!(
-                    "run_loop_action=usage_limit_paused issue={} classifier={} due_in_ms={}",
-                    latest.identifier, pause.classifier, retry_delay_ms
+                if !handoff_report.is_ready() {
+                    runtime_state = run_loop_runtime_state_with_transition(
+                        runtime_state,
+                        Some(latest.state.clone()),
+                        "need_human_input",
+                        "agent review handoff invariant failed",
+                    );
+                    upsert_runtime_state(&config, &runtime_state)?;
+                    write_lane_claim_state(
+                        &config,
+                        adapter.as_ref(),
+                        &latest,
+                        WorkerLane::Main,
+                        &main_claim,
+                        LaneClaimState::Failed,
+                    )?;
+                    adapter.set_state(&latest.identifier, "need_human_input")?;
+                    append_tracker_mutation_audit(
+                        &config,
+                        TrackerMutationAudit {
+                            command: "main loop",
+                            mutation_type: "state_change",
+                            issue_ref: Some(&latest.identifier),
+                            target: None,
+                            from_state: Some(latest.state.clone()),
+                            to_state: Some("need_human_input".into()),
+                            reason: "agent review handoff invariant failed",
+                        },
+                    );
+                    remove_runtime_state_for_issue(&config, &latest.identifier)?;
+                    println!(
+                    "run_loop_action=blocked issue={} target_state=need_human_input reason=handoff_invariant_failed",
+                    latest.identifier
                 );
-                print_latest_status(&latest_status_for_issue(
-                    &config,
-                    &latest,
-                    "main",
-                    "retrying",
-                    "usage_limit_paused",
-                    Some(format!("retry in {retry_delay_ms}ms")),
-                ));
-                break;
-            }
-            if result.message.contains("handoff PR link") {
+                    print_latest_status(&latest_status_for_issue(
+                        &config,
+                        &latest,
+                        "main",
+                        "blocked",
+                        "handoff_invariant_failed",
+                        Some("Need Human Input".into()),
+                    ));
+                    continue;
+                }
                 runtime_state = run_loop_runtime_state_with_transition(
                     runtime_state,
                     Some(latest.state.clone()),
-                    "need_human_input",
-                    "handoff PR linkage invariant failed",
+                    "agent_review",
+                    "main agent completed",
                 );
                 mark_runtime_state_updated(&mut runtime_state, current_time_ms());
-                save_runtime_state(&config, &runtime_state)?;
+                upsert_runtime_state(&config, &runtime_state)?;
                 write_lane_claim_state(
                     &config,
                     adapter.as_ref(),
                     &latest,
                     WorkerLane::Main,
                     &main_claim,
-                    LaneClaimState::Failed,
+                    LaneClaimState::Done,
                 )?;
-                adapter.set_state(&latest.identifier, "need_human_input")?;
+                adapter.set_state(&latest.identifier, "agent_review")?;
                 append_tracker_mutation_audit(
                     &config,
                     TrackerMutationAudit {
@@ -7650,93 +7889,189 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                             .as_ref()
                             .map(|handoff| handoff.publication.pr_url.clone()),
                         from_state: Some(latest.state.clone()),
-                        to_state: Some("need_human_input".into()),
-                        reason: "handoff PR linkage invariant failed",
+                        to_state: Some("agent_review".into()),
+                        reason: "main agent completed",
                     },
                 );
-                clear_runtime_state(&config)?;
+                remove_runtime_state_for_issue(&config, &latest.identifier)?;
                 println!(
+                    "run_loop_action=handoff issue={} target_state=agent_review",
+                    latest.identifier
+                );
+                print_latest_status(&latest_status_for_issue(
+                    &config,
+                    &latest,
+                    "main",
+                    "handoff",
+                    "agent_review",
+                    Some("Review Agent".into()),
+                ));
+            } else {
+                let retry_delay_ms = Orchestrator::new(config.clone())
+                    .retry_delay_ms(runtime_state.attempt_count, false);
+                if let Some(pause) = &result.usage_limit_pause {
+                    record_runtime_retry(
+                        &mut runtime_state,
+                        current_time_ms(),
+                        retry_delay_ms,
+                        format!("usage-limit pause: {}", pause.evidence),
+                    );
+                    upsert_runtime_state(&config, &runtime_state)?;
+                    let pause_workpad =
+                        run_loop_usage_limit_pause_workpad(&latest, &result, pause, retry_delay_ms);
+                    adapter.upsert_workpad(&latest.identifier, &pause_workpad)?;
+                    append_tracker_mutation_audit(
+                        &config,
+                        TrackerMutationAudit {
+                            command: "main loop",
+                            mutation_type: "workpad_write",
+                            issue_ref: Some(&latest.identifier),
+                            target: Some(pause.classifier.clone()),
+                            from_state: Some(latest.state.clone()),
+                            to_state: None,
+                            reason: "usage-limit pause evidence",
+                        },
+                    );
+                    append_runtime_supervision_event(
+                        &config,
+                        Some(&runtime_state),
+                        "UsageLimitPaused",
+                        &format!(
+                            "issue={} classifier={} due_in_ms={} evidence={}",
+                            latest.identifier, pause.classifier, retry_delay_ms, pause.evidence
+                        ),
+                    )?;
+                    println!(
+                        "run_loop_action=usage_limit_paused issue={} classifier={} due_in_ms={}",
+                        latest.identifier, pause.classifier, retry_delay_ms
+                    );
+                    print_latest_status(&latest_status_for_issue(
+                        &config,
+                        &latest,
+                        "main",
+                        "retrying",
+                        "usage_limit_paused",
+                        Some(format!("retry in {retry_delay_ms}ms")),
+                    ));
+                    break;
+                }
+                if result.message.contains("handoff PR link") {
+                    runtime_state = run_loop_runtime_state_with_transition(
+                        runtime_state,
+                        Some(latest.state.clone()),
+                        "need_human_input",
+                        "handoff PR linkage invariant failed",
+                    );
+                    mark_runtime_state_updated(&mut runtime_state, current_time_ms());
+                    upsert_runtime_state(&config, &runtime_state)?;
+                    write_lane_claim_state(
+                        &config,
+                        adapter.as_ref(),
+                        &latest,
+                        WorkerLane::Main,
+                        &main_claim,
+                        LaneClaimState::Failed,
+                    )?;
+                    adapter.set_state(&latest.identifier, "need_human_input")?;
+                    append_tracker_mutation_audit(
+                        &config,
+                        TrackerMutationAudit {
+                            command: "main loop",
+                            mutation_type: "state_change",
+                            issue_ref: Some(&latest.identifier),
+                            target: result
+                                .live_handoff
+                                .as_ref()
+                                .map(|handoff| handoff.publication.pr_url.clone()),
+                            from_state: Some(latest.state.clone()),
+                            to_state: Some("need_human_input".into()),
+                            reason: "handoff PR linkage invariant failed",
+                        },
+                    );
+                    remove_runtime_state_for_issue(&config, &latest.identifier)?;
+                    println!(
                     "run_loop_action=blocked issue={} target_state=need_human_input reason=handoff_pr_linkage_invariant_failed",
                     latest.identifier
                 );
-                print_latest_status(&latest_status_for_issue(
-                    &config,
-                    &latest,
-                    "main",
-                    "blocked",
-                    "handoff_pr_linkage",
-                    Some("Need Human Input".into()),
-                ));
-                continue;
-            }
-            if runtime_state.attempt_count < config.agent.max_turns {
-                record_runtime_retry(
-                    &mut runtime_state,
-                    current_time_ms(),
-                    retry_delay_ms,
-                    result.message.clone(),
-                );
-                save_runtime_state(&config, &runtime_state)?;
-                append_runtime_supervision_event(
-                    &config,
-                    Some(&runtime_state),
-                    "RetryScheduled",
-                    &format!(
-                        "issue={} attempt={} due_in_ms={} error={}",
-                        latest.identifier,
-                        runtime_state.attempt_count,
+                    print_latest_status(&latest_status_for_issue(
+                        &config,
+                        &latest,
+                        "main",
+                        "blocked",
+                        "handoff_pr_linkage",
+                        Some("Need Human Input".into()),
+                    ));
+                    continue;
+                }
+                if runtime_state.attempt_count < config.agent.max_turns {
+                    record_runtime_retry(
+                        &mut runtime_state,
+                        current_time_ms(),
                         retry_delay_ms,
-                        result.message
-                    ),
-                )?;
-                println!(
-                    "run_loop_action=retry_scheduled issue={} attempt={} due_in_ms={}",
-                    latest.identifier, runtime_state.attempt_count, retry_delay_ms
-                );
-                print_latest_status(&latest_status_for_issue(
-                    &config,
-                    &latest,
-                    "main",
-                    "retrying",
-                    "retry_scheduled",
-                    Some(format!("retry in {retry_delay_ms}ms")),
-                ));
-                break;
-            } else {
-                runtime_state = run_loop_runtime_state_with_transition(
-                    runtime_state,
-                    Some(latest.state.clone()),
-                    "need_human_input",
-                    "backend run failed after retry limit",
-                );
-                mark_runtime_state_updated(&mut runtime_state, current_time_ms());
-                save_runtime_state(&config, &runtime_state)?;
-                adapter.set_state(&latest.identifier, "need_human_input")?;
-                append_tracker_mutation_audit(
-                    &config,
-                    TrackerMutationAudit {
-                        command: "main loop",
-                        mutation_type: "state_change",
-                        issue_ref: Some(&latest.identifier),
-                        target: None,
-                        from_state: Some(latest.state.clone()),
-                        to_state: Some("need_human_input".into()),
-                        reason: "backend run failed after retry limit",
-                    },
-                );
-                clear_runtime_state(&config)?;
-                println!(
-                    "run_loop_action=blocked issue={} target_state=need_human_input",
-                    latest.identifier
-                );
-                print_latest_status(&latest_status_for_issue(
-                    &config,
-                    &latest,
-                    "main",
-                    "failed",
-                    "need_human_input",
-                    Some("operator repair".into()),
-                ));
+                        result.message.clone(),
+                    );
+                    upsert_runtime_state(&config, &runtime_state)?;
+                    append_runtime_supervision_event(
+                        &config,
+                        Some(&runtime_state),
+                        "RetryScheduled",
+                        &format!(
+                            "issue={} attempt={} due_in_ms={} error={}",
+                            latest.identifier,
+                            runtime_state.attempt_count,
+                            retry_delay_ms,
+                            result.message
+                        ),
+                    )?;
+                    println!(
+                        "run_loop_action=retry_scheduled issue={} attempt={} due_in_ms={}",
+                        latest.identifier, runtime_state.attempt_count, retry_delay_ms
+                    );
+                    print_latest_status(&latest_status_for_issue(
+                        &config,
+                        &latest,
+                        "main",
+                        "retrying",
+                        "retry_scheduled",
+                        Some(format!("retry in {retry_delay_ms}ms")),
+                    ));
+                    break;
+                } else {
+                    runtime_state = run_loop_runtime_state_with_transition(
+                        runtime_state,
+                        Some(latest.state.clone()),
+                        "need_human_input",
+                        "backend run failed after retry limit",
+                    );
+                    mark_runtime_state_updated(&mut runtime_state, current_time_ms());
+                    upsert_runtime_state(&config, &runtime_state)?;
+                    adapter.set_state(&latest.identifier, "need_human_input")?;
+                    append_tracker_mutation_audit(
+                        &config,
+                        TrackerMutationAudit {
+                            command: "main loop",
+                            mutation_type: "state_change",
+                            issue_ref: Some(&latest.identifier),
+                            target: None,
+                            from_state: Some(latest.state.clone()),
+                            to_state: Some("need_human_input".into()),
+                            reason: "backend run failed after retry limit",
+                        },
+                    );
+                    remove_runtime_state_for_issue(&config, &latest.identifier)?;
+                    println!(
+                        "run_loop_action=blocked issue={} target_state=need_human_input",
+                        latest.identifier
+                    );
+                    print_latest_status(&latest_status_for_issue(
+                        &config,
+                        &latest,
+                        "main",
+                        "failed",
+                        "need_human_input",
+                        Some("operator repair".into()),
+                    ));
+                }
             }
         }
     }
@@ -7864,6 +8199,14 @@ fn pool_claim_eligibility(
                 if claim.lane == lane.claim_lane() && claim.state.is_terminal_audit_pointer() =>
             {
                 PoolClaimEligibility::Claimable
+            }
+            Ok(claim)
+                if claim.lane == lane.claim_lane()
+                    && claim.issue == issue.identifier
+                    && claim.state == LaneClaimState::Active
+                    && claim.worker.as_deref() == Some(worker_id) =>
+            {
+                PoolClaimEligibility::OwnedBySelf
             }
             Ok(claim) if claim.lane == lane.claim_lane() => {
                 PoolClaimEligibility::ClaimedByOther { owner: claim.run }
@@ -7999,6 +8342,13 @@ enum ResumePreflightAction {
     Block {
         reason: String,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimePreflightSummary {
+    retained_states: Vec<RuntimeState>,
+    active_main_workers: usize,
+    blocked: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -8260,6 +8610,7 @@ fn run_loop_resume_preflight(
                 due_in_ms,
             });
         }
+        return Ok(ResumePreflightAction::Continue);
     }
 
     if let Some(stall) = detect_runtime_stall(state, now_ms, config.codex.stall_timeout_ms) {
@@ -8270,6 +8621,132 @@ fn run_loop_resume_preflight(
     }
 
     Ok(ResumePreflightAction::Continue)
+}
+
+fn run_loop_resume_preflight_many(
+    adapter: &dyn jade_symphony::tracker::TrackerAdapter,
+    config: &RuntimeConfig,
+    states: &[RuntimeState],
+    now_ms: u64,
+) -> Result<RuntimePreflightSummary, Box<dyn std::error::Error>> {
+    let mut retained_states = Vec::new();
+    let mut active_main_workers = 0usize;
+    let mut blocked = None;
+
+    for state in states {
+        if !runtime_state_is_main_lane(state) {
+            retained_states.push(state.clone());
+            continue;
+        }
+
+        let action = run_loop_resume_preflight(adapter, config, Some(state), now_ms)?;
+        match action {
+            ResumePreflightAction::Continue => {
+                if runtime_state_points_at_in_progress_issue(adapter, state)? {
+                    active_main_workers += 1;
+                }
+                retained_states.push(state.clone());
+            }
+            ResumePreflightAction::ArchiveStale {
+                issue_identifier,
+                tracker_state,
+                archive_reason,
+            } => {
+                let archive_path = archive_runtime_state(config, state, &archive_reason)?;
+                append_runtime_supervision_event(
+                    config,
+                    Some(state),
+                    "RuntimeStateArchived",
+                    &format!(
+                        "issue={issue_identifier} tracker_state={tracker_state} reason={archive_reason} archive_path={}",
+                        archive_path.display()
+                    ),
+                )?;
+                println!(
+                    "run_loop_resume_preflight action=archive issue={} tracker_state={:?} reason={} archive_path={}",
+                    issue_identifier,
+                    tracker_state,
+                    archive_reason,
+                    archive_path.display()
+                );
+            }
+            ResumePreflightAction::RetryLater {
+                issue_identifier,
+                retry,
+                due_in_ms,
+            } => {
+                active_main_workers += 1;
+                append_runtime_supervision_event(
+                    config,
+                    Some(state),
+                    "RetryDeferred",
+                    &format!(
+                        "issue={issue_identifier} attempt={} due_in_ms={} error={}",
+                        retry.attempt, due_in_ms, retry.error
+                    ),
+                )?;
+                println!(
+                    "run_loop_resume_preflight action=retry_backoff issue={} due_in_ms={} attempt={}",
+                    issue_identifier, due_in_ms, retry.attempt
+                );
+                retained_states.push(state.clone());
+            }
+            ResumePreflightAction::Stalled {
+                issue_identifier,
+                stall,
+            } => {
+                active_main_workers += 1;
+                append_runtime_supervision_event(
+                    config,
+                    Some(state),
+                    "RuntimeStalled",
+                    &format!(
+                        "issue={issue_identifier} stalled_for_ms={} reason={}",
+                        stall.stalled_for_ms, stall.reason
+                    ),
+                )?;
+                let reason = format!(
+                    "runtime_stalled issue={} stalled_for_ms={}",
+                    issue_identifier, stall.stalled_for_ms
+                );
+                println!("run_loop_resume_preflight action={reason}");
+                retained_states.push(state.clone());
+                blocked.get_or_insert(reason);
+            }
+            ResumePreflightAction::Block { reason } => {
+                append_runtime_supervision_event(config, Some(state), "ResumeBlocked", &reason)?;
+                retained_states.push(state.clone());
+                blocked.get_or_insert(reason);
+            }
+        }
+    }
+
+    Ok(RuntimePreflightSummary {
+        retained_states,
+        active_main_workers,
+        blocked,
+    })
+}
+
+fn runtime_state_is_main_lane(state: &RuntimeState) -> bool {
+    state
+        .lane
+        .as_deref()
+        .map(|lane| lane.eq_ignore_ascii_case("main"))
+        .unwrap_or(true)
+}
+
+fn runtime_state_points_at_in_progress_issue(
+    adapter: &dyn jade_symphony::tracker::TrackerAdapter,
+    state: &RuntimeState,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let Some(active_issue) = state.active_issue.as_ref() else {
+        return Ok(false);
+    };
+    let Some(issue) = adapter.get_issue(&active_issue.identifier)? else {
+        return Ok(false);
+    };
+    Ok(normalize_state(&issue.state) == "in progress")
 }
 
 fn stale_runtime_state_action(
@@ -8415,7 +8892,7 @@ fn ensure_write_mode_main_agent_backend(
     Err(io::Error::new(
         io::ErrorKind::InvalidInput,
         format!(
-            "write-mode {command} is blocked because workflow={} configures agent.backend=dry-run; configure a real main-agent backend such as tmux, codex, or claude-code before using --write",
+            "write-mode {command} is blocked because workflow={} configures main_lane.backend=dry-run; configure a real main-agent backend such as tmux, codex, or claude-code before using --write",
             workflow_path.display()
         ),
     )
@@ -8443,6 +8920,39 @@ fn current_time_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
+}
+
+fn current_gmt_timestamp() -> String {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    format_gmt_timestamp(seconds)
+}
+
+fn format_gmt_timestamp(seconds_since_unix_epoch: u64) -> String {
+    let days = (seconds_since_unix_epoch / 86_400) as i64;
+    let seconds_of_day = seconds_since_unix_epoch % 86_400;
+    let (year, month, day) = civil_from_days(days);
+    let hour = seconds_of_day / 3_600;
+    let minute = (seconds_of_day % 3_600) / 60;
+    let second = seconds_of_day % 60;
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02} GMT")
+}
+
+fn civil_from_days(days_since_unix_epoch: i64) -> (i64, u32, u32) {
+    let days = days_since_unix_epoch + 719_468;
+    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
+    let day_of_era = days - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    year += if month <= 2 { 1 } else { 0 };
+    (year, month as u32, day as u32)
 }
 
 fn lane_claim_for_issue(
@@ -8889,8 +9399,9 @@ fn run_loop_handoff_workpad(
     issue: &TrackerIssue,
     result: &IssueExecutionResult,
     handoff: &IssueHandoffPlan,
+    ownership: Option<&RuntimeOwnershipMarker>,
 ) -> String {
-    [
+    let mut lines = vec![
         "## Jade Symphony Workpad".to_string(),
         String::new(),
         "### Context".to_string(),
@@ -8898,7 +9409,8 @@ fn run_loop_handoff_workpad(
         "- Source: `jade-symphony main loop`".to_string(),
         String::new(),
         "### Run-Loop Handoff Checklist".to_string(),
-        "- [x] Read the issue contract, Project state, and existing workpad evidence.".to_string(),
+        "- [x] Read the issue contract, Project state, Main Workpad, and timeline evidence."
+            .to_string(),
         "- [x] Prepare or resume the isolated issue workspace and branch.".to_string(),
         "- [x] Run the configured Main Agent backend for the implementation slice.".to_string(),
         "- [x] Verify handoff evidence and prepare the PR for Agent Review.".to_string(),
@@ -8976,8 +9488,14 @@ fn run_loop_handoff_workpad(
         "### Main-Agent Boundary".to_string(),
         "- Locally complete main-agent work stops at `Agent Review`.".to_string(),
         "- `Human Review` is reserved for independent Review Agent pass evidence.".to_string(),
-    ]
-    .join("\n")
+    ];
+
+    if let Some(ownership) = ownership {
+        lines.push(String::new());
+        lines.push(render_runtime_ownership_marker(ownership));
+    }
+
+    lines.join("\n")
 }
 
 fn branch_target_workpad_line(handoff: &IssueHandoffPlan) -> String {
@@ -9056,6 +9574,13 @@ fn record_live_handoff_pr_link(
         return Ok(());
     };
 
+    let linked = adapter
+        .list_linked_pull_requests(issue_ref)
+        .map_err(|error| format!("handoff PR link verification failed: {error}"))?;
+    if linked_pull_requests_contain(&linked, &handoff.publication.pr_url) {
+        return Ok(());
+    }
+
     adapter
         .link_pull_request(issue_ref, &handoff.publication.pr_url)
         .map_err(|error| format!("handoff PR link repair failed: {error}"))?;
@@ -9106,13 +9631,24 @@ fn linked_pull_requests_contain(
     pr_url: &str,
 ) -> bool {
     let expected_url = pr_url.trim();
-    let expected_number = pull_request_number_from_url(expected_url);
+    let expected_number = pull_request_number_from_ref(expected_url);
     linked_pull_requests.iter().any(|linked| {
         linked
             .url
             .as_deref()
             .is_some_and(|url| url.trim() == expected_url)
             || expected_number.is_some() && linked.number == expected_number
+    })
+}
+
+fn pull_request_number_from_ref(reference: &str) -> Option<u64> {
+    pull_request_number_from_url(reference).or_else(|| {
+        reference
+            .trim()
+            .trim_start_matches('#')
+            .trim_start_matches("PR_")
+            .parse()
+            .ok()
     })
 }
 
@@ -9417,6 +9953,9 @@ enum Command {
     ReviewLoop {
         options: ReviewLoopOptions,
     },
+    ReviewStatus {
+        options: ReviewStatusCliOptions,
+    },
     MergeSession {
         workflow_path: PathBuf,
         issue_ref: String,
@@ -9500,7 +10039,7 @@ struct RunLoopOptions {
     max_iterations: Option<usize>,
     once: bool,
     write: bool,
-    pool: Option<usize>,
+    max_concurrent: Option<usize>,
     display: DisplayMode,
 }
 
@@ -9518,6 +10057,15 @@ struct ReviewLoopOptions {
     write: bool,
     fake_outcome: Option<FakeReviewOutcome>,
     max_concurrent: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReviewStatusCliOptions {
+    workflow_path: PathBuf,
+    issue_filter: Option<String>,
+    recent_limit: usize,
+    verbose: bool,
+    json: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -9553,7 +10101,7 @@ struct MergeLoopOptions {
     max_iterations: Option<usize>,
     once: bool,
     write: bool,
-    pool: Option<usize>,
+    max_concurrent: Option<usize>,
 }
 
 impl ReviewLoopOptions {
@@ -9581,8 +10129,10 @@ impl MergeLoopOptions {
         }
     }
 
-    fn pool_size(&self) -> usize {
-        self.pool.unwrap_or(1).max(1)
+    fn worker_limit(&self, config: &RuntimeConfig) -> usize {
+        self.max_concurrent
+            .unwrap_or(config.merge_lane.max_concurrent_workers)
+            .max(1)
     }
 }
 
@@ -9595,8 +10145,10 @@ impl RunLoopOptions {
         }
     }
 
-    fn pool_size(&self, _config: &RuntimeConfig) -> usize {
-        self.pool.unwrap_or(1).max(1)
+    fn worker_limit(&self, config: &RuntimeConfig) -> usize {
+        self.max_concurrent
+            .unwrap_or(config.agent.max_concurrent_agents)
+            .max(1)
     }
 }
 
@@ -9677,7 +10229,7 @@ enum CliCommand {
     #[command(
         next_help_heading = "Project / Agent internals",
         about = "Discover and record per-issue git worktrees",
-        long_about = "Discover and record per-issue git worktrees.\n\n`workspace` is the safe local-worktree coordination surface for Main, Review, and Merge lanes. It discovers existing issue worktrees from the session registry, workpad evidence, linked PR/branch hints, and `git worktree list`. It can ensure missing Review/Merge inspection worktrees under the configured workspace root, but it never runs `gh pr checkout`, switches branches, or changes the canonical repository checkout.\n\nUse `workspace show` before local Review or Merge inspection. Use `workspace adopt` only when an operator has selected an existing worktree that should become the canonical workspace evidence for the issue. Use `workspace ensure` only when no suitable candidate exists and local inspection is required."
+        long_about = "Discover and record per-issue git worktrees.\n\n`workspace` is the safe local-worktree coordination surface for Main, Review, and Merge lanes. It discovers existing issue worktrees from the session registry, Main Workpad/timeline evidence, linked PR/branch hints, and `git worktree list`. It can ensure missing Review/Merge inspection worktrees under the configured workspace root, but it never runs `gh pr checkout`, switches branches, or changes the canonical repository checkout.\n\nUse `workspace show` before local Review or Merge inspection. Use `workspace adopt` only when an operator has selected an existing worktree that should become the canonical workspace evidence for the issue. Use `workspace ensure` only when no suitable candidate exists and local inspection is required."
     )]
     Workspace(WorkspaceArgs),
     #[command(name = "session")]
@@ -9838,8 +10390,8 @@ struct RunLoopArgs {
     once: bool,
     #[arg(long)]
     write: bool,
-    #[arg(long)]
-    pool: Option<usize>,
+    #[arg(long = "max-concurrent")]
+    max_concurrent: Option<usize>,
     #[arg(long, value_enum, default_value_t = CliDisplayMode::Plain)]
     display: CliDisplayMode,
     #[arg(long = "dry-run")]
@@ -9899,7 +10451,7 @@ struct WorkspaceArgs {
 enum WorkspaceCommandArgs {
     #[command(
         about = "List discovered issue worktrees and orphan hints",
-        long_about = "List discovered issue worktrees and orphan hints.\n\nThis is a read-only Project-wide inventory. It scans tracker issues, session registry records, workpad evidence, linked PR/branch hints, and local `git worktree list` output. It reports candidates per issue and orphan-looking worktrees whose branch/path implies an issue not currently present in the fetched Project state."
+        long_about = "List discovered issue worktrees and orphan hints.\n\nThis is a read-only Project-wide inventory. It scans tracker issues, session registry records, Main Workpad/timeline evidence, linked PR/branch hints, and local `git worktree list` output. It reports candidates per issue and orphan-looking worktrees whose branch/path implies an issue not currently present in the fetched Project state."
     )]
     List(WorkspaceListArgs),
     #[command(
@@ -10013,8 +10565,8 @@ struct MergeLoopArgs {
     once: bool,
     #[arg(long)]
     write: bool,
-    #[arg(long)]
-    pool: Option<usize>,
+    #[arg(long = "max-concurrent")]
+    max_concurrent: Option<usize>,
     #[arg(long = "dry-run")]
     _dry_run: bool,
 }
@@ -10386,6 +10938,24 @@ struct ReviewLoopArgs {
 }
 
 #[derive(Debug, Args)]
+struct ReviewStatusArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long = "issue", help = "Filter status to one issue, for example #313")]
+    issue_filter: Option<String>,
+    #[arg(
+        long = "recent",
+        default_value_t = DEFAULT_RECENT_REVIEW_JOBS,
+        help = "Number of recent completed or failed review jobs to show"
+    )]
+    recent_limit: usize,
+    #[arg(long, help = "Show more paths and anomaly details")]
+    verbose: bool,
+    #[arg(long, help = "Print the complete structured review status payload")]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
 struct ReviewArgs {
     #[command(subcommand)]
     command: ReviewCommandArgs,
@@ -10401,6 +10971,7 @@ enum ReviewCommandArgs {
     Session(LaneSessionAliasArgs),
     Freshness(ReviewFreshnessArgs),
     Loop(ReviewLoopArgs),
+    Status(ReviewStatusArgs),
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -10591,7 +11162,7 @@ impl ForgeStatusArg {
 }
 
 fn run_loop_command(args: RunLoopArgs) -> Result<Command, String> {
-    if args.max_iterations == Some(0) || args.pool == Some(0) {
+    if args.max_iterations == Some(0) || args.max_concurrent == Some(0) {
         return Err(usage());
     }
     Ok(Command::RunLoop {
@@ -10600,7 +11171,7 @@ fn run_loop_command(args: RunLoopArgs) -> Result<Command, String> {
             max_iterations: args.max_iterations,
             once: args.once,
             write: args.write,
-            pool: args.pool,
+            max_concurrent: args.max_concurrent,
             display: args.display.into(),
         },
     })
@@ -10608,7 +11179,7 @@ fn run_loop_command(args: RunLoopArgs) -> Result<Command, String> {
 
 fn merge_loop_command(args: MergeLoopArgs) -> Result<Command, String> {
     if args.max_iterations == Some(0)
-        || args.pool == Some(0)
+        || args.max_concurrent == Some(0)
         || (!args.once && args.max_iterations.is_none())
     {
         return Err(usage());
@@ -10619,7 +11190,7 @@ fn merge_loop_command(args: MergeLoopArgs) -> Result<Command, String> {
             max_iterations: args.max_iterations,
             once: args.once,
             write: args.write,
-            pool: args.pool,
+            max_concurrent: args.max_concurrent,
         },
     })
 }
@@ -11018,6 +11589,20 @@ fn command_from_review_args(command: ReviewCommandArgs) -> Result<Command, Strin
                     write: args.write,
                     fake_outcome: args.fake_outcome.map(Into::into),
                     max_concurrent: args.max_concurrent,
+                },
+            })
+        }
+        ReviewCommandArgs::Status(args) => {
+            if args.recent_limit == 0 {
+                return Err(usage());
+            }
+            Ok(Command::ReviewStatus {
+                options: ReviewStatusCliOptions {
+                    workflow_path: args.workflow_path,
+                    issue_filter: args.issue_filter,
+                    recent_limit: args.recent_limit,
+                    verbose: args.verbose,
+                    json: args.json,
                 },
             })
         }
@@ -11556,6 +12141,7 @@ mod tests {
         issues: RefCell<BTreeMap<String, TrackerIssue>>,
         linked_pull_requests: RefCell<Vec<jade_symphony::model::LinkedPullRequest>>,
         fail_workpad: bool,
+        fail_comment: bool,
         fail_link_pr: bool,
         confirm_link_pr: bool,
     }
@@ -11567,6 +12153,7 @@ mod tests {
                 issues: RefCell::new(BTreeMap::new()),
                 linked_pull_requests: RefCell::new(Vec::new()),
                 fail_workpad: false,
+                fail_comment: false,
                 fail_link_pr: false,
                 confirm_link_pr: true,
             }
@@ -11631,11 +12218,8 @@ mod tests {
                 );
             }
             assert!(
-                markdown.contains("## Rework Diagnostic")
-                    || markdown.contains("## Rework Revision Evidence")
-                    || markdown.contains("## Rework Revision Blocker")
-                    || markdown.contains("### Merge Lane Handoff")
-                    || markdown.contains("## Agent Review")
+                markdown.contains("## Jade Symphony Workpad")
+                    || markdown.contains("### Workspace Evidence")
             );
             self.operations
                 .borrow_mut()
@@ -11664,7 +12248,20 @@ mod tests {
             issue_ref: &str,
             markdown: &str,
         ) -> Result<(), jade_symphony::tracker::TrackerError> {
-            assert!(markdown.contains("## Promotion Note"));
+            if self.fail_comment {
+                return Err(
+                    jade_symphony::tracker::TrackerError::IntegrationUnavailable(
+                        "comment failed".into(),
+                    ),
+                );
+            }
+            assert!(
+                markdown.contains("## Promotion Note")
+                    || markdown.contains("## Jade Symphony Agent Review Run")
+                    || markdown.contains("## Jade Symphony Rework Run")
+                    || markdown.contains("## Jade Symphony Merge Run")
+                    || markdown.contains("## Jade Symphony Doctor Triage")
+            );
             self.operations
                 .borrow_mut()
                 .push(format!("comment:{issue_ref}"));
@@ -12290,7 +12887,7 @@ mod tests {
     fn review_session_uses_gemini_command_when_no_tmux_override_exists() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\ntracker:\n  kind: memory\nagent:\n  backend: tmux\ntmux:\n  agent_command: codex\nreview:\n  backend: gemini-cli\n  gemini_command: /opt/homebrew/bin/gemini\n---\nPrompt",
+            "---\ntracker:\n  kind: memory\nmain_lane:\n  backend: tmux\ntmux:\n  agent_command: codex\nreview_lane:\n  backend: gemini-cli\n  gemini_command: /opt/homebrew/bin/gemini\n---\nPrompt",
         )
         .unwrap();
         let config =
@@ -12314,7 +12911,7 @@ mod tests {
     fn review_session_prefers_tmux_review_command_override() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\ntracker:\n  kind: memory\nagent:\n  backend: tmux\ntmux:\n  agent_command: codex\n  review_agent_command: custom-gemini --model pro\nreview:\n  backend: gemini-cli\n  gemini_command: /opt/homebrew/bin/gemini\n---\nPrompt",
+            "---\ntracker:\n  kind: memory\nmain_lane:\n  backend: tmux\ntmux:\n  agent_command: codex\n  review_agent_command: custom-gemini --model pro\nreview_lane:\n  backend: gemini-cli\n  gemini_command: /opt/homebrew/bin/gemini\n---\nPrompt",
         )
         .unwrap();
         let config =
@@ -13024,6 +13621,35 @@ mod tests {
     }
 
     #[test]
+    fn parses_review_status_flags() {
+        let command = Command::parse(vec![
+            "review".into(),
+            "status".into(),
+            "examples/review-fixture-workflow.md".into(),
+            "--issue".into(),
+            "#313".into(),
+            "--recent".into(),
+            "3".into(),
+            "--verbose".into(),
+            "--json".into(),
+        ])
+        .unwrap();
+
+        let Command::ReviewStatus { options } = command else {
+            panic!("expected review status command");
+        };
+
+        assert_eq!(
+            options.workflow_path,
+            PathBuf::from("examples/review-fixture-workflow.md")
+        );
+        assert_eq!(options.issue_filter.as_deref(), Some("#313"));
+        assert_eq!(options.recent_limit, 3);
+        assert!(options.verbose);
+        assert!(options.json);
+    }
+
+    #[test]
     fn parses_merge_loop_flags() {
         let command = Command::parse(vec![
             "merge".into(),
@@ -13031,7 +13657,7 @@ mod tests {
             "examples/github-project-workflow.md".into(),
             "--max-iterations".into(),
             "3".into(),
-            "--pool".into(),
+            "--max-concurrent".into(),
             "2".into(),
             "--write".into(),
         ])
@@ -13046,8 +13672,8 @@ mod tests {
             PathBuf::from("examples/github-project-workflow.md")
         );
         assert_eq!(options.max_iterations, Some(3));
-        assert_eq!(options.pool, Some(2));
-        assert_eq!(options.pool_size(), 2);
+        assert_eq!(options.max_concurrent, Some(2));
+        assert_eq!(options.worker_limit(&test_config()), 2);
         assert!(options.write);
     }
 
@@ -13088,14 +13714,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_zero_merge_loop_pool() {
+    fn rejects_zero_merge_loop_max_concurrent() {
         assert!(Command::parse(vec![
             "merge".into(),
             "loop".into(),
             "WORKFLOW.md".into(),
             "--max-iterations".into(),
             "1".into(),
-            "--pool".into(),
+            "--max-concurrent".into(),
             "0".into(),
         ])
         .is_err());
@@ -13334,7 +13960,7 @@ mod tests {
             adapter.operations(),
             vec![
                 "update_issue_content:#67",
-                "workpad:#67",
+                "comment:#67",
                 "set_state:#67:human_review"
             ]
         );
@@ -13358,7 +13984,7 @@ mod tests {
             "examples/dry-run-workflow.md".into(),
             "--max-iterations".into(),
             "3".into(),
-            "--pool".into(),
+            "--max-concurrent".into(),
             "4".into(),
             "--display".into(),
             "tui".into(),
@@ -13375,8 +14001,8 @@ mod tests {
             PathBuf::from("examples/dry-run-workflow.md")
         );
         assert_eq!(options.max_iterations, Some(3));
-        assert_eq!(options.pool, Some(4));
-        assert_eq!(options.pool_size(&test_config()), 4);
+        assert_eq!(options.max_concurrent, Some(4));
+        assert_eq!(options.worker_limit(&test_config()), 4);
         assert_eq!(options.display, DisplayMode::Tui);
         assert!(!options.once);
         assert!(!options.write);
@@ -13444,14 +14070,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_zero_run_loop_pool() {
+    fn rejects_zero_run_loop_max_concurrent() {
         let error = Command::parse(vec![
             "main".into(),
             "loop".into(),
             "WORKFLOW.md".into(),
             "--max-iterations".into(),
             "1".into(),
-            "--pool".into(),
+            "--max-concurrent".into(),
             "0".into(),
         ])
         .unwrap_err();
@@ -13519,6 +14145,31 @@ mod tests {
 
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].identifier, "#7");
+    }
+
+    #[test]
+    fn merge_pool_selection_reuses_structured_active_claim_for_same_worker() {
+        let config = test_config();
+        let worker = "Jade Symphony Agent";
+        let claim = LaneClaim::active(
+            "#6",
+            LaneClaimLane::Merge,
+            LaneClaimActor::Codex,
+            LaneClaimSource::Loop,
+            1_779_000_000_000,
+        )
+        .with_worker(worker);
+        let mut claimed_by_self = tracker_issue_with_ref("#6", "Claimed merge", "Merging");
+        claimed_by_self.project_fields.insert(
+            "Merging Agent".into(),
+            serde_json::Value::String(claim.render()),
+        );
+
+        let selected =
+            select_pool_worker_issues(&[claimed_by_self], WorkerLane::Merging, worker, 1, &config);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].identifier, "#6");
     }
 
     #[test]
@@ -13788,6 +14439,73 @@ mod tests {
     }
 
     #[test]
+    fn resume_preflight_many_counts_active_main_worker_slots() {
+        let config = test_config();
+        let tracker = MemoryTracker::new(vec![
+            tracker_issue_with_ref("#29", "Runtime one", "In Progress"),
+            tracker_issue_with_ref("#30", "Runtime two", "In Progress"),
+        ]);
+        let states = vec![active_runtime_state("#29"), active_runtime_state("#30")];
+
+        let summary = run_loop_resume_preflight_many(&tracker, &config, &states, 2_000).unwrap();
+
+        assert_eq!(summary.active_main_workers, 2);
+        assert_eq!(summary.retained_states.len(), 2);
+        assert_eq!(summary.blocked, None);
+    }
+
+    #[test]
+    fn resume_preflight_many_archives_only_stale_slot() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.observability.logs_root = temp.path().join("logs");
+        let tracker = MemoryTracker::new(vec![
+            tracker_issue_with_ref("#29", "Handed off", "Agent Review"),
+            tracker_issue_with_ref("#30", "Still active", "In Progress"),
+        ]);
+        let states = vec![active_runtime_state("#29"), active_runtime_state("#30")];
+
+        let summary = run_loop_resume_preflight_many(&tracker, &config, &states, 2_000).unwrap();
+
+        assert_eq!(summary.active_main_workers, 1);
+        assert_eq!(summary.retained_states.len(), 1);
+        assert_eq!(
+            summary.retained_states[0]
+                .active_issue
+                .as_ref()
+                .map(|issue| issue.identifier.as_str()),
+            Some("#30")
+        );
+    }
+
+    #[test]
+    fn run_loop_runtime_state_uses_matching_slot_for_attempt_count() {
+        let config = test_config();
+        let issue = tracker_issue("In Progress");
+        let claim = test_claim(&issue);
+        let unrelated = active_runtime_state("#28");
+        let existing = run_loop_runtime_state_for_issue(None, &issue, &config, "Claimed", &claim);
+        let states = vec![unrelated, existing];
+
+        let state = run_loop_runtime_state_for_issue(
+            runtime_state_for_issue(&states, &issue.identifier),
+            &issue,
+            &config,
+            "Resumed",
+            &claim,
+        );
+
+        assert_eq!(state.attempt_count, 2);
+        assert_eq!(
+            state
+                .active_issue
+                .as_ref()
+                .map(|issue| issue.identifier.as_str()),
+            Some("#29")
+        );
+    }
+
+    #[test]
     fn resume_preflight_defers_until_retry_is_due() {
         let config = test_config();
         let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
@@ -13803,6 +14521,24 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn resume_preflight_continues_after_retry_is_due_even_when_old() {
+        let config = test_config();
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let mut state = active_runtime_state("#29");
+        record_runtime_retry(&mut state, 1_000, 5_000, "backend not ready");
+
+        let action = run_loop_resume_preflight(
+            &tracker,
+            &config,
+            Some(&state),
+            config.codex.stall_timeout_ms + 10_000,
+        )
+        .unwrap();
+
+        assert_eq!(action, ResumePreflightAction::Continue);
     }
 
     #[test]
@@ -13961,6 +14697,7 @@ mod tests {
             &issue,
             &result,
             &run_loop_handoff_plan(&config, &issue).unwrap(),
+            None,
         );
 
         assert_eq!(state.last_event.as_deref(), Some("SessionRunning"));
@@ -14066,7 +14803,7 @@ mod tests {
             handoff_verification: Some("skipped:not_configured".into()),
         };
 
-        let workpad = run_loop_handoff_workpad(&issue, &result, &handoff);
+        let workpad = run_loop_handoff_workpad(&issue, &result, &handoff, None);
 
         assert!(workpad.contains("### Run-Loop Handoff Checklist"));
         assert!(workpad.contains("### Work Log"));
@@ -14104,6 +14841,34 @@ mod tests {
             adapter.operations(),
             vec!["link_pr:#29:https://github.com/Alive24/jade-symphony/pull/45"]
         );
+    }
+
+    #[test]
+    fn live_run_loop_handoff_skips_link_comment_when_pr_already_visible() {
+        let config = test_config();
+        let issue = tracker_issue("In Progress");
+        let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+        let mut result = successful_live_handoff_result(&handoff);
+        let adapter = RecordingAdapter::default();
+        adapter
+            .linked_pull_requests
+            .borrow_mut()
+            .push(jade_symphony::model::LinkedPullRequest {
+                number: Some(45),
+                url: Some("https://github.com/Alive24/jade-symphony/pull/45".into()),
+                state: Some("OPEN".into()),
+                is_draft: Some(false),
+                ..Default::default()
+            });
+
+        assert!(apply_live_handoff_pr_link(
+            &adapter,
+            &issue.identifier,
+            &mut result
+        ));
+
+        assert!(result.success);
+        assert!(adapter.operations().is_empty());
     }
 
     #[test]
@@ -14306,16 +15071,16 @@ mod tests {
         assert_eq!(
             adapter.operations(),
             vec![
-                "workpad:#29".to_string(),
+                "comment:#29".to_string(),
                 "set_state:#29:rework".to_string()
             ]
         );
     }
 
     #[test]
-    fn rework_transition_does_not_set_state_when_workpad_write_fails() {
+    fn rework_transition_does_not_set_state_when_timeline_comment_fails() {
         let adapter = RecordingAdapter {
-            fail_workpad: true,
+            fail_comment: true,
             ..Default::default()
         };
         let issue = tracker_issue("Agent Review");
@@ -14337,7 +15102,7 @@ mod tests {
     fn merge_completion_closes_issue_after_workpad_and_done_state() {
         let adapter = RecordingAdapter::default();
         let issue = tracker_issue("Merging");
-        let workpad = "## Jade Symphony Workpad\n\n### Merge Lane Handoff\n";
+        let workpad = "## Jade Symphony Merge Run\n\n### Merge Action\n";
 
         let config = test_config();
         record_done_merge_lane_completion(&config, &adapter, &issue, workpad).unwrap();
@@ -14345,7 +15110,7 @@ mod tests {
         assert_eq!(
             adapter.operations(),
             vec![
-                "workpad:#29".to_string(),
+                "comment:#29".to_string(),
                 "set_state:#29:done".to_string(),
                 "close_issue:#29".to_string()
             ]
@@ -14642,7 +15407,7 @@ mod tests {
             adapter.operations(),
             vec![
                 "update_issue_content:#282".to_string(),
-                "workpad:#282".to_string(),
+                "comment:#282".to_string(),
                 "set_state:#282:rework".to_string(),
             ]
         );
@@ -14694,7 +15459,7 @@ mod tests {
         .to_string();
 
         assert!(error.contains("active Review Agent claim"));
-        assert_eq!(adapter.operations(), vec!["workpad:#282".to_string()]);
+        assert_eq!(adapter.operations(), vec!["comment:#282".to_string()]);
     }
 
     #[test]
@@ -14797,6 +15562,24 @@ mod tests {
 
         assert!(link_pr_with_adapter(&adapter, "#127", "PR_128", true).unwrap());
         assert_eq!(adapter.operations(), vec!["link_pr:#127:PR_128"]);
+    }
+
+    #[test]
+    fn link_pr_helper_skips_repair_when_project_readback_already_has_pr() {
+        let adapter = RecordingAdapter::default();
+        adapter
+            .linked_pull_requests
+            .borrow_mut()
+            .push(jade_symphony::model::LinkedPullRequest {
+                number: Some(128),
+                url: Some("https://github.com/Alive24/jade-symphony/pull/128".into()),
+                state: Some("OPEN".into()),
+                is_draft: Some(false),
+                ..Default::default()
+            });
+
+        assert!(!link_pr_with_adapter(&adapter, "#127", "PR_128", true).unwrap());
+        assert!(adapter.operations().is_empty());
     }
 
     #[test]
@@ -15164,7 +15947,7 @@ mod tests {
             workflow_path: PathBuf::from("WORKFLOW.md"),
             max_iterations: None,
             once: false,
-            pool: None,
+            max_concurrent: None,
             write: false,
             display: DisplayMode::Plain,
         };
@@ -15186,7 +15969,7 @@ mod tests {
         std::fs::write(
             &workflow_path,
             format!(
-                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {}\nobservability:\n  logs_root: {}\nagent:\n  backend: dry-run\n---\nPrompt",
+                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {}\nobservability:\n  logs_root: {}\nmain_lane:\n  backend: dry-run\n---\nPrompt",
                 workspace_root.display(),
                 logs_root.display()
             ),
@@ -15197,7 +15980,7 @@ mod tests {
             workflow_path: workflow_path.clone(),
             max_iterations: Some(1),
             once: false,
-            pool: None,
+            max_concurrent: None,
             write: true,
             display: DisplayMode::Plain,
         })
@@ -15205,7 +15988,7 @@ mod tests {
         .to_string();
 
         assert!(error.contains("write-mode main loop is blocked"));
-        assert!(error.contains("agent.backend=dry-run"));
+        assert!(error.contains("main_lane.backend=dry-run"));
         assert!(error.contains(workflow_path.to_string_lossy().as_ref()));
         assert!(
             !workspace_root.exists(),
@@ -15223,7 +16006,7 @@ mod tests {
         std::fs::write(
             &workflow_path,
             format!(
-                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {}\nobservability:\n  logs_root: {}\nagent:\n  backend: dry-run\n---\nPrompt",
+                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {}\nobservability:\n  logs_root: {}\nmain_lane:\n  backend: dry-run\n---\nPrompt",
                 workspace_root.display(),
                 logs_root.display()
             ),
@@ -15234,7 +16017,7 @@ mod tests {
             workflow_path,
             max_iterations: Some(1),
             once: false,
-            pool: None,
+            max_concurrent: None,
             write: false,
             display: DisplayMode::Plain,
         })
@@ -15247,7 +16030,7 @@ mod tests {
             workflow_path: PathBuf::from("WORKFLOW.md"),
             max_iterations: Some(2),
             once: false,
-            pool: None,
+            max_concurrent: None,
             write: true,
             display: DisplayMode::Plain,
         };
@@ -15266,7 +16049,7 @@ mod tests {
             workflow_path: PathBuf::from("WORKFLOW.md"),
             max_iterations: None,
             once: false,
-            pool: None,
+            max_concurrent: None,
             write: true,
             display: DisplayMode::Plain,
         };

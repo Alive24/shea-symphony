@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::model::TrackerIssue;
 use crate::review::{ReviewFindingClass, ReviewGateDecision, ReviewJob, ReviewOutcome};
@@ -159,10 +160,22 @@ pub fn render_rework_diagnostic_workpad(
     issue: &TrackerIssue,
     diagnostic: &ReworkDiagnostic,
 ) -> String {
+    let review_origin = diagnostic.source.starts_with("agent_review:");
+    let title = if review_origin {
+        "## Jade Symphony Agent Review Run"
+    } else {
+        "## Jade Symphony Rework Run"
+    };
+    let lane = if review_origin { "review" } else { "main" };
     let mut lines = vec![
-        "## Rework Diagnostic".to_string(),
+        title.to_string(),
         String::new(),
+        format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", issue.identifier, issue.title),
+        format!("- Lane: `{lane}`"),
+        "- Run type: `review_rework_diagnostic`".into(),
+        format!("- Input state: `{}`", issue.state),
+        "- Target state after run: `Rework`".into(),
         format!("- Source: `{}`", diagnostic.source),
         format!("- Kind: `{:?}`", diagnostic.kind),
         format!("- Summary: {}", diagnostic.summary),
@@ -211,10 +224,14 @@ pub fn render_rework_diagnostic_workpad(
 
     lines.push(String::new());
     lines.push("### Role Boundary".into());
-    lines.push(
-        "- Main implementation agent repairs confirmed Rework and then stops at `Agent Review`."
-            .into(),
-    );
+    if review_origin {
+        lines.push("- Review Agent records the independent review result and may route confirmed findings to `Rework`.".into());
+        lines.push("- This comment is append-only trigger evidence; it does not replace the canonical Main Agent Workpad.".into());
+        lines.push("- Main implementation agent repairs confirmed Rework in the existing Main Agent Workpad, then stops at `Agent Review`.".into());
+    } else {
+        lines.push("- This comment is append-only Rework diagnostic evidence; it does not replace the canonical Main Agent Workpad.".into());
+        lines.push("- Main implementation agent records implementation repair evidence in the existing Main Agent Workpad and then stops at `Agent Review`.".into());
+    }
     lines.push(
         "- `Human Review` remains reserved for independent Review Agent pass evidence.".into(),
     );
@@ -232,9 +249,14 @@ fn push_log_block(lines: &mut Vec<String>, label: &str, content: Option<&str>) {
 
     lines.push(String::new());
     lines.push(format!("### {label}"));
+    lines.push("<details>".into());
+    lines.push(format!("<summary>{label}</summary>"));
+    lines.push(String::new());
     lines.push("```text".into());
     lines.push(truncate_log(content));
     lines.push("```".into());
+    lines.push(String::new());
+    lines.push("</details>".into());
 }
 
 fn truncate_log(content: &str) -> String {
@@ -244,6 +266,39 @@ fn truncate_log(content: &str) -> String {
     } else {
         format!("{} [... truncated]", &content[..LIMIT])
     }
+}
+
+fn current_gmt_timestamp() -> String {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    format_gmt_timestamp(seconds)
+}
+
+fn format_gmt_timestamp(seconds_since_unix_epoch: u64) -> String {
+    let days = (seconds_since_unix_epoch / 86_400) as i64;
+    let seconds_of_day = seconds_since_unix_epoch % 86_400;
+    let (year, month, day) = civil_from_days(days);
+    let hour = seconds_of_day / 3_600;
+    let minute = (seconds_of_day % 3_600) / 60;
+    let second = seconds_of_day % 60;
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02} GMT")
+}
+
+fn civil_from_days(days_since_unix_epoch: i64) -> (i64, u32, u32) {
+    let days = days_since_unix_epoch + 719_468;
+    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
+    let day_of_era = days - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    year += if month <= 2 { 1 } else { 0 };
+    (year, month as u32, day as u32)
 }
 
 pub fn rework_transition_expected(decision: &ReviewGateDecision) -> bool {
@@ -323,6 +378,8 @@ mod tests {
         assert!(workpad.contains("Review artifact: `/tmp/review-artifact.json`"));
         assert!(workpad.contains("Review job ledger: `/tmp/reviews/jobs/50-review-1.json`"));
         assert!(workpad.contains("Confirmed: Missing test - Add ordering coverage."));
+        assert!(workpad.contains("does not replace the canonical Main Agent Workpad"));
+        assert!(workpad.contains("repairs confirmed Rework in the existing Main Agent Workpad"));
         assert!(workpad.contains("review stdout"));
         assert!(workpad.contains("review stderr"));
     }

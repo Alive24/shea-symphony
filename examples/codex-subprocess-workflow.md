@@ -18,7 +18,7 @@ tracker:
     - Done
 workspace:
   root: /tmp/jade-symphony-codex-subprocess-workspaces
-agent:
+main_lane:
   backend: codex
   max_concurrent_agents: 1
   max_turns: 1

@@ -121,9 +121,40 @@ the evidence without running a repair or migration first.
 requiring sessions next to tracker/runtime findings. `clean audit` treats the
 session registry, rendered prompts, and tmux logs as recovery evidence, and only
 classifies completed sessions as cleanup candidates.
-If an operator switches the workflow back to `agent.backend: dry-run`, the
+If an operator switches the workflow back to `main_lane.backend: dry-run`, the
 mutating tick exits before runtime-state writes, worktree creation, Project
 claims, or workpad mutation.
+
+## Evidence Timeline
+
+Jade Symphony uses two issue-comment evidence surfaces:
+
+- `Main Agent Workpad`: one persistent marker comment owned by the Main Agent.
+  It is updated in place for implementation plan, work log, verification, PR,
+  workspace, and handoff evidence. Main-lane `Rework` continues to update this
+  same Workpad as the current-state implementation surface. New canonical Main
+  Workpad writes supersede older canonical Workpad blocks so stale planned PR
+  fields such as `Live PR: not-created` do not survive after live PR evidence
+  exists.
+- Append-only timeline comments: every Review, Rework, Merge, Human Review, and
+  Doctor run writes a standalone comment with a human-readable GMT timestamp,
+  lane, actor, input state, target state, result, PR when relevant, and evidence
+  summary. `Jade Symphony Rework Run` comments explain why the issue entered
+  `Rework`; they do not replace the Main Agent Workpad for implementation
+  evidence.
+
+PR linkage repair should be quiet when normal GitHub/Project readback already
+shows the PR. A visible linkage repair comment is a fallback for cases where
+GitHub Project v2 cannot otherwise expose the PR, not routine timeline noise.
+
+Review, Merge, Human Review, and Doctor flows must not overwrite or restructure
+the Main Agent Workpad. Rework-trigger diagnostics should reference Main
+evidence, then write their own `Jade Symphony Agent Review Run`,
+`Jade Symphony Rework Run`,
+`Jade Symphony Merge Run`, `Jade Symphony Human Review Decision`, or
+`Jade Symphony Doctor Triage` timeline comment. Historical issues may still
+contain older mixed Workpad evidence; do not migrate or delete it during normal
+dogfood.
 
 ## Review Backend Setup
 
@@ -143,7 +174,7 @@ Then configure the workflow or operator environment with that path before
 running review automation:
 
 ```yaml
-review:
+review_lane:
   backend: gemini-cli
   gemini_command: /opt/homebrew/bin/gemini
   gemini_model: gemini-3.1-pro-preview
@@ -154,6 +185,30 @@ review:
 ```bash
 target/debug/jade-symphony review loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
+
+During supervised review-loop dogfood, use the read-only status surface before
+dropping to raw logs or process inspection:
+
+```bash
+target/debug/jade-symphony review status workflows/jade-symphony.md
+target/debug/jade-symphony review status workflows/jade-symphony.md --issue '#<issue>' --recent 3 --verbose
+target/debug/jade-symphony review status workflows/jade-symphony.md --json
+```
+
+Default output is a compact table of running review slots and recent terminal
+jobs. It includes issue, title when available, job id, backend, pid when known,
+elapsed time, artifact and ledger pointers, claim summary, last event or
+decision, outcome, and the last five sanitized stderr lines in a short detail
+block. `--json` prints the complete structured payload for scripts. The command
+does not mutate Project state, claims, workpads, ledgers, or processes; it only
+composes local review job ledgers, runtime/session registry evidence, and
+Project `Review Agent` claim readbacks.
+
+Use the anomaly block to decide the next human action. It calls out stale
+Project claims without active local jobs, missing or dead pids, long-running
+jobs past the configured review timeout, backend binary/auth/configuration
+failures, missing artifacts, inconclusive or needs-rework outcomes, and jobs
+that still appear active after the issue left `Agent Review`.
 
 For supervised manual review terminals, first use
 `review claim WORKFLOW '#issue' --worker <worker> --write` on an `Agent Review`
@@ -167,10 +222,10 @@ value may be a display label such as `Manual Gemini Review`; use the claim
 command so Jade Symphony can quote, escape, and validate the stored pointer
 before Project mutation.
 
-If Gemini cannot start, the review workpad should name the configured command,
-whether worker `PATH` could resolve it, the required operator action, and the
-retry command. Do not move an issue to `Human Review` unless the Review Agent
-actually records passing review evidence.
+If Gemini cannot start, the Agent Review timeline comment should name the
+configured command, whether worker `PATH` could resolve it, the required
+operator action, and the retry command. Do not move an issue to `Human Review`
+unless the Review Agent actually records passing review evidence.
 If the linked PR is still draft, do not run normal review. Record invalid
 handoff evidence and send the work back to Main/operator repair; `doctor repair
 <issue> --mark-pr-ready --confirm-handoff-ready --write` is the explicit repair
@@ -185,13 +240,15 @@ artifact, session registry entry, and log path, then route with `review pass` or
 If Gemini returns successfully but says it could not inspect the PR, workspace,
 diff, code changes, or required handoff evidence, treat that as an automatic
 Review Agent inconclusive result, not a pass. `review loop` records the
-inconclusive reason in the ledger/workpad and routes the issue to `Rework` so
-the missing evidence can be repaired before another independent review pass.
+inconclusive reason in the ledger/timeline comment and routes the issue to
+`Rework` so the missing evidence can be repaired before another independent
+review pass.
 
-Manual Gemini or operator-supplied review notes must use an explicit manual
-evidence marker such as `## Manual Agent Review Evidence`. They are not the same
-thing as automatic `review loop` pass evidence and should not be used to satisfy
-the automatic Review Agent boundary unless the workflow explicitly says so.
+Manual Gemini or operator-supplied review notes must be routed through
+`review pass` or `review reject`, which wraps the note in a
+`## Jade Symphony Agent Review Run` timeline comment. Mark the inner note as
+manual evidence so operators can distinguish it from automatic `review loop`
+pass evidence.
 
 Use `workflows/jade-symphony.md` for supervised review workers. Do not keep the
 active review workflow only under `/tmp` or `/private/tmp`; the CLI prints
@@ -369,9 +426,9 @@ diagnostic so local work is not discarded silently.
 `doctor` treats Human Review as valid only when independent review pass evidence
 is durable. Project fields named `review_pass_evidence_recorded` or
 `review_pass_evidence` satisfy that check when a tracker exposes them; in the
-current GitHub Project #9 schema, the canonical source is the review workpad text
-written into the issue comment stream. A `Review Agent` claim by itself is not
-pass evidence.
+current GitHub Project #9 schema, the canonical source is an Agent Review
+timeline comment in the issue comment stream. A `Review Agent` claim by itself
+is not pass evidence.
 
 For a manual Gemini/operator review, claim and route through the CLI:
 
@@ -382,8 +439,9 @@ target/debug/jade-symphony review reject workflows/jade-symphony.md '#226' --evi
 ```
 
 The evidence file for `review pass` or `review reject` must include the exact
-structured `Review Agent` claim from `review claim`. `review pass` writes the
-review pass marker before moving to `Human Review`; `review reject` refuses
+structured `Review Agent` claim from `review claim`. `review pass` writes an
+append-only Agent Review timeline comment with the review pass marker before
+moving to `Human Review`; `review reject` refuses
 `Human Review` and may route only to `Agent Review`, `Rework`, or
 `Need Human Input`. Both commands preserve the `Review Agent` field as terminal
 audit evidence instead of clearing it.
@@ -429,11 +487,17 @@ Interrupted tmux recovery flow:
    `needs_human_decision`; completed sessions and terminal clean worktrees may
    become cleanup candidates.
 
-For supervised parallel operators, pass `--pool N` to preview eligible slots and
-apply lane-specific claim checks. Main work uses the `Main Agent` Project field
-as a soft claim-lock hint while still processing one active runtime issue per
-loop tick. Merge work uses the `Merging Agent` Project field and can process
-multiple guarded merge slots in one bounded loop.
+For supervised parallel operators, pass `--max-concurrent N` to preview eligible
+slots and apply lane-specific claim checks. Main work uses the `Main Agent`
+Project field as the claim lock and the runtime-state file as the local worker
+slot ledger. In write mode, `main loop` first counts active Main runtime entries
+that still point at `In Progress` issues, archives clean stale handoff entries,
+and then starts up to the remaining capacity in the same bounded iteration.
+Existing single-entry runtime-state files still load, but once multiple Main
+workers are active the file stores an `active_workers` list so one issue cannot
+overwrite another issue's tmux/session evidence. Merge work uses the `Merging
+Agent` Project field and can process multiple guarded merge slots in one
+bounded loop.
 Lane claim fields are latest-run audit pointers, not append-only logs. New
 values use `v=1 lane=<main|review|merge> actor=<codex|gemini|claude|human>
 worker=<worker> source=<loop|manual|goal> issue=#N run=<id>
@@ -456,8 +520,8 @@ step. Treat these as the glanceable status bar; detailed line logs and JSONL
 events remain the durable audit trail.
 
 ```bash
-target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --pool 2 --dry-run
-target/debug/jade-symphony merge loop workflows/jade-symphony.md --max-iterations 1 --pool 2 --dry-run
+target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
+target/debug/jade-symphony merge loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
 ```
 
 ## Logical Actor Audit

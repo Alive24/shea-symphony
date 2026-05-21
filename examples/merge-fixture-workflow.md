@@ -1,6 +1,6 @@
 ---
 tracker:
-  kind: github_project_v2
+  kind: memory
   owner: Alive24
   repo: jade-symphony
   project_owner: Alive24
@@ -36,7 +36,7 @@ tracker:
     marker: "<!-- jade-symphony-workpad -->"
 workspace:
   root: /tmp/jade-symphony-merge-fixture-workspaces
-agent:
+main_lane:
   backend: dry-run
   max_concurrent_agents: 1
   max_turns: 1
@@ -44,14 +44,16 @@ codex:
   command: codex app-server
 claude:
   command: claude
-review:
+review_lane:
   backend: fake
   gemini_command: gemini
 observability:
   logs_root: /tmp/jade-symphony-merge-fixture-logs
 ---
 
-Fixture workflow for `merge once --dry-run`.
+Fixture workflow for `merge once` and bounded `merge loop` rehearsal.
 
-This workflow never performs a live merge. It exists to rehearse merge-lane
-decision logic from fixture-linked pull request metadata.
+This workflow never performs a live GitHub merge. In write mode, fixture merge
+commands record the same timeline/state/close sequence as a live successful
+merge while using synthetic command evidence, so operators can rehearse the
+merge lane end-to-end without landing a real pull request.

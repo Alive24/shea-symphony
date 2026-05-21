@@ -4,7 +4,7 @@ tracker:
   fixture_path: fixtures/dry-run-issues.json
 workspace:
   root: /tmp/jade-symphony-profile-workspaces
-agent:
+main_lane:
   backend: dry-run
 profiles:
   default: codex-alpha

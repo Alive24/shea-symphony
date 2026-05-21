@@ -32,7 +32,7 @@ polling:
   interval_ms: 5000
 workspace:
   root: /tmp/jade-symphony-linear-fixture-workspaces
-agent:
+main_lane:
   backend: dry-run
   max_concurrent_agents: 1
   max_turns: 3

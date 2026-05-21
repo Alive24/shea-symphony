@@ -131,9 +131,23 @@ Discuss like Issue Forge:
 
 - Ask 1-3 focused questions per turn.
 - Resolve goal, why now, scope, guardrails, dependencies, parent/subissue shape,
-  verification, and UAT.
+  current code-state freshness, verification, and UAT.
 - After each question round, include a short promotion-readiness note.
 - Do not promote until the operator explicitly confirms promotion.
+
+Before drafting a promoted Todo contract, compare the Backlog seed against the
+current development state, not only against the seed text:
+
+- Check enough latest repo/project context to decide whether the original gap
+  still exists on current `main`.
+- Search existing open/done issues or PRs when later work may already cover the
+  gap.
+- If the gap is already solved, recommend closing or leaving the item in
+  `Backlog` instead of creating make-work.
+- If later code changed the shape of the gap, promote only the residual slice
+  and record the drift in the promoted issue context.
+- If freshness cannot be determined cheaply, ask whether to scan more, keep the
+  item in `Backlog`, or promote with an explicit freshness-risk assumption.
 
 Default promotion path:
 

@@ -9,9 +9,9 @@ URL: {{ issue.url }}
 ## Mission
 
 Review the completed Main Agent work for this issue. Your authority is review
-only: inspect the linked PR, check the workpad evidence, classify findings, and
-produce a review result. Do not implement unrelated code changes while acting as
-the Review Agent.
+only: inspect the linked PR, check the Main Agent Workpad and timeline evidence,
+classify findings, and produce a review result. Do not implement unrelated code
+changes while acting as the Review Agent.
 
 Use Jade Symphony CLI for Project state, Project fields, claim locks, workpad
 updates, linked-PR state, and review routing. Direct GitHub issue/PR reads are
@@ -40,8 +40,8 @@ Project GraphQL or Project UI changes are break-glass only.
   evidence and change state after the Gemini process exits.
 - Supervised tmux Review sessions are optional manual fallback sessions; use
   them only when an operator explicitly starts `session start --lane review`.
-- Preserve the assigned structured claim `run=` in review evidence, workpad
-  notes, and any handoff summary.
+- Preserve the assigned structured claim `run=` in review evidence, timeline
+  comments, and any handoff summary.
 - `review session` may start or inspect a review runtime/session, but it does
   not write the `Review Agent` claim. Use the claim value already assigned by
   the CLI-owned review claim path.
@@ -60,21 +60,33 @@ Project GraphQL or Project UI changes are break-glass only.
   verification evidence.
 - Evaluate every checkbox under the issue body's `Expected Outcome`,
   `Completion Criteria`, `Functional Verification`, `UAT`, and
-  `Context Verification` sections.
+  `Context Verification` sections, but keep ownership boundaries clear:
+  `UAT` is Human Review-owned unless the issue explicitly asks the Main Agent to
+  implement a UAT harness, fixture, or workflow capability.
+- Missing Human-owned `UAT` execution is not a confirmed implementation defect
+  and must not by itself produce `Review Result: REWORK`. Report it as UAT
+  readiness or Human Review follow-up evidence instead.
+- If the issue scope requires implementing a UAT fixture, rehearsal path, or
+  dogfood workflow, missing that implementation can be a confirmed finding. In
+  that case, identify the missing implementation deliverable rather than using
+  "Missing UAT" as the blocker.
 - In manual review, when the review passes, update the issue body checklist in
-  place so satisfied items are checked. Leave unsatisfied, skipped, or
-  unsupported items unchecked and explain them in review evidence.
+  place so evidence-backed non-UAT review items are checked. Leave UAT,
+  unsatisfied, skipped, or unsupported items unchecked and explain them in
+  review evidence.
 - In automatic headless review, do not edit the issue body checklist yourself;
-  report which checklist items are evidence-backed in stdout and let the wrapper
-  or later Human Review handle persistence.
+  report which non-UAT checklist items are evidence-backed in stdout and let the
+  wrapper or later Human Review handle persistence. Report UAT items separately
+  as Human Review follow-up.
 - Do not check an item only because the Main Agent claimed it. Check it only
-  when PR diff, workpad evidence, command output, or operator evidence supports
+  when PR diff, Main Workpad evidence, timeline comments, command output, or operator evidence supports
   it.
 - Prefer concrete findings with file paths, command output, or missing evidence.
 - Distinguish confirmed regressions from plausible concerns and questions.
-- In manual review, record review evidence in the workpad or review ledger
-  before changing state. In automatic headless review, include the evidence in
-  your stdout response and let the wrapper write the workpad/ledger.
+- In manual review, record review evidence as a standalone append-only
+  `Jade Symphony Agent Review Run` timeline comment or review ledger before
+  changing state. In automatic headless review, include the evidence in your
+  stdout response and let the wrapper write the timeline comment and ledger.
 
 ## Allowed Transitions
 
@@ -114,7 +126,7 @@ Project GraphQL or Project UI changes are break-glass only.
 - Do not merge PRs.
 - Do not blur review into implementation. If the fix is required, route it to
   `Rework`.
-- Do not overwrite Main Agent workpad sections. Add review evidence as an
-  `Agent Review` section while preserving existing Main plan, work log, PR, and
-  verification evidence.
+- Do not overwrite or restructure the Main Agent Workpad. Add review evidence as
+  a standalone append-only `Jade Symphony Agent Review Run` timeline comment
+  while preserving existing Main plan, work log, PR, and verification evidence.
 - Preserve the authority boundary in `docs/bootstrap/JADE_WORKFLOW.md`.

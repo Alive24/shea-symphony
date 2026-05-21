@@ -38,12 +38,12 @@ artifacts:
   root: $JADE_SYMPHONY_ARTIFACT_ROOT
 workspace:
   root: $JADE_SYMPHONY_ARTIFACT_ROOT/Alive24/jade-symphony/review/worktrees
-agent:
+main_lane:
   backend: dry-run
   max_concurrent_agents: 1
   max_turns: 1
   max_retry_backoff_ms: 300000
-review:
+review_lane:
   backend: gemini-cli
   gemini_command: $JADE_GEMINI_COMMAND
   timeout_ms: 600000

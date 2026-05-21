@@ -54,9 +54,10 @@ cargo run -- doctor --interactive
 
 Review the output before mutating anything. In particular, check for:
 
-- `Rework` items produced by failed merge attempts;
 - issues in `Merging`;
-- other issues in `Rework`;
+- `Rework` items that need Main/Review-directed repair;
+- historical merge-lane recovery items only when an operator explicitly chose
+  that path;
 - active `In Progress` work;
 - Agent Review issues missing PR evidence;
 - dirty Merging PRs;
@@ -92,7 +93,7 @@ cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
 That write tick requires a real main-agent backend. The canonical workflow uses
-`agent.backend: tmux`, so a successful tick starts an attachable local session,
+`main_lane.backend: tmux`, so a successful tick starts an attachable local session,
 prints the `tmux attach-session` command, records the prompt artifact, session
 registry entry, and log path, and keeps the issue active. A running tmux session
 alone is not completion evidence and must not move the issue to `Agent Review`.
@@ -187,7 +188,8 @@ Expected outcomes:
   with `--prompt`, `--output-format json`, workflow-configured model, and
   workflow-configured interim allowed tools, writes the prompt through stdin,
   and records stdout, stderr, exit status, Gemini session id when present, a
-  review output artifact, and a durable job ledger;
+  review output artifact, durable job ledger, and append-only Agent Review
+  timeline comment;
 - manual review claims use `review claim`, and terminal manual review routing
   validates the exact evidence claim before preserving the `Review Agent` field
   as a terminal structured audit pointer;
@@ -200,7 +202,7 @@ Expected outcomes:
 - failed, timed-out, unavailable, unparsed, or infrastructure-blocked review
   stays out of `Human Review` with durable evidence.
 
-If the review workflow uses `review.gemini_command: $JADE_GEMINI_COMMAND`,
+If the review workflow uses `review_lane.gemini_command: $JADE_GEMINI_COMMAND`,
 set that environment variable to an absolute Gemini CLI path before starting
 the review loop. This avoids worker processes with a narrower `PATH` recording
 a backend-unavailable failure for an otherwise installed Gemini CLI.
@@ -215,12 +217,13 @@ Do not use review commands to bypass human acceptance.
 
 Human Review requires durable pass evidence from the independent Review Agent.
 For GitHub Project #9, do not assume the `Review Agent` claim field is enough:
-doctor expects the canonical review workpad pass marker in the issue comment
-stream, or an explicit manual review pass Project field if a future tracker schema adds
-one.
-Manual Gemini or operator-supplied review notes must be labeled as manual
-evidence, for example with `## Manual Agent Review Evidence`, so operators can
-distinguish them from automatic `review loop` pass evidence.
+doctor expects the canonical Agent Review timeline comment pass marker in the
+issue comment stream, or an explicit manual review pass Project field if a
+future tracker schema adds one.
+Manual Gemini or operator-supplied review notes are wrapped by `review pass` or
+`review reject` into a `## Jade Symphony Agent Review Run` timeline comment;
+label the inner note as manual evidence so operators can distinguish it from
+automatic `review loop` pass evidence.
 
 After a human accepts work and moves the issue to `Merging`, use the guarded
 merge lane:
@@ -236,7 +239,11 @@ The merge lane should:
 - require exactly one verified linked PR;
 - check PR state, base branch, checks, review/approval signal, and mergeability;
 - merge clean approved work;
-- route dirty or failing work to `Rework` with workpad evidence;
+- safely update `BEHIND` PR branches and leave the issue in `Merging` for the
+  next retry;
+- route dirty or failing work to `Need Human Input` with a standalone merge
+  timeline comment unless a future command can prove safe merge-lane-only
+  repair;
 - retry transient missing or `UNKNOWN` mergeability instead of treating it as a
   human decision;
 - include a `Required Human Input` question whenever a blocker really needs a
@@ -275,7 +282,7 @@ When something goes wrong:
 - keep one issue, one branch, one PR.
 
 If a branch is dirty because `main` advanced, repair the existing PR branch,
-record workpad evidence, and rerun verification before merging.
+record merge/rework timeline evidence, and rerun verification before merging.
 
 ## Stop Conditions
 

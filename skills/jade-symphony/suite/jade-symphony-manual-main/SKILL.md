@@ -1,6 +1,6 @@
 ---
 name: jade-symphony-manual-main
-description: Use when manually running a Codex Main Agent session for Jade Symphony implementation work from a fresh Codex session. This skill claims Todo or resumable In Progress work through the Main Agent lane, preserves issue quality and dependency gates, creates or resumes isolated workspaces and PRs, and hands off only to Agent Review.
+description: Use when manually running a Codex Main Agent session for Jade Symphony implementation or Main-lane Rework from a fresh Codex session. This skill claims Todo, Main-lane Rework, or resumable In Progress work through the Main Agent lane, preserves issue quality and dependency gates, creates or resumes isolated workspaces and PRs, and hands off only to Agent Review.
 metadata:
   short-description: Jade Symphony manual Main Agent
   suite-version: 2026.05.17
@@ -84,6 +84,10 @@ Pick the issue only when all are true:
 
 - Status is `Todo`, Main-lane `Rework`, or `In Progress` with
   matching/resumable Main Agent evidence.
+- If status is `Rework`, the trigger must be Agent Review findings or Human
+  Review contract revision that requires Main implementation repair. Merge-lane
+  conflicts, stale-base repair, Merging failures, or any issue with an active
+  `Merging Agent` claim are not Main-lane Rework.
 - `Main Agent` field is empty or belongs to this session.
 - Dependency relationships are terminal or explicitly non-blocking.
 - If it is a native parent issue, every native GitHub subissue has Project
@@ -103,7 +107,8 @@ For the selected issue:
 
 1. Claim through the `Main Agent` field and transition to `In Progress`.
 2. Create or resume the isolated worktree and feature branch.
-3. Read the issue body, workpad comments, canonical docs, and relevant code.
+3. Read the issue body, Main Agent Workpad, append-only timeline comments,
+   canonical docs, and relevant code.
 4. Implement only the accepted issue scope.
 5. Run the strongest practical verification for the touched area.
 6. Update issue or PR evidence with changes, verification, risks, and follow-ups.
@@ -123,7 +128,7 @@ worktree/PR update, workpad write, PR readiness check, linked-PR verification,
 and evidence update that justifies that state. After the status changes, do only
 readback verification such as `project issue` or `doctor`.
 
-## Workpad Evidence
+## Main Agent Workpad Evidence
 
 Keep exactly one durable Jade Symphony workpad updated in place. It must include:
 
@@ -134,6 +139,19 @@ Keep exactly one durable Jade Symphony workpad updated in place. It must include
 - verification commands and results.
 - PR URL, linked-PR confirmation, and ready/not-draft status.
 - final handoff summary explaining why Main stops at `Agent Review`.
+
+Main-lane `Rework` is still Main implementation work. If the issue was returned
+from Agent Review or revised from Human Review, update this same Main Agent
+Workpad with the new rework round, current plan/work log, changed files,
+verification, PR readiness, and handoff evidence. Do not create a second
+canonical Main Workpad for Main-lane rework.
+
+Standalone `Jade Symphony Rework Run` comments are append-only trigger or
+diagnostic records explaining why the issue entered `Rework`; they are not the
+current-state implementation evidence surface. Review, Merge, Human Review, and
+Doctor runs write their own append-only Jade Symphony timeline comments and
+must not overwrite, restructure, or fold their run logs into the Main Agent
+Workpad.
 
 Do not treat the workpad as a replacement for the issue body's Review checklist.
 The issue body should retain unchecked `Expected Outcome`, `Completion Criteria`,

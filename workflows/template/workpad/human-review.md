@@ -1,5 +1,4 @@
-<!-- jade-symphony-workpad -->
-## Human Review Decision Note
+## Jade Symphony Human Review Decision
 
 - Issue: #<issue>
 - PR: #<pr> <url>

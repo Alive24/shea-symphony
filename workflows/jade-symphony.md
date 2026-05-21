@@ -44,28 +44,30 @@ artifacts:
   namespace: Alive24/jade-symphony
 workspace:
   root: $JADE_SYMPHONY_ARTIFACT_ROOT/Alive24/jade-symphony/default/worktrees
-agent:
+main_lane:
   backend: tmux
-  max_concurrent_agents: 1
+  max_concurrent_agents: 3
   max_turns: 3
   max_retry_backoff_ms: 300000
 tmux:
   command: tmux
   agent_command: codex
-  review_agent_command: $JADE_GEMINI_COMMAND
+  review_agent_command: /opt/homebrew/bin/gemini
   session_prefix: jade
 codex:
   command: codex app-server
 claude:
   command: claude
-review:
+review_lane:
   backend: gemini-cli
-  gemini_command: $JADE_GEMINI_COMMAND
+  gemini_command: /opt/homebrew/bin/gemini
   gemini_model: gemini-3.1-pro-preview
   gemini_allowed_tools:
     - run_shell_command
-  timeout_ms: 600000
+  timeout_ms: 1200000
   max_concurrent_workers: 2
+merge_lane:
+  max_concurrent_workers: 3
 verification:
   timeout_ms: 600000
   commands: []

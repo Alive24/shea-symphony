@@ -18,7 +18,7 @@ tracker:
     - Done
 workspace:
   root: /tmp/jade-symphony-claude-subprocess-workspaces
-agent:
+main_lane:
   backend: claude-code
   max_concurrent_agents: 1
   max_turns: 1

@@ -10,6 +10,60 @@ instructions, or a CLI invariant.
 
 ## Current Runs
 
+- `2026-05-19-04-final-parity-audit/`
+  - Themes: Liquid-compatible prompt rendering, runtime state persistence and
+    resume wiring, final partial-row duplicate audit.
+  - Created Backlog: #326, #327.
+  - Watchlist: persistent observability API/dashboard after live worker-fed
+    runtime snapshots; tracker adapter smoke tests after dynamic-tool/runtime
+    boundaries are clearer.
+  - Slept enough: yes; this source window produced no further high-signal
+    uncovered theme that should become a Backlog seed now.
+  - Gemini review: ran; duplicate risk, evidence quality, Backlog safety,
+    slept-enough judgment, and lane-authority checks passed.
+
+- `2026-05-19-03-ssh-worker-workspaces/`
+  - Themes: remote SSH worker transport, remote workspace lifecycle, host
+    scheduling, remote sandbox/evidence boundaries.
+  - Created Backlog: #325.
+  - Watchlist: final parity-table audit for prompt rendering, tracker adapter
+    smoke coverage, runtime state resume wiring, and status snapshot feed.
+  - Slept enough: no; next theme should audit remaining partial parity rows and
+    avoid creating duplicates for already-covered implementation notes.
+  - Gemini review: ran; duplicate risk, evidence quality, Backlog safety,
+    next-theme Watchlist, and lane-authority checks passed.
+
+- `2026-05-19-02-worker-supervision-parity/`
+  - Themes: persistent worker lifecycle, retry timers, stall restart,
+    active-run reconciliation, process-exit classification.
+  - Created Backlog: #324.
+  - Watchlist: worker host / SSH execution and workspace lifecycle boundaries.
+  - Slept enough: no; next theme should compare OpenAI Symphony worker host,
+    SSH, and workspace lifecycle assumptions against Jade's local worktree and
+    session model.
+  - Gemini review: ran; duplicate risk, evidence quality, Backlog safety,
+    next-theme Watchlist, and lane-authority checks passed.
+
+- `2026-05-19-01-openai-symphony-parity/`
+  - Themes: Codex app-server continuation parity, tracker-scoped dynamic tool
+    execution, last-known-good workflow reload, OpenAI Symphony reference gaps.
+  - Created Backlog: #321, #322, #323.
+  - Watchlist: persistent observability API/dashboard, pending live worker
+    runtime snapshot wiring.
+  - Slept enough: no; next theme should compare retry timers, stall detection,
+    worker supervision, and continuation scheduling against #305/#312/#318.
+  - Gemini review: ran; duplicate risk, evidence quality, Backlog safety,
+    observability Watchlist, and lane-authority checks passed.
+
+- `2026-05-18-02-dream-cli-skill-drift/`
+  - Themes: Codex tmux config-migration prompts, repo-owned skill command
+    example drift, duplicate filtering against current Backlog/Todo.
+  - Created Backlog: #319, #320.
+  - Slept enough: no; next theme should revisit skill readiness and install
+    drift after #315 moves.
+  - Gemini review: ran; duplicate risk, evidence, scope, Backlog safety, and
+    lane-authority checks passed.
+
 - `2026-05-18-01-issue-295-dream-skill-rehearsal/`
   - Themes: manual lane claim parsing, session registry status drift, malformed
     claim repair UX.

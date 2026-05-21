@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -17,6 +18,7 @@ pub struct PullRequestMergeStatus {
     pub merge_state_status: Option<String>,
     pub review_decision: Option<String>,
     pub base_ref_name: Option<String>,
+    pub head_ref_name: Option<String>,
     #[serde(default)]
     pub checks: Vec<PullRequestCheckStatus>,
 }
@@ -50,6 +52,7 @@ pub enum MergeLaneDecisionKind {
     ReviewNotApproved,
     ChecksPending,
     ChecksFailing,
+    StaleBranch,
     MergeDirty,
     MergeabilityUnknown,
 }
@@ -66,6 +69,14 @@ pub enum MergeLaneError {
     Git(#[from] GitHandoffError),
     #[error("merge lane payload failed: {0}")]
     Payload(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeConflictRepairOutcome {
+    pub repaired: bool,
+    pub worktree_path: Option<PathBuf>,
+    pub output: CommandOutput,
+    pub reason: String,
 }
 
 pub fn merge_lane_decision(
@@ -172,8 +183,10 @@ pub fn merge_lane_decision(
             kind: MergeLaneDecisionKind::ChecksFailing,
             issue_ref: issue.identifier.clone(),
             pr_url: Some(status.url.clone()),
-            target_state: Some("rework"),
-            reason: format!("check `{failing}` is failing"),
+            target_state: Some("need_human_input"),
+            reason: format!(
+                "check `{failing}` is failing; merge lane needs operator classification before repair"
+            ),
         };
     }
 
@@ -188,14 +201,25 @@ pub fn merge_lane_decision(
     }
 
     match status.merge_state_status.as_deref() {
-        Some("DIRTY") | Some("BEHIND") => {
+        Some("BEHIND") => {
+            return MergeLaneDecision {
+                kind: MergeLaneDecisionKind::StaleBranch,
+                issue_ref: issue.identifier.clone(),
+                pr_url: Some(status.url.clone()),
+                target_state: None,
+                reason:
+                    "pull request is behind the base branch; merge lane should safely update the PR branch and retry later"
+                        .into(),
+            };
+        }
+        Some("DIRTY") => {
             return MergeLaneDecision {
                 kind: MergeLaneDecisionKind::MergeDirty,
                 issue_ref: issue.identifier.clone(),
                 pr_url: Some(status.url.clone()),
-                target_state: Some("rework"),
+                target_state: None,
                 reason: format!(
-                    "pull request merge state is `{}`",
+                    "pull request merge state is `{}`; merge lane should attempt safe local conflict repair before operator escalation",
                     status.merge_state_status.as_deref().unwrap_or_default()
                 ),
             };
@@ -284,6 +308,7 @@ pub fn pull_request_status_from_linked(
         merge_state_status: pull_request.merge_state_status.clone(),
         review_decision: pull_request.review_decision.clone(),
         base_ref_name: pull_request.base_ref_name.clone(),
+        head_ref_name: pull_request.head_ref_name.clone(),
         checks: Vec::new(),
     })
 }
@@ -300,7 +325,7 @@ pub fn fetch_pull_request_status(
             "view".into(),
             pr_ref.into(),
             "--json".into(),
-            "number,url,state,isDraft,mergeStateStatus,reviewDecision,baseRefName,statusCheckRollup"
+            "number,url,state,isDraft,mergeStateStatus,reviewDecision,baseRefName,headRefName,statusCheckRollup"
                 .into(),
         ],
         cwd,
@@ -333,19 +358,168 @@ pub fn merge_pull_request(
     runner: &dyn HandoffCommandRunner,
     cwd: &Path,
 ) -> Result<CommandOutput, MergeLaneError> {
+    // Issue worktrees intentionally keep the PR branch checked out for audit and
+    // recovery. Branch/worktree cleanup belongs to the explicit clean surface,
+    // not to the merge success path.
     let output = runner.run(
         "gh",
-        &[
-            "pr".into(),
-            "merge".into(),
-            pr_ref.into(),
-            "--merge".into(),
-            "--delete-branch".into(),
-        ],
+        &["pr".into(), "merge".into(), pr_ref.into(), "--merge".into()],
         cwd,
     )?;
     require_success("gh", &output)?;
     Ok(output)
+}
+
+pub fn update_pull_request_branch(
+    pr_ref: &str,
+    runner: &dyn HandoffCommandRunner,
+    cwd: &Path,
+) -> Result<CommandOutput, MergeLaneError> {
+    Ok(runner.run(
+        "gh",
+        &["pr".into(), "update-branch".into(), pr_ref.into()],
+        cwd,
+    )?)
+}
+
+pub fn repair_dirty_pull_request(
+    pr_ref: &str,
+    head_ref_name: Option<&str>,
+    expected_base_branch: &str,
+    runner: &dyn HandoffCommandRunner,
+    cwd: &Path,
+    fixture_mode: bool,
+) -> Result<MergeConflictRepairOutcome, MergeLaneError> {
+    if fixture_mode {
+        return Ok(MergeConflictRepairOutcome {
+            repaired: true,
+            worktree_path: None,
+            output: CommandOutput {
+                status: 0,
+                stdout: format!(
+                    "fixture conflict repair rehearsed for {pr_ref}; no live branch was changed"
+                ),
+                stderr: String::new(),
+            },
+            reason: "fixture-mode safe conflict repair rehearsal completed".into(),
+        });
+    }
+
+    let Some(head_ref_name) = head_ref_name.filter(|value| !value.trim().is_empty()) else {
+        return Ok(MergeConflictRepairOutcome {
+            repaired: false,
+            worktree_path: None,
+            output: CommandOutput {
+                status: 1,
+                stdout: String::new(),
+                stderr: "pull request head branch is missing from preflight metadata".into(),
+            },
+            reason: "cannot attempt safe conflict repair without a PR head branch".into(),
+        });
+    };
+
+    let Some(worktree_path) = find_worktree_for_branch(head_ref_name, runner, cwd)? else {
+        return Ok(MergeConflictRepairOutcome {
+            repaired: false,
+            worktree_path: None,
+            output: CommandOutput {
+                status: 1,
+                stdout: String::new(),
+                stderr: format!("no local worktree found for branch `{head_ref_name}`"),
+            },
+            reason: format!(
+                "no local worktree is available for PR branch `{head_ref_name}`; operator must adopt or create the existing PR worktree before merge-lane repair"
+            ),
+        });
+    };
+
+    let status = runner.run(
+        "git",
+        &["status".into(), "--porcelain".into()],
+        &worktree_path,
+    )?;
+    require_success("git", &status)?;
+    if !status.stdout.trim().is_empty() {
+        return Ok(MergeConflictRepairOutcome {
+            repaired: false,
+            worktree_path: Some(worktree_path),
+            output: status,
+            reason: "PR worktree is dirty before merge-lane repair".into(),
+        });
+    }
+
+    let fetch_ref = format!("origin/{expected_base_branch}");
+    let fetch = runner.run(
+        "git",
+        &["fetch".into(), "origin".into(), expected_base_branch.into()],
+        &worktree_path,
+    )?;
+    require_success("git", &fetch)?;
+
+    let merge = runner.run(
+        "git",
+        &["merge".into(), "--no-edit".into(), fetch_ref.clone()],
+        &worktree_path,
+    )?;
+    if merge.status != 0 {
+        let _ = runner.run("git", &["merge".into(), "--abort".into()], &worktree_path);
+        return Ok(MergeConflictRepairOutcome {
+            repaired: false,
+            worktree_path: Some(worktree_path),
+            output: merge,
+            reason: format!(
+                "safe merge-lane repair could not merge `{fetch_ref}` into `{head_ref_name}` without manual conflict resolution"
+            ),
+        });
+    }
+
+    let post_status = runner.run(
+        "git",
+        &["status".into(), "--porcelain".into()],
+        &worktree_path,
+    )?;
+    require_success("git", &post_status)?;
+    if !post_status.stdout.trim().is_empty() {
+        return Ok(MergeConflictRepairOutcome {
+            repaired: false,
+            worktree_path: Some(worktree_path),
+            output: post_status,
+            reason: "merge-lane repair left uncommitted changes in the PR worktree".into(),
+        });
+    }
+
+    let push = runner.run(
+        "git",
+        &["push".into(), "origin".into(), head_ref_name.into()],
+        &worktree_path,
+    )?;
+    if push.status != 0 {
+        return Ok(MergeConflictRepairOutcome {
+            repaired: false,
+            worktree_path: Some(worktree_path),
+            output: push,
+            reason:
+                "merge-lane repair succeeded locally, but pushing the repaired PR branch failed"
+                    .into(),
+        });
+    }
+
+    Ok(MergeConflictRepairOutcome {
+        repaired: true,
+        worktree_path: Some(worktree_path),
+        output: push,
+        reason: format!(
+            "safe merge-lane repair merged `{fetch_ref}` into `{head_ref_name}` and pushed the existing PR branch"
+        ),
+    })
+}
+
+pub fn fixture_merge_output(pr_ref: &str) -> CommandOutput {
+    CommandOutput {
+        status: 0,
+        stdout: format!("fixture merge rehearsed for {pr_ref}; no live GitHub merge was performed"),
+        stderr: String::new(),
+    }
 }
 
 pub fn merge_lane_workpad(
@@ -354,12 +528,14 @@ pub fn merge_lane_workpad(
     merge_output: Option<&CommandOutput>,
 ) -> String {
     let mut lines = vec![
-        "## Jade Symphony Workpad".to_string(),
+        "## Jade Symphony Merge Run".to_string(),
         String::new(),
-        "### Merge Lane Handoff".to_string(),
+        format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", issue.identifier, issue.title),
+        "- Lane: `merge`".to_string(),
         "- Actor role: `merge_agent`".to_string(),
         "- Source: `jade-symphony merge once`".to_string(),
+        "- Input state: `Merging`".to_string(),
         format!("- Decision: `{:?}`", decision.kind),
         format!("- Reason: {}", decision.reason),
         format!(
@@ -410,6 +586,39 @@ pub fn merge_lane_workpad(
     lines.join("\n")
 }
 
+fn current_gmt_timestamp() -> String {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    format_gmt_timestamp(seconds)
+}
+
+fn format_gmt_timestamp(seconds_since_unix_epoch: u64) -> String {
+    let days = (seconds_since_unix_epoch / 86_400) as i64;
+    let seconds_of_day = seconds_since_unix_epoch % 86_400;
+    let (year, month, day) = civil_from_days(days);
+    let hour = seconds_of_day / 3_600;
+    let minute = (seconds_of_day % 3_600) / 60;
+    let second = seconds_of_day % 60;
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02} GMT")
+}
+
+fn civil_from_days(days_since_unix_epoch: i64) -> (i64, u32, u32) {
+    let days = days_since_unix_epoch + 719_468;
+    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
+    let day_of_era = days - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    year += if month <= 2 { 1 } else { 0 };
+    (year, month as u32, day as u32)
+}
+
 pub fn expected_merge_base_branch(_config: &RuntimeConfig) -> &'static str {
     "main"
 }
@@ -440,8 +649,42 @@ fn pull_request_status_from_json(
         merge_state_status: optional_string(value.get("mergeStateStatus")),
         review_decision: optional_string(value.get("reviewDecision")),
         base_ref_name: optional_string(value.get("baseRefName")),
+        head_ref_name: optional_string(value.get("headRefName")),
         checks: checks_from_json(value.get("statusCheckRollup")),
     })
+}
+
+fn find_worktree_for_branch(
+    branch_name: &str,
+    runner: &dyn HandoffCommandRunner,
+    cwd: &Path,
+) -> Result<Option<PathBuf>, MergeLaneError> {
+    let output = runner.run(
+        "git",
+        &["worktree".into(), "list".into(), "--porcelain".into()],
+        cwd,
+    )?;
+    require_success("git", &output)?;
+    Ok(parse_worktree_for_branch(&output.stdout, branch_name))
+}
+
+fn parse_worktree_for_branch(output: &str, branch_name: &str) -> Option<PathBuf> {
+    let expected_branch = format!("refs/heads/{branch_name}");
+    let mut current_worktree: Option<PathBuf> = None;
+
+    for line in output.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            current_worktree = Some(PathBuf::from(path));
+        } else if let Some(branch) = line.strip_prefix("branch ") {
+            if branch == expected_branch {
+                return current_worktree.clone();
+            }
+        } else if line.trim().is_empty() {
+            current_worktree = None;
+        }
+    }
+
+    None
 }
 
 fn checks_from_json(value: Option<&serde_json::Value>) -> Vec<PullRequestCheckStatus> {
@@ -520,13 +763,19 @@ fn required_human_input_section(decision: &MergeLaneDecision) -> Vec<String> {
             "Should the closed pull request be reopened, replaced, or should the issue leave Merging?"
         }
         MergeLaneDecisionKind::DraftPullRequest => {
-            "Should the draft pull request stay in Merging, move back to Rework, or wait for the author to mark it ready?"
+            "Should the draft pull request be marked ready, or should this issue leave Merging until the author finishes handoff?"
         }
         MergeLaneDecisionKind::BaseMismatch => {
             "Should the pull request base branch be changed, or is this issue targeting a different release branch?"
         }
         MergeLaneDecisionKind::ReviewNotApproved => {
             "Should the review decision block merge, or should the issue move back to Rework for follow-up?"
+        }
+        MergeLaneDecisionKind::ChecksFailing => {
+            "Are the failing checks caused by a merge-lane-only problem that may be repaired here, or does implementation need human-directed follow-up?"
+        }
+        MergeLaneDecisionKind::MergeDirty => {
+            "Is this conflict safe merge-lane repair, or does it require human input before changing the PR branch?"
         }
         MergeLaneDecisionKind::MergeabilityUnknown => {
             "How should this non-standard mergeability state be classified for the merge lane?"
@@ -621,6 +870,7 @@ mod tests {
             merge_state_status: Some("CLEAN".into()),
             review_decision: Some("APPROVED".into()),
             base_ref_name: Some("main".into()),
+            head_ref_name: Some("feature/issue-60".into()),
             checks: vec![PullRequestCheckStatus {
                 name: "cargo test".into(),
                 status: Some("COMPLETED".into()),
@@ -653,6 +903,7 @@ mod tests {
                 "mergeStateStatus": "{merge_state_status}",
                 "reviewDecision": "APPROVED",
                 "baseRefName": "main",
+                "headRefName": "feature/issue-60",
                 "statusCheckRollup": [
                     {{"name": "cargo test", "status": "COMPLETED", "conclusion": "SUCCESS"}}
                 ]
@@ -676,6 +927,25 @@ mod tests {
                 stdout: self.outputs.borrow_mut().remove(0),
                 stderr: String::new(),
             })
+        }
+    }
+
+    struct RecordingRunner {
+        program: RefCell<Option<String>>,
+        args: RefCell<Vec<String>>,
+        output: CommandOutput,
+    }
+
+    impl HandoffCommandRunner for RecordingRunner {
+        fn run(
+            &self,
+            program: &str,
+            args: &[String],
+            _cwd: &Path,
+        ) -> Result<CommandOutput, GitHandoffError> {
+            self.program.replace(Some(program.into()));
+            self.args.replace(args.to_vec());
+            Ok(self.output.clone())
         }
     }
 
@@ -723,7 +993,7 @@ mod tests {
     }
 
     #[test]
-    fn dirty_pr_routes_to_rework() {
+    fn dirty_pr_attempts_safe_repair_before_human_input() {
         let issue = issue("Merging", vec![pr()]);
         let mut status = clean_status();
         status.merge_state_status = Some("DIRTY".into());
@@ -736,11 +1006,14 @@ mod tests {
         );
 
         assert_eq!(decision.kind, MergeLaneDecisionKind::MergeDirty);
-        assert_eq!(decision.target_state, Some("rework"));
+        assert_eq!(decision.target_state, None);
+        assert!(decision
+            .reason
+            .contains("attempt safe local conflict repair"));
     }
 
     #[test]
-    fn dirty_pr_without_github_review_decision_routes_to_rework() {
+    fn dirty_pr_without_github_review_decision_still_attempts_repair() {
         let issue = issue("Merging", vec![pr()]);
         let mut status = clean_status();
         status.merge_state_status = Some("DIRTY".into());
@@ -754,7 +1027,83 @@ mod tests {
         );
 
         assert_eq!(decision.kind, MergeLaneDecisionKind::MergeDirty);
-        assert_eq!(decision.target_state, Some("rework"));
+        assert_eq!(decision.target_state, None);
+    }
+
+    #[test]
+    fn behind_pr_stays_in_merging_for_safe_update_and_retry() {
+        let issue = issue("Merging", vec![pr()]);
+        let mut status = clean_status();
+        status.merge_state_status = Some("BEHIND".into());
+        let decision = merge_lane_decision(
+            &issue,
+            "Merging",
+            "main",
+            &issue.linked_pull_requests,
+            Some(&status),
+        );
+
+        assert_eq!(decision.kind, MergeLaneDecisionKind::StaleBranch);
+        assert_eq!(decision.target_state, None);
+        assert!(decision.reason.contains("safely update"));
+    }
+
+    #[test]
+    fn stale_branch_update_uses_github_non_rewrite_command() {
+        let runner = RecordingRunner {
+            program: RefCell::new(None),
+            args: RefCell::new(Vec::new()),
+            output: CommandOutput {
+                status: 0,
+                stdout: "updated".into(),
+                stderr: String::new(),
+            },
+        };
+
+        let output = update_pull_request_branch("60", &runner, Path::new(".")).unwrap();
+
+        assert_eq!(output.status, 0);
+        assert_eq!(runner.program.borrow().as_deref(), Some("gh"));
+        assert_eq!(
+            *runner.args.borrow(),
+            vec![
+                "pr".to_string(),
+                "update-branch".to_string(),
+                "60".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn merge_pull_request_preserves_local_issue_worktree_branch() {
+        let runner = RecordingRunner {
+            program: RefCell::new(None),
+            args: RefCell::new(Vec::new()),
+            output: CommandOutput {
+                status: 0,
+                stdout: "merged".into(),
+                stderr: String::new(),
+            },
+        };
+
+        let output = merge_pull_request("60", &runner, Path::new(".")).unwrap();
+
+        assert_eq!(output.status, 0);
+        assert_eq!(runner.program.borrow().as_deref(), Some("gh"));
+        assert_eq!(
+            *runner.args.borrow(),
+            vec![
+                "pr".to_string(),
+                "merge".to_string(),
+                "60".to_string(),
+                "--merge".to_string()
+            ]
+        );
+        assert!(!runner
+            .args
+            .borrow()
+            .iter()
+            .any(|arg| arg == "--delete-branch"));
     }
 
     #[test]
@@ -770,7 +1119,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_then_dirty_after_recheck_routes_to_rework() {
+    fn unknown_then_dirty_after_recheck_routes_to_need_human_input() {
         let runner = SequenceRunner {
             outputs: RefCell::new(vec![pr_json("UNKNOWN"), pr_json("DIRTY")]),
         };
@@ -786,7 +1135,86 @@ mod tests {
         );
 
         assert_eq!(decision.kind, MergeLaneDecisionKind::MergeDirty);
-        assert_eq!(decision.target_state, Some("rework"));
+        assert_eq!(decision.target_state, None);
+    }
+
+    #[test]
+    fn unknown_then_behind_after_recheck_stays_in_merging_for_update() {
+        let runner = SequenceRunner {
+            outputs: RefCell::new(vec![pr_json("UNKNOWN"), pr_json("BEHIND")]),
+        };
+        let status =
+            fetch_pull_request_status_with_recheck("60", &runner, Path::new("."), 2).unwrap();
+        let issue = issue("Merging", vec![pr()]);
+        let decision = merge_lane_decision(
+            &issue,
+            "Merging",
+            "main",
+            &issue.linked_pull_requests,
+            Some(&status),
+        );
+
+        assert_eq!(decision.kind, MergeLaneDecisionKind::StaleBranch);
+        assert_eq!(decision.target_state, None);
+    }
+
+    #[test]
+    fn parses_worktree_for_matching_branch() {
+        let output = "\
+worktree /repo
+HEAD 111
+branch refs/heads/main
+
+worktree /repo/pr
+HEAD 222
+branch refs/heads/feature/issue-60
+";
+
+        assert_eq!(
+            parse_worktree_for_branch(output, "feature/issue-60"),
+            Some(PathBuf::from("/repo/pr"))
+        );
+        assert_eq!(parse_worktree_for_branch(output, "missing"), None);
+    }
+
+    #[test]
+    fn fixture_conflict_repair_reports_success_without_live_mutation() {
+        let runner = RecordingRunner {
+            program: RefCell::new(None),
+            args: RefCell::new(Vec::new()),
+            output: CommandOutput {
+                status: 99,
+                stdout: String::new(),
+                stderr: "should not be called".into(),
+            },
+        };
+
+        let outcome =
+            repair_dirty_pull_request("60", None, "main", &runner, Path::new("."), true).unwrap();
+
+        assert!(outcome.repaired);
+        assert!(outcome.output.stdout.contains("fixture conflict repair"));
+        assert!(runner.program.borrow().is_none());
+    }
+
+    #[test]
+    fn conflict_repair_requires_head_branch() {
+        let runner = RecordingRunner {
+            program: RefCell::new(None),
+            args: RefCell::new(Vec::new()),
+            output: CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            },
+        };
+
+        let outcome =
+            repair_dirty_pull_request("60", None, "main", &runner, Path::new("."), false).unwrap();
+
+        assert!(!outcome.repaired);
+        assert!(outcome.reason.contains("without a PR head branch"));
+        assert!(runner.program.borrow().is_none());
     }
 
     #[test]
@@ -834,7 +1262,7 @@ mod tests {
     }
 
     #[test]
-    fn failing_check_routes_to_rework() {
+    fn failing_check_routes_to_need_human_input() {
         let issue = issue("Merging", vec![pr()]);
         let mut status = clean_status();
         status.checks[0].conclusion = Some("FAILURE".into());
@@ -847,7 +1275,7 @@ mod tests {
         );
 
         assert_eq!(decision.kind, MergeLaneDecisionKind::ChecksFailing);
-        assert_eq!(decision.target_state, Some("rework"));
+        assert_eq!(decision.target_state, Some("need_human_input"));
     }
 
     #[test]

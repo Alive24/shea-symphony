@@ -100,7 +100,7 @@ use jade_symphony::runtime_state::{
 use jade_symphony::session_registry::{
     capture_tmux_pane_tail, classify_session_record, load_session_registry, read_log_tail,
     save_session_record, save_session_registry, session_registry_path, unix_timestamp_ms,
-    AgentSessionRecord, SessionStatus,
+    AgentSessionRecord, SessionStatus, SessionStatusProbe,
 };
 use jade_symphony::skill_status::{
     build_skill_readiness_report, doctor_skill_readiness_summary, render_skill_readiness_report,
@@ -9296,6 +9296,36 @@ fn run_loop_resume_preflight_many(
                 }
             };
             if let Some(issue) = in_progress_issue {
+                if let Some(probe) = runtime_session_probe_for_state(config, state, now_ms)? {
+                    if session_status_counts_as_active_worker(&probe.status) {
+                        let issue_identifier = state
+                            .active_issue
+                            .as_ref()
+                            .map(|issue| issue.identifier.as_str())
+                            .unwrap_or("unknown");
+                        active_main_workers += 1;
+                        append_runtime_supervision_event(
+                            config,
+                            Some(state),
+                            "RuntimeRecoverSkippedActiveSession",
+                            &format!(
+                                "issue={issue_identifier} status={} source={} evidence={}",
+                                probe.status.as_str(),
+                                probe.source.as_str(),
+                                compact_evidence(&probe.evidence)
+                            ),
+                        )?;
+                        println!(
+                            "run_loop_resume_preflight action=active_session issue={} status={} source={} evidence={}",
+                            issue_identifier,
+                            probe.status.as_str(),
+                            probe.source.as_str(),
+                            compact_evidence(&probe.evidence)
+                        );
+                        retained_states.push(state.clone());
+                        continue;
+                    }
+                }
                 if let Some(reason) = runtime_recovery_reason(config, state, now_ms)? {
                     let issue_identifier = state
                         .active_issue
@@ -9440,6 +9470,83 @@ fn run_loop_resume_preflight_many(
     })
 }
 
+fn runtime_session_probe_for_state(
+    config: &RuntimeConfig,
+    state: &RuntimeState,
+    now_ms: u64,
+) -> Result<Option<SessionStatusProbe>, Box<dyn std::error::Error>> {
+    if state.last_event.as_deref() != Some("SessionRunning") {
+        return Ok(None);
+    }
+    let Some(session_id) = state.backend_session_id.as_deref() else {
+        return Ok(None);
+    };
+    let registry = load_session_registry(&session_registry_path(config))?;
+    let Some(record) = registry
+        .sessions
+        .iter()
+        .rev()
+        .find(|record| record.session_name == session_id)
+    else {
+        return Ok(None);
+    };
+    Ok(Some(runtime_session_probe_from_record(
+        config, record, now_ms,
+    )?))
+}
+
+fn runtime_session_probe_from_record(
+    config: &RuntimeConfig,
+    record: &AgentSessionRecord,
+    now_ms: u64,
+) -> Result<SessionStatusProbe, Box<dyn std::error::Error>> {
+    let is_tmux_session = record.backend == "tmux";
+    let pane_tail = if is_tmux_session {
+        Some(
+            capture_tmux_pane_tail(
+                &config.tmux.command,
+                &record.pane_target,
+                DEFAULT_SESSION_STATUS_LINES,
+            )
+            .map_err(|error| {
+                io::Error::other(format!(
+                    "tmux_pane_unavailable session={} error={}",
+                    record.session_name,
+                    compact_evidence(&error)
+                ))
+            })?,
+        )
+    } else {
+        None
+    };
+    let log_tail = if is_tmux_session {
+        read_log_tail(&record.log_path, DEFAULT_SESSION_STATUS_LINES)?
+    } else {
+        None
+    };
+    Ok(classify_session_record(
+        record,
+        pane_tail.as_deref(),
+        log_tail.as_deref(),
+        now_ms,
+        DEFAULT_SESSION_STALE_AFTER_MS,
+    ))
+}
+
+fn session_status_counts_as_active_worker(status: &SessionStatus) -> bool {
+    matches!(
+        status,
+        SessionStatus::Starting
+            | SessionStatus::Running
+            | SessionStatus::WaitingForTrust
+            | SessionStatus::WaitingForApproval
+            | SessionStatus::WaitingForHumanInput
+            | SessionStatus::UsageLimited
+            | SessionStatus::Unknown
+            | SessionStatus::UnknownPersisted(_)
+    )
+}
+
 fn runtime_recovery_reason(
     config: &RuntimeConfig,
     state: &RuntimeState,
@@ -9479,34 +9586,17 @@ fn runtime_recovery_reason(
     };
 
     if record.backend == "tmux" {
-        match capture_tmux_pane_tail(
-            &config.tmux.command,
-            &record.pane_target,
-            DEFAULT_SESSION_STATUS_LINES,
-        ) {
-            Ok(pane_tail) => {
-                let log_tail = read_log_tail(&record.log_path, DEFAULT_SESSION_STATUS_LINES)?;
-                let probe = classify_session_record(
-                    record,
-                    Some(&pane_tail),
-                    log_tail.as_deref(),
-                    now_ms,
-                    DEFAULT_SESSION_STALE_AFTER_MS,
-                );
-                if matches!(probe.status, SessionStatus::Stale) {
-                    return Ok(Some(format!(
-                        "session_stale source={} evidence={}",
-                        probe.source.as_str(),
-                        compact_evidence(&probe.evidence)
-                    )));
-                }
-            }
-            Err(error) => {
+        match runtime_session_probe_from_record(config, record, now_ms) {
+            Ok(probe) if matches!(probe.status, SessionStatus::Stale) => {
                 return Ok(Some(format!(
-                    "tmux_pane_unavailable session={} error={}",
-                    session_id,
-                    compact_evidence(&error)
+                    "session_stale source={} evidence={}",
+                    probe.source.as_str(),
+                    compact_evidence(&probe.evidence)
                 )));
+            }
+            Ok(_) => {}
+            Err(error) => {
+                return Ok(Some(compact_evidence(&error.to_string())));
             }
         }
     }
@@ -15819,6 +15909,72 @@ mod tests {
         assert_eq!(summary.active_main_workers, 0);
         assert_eq!(summary.blocked, None);
         assert_eq!(summary.recoverable_states.len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resume_preflight_many_counts_running_tmux_session_in_recover_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
+        config.observability.logs_root = temp.path().join("logs");
+        config.tmux.command = fake_tmux_capture_script(
+            temp.path(),
+            "Codex\n◦ Running cargo run -- autopilot plan\n› Improve documentation in @filename",
+        );
+        std::fs::set_permissions(
+            Path::new(&config.tmux.command),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let mut state = active_runtime_state("#29");
+        state.backend = "tmux".into();
+        state.last_event = Some("SessionRunning".into());
+        state.backend_session_id = Some("jade-main-29-attempt-1".into());
+        state.updated_at_ms = Some(1_000);
+
+        let mut record = main_tmux_session_record("#29", SessionStatus::Running);
+        record.session_name = "jade-main-29-attempt-1".into();
+        record.pane_target = "jade-main-29-attempt-1".into();
+        record.log_path = temp.path().join("session.log");
+        record.updated_at_ms = 1_000;
+        save_session_registry(
+            &session_registry_path(&config),
+            &jade_symphony::session_registry::SessionRegistry {
+                sessions: vec![record],
+            },
+        )
+        .unwrap();
+
+        let summary = run_loop_resume_preflight_many(
+            &tracker,
+            &config,
+            &[state],
+            config.codex.stall_timeout_ms + 2_000,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(summary.active_main_workers, 1);
+        assert_eq!(summary.blocked, None);
+        assert_eq!(summary.retained_states.len(), 1);
+        assert_eq!(summary.recoverable_states.len(), 0);
+    }
+
+    #[cfg(unix)]
+    fn fake_tmux_capture_script(root: &Path, output: &str) -> String {
+        let path = root.join("fake-tmux");
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\nif [ \"${{1:-}}\" = \"capture-pane\" ]; then\ncat <<'EOF'\n{output}\nEOF\nexit 0\nfi\nexit 0\n"
+            ),
+        )
+        .unwrap();
+        path.display().to_string()
     }
 
     #[test]

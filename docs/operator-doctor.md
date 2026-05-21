@@ -115,13 +115,23 @@ lane handoff.
 
 ## Doctor Triage Note
 
-Use this format for durable issue-comment evidence:
+Use this format for durable append-only issue timeline evidence. Write
+operator-authored notes with `project timeline-comment`; do not use
+`project workpad`, which is reserved for the persistent Main Agent Workpad.
 
 ```markdown
-### Doctor Triage Note
+## Jade Symphony Doctor Triage
 
 - Issue: `#258`
+- Lane: `doctor`
+- Actor role: `doctor`
+- Run ID: `<doctor-action-id>`
 - Status at triage: `Need Human Input`
+- Input state: `Need Human Input`
+- Target state after repair: `Need Human Input` | `Agent Review` | `unchanged`
+- Result: Routed | Repaired | Triage recorded | Blocked
+- PR: #<pr> <url> | `not recorded`
+- Evidence summary: ...
 - Primary classification: `missing_pr_linkage`
 - Secondary classifications: `stale_lane_claim`
 - Diagnosis: The issue is blocked because ...

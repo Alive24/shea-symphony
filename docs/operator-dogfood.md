@@ -138,10 +138,10 @@ Jade Symphony uses two issue-comment evidence surfaces:
   exists.
 - Append-only timeline comments: every Review, Rework, Merge, Human Review, and
   Doctor run writes a standalone comment with a human-readable GMT timestamp,
-  lane, actor, input state, target state, result, PR when relevant, and evidence
-  summary. `Jade Symphony Rework Run` comments explain why the issue entered
-  `Rework`; they do not replace the Main Agent Workpad for implementation
-  evidence.
+  run id, lane, actor, input state, target state, result, PR when relevant, and
+  evidence summary. `Jade Symphony Rework Run` comments explain why the issue
+  entered `Rework`; they do not replace the Main Agent Workpad for
+  implementation evidence.
 
 PR linkage repair should be quiet when normal GitHub/Project readback already
 shows the PR. A visible linkage repair comment is a fallback for cases where
@@ -376,7 +376,8 @@ operator confirmation, then run `forge rework`. The command is non-interactive:
 it validates the source issue is `Human Review`, rejects active lane claims,
 records a diagnostic workpad if they are present, preserves terminal lane claims
 as audit pointers, replaces the issue content, writes Rework revision evidence
-to the workpad, and sets `Rework` as the final mutation. Do not use raw Project
+as an append-only `Jade Symphony Rework Run` timeline comment, and sets
+`Rework` as the final mutation. Do not use raw Project
 mutation, `project set-state`, or `forge promote` for this normal path. Missing
 linked PRs or missing local worktrees are downstream Main Agent recovery work
 after the issue is in `Rework`.

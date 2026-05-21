@@ -66,10 +66,12 @@ language in explanations:
 - `project state`
 - `project issue`
 - `project set-state`
+- `project timeline-comment`
 
 Do not use `project workpad` for Human Review decision notes. That command
 upserts the canonical Main Agent Workpad marker comment and is reserved for
 Main implementation evidence, including Main-lane Rework rounds.
+Use `project timeline-comment` for append-only Human Review decision notes.
 
 During live use, if the current binary still exposes flat commands, use those
 commands and say so in the decision note:
@@ -77,14 +79,13 @@ commands and say so in the decision note:
 ```bash
 cargo run -- project state workflows/jade-symphony.md
 cargo run -- project issue workflows/jade-symphony.md '#<issue>' --json
+cargo run -- project timeline-comment workflows/jade-symphony.md '#<issue>' /path/to/human-review-note.md --write
 cargo run -- project set-state workflows/jade-symphony.md '#<issue>' merging --write
 ```
 
 Do not turn the topology transition into custom GitHub Project mutations.
-Until Jade Symphony CLI exposes a first-class append-only timeline comment
-command, record this as a CLI surface gap in the decision note and use
-`gh issue comment` only for the Human Review decision note. Project status
-changes must still go through `project set-state`.
+Project status changes must still go through `project set-state`, after the
+timeline comment has been written.
 
 ## Required Reads
 
@@ -277,20 +278,12 @@ Do not infer confirmation from discussion, enthusiasm, or a partial UAT answer.
 After explicit confirmation, write the completed decision note as append-only
 timeline evidence before any state change.
 
-Preferred future route: use the first-class Jade Symphony CLI append-only
-timeline/comment command once it exists.
-
-Current safe route: do not use `project workpad`; instead write an issue comment
-with the completed note and explicitly include:
-
-- `CLI gap: no append-only Human Review timeline command is available yet`;
-- `Project state mutation will be performed through Jade Symphony CLI`;
-- the operator's exact confirmation phrase.
-
-Current fallback example:
+Current safe route: do not use `project workpad`; write the completed note with
+the CLI append-only timeline command and explicitly include the operator's
+exact confirmation phrase.
 
 ```bash
-gh issue comment <issue> --repo Alive24/jade-symphony --body-file /path/to/human-review-note.md
+cargo run -- project timeline-comment workflows/jade-symphony.md '#<issue>' /path/to/human-review-note.md --write
 ```
 
 ## Route With CLI

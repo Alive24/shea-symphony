@@ -648,7 +648,15 @@ pub fn render_doctor_repair_workpad(
         format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", issue.identifier, issue.title),
         "- Lane: `doctor`".to_string(),
-        format!("- Current state: `{}`", issue.state),
+        "- Actor role: `doctor`".to_string(),
+        "- Actor: `jade-symphony doctor`".to_string(),
+        "- Run ID: `doctor-repair`".to_string(),
+        format!("- Input state: `{}`", issue.state),
+        format!(
+            "- Target state after repair: `{}`",
+            doctor_target_state(action)
+        ),
+        format!("- Result: `{}`", doctor_result(action)),
         format!("- Requested action: `{action}`"),
     ];
 
@@ -661,7 +669,13 @@ pub fn render_doctor_repair_workpad(
     if has_pr_url(issue) {
         let targets = reliable_pr_targets(issue).join(", ");
         lines.push(format!("- PR evidence: `{targets}`"));
+    } else {
+        lines.push("- PR evidence: `not recorded`".into());
     }
+    lines.push(format!(
+        "- Evidence summary: {} issue-specific doctor finding(s) captured before repair.",
+        related.len()
+    ));
 
     lines.extend([String::new(), "### Doctor Findings".to_string()]);
     if related.is_empty() {
@@ -748,16 +762,40 @@ pub fn render_human_review_repair_workpad(violation: &ProjectAuditViolation) -> 
         format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", violation.issue_ref, violation.title),
         "- Lane: `doctor`".into(),
+        "- Actor role: `doctor`".into(),
+        "- Actor: `jade-symphony doctor`".into(),
+        "- Run ID: `doctor-human-review-repair`".into(),
+        format!("- Input state: `{}`", violation.state),
+        "- Target state after repair: `Agent Review`".into(),
+        "- Result: `repair_recorded`".into(),
+        "- PR evidence: `not recorded`".into(),
         format!("- Violation: `{}`", violation.code),
         format!("- Previous state: `{}`", violation.state),
         format!("- Message: {}", violation.message),
         format!("- Repair: {}", violation.suggestion),
+        "- Evidence summary: invalid Human Review boundary repair evidence recorded before tracker mutation.".to_string(),
         String::new(),
         "### State Boundary".to_string(),
         "- Main implementation agent is moving this issue back to `Agent Review`.".to_string(),
         "- This repair does not set `Human Review`; that state requires independent Review Agent pass evidence.".to_string(),
     ]
     .join("\n")
+}
+
+fn doctor_target_state(action: &str) -> &'static str {
+    match action {
+        "move_need_human_input" => "Need Human Input",
+        "mark_pr_ready" => "Agent Review",
+        _ => "unchanged",
+    }
+}
+
+fn doctor_result(action: &str) -> &'static str {
+    match action {
+        "move_need_human_input" => "routed",
+        "mark_pr_ready" => "repair_recorded",
+        _ => "triage_recorded",
+    }
 }
 
 fn current_gmt_timestamp() -> String {

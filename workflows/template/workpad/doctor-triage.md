@@ -4,9 +4,14 @@
 - Issue: #<issue> <title>
 - Lane: `doctor`
 - Actor role: `doctor`
+- Actor: <doctor command or operator>
+- Run ID: `<run-id or doctor-action-id>`
 - Input state: <state>
 - Target state after repair: <state or unchanged>
+- Result: Routed | Repaired | Triage recorded | Blocked
+- PR: #<pr> <url> | not recorded
 - Requested action: <action>
+- Evidence summary: <short summary of doctor findings and repair evidence>
 
 ### Doctor Findings
 

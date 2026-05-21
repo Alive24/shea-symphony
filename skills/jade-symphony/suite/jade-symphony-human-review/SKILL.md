@@ -43,7 +43,8 @@ workflows/template/workpad/human-review.md
 
 ## Core Boundary
 
-- Do not modify implementation code.
+- Do not modify implementation code, except for the narrow PR branch freshness
+  repair described below when the fix is mechanical and low-risk.
 - Do not act as the independent Review Agent.
 - Do not merge PRs or act as the Merging Agent.
 - Do not move accepted work directly to `Done`.
@@ -65,10 +66,12 @@ language in explanations:
 - `project state`
 - `project issue`
 - `project set-state`
+- `project timeline-comment`
 
 Do not use `project workpad` for Human Review decision notes. That command
 upserts the canonical Main Agent Workpad marker comment and is reserved for
 Main implementation evidence, including Main-lane Rework rounds.
+Use `project timeline-comment` for append-only Human Review decision notes.
 
 During live use, if the current binary still exposes flat commands, use those
 commands and say so in the decision note:
@@ -76,14 +79,13 @@ commands and say so in the decision note:
 ```bash
 cargo run -- project state workflows/jade-symphony.md
 cargo run -- project issue workflows/jade-symphony.md '#<issue>' --json
+cargo run -- project timeline-comment workflows/jade-symphony.md '#<issue>' /path/to/human-review-note.md --write
 cargo run -- project set-state workflows/jade-symphony.md '#<issue>' merging --write
 ```
 
 Do not turn the topology transition into custom GitHub Project mutations.
-Until Jade Symphony CLI exposes a first-class append-only timeline comment
-command, record this as a CLI surface gap in the decision note and use
-`gh issue comment` only for the Human Review decision note. Project status
-changes must still go through `project set-state`.
+Project status changes must still go through `project set-state`, after the
+timeline comment has been written.
 
 ## Required Reads
 
@@ -106,6 +108,48 @@ Inspect the issue body and workpad for:
 
 Do not drown the operator in raw JSON. Summarize the decision-relevant facts and
 include exact issue and PR references.
+
+## PR Freshness Repair Gate
+
+Before any PR-specific UAT, verify that the reviewed PR branch contains the
+latest `origin/main`. Run this only from the linked PR/issue worktree, never
+from the canonical `main` checkout.
+
+From the linked PR/issue worktree, run:
+
+```bash
+git fetch origin
+git merge-base --is-ancestor origin/main HEAD
+```
+
+Interpret and repair:
+
+- Exit code `0`: the PR branch contains latest `origin/main`; continue to UAT.
+- Non-zero exit code: immediately attempt a safe local branch refresh:
+
+```bash
+git merge --no-edit origin/main
+```
+
+If the merge is clean, run targeted verification, push the PR branch, record the
+refresh in the running Human Review note draft, then continue UAT.
+
+If conflicts or failures are small, mechanical, and clearly caused by freshness
+drift, resolve them in the PR worktree, run the relevant verification, commit,
+push the PR branch, record the repair in the note draft, then continue UAT.
+
+If conflicts are broad, product-scope, ambiguous, or verification fails in a way
+that is not obviously mechanical, stop before UAT and recommend `Request Rework`
+with the smallest actionable finding.
+
+If the PR worktree cannot be found, do not run the freshness check from the
+canonical `main` checkout. First select or create a PR branch worktree. If that
+cannot be done safely, record the missing worktree as a UAT blocker.
+
+If `gh pr view` reports a non-clean merge state, treat that as corroborating
+freshness or mergeability risk. The local `merge-base` check is still required
+before PR-specific UAT because GitHub mergeability can lag or be temporarily
+unknown.
 
 ## Brief The Operator
 
@@ -167,6 +211,8 @@ First resolve the correct execution directory.
   run from the linked PR/issue worktree or another checkout of that PR branch.
 - Do not ask the operator to run PR-specific UAT from the canonical `main`
   checkout unless the PR has already been merged into `main`.
+- Before PR-specific UAT, apply the PR Freshness Repair Gate. Do not stop only
+  because the PR branch is stale; first try the safe refresh/small-repair path.
 - Prefer the worktree recorded in the issue workpad or `project issue` readback.
   If no usable worktree is available, ask the operator whether to create or
   select one before continuing.
@@ -232,20 +278,12 @@ Do not infer confirmation from discussion, enthusiasm, or a partial UAT answer.
 After explicit confirmation, write the completed decision note as append-only
 timeline evidence before any state change.
 
-Preferred future route: use the first-class Jade Symphony CLI append-only
-timeline/comment command once it exists.
-
-Current safe route: do not use `project workpad`; instead write an issue comment
-with the completed note and explicitly include:
-
-- `CLI gap: no append-only Human Review timeline command is available yet`;
-- `Project state mutation will be performed through Jade Symphony CLI`;
-- the operator's exact confirmation phrase.
-
-Current fallback example:
+Current safe route: do not use `project workpad`; write the completed note with
+the CLI append-only timeline command and explicitly include the operator's
+exact confirmation phrase.
 
 ```bash
-gh issue comment <issue> --repo Alive24/jade-symphony --body-file /path/to/human-review-note.md
+cargo run -- project timeline-comment workflows/jade-symphony.md '#<issue>' /path/to/human-review-note.md --write
 ```
 
 ## Route With CLI

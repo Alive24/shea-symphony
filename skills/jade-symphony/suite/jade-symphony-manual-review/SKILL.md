@@ -131,6 +131,12 @@ overwrite, or restructure the Main Agent Workpad.
 
 - Issue: #<issue>
 - PR: #<pr> <url>
+- Lane: `review`
+- Actor role: `review_agent`
+- Run ID: `<run-id from Review Agent claim>`
+- Input state: `Agent Review`
+- Target state after review routing: Human Review / Rework / Agent Review / Need Human Input
+- Result: ManualPass / ManualRework / ManualInconclusive / ManualInfrastructureBlocked
 - Reviewer: manual Review Agent
 - Review mode: Manual
 - Review Agent claim: `<exact value printed by review claim>`

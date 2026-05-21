@@ -56,6 +56,8 @@ The GitHub Project v2 adapter must support:
 - `get_issue(issue_ref)`
 - `set_state(issue_ref, normalized_state)`
 - `upsert_workpad(issue_ref, markdown)`
+- `add_issue_comment(issue_ref, markdown)` for append-only lane timeline
+  evidence
 - `create_follow_up_issue(input)`
 - `add_issue_to_project(issue_id)`
 - `link_pull_request(issue_ref, pr_ref)`
@@ -118,6 +120,13 @@ Rules:
 - Do not use the issue body for runtime progress.
 - Keep PR links in GitHub-native references when possible.
 - Keep a concise final handoff in the workpad before state transition.
+
+The workpad is not a shared lane ledger. Main implementation keeps exactly one
+persistent `Main Agent Workpad` comment and updates it in place. Review,
+Rework trigger diagnostics, Merge, Human Review, and Doctor triage or repair
+records use standalone append-only issue comments. Those timeline comments
+preserve chronology and must include timestamp, run id, lane, actor, input
+state, target state, PR when relevant, result, and evidence summary.
 
 ## Linear Compatibility Rule
 

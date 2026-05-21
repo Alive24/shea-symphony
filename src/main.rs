@@ -197,6 +197,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             markdown_path,
             write,
         } => upsert_workpad(workflow_path, issue_ref, markdown_path, write),
+        Command::TimelineComment {
+            workflow_path,
+            issue_ref,
+            markdown_path,
+            write,
+        } => append_timeline_comment(workflow_path, issue_ref, markdown_path, write),
         Command::LinkPr {
             workflow_path,
             issue_ref,
@@ -655,6 +661,49 @@ fn upsert_workpad(
     );
     println!(
         "workpad=ok issue_ref={} source={}",
+        issue_ref,
+        markdown_path.display()
+    );
+    Ok(())
+}
+
+fn append_timeline_comment(
+    workflow_path: PathBuf,
+    issue_ref: String,
+    markdown_path: PathBuf,
+    write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let markdown = std::fs::read_to_string(&markdown_path)?;
+    if !write {
+        println!(
+            "timeline_comment_dry_run action=add_issue_comment issue_ref={} source={}",
+            issue_ref,
+            markdown_path.display()
+        );
+        return Ok(());
+    }
+
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    let from_state = adapter
+        .get_issue(&issue_ref)?
+        .map(|issue| issue.state)
+        .filter(|current| !current.is_empty());
+    adapter.add_issue_comment(&issue_ref, &markdown)?;
+    append_tracker_mutation_audit(
+        &config,
+        TrackerMutationAudit {
+            command: "timeline-comment",
+            mutation_type: "timeline_comment",
+            issue_ref: Some(&issue_ref),
+            target: Some(markdown_path.display().to_string()),
+            from_state,
+            to_state: None,
+            reason: "explicit CLI append-only timeline comment",
+        },
+    );
+    println!(
+        "timeline_comment=ok issue_ref={} source={}",
         issue_ref,
         markdown_path.display()
     );
@@ -1394,11 +1443,17 @@ fn render_forge_rework_workpad(
         format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", issue.identifier, issue.title),
         "- Lane: `main`".into(),
+        "- Actor role: `human_review_revision`".into(),
+        "- Actor: `operator`".into(),
+        "- Run ID: `forge-rework`".into(),
         "- Run type: `human_review_rework_revision`".into(),
         "- Input state: `Human Review`".into(),
         "- Target state after run: `Rework`".into(),
+        "- Result: `rework_revision_recorded`".into(),
+        format!("- PR: `{}`", timeline_pr_summary(issue)),
         format!("- Replacement Rework title/status: `{rework_title}` / `Rework`"),
         format!("- Operator confirmation: {operator_confirmation:?}"),
+        "- Evidence summary: operator confirmation, replacement contract, and readback evidence recorded.".into(),
         "- Source state validated as `Human Review` before mutation.".into(),
         "- Terminal lane claims, when present, were preserved as audit pointers.".into(),
         "- Active lane claims in `Human Review` are rejected before content or status writes."
@@ -1433,10 +1488,16 @@ fn render_forge_rework_blocked_workpad(issue: &TrackerIssue, reason: &str) -> St
         format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", issue.identifier, issue.title),
         "- Lane: `main`".into(),
+        "- Actor role: `human_review_revision`".into(),
+        "- Actor: `operator`".into(),
+        "- Run ID: `forge-rework`".into(),
         "- Run type: `human_review_rework_revision`".into(),
         "- Source state: `Human Review`".into(),
         "- Target state after run: `unchanged`".into(),
+        "- Result: `blocked`".into(),
+        format!("- PR: `{}`", timeline_pr_summary(issue)),
         format!("- Blocker: {reason}"),
+        "- Evidence summary: blocked rework revision recorded before any state mutation.".into(),
         "- No replacement body was written.".into(),
         "- Project status was not changed to `Rework`.".into(),
         "- Resolve or supersede the active lane claim before retrying `forge rework`.".into(),
@@ -2406,12 +2467,24 @@ fn render_manual_review_workpad(
         format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", issue.identifier, issue.title),
         "- Lane: `review`".into(),
+        "- Actor role: `review_agent`".into(),
+        format!(
+            "- Actor: `{}`",
+            timeline_claim_actor(current_claim_value).unwrap_or("manual-operator".into())
+        ),
+        format!(
+            "- Run ID: `{}`",
+            timeline_claim_run(current_claim_value).unwrap_or("not recorded".into())
+        ),
         "- Input state: `Agent Review`".into(),
         "- Reviewer backend: manual-operator".into(),
         format!("- Decision: Manual independent review {decision}."),
         format!("- Target state after review routing: `{target_state}`"),
+        format!("- Result: `{}`", if pass { "passed" } else { "rework" }),
+        format!("- PR: `{}`", timeline_pr_summary(issue)),
         format!("- Review Agent claim: `{current_claim_value}`"),
         format!("- Terminal Review Agent claim: `{terminal_claim_value}`"),
+        "- Evidence summary: manual review evidence captured below.".into(),
         String::new(),
         "### Manual Review Evidence".into(),
         "````md".into(),
@@ -2430,6 +2503,31 @@ fn render_manual_review_workpad(
         );
     }
     lines.join("\n")
+}
+
+fn timeline_claim_run(value: &str) -> Option<String> {
+    LaneClaim::parse(value).ok().map(|claim| claim.run)
+}
+
+fn timeline_claim_actor(value: &str) -> Option<String> {
+    LaneClaim::parse(value)
+        .ok()
+        .map(|claim| claim.actor.as_str().to_string())
+}
+
+fn timeline_pr_summary(issue: &TrackerIssue) -> String {
+    issue
+        .linked_pull_requests
+        .iter()
+        .find_map(
+            |pull_request| match (pull_request.number, pull_request.url.as_deref()) {
+                (Some(number), Some(url)) => Some(format!("#{number} {url}")),
+                (Some(number), None) => Some(format!("#{number}")),
+                (None, Some(url)) => Some(url.to_string()),
+                (None, None) => None,
+            },
+        )
+        .unwrap_or_else(|| "not recorded".into())
 }
 
 fn validate_manual_review_pass_claim(
@@ -4127,6 +4225,47 @@ fn agent_session_workpad(input: AgentSessionWorkpadInput<'_>) -> String {
         format!("- Issue: {} {}", input.issue.identifier, input.issue.title),
         format!("- Lane: `{}`", input.lane.label()),
         format!(
+            "- Actor role: `{}`",
+            match input.lane {
+                AgentSessionLaneArg::Main => "implementation_agent",
+                AgentSessionLaneArg::Review => "review_agent",
+                AgentSessionLaneArg::Merge => "merge_agent",
+            }
+        ),
+        format!(
+            "- Actor: `{}`",
+            timeline_claim_actor(input.claim_value).unwrap_or_else(|| "not recorded".into())
+        ),
+        format!(
+            "- Run ID: `{}`",
+            timeline_claim_run(input.claim_value).unwrap_or_else(|| "not recorded".into())
+        ),
+        format!(
+            "- Input state: `{}`",
+            match input.lane {
+                AgentSessionLaneArg::Main => input.issue.state.as_str(),
+                AgentSessionLaneArg::Review => "Agent Review",
+                AgentSessionLaneArg::Merge => "Merging",
+            }
+        ),
+        format!(
+            "- Target state after run: `{}`",
+            match input.lane {
+                AgentSessionLaneArg::Main => "Agent Review",
+                AgentSessionLaneArg::Review => "Human Review | Rework | Need Human Input | unchanged",
+                AgentSessionLaneArg::Merge => "Done | Need Human Input | unchanged",
+            }
+        ),
+        format!(
+            "- Result: `{}`",
+            if input.summary.pending_session {
+                "session_started"
+            } else {
+                "session_recorded"
+            }
+        ),
+        format!("- PR: `{}`", timeline_pr_summary(input.issue)),
+        format!(
             "- Claim field: `{}` = `{}`",
             input.lane.claim_field(),
             input.claim_value
@@ -4143,6 +4282,7 @@ fn agent_session_workpad(input: AgentSessionWorkpadInput<'_>) -> String {
         format!("- Session log: `{log_path}`"),
         format!("- Attach command: `{attach_command}`"),
         format!("- Git identity: `{}`", input.git_identity.summary()),
+        "- Evidence summary: tmux session, prompt artifact, log path, workspace, and claim metadata recorded.".to_string(),
         String::new(),
         input.summary.message.clone(),
     ]
@@ -9596,6 +9736,12 @@ enum Command {
         markdown_path: PathBuf,
         write: bool,
     },
+    TimelineComment {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        markdown_path: PathBuf,
+        write: bool,
+    },
     LinkPr {
         workflow_path: PathBuf,
         issue_ref: String,
@@ -10374,6 +10520,11 @@ enum ProjectCommandArgs {
     Add(AddToProjectArgs),
     #[command(about = "Upsert the canonical issue workpad")]
     Workpad(WorkpadArgs),
+    #[command(
+        name = "timeline-comment",
+        about = "Append a standalone issue timeline comment"
+    )]
+    TimelineComment(TimelineCommentArgs),
 }
 
 #[derive(Debug, Args)]
@@ -10388,6 +10539,19 @@ struct ProjectInspectArgs {
     _dry_run: bool,
     #[arg(long = "write")]
     _write: bool,
+}
+
+#[derive(Debug, Args)]
+struct TimelineCommentArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    issue_ref: String,
+    #[arg(value_name = "MARKDOWN_PATH")]
+    markdown_path: PathBuf,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -10914,6 +11078,12 @@ fn command_from_project_args(command: ProjectCommandArgs) -> Result<Command, Str
             write: args.write,
         }),
         ProjectCommandArgs::Workpad(args) => Ok(Command::Workpad {
+            workflow_path: args.workflow_path,
+            issue_ref: args.issue_ref,
+            markdown_path: args.markdown_path,
+            write: args.write,
+        }),
+        ProjectCommandArgs::TimelineComment(args) => Ok(Command::TimelineComment {
             workflow_path: args.workflow_path,
             issue_ref: args.issue_ref,
             markdown_path: args.markdown_path,
@@ -12978,6 +13148,26 @@ mod tests {
                 workflow_path: PathBuf::from("examples/github-project-workflow.md"),
                 issue_ref: "#235".into(),
                 json: true
+            }
+        );
+    }
+
+    #[test]
+    fn parses_project_timeline_comment_write_surface() {
+        assert_eq!(
+            parse(&[
+                "project",
+                "timeline-comment",
+                "examples/github-project-workflow.md",
+                "#235",
+                "/tmp/human-review-note.md",
+                "--write"
+            ]),
+            Command::TimelineComment {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                issue_ref: "#235".into(),
+                markdown_path: PathBuf::from("/tmp/human-review-note.md"),
+                write: true,
             }
         );
     }

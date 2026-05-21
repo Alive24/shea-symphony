@@ -135,10 +135,10 @@ Jade Symphony uses two issue-comment evidence surfaces:
   same Workpad as the current-state implementation surface.
 - Append-only timeline comments: every Review, Rework, Merge, Human Review, and
   Doctor run writes a standalone comment with a human-readable GMT timestamp,
-  lane, actor, input state, target state, result, PR when relevant, and evidence
-  summary. `Jade Symphony Rework Run` comments explain why the issue entered
-  `Rework`; they do not replace the Main Agent Workpad for implementation
-  evidence.
+  run id, lane, actor, input state, target state, result, PR when relevant, and
+  evidence summary. `Jade Symphony Rework Run` comments explain why the issue
+  entered `Rework`; they do not replace the Main Agent Workpad for
+  implementation evidence.
 
 Review, Merge, Human Review, and Doctor flows must not overwrite or restructure
 the Main Agent Workpad. Rework-trigger diagnostics should reference Main
@@ -326,7 +326,8 @@ operator confirmation, then run `forge rework`. The command is non-interactive:
 it validates the source issue is `Human Review`, rejects active lane claims,
 records a diagnostic workpad if they are present, preserves terminal lane claims
 as audit pointers, replaces the issue content, writes Rework revision evidence
-to the workpad, and sets `Rework` as the final mutation. Do not use raw Project
+as an append-only `Jade Symphony Rework Run` timeline comment, and sets
+`Rework` as the final mutation. Do not use raw Project
 mutation, `project set-state`, or `forge promote` for this normal path. Missing
 linked PRs or missing local worktrees are downstream Main Agent recovery work
 after the issue is in `Rework`.

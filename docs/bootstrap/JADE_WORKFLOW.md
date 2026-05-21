@@ -165,7 +165,8 @@ Minimum behavior:
 3. Independent Review Agent starts an asynchronous review job using the
    configured backend.
 4. Review Agent records queued, running, completed, failed, timed out, and
-   cancelled job state in the workpad or status surface.
+   cancelled job state in a standalone append-only Agent Review timeline
+   comment and the status surface.
 5. Review Agent classifies findings as `Confirmed`, `Plausible`, `Rejected`, or
    `Needs Context`.
 6. Review Agent moves confirmed findings to `Rework`.
@@ -178,6 +179,19 @@ Minimum behavior:
    evidence.
 9. Review Agent moves to `Human Review` only after review passes and evidence
    is recorded.
+
+## Evidence Timeline Model
+
+Main implementation owns one persistent `Main Agent Workpad` comment. It records
+current implementation context, plan, work log, changed files, verification, PR
+handoff, and Main-lane Rework implementation rounds.
+
+Other lanes do not edit or restructure that Workpad. Review attempts, Rework
+trigger diagnostics, Merge runs, Human Review decisions, and Doctor triage or
+repair records each write their own append-only issue timeline comment. Each
+timeline comment should be self-contained enough to audit in chronological
+order: human-readable timestamp with timezone, run id, lane, actor, input state,
+target state, PR when relevant, result, and evidence summary.
 
 ## Workpad Outline
 

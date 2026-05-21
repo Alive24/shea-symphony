@@ -173,19 +173,36 @@ pub fn render_rework_diagnostic_workpad(
         format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", issue.identifier, issue.title),
         format!("- Lane: `{lane}`"),
+        format!(
+            "- Actor role: `{}`",
+            if review_origin {
+                "review_agent"
+            } else {
+                "implementation_agent"
+            }
+        ),
+        format!("- Run ID: `{}`", diagnostic.source),
         "- Run type: `review_rework_diagnostic`".into(),
         format!("- Input state: `{}`", issue.state),
         "- Target state after run: `Rework`".into(),
+        format!("- Result: `{:?}`", diagnostic.kind),
         format!("- Source: `{}`", diagnostic.source),
         format!("- Kind: `{:?}`", diagnostic.kind),
         format!("- Summary: {}", diagnostic.summary),
         format!("- Next action: {}", diagnostic.next_action),
         "- Evidence was recorded before moving the issue to `Rework`.".to_string(),
+        format!(
+            "- Evidence summary: {} changed file(s), {} finding(s).",
+            diagnostic.changed_files.len(),
+            diagnostic.findings.len()
+        ),
     ];
 
     if let Some(pr_ref) = &diagnostic.pr_ref {
         lines.push(format!("- Pull request: `{pr_ref}`"));
         lines.push("- PR-specific context is captured here; mirror this note to the PR conversation when the active adapter supports PR comments.".into());
+    } else {
+        lines.push("- Pull request: `not recorded`".into());
     }
     if let Some(path) = &diagnostic.review_artifact_path {
         lines.push(format!("- Review artifact: `{path}`"));

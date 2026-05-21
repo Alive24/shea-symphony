@@ -144,10 +144,10 @@ Jade Symphony uses two issue-comment evidence surfaces:
   exists.
 - Append-only timeline comments: every Review, Rework, Merge, Human Review, and
   Doctor run writes a standalone comment with a human-readable GMT timestamp,
-  lane, actor, input state, target state, result, PR when relevant, and evidence
-  summary. `Jade Symphony Rework Run` comments explain why the issue entered
-  `Rework`; they do not replace the Main Agent Workpad for implementation
-  evidence.
+  run id, lane, actor, input state, target state, result, PR when relevant, and
+  evidence summary. `Jade Symphony Rework Run` comments explain why the issue
+  entered `Rework`; they do not replace the Main Agent Workpad for
+  implementation evidence.
 
 PR linkage repair should be quiet when normal GitHub/Project readback already
 shows the PR. A visible linkage repair comment is a fallback for cases where
@@ -280,6 +280,25 @@ Use `--codex-dir`, `--gemini-dir`, `--skip-codex`, or `--skip-gemini` to make
 the target set explicit. Use `--yes` only after the printed target paths are
 known and intentional.
 
+Skills are per-repo rendered installs, not one global generic skill set. Before
+starting a lane that depends on local skills, inspect readiness without writing:
+
+```bash
+cargo run -- skills status workflows/jade-symphony.md
+cargo run -- skills status workflows/jade-symphony.md --json
+cargo run -- skills status workflows/jade-symphony.md --session-skills-file /path/to/session-skills.txt
+```
+
+`skills status` discovers the source suite from `--suite-path`,
+`JADE_SYMPHONY_SKILL_SUITE`, the current repo's `skills/jade-symphony/suite`,
+then installed-only mode when no source suite exists. It reports expected/source
+skills, Codex installs, Gemini installs when configured or discoverable,
+rendered metadata freshness, broken links, alias/file-shaped installs, missing
+`SKILL.md`, and optional current-session visibility. If no session skill input
+is provided, session visibility is `unknown`; that is diagnostic context, not a
+failure. Gemini absence is not a failure unless the operator explicitly requires
+Gemini for the current environment.
+
 The packaged skills preserve the same lane boundaries as the Jade Symphony CLI:
 Issue Forge, Reflect, and Dream handle conversation, draft shaping, backlog
 mining, and promotion discussion, including Human Review -> Rework revision
@@ -363,7 +382,8 @@ operator confirmation, then run `forge rework`. The command is non-interactive:
 it validates the source issue is `Human Review`, rejects active lane claims,
 records a diagnostic workpad if they are present, preserves terminal lane claims
 as audit pointers, replaces the issue content, writes Rework revision evidence
-to the workpad, and sets `Rework` as the final mutation. Do not use raw Project
+as an append-only `Jade Symphony Rework Run` timeline comment, and sets
+`Rework` as the final mutation. Do not use raw Project
 mutation, `project set-state`, or `forge promote` for this normal path. Missing
 linked PRs or missing local worktrees are downstream Main Agent recovery work
 after the issue is in `Rework`.

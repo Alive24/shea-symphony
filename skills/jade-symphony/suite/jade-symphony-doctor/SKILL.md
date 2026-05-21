@@ -58,6 +58,10 @@ Report:
 - Do not start Main, Review, or Merge lane work from this skill.
 - Do not mutate Project state unless the operator explicitly approves a
   documented Jade Symphony CLI repair command.
+- Doctor triage or repair evidence belongs in a standalone append-only
+  `Jade Symphony Doctor Triage` timeline comment. Use
+  `project timeline-comment` for operator-authored notes; do not use
+  `project workpad`, which is reserved for the persistent Main Agent Workpad.
 - Do not silently overwrite local skills; use the suite installer, show target
   paths, and require confirmation before writing.
 - Keep automatic install-health repair out of this skill; `doctor` should

@@ -231,6 +231,24 @@ Manual Gemini or operator-supplied review notes are wrapped by `review pass` or
 label the inner note as manual evidence so operators can distinguish it from
 automatic `review loop` pass evidence.
 
+Jade Symphony now keeps two separate evidence surfaces:
+
+- the persistent `Main Agent Workpad`, updated in place only by Main
+  implementation work and Main-lane Rework implementation rounds;
+- append-only timeline comments for Review, Rework trigger diagnostics, Merge,
+  Human Review decisions, and Doctor triage or repair records.
+
+Operators should read the issue timeline chronologically for lane decisions and
+use the Main Agent Workpad for current implementation context. Non-Main lanes
+must not overwrite or restructure the Main Agent Workpad. A standalone timeline
+comment should include a human-readable timestamp with timezone, run id, lane,
+actor, input state, target state, PR when relevant, result, and a short evidence
+summary. For operator-authored Human Review notes, write the comment through:
+
+```bash
+cargo run -- project timeline-comment workflows/jade-symphony.md '#<issue>' /path/to/human-review-note.md --write
+```
+
 After a human accepts work and moves the issue to `Merging`, use the guarded
 merge lane:
 

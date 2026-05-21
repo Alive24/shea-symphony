@@ -89,13 +89,19 @@ cargo run -- clean audit workflows/jade-symphony.md
 Use `--display tui` for an opt-in operator panel on `main loop`, `project state`,
 and `doctor`. The default output stays line-oriented for logs and scripts.
 
-`main loop --max-concurrent N` is a supervised planning and claim-locking slice. Dry-run
-mode previews up to `N` eligible main-lane issues after skipping items whose
-`Main Agent` Project field is already owned by another worker. Write mode still
-processes one main work item at a time because the runtime state tracks one
-active issue, but it uses the same lane claim check and stamps `Main Agent`
-before tracker mutation. `main loop`, `review loop`, and `merge once` print
-compact `Latest:` status bars in addition to their detailed line logs.
+`main loop --max-concurrent N` is a supervised planning, claim-locking, and
+runtime-slot boundary. Dry-run mode previews up to `N` eligible main-lane issues
+after skipping items whose `Main Agent` Project field is already owned by
+another worker. Write mode counts active Main runtime entries first, then claims
+and starts up to the remaining capacity in the same bounded loop iteration. The
+runtime-state file is backward-compatible with the old single active issue
+shape, but can now persist multiple active Main worker entries without
+overwriting another issue's session, workspace, retry, or transition evidence.
+`doctor` evaluates those runtime entries per issue so legitimate parallel Main
+workers do not create false `runtime_active_issue_disagrees` warnings while
+still surfacing missing, stale, or conflicting ownership. `main loop`, `review
+loop`, and `merge once` print compact `Latest:` status bars in addition to their
+detailed line logs.
 `main loop --write`, `review loop --write`, and `merge loop --write` also
 enforce a clean canonical launch checkout before the first tracker mutation.
 Tracked dirty files block the lane; recognized untracked

@@ -97,6 +97,18 @@ A subissue may move to `Done` after all of these are true:
 Subissue `Done` means the slice has landed in the parent branch. It does not mean
 the parent work is approved for `main`.
 
+## Parent Execution Gate
+
+Parent issues with native GitHub subissues are not ordinary executable `Todo` or
+`Rework` items. The Main queue, `main loop`, and manual `main claim` path must
+skip or reject the parent until every native subissue has Project status `Done`.
+
+GitHub native sub-issue links define the subissue set dynamically. If a new
+native subissue is added, the parent becomes blocked again until that new
+subissue is also `Done`. GitHub issue `closed` state is useful context but is
+not enough for this gate; Jade Symphony checks Project status so the operator
+lane evidence and merge semantics stay aligned.
+
 ## Parent Human Review Gate
 
 The parent issue remains the final Human Review unit.
@@ -131,6 +143,49 @@ Later doctor checks should flag these examples:
 
 Issue #273 should turn these into doctor invariants. Issue #274 should teach
 lane flows how to use the parent integration branch during live execution.
+
+## Doctor Diagnostics
+
+`doctor` is diagnostic-only for parent/subissue topology. It reads GitHub native
+parent and subissue links as hierarchy authority, then uses parent issue body or
+workpad branch evidence, linked PR base/merge state, and branch-name hints as
+supplemental execution evidence.
+
+Blocker findings cover unsafe execution states:
+
+- native subissue PRs targeting `main` instead of the parent integration branch;
+- missing or ambiguous parent integration branch evidence on a native parent;
+- `Done` subissues without linked PR or workpad evidence showing merge into the
+  parent integration branch;
+- parent issues in `Human Review` before every native subissue is `Done` and
+  merged into the parent integration branch.
+
+Warning findings cover repairable metadata inconsistencies, such as body-only
+parent membership or a subissue PR target that disagrees with the parent branch
+without directly targeting `main`. Doctor does not repair these states, retarget
+PRs, edit native GitHub relationships, move Project statuses, or replace the
+#274 lane-flow work.
+
+## Lane Flow Evidence
+
+Jade Symphony resolves branch targets from GitHub native parent/subissue
+metadata plus durable supplemental evidence. Normal single-issue work still
+targets `main`. A native subissue keeps its per-issue feature branch as the PR
+head and uses the recorded parent integration branch as the PR base. A parent
+issue with native subissues uses the parent integration branch as the parent
+final PR head and `main` as the PR base.
+
+Handoff, workpad, PR body, and merge readback surfaces should record:
+
+- native parent issue, when the issue is a subissue;
+- `parent_integration_branch`;
+- actual PR base branch;
+- parent final PR base branch, when the issue is the parent.
+
+Merge-lane `Done` has topology-specific meaning. A subissue merged into the
+parent integration branch can become `Done` after evidence is recorded. The
+parent issue remains the only final Human Review unit for merging that parent
+branch into `main`.
 
 ## Dry Fixture Verification
 

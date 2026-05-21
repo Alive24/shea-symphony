@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockerRef {
@@ -52,6 +52,13 @@ pub struct TrackerIssue {
     pub updated_at: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeSubissueStatus {
+    pub identifier: String,
+    pub project_state: Option<String>,
+    pub github_state: Option<String>,
+}
+
 impl TrackerIssue {
     pub fn normalized_state(&self) -> String {
         normalize_state(&self.state)
@@ -63,6 +70,172 @@ impl TrackerIssue {
             .map(|label| label.to_lowercase())
             .collect()
     }
+}
+
+pub fn native_subissue_statuses(issue: &TrackerIssue) -> Vec<NativeSubissueStatus> {
+    let mut statuses = Vec::new();
+    if let Some(values) = issue
+        .project_fields
+        .get("GitHub Native Subissues")
+        .and_then(serde_json::Value::as_array)
+    {
+        for value in values {
+            if let Some(identifier) = issue_ref_from_value(value) {
+                push_native_subissue_status(
+                    &mut statuses,
+                    NativeSubissueStatus {
+                        identifier,
+                        project_state: value
+                            .get("project_state")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_string),
+                        github_state: value
+                            .get("state")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_string),
+                    },
+                );
+            }
+        }
+    }
+
+    if let Some(project_states) = issue
+        .project_fields
+        .get("Native Subissue Project States")
+        .and_then(serde_json::Value::as_str)
+    {
+        for (identifier, state) in parse_issue_state_pairs(project_states) {
+            push_native_subissue_status(
+                &mut statuses,
+                NativeSubissueStatus {
+                    identifier,
+                    project_state: Some(state),
+                    github_state: None,
+                },
+            );
+        }
+    }
+
+    if let Some(subissues) = issue
+        .project_fields
+        .get("Native Subissues")
+        .and_then(serde_json::Value::as_str)
+    {
+        for identifier in subissues
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            push_native_subissue_status(
+                &mut statuses,
+                NativeSubissueStatus {
+                    identifier: identifier.to_string(),
+                    project_state: None,
+                    github_state: None,
+                },
+            );
+        }
+    }
+
+    statuses
+}
+
+pub fn incomplete_native_subissues(
+    issue: &TrackerIssue,
+    terminal_states: &BTreeSet<String>,
+) -> Vec<NativeSubissueStatus> {
+    native_subissue_statuses(issue)
+        .into_iter()
+        .filter(|subissue| {
+            subissue
+                .project_state
+                .as_deref()
+                .map(normalize_state)
+                .map(|state| !terminal_states.contains(&state))
+                .unwrap_or(true)
+        })
+        .collect()
+}
+
+pub fn native_subissue_gate_blocker(
+    issue: &TrackerIssue,
+    terminal_states: &BTreeSet<String>,
+) -> Option<String> {
+    let incomplete = incomplete_native_subissues(issue, terminal_states);
+    if incomplete.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "blocked by incomplete native subissues: {}",
+        incomplete
+            .iter()
+            .map(|subissue| {
+                let state = subissue
+                    .project_state
+                    .as_deref()
+                    .unwrap_or("missing Project status");
+                format!("{}={state}", subissue.identifier)
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
+}
+
+fn push_native_subissue_status(
+    statuses: &mut Vec<NativeSubissueStatus>,
+    mut candidate: NativeSubissueStatus,
+) {
+    if let Some(existing) = statuses
+        .iter_mut()
+        .find(|status| issue_refs_match(&status.identifier, &candidate.identifier))
+    {
+        if existing.project_state.is_none() {
+            existing.project_state = candidate.project_state.take();
+        }
+        if existing.github_state.is_none() {
+            existing.github_state = candidate.github_state.take();
+        }
+        return;
+    }
+    statuses.push(candidate);
+}
+
+fn issue_ref_from_value(value: &serde_json::Value) -> Option<String> {
+    value
+        .get("identifier")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .or_else(|| value.as_str().map(str::to_string))
+        .or_else(|| {
+            value
+                .get("number")
+                .and_then(serde_json::Value::as_u64)
+                .map(|number| format!("#{number}"))
+        })
+}
+
+fn parse_issue_state_pairs(raw: &str) -> Vec<(String, String)> {
+    raw.split(',')
+        .filter_map(|pair| {
+            let (issue_ref, state) = pair.trim().split_once('=')?;
+            let issue_ref = issue_ref.trim();
+            let state = state.trim();
+            if issue_ref.is_empty() || state.is_empty() {
+                None
+            } else {
+                Some((issue_ref.to_string(), state.to_string()))
+            }
+        })
+        .collect()
+}
+
+fn issue_refs_match(left: &str, right: &str) -> bool {
+    normalize_issue_ref(left) == normalize_issue_ref(right)
+}
+
+fn normalize_issue_ref(value: &str) -> String {
+    value.trim().trim_start_matches('#').to_string()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -93,7 +93,7 @@ failure. Gemini absence is a blocker only when `--require-gemini` is used.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `main once` | Execute one selected issue through the configured backend. | Fixture-safe by default when the workflow has `tracker.fixture_path`. |
-| `main loop` | Poll/select/claim/run/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; tmux sessions stay active instead of auto-handing off; Agent Review handoff requires a verified Project-visible, ready, non-draft PR. |
+| `main loop` | Poll/select/claim/run/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; tmux sessions stay active instead of auto-handing off; Agent Review handoff requires a verified Project-visible, ready, non-draft PR; native subissue PRs target the parent integration branch when topology evidence is present; parent issues with native subissues are skipped until every native subissue has Project status `Done`. |
 
 Examples:
 
@@ -145,6 +145,12 @@ cargo run -- main claim workflows/jade-symphony.md '#265' --worker codex-manual-
 cargo run -- review claim workflows/jade-symphony.md '#265' --worker "Manual Gemini Review" --write
 cargo run -- merge claim workflows/jade-symphony.md '#265' --worker codex-manual-merge --write
 ```
+
+For parent tracking issues with native GitHub subissues, `main claim` uses the
+same execution gate as `main loop`: it rejects `Todo` or `Rework` parents while
+any native subissue is missing from the Project read or has a non-`Done` Project
+status. This is independent from tracker blocker relationships so native
+subissue changes cannot silently bypass parent dispatch safety.
 
 Live write-mode claim, session, and lane loop commands refuse to run unless the
 canonical checkout is attached to `main` and exactly matches `origin/main` after
@@ -232,6 +238,13 @@ issue workpad. `workspace adopt` is only
 for an operator-selected existing worktree; it must not be used as a shortcut
 for `gh pr checkout` in the canonical checkout. `doctor` warns when multiple
 strong candidates exist for one active issue.
+
+For native parent/subissue flows, `doctor` also checks the read-only integration
+branch topology from GitHub native parent/subissue links plus Jade-owned branch
+and merge evidence. It reports blockers for subissue PRs targeting `main`,
+missing or ambiguous parent integration branch evidence, `Done` subissues
+without parent-branch merge evidence, and parent `Human Review` before native
+subissues are complete.
 
 ## Tracker Writes
 
@@ -480,7 +493,7 @@ Doctor lanes.
 
 | Command | Purpose | Boundary |
 | --- | --- | --- |
-| `merge once` | Inspect one `Merging` issue, verify a single linked PR, and either merge, safely refresh a stale branch, attempt safe conflict repair, or route blockers. | Live merge requires explicit `--write`; fixture workflows synthesize merge or conflict-repair command evidence without touching GitHub. `BEHIND` PRs are updated with `gh pr update-branch` and left in `Merging` for retry, transient `UNKNOWN` mergeability stays in `Merging`, `DIRTY` PRs first try a clean local PR-worktree repair when available, and unrepaired dirty/failing blockers route to `Need Human Input` with a concrete question instead of defaulting to `Rework`. |
+| `merge once` | Inspect one `Merging` issue, verify a single linked PR, and either merge, safely refresh a stale branch, attempt safe conflict repair, or route blockers. | Live merge requires explicit `--write`; fixture workflows synthesize merge or conflict-repair command evidence without touching GitHub. Native subissues expect the parent integration branch as the PR base; parent final PRs expect `main`. `BEHIND` PRs are updated with `gh pr update-branch` and left in `Merging` for retry, transient `UNKNOWN` mergeability stays in `Merging`, `DIRTY` PRs first try a clean local PR-worktree repair when available, and unrepaired dirty/failing blockers route to `Need Human Input` with a concrete question instead of defaulting to `Rework`. |
 
 Examples:
 

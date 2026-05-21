@@ -52,6 +52,7 @@ pub enum BranchTargetRole {
 pub struct ReworkContinuationEvidence {
     pub pull_request_url: String,
     pub pull_request_state: String,
+    pub branch_name: Option<String>,
     pub source: String,
 }
 
@@ -65,6 +66,8 @@ pub struct AgentReviewHandoffEvidence {
     pub pull_request_url: Option<String>,
     pub project_pr_link_verified: Option<bool>,
     pub pull_request_is_draft: Option<bool>,
+    pub main_workpad_has_plan: Option<bool>,
+    pub main_workpad_has_work_log: Option<bool>,
     pub validation_summary: String,
     pub last_transition: String,
     pub no_pr_blocker: Option<String>,
@@ -140,10 +143,23 @@ impl AgentReviewHandoffEvidence {
             pull_request_url: None,
             project_pr_link_verified: None,
             pull_request_is_draft: None,
+            main_workpad_has_plan: None,
+            main_workpad_has_work_log: None,
             validation_summary: validation_summary.into(),
             last_transition: last_transition.into(),
             no_pr_blocker: None,
         }
+    }
+
+    pub fn record_main_workpad_markdown(&mut self, markdown: Option<&str>) {
+        let Some(markdown) = markdown else {
+            self.main_workpad_has_plan = Some(false);
+            self.main_workpad_has_work_log = Some(false);
+            return;
+        };
+
+        self.main_workpad_has_plan = Some(markdown_has_heading(markdown, "### Plan"));
+        self.main_workpad_has_work_log = Some(markdown_has_heading(markdown, "### Work Log"));
     }
 }
 
@@ -166,6 +182,16 @@ pub fn evaluate_agent_review_handoff(
     }
     if evidence.last_transition.trim().is_empty() {
         missing.push("last transition".into());
+    }
+    match evidence.main_workpad_has_plan {
+        Some(true) => {}
+        Some(false) => missing.push("Main Workpad `### Plan`".into()),
+        None => missing.push("Main Workpad `### Plan` evidence".into()),
+    }
+    match evidence.main_workpad_has_work_log {
+        Some(true) => {}
+        Some(false) => missing.push("Main Workpad `### Work Log`".into()),
+        None => missing.push("Main Workpad `### Work Log` evidence".into()),
     }
 
     let has_pr = evidence
@@ -199,6 +225,8 @@ pub fn evaluate_agent_review_handoff(
         && has_pr
         && evidence.project_pr_link_verified == Some(true)
         && evidence.pull_request_is_draft == Some(false)
+        && evidence.main_workpad_has_plan == Some(true)
+        && evidence.main_workpad_has_work_log == Some(true)
     {
         AgentReviewHandoffReport {
             status: AgentReviewHandoffStatus::Ready,
@@ -260,6 +288,20 @@ pub fn render_agent_review_handoff_workpad(
                 .map(|is_draft| is_draft.to_string())
                 .unwrap_or_else(|| "unknown".into())
         ),
+        format!(
+            "- Main Workpad has `### Plan`: `{}`",
+            evidence
+                .main_workpad_has_plan
+                .map(|present| present.to_string())
+                .unwrap_or_else(|| "unknown".into())
+        ),
+        format!(
+            "- Main Workpad has `### Work Log`: `{}`",
+            evidence
+                .main_workpad_has_work_log
+                .map(|present| present.to_string())
+                .unwrap_or_else(|| "unknown".into())
+        ),
         format!("- Validation: {}", evidence.validation_summary),
         format!("- Last transition: {}", evidence.last_transition),
     ];
@@ -297,6 +339,16 @@ pub fn render_agent_review_handoff_workpad(
     lines.join("\n")
 }
 
+fn markdown_has_heading(markdown: &str, heading: &str) -> bool {
+    markdown.lines().any(|line| {
+        let trimmed = line.trim();
+        trimmed == heading
+            || trimmed
+                .strip_prefix(heading)
+                .is_some_and(|rest| rest.starts_with(' '))
+    })
+}
+
 pub fn plan_issue_handoff(
     workspace_root: &Path,
     issue: &TrackerIssue,
@@ -320,12 +372,20 @@ pub fn plan_issue_handoff_for_profile(
     let branch_target = branch_target_evidence(issue, base_branch);
     let branch_name = match issue.branch_name.as_deref() {
         Some(existing_branch) if is_rework => existing_branch.to_string(),
-        None if let Some(continuation) = &continuation => {
-            return Err(HandoffError::MissingReworkContinuationBranch {
+        None if let Some(continuation) = &continuation => continuation
+            .branch_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|branch_name| !branch_name.is_empty())
+            .map(|branch_name| {
+                guard_branch_for_issue(branch_name, &issue.identifier)?;
+                Ok::<_, HandoffError>(branch_name.to_string())
+            })
+            .transpose()?
+            .ok_or_else(|| HandoffError::MissingReworkContinuationBranch {
                 issue_ref: issue.identifier.clone(),
                 pull_request_url: continuation.pull_request_url.clone(),
-            });
-        }
+            })?,
         _ if branch_target.role == BranchTargetRole::ParentIssue => branch_target
             .parent_integration_branch
             .clone()
@@ -485,13 +545,25 @@ fn rework_continuation_evidence(
         }
         1 => {
             let pull_request = open.remove(0);
+            let branch_name = pull_request
+                .head_ref_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|branch_name| !branch_name.is_empty())
+                .map(ToOwned::to_owned);
+            let source = if branch_name.is_some() {
+                "linked_pull_request_head_ref"
+            } else {
+                "linked_pull_request"
+            };
             Ok(Some(ReworkContinuationEvidence {
                 pull_request_url: pull_request_url(pull_request),
                 pull_request_state: pull_request
                     .state
                     .clone()
                     .unwrap_or_else(|| "unknown".into()),
-                source: "linked_pull_request".into(),
+                branch_name,
+                source: source.into(),
             }))
         }
         _ => Err(HandoffError::AmbiguousReworkContinuation {
@@ -766,6 +838,13 @@ mod tests {
         }
     }
 
+    fn linked_pr_with_head(number: u64, state: &str, head_ref_name: &str) -> LinkedPullRequest {
+        LinkedPullRequest {
+            head_ref_name: Some(head_ref_name.into()),
+            ..linked_pr(number, state)
+        }
+    }
+
     #[test]
     fn creates_deterministic_workspace_and_branch_plan() {
         let plan = plan_issue_handoff(Path::new("/tmp/jade-workspaces"), &issue(), "main").unwrap();
@@ -935,6 +1014,55 @@ mod tests {
     }
 
     #[test]
+    fn reuses_linked_pull_request_head_branch_for_rework_continuation() {
+        let mut issue = issue();
+        issue.state = "Rework".into();
+        issue.linked_pull_requests = vec![linked_pr_with_head(
+            45,
+            "OPEN",
+            "feature/issue-21-existing-work",
+        )];
+
+        let plan = plan_issue_handoff(Path::new("/tmp/workspaces"), &issue, "main").unwrap();
+
+        assert_eq!(plan.branch_name, "feature/issue-21-existing-work");
+        assert_eq!(
+            plan.pull_request.head_branch,
+            "feature/issue-21-existing-work"
+        );
+        assert_eq!(
+            plan.continuation
+                .as_ref()
+                .and_then(|continuation| continuation.branch_name.as_deref()),
+            Some("feature/issue-21-existing-work")
+        );
+        assert_eq!(
+            plan.continuation
+                .as_ref()
+                .map(|continuation| continuation.source.as_str()),
+            Some("linked_pull_request_head_ref")
+        );
+    }
+
+    #[test]
+    fn rejects_rework_linked_pull_request_head_for_different_issue() {
+        let mut issue = issue();
+        issue.state = "Rework".into();
+        issue.linked_pull_requests = vec![linked_pr_with_head(45, "OPEN", "feature/issue-20-auth")];
+
+        let err = plan_issue_handoff(Path::new("/tmp/workspaces"), &issue, "main").unwrap_err();
+
+        assert_eq!(
+            err,
+            HandoffError::BranchIssueMismatch {
+                branch_name: "feature/issue-20-auth".into(),
+                expected_issue: "21".into(),
+                found_issue: "20".into(),
+            }
+        );
+    }
+
+    #[test]
     fn blocks_rework_with_multiple_open_pull_requests() {
         let mut issue = issue();
         issue.state = "Rework".into();
@@ -1022,6 +1150,9 @@ mod tests {
         evidence.pull_request_url = Some("https://github.com/Alive24/jade-symphony/pull/21".into());
         evidence.project_pr_link_verified = Some(true);
         evidence.pull_request_is_draft = Some(false);
+        evidence.record_main_workpad_markdown(Some(
+            "## Jade Symphony Workpad\n\n### Plan\n\n### Work Log",
+        ));
 
         let report = evaluate_agent_review_handoff(&evidence);
 
@@ -1036,6 +1167,9 @@ mod tests {
             AgentReviewHandoffEvidence::from_plan(&plan, "cargo test passed", "completed");
         evidence.pull_request_url = Some("https://github.com/Alive24/jade-symphony/pull/21".into());
         evidence.pull_request_is_draft = Some(false);
+        evidence.record_main_workpad_markdown(Some(
+            "## Jade Symphony Workpad\n\n### Plan\n\n### Work Log",
+        ));
 
         let report = evaluate_agent_review_handoff(&evidence);
 
@@ -1053,6 +1187,9 @@ mod tests {
         evidence.pull_request_url = Some("https://github.com/Alive24/jade-symphony/pull/21".into());
         evidence.project_pr_link_verified = Some(true);
         evidence.pull_request_is_draft = Some(true);
+        evidence.record_main_workpad_markdown(Some(
+            "## Jade Symphony Workpad\n\n### Plan\n\n### Work Log",
+        ));
 
         let report = evaluate_agent_review_handoff(&evidence);
 
@@ -1067,6 +1204,9 @@ mod tests {
             AgentReviewHandoffEvidence::from_plan(&plan, "cargo test passed", "completed");
         evidence.pull_request_url = Some("https://github.com/Alive24/jade-symphony/pull/21".into());
         evidence.project_pr_link_verified = Some(true);
+        evidence.record_main_workpad_markdown(Some(
+            "## Jade Symphony Workpad\n\n### Plan\n\n### Work Log",
+        ));
 
         let report = evaluate_agent_review_handoff(&evidence);
 

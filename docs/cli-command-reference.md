@@ -93,7 +93,7 @@ failure. Gemini absence is a blocker only when `--require-gemini` is used.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `main once` | Execute one selected issue through the configured backend. | Fixture-safe by default when the workflow has `tracker.fixture_path`. |
-| `main loop` | Poll/select/claim/run/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; tmux sessions stay active instead of auto-handing off; Agent Review handoff requires a verified Project-visible, ready, non-draft PR; native subissue PRs target the parent integration branch when topology evidence is present; parent issues with native subissues are skipped until every native subissue has Project status `Done`. |
+| `main loop` | Poll/select/claim/run/reconcile/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; tmux sessions stay active until a later loop observes terminal evidence; Agent Review handoff requires a verified Project-visible, ready, non-draft PR; native subissue PRs target the parent integration branch when topology evidence is present; parent issues with native subissues are skipped until every native subissue has Project status `Done`. |
 
 Examples:
 
@@ -119,7 +119,9 @@ shape, but can now persist multiple active Main worker entries without
 overwriting another issue's session, workspace, retry, or transition evidence.
 `doctor` evaluates those runtime entries per issue so legitimate parallel Main
 workers do not create false `runtime_active_issue_disagrees` warnings while
-still surfacing missing, stale, or conflicting ownership. `main loop`, `review
+still surfacing missing, stale, or conflicting ownership. Planned claimable work
+is reported separately from real active sessions; a Todo candidate is not
+`running` until a backend session or runtime record exists. `main loop`, `review
 loop`, and `merge once` print compact `Latest:` status bars in addition to their
 detailed line logs.
 `main loop --write`, `review loop --write`, and `merge loop --write` also
@@ -170,7 +172,13 @@ branch, attach command, prompt artifact, actor, lane, attempt, and running
 status in a durable session registry under the configured artifact root. The
 registry is terminal-session evidence only; tracker state remains the issue
 lifecycle source of truth. The issue stays in the active main lane until later
-completion evidence satisfies the existing handoff rules. If an operator
+completion evidence satisfies the existing handoff rules. On later ticks,
+`main loop --write` probes the runtime state's recorded session through the
+session registry plus bounded tmux pane/log evidence before launching anything
+new. Completed sessions continue through verification, PR publication,
+linked-PR readback, PR readiness, and `Agent Review` handoff; active, waiting,
+unknown, or missing-registry sessions are preserved without launching a
+duplicate Main Agent. If an operator
 overrides the workflow back to `main_lane.backend: dry-run`, `main loop --write`
 exits non-zero before loading runtime state, creating worktrees, claiming
 Project fields, or writing workpads.

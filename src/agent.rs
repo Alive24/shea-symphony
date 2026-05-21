@@ -660,31 +660,55 @@ fn run_tmux_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError
         }
     }
 
-    for (action, mut command) in [
-        ("load-buffer", {
-            let mut command = Command::new(&tmux);
-            command
-                .envs(prepared.env.iter())
-                .args(["load-buffer", "-b", target])
-                .arg(&prompt_artifact_path);
-            command
-        }),
-        ("paste-buffer", {
-            let mut command = Command::new(&tmux);
-            command
-                .envs(prepared.env.iter())
-                .args(["paste-buffer", "-b", target, "-t", target]);
-            command
-        }),
-        ("send-keys", {
-            let mut command = Command::new(&tmux);
-            command
-                .envs(prepared.env.iter())
-                .args(["send-keys", "-t", target, "C-m"]);
-            command
-        }),
-    ] {
-        if let Err(error) = tmux_command_status(&mut command, action) {
+    let mut load_buffer = Command::new(&tmux);
+    load_buffer
+        .envs(prepared.env.iter())
+        .args(["load-buffer", "-b", target])
+        .arg(&prompt_artifact_path);
+    if let Err(error) = tmux_command_status(&mut load_buffer, "load-buffer") {
+        events.push(AgentEvent::Failed {
+            backend: prepared.backend,
+            error,
+        });
+        return Ok(events);
+    }
+
+    let mut paste_buffer = Command::new(&tmux);
+    paste_buffer
+        .envs(prepared.env.iter())
+        .args(["paste-buffer", "-b", target, "-t", target]);
+    if let Err(error) = tmux_command_status(&mut paste_buffer, "paste-buffer") {
+        events.push(AgentEvent::Failed {
+            backend: prepared.backend,
+            error,
+        });
+        return Ok(events);
+    }
+
+    thread::sleep(Duration::from_millis(tmux_prompt_submit_delay_ms(
+        &prepared,
+    )));
+
+    let mut send_enter = Command::new(&tmux);
+    send_enter
+        .envs(prepared.env.iter())
+        .args(["send-keys", "-t", target, "C-m"]);
+    if let Err(error) = tmux_command_status(&mut send_enter, "send-keys") {
+        events.push(AgentEvent::Failed {
+            backend: prepared.backend,
+            error,
+        });
+        return Ok(events);
+    }
+
+    if is_codex_tmux_agent_command(agent_command)
+        && codex_prompt_still_waiting_after_submit(&prepared, &tmux, target)
+    {
+        let mut send_enter = Command::new(&tmux);
+        send_enter
+            .envs(prepared.env.iter())
+            .args(["send-keys", "-t", target, "C-m"]);
+        if let Err(error) = tmux_command_status(&mut send_enter, "send-keys retry") {
             events.push(AgentEvent::Failed {
                 backend: prepared.backend,
                 error,
@@ -729,6 +753,35 @@ fn tmux_command_output(command: &mut Command, action: &str) -> Result<String, St
         )),
         Err(error) => Err(format!("tmux {action} failed: {error}")),
     }
+}
+
+fn tmux_prompt_submit_delay_ms(prepared: &PreparedRun) -> u64 {
+    prepared
+        .env
+        .get("JADE_SYMPHONY_TMUX_PROMPT_SUBMIT_DELAY_MS")
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(200)
+}
+
+fn codex_prompt_still_waiting_after_submit(
+    prepared: &PreparedRun,
+    tmux: &str,
+    target: &str,
+) -> bool {
+    thread::sleep(Duration::from_millis(250));
+    let Ok(capture) = capture_tmux_pane(prepared, tmux, target, DEFAULT_TMUX_CAPTURE_LINES) else {
+        return false;
+    };
+    codex_pasted_content_waiting_for_submit(&capture)
+}
+
+fn codex_pasted_content_waiting_for_submit(text: &str) -> bool {
+    let normalized = normalized_pane_text(text);
+    normalized.contains("› [pasted content")
+        && !normalized.contains("working")
+        && !normalized.contains("thinking")
+        && !normalized.contains("explored")
+        && !normalized.contains("ran ")
 }
 
 fn wait_for_codex_tmux_readiness(
@@ -1312,6 +1365,16 @@ mod tests {
         assert!(codex_viewport_ready("Codex\n› ready"));
         assert!(!codex_viewport_ready(
             "Codex\nDo you trust the contents of this directory?"
+        ));
+    }
+
+    #[test]
+    fn detects_codex_pasted_prompt_still_waiting_for_submit() {
+        assert!(codex_pasted_content_waiting_for_submit(
+            "╭ OpenAI Codex ╮\n\n› [Pasted Content 24237 chars]\n"
+        ));
+        assert!(!codex_pasted_content_waiting_for_submit(
+            "› [Pasted Content 24237 chars]\n\n• Working (18s • esc to interrupt)"
         ));
     }
 

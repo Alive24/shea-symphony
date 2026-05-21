@@ -29,15 +29,18 @@ Gemini-backed `review loop` uses the headless CLI path by default: it writes the
 Review prompt through stdin, requests JSON output, applies configured model and
 interim allowed-tools settings, and records stdout/stderr/job evidence for the
 review handoff.
-Manual tmux recovery is a two-step path. Use `main claim`, `review claim`, or
-`merge claim` to write the matching Project claim field, print the structured
-`run=`, and record minimum non-tmux registry evidence for the manual Codex App
-claim. Worker labels may be human-readable display labels with spaces; claim
-commands quote and validate those values before Project writes. Then use
-`session start --lane ... --run ...` to render the lane prompt and start the
-tmux runtime when a supervised terminal is needed. Session commands validate the
-existing claim and write attach/log evidence without approving reviews, merging
-PRs, or closing issues.
+Main-lane crash recovery should normally use `main loop --recover` on a bounded
+write tick. It restarts recoverable interrupted `In Progress` tmux runtime slots
+as new attempts while preserving issue state, dirty worktrees, and existing
+claim evidence. Manual tmux recovery remains a two-step break-glass path: use
+`main claim`, `review claim`, or `merge claim` to write the matching Project
+claim field, print the structured `run=`, and record minimum non-tmux registry
+evidence for the manual Codex App claim. Worker labels may be human-readable
+display labels with spaces; claim commands quote and validate those values
+before Project writes. Then use `session start --lane ... --run ...` to render
+the lane prompt and start the tmux runtime when a supervised terminal is needed.
+Session commands validate the existing claim and write attach/log evidence
+without approving reviews, merging PRs, or closing issues.
 
 Lane prompt files:
 

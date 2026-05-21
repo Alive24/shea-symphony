@@ -112,7 +112,7 @@ failure. Gemini absence is a blocker only when `--require-gemini` is used.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `main once` | Execute one selected issue through the configured backend. | Fixture-safe by default when the workflow has `tracker.fixture_path`. |
-| `main loop` | Poll/select/claim/run/reconcile/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; tmux sessions stay active until a later loop observes terminal evidence; Agent Review handoff requires a verified Project-visible, ready, non-draft PR; native subissue PRs target the parent integration branch when topology evidence is present; parent issues with native subissues are skipped until every native subissue has Project status `Done`. |
+| `main loop` | Poll/select/claim/run/reconcile/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; tmux sessions stay active until a later loop observes terminal evidence; `--recover` may restart interrupted Main tmux runtime slots without changing issue state; Agent Review handoff requires a verified Project-visible, ready, non-draft PR; native subissue PRs target the parent integration branch when topology evidence is present; parent issues with native subissues are skipped until every native subissue has Project status `Done`. |
 
 Examples:
 
@@ -121,6 +121,7 @@ cargo run -- main once examples/dry-run-workflow.md
 cargo run -- main loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
 cargo run -- main loop examples/dry-run-workflow.md --max-iterations 1 --dry-run --display tui
 cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
+cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 3 --write --recover
 cargo run -- clean plan workflows/jade-symphony.md
 cargo run -- clean audit workflows/jade-symphony.md
 ```
@@ -136,6 +137,13 @@ and starts up to the remaining capacity in the same bounded loop iteration. The
 runtime-state file is backward-compatible with the old single active issue
 shape, but can now persist multiple active Main worker entries without
 overwriting another issue's session, workspace, retry, or transition evidence.
+`main loop --recover` is the standard crash-recovery path for interrupted Main
+tmux runtime slots. It treats stalled runtime entries, missing session-registry
+records, and unavailable tmux panes as recoverable capacity instead of blocking
+the lane, then restarts the same `In Progress` issue as a new attempt while
+preserving the existing issue state, claim, workspace, dirty local changes, and
+runtime evidence. It does not route through `Rework` and does not advance to
+`Agent Review`; normal handoff still requires a later successful Main result.
 `doctor` evaluates those runtime entries per issue so legitimate parallel Main
 workers do not create false `runtime_active_issue_disagrees` warnings while
 still surfacing missing, stale, or conflicting ownership. Planned claimable work
@@ -197,7 +205,8 @@ session registry plus bounded tmux pane/log evidence before launching anything
 new. Completed sessions continue through verification, PR publication,
 linked-PR readback, PR readiness, and `Agent Review` handoff; active, waiting,
 unknown, or missing-registry sessions are preserved without launching a
-duplicate Main Agent. If an operator
+duplicate Main Agent unless `--recover` is present and the session is classified
+as interrupted or unavailable. If an operator
 overrides the workflow back to `main_lane.backend: dry-run`, `main loop --write`
 exits non-zero before loading runtime state, creating worktrees, claiming
 Project fields, or writing workpads.

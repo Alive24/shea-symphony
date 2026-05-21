@@ -490,8 +490,8 @@ pub fn tail_lines(text: &str, max_lines: usize) -> String {
 pub fn compact_session_evidence(text: &str) -> String {
     let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
     const MAX_LEN: usize = 180;
-    if compact.len() > MAX_LEN {
-        format!("{}...", &compact[..MAX_LEN])
+    if compact.chars().count() > MAX_LEN {
+        format!("{}...", compact.chars().take(MAX_LEN).collect::<String>())
     } else {
         compact
     }
@@ -763,6 +763,15 @@ mod tests {
     #[test]
     fn tails_bounded_log_lines() {
         assert_eq!(tail_lines("one\ntwo\nthree\nfour", 2), "three\nfour");
+    }
+
+    #[test]
+    fn compact_session_evidence_truncates_on_char_boundary() {
+        let text = format!("{} auto-approval", "─".repeat(200));
+        let evidence = compact_session_evidence(&text);
+
+        assert!(evidence.ends_with("..."));
+        assert!(evidence.is_char_boundary(evidence.len()));
     }
 
     #[test]

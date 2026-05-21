@@ -35,6 +35,23 @@ Validate active local copies against the repo-owned suite:
 node scripts/install-jade-symphony-skills.js --validate
 ```
 
+Before installing or starting a skill-dependent session, inspect readiness
+without writing local skill roots:
+
+```bash
+cargo run -- skills status workflows/jade-symphony.md
+cargo run -- skills status workflows/jade-symphony.md --json
+cargo run -- skills status workflows/jade-symphony.md --session-skills "jade-symphony-manual-main,jade-symphony-doctor"
+```
+
+`skills status` treats this suite as the expected source, then compares Codex
+and Gemini local installs, rendered metadata, symlink or alias shape, and
+optional current-session skill visibility. Source suite discovery is
+`--suite-path`, `JADE_SYMPHONY_SKILL_SUITE`, current repo
+`skills/jade-symphony/suite`, then installed-only mode. Missing session input is
+reported as `unknown`, not as a failure. Gemini is optional unless the operator
+passes `--require-gemini` or otherwise configures a Gemini skill root.
+
 The installer detects:
 
 - Codex target from `CODEX_HOME/skills`, then `$HOME/.codex/skills`.

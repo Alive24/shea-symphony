@@ -153,6 +153,12 @@ pub struct ReviewJobLedgerRecord {
     pub worker_key: String,
     pub backend: String,
     pub state: ReviewJobState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at_ms: Option<u64>,
     pub artifact_path: Option<PathBuf>,
     pub ledger_path: PathBuf,
     pub decision_outcome: ReviewOutcome,
@@ -1035,12 +1041,15 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
             ("issue_title", issue.title.clone()),
             ("worker_key", review_worker_key(issue, &job.backend)),
             ("reviewer_backend", job.backend.clone()),
+            ("run_id", job.id.clone()),
             ("job_state", format!("{:?}", job.state)),
             ("decision", decision.message),
             (
                 "target_state",
                 decision.target_state.unwrap_or("none").to_string(),
             ),
+            ("result", format!("{:?}", decision.outcome)),
+            ("pr_line", review_pr_line(issue)),
             (
                 "artifact_line",
                 job.artifact_path
@@ -1055,6 +1064,7 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
                     .map(|path| format!("- Review job ledger: `{}`", path.display()))
                     .unwrap_or_else(|| "- Review job ledger: `not recorded`".into()),
             ),
+            ("evidence_summary", review_evidence_summary(job)),
             ("job_id", job.id.clone()),
             ("attempt_details", attempt_details.join("\n")),
             ("operator_action_section", operator_action_section),
@@ -1067,6 +1077,41 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
             ("pass_evidence_section", pass_evidence_section),
         ],
     )
+}
+
+fn review_pr_line(issue: &TrackerIssue) -> String {
+    let pr = issue
+        .linked_pull_requests
+        .iter()
+        .find_map(
+            |pull_request| match (pull_request.number, pull_request.url.as_deref()) {
+                (Some(number), Some(url)) => Some(format!("#{number} {url}")),
+                (Some(number), None) => Some(format!("#{number}")),
+                (None, Some(url)) => Some(url.to_string()),
+                (None, None) => None,
+            },
+        )
+        .unwrap_or_else(|| "not recorded".into());
+    format!("- PR: `{pr}`")
+}
+
+fn review_evidence_summary(job: &ReviewJob) -> String {
+    let finding_count = job
+        .report
+        .as_ref()
+        .map(|report| report.findings.len())
+        .unwrap_or_default();
+    let artifact = if job.artifact_path.is_some() {
+        "artifact recorded"
+    } else {
+        "artifact not recorded"
+    };
+    let ledger = if job.ledger_path.is_some() {
+        "ledger recorded"
+    } else {
+        "ledger not recorded"
+    };
+    format!("{finding_count} parsed finding(s); {artifact}; {ledger}.")
 }
 
 fn render_parsed_findings_section(
@@ -1337,6 +1382,9 @@ pub fn review_job_ledger_record(
         worker_key: review_worker_key(issue, &job.backend),
         backend: job.backend.clone(),
         state: job.state.clone(),
+        pid: None,
+        started_at_ms: None,
+        updated_at_ms: None,
         artifact_path: job.artifact_path.clone(),
         ledger_path,
         decision_outcome: decision.outcome,
@@ -2409,7 +2457,16 @@ mod tests {
 
         assert!(body.contains("Generated at: `"));
         assert!(body.contains("GMT`"));
+        assert!(body.contains("## Jade Symphony Agent Review Run"));
+        assert!(body.contains("- Lane: `review`"));
+        assert!(body.contains("- Actor role: `review_agent`"));
+        assert!(body.contains("- Run ID: `gemini-1`"));
+        assert!(body.contains("- PR: `https://github.com/Alive24/jade-symphony/pull/1`"));
         assert!(body.contains("Target state after review routing: `human_review`"));
+        assert!(body.contains("- Result: `PassedToHumanReview`"));
+        assert!(body.contains(
+            "- Evidence summary: 0 parsed finding(s); artifact recorded; ledger recorded."
+        ));
         assert!(body.contains("### Review Response"));
         assert!(body.contains("Agent note body."));
         assert!(body.contains("### Stdout"));

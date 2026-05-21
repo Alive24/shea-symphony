@@ -34,6 +34,8 @@ pub struct ProjectAuditReport {
     pub violations: Vec<ProjectAuditViolation>,
     #[serde(default)]
     pub integration_gaps: Vec<String>,
+    #[serde(default)]
+    pub skill_readiness_summary: Option<String>,
 }
 
 impl ProjectAuditReport {
@@ -52,6 +54,7 @@ impl ProjectAuditReport {
 #[derive(Debug, Clone)]
 pub struct ProjectDoctorContext {
     pub runtime_state: Option<RuntimeState>,
+    pub runtime_states: Vec<RuntimeState>,
     pub sessions: Vec<SessionStatusSnapshot>,
     pub now_ms: u64,
     pub stale_after_ms: u64,
@@ -629,6 +632,7 @@ pub fn audit_project_issues_with_context(
         total_issues: issues.len(),
         violations,
         integration_gaps: Vec::new(),
+        skill_readiness_summary: None,
     }
 }
 
@@ -644,7 +648,15 @@ pub fn render_doctor_repair_workpad(
         format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", issue.identifier, issue.title),
         "- Lane: `doctor`".to_string(),
-        format!("- Current state: `{}`", issue.state),
+        "- Actor role: `doctor`".to_string(),
+        "- Actor: `jade-symphony doctor`".to_string(),
+        "- Run ID: `doctor-repair`".to_string(),
+        format!("- Input state: `{}`", issue.state),
+        format!(
+            "- Target state after repair: `{}`",
+            doctor_target_state(action)
+        ),
+        format!("- Result: `{}`", doctor_result(action)),
         format!("- Requested action: `{action}`"),
     ];
 
@@ -657,7 +669,13 @@ pub fn render_doctor_repair_workpad(
     if has_pr_url(issue) {
         let targets = reliable_pr_targets(issue).join(", ");
         lines.push(format!("- PR evidence: `{targets}`"));
+    } else {
+        lines.push("- PR evidence: `not recorded`".into());
     }
+    lines.push(format!(
+        "- Evidence summary: {} issue-specific doctor finding(s) captured before repair.",
+        related.len()
+    ));
 
     lines.extend([String::new(), "### Doctor Findings".to_string()]);
     if related.is_empty() {
@@ -687,6 +705,9 @@ pub fn render_project_audit_report(report: &ProjectAuditReport) -> String {
         format!("violations={}", report.violations.len()),
         format!("blockers={}", report.blocker_count()),
     ];
+    if let Some(summary) = &report.skill_readiness_summary {
+        lines.push(format!("skill_readiness_summary={summary}"));
+    }
 
     if report.is_clean() {
         lines.push("summary=Project invariants look clean.".into());
@@ -741,16 +762,40 @@ pub fn render_human_review_repair_workpad(violation: &ProjectAuditViolation) -> 
         format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", violation.issue_ref, violation.title),
         "- Lane: `doctor`".into(),
+        "- Actor role: `doctor`".into(),
+        "- Actor: `jade-symphony doctor`".into(),
+        "- Run ID: `doctor-human-review-repair`".into(),
+        format!("- Input state: `{}`", violation.state),
+        "- Target state after repair: `Agent Review`".into(),
+        "- Result: `repair_recorded`".into(),
+        "- PR evidence: `not recorded`".into(),
         format!("- Violation: `{}`", violation.code),
         format!("- Previous state: `{}`", violation.state),
         format!("- Message: {}", violation.message),
         format!("- Repair: {}", violation.suggestion),
+        "- Evidence summary: invalid Human Review boundary repair evidence recorded before tracker mutation.".to_string(),
         String::new(),
         "### State Boundary".to_string(),
         "- Main implementation agent is moving this issue back to `Agent Review`.".to_string(),
         "- This repair does not set `Human Review`; that state requires independent Review Agent pass evidence.".to_string(),
     ]
     .join("\n")
+}
+
+fn doctor_target_state(action: &str) -> &'static str {
+    match action {
+        "move_need_human_input" => "Need Human Input",
+        "mark_pr_ready" => "Agent Review",
+        _ => "unchanged",
+    }
+}
+
+fn doctor_result(action: &str) -> &'static str {
+    match action {
+        "move_need_human_input" => "routed",
+        "mark_pr_ready" => "repair_recorded",
+        _ => "triage_recorded",
+    }
 }
 
 fn current_gmt_timestamp() -> String {
@@ -887,14 +932,22 @@ fn audit_runtime_consistency(
     context: &ProjectDoctorContext,
     violations: &mut Vec<ProjectAuditViolation>,
 ) {
-    let Some(runtime_state) = context.runtime_state.as_ref() else {
+    let runtime_states = context_runtime_states(context);
+    if runtime_states.is_empty() {
         return;
-    };
-    let Some(active_issue) = runtime_state.active_issue.as_ref() else {
-        return;
-    };
-
-    let runtime_matches_issue = issue_refs_match(&active_issue.identifier, &issue.identifier);
+    }
+    let matching_runtime_states = runtime_states
+        .iter()
+        .copied()
+        .filter(|runtime_state| {
+            runtime_state
+                .active_issue
+                .as_ref()
+                .map(|active_issue| issue_refs_match(&active_issue.identifier, &issue.identifier))
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    let runtime_matches_issue = !matching_runtime_states.is_empty();
 
     if runtime_matches_issue && normalized_issue_state != "in progress" {
         violations.push(violation(
@@ -906,17 +959,19 @@ fn audit_runtime_consistency(
         ));
     }
 
-    if runtime_matches_issue && normalized_issue_state == "in progress" {
-        if let Some(stall) =
-            detect_runtime_stall(runtime_state, context.now_ms, context.stale_after_ms)
-        {
-            violations.push(violation(
+    if normalized_issue_state == "in progress" {
+        for runtime_state in &matching_runtime_states {
+            if let Some(stall) =
+                detect_runtime_stall(runtime_state, context.now_ms, context.stale_after_ms)
+            {
+                violations.push(violation(
                 issue,
                 AuditSeverity::Warning,
                 "runtime_state_stale",
                 &format!("Runtime state is stale: {}.", stall.reason),
                 "Use `doctor repair <issue>` to choose resume, no-op, or escalation before another worker claims it.",
             ));
+            }
         }
     }
 
@@ -932,7 +987,9 @@ fn audit_runtime_consistency(
 
     if runtime_matches_issue
         && matches!(normalized_issue_state, "todo" | "need to clarify")
-        && runtime_state.workspace_path.is_some()
+        && matching_runtime_states
+            .iter()
+            .any(|runtime_state| runtime_state.workspace_path.is_some())
     {
         violations.push(violation(
             issue,
@@ -943,7 +1000,7 @@ fn audit_runtime_consistency(
         ));
     }
 
-    if runtime_matches_issue {
+    for runtime_state in matching_runtime_states {
         if let (Some(runtime_branch), Some(tracker_branch)) = (
             runtime_state.branch_name.as_deref(),
             issue.branch_name.as_deref(),
@@ -958,6 +1015,14 @@ fn audit_runtime_consistency(
                 ));
             }
         }
+    }
+}
+
+fn context_runtime_states(context: &ProjectDoctorContext) -> Vec<&RuntimeState> {
+    if !context.runtime_states.is_empty() {
+        context.runtime_states.iter().collect()
+    } else {
+        context.runtime_state.iter().collect()
     }
 }
 
@@ -1073,47 +1138,46 @@ fn audit_session_consistency(
         }
     }
 
-    let Some(runtime_state) = context.runtime_state.as_ref() else {
-        return;
-    };
-    let Some(active_issue) = runtime_state.active_issue.as_ref() else {
-        return;
-    };
-    let Some(runtime_session_id) = runtime_state.backend_session_id.as_deref() else {
-        return;
-    };
-    let Some(issue) = find_issue_by_ref(issues, &active_issue.identifier) else {
-        return;
-    };
-    if normalize_state(&issue.state) == "done" {
-        return;
-    }
-    let matching_session = context
-        .sessions
-        .iter()
-        .find(|session| session.session_id == runtime_session_id);
-    let Some(session) = matching_session else {
-        violations.push(violation(
-            issue,
-            AuditSeverity::Warning,
-            "runtime_session_missing_registry",
-            "Runtime state references a tmux session that is missing from the session registry.",
-            "Inspect runtime-state.json and tmux sessions before clearing or retrying the run.",
-        ));
-        return;
-    };
-    if session
-        .issue_identifier
-        .as_deref()
-        .is_some_and(|identifier| !issue_refs_match(identifier, &active_issue.identifier))
-    {
-        violations.push(violation(
-            issue,
-            AuditSeverity::Warning,
-            "runtime_session_issue_mismatch",
-            "Runtime state active issue and registered tmux session issue do not match.",
-            "Inspect both records before dispatching another worker or cleaning artifacts.",
-        ));
+    for runtime_state in context_runtime_states(context) {
+        let Some(active_issue) = runtime_state.active_issue.as_ref() else {
+            continue;
+        };
+        let Some(runtime_session_id) = runtime_state.backend_session_id.as_deref() else {
+            continue;
+        };
+        let Some(issue) = find_issue_by_ref(issues, &active_issue.identifier) else {
+            continue;
+        };
+        if normalize_state(&issue.state) == "done" {
+            continue;
+        }
+        let matching_session = context
+            .sessions
+            .iter()
+            .find(|session| session.session_id == runtime_session_id);
+        let Some(session) = matching_session else {
+            violations.push(violation(
+                issue,
+                AuditSeverity::Warning,
+                "runtime_session_missing_registry",
+                "Runtime state references a tmux session that is missing from the session registry.",
+                "Inspect runtime-state.json and tmux sessions before clearing or retrying the run.",
+            ));
+            continue;
+        };
+        if session
+            .issue_identifier
+            .as_deref()
+            .is_some_and(|identifier| !issue_refs_match(identifier, &active_issue.identifier))
+        {
+            violations.push(violation(
+                issue,
+                AuditSeverity::Warning,
+                "runtime_session_issue_mismatch",
+                "Runtime state active issue and registered tmux session issue do not match.",
+                "Inspect both records before dispatching another worker or cleaning artifacts.",
+            ));
+        }
     }
 }
 
@@ -1301,11 +1365,9 @@ fn audit_lane_claim_fields(
 }
 
 fn context_has_run(context: &ProjectDoctorContext, run_id: &str) -> bool {
-    context
-        .runtime_state
-        .as_ref()
-        .and_then(|state| state.run_id.as_deref())
-        .is_some_and(|candidate| candidate == run_id)
+    context_runtime_states(context)
+        .iter()
+        .any(|state| state.run_id.as_deref() == Some(run_id))
         || context
             .sessions
             .iter()
@@ -1379,7 +1441,7 @@ mod tests {
         }
     }
 
-    fn runtime_context(identifier: &str, updated_at_ms: u64) -> ProjectDoctorContext {
+    fn runtime_state(identifier: &str, updated_at_ms: u64) -> RuntimeState {
         let mut runtime_state = RuntimeState::active(
             crate::runtime_state::RuntimeIssueState {
                 id: format!("ISSUE_{identifier}"),
@@ -1388,8 +1450,14 @@ mod tests {
             "dry-run",
         );
         runtime_state.updated_at_ms = Some(updated_at_ms);
+        runtime_state
+    }
+
+    fn runtime_context(identifier: &str, updated_at_ms: u64) -> ProjectDoctorContext {
+        let runtime_state = runtime_state(identifier, updated_at_ms);
         ProjectDoctorContext {
             runtime_state: Some(runtime_state),
+            runtime_states: Vec::new(),
             sessions: Vec::new(),
             now_ms: 20_000,
             stale_after_ms: 10_000,
@@ -1450,6 +1518,7 @@ mod tests {
         ));
         let context = ProjectDoctorContext {
             runtime_state: None,
+            runtime_states: Vec::new(),
             sessions: vec![session(Some("#57"), "completed")],
             now_ms: 20_000,
             stale_after_ms: 10_000,
@@ -1466,6 +1535,7 @@ mod tests {
         drifted.evidence = "unknown persisted session status recorded_legacy".into();
         let context = ProjectDoctorContext {
             runtime_state: None,
+            runtime_states: Vec::new(),
             sessions: vec![drifted],
             now_ms: 20_000,
             stale_after_ms: 10_000,
@@ -1705,6 +1775,7 @@ mod tests {
         );
         let context = ProjectDoctorContext {
             runtime_state: None,
+            runtime_states: Vec::new(),
             sessions: Vec::new(),
             now_ms: 20_000,
             stale_after_ms: 10_000,
@@ -1760,6 +1831,7 @@ mod tests {
         );
         let context = ProjectDoctorContext {
             runtime_state: None,
+            runtime_states: Vec::new(),
             sessions: Vec::new(),
             now_ms: 20_000,
             stale_after_ms: 10_000,
@@ -1790,6 +1862,7 @@ mod tests {
         session.log_path = None;
         let context = ProjectDoctorContext {
             runtime_state: None,
+            runtime_states: Vec::new(),
             sessions: vec![session],
             now_ms: 20_000,
             stale_after_ms: 10_000,
@@ -1814,6 +1887,7 @@ mod tests {
         );
         let context = ProjectDoctorContext {
             runtime_state: None,
+            runtime_states: Vec::new(),
             sessions: Vec::new(),
             now_ms: 20_000,
             stale_after_ms: 10_000,
@@ -1887,6 +1961,46 @@ mod tests {
     }
 
     #[test]
+    fn accepts_multiple_in_progress_issues_with_matching_runtime_states() {
+        let context = ProjectDoctorContext {
+            runtime_state: None,
+            runtime_states: vec![runtime_state("#202", 19_000), runtime_state("#203", 19_000)],
+            sessions: Vec::new(),
+            now_ms: 20_000,
+            stale_after_ms: 10_000,
+        };
+
+        let report = audit_project_issues_with_context(
+            &[issue("#202", "In Progress"), issue("#203", "In Progress")],
+            Some(&context),
+        );
+
+        assert!(!report
+            .violations
+            .iter()
+            .any(|violation| violation.code == "runtime_active_issue_disagrees"));
+    }
+
+    #[test]
+    fn reports_in_progress_issue_missing_matching_runtime_state() {
+        let context = ProjectDoctorContext {
+            runtime_state: None,
+            runtime_states: vec![runtime_state("#202", 19_000), runtime_state("#203", 19_000)],
+            sessions: Vec::new(),
+            now_ms: 20_000,
+            stale_after_ms: 10_000,
+        };
+
+        let report =
+            audit_project_issues_with_context(&[issue("#204", "In Progress")], Some(&context));
+
+        assert!(report
+            .violations
+            .iter()
+            .any(|violation| violation.code == "runtime_active_issue_disagrees"));
+    }
+
+    #[test]
     fn reports_stale_tmux_session_for_matching_issue() {
         let issue = issue("#202", "In Progress");
         let mut context = runtime_context("#202", 19_000);
@@ -1918,6 +2032,7 @@ mod tests {
     fn reports_unattributed_tmux_session() {
         let context = ProjectDoctorContext {
             runtime_state: None,
+            runtime_states: Vec::new(),
             sessions: vec![session(None, "running")],
             now_ms: 20_000,
             stale_after_ms: 10_000,
@@ -1943,6 +2058,7 @@ mod tests {
             total_issues: 0,
             violations: Vec::new(),
             integration_gaps: Vec::new(),
+            skill_readiness_summary: None,
         };
 
         append_local_skill_install_doctor_violations(&mut report, temp.path(), &[target]);
@@ -2002,6 +2118,7 @@ mod tests {
             total_issues: 0,
             violations: Vec::new(),
             integration_gaps: Vec::new(),
+            skill_readiness_summary: None,
         };
 
         append_local_skill_install_doctor_violations(&mut report, temp.path(), &[target]);
@@ -2043,6 +2160,7 @@ mod tests {
             total_issues: 0,
             violations: Vec::new(),
             integration_gaps: Vec::new(),
+            skill_readiness_summary: None,
         };
 
         append_local_skill_install_doctor_violations(&mut report, temp.path(), &[target]);

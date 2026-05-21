@@ -43,7 +43,8 @@ workflows/template/workpad/human-review.md
 
 ## Core Boundary
 
-- Do not modify implementation code.
+- Do not modify implementation code, except for the narrow PR branch freshness
+  repair described below when the fix is mechanical and low-risk.
 - Do not act as the independent Review Agent.
 - Do not merge PRs or act as the Merging Agent.
 - Do not move accepted work directly to `Done`.
@@ -107,6 +108,48 @@ Inspect the issue body and workpad for:
 Do not drown the operator in raw JSON. Summarize the decision-relevant facts and
 include exact issue and PR references.
 
+## PR Freshness Repair Gate
+
+Before any PR-specific UAT, verify that the reviewed PR branch contains the
+latest `origin/main`. Run this only from the linked PR/issue worktree, never
+from the canonical `main` checkout.
+
+From the linked PR/issue worktree, run:
+
+```bash
+git fetch origin
+git merge-base --is-ancestor origin/main HEAD
+```
+
+Interpret and repair:
+
+- Exit code `0`: the PR branch contains latest `origin/main`; continue to UAT.
+- Non-zero exit code: immediately attempt a safe local branch refresh:
+
+```bash
+git merge --no-edit origin/main
+```
+
+If the merge is clean, run targeted verification, push the PR branch, record the
+refresh in the running Human Review note draft, then continue UAT.
+
+If conflicts or failures are small, mechanical, and clearly caused by freshness
+drift, resolve them in the PR worktree, run the relevant verification, commit,
+push the PR branch, record the repair in the note draft, then continue UAT.
+
+If conflicts are broad, product-scope, ambiguous, or verification fails in a way
+that is not obviously mechanical, stop before UAT and recommend `Request Rework`
+with the smallest actionable finding.
+
+If the PR worktree cannot be found, do not run the freshness check from the
+canonical `main` checkout. First select or create a PR branch worktree. If that
+cannot be done safely, record the missing worktree as a UAT blocker.
+
+If `gh pr view` reports a non-clean merge state, treat that as corroborating
+freshness or mergeability risk. The local `merge-base` check is still required
+before PR-specific UAT because GitHub mergeability can lag or be temporarily
+unknown.
+
 ## Brief The Operator
 
 Give a concise Human Review brief with:
@@ -167,6 +210,8 @@ First resolve the correct execution directory.
   run from the linked PR/issue worktree or another checkout of that PR branch.
 - Do not ask the operator to run PR-specific UAT from the canonical `main`
   checkout unless the PR has already been merged into `main`.
+- Before PR-specific UAT, apply the PR Freshness Repair Gate. Do not stop only
+  because the PR branch is stale; first try the safe refresh/small-repair path.
 - Prefer the worktree recorded in the issue workpad or `project issue` readback.
   If no usable worktree is available, ask the operator whether to create or
   select one before continuing.

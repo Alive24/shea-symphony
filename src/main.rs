@@ -99,6 +99,10 @@ use jade_symphony::session_registry::{
     save_session_record, session_registry_path, unix_timestamp_ms, AgentSessionRecord,
     SessionStatus,
 };
+use jade_symphony::skill_status::{
+    build_skill_readiness_report, doctor_skill_readiness_summary, render_skill_readiness_report,
+    render_skill_readiness_report_json, SkillStatusInput,
+};
 use jade_symphony::status_surface::{render_latest_status_bar, render_snapshot};
 use jade_symphony::tracker::{
     adapter_from_config, claim_decision, classify_project_state_error, ClaimDecision,
@@ -156,6 +160,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             workflow_path,
             write,
         } => doctor_repair_human_review(workflow_path, write),
+        Command::SkillsStatus { input, json } => skills_status(input, json),
         Command::Profiles { workflow_path } => list_profiles(workflow_path),
         Command::Debug { workflow_path } => debug_report(workflow_path),
         Command::CleanupPlan { workflow_path } => cleanup_plan_command(workflow_path),
@@ -4954,6 +4959,15 @@ fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::Error>> {
     let skill_repo_root = discover_skill_suite_repo_root(&workflow_path)?;
     let skill_targets = default_jade_symphony_skill_targets();
     append_local_skill_install_doctor_violations(&mut report, &skill_repo_root, &skill_targets);
+    report.skill_readiness_summary = Some(doctor_skill_readiness_summary(SkillStatusInput {
+        workflow_path: workflow_path.clone(),
+        suite_path: None,
+        codex_dir: None,
+        gemini_dir: None,
+        require_gemini: false,
+        session_skills: Vec::new(),
+        session_skills_file: None,
+    }));
 
     match &options.action {
         Some(DoctorAction::Repair(repair)) => {
@@ -4986,6 +5000,16 @@ fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::Error>> {
         .into());
     }
 
+    Ok(())
+}
+
+fn skills_status(input: SkillStatusInput, json: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let report = build_skill_readiness_report(input);
+    if json {
+        println!("{}", render_skill_readiness_report_json(&report)?);
+    } else {
+        println!("{}", render_skill_readiness_report(&report));
+    }
     Ok(())
 }
 
@@ -9830,6 +9854,10 @@ enum Command {
         workflow_path: PathBuf,
         write: bool,
     },
+    SkillsStatus {
+        input: SkillStatusInput,
+        json: bool,
+    },
     Profiles {
         workflow_path: PathBuf,
     },
@@ -10231,6 +10259,8 @@ enum CliCommand {
     Doctor(DoctorArgs),
     #[command(name = "doctor-repair-human-review")]
     DoctorRepairHumanReview(DoctorRepairArgs),
+    #[command(next_help_heading = "Human / Operator operations")]
+    Skills(SkillsArgs),
     Profiles(WorkflowPathArgs),
     Debug(WorkflowPathArgs),
     Status(StatusArgs),
@@ -10343,6 +10373,42 @@ struct DoctorArgs {
     write: bool,
     #[command(subcommand)]
     action: Option<DoctorSubcommandArgs>,
+}
+
+#[derive(Debug, Args)]
+struct SkillsArgs {
+    #[command(subcommand)]
+    command: SkillsCommandArgs,
+}
+
+#[derive(Debug, Subcommand)]
+enum SkillsCommandArgs {
+    #[command(about = "Report per-repo Jade Symphony skill readiness")]
+    Status(SkillsStatusArgs),
+}
+
+#[derive(Debug, Args)]
+struct SkillsStatusArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long = "suite-path")]
+    suite_path: Option<PathBuf>,
+    #[arg(long = "codex-dir")]
+    codex_dir: Option<PathBuf>,
+    #[arg(long = "gemini-dir")]
+    gemini_dir: Option<PathBuf>,
+    #[arg(long = "require-gemini")]
+    require_gemini: bool,
+    #[arg(long = "session-skills")]
+    session_skills: Vec<String>,
+    #[arg(long = "session-skills-file")]
+    session_skills_file: Option<PathBuf>,
+    #[arg(long)]
+    json: bool,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+    #[arg(long = "write")]
+    _write: bool,
 }
 
 #[derive(Debug, Args)]
@@ -11318,6 +11384,20 @@ impl TryFrom<Cli> for Command {
                             write: args.write,
                         })
                     }
+                    CliCommand::Skills(args) => match args.command {
+                        SkillsCommandArgs::Status(args) => Ok(Self::SkillsStatus {
+                            input: SkillStatusInput {
+                                workflow_path: args.workflow_path,
+                                suite_path: args.suite_path,
+                                codex_dir: args.codex_dir,
+                                gemini_dir: args.gemini_dir,
+                                require_gemini: args.require_gemini,
+                                session_skills: args.session_skills,
+                                session_skills_file: args.session_skills_file,
+                            },
+                            json: args.json,
+                        }),
+                    },
                     CliCommand::Profiles(args) => Ok(Self::Profiles {
                         workflow_path: args.workflow_path,
                     }),
@@ -11708,6 +11788,7 @@ fn usage() -> String {
         "  plan                        Render the dispatch/status plan",
         "  validate                    Validate workflow loading and configuration",
         "  doctor                      Audit Project, workflow, and runtime invariants",
+        "  skills                      Inspect per-repo skill readiness",
         "  status                      Show or serve runtime status snapshots",
         "  clean                       Plan or audit artifact cleanup",
         "  profiles                    List execution profiles",
@@ -12529,6 +12610,7 @@ mod tests {
             total_issues: 1,
             violations: Vec::new(),
             integration_gaps: Vec::new(),
+            skill_readiness_summary: None,
         };
         assert_eq!(doctor_health_label(&clean), "clean");
 
@@ -12545,6 +12627,7 @@ mod tests {
             total_issues: 1,
             violations: vec![warning_violation.clone()],
             integration_gaps: Vec::new(),
+            skill_readiness_summary: None,
         };
         assert_eq!(doctor_health_label(&warning), "needs_attention");
 
@@ -12555,6 +12638,7 @@ mod tests {
                 ..warning_violation
             }],
             integration_gaps: Vec::new(),
+            skill_readiness_summary: None,
         };
         assert_eq!(doctor_health_label(&blocked), "blocked");
 
@@ -12615,6 +12699,35 @@ mod tests {
             parse(&["status", "show", "examples/dry-run-workflow.md", "--json"]),
             Command::Plan {
                 workflow_path: PathBuf::from("examples/dry-run-workflow.md"),
+                json: true,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_skills_status_readiness_command() {
+        assert_eq!(
+            parse(&[
+                "skills",
+                "status",
+                "workflows/jade-symphony.md",
+                "--suite-path",
+                "skills/jade-symphony/suite",
+                "--session-skills",
+                "jade-symphony-doctor,jade-symphony-manual-main",
+                "--require-gemini",
+                "--json",
+            ]),
+            Command::SkillsStatus {
+                input: SkillStatusInput {
+                    workflow_path: PathBuf::from("workflows/jade-symphony.md"),
+                    suite_path: Some(PathBuf::from("skills/jade-symphony/suite")),
+                    codex_dir: None,
+                    gemini_dir: None,
+                    require_gemini: true,
+                    session_skills: vec!["jade-symphony-doctor,jade-symphony-manual-main".into()],
+                    session_skills_file: None,
+                },
                 json: true,
             }
         );

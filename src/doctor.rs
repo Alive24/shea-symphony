@@ -34,6 +34,8 @@ pub struct ProjectAuditReport {
     pub violations: Vec<ProjectAuditViolation>,
     #[serde(default)]
     pub integration_gaps: Vec<String>,
+    #[serde(default)]
+    pub skill_readiness_summary: Option<String>,
 }
 
 impl ProjectAuditReport {
@@ -630,6 +632,7 @@ pub fn audit_project_issues_with_context(
         total_issues: issues.len(),
         violations,
         integration_gaps: Vec::new(),
+        skill_readiness_summary: None,
     }
 }
 
@@ -688,6 +691,9 @@ pub fn render_project_audit_report(report: &ProjectAuditReport) -> String {
         format!("violations={}", report.violations.len()),
         format!("blockers={}", report.blocker_count()),
     ];
+    if let Some(summary) = &report.skill_readiness_summary {
+        lines.push(format!("skill_readiness_summary={summary}"));
+    }
 
     if report.is_clean() {
         lines.push("summary=Project invariants look clean.".into());
@@ -1994,6 +2000,7 @@ mod tests {
             total_issues: 0,
             violations: Vec::new(),
             integration_gaps: Vec::new(),
+            skill_readiness_summary: None,
         };
 
         append_local_skill_install_doctor_violations(&mut report, temp.path(), &[target]);
@@ -2053,6 +2060,7 @@ mod tests {
             total_issues: 0,
             violations: Vec::new(),
             integration_gaps: Vec::new(),
+            skill_readiness_summary: None,
         };
 
         append_local_skill_install_doctor_violations(&mut report, temp.path(), &[target]);
@@ -2094,6 +2102,7 @@ mod tests {
             total_issues: 0,
             violations: Vec::new(),
             integration_gaps: Vec::new(),
+            skill_readiness_summary: None,
         };
 
         append_local_skill_install_doctor_violations(&mut report, temp.path(), &[target]);

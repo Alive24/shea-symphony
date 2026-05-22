@@ -122,6 +122,17 @@ For the selected issue:
 
 The Main Agent must stop at `Agent Review`. Draft PRs must not be handed off.
 
+## Runtime Boundary
+
+The canonical loop path is app-server-first: `main_lane.backend: codex` with
+`codex.command: codex app-server`. Manual Main work should preserve the same
+single-issue claim, workspace, workpad, PR, linked-PR, and `Agent Review`
+handoff semantics as `main loop --write`; it is not a looser alternate
+workflow. Use `session start --lane main --run <RUN_ID> --write` only when an
+operator wants the configured Main runtime to run from the existing claim.
+`main_lane.backend: tmux` is an explicit fallback/debug setting, not the default
+unattended substrate.
+
 ## Status Transition Ordering
 
 Project `Status` changes must be the final mutating step of each state-changing

@@ -38,7 +38,8 @@ The final `AgentEvent::Message` contains `prompt_artifact=`, `protocol_artifact=
 
 This transport does not:
 
-- switch Main or merge defaults by itself;
+- choose lane defaults by itself; Main and merge-agent defaults are owned by
+  workflow config and lane wiring;
 - change Gemini Review behavior;
 - implement remote SSH app-server launch;
 - implement dynamic tool execution;

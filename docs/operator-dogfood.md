@@ -104,23 +104,21 @@ target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations
 
 If the normal preflight surfaces fail, the launcher exits before claiming
 tracker work.
-The canonical workflow now uses the local `tmux` main-agent backend. A write
-tick starts an attachable tmux session, records its attach command and log path,
-persists a session registry record under the configured artifact root, and
-leaves the issue active until real implementation/handoff evidence exists.
-When the recorded Main session later reaches a terminal completed state,
-another bounded `main loop --write` tick reconciles it through verification, PR
-publication, linked-PR readback, PR readiness, Main Workpad evidence, and final
-`Agent Review` handoff. Non-terminal, waiting, unknown, or missing-registry
-session evidence is treated as incomplete work and does not launch a duplicate
-Main Agent.
-For Codex-backed tmux sessions, Jade Symphony captures the pane before prompt injection.
-If the Codex workspace trust prompt is visible in a Jade Symphony-created issue worktree,
-the backend sends two `C-m` submissions, waits for a ready Codex viewport, and
-only then pastes the rendered issue prompt. Set
-`JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to opt out; when disabled, or when readiness
-cannot be confirmed, the tick fails closed with attach/log evidence and does not
-hand off to `Agent Review`.
+The canonical workflow now uses the Codex app-server Main backend. A write tick
+starts one app-server turn in the prepared issue worktree, records
+prompt/protocol/stderr/normalized-event artifacts, persists a session registry
+record under the configured artifact root, and reconciles through verification,
+PR publication, linked-PR readback, PR readiness, Main Workpad evidence, and
+final `Agent Review` handoff only after the turn completes successfully.
+Non-terminal, failed, usage-limited, unknown, stale, or missing-registry runtime
+evidence is treated conservatively and does not launch duplicate Main Agents or
+hand off incomplete work.
+`main_lane.backend: tmux` remains available as an explicit fallback/debug
+setting. In that mode, Codex-backed tmux sessions still capture the pane before
+prompt injection and can auto-advance the Codex workspace trust prompt inside a
+Jade Symphony-created issue worktree. Set `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to
+opt out; when disabled, or when readiness cannot be confirmed, the tick fails
+closed with attach/log evidence and does not hand off to `Agent Review`.
 Main handoff also requires the PR relationship to be visible through Jade
 Symphony's Project/issue linked-PR read surface, and the linked PR must be
 ready, not draft. Workpad or comment URLs can identify the intended PR, but
@@ -129,25 +127,25 @@ other handoff evidence is valid, `main loop --write` may run `gh pr ready`
 before moving the issue to `Agent Review`; if relationship verification or
 readiness mutation fails, keep the issue out of `Agent Review`, route to
 `Need Human Input`, and preserve the blocker in the workpad.
-When Main handoff reaches `Agent Review`, Jade Symphony keeps tmux logs and
-attach commands as audit evidence while marking matching Main session registry
-entries completed and clearing matching active runtime state. A still-open tmux
-pane is not by itself active work after that reconciliation; attach only when
-the registry or doctor evidence says the run is still blocked or failed.
-Routine status output reads the durable session registry, probes bounded pane
-and log tails, and reports a conservative session classification such as
+When Main handoff reaches `Agent Review`, Jade Symphony keeps backend artifacts
+as audit evidence while marking matching Main session registry entries completed
+and clearing matching active runtime state. Routine status output reads the
+durable session registry, probes bounded tmux pane/log tails only for tmux
+fallback sessions, and reports a conservative session classification such as
 `running`, `waiting_for_trust`, `waiting_for_approval`, `usage_limited`,
 `failed`, `completed`, `stale`, or `unknown`. The status surface includes only
-compact evidence snippets plus attach/log locations; attach manually when raw
-scrollback is needed.
+compact evidence snippets plus artifact, attach, or log locations; inspect the
+recorded app-server artifacts or attach manually only when raw evidence is
+needed.
 Persisted session registry statuses that are not recognized by the current
 binary are read as `unknown` without rewriting or dropping the record. Status
 and doctor diagnostics preserve the raw drifted value so operators can inspect
 the evidence without running a repair or migration first.
 `doctor` reads the same registry and reports stale, orphaned, or attention
 requiring sessions next to tracker/runtime findings. `clean audit` treats the
-session registry, rendered prompts, and tmux logs as recovery evidence, and only
-classifies completed sessions as cleanup candidates.
+session registry, rendered prompts, app-server artifacts, and tmux fallback logs
+as recovery evidence, and only classifies completed sessions as cleanup
+candidates.
 If an operator switches the workflow back to `main_lane.backend: dry-run`, the
 mutating tick exits before runtime-state writes, worktree creation, Project
 claims, or workpad mutation.
@@ -535,14 +533,15 @@ target/debug/jade-symphony clean audit workflows/jade-symphony.md
 `needs_human_decision`. Keep `doctor` for tracker/runtime invariants and stuck
 workflow states.
 
-Interrupted tmux recovery flow:
+Interrupted runtime recovery flow:
 
 1. Run `target/debug/jade-symphony status workflows/jade-symphony.md` and read
-   the `tmux sessions` section for the session status, attach command, and log.
+   the `runtime sessions` section for backend, session status, artifact path,
+   attach command when available, and log.
 2. Run `target/debug/jade-symphony doctor workflows/jade-symphony.md` before
    retrying or clearing runtime state; stale, failed, usage-limited, or
    unattributed sessions require operator inspection.
-3. For interrupted Main-lane tmux work where the issue is still `In Progress`,
+3. For interrupted Main-lane runtime work where the issue is still `In Progress`,
    run a bounded recovery tick:
 
 ```bash

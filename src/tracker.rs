@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::process::{Command, Output, Stdio};
@@ -775,6 +776,7 @@ impl TrackerAdapter for GithubProjectV2Adapter {
 #[derive(Debug, Clone)]
 struct GithubProjectV2GhClient {
     config: RuntimeConfig,
+    metadata_cache: ProjectMetadataCache,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -810,6 +812,7 @@ impl GithubProjectV2GhClient {
     fn new(config: &RuntimeConfig) -> Self {
         Self {
             config: config.clone(),
+            metadata_cache: ProjectMetadataCache::default(),
         }
     }
 
@@ -817,13 +820,13 @@ impl GithubProjectV2GhClient {
         project_owner_query_order(&self.config)
     }
 
-    fn query_project_owner<F>(
+    fn query_project_owner<F, T>(
         &self,
         operation: &str,
         mut query: F,
-    ) -> Result<(ProjectV2OwnerType, serde_json::Value), TrackerError>
+    ) -> Result<(ProjectV2OwnerType, T), TrackerError>
     where
-        F: FnMut(ProjectV2OwnerType) -> Result<serde_json::Value, TrackerError>,
+        F: FnMut(ProjectV2OwnerType) -> Result<T, TrackerError>,
     {
         let mut attempts = Vec::new();
 
@@ -851,6 +854,16 @@ impl GithubProjectV2GhClient {
                 self.config.tracker.status_field
             )));
         }
+        let (rest_item_overlays, rest_item_overlay_fallback) =
+            match self.rest_project_item_overlays(&metadata) {
+                Ok(overlays) => (overlays, None),
+                Err(rest_error) => (
+                    BTreeMap::new(),
+                    Some(format!(
+                        "REST Projects v2 item overlay fallback reason: {rest_error}; using GraphQL Project item fields where available"
+                    )),
+                ),
+            };
 
         let mut issues = Vec::new();
         let mut cursor = None;
@@ -860,6 +873,11 @@ impl GithubProjectV2GhClient {
 
             let (mut page_issues, next_cursor, has_next_page) =
                 issues_from_project_response(&response, &self.config)?;
+            apply_rest_project_item_overlays(&mut page_issues, &rest_item_overlays);
+            apply_rest_project_item_overlay_fallback(
+                &mut page_issues,
+                rest_item_overlay_fallback.as_deref(),
+            );
             issues.append(&mut page_issues);
 
             if has_next_page {
@@ -992,23 +1010,26 @@ impl GithubProjectV2GhClient {
             return Ok(());
         }
 
-        let item_id = issue.item_id.ok_or_else(|| {
+        let item_id = issue.item_id.clone().ok_or_else(|| {
             TrackerError::IntegrationUnavailable(format!(
                 "issue {issue_ref} has no ProjectV2 item id"
             ))
         })?;
-        let metadata = self.project_metadata()?;
-        let option_id =
-            status_option_id(&metadata, &option_name, &self.config.tracker.status_field)?;
+        let (metadata, option_id) = self.status_option_id_with_refresh(&option_name)?;
+        if let Ok(()) = self.update_project_item_field_rest(
+            &issue,
+            &metadata,
+            &metadata.status_field(),
+            ProjectFieldUpdateValue::String(option_id.clone()),
+        ) {
+            return Ok(());
+        }
 
-        self.graphql(
-            GITHUB_UPDATE_PROJECT_ITEM_FIELD_MUTATION,
-            &[
-                ("projectId", metadata.project_id),
-                ("itemId", item_id),
-                ("fieldId", metadata.status_field_id),
-                ("optionId", option_id),
-            ],
+        self.graphql_update_project_single_select_field(
+            metadata.project_id,
+            item_id,
+            metadata.status_field_id,
+            option_id,
         )?;
         Ok(())
     }
@@ -1184,10 +1205,8 @@ impl GithubProjectV2GhClient {
         issue_id: &str,
         normalized_state: &str,
     ) -> Result<(), TrackerError> {
-        let metadata = self.project_metadata()?;
         let option_name = self.state_option_name(normalized_state)?;
-        let option_id =
-            status_option_id(&metadata, &option_name, &self.config.tracker.status_field)?;
+        let (metadata, option_id) = self.status_option_id_with_refresh(&option_name)?;
         let response = self.graphql(
             GITHUB_ADD_PROJECT_ITEM_MUTATION,
             &[
@@ -1196,14 +1215,11 @@ impl GithubProjectV2GhClient {
             ],
         )?;
         let item_id = project_item_id_from_add_response(&response)?;
-        self.graphql(
-            GITHUB_UPDATE_PROJECT_ITEM_FIELD_MUTATION,
-            &[
-                ("projectId", metadata.project_id),
-                ("itemId", item_id),
-                ("fieldId", metadata.status_field_id),
-                ("optionId", option_id),
-            ],
+        self.graphql_update_project_single_select_field(
+            metadata.project_id,
+            item_id,
+            metadata.status_field_id,
+            option_id,
         )?;
         Ok(())
     }
@@ -1214,52 +1230,71 @@ impl GithubProjectV2GhClient {
         assignment: &ProjectFieldAssignment,
     ) -> Result<(), TrackerError> {
         let issue = self.resolve_issue(issue_ref)?;
-        let item_id = issue.item_id.ok_or_else(|| {
+        let item_id = issue.item_id.clone().ok_or_else(|| {
             TrackerError::IntegrationUnavailable(format!(
                 "issue {issue_ref} is not a ProjectV2 item; add it to the project before setting fields"
             ))
         })?;
-        let metadata = self.project_metadata()?;
-        let field = metadata.field(&assignment.name).ok_or_else(|| {
-            TrackerError::IntegrationUnavailable(format!(
-                "ProjectV2 field {:?} was not found",
-                assignment.name
-            ))
-        })?;
+        let (metadata, field) = self.project_field_with_refresh(&assignment.name)?;
         let project_id = metadata.project_id.clone();
         let field_id = field.id.clone();
         match field.kind {
             ProjectFieldKind::SingleSelect => {
-                let option_id = field.option_id(&assignment.value).ok_or_else(|| {
-                    TrackerError::IntegrationUnavailable(format!(
-                        "option {:?} was not found in ProjectV2 field {:?}",
-                        assignment.value, assignment.name
-                    ))
-                })?;
-                self.graphql(
-                    GITHUB_UPDATE_PROJECT_ITEM_FIELD_MUTATION,
-                    &[
-                        ("projectId", project_id),
-                        ("itemId", item_id),
-                        ("fieldId", field_id),
-                        ("optionId", option_id),
-                    ],
+                let option_id =
+                    self.project_field_option_id_with_refresh(&assignment.name, &assignment.value)?;
+                if let Ok(()) = self.update_project_item_field_rest(
+                    &issue,
+                    &metadata,
+                    &field,
+                    ProjectFieldUpdateValue::String(option_id.clone()),
+                ) {
+                    return Ok(());
+                }
+                self.graphql_update_project_single_select_field(
+                    project_id, item_id, field_id, option_id,
                 )?;
             }
             ProjectFieldKind::Text => {
-                self.graphql(
-                    GITHUB_UPDATE_PROJECT_ITEM_TEXT_FIELD_MUTATION,
-                    &[
-                        ("projectId", project_id),
-                        ("itemId", item_id),
-                        ("fieldId", field_id),
-                        ("text", assignment.value.clone()),
-                    ],
+                if let Ok(()) = self.update_project_item_field_rest(
+                    &issue,
+                    &metadata,
+                    &field,
+                    ProjectFieldUpdateValue::String(assignment.value.clone()),
+                ) {
+                    return Ok(());
+                }
+                self.graphql_update_project_text_field(
+                    project_id,
+                    item_id,
+                    field_id,
+                    assignment.value.clone(),
+                )?;
+            }
+            ProjectFieldKind::Number => {
+                let number = assignment.value.parse::<f64>().map_err(|error| {
+                    TrackerError::Payload(format!(
+                        "ProjectV2 number field {:?} value {:?} is invalid: {error}",
+                        assignment.name, assignment.value
+                    ))
+                })?;
+                self.update_project_item_field_rest(
+                    &issue,
+                    &metadata,
+                    &field,
+                    ProjectFieldUpdateValue::Number(number),
+                )?;
+            }
+            ProjectFieldKind::Date => {
+                self.update_project_item_field_rest(
+                    &issue,
+                    &metadata,
+                    &field,
+                    ProjectFieldUpdateValue::String(assignment.value.clone()),
                 )?;
             }
             _ => {
                 return Err(TrackerError::IntegrationUnavailable(format!(
-                    "ProjectV2 field {:?} is {:?}; only single-select and text field assignment are currently supported",
+                    "ProjectV2 field {:?} is {:?}; REST-first assignment supports single-select, text, number, and date; GraphQL fallback is unavailable for this field kind",
                     assignment.name, field.kind
                 )));
             }
@@ -1269,19 +1304,23 @@ impl GithubProjectV2GhClient {
 
     fn clear_project_field(&self, issue_ref: &str, field_name: &str) -> Result<(), TrackerError> {
         let issue = self.resolve_issue(issue_ref)?;
-        let item_id = issue.item_id.ok_or_else(|| {
+        let item_id = issue.item_id.clone().ok_or_else(|| {
             TrackerError::IntegrationUnavailable(format!(
                 "issue {issue_ref} is not a ProjectV2 item; add it to the project before clearing fields"
             ))
         })?;
-        let metadata = self.project_metadata()?;
-        let field = metadata.field(field_name).ok_or_else(|| {
-            TrackerError::IntegrationUnavailable(format!(
-                "ProjectV2 field {field_name:?} was not found"
-            ))
-        })?;
+        let (metadata, field) = self.project_field_with_refresh(field_name)?;
         let project_id = metadata.project_id.clone();
         let field_id = field.id.clone();
+        if let Ok(()) = self.update_project_item_field_rest(
+            &issue,
+            &metadata,
+            &field,
+            ProjectFieldUpdateValue::Null,
+        ) {
+            return Ok(());
+        }
+
         self.graphql(
             GITHUB_CLEAR_PROJECT_ITEM_FIELD_MUTATION,
             &[
@@ -1420,6 +1459,15 @@ impl GithubProjectV2GhClient {
     }
 
     fn project_metadata(&self) -> Result<ProjectMetadata, TrackerError> {
+        self.metadata_cache
+            .get_or_try_init(|| self.load_project_metadata())
+    }
+
+    fn refresh_project_metadata(&self) -> Result<ProjectMetadata, TrackerError> {
+        self.metadata_cache.refresh(|| self.load_project_metadata())
+    }
+
+    fn load_project_metadata(&self) -> Result<ProjectMetadata, TrackerError> {
         let owner = self
             .config
             .tracker
@@ -1431,15 +1479,242 @@ impl GithubProjectV2GhClient {
                 TrackerError::IntegrationUnavailable("missing project_number".into())
             })?;
 
-        let (owner_type, response) = self
-            .query_project_owner("ProjectV2 metadata", |owner_type| {
-                self.graphql_project_metadata(owner_type, owner, number)
-            })?;
+        match self.query_project_owner("ProjectV2 REST metadata", |owner_type| {
+            self.rest_project_metadata(owner_type, owner, number)
+        }) {
+            Ok((_owner_type, metadata)) => Ok(metadata),
+            Err(rest_error) => {
+                let (_owner_type, response) = self
+                    .query_project_owner("ProjectV2 metadata", |owner_type| {
+                        self.graphql_project_metadata(owner_type, owner, number)
+                    })
+                    .map_err(|graphql_error| {
+                        TrackerError::IntegrationUnavailable(format!(
+                            "REST ProjectV2 metadata fallback reason: {rest_error}; GraphQL fallback failed: {graphql_error}"
+                        ))
+                    })?;
 
-        let mut metadata =
-            project_metadata_from_response(&response, &self.config.tracker.status_field)?;
-        metadata.owner_type = owner_type;
-        Ok(metadata)
+                project_metadata_from_response(&response, &self.config.tracker.status_field)
+            }
+        }
+    }
+
+    fn project_field_with_refresh(
+        &self,
+        field_name: &str,
+    ) -> Result<(ProjectMetadata, ProjectFieldMetadata), TrackerError> {
+        project_field_from_metadata_with_refresh(&self.metadata_cache, field_name, || {
+            self.load_project_metadata()
+        })
+    }
+
+    fn status_option_id_with_refresh(
+        &self,
+        option_name: &str,
+    ) -> Result<(ProjectMetadata, String), TrackerError> {
+        let (metadata, field) =
+            self.project_field_with_refresh(&self.config.tracker.status_field)?;
+        let Some(option_id) = field.option_id(option_name) else {
+            let refreshed = self.refresh_project_metadata()?;
+            let refreshed_field = refreshed
+                .field(&self.config.tracker.status_field)
+                .ok_or_else(|| {
+                    TrackerError::IntegrationUnavailable(format!(
+                        "ProjectV2 field {:?} was not found after metadata refresh",
+                        self.config.tracker.status_field
+                    ))
+                })?;
+            let option_id = refreshed_field.option_id(option_name).ok_or_else(|| {
+                TrackerError::IntegrationUnavailable(format!(
+                    "status option {option_name:?} was not found in ProjectV2 field {:?} after metadata refresh",
+                    self.config.tracker.status_field
+                ))
+            })?;
+            return Ok((refreshed, option_id));
+        };
+        Ok((metadata, option_id))
+    }
+
+    fn project_field_option_id_with_refresh(
+        &self,
+        field_name: &str,
+        option_name: &str,
+    ) -> Result<String, TrackerError> {
+        let (_metadata, field) = self.project_field_with_refresh(field_name)?;
+        if let Some(option_id) = field.option_id(option_name) {
+            return Ok(option_id);
+        }
+
+        let refreshed = self.refresh_project_metadata()?;
+        let refreshed_field = refreshed.field(field_name).ok_or_else(|| {
+            TrackerError::IntegrationUnavailable(format!(
+                "ProjectV2 field {field_name:?} was not found after metadata refresh"
+            ))
+        })?;
+        refreshed_field.option_id(option_name).ok_or_else(|| {
+            TrackerError::IntegrationUnavailable(format!(
+                "option {option_name:?} was not found in ProjectV2 field {field_name:?} after metadata refresh"
+            ))
+        })
+    }
+
+    fn rest_project_metadata(
+        &self,
+        owner_type: ProjectV2OwnerType,
+        owner: &str,
+        number: u64,
+    ) -> Result<ProjectMetadata, TrackerError> {
+        let base_path = github_rest_project_path(owner_type, owner, number);
+        let project = run_gh_api_json(vec!["api".into(), base_path.clone()])?;
+        let fields = run_gh_api_json(vec![
+            "api".into(),
+            format!("{base_path}/fields?per_page=100"),
+            "--paginate".into(),
+            "--slurp".into(),
+        ])?;
+
+        rest_project_metadata_from_response(
+            &project,
+            &fields,
+            &self.config.tracker.status_field,
+            owner_type,
+        )
+    }
+
+    fn rest_project_item_overlays(
+        &self,
+        metadata: &ProjectMetadata,
+    ) -> Result<BTreeMap<String, RestProjectItemOverlay>, TrackerError> {
+        let field_ids = metadata
+            .supported_rest_field_ids()
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let owner = self
+            .config
+            .tracker
+            .project_owner
+            .as_deref()
+            .ok_or_else(|| TrackerError::IntegrationUnavailable("missing project_owner".into()))?;
+        let number =
+            self.config.tracker.project_number.ok_or_else(|| {
+                TrackerError::IntegrationUnavailable("missing project_number".into())
+            })?;
+        let base_path = github_rest_project_path(metadata.owner_type, owner, number);
+        let endpoint = if field_ids.is_empty() {
+            format!("{base_path}/items?per_page=100")
+        } else {
+            format!("{base_path}/items?per_page=100&fields={field_ids}")
+        };
+        let response = run_gh_api_json(vec![
+            "api".into(),
+            endpoint,
+            "--paginate".into(),
+            "--slurp".into(),
+        ])?;
+        rest_project_item_overlays_from_response(&response)
+    }
+
+    fn update_project_item_field_rest(
+        &self,
+        issue: &TrackerIssue,
+        metadata: &ProjectMetadata,
+        field: &ProjectFieldMetadata,
+        value: ProjectFieldUpdateValue,
+    ) -> Result<(), TrackerError> {
+        let item_rest_id = project_rest_item_id(issue).ok_or_else(|| {
+            TrackerError::NotImplemented(
+                "REST Projects v2 item update fallback reason: current Project read lacks REST item id; using GraphQL where available"
+                    .into(),
+            )
+        })?;
+        self.update_project_item_field_rest_by_id(metadata, item_rest_id, field, value)
+    }
+
+    fn update_project_item_field_rest_by_id(
+        &self,
+        metadata: &ProjectMetadata,
+        item_rest_id: u64,
+        field: &ProjectFieldMetadata,
+        value: ProjectFieldUpdateValue,
+    ) -> Result<(), TrackerError> {
+        let field_rest_id = field.rest_id.ok_or_else(|| {
+            TrackerError::NotImplemented(format!(
+                "REST Projects v2 item update fallback reason: ProjectV2 field {:?} lacks a REST field id; using GraphQL where available",
+                field.name
+            ))
+        })?;
+        let owner = self
+            .config
+            .tracker
+            .project_owner
+            .as_deref()
+            .ok_or_else(|| TrackerError::IntegrationUnavailable("missing project_owner".into()))?;
+        let number =
+            self.config.tracker.project_number.ok_or_else(|| {
+                TrackerError::IntegrationUnavailable("missing project_number".into())
+            })?;
+        let base_path = github_rest_project_path(metadata.owner_type, owner, number);
+        let body = rest_project_item_field_update_body(field_rest_id, value)?;
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis())
+            .unwrap_or_default();
+        let body_path =
+            std::env::temp_dir().join(format!("jade-symphony-project-item-field-{nonce}.json"));
+        let body_bytes = serde_json::to_vec(&body)
+            .map_err(|error| TrackerError::Payload(format!("invalid REST update body: {error}")))?;
+        fs::write(&body_path, body_bytes)
+            .map_err(|error| TrackerError::IntegrationUnavailable(error.to_string()))?;
+        let result = run_gh_api_json(vec![
+            "api".into(),
+            "-X".into(),
+            "PATCH".into(),
+            format!("{base_path}/items/{item_rest_id}"),
+            "--input".into(),
+            body_path.to_string_lossy().to_string(),
+        ]);
+        let _ = fs::remove_file(&body_path);
+        result.map(|_| ())
+    }
+
+    fn graphql_update_project_single_select_field(
+        &self,
+        project_id: String,
+        item_id: String,
+        field_id: String,
+        option_id: String,
+    ) -> Result<(), TrackerError> {
+        self.graphql(
+            GITHUB_UPDATE_PROJECT_ITEM_FIELD_MUTATION,
+            &[
+                ("projectId", project_id),
+                ("itemId", item_id),
+                ("fieldId", field_id),
+                ("optionId", option_id),
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn graphql_update_project_text_field(
+        &self,
+        project_id: String,
+        item_id: String,
+        field_id: String,
+        text: String,
+    ) -> Result<(), TrackerError> {
+        self.graphql(
+            GITHUB_UPDATE_PROJECT_ITEM_TEXT_FIELD_MUTATION,
+            &[
+                ("projectId", project_id),
+                ("itemId", item_id),
+                ("fieldId", field_id),
+                ("text", text),
+            ],
+        )?;
+        Ok(())
     }
 
     fn graphql_project_metadata(
@@ -1601,6 +1876,36 @@ impl ProjectMetadata {
     fn field(&self, name: &str) -> Option<&ProjectFieldMetadata> {
         self.fields.iter().find(|field| field.name == name)
     }
+
+    fn status_field(&self) -> ProjectFieldMetadata {
+        if let Some(field) = self
+            .fields
+            .iter()
+            .find(|field| field.id == self.status_field_id)
+        {
+            return field.clone();
+        }
+
+        ProjectFieldMetadata {
+            id: self.status_field_id.clone(),
+            name: "Status".into(),
+            kind: ProjectFieldKind::SingleSelect,
+            options: self.status_options.clone(),
+            rest_id: self
+                .fields
+                .iter()
+                .find(|field| field.id == self.status_field_id)
+                .and_then(|field| field.rest_id),
+        }
+    }
+
+    fn supported_rest_field_ids(&self) -> Vec<u64> {
+        self.fields
+            .iter()
+            .filter(|field| field.kind.supports_rest_update())
+            .filter_map(|field| field.rest_id)
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1609,6 +1914,7 @@ struct ProjectFieldMetadata {
     name: String,
     kind: ProjectFieldKind,
     options: Vec<(String, String)>,
+    rest_id: Option<u64>,
 }
 
 impl ProjectFieldMetadata {
@@ -1627,6 +1933,66 @@ enum ProjectFieldKind {
     Date,
     Iteration,
     Unknown,
+}
+
+impl ProjectFieldKind {
+    fn supports_rest_update(self) -> bool {
+        matches!(
+            self,
+            Self::SingleSelect | Self::Text | Self::Number | Self::Date
+        )
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct ProjectMetadataCache {
+    value: RefCell<Option<ProjectMetadata>>,
+}
+
+impl ProjectMetadataCache {
+    fn get_or_try_init<F>(&self, fetch: F) -> Result<ProjectMetadata, TrackerError>
+    where
+        F: FnOnce() -> Result<ProjectMetadata, TrackerError>,
+    {
+        if let Some(metadata) = self.value.borrow().clone() {
+            return Ok(metadata);
+        }
+
+        let metadata = fetch()?;
+        *self.value.borrow_mut() = Some(metadata.clone());
+        Ok(metadata)
+    }
+
+    fn refresh<F>(&self, fetch: F) -> Result<ProjectMetadata, TrackerError>
+    where
+        F: FnOnce() -> Result<ProjectMetadata, TrackerError>,
+    {
+        let metadata = fetch()?;
+        *self.value.borrow_mut() = Some(metadata.clone());
+        Ok(metadata)
+    }
+}
+
+fn project_field_from_metadata_with_refresh<F>(
+    cache: &ProjectMetadataCache,
+    field_name: &str,
+    fetch: F,
+) -> Result<(ProjectMetadata, ProjectFieldMetadata), TrackerError>
+where
+    F: Fn() -> Result<ProjectMetadata, TrackerError>,
+{
+    let metadata = cache.get_or_try_init(&fetch)?;
+    if let Some(field) = metadata.field(field_name) {
+        return Ok((metadata.clone(), field.clone()));
+    }
+
+    let refreshed = cache.refresh(fetch)?;
+    let field = refreshed.field(field_name).cloned().ok_or_else(|| {
+        TrackerError::IntegrationUnavailable(format!(
+            "ProjectV2 field {field_name:?} was not found after metadata refresh"
+        ))
+    })?;
+    Ok((refreshed, field))
 }
 
 fn gh_available() -> bool {
@@ -2432,7 +2798,287 @@ fn project_field_metadata(field: &serde_json::Value) -> Option<ProjectFieldMetad
         name,
         kind,
         options,
+        rest_id: None,
     })
+}
+
+fn rest_project_metadata_from_response(
+    project: &serde_json::Value,
+    fields_response: &serde_json::Value,
+    status_field: &str,
+    owner_type: ProjectV2OwnerType,
+) -> Result<ProjectMetadata, TrackerError> {
+    let project_id = project
+        .get("node_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| TrackerError::Payload("REST ProjectV2 metadata missing node_id".into()))?;
+    let fields =
+        rest_paginated_array_items(fields_response, "REST ProjectV2 metadata fields response")?;
+    let fields = fields
+        .into_iter()
+        .filter_map(rest_project_field_metadata)
+        .collect::<Vec<_>>();
+    let Some(status_field_metadata) = fields.iter().find(|field| field.name == status_field) else {
+        return Err(TrackerError::Payload(format!(
+            "REST ProjectV2 status field {status_field:?} was not found"
+        )));
+    };
+
+    Ok(ProjectMetadata {
+        owner_type,
+        project_id: project_id.to_string(),
+        status_field_id: status_field_metadata.id.clone(),
+        status_options: status_field_metadata.options.clone(),
+        fields,
+    })
+}
+
+fn rest_project_field_metadata(field: &serde_json::Value) -> Option<ProjectFieldMetadata> {
+    let id = field.get("node_id")?.as_str()?.to_string();
+    let rest_id = field.get("id").and_then(serde_json::Value::as_u64);
+    let name = field.get("name")?.as_str()?.to_string();
+    let kind = match field
+        .get("data_type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+    {
+        "single_select" => ProjectFieldKind::SingleSelect,
+        "text" => ProjectFieldKind::Text,
+        "number" => ProjectFieldKind::Number,
+        "date" => ProjectFieldKind::Date,
+        "iteration" => ProjectFieldKind::Iteration,
+        _ => ProjectFieldKind::Unknown,
+    };
+    let options = field
+        .get("options")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|option| {
+            Some((
+                option.get("id")?.as_str()?.to_string(),
+                rich_text_or_string(option.get("name")?)?,
+            ))
+        })
+        .collect();
+
+    Some(ProjectFieldMetadata {
+        id,
+        name,
+        kind,
+        options,
+        rest_id,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RestProjectItemOverlay {
+    item_node_id: String,
+    content_node_id: String,
+    project_fields: BTreeMap<String, serde_json::Value>,
+}
+
+fn rest_project_item_overlays_from_response(
+    response: &serde_json::Value,
+) -> Result<BTreeMap<String, RestProjectItemOverlay>, TrackerError> {
+    let items = rest_paginated_array_items(response, "REST ProjectV2 items response")?;
+    let mut overlays = BTreeMap::new();
+    for item in items {
+        if let Some(overlay) = rest_project_item_overlay(item)? {
+            overlays.insert(overlay.content_node_id.clone(), overlay);
+        }
+    }
+    Ok(overlays)
+}
+
+fn rest_project_item_overlay(
+    item: &serde_json::Value,
+) -> Result<Option<RestProjectItemOverlay>, TrackerError> {
+    let content = match item.get("content") {
+        Some(content) if content.get("node_id").is_some() => content,
+        _ => return Ok(None),
+    };
+    let item_rest_id = item
+        .get("id")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| TrackerError::Payload("REST ProjectV2 item missing id".into()))?;
+    let item_node_id = item
+        .get("node_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| TrackerError::Payload("REST ProjectV2 item missing node_id".into()))?;
+    let content_node_id = content
+        .get("node_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            TrackerError::Payload("REST ProjectV2 item content missing node_id".into())
+        })?;
+    let mut project_fields = BTreeMap::new();
+    project_fields.insert(
+        "GitHub Project Item REST ID".into(),
+        serde_json::Value::Number(item_rest_id.into()),
+    );
+    project_fields.insert(
+        "GitHub Project Item Node ID".into(),
+        serde_json::Value::String(item_node_id.to_string()),
+    );
+    for field in item
+        .get("fields")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(name) = field.get("name").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let value = rest_project_field_value(field);
+        project_fields.insert(name.to_string(), value);
+    }
+
+    Ok(Some(RestProjectItemOverlay {
+        item_node_id: item_node_id.to_string(),
+        content_node_id: content_node_id.to_string(),
+        project_fields,
+    }))
+}
+
+fn rest_project_field_value(field: &serde_json::Value) -> serde_json::Value {
+    let Some(value) = field.get("value") else {
+        return serde_json::Value::Null;
+    };
+    match field
+        .get("data_type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+    {
+        "single_select" => value
+            .get("name")
+            .and_then(rich_text_or_string)
+            .map(serde_json::Value::String)
+            .unwrap_or(serde_json::Value::Null),
+        "text" | "date" => value
+            .as_str()
+            .map(|text| serde_json::Value::String(text.to_string()))
+            .unwrap_or(serde_json::Value::Null),
+        "number" => value.clone(),
+        _ => value.clone(),
+    }
+}
+
+fn apply_rest_project_item_overlays(
+    issues: &mut [TrackerIssue],
+    overlays: &BTreeMap<String, RestProjectItemOverlay>,
+) {
+    for issue in issues {
+        if let Some(overlay) = overlays.get(&issue.id) {
+            for (name, value) in &overlay.project_fields {
+                issue.project_fields.insert(name.clone(), value.clone());
+            }
+            issue
+                .item_id
+                .get_or_insert_with(|| overlay.item_node_id.clone());
+        }
+    }
+}
+
+fn apply_rest_project_item_overlay_fallback(issues: &mut [TrackerIssue], reason: Option<&str>) {
+    let Some(reason) = reason else {
+        return;
+    };
+    for issue in issues {
+        issue.project_fields.insert(
+            "GitHub REST Project Item Fallback Reason".into(),
+            serde_json::Value::String(reason.to_string()),
+        );
+    }
+}
+
+fn rest_paginated_array_items<'a>(
+    response: &'a serde_json::Value,
+    label: &str,
+) -> Result<Vec<&'a serde_json::Value>, TrackerError> {
+    let values = response
+        .as_array()
+        .ok_or_else(|| TrackerError::Payload(format!("{label} was not an array")))?;
+    if values.is_empty() {
+        return Ok(Vec::new());
+    }
+    if values.iter().all(serde_json::Value::is_array) {
+        return Ok(values
+            .iter()
+            .flat_map(|page| page.as_array().into_iter().flatten())
+            .collect());
+    }
+    if values.iter().all(serde_json::Value::is_object) {
+        return Ok(values.iter().collect());
+    }
+    Err(TrackerError::Payload(format!(
+        "{label} mixed paginated pages and item objects"
+    )))
+}
+
+fn project_rest_item_id(issue: &TrackerIssue) -> Option<u64> {
+    issue
+        .project_fields
+        .get("GitHub Project Item REST ID")
+        .and_then(serde_json::Value::as_u64)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum ProjectFieldUpdateValue {
+    String(String),
+    Number(f64),
+    Null,
+}
+
+fn rest_project_item_field_update_body(
+    field_rest_id: u64,
+    value: ProjectFieldUpdateValue,
+) -> Result<serde_json::Value, TrackerError> {
+    let value = match value {
+        ProjectFieldUpdateValue::String(value) => serde_json::Value::String(value),
+        ProjectFieldUpdateValue::Number(value) => {
+            let number = serde_json::Number::from_f64(value).ok_or_else(|| {
+                TrackerError::Payload(format!(
+                    "ProjectV2 REST number value {value:?} is not finite"
+                ))
+            })?;
+            serde_json::Value::Number(number)
+        }
+        ProjectFieldUpdateValue::Null => serde_json::Value::Null,
+    };
+    Ok(serde_json::json!({
+        "fields": [
+            {
+                "id": field_rest_id,
+                "value": value
+            }
+        ]
+    }))
+}
+
+fn github_rest_project_path(kind: ProjectV2OwnerType, owner: &str, number: u64) -> String {
+    match kind {
+        ProjectV2OwnerType::Organization => format!("orgs/{owner}/projectsV2/{number}"),
+        ProjectV2OwnerType::User => format!("users/{owner}/projectsV2/{number}"),
+    }
+}
+
+fn rich_text_or_string(value: &serde_json::Value) -> Option<String> {
+    value
+        .as_str()
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            value
+                .get("raw")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .or_else(|| {
+            value
+                .get("html")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned)
+        })
 }
 
 fn ensure_workpad_marker(markdown: &str, marker: &str) -> String {
@@ -2620,6 +3266,7 @@ fn marked_block<'a>(text: &'a str, start: &str, end: &str) -> Option<&'a str> {
     Some(&text[start_index..end_index])
 }
 
+#[cfg(test)]
 fn status_option_id(
     metadata: &ProjectMetadata,
     option_name: &str,
@@ -4484,6 +5131,7 @@ fn load_fixture(config: &RuntimeConfig) -> Result<Vec<TrackerIssue>, TrackerErro
 mod tests {
     use super::*;
     use crate::workflow::WorkflowDefinition;
+    use std::cell::Cell;
     use std::path::Path;
 
     fn issue(state: &str) -> TrackerIssue {
@@ -4511,6 +5159,44 @@ mod tests {
     fn github_config(source: &str) -> RuntimeConfig {
         let workflow = WorkflowDefinition::parse("/tmp/WORKFLOW.md", source).unwrap();
         RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap()
+    }
+
+    fn test_status_field() -> ProjectFieldMetadata {
+        ProjectFieldMetadata {
+            id: "FIELD_STATUS".into(),
+            name: "Status".into(),
+            kind: ProjectFieldKind::SingleSelect,
+            options: vec![
+                ("OPT_TODO".into(), "Todo".into()),
+                ("OPT_DONE".into(), "Done".into()),
+            ],
+            rest_id: Some(345980099),
+        }
+    }
+
+    fn test_text_field(name: &str, id: &str, rest_id: Option<u64>) -> ProjectFieldMetadata {
+        ProjectFieldMetadata {
+            id: id.into(),
+            name: name.into(),
+            kind: ProjectFieldKind::Text,
+            options: Vec::new(),
+            rest_id,
+        }
+    }
+
+    fn test_metadata(fields: Vec<ProjectFieldMetadata>) -> ProjectMetadata {
+        let status = fields
+            .iter()
+            .find(|field| field.name == "Status")
+            .cloned()
+            .unwrap_or_else(test_status_field);
+        ProjectMetadata {
+            owner_type: ProjectV2OwnerType::User,
+            project_id: "PVT_1".into(),
+            status_field_id: status.id.clone(),
+            status_options: status.options,
+            fields,
+        }
     }
 
     #[test]
@@ -5140,6 +5826,289 @@ Prompt
     }
 
     #[test]
+    fn project_metadata_cache_reuses_loaded_metadata() {
+        let cache = ProjectMetadataCache::default();
+        let calls = Cell::new(0);
+        let metadata = test_metadata(vec![test_status_field()]);
+
+        let first = cache
+            .get_or_try_init(|| {
+                calls.set(calls.get() + 1);
+                Ok(metadata.clone())
+            })
+            .unwrap();
+        let second = cache
+            .get_or_try_init(|| {
+                calls.set(calls.get() + 1);
+                Ok(test_metadata(vec![]))
+            })
+            .unwrap();
+
+        assert_eq!(calls.get(), 1);
+        assert_eq!(first.project_id, "PVT_1");
+        assert_eq!(second.status_field_id, "FIELD_STATUS");
+    }
+
+    #[test]
+    fn project_field_lookup_refreshes_stale_metadata() {
+        let cache = ProjectMetadataCache::default();
+        let calls = Cell::new(0);
+
+        let (_metadata, field) =
+            project_field_from_metadata_with_refresh(&cache, "Main Agent", || {
+                calls.set(calls.get() + 1);
+                if calls.get() == 1 {
+                    Ok(test_metadata(vec![test_status_field()]))
+                } else {
+                    Ok(test_metadata(vec![
+                        test_status_field(),
+                        test_text_field("Main Agent", "FIELD_MAIN_AGENT", Some(347408996)),
+                    ]))
+                }
+            })
+            .unwrap();
+
+        assert_eq!(calls.get(), 2);
+        assert_eq!(field.name, "Main Agent");
+        assert_eq!(field.rest_id, Some(347408996));
+    }
+
+    #[test]
+    fn parses_rest_project_metadata_from_paginated_fields() {
+        let project = serde_json::json!({"node_id": "PVT_1"});
+        let fields = serde_json::json!([
+            [
+                {
+                    "id": 345980099,
+                    "node_id": "FIELD_STATUS",
+                    "name": "Status",
+                    "data_type": "single_select",
+                    "options": [
+                        {"id": "OPT_TODO", "name": {"raw": "Todo", "html": "Todo"}},
+                        {"id": "OPT_DONE", "name": {"raw": "Done", "html": "Done"}}
+                    ]
+                }
+            ],
+            [
+                {
+                    "id": 347408996,
+                    "node_id": "FIELD_MAIN_AGENT",
+                    "name": "Main Agent",
+                    "data_type": "text"
+                },
+                {
+                    "id": 348315440,
+                    "node_id": "FIELD_REVIEW_AGENT",
+                    "name": "Review Agent",
+                    "data_type": "text"
+                }
+            ]
+        ]);
+
+        let metadata = rest_project_metadata_from_response(
+            &project,
+            &fields,
+            "Status",
+            ProjectV2OwnerType::Organization,
+        )
+        .unwrap();
+
+        assert_eq!(metadata.project_id, "PVT_1");
+        assert_eq!(metadata.owner_type, ProjectV2OwnerType::Organization);
+        assert_eq!(metadata.status_field_id, "FIELD_STATUS");
+        assert_eq!(
+            metadata.status_options[0],
+            ("OPT_TODO".into(), "Todo".into())
+        );
+        assert_eq!(metadata.field("Status").unwrap().rest_id, Some(345980099));
+        assert_eq!(
+            metadata.field("Main Agent").unwrap().rest_id,
+            Some(347408996)
+        );
+    }
+
+    #[test]
+    fn parses_rest_project_item_overlays_from_paginated_items() {
+        let response = serde_json::json!([
+            [
+                {
+                    "id": 190539790,
+                    "node_id": "PVTI_1",
+                    "content": {
+                        "node_id": "I_1",
+                        "number": 349
+                    },
+                    "fields": [
+                        {
+                            "id": 345980099,
+                            "name": "Status",
+                            "data_type": "single_select",
+                            "value": {"id": "OPT_TODO", "name": {"raw": "Todo"}}
+                        },
+                        {
+                            "id": 347408996,
+                            "name": "Main Agent",
+                            "data_type": "text",
+                            "value": "v=1 lane=main"
+                        }
+                    ]
+                }
+            ],
+            [
+                {
+                    "id": 190539791,
+                    "node_id": "PVTI_2",
+                    "content": {
+                        "node_id": "I_2",
+                        "number": 350
+                    },
+                    "fields": [
+                        {
+                            "id": 1,
+                            "name": "Priority",
+                            "data_type": "number",
+                            "value": 3
+                        },
+                        {
+                            "id": 2,
+                            "name": "Target Date",
+                            "data_type": "date",
+                            "value": "2026-05-22"
+                        }
+                    ]
+                }
+            ]
+        ]);
+
+        let overlays = rest_project_item_overlays_from_response(&response).unwrap();
+
+        let first = overlays.get("I_1").unwrap();
+        assert_eq!(first.item_node_id, "PVTI_1");
+        assert_eq!(
+            first
+                .project_fields
+                .get("GitHub Project Item REST ID")
+                .and_then(serde_json::Value::as_u64),
+            Some(190539790)
+        );
+        assert_eq!(
+            first
+                .project_fields
+                .get("Status")
+                .and_then(serde_json::Value::as_str),
+            Some("Todo")
+        );
+        assert_eq!(
+            first
+                .project_fields
+                .get("Main Agent")
+                .and_then(serde_json::Value::as_str),
+            Some("v=1 lane=main")
+        );
+
+        let mut issue = issue("Todo");
+        issue.id = "I_1".into();
+        apply_rest_project_item_overlays(std::slice::from_mut(&mut issue), &overlays);
+        assert_eq!(issue.item_id.as_deref(), Some("PVTI_1"));
+        assert_eq!(
+            issue
+                .project_fields
+                .get("GitHub Project Item REST ID")
+                .and_then(serde_json::Value::as_u64),
+            Some(190539790)
+        );
+
+        let second = overlays.get("I_2").unwrap();
+        assert_eq!(
+            second.project_fields.get("Priority"),
+            Some(&serde_json::json!(3))
+        );
+        assert_eq!(
+            second
+                .project_fields
+                .get("Target Date")
+                .and_then(serde_json::Value::as_str),
+            Some("2026-05-22")
+        );
+    }
+
+    #[test]
+    fn builds_rest_project_item_field_update_payloads() {
+        assert_eq!(
+            rest_project_item_field_update_body(
+                345980099,
+                ProjectFieldUpdateValue::String("f75ad846".into())
+            )
+            .unwrap(),
+            serde_json::json!({
+                "fields": [
+                    {"id": 345980099, "value": "f75ad846"}
+                ]
+            })
+        );
+        assert_eq!(
+            rest_project_item_field_update_body(
+                347408996,
+                ProjectFieldUpdateValue::String("v=1 lane=main".into())
+            )
+            .unwrap(),
+            serde_json::json!({
+                "fields": [
+                    {"id": 347408996, "value": "v=1 lane=main"}
+                ]
+            })
+        );
+        assert_eq!(
+            rest_project_item_field_update_body(42, ProjectFieldUpdateValue::Null).unwrap(),
+            serde_json::json!({
+                "fields": [
+                    {"id": 42, "value": null}
+                ]
+            })
+        );
+    }
+
+    #[test]
+    fn rest_update_reports_graphql_fallback_reasons_for_missing_rest_ids() {
+        let client = GithubProjectV2GhClient::new(&github_config(
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 9\n---\nPrompt",
+        ));
+        let metadata = test_metadata(vec![
+            test_status_field(),
+            test_text_field("Main Agent", "FIELD_MAIN_AGENT", None),
+        ]);
+        let field_without_rest_id = metadata.field("Main Agent").unwrap().clone();
+        let mut issue_with_rest_item = issue("Todo");
+        issue_with_rest_item.project_fields.insert(
+            "GitHub Project Item REST ID".into(),
+            serde_json::json!(190539790),
+        );
+
+        let error = client
+            .update_project_item_field_rest(
+                &issue_with_rest_item,
+                &metadata,
+                &field_without_rest_id,
+                ProjectFieldUpdateValue::String("v=1 lane=main".into()),
+            )
+            .unwrap_err();
+        assert!(format!("{error}").contains("lacks a REST field id"));
+        assert!(format!("{error}").contains("using GraphQL where available"));
+
+        let field_with_rest_id = test_text_field("Main Agent", "FIELD_MAIN_AGENT", Some(347408996));
+        let issue_without_rest_item = issue("Todo");
+        let error = client
+            .update_project_item_field_rest(
+                &issue_without_rest_item,
+                &metadata,
+                &field_with_rest_id,
+                ProjectFieldUpdateValue::String("v=1 lane=main".into()),
+            )
+            .unwrap_err();
+        assert!(format!("{error}").contains("current Project read lacks REST item id"));
+    }
+
+    #[test]
     fn resolves_project_status_option_id() {
         let metadata = ProjectMetadata {
             owner_type: ProjectV2OwnerType::User,
@@ -5157,6 +6126,7 @@ Prompt
                     ("OPT_TODO".into(), "Todo".into()),
                     ("OPT_DONE".into(), "Done".into()),
                 ],
+                rest_id: None,
             }],
         };
 

@@ -571,6 +571,15 @@ or workpad, and update terminal completed work to `state=done` instead of
 clearing useful claim evidence by default. Display labels with spaces are stored
 with reversible quoting, for example `worker="Codex Manual Main"`; raw Project
 field edits are a break-glass repair path, not normal claim ownership.
+If GitHub returns a transient transport, rate-limit, or HTTP 5xx error after a
+claim, workpad, timeline comment, Project status, merge, or issue-close write,
+the CLI performs read-after-write reconciliation instead of blindly retrying the
+mutation. A recovered write prints `tracker_recovery action=recovered` and the
+lane continues. An uncertain write prints `recoverable_tracker_mutation_uncertain`
+with the mutation type, issue or PR, failure kind, and next safe action; rerun
+the same lane command after waiting or inspect with `project issue`. Do not
+clear lane claims to recover uncertainty, and do not send merge transport
+failures to `Rework`.
 For supervised merge terminals, use `merge claim WORKFLOW '#issue' --worker
 <worker> --write` on a `Merging` issue; the claim records truthful non-tmux
 manual evidence for the `run=`. Then use `session start WORKFLOW '#issue'

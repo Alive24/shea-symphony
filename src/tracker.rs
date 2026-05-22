@@ -205,12 +205,14 @@ pub fn classify_project_state_failure_message(message: &str) -> ProjectStateFail
         || normalized.contains("http 403")
     {
         ProjectStateFailureKind::Auth
-    } else if normalized.contains("http 502")
+    } else if normalized.contains("http 500")
+        || normalized.contains("http 502")
         || normalized.contains("http 503")
         || normalized.contains("http 504")
         || normalized.contains("bad gateway")
         || normalized.contains("service unavailable")
         || normalized.contains("gateway timeout")
+        || normalized.contains("internal server error")
     {
         ProjectStateFailureKind::TransientBackend
     } else if normalized.contains("could not resolve host")
@@ -6991,6 +6993,18 @@ Prompt
                 "GitHub GraphQL operation timed out after 30000ms"
             ),
             ProjectStateFailureKind::Network
+        );
+        assert_eq!(
+            classify_project_state_failure_message(
+                "GitHub GraphQL operation failed: HTTP 502 Bad Gateway"
+            ),
+            ProjectStateFailureKind::TransientBackend
+        );
+        assert_eq!(
+            classify_project_state_failure_message(
+                "GitHub GraphQL operation failed: HTTP 500 Internal Server Error"
+            ),
+            ProjectStateFailureKind::TransientBackend
         );
         assert_eq!(
             classify_project_state_failure_message(

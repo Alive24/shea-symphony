@@ -30,8 +30,8 @@ use jade_symphony::event_log::{
     EventLog, EventRecord, TrackerMutationAuditInput, TrackerMutationAuditRecord,
 };
 use jade_symphony::git_handoff::{
-    ensure_pull_request_ready, prepare_issue_worktree, publish_issue_pull_request,
-    LiveWorktreeResult, ProcessHandoffCommandRunner, PullRequestPublication,
+    ensure_pull_request_ready, prepare_issue_worktree, publish_issue_pull_request, CommandOutput,
+    HandoffCommandRunner, LiveWorktreeResult, ProcessHandoffCommandRunner, PullRequestPublication,
     PullRequestReadyStatus,
 };
 use jade_symphony::handoff::{
@@ -108,8 +108,9 @@ use jade_symphony::skill_status::{
 };
 use jade_symphony::status_surface::{render_latest_status_bar, render_snapshot};
 use jade_symphony::tracker::{
-    adapter_from_config, claim_decision, classify_project_state_error, ClaimDecision,
-    FollowUpIssueInput, ProjectFieldAssignment, TrackerAdapter, TrackerError,
+    adapter_from_config, claim_decision, classify_project_state_error,
+    classify_project_state_failure_message, ClaimDecision, FollowUpIssueInput,
+    ProjectFieldAssignment, ProjectStateFailureKind, TrackerAdapter, TrackerError,
 };
 use jade_symphony::workflow::{AgentLane, WorkflowDefinition};
 use jade_symphony::workspace::{
@@ -630,25 +631,37 @@ fn set_state(
     }
     let config = load_config(&workflow_path)?;
     let adapter = adapter_from_config(&config);
-    let from_state = adapter
-        .get_issue(&issue_ref)?
-        .map(|issue| issue.state)
+    let initial_issue = adapter.get_issue(&issue_ref)?;
+    let from_state = initial_issue
+        .as_ref()
+        .map(|issue| issue.state.clone())
         .filter(|current| !current.is_empty());
-    adapter.set_state(&issue_ref, &state)?;
+    let outcome = set_state_with_recovery(
+        adapter.as_ref(),
+        &issue_ref,
+        initial_issue.as_ref(),
+        &state,
+        "state_change",
+    )?;
     reconcile_main_handoff_runtime_state(&config, &issue_ref, &state)?;
-    append_tracker_mutation_audit(
-        &config,
-        TrackerMutationAudit {
-            command: "set-state",
-            mutation_type: "state_change",
-            issue_ref: Some(&issue_ref),
-            target: None,
-            from_state,
-            to_state: Some(state.clone()),
-            reason: "explicit CLI state update",
-        },
+    if outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: "set-state",
+                mutation_type: "state_change",
+                issue_ref: Some(&issue_ref),
+                target: None,
+                from_state,
+                to_state: Some(state.clone()),
+                reason: "explicit CLI state update",
+            },
+        );
+    }
+    println!(
+        "set_state={} issue_ref={issue_ref} state={state}",
+        outcome.as_str()
     );
-    println!("set_state=ok issue_ref={issue_ref} state={state}");
     Ok(())
 }
 
@@ -736,21 +749,40 @@ fn upsert_workpad(
     let config = load_config(&workflow_path)?;
     let adapter = adapter_from_config(&config);
     let markdown = std::fs::read_to_string(&markdown_path)?;
-    adapter.upsert_workpad(&issue_ref, &markdown)?;
-    append_tracker_mutation_audit(
-        &config,
-        TrackerMutationAudit {
-            command: "workpad",
-            mutation_type: "workpad_write",
-            issue_ref: Some(&issue_ref),
-            target: Some(markdown_path.display().to_string()),
-            from_state: None,
-            to_state: None,
-            reason: "explicit CLI workpad upsert",
-        },
+    let initial_issue = adapter.get_issue(&issue_ref)?;
+    let key = recovery_key(
+        "workpad",
+        &issue_ref,
+        &format!(
+            "{}|{}",
+            markdown_path.display(),
+            stable_recovery_hash(&markdown)
+        ),
     );
+    let outcome = upsert_workpad_with_recovery(
+        adapter.as_ref(),
+        &issue_ref,
+        initial_issue.as_ref(),
+        &markdown,
+        &key,
+    )?;
+    if outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: "workpad",
+                mutation_type: "workpad_write",
+                issue_ref: Some(&issue_ref),
+                target: Some(markdown_path.display().to_string()),
+                from_state: None,
+                to_state: None,
+                reason: "explicit CLI workpad upsert",
+            },
+        );
+    }
     println!(
-        "workpad=ok issue_ref={} source={}",
+        "workpad={} issue_ref={} source={}",
+        outcome.as_str(),
         issue_ref,
         markdown_path.display()
     );
@@ -775,25 +807,45 @@ fn append_timeline_comment(
 
     let config = load_config(&workflow_path)?;
     let adapter = adapter_from_config(&config);
-    let from_state = adapter
-        .get_issue(&issue_ref)?
-        .map(|issue| issue.state)
+    let initial_issue = adapter.get_issue(&issue_ref)?;
+    let from_state = initial_issue
+        .as_ref()
+        .map(|issue| issue.state.clone())
         .filter(|current| !current.is_empty());
-    adapter.add_issue_comment(&issue_ref, &markdown)?;
-    append_tracker_mutation_audit(
-        &config,
-        TrackerMutationAudit {
-            command: "timeline-comment",
-            mutation_type: "timeline_comment",
-            issue_ref: Some(&issue_ref),
-            target: Some(markdown_path.display().to_string()),
-            from_state,
-            to_state: None,
-            reason: "explicit CLI append-only timeline comment",
-        },
+    let key = recovery_key(
+        "timeline-comment",
+        &issue_ref,
+        &format!(
+            "{}|{}",
+            markdown_path.display(),
+            stable_recovery_hash(&markdown)
+        ),
     );
+    let outcome = add_timeline_comment_with_recovery(
+        adapter.as_ref(),
+        &issue_ref,
+        initial_issue.as_ref(),
+        &markdown,
+        &key,
+        "timeline_comment",
+    )?;
+    if outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: "timeline-comment",
+                mutation_type: "timeline_comment",
+                issue_ref: Some(&issue_ref),
+                target: Some(markdown_path.display().to_string()),
+                from_state,
+                to_state: None,
+                reason: "explicit CLI append-only timeline comment",
+            },
+        );
+    }
     println!(
-        "timeline_comment=ok issue_ref={} source={}",
+        "timeline_comment={} issue_ref={} source={}",
+        outcome.as_str(),
         issue_ref,
         markdown_path.display()
     );
@@ -2138,12 +2190,14 @@ fn review_claim(
         );
         return Ok(());
     }
-    adapter.set_project_field(
-        &issue.identifier,
+    let outcome = set_project_field_with_recovery(
+        adapter.as_ref(),
+        &issue,
         &ProjectFieldAssignment {
             name: "Review Agent".into(),
             value: claim_value.clone(),
         },
+        "claim_field",
     )?;
     let registry_path = record_manual_lane_claim_evidence(
         &config,
@@ -2153,20 +2207,23 @@ fn review_claim(
         &claim_value,
         &worker,
     )?;
-    append_tracker_mutation_audit(
-        &config,
-        TrackerMutationAudit {
-            command: "review claim",
-            mutation_type: "claim_field",
-            issue_ref: Some(&issue.identifier),
-            target: Some(format!("Review Agent={claim_value}")),
-            from_state: Some(issue.state),
-            to_state: None,
-            reason: "manual review agent claim",
-        },
-    );
+    if outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: "review claim",
+                mutation_type: "claim_field",
+                issue_ref: Some(&issue.identifier),
+                target: Some(format!("Review Agent={claim_value}")),
+                from_state: Some(issue.state.clone()),
+                to_state: None,
+                reason: "manual review agent claim",
+            },
+        );
+    }
     println!(
-        "review_claim=ok issue_ref={} field=\"Review Agent\" run={} registry={} value={claim_value}",
+        "review_claim={} issue_ref={} field=\"Review Agent\" run={} registry={} value={claim_value}",
+        outcome.as_str(),
         issue.identifier,
         claim.run,
         registry_path.display()
@@ -2219,31 +2276,36 @@ fn lane_claim_command(
         return Ok(());
     }
 
-    adapter.set_project_field(
-        &issue.identifier,
+    let outcome = set_project_field_with_recovery(
+        adapter.as_ref(),
+        &issue,
         &ProjectFieldAssignment {
             name: lane.claim_field().into(),
             value: claim_value.clone(),
         },
+        "claim_field",
     )?;
     let registry_path =
         record_manual_lane_claim_evidence(&config, &issue, lane, &claim, &claim_value, &worker)?;
     let command_name = format!("{} claim", lane.label());
-    append_tracker_mutation_audit(
-        &config,
-        TrackerMutationAudit {
-            command: &command_name,
-            mutation_type: "claim_field",
-            issue_ref: Some(&issue.identifier),
-            target: Some(format!("{}={claim_value}", lane.claim_field())),
-            from_state: Some(issue.state.clone()),
-            to_state: None,
-            reason: "manual lane worker claim",
-        },
-    );
+    if outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: &command_name,
+                mutation_type: "claim_field",
+                issue_ref: Some(&issue.identifier),
+                target: Some(format!("{}={claim_value}", lane.claim_field())),
+                from_state: Some(issue.state.clone()),
+                to_state: None,
+                reason: "manual lane worker claim",
+            },
+        );
+    }
     println!(
-        "{}_claim=ok issue_ref={} field={:?} worker={} run={} registry={} value={claim_value}",
+        "{}_claim={} issue_ref={} field={:?} worker={} run={} registry={} value={claim_value}",
         lane.label(),
+        outcome.as_str(),
         issue.identifier,
         lane.claim_field(),
         worker.trim(),
@@ -2495,19 +2557,38 @@ fn review_manual_pass(
         );
         return Ok(());
     }
-    adapter.add_issue_comment(&issue.identifier, &workpad)?;
-    append_tracker_mutation_audit(
-        &config,
-        TrackerMutationAudit {
-            command: "review pass",
-            mutation_type: "timeline_comment",
-            issue_ref: Some(&issue.identifier),
-            target: None,
-            from_state: Some(issue.state.clone()),
-            to_state: Some(target_state.into()),
-            reason: "manual review pass evidence",
-        },
+    let evidence_key = recovery_key(
+        "review-pass",
+        &issue.identifier,
+        &format!(
+            "{}|{}|{}",
+            terminal_claim_value,
+            target_state,
+            stable_recovery_hash(&workpad)
+        ),
     );
+    let evidence_outcome = add_timeline_comment_with_recovery(
+        adapter.as_ref(),
+        &issue.identifier,
+        Some(&issue),
+        &workpad,
+        &evidence_key,
+        "timeline_comment",
+    )?;
+    if evidence_outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: "review pass",
+                mutation_type: "timeline_comment",
+                issue_ref: Some(&issue.identifier),
+                target: None,
+                from_state: Some(issue.state.clone()),
+                to_state: Some(target_state.into()),
+                reason: "manual review pass evidence",
+            },
+        );
+    }
     write_terminal_review_claim(
         &config,
         adapter.as_ref(),
@@ -2516,19 +2597,27 @@ fn review_manual_pass(
         &terminal_claim_value,
         "review pass terminal claim evidence",
     )?;
-    adapter.set_state(&issue.identifier, target_state)?;
-    append_tracker_mutation_audit(
-        &config,
-        TrackerMutationAudit {
-            command: "review pass",
-            mutation_type: "state_change",
-            issue_ref: Some(&issue.identifier),
-            target: None,
-            from_state: Some(issue.state),
-            to_state: Some(target_state.into()),
-            reason: "manual review pass routing",
-        },
-    );
+    let state_outcome = set_state_with_recovery(
+        adapter.as_ref(),
+        &issue.identifier,
+        Some(&issue),
+        target_state,
+        "state_change",
+    )?;
+    if state_outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: "review pass",
+                mutation_type: "state_change",
+                issue_ref: Some(&issue.identifier),
+                target: None,
+                from_state: Some(issue.state.clone()),
+                to_state: Some(target_state.into()),
+                reason: "manual review pass routing",
+            },
+        );
+    }
     println!(
         "review_pass=ok issue_ref={} target_state={target_state}",
         issue.identifier
@@ -2601,19 +2690,38 @@ fn review_manual_reject(
         );
         return Ok(());
     }
-    adapter.add_issue_comment(&issue.identifier, &workpad)?;
-    append_tracker_mutation_audit(
-        &config,
-        TrackerMutationAudit {
-            command: "review reject",
-            mutation_type: "timeline_comment",
-            issue_ref: Some(&issue.identifier),
-            target: None,
-            from_state: Some(issue.state.clone()),
-            to_state: Some(target_state.clone()),
-            reason: "manual review reject evidence",
-        },
+    let evidence_key = recovery_key(
+        "review-reject",
+        &issue.identifier,
+        &format!(
+            "{}|{}|{}",
+            terminal_claim_value,
+            target_state,
+            stable_recovery_hash(&workpad)
+        ),
     );
+    let evidence_outcome = add_timeline_comment_with_recovery(
+        adapter.as_ref(),
+        &issue.identifier,
+        Some(&issue),
+        &workpad,
+        &evidence_key,
+        "timeline_comment",
+    )?;
+    if evidence_outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: "review reject",
+                mutation_type: "timeline_comment",
+                issue_ref: Some(&issue.identifier),
+                target: None,
+                from_state: Some(issue.state.clone()),
+                to_state: Some(target_state.clone()),
+                reason: "manual review reject evidence",
+            },
+        );
+    }
     write_terminal_review_claim(
         &config,
         adapter.as_ref(),
@@ -2622,19 +2730,27 @@ fn review_manual_reject(
         &terminal_claim_value,
         "review reject terminal claim evidence",
     )?;
-    adapter.set_state(&issue.identifier, &target_state)?;
-    append_tracker_mutation_audit(
-        &config,
-        TrackerMutationAudit {
-            command: "review reject",
-            mutation_type: "state_change",
-            issue_ref: Some(&issue.identifier),
-            target: None,
-            from_state: Some(issue.state),
-            to_state: Some(target_state.clone()),
-            reason: "manual review reject routing",
-        },
-    );
+    let state_outcome = set_state_with_recovery(
+        adapter.as_ref(),
+        &issue.identifier,
+        Some(&issue),
+        &target_state,
+        "state_change",
+    )?;
+    if state_outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            &config,
+            TrackerMutationAudit {
+                command: "review reject",
+                mutation_type: "state_change",
+                issue_ref: Some(&issue.identifier),
+                target: None,
+                from_state: Some(issue.state.clone()),
+                to_state: Some(target_state.clone()),
+                reason: "manual review reject routing",
+            },
+        );
+    }
     println!(
         "review_reject=ok issue_ref={} target_state={target_state}",
         issue.identifier
@@ -2815,25 +2931,33 @@ fn write_terminal_review_claim(
     value: &str,
     reason: &'static str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    adapter.set_project_field(
-        issue_ref,
+    let mut issue = adapter
+        .get_issue(issue_ref)?
+        .ok_or_else(|| format!("issue not found before terminal review claim: {issue_ref}"))?;
+    issue.state = from_state.into();
+    let outcome = set_project_field_with_recovery(
+        adapter,
+        &issue,
         &ProjectFieldAssignment {
             name: "Review Agent".into(),
             value: value.into(),
         },
+        "claim_field",
     )?;
-    append_tracker_mutation_audit(
-        config,
-        TrackerMutationAudit {
-            command: "manual review routing",
-            mutation_type: "claim_field",
-            issue_ref: Some(issue_ref),
-            target: Some(format!("Review Agent={value}")),
-            from_state: Some(from_state.into()),
-            to_state: None,
-            reason,
-        },
-    );
+    if outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            config,
+            TrackerMutationAudit {
+                command: "manual review routing",
+                mutation_type: "claim_field",
+                issue_ref: Some(issue_ref),
+                target: Some(format!("Review Agent={value}")),
+                from_state: Some(from_state.into()),
+                to_state: None,
+                reason,
+            },
+        );
+    }
     Ok(())
 }
 
@@ -3505,22 +3629,18 @@ fn merge_once_tick(
         let output = update_pull_request_branch(pr_ref, &runner, &std::env::current_dir()?)?;
         if output.status == 0 {
             let workpad = merge_lane_workpad(&issue, &decision, Some(&output));
-            adapter.add_issue_comment(&issue.identifier, &workpad)?;
-            append_tracker_mutation_audit(
+            let comment_outcome = record_merge_timeline_comment_with_recovery(
                 &config,
-                TrackerMutationAudit {
-                    command: "merge once",
-                    mutation_type: "timeline_comment",
-                    issue_ref: Some(&issue.identifier),
-                    target: decision.pr_url.clone(),
-                    from_state: Some(issue.state.clone()),
-                    to_state: None,
-                    reason: "merge lane stale branch update evidence",
-                },
-            );
+                adapter.as_ref(),
+                &issue,
+                &decision,
+                &workpad,
+                "merge lane stale branch update evidence",
+            )?;
             println!(
-                "merge_once_action=stale_branch_updated issue={} target_state=merging",
-                issue.identifier
+                "merge_once_action=stale_branch_updated issue={} target_state=merging evidence={}",
+                issue.identifier,
+                comment_outcome.as_str()
             );
             return Ok(MergeOnceOutcome::Skipped);
         }
@@ -3535,35 +3655,26 @@ fn merge_once_tick(
             single_line(&output.stderr)
         );
         let workpad = merge_lane_workpad(&issue, &failed_update, Some(&output));
-        adapter.add_issue_comment(&issue.identifier, &workpad)?;
-        append_tracker_mutation_audit(
+        record_merge_timeline_comment_with_recovery(
             &config,
-            TrackerMutationAudit {
-                command: "merge once",
-                mutation_type: "timeline_comment",
-                issue_ref: Some(&issue.identifier),
-                target: failed_update.pr_url.clone(),
-                from_state: Some(issue.state.clone()),
-                to_state: failed_update.target_state.map(ToOwned::to_owned),
-                reason: "merge lane stale branch update failure evidence",
-            },
-        );
-        adapter.set_state(&issue.identifier, "need_human_input")?;
-        append_tracker_mutation_audit(
+            adapter.as_ref(),
+            &issue,
+            &failed_update,
+            &workpad,
+            "merge lane stale branch update failure evidence",
+        )?;
+        let state_outcome = set_merge_state_with_recovery(
             &config,
-            TrackerMutationAudit {
-                command: "merge once",
-                mutation_type: "state_change",
-                issue_ref: Some(&issue.identifier),
-                target: failed_update.pr_url.clone(),
-                from_state: Some(issue.state.clone()),
-                to_state: Some("need_human_input".into()),
-                reason: "merge lane stale branch update failed",
-            },
-        );
+            adapter.as_ref(),
+            &issue,
+            "need_human_input",
+            failed_update.pr_url.clone(),
+            "merge lane stale branch update failed",
+        )?;
         println!(
-            "merge_once_action=routed issue={} target_state=need_human_input",
-            issue.identifier
+            "merge_once_action=routed issue={} target_state=need_human_input outcome={}",
+            issue.identifier,
+            state_outcome.as_str()
         );
         return Ok(MergeOnceOutcome::Routed);
     }
@@ -3593,22 +3704,18 @@ fn merge_once_tick(
             let mut repaired_decision = decision.clone();
             repaired_decision.reason = repair.reason.clone();
             let workpad = merge_lane_workpad(&issue, &repaired_decision, Some(&repair.output));
-            adapter.add_issue_comment(&issue.identifier, &workpad)?;
-            append_tracker_mutation_audit(
+            let comment_outcome = record_merge_timeline_comment_with_recovery(
                 &config,
-                TrackerMutationAudit {
-                    command: "merge once",
-                    mutation_type: "timeline_comment",
-                    issue_ref: Some(&issue.identifier),
-                    target: repaired_decision.pr_url.clone(),
-                    from_state: Some(issue.state.clone()),
-                    to_state: None,
-                    reason: "merge lane safe conflict repair evidence",
-                },
-            );
+                adapter.as_ref(),
+                &issue,
+                &repaired_decision,
+                &workpad,
+                "merge lane safe conflict repair evidence",
+            )?;
             println!(
-                "merge_once_action=safe_conflict_repaired issue={} target_state=merging",
-                issue.identifier
+                "merge_once_action=safe_conflict_repaired issue={} target_state=merging evidence={}",
+                issue.identifier,
+                comment_outcome.as_str()
             );
             return Ok(MergeOnceOutcome::Skipped);
         }
@@ -3617,35 +3724,26 @@ fn merge_once_tick(
         failed_repair.target_state = Some("need_human_input");
         failed_repair.reason = repair.reason.clone();
         let workpad = merge_lane_workpad(&issue, &failed_repair, Some(&repair.output));
-        adapter.add_issue_comment(&issue.identifier, &workpad)?;
-        append_tracker_mutation_audit(
+        record_merge_timeline_comment_with_recovery(
             &config,
-            TrackerMutationAudit {
-                command: "merge once",
-                mutation_type: "timeline_comment",
-                issue_ref: Some(&issue.identifier),
-                target: failed_repair.pr_url.clone(),
-                from_state: Some(issue.state.clone()),
-                to_state: failed_repair.target_state.map(ToOwned::to_owned),
-                reason: "merge lane conflict repair failure evidence",
-            },
-        );
-        adapter.set_state(&issue.identifier, "need_human_input")?;
-        append_tracker_mutation_audit(
+            adapter.as_ref(),
+            &issue,
+            &failed_repair,
+            &workpad,
+            "merge lane conflict repair failure evidence",
+        )?;
+        let state_outcome = set_merge_state_with_recovery(
             &config,
-            TrackerMutationAudit {
-                command: "merge once",
-                mutation_type: "state_change",
-                issue_ref: Some(&issue.identifier),
-                target: failed_repair.pr_url.clone(),
-                from_state: Some(issue.state.clone()),
-                to_state: Some("need_human_input".into()),
-                reason: "merge lane conflict repair needs human input",
-            },
-        );
+            adapter.as_ref(),
+            &issue,
+            "need_human_input",
+            failed_repair.pr_url.clone(),
+            "merge lane conflict repair needs human input",
+        )?;
         println!(
-            "merge_once_action=routed issue={} target_state=need_human_input",
-            issue.identifier
+            "merge_once_action=routed issue={} target_state=need_human_input outcome={}",
+            issue.identifier,
+            state_outcome.as_str()
         );
         return Ok(MergeOnceOutcome::Routed);
     }
@@ -3658,7 +3756,15 @@ fn merge_once_tick(
         let output = if merge_rehearsal_mode(&config, &issue) {
             fixture_merge_output(pr_ref)
         } else {
-            merge_pull_request(pr_ref, &runner, &std::env::current_dir()?)?
+            let (output, merge_outcome) =
+                merge_pull_request_with_recovery(pr_ref, &runner, &std::env::current_dir()?)?;
+            println!(
+                "merge_once_action=merge_command issue={} pr={} outcome={}",
+                issue.identifier,
+                pr_ref,
+                merge_outcome.as_str()
+            );
+            output
         };
         let workpad = merge_lane_workpad(&issue, &decision, Some(&output));
         record_done_merge_lane_completion(&config, adapter.as_ref(), &issue, &workpad)?;
@@ -3670,41 +3776,32 @@ fn merge_once_tick(
     }
 
     let workpad = merge_lane_workpad(&issue, &decision, None);
-    adapter.add_issue_comment(&issue.identifier, &workpad)?;
-    append_tracker_mutation_audit(
+    record_merge_timeline_comment_with_recovery(
         &config,
-        TrackerMutationAudit {
-            command: "merge once",
-            mutation_type: "timeline_comment",
-            issue_ref: Some(&issue.identifier),
-            target: decision.pr_url.clone(),
-            from_state: Some(issue.state.clone()),
-            to_state: decision.target_state.map(ToOwned::to_owned),
-            reason: "merge lane routing evidence",
-        },
-    );
+        adapter.as_ref(),
+        &issue,
+        &decision,
+        &workpad,
+        "merge lane routing evidence",
+    )?;
     if let Some(target_state) = decision.target_state {
-        adapter.set_state(&issue.identifier, target_state)?;
-        append_tracker_mutation_audit(
+        let state_outcome = set_merge_state_with_recovery(
             &config,
-            TrackerMutationAudit {
-                command: "merge once",
-                mutation_type: "state_change",
-                issue_ref: Some(&issue.identifier),
-                target: decision.pr_url.clone(),
-                from_state: Some(issue.state.clone()),
-                to_state: Some(target_state.into()),
-                reason: "merge lane routing",
-            },
-        );
+            adapter.as_ref(),
+            &issue,
+            target_state,
+            decision.pr_url.clone(),
+            "merge lane routing",
+        )?;
         if decision.kind == MergeLaneDecisionKind::AlreadyMerged
             && normalize_state(target_state) == "done"
         {
-            close_completed_issue(adapter.as_ref(), &issue.identifier)?;
+            close_completed_issue(&config, adapter.as_ref(), &issue.identifier, Some(&issue))?;
         }
         println!(
-            "merge_once_action=routed issue={} target_state={target_state}",
-            issue.identifier
+            "merge_once_action=routed issue={} target_state={target_state} outcome={}",
+            issue.identifier,
+            state_outcome.as_str()
         );
         return Ok(MergeOnceOutcome::Routed);
     } else {
@@ -3740,67 +3837,136 @@ fn refresh_canonical_checkout_after_merge(
     Ok(())
 }
 
+fn record_merge_timeline_comment_with_recovery(
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    issue: &TrackerIssue,
+    decision: &jade_symphony::merge_lane::MergeLaneDecision,
+    workpad: &str,
+    reason: &'static str,
+) -> Result<TrackerMutationOutcome, Box<dyn std::error::Error>> {
+    let key = if matches!(
+        decision.kind,
+        MergeLaneDecisionKind::ReadyToMerge | MergeLaneDecisionKind::AlreadyMerged
+    ) {
+        merge_completion_recovery_key(issue, decision.pr_url.as_deref().unwrap_or("missing-pr"))
+    } else {
+        merge_decision_recovery_key(issue, decision)
+    };
+    let outcome = add_timeline_comment_with_recovery(
+        adapter,
+        &issue.identifier,
+        Some(issue),
+        workpad,
+        &key,
+        "timeline_comment",
+    )?;
+    if outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            config,
+            TrackerMutationAudit {
+                command: "merge once",
+                mutation_type: "timeline_comment",
+                issue_ref: Some(&issue.identifier),
+                target: decision.pr_url.clone(),
+                from_state: Some(issue.state.clone()),
+                to_state: decision.target_state.map(ToOwned::to_owned),
+                reason,
+            },
+        );
+    }
+    Ok(outcome)
+}
+
+fn set_merge_state_with_recovery(
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    issue: &TrackerIssue,
+    target_state: &str,
+    pr_url: Option<String>,
+    reason: &'static str,
+) -> Result<TrackerMutationOutcome, Box<dyn std::error::Error>> {
+    let outcome = set_state_with_recovery(
+        adapter,
+        &issue.identifier,
+        Some(issue),
+        target_state,
+        "state_change",
+    )?;
+    if outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            config,
+            TrackerMutationAudit {
+                command: "merge once",
+                mutation_type: "state_change",
+                issue_ref: Some(&issue.identifier),
+                target: pr_url,
+                from_state: Some(issue.state.clone()),
+                to_state: Some(target_state.into()),
+                reason,
+            },
+        );
+    }
+    Ok(outcome)
+}
+
 fn record_done_merge_lane_completion(
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
     issue: &TrackerIssue,
     workpad: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    adapter.add_issue_comment(&issue.identifier, workpad)?;
-    append_tracker_mutation_audit(
+    let pr_url = issue
+        .linked_pull_requests
+        .first()
+        .and_then(|pr| pr.url.clone());
+    let completion_decision = jade_symphony::merge_lane::MergeLaneDecision {
+        kind: MergeLaneDecisionKind::ReadyToMerge,
+        issue_ref: issue.identifier.clone(),
+        pr_url: pr_url.clone(),
+        target_state: Some("done"),
+        reason: "merge completed".into(),
+    };
+    record_merge_timeline_comment_with_recovery(
         config,
-        TrackerMutationAudit {
-            command: "merge once",
-            mutation_type: "timeline_comment",
-            issue_ref: Some(&issue.identifier),
-            target: issue
-                .linked_pull_requests
-                .first()
-                .and_then(|pr| pr.url.clone()),
-            from_state: Some(issue.state.clone()),
-            to_state: Some("done".into()),
-            reason: "merge completion evidence",
-        },
-    );
-    adapter.set_state(&issue.identifier, "done")?;
-    append_tracker_mutation_audit(
-        config,
-        TrackerMutationAudit {
-            command: "merge once",
-            mutation_type: "state_change",
-            issue_ref: Some(&issue.identifier),
-            target: issue
-                .linked_pull_requests
-                .first()
-                .and_then(|pr| pr.url.clone()),
-            from_state: Some(issue.state.clone()),
-            to_state: Some("done".into()),
-            reason: "merge completed",
-        },
-    );
-    close_completed_issue(adapter, &issue.identifier)?;
+        adapter,
+        issue,
+        &completion_decision,
+        workpad,
+        "merge completion evidence",
+    )?;
+    set_merge_state_with_recovery(config, adapter, issue, "done", pr_url, "merge completed")?;
+    close_completed_issue(config, adapter, &issue.identifier, Some(issue))?;
     Ok(())
 }
 
 fn close_completed_issue(
+    config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
     issue_ref: &str,
+    initial_issue: Option<&TrackerIssue>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    match adapter.close_issue(issue_ref) {
-        Ok(()) => {
-            println!("merge_once_action=closed_issue issue={issue_ref}");
-            Ok(())
-        }
-        Err(TrackerError::NotImplemented(message)) => {
-            eprintln!("merge_once_warning=issue_close_unavailable reason={message}");
-            Ok(())
-        }
-        Err(TrackerError::IntegrationUnavailable(message)) => {
-            eprintln!("merge_once_warning=issue_close_unavailable reason={message}");
-            Ok(())
-        }
-        Err(error) => Err(Box::new(error)),
+    let outcome = close_issue_with_recovery(adapter, issue_ref, initial_issue)?;
+    if outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            config,
+            TrackerMutationAudit {
+                command: "merge once",
+                mutation_type: "issue_close",
+                issue_ref: Some(issue_ref),
+                target: None,
+                from_state: initial_issue.map(|issue| issue.state.clone()),
+                to_state: Some("closed".into()),
+                reason: "merge completed issue closure",
+            },
+        );
     }
+    println!(
+        "merge_once_action=closed_issue issue={} outcome={}",
+        issue_ref,
+        outcome.as_str()
+    );
+    Ok(())
 }
 
 fn single_line(value: &str) -> String {
@@ -3981,28 +4147,34 @@ fn write_review_claim_field(
 ) -> Result<LaneClaim, Box<dyn std::error::Error>> {
     let claim = review_claim_for_issue(issue, worker_key);
     let claim_value = render_parseable_lane_claim(&claim)?;
-    adapter.set_project_field(
-        &issue.identifier,
+    let outcome = set_project_field_with_recovery(
+        adapter,
+        issue,
         &ProjectFieldAssignment {
             name: "Review Agent".into(),
             value: claim_value.clone(),
         },
+        "claim_field",
     )?;
-    append_tracker_mutation_audit(
-        config,
-        TrackerMutationAudit {
-            command: "review loop",
-            mutation_type: "claim_field",
-            issue_ref: Some(&issue.identifier),
-            target: Some(format!("Review Agent={claim_value}")),
-            from_state: None,
-            to_state: None,
-            reason: "review worker claim",
-        },
-    );
+    if outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            config,
+            TrackerMutationAudit {
+                command: "review loop",
+                mutation_type: "claim_field",
+                issue_ref: Some(&issue.identifier),
+                target: Some(format!("Review Agent={claim_value}")),
+                from_state: None,
+                to_state: None,
+                reason: "review worker claim",
+            },
+        );
+    }
     println!(
-        "review_loop_action=claim_field issue={} field=\"Review Agent\" run={}",
-        issue.identifier, claim.run
+        "review_loop_action=claim_field issue={} field=\"Review Agent\" run={} outcome={}",
+        issue.identifier,
+        claim.run,
+        outcome.as_str()
     );
     Ok(claim)
 }
@@ -4300,25 +4472,58 @@ fn start_agent_session_with_claim(
         agent_command: &agent_command,
         git_identity: &git_identity,
     });
-    let mutation_type = if lane == AgentSessionLaneArg::Main {
-        adapter.upsert_workpad(&issue.identifier, &workpad)?;
-        "workpad_write"
+    let (mutation_type, outcome) = if lane == AgentSessionLaneArg::Main {
+        let key = recovery_key(
+            "session-start-workpad",
+            &issue.identifier,
+            &format!(
+                "{}|{}|{}",
+                issue.identifier,
+                claim.run,
+                stable_recovery_hash(&workpad)
+            ),
+        );
+        (
+            "workpad_write",
+            upsert_workpad_with_recovery(adapter, &issue.identifier, Some(issue), &workpad, &key)?,
+        )
     } else {
-        adapter.add_issue_comment(&issue.identifier, &workpad)?;
-        "timeline_comment"
+        let key = recovery_key(
+            "session-start-timeline",
+            &issue.identifier,
+            &format!(
+                "{}|{}|{}",
+                issue.identifier,
+                claim.run,
+                stable_recovery_hash(&workpad)
+            ),
+        );
+        (
+            "timeline_comment",
+            add_timeline_comment_with_recovery(
+                adapter,
+                &issue.identifier,
+                Some(issue),
+                &workpad,
+                &key,
+                "timeline_comment",
+            )?,
+        )
     };
-    append_tracker_mutation_audit(
-        config,
-        TrackerMutationAudit {
-            command: audit_command,
-            mutation_type,
-            issue_ref: Some(&issue.identifier),
-            target: summary.session_id.clone(),
-            from_state: Some(issue.state.clone()),
-            to_state: None,
-            reason: "manual tmux lane session evidence",
-        },
-    );
+    if outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            config,
+            TrackerMutationAudit {
+                command: audit_command,
+                mutation_type,
+                issue_ref: Some(&issue.identifier),
+                target: summary.session_id.clone(),
+                from_state: Some(issue.state.clone()),
+                to_state: None,
+                reason: "manual tmux lane session evidence",
+            },
+        );
+    }
 
     Ok(AgentSessionStartResult {
         summary,
@@ -4726,36 +4931,67 @@ fn apply_review_result(
     let workpad = repeat_evidence
         .map(|evidence| render_repeated_review_failure_workpad(issue, job, evidence))
         .unwrap_or_else(|| render_review_workpad(issue, job));
-    adapter.add_issue_comment(issue_ref, &workpad)?;
-    append_tracker_mutation_audit(
-        config,
-        TrackerMutationAudit {
-            command: "review loop",
-            mutation_type: "timeline_comment",
-            issue_ref: Some(issue_ref),
-            target: job
-                .ledger_path
+    let evidence_key = recovery_key(
+        "review-result",
+        issue_ref,
+        &format!(
+            "{}|{:?}|{}|{}",
+            issue_ref,
+            decision.outcome,
+            decision.target_state.unwrap_or("none"),
+            job.ledger_path
                 .as_ref()
-                .map(|path| path.display().to_string()),
-            from_state: Some(issue.state.clone()),
-            to_state: decision.target_state.map(ToOwned::to_owned),
-            reason: "review result timeline evidence",
-        },
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| stable_recovery_hash(&workpad))
+        ),
     );
-    if let Some(target_state) = decision.target_state {
-        adapter.set_state(issue_ref, target_state)?;
+    let evidence_outcome = add_timeline_comment_with_recovery(
+        adapter,
+        issue_ref,
+        Some(issue),
+        &workpad,
+        &evidence_key,
+        "timeline_comment",
+    )?;
+    if evidence_outcome.should_record_audit() {
         append_tracker_mutation_audit(
             config,
             TrackerMutationAudit {
                 command: "review loop",
-                mutation_type: "state_change",
+                mutation_type: "timeline_comment",
                 issue_ref: Some(issue_ref),
-                target: None,
+                target: job
+                    .ledger_path
+                    .as_ref()
+                    .map(|path| path.display().to_string()),
                 from_state: Some(issue.state.clone()),
-                to_state: Some(target_state.into()),
-                reason: "review result routing",
+                to_state: decision.target_state.map(ToOwned::to_owned),
+                reason: "review result timeline evidence",
             },
         );
+    }
+    if let Some(target_state) = decision.target_state {
+        let state_outcome = set_state_with_recovery(
+            adapter,
+            issue_ref,
+            Some(issue),
+            target_state,
+            "state_change",
+        )?;
+        if state_outcome.should_record_audit() {
+            append_tracker_mutation_audit(
+                config,
+                TrackerMutationAudit {
+                    command: "review loop",
+                    mutation_type: "state_change",
+                    issue_ref: Some(issue_ref),
+                    target: None,
+                    from_state: Some(issue.state.clone()),
+                    to_state: Some(target_state.into()),
+                    reason: "review result routing",
+                },
+            );
+        }
     }
     Ok(())
 }
@@ -4937,35 +5173,64 @@ fn transition_review_issue_to_rework_with_workpad(
     job: &ReviewJob,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let workpad = render_review_workpad(issue, job);
-    adapter.add_issue_comment(&issue.identifier, &workpad)?;
-    append_tracker_mutation_audit(
-        config,
-        TrackerMutationAudit {
-            command: "review loop",
-            mutation_type: "timeline_comment",
-            issue_ref: Some(&issue.identifier),
-            target: job
-                .ledger_path
+    let evidence_key = recovery_key(
+        "review-rework",
+        &issue.identifier,
+        &format!(
+            "{}|{}",
+            issue.identifier,
+            job.ledger_path
                 .as_ref()
-                .map(|path| path.display().to_string()),
-            from_state: Some(issue.state.clone()),
-            to_state: Some("rework".into()),
-            reason: "review result timeline evidence",
-        },
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| stable_recovery_hash(&workpad))
+        ),
     );
-    adapter.set_state(&issue.identifier, "rework")?;
-    append_tracker_mutation_audit(
-        config,
-        TrackerMutationAudit {
-            command: "review loop",
-            mutation_type: "state_change",
-            issue_ref: Some(&issue.identifier),
-            target: None,
-            from_state: Some(issue.state.clone()),
-            to_state: Some("rework".into()),
-            reason: "confirmed review finding",
-        },
-    );
+    let evidence_outcome = add_timeline_comment_with_recovery(
+        adapter,
+        &issue.identifier,
+        Some(issue),
+        &workpad,
+        &evidence_key,
+        "timeline_comment",
+    )?;
+    if evidence_outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            config,
+            TrackerMutationAudit {
+                command: "review loop",
+                mutation_type: "timeline_comment",
+                issue_ref: Some(&issue.identifier),
+                target: job
+                    .ledger_path
+                    .as_ref()
+                    .map(|path| path.display().to_string()),
+                from_state: Some(issue.state.clone()),
+                to_state: Some("rework".into()),
+                reason: "review result timeline evidence",
+            },
+        );
+    }
+    let state_outcome = set_state_with_recovery(
+        adapter,
+        &issue.identifier,
+        Some(issue),
+        "rework",
+        "state_change",
+    )?;
+    if state_outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            config,
+            TrackerMutationAudit {
+                command: "review loop",
+                mutation_type: "state_change",
+                issue_ref: Some(&issue.identifier),
+                target: None,
+                from_state: Some(issue.state.clone()),
+                to_state: Some("rework".into()),
+                reason: "confirmed review finding",
+            },
+        );
+    }
     Ok(())
 }
 
@@ -7997,7 +8262,18 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 AssigneeOwnershipDecision::Allowed => {}
                 AssigneeOwnershipDecision::Block { reason } => {
                     let workpad = run_loop_assignee_ownership_workpad(&latest, &reason);
-                    adapter.upsert_workpad(&latest.identifier, &workpad)?;
+                    let workpad_key = recovery_key(
+                        "main-assignee-ownership-workpad",
+                        &latest.identifier,
+                        &format!("{}|{}", latest.identifier, stable_recovery_hash(&workpad)),
+                    );
+                    upsert_workpad_with_recovery(
+                        adapter.as_ref(),
+                        &latest.identifier,
+                        Some(&latest),
+                        &workpad,
+                        &workpad_key,
+                    )?;
                     print_latest_status(&latest_status_for_issue(
                         &config,
                         &latest,
@@ -8076,22 +8352,31 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                         &main_claim,
                         true,
                     )?;
-                    adapter.set_state(&latest.identifier, "in_progress")?;
-                    append_tracker_mutation_audit(
-                        &config,
-                        TrackerMutationAudit {
-                            command: "main loop",
-                            mutation_type: "state_change",
-                            issue_ref: Some(&latest.identifier),
-                            target: None,
-                            from_state: Some(latest.state.clone()),
-                            to_state: Some("in_progress".into()),
-                            reason: "main worker claim",
-                        },
-                    );
+                    let state_outcome = set_state_with_recovery(
+                        adapter.as_ref(),
+                        &latest.identifier,
+                        Some(&latest),
+                        "in_progress",
+                        "state_change",
+                    )?;
+                    if state_outcome.should_record_audit() {
+                        append_tracker_mutation_audit(
+                            &config,
+                            TrackerMutationAudit {
+                                command: "main loop",
+                                mutation_type: "state_change",
+                                issue_ref: Some(&latest.identifier),
+                                target: None,
+                                from_state: Some(latest.state.clone()),
+                                to_state: Some("in_progress".into()),
+                                reason: "main worker claim",
+                            },
+                        );
+                    }
                     println!(
-                        "run_loop_action=claim issue={} target_state=in_progress",
-                        latest.identifier
+                        "run_loop_action=claim issue={} target_state=in_progress outcome={}",
+                        latest.identifier,
+                        state_outcome.as_str()
                     );
                     print_latest_status(&latest_status_for_issue(
                         &config,
@@ -8141,24 +8426,43 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             };
             let ownership_workpad =
                 run_loop_ownership_workpad(&latest, &ownership, event, &main_claim);
-            adapter.upsert_workpad(&latest.identifier, &ownership_workpad)?;
-            append_tracker_mutation_audit(
-                &config,
-                TrackerMutationAudit {
-                    command: "main loop",
-                    mutation_type: "workpad_write",
-                    issue_ref: Some(&latest.identifier),
-                    target: ownership.profile_id.clone(),
-                    from_state: Some(latest.state.clone()),
-                    to_state: None,
-                    reason: "runtime ownership evidence",
-                },
+            let ownership_key = recovery_key(
+                "main-ownership-workpad",
+                &latest.identifier,
+                &format!(
+                    "{}|{}|{}",
+                    latest.identifier,
+                    main_claim.run,
+                    stable_recovery_hash(&ownership_workpad)
+                ),
             );
+            let ownership_outcome = upsert_workpad_with_recovery(
+                adapter.as_ref(),
+                &latest.identifier,
+                Some(&latest),
+                &ownership_workpad,
+                &ownership_key,
+            )?;
+            if ownership_outcome.should_record_audit() {
+                append_tracker_mutation_audit(
+                    &config,
+                    TrackerMutationAudit {
+                        command: "main loop",
+                        mutation_type: "workpad_write",
+                        issue_ref: Some(&latest.identifier),
+                        target: ownership.profile_id.clone(),
+                        from_state: Some(latest.state.clone()),
+                        to_state: None,
+                        reason: "runtime ownership evidence",
+                    },
+                );
+            }
             println!(
-                "run_loop_action=ownership issue={} profile={} branch={}",
+                "run_loop_action=ownership issue={} profile={} branch={} outcome={}",
                 latest.identifier,
                 ownership.profile_id.as_deref().unwrap_or("n/a"),
-                ownership.branch_name
+                ownership.branch_name,
+                ownership_outcome.as_str()
             );
 
             let mut runtime_state = run_loop_runtime_state_for_issue(
@@ -8438,22 +8742,40 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             );
 
             let workpad = run_loop_handoff_workpad(&latest, &result, &handoff, Some(&ownership));
-            adapter.upsert_workpad(&latest.identifier, &workpad)?;
-            append_tracker_mutation_audit(
-                &config,
-                TrackerMutationAudit {
-                    command: "main loop",
-                    mutation_type: "workpad_write",
-                    issue_ref: Some(&latest.identifier),
-                    target: result
-                        .live_handoff
-                        .as_ref()
-                        .map(|handoff| handoff.publication.pr_url.clone()),
-                    from_state: Some(latest.state.clone()),
-                    to_state: None,
-                    reason: "main worker handoff evidence",
-                },
+            let handoff_key = recovery_key(
+                "main-handoff-workpad",
+                &latest.identifier,
+                &format!(
+                    "{}|{}|{}",
+                    latest.identifier,
+                    main_claim.run,
+                    stable_recovery_hash(&workpad)
+                ),
             );
+            let handoff_outcome = upsert_workpad_with_recovery(
+                adapter.as_ref(),
+                &latest.identifier,
+                Some(&latest),
+                &workpad,
+                &handoff_key,
+            )?;
+            if handoff_outcome.should_record_audit() {
+                append_tracker_mutation_audit(
+                    &config,
+                    TrackerMutationAudit {
+                        command: "main loop",
+                        mutation_type: "workpad_write",
+                        issue_ref: Some(&latest.identifier),
+                        target: result
+                            .live_handoff
+                            .as_ref()
+                            .map(|handoff| handoff.publication.pr_url.clone()),
+                        from_state: Some(latest.state.clone()),
+                        to_state: None,
+                        reason: "main worker handoff evidence",
+                    },
+                );
+            }
 
             if result.pending_session {
                 append_runtime_supervision_event(
@@ -8517,22 +8839,40 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 let handoff_report = evaluate_agent_review_handoff(&evidence);
                 let handoff_workpad =
                     render_agent_review_handoff_workpad(&latest, &evidence, &handoff_report);
-                adapter.upsert_workpad(&latest.identifier, &handoff_workpad)?;
-                append_tracker_mutation_audit(
-                    &config,
-                    TrackerMutationAudit {
-                        command: "main loop",
-                        mutation_type: "workpad_write",
-                        issue_ref: Some(&latest.identifier),
-                        target: result
-                            .live_handoff
-                            .as_ref()
-                            .map(|handoff| handoff.publication.pr_url.clone()),
-                        from_state: Some(latest.state.clone()),
-                        to_state: Some("agent_review".into()),
-                        reason: "agent review handoff evidence",
-                    },
+                let review_handoff_key = recovery_key(
+                    "agent-review-handoff-workpad",
+                    &latest.identifier,
+                    &format!(
+                        "{}|{}|{}",
+                        latest.identifier,
+                        main_claim.run,
+                        stable_recovery_hash(&handoff_workpad)
+                    ),
                 );
+                let review_handoff_outcome = upsert_workpad_with_recovery(
+                    adapter.as_ref(),
+                    &latest.identifier,
+                    Some(&latest),
+                    &handoff_workpad,
+                    &review_handoff_key,
+                )?;
+                if review_handoff_outcome.should_record_audit() {
+                    append_tracker_mutation_audit(
+                        &config,
+                        TrackerMutationAudit {
+                            command: "main loop",
+                            mutation_type: "workpad_write",
+                            issue_ref: Some(&latest.identifier),
+                            target: result
+                                .live_handoff
+                                .as_ref()
+                                .map(|handoff| handoff.publication.pr_url.clone()),
+                            from_state: Some(latest.state.clone()),
+                            to_state: Some("agent_review".into()),
+                            reason: "agent review handoff evidence",
+                        },
+                    );
+                }
                 if !handoff_report.is_ready() {
                     runtime_state = run_loop_runtime_state_with_transition(
                         runtime_state,
@@ -8549,19 +8889,27 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                         &main_claim,
                         LaneClaimState::Failed,
                     )?;
-                    adapter.set_state(&latest.identifier, "need_human_input")?;
-                    append_tracker_mutation_audit(
-                        &config,
-                        TrackerMutationAudit {
-                            command: "main loop",
-                            mutation_type: "state_change",
-                            issue_ref: Some(&latest.identifier),
-                            target: None,
-                            from_state: Some(latest.state.clone()),
-                            to_state: Some("need_human_input".into()),
-                            reason: "agent review handoff invariant failed",
-                        },
-                    );
+                    let state_outcome = set_state_with_recovery(
+                        adapter.as_ref(),
+                        &latest.identifier,
+                        Some(&latest),
+                        "need_human_input",
+                        "state_change",
+                    )?;
+                    if state_outcome.should_record_audit() {
+                        append_tracker_mutation_audit(
+                            &config,
+                            TrackerMutationAudit {
+                                command: "main loop",
+                                mutation_type: "state_change",
+                                issue_ref: Some(&latest.identifier),
+                                target: None,
+                                from_state: Some(latest.state.clone()),
+                                to_state: Some("need_human_input".into()),
+                                reason: "agent review handoff invariant failed",
+                            },
+                        );
+                    }
                     remove_runtime_state_for_issue(&config, &latest.identifier)?;
                     println!(
                     "run_loop_action=blocked issue={} target_state=need_human_input reason=handoff_invariant_failed",
@@ -8593,23 +8941,31 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     &main_claim,
                     LaneClaimState::Done,
                 )?;
-                adapter.set_state(&latest.identifier, "agent_review")?;
+                let state_outcome = set_state_with_recovery(
+                    adapter.as_ref(),
+                    &latest.identifier,
+                    Some(&latest),
+                    "agent_review",
+                    "state_change",
+                )?;
                 reconcile_main_handoff_runtime_state(&config, &latest.identifier, "agent_review")?;
-                append_tracker_mutation_audit(
-                    &config,
-                    TrackerMutationAudit {
-                        command: "main loop",
-                        mutation_type: "state_change",
-                        issue_ref: Some(&latest.identifier),
-                        target: result
-                            .live_handoff
-                            .as_ref()
-                            .map(|handoff| handoff.publication.pr_url.clone()),
-                        from_state: Some(latest.state.clone()),
-                        to_state: Some("agent_review".into()),
-                        reason: "main agent completed",
-                    },
-                );
+                if state_outcome.should_record_audit() {
+                    append_tracker_mutation_audit(
+                        &config,
+                        TrackerMutationAudit {
+                            command: "main loop",
+                            mutation_type: "state_change",
+                            issue_ref: Some(&latest.identifier),
+                            target: result
+                                .live_handoff
+                                .as_ref()
+                                .map(|handoff| handoff.publication.pr_url.clone()),
+                            from_state: Some(latest.state.clone()),
+                            to_state: Some("agent_review".into()),
+                            reason: "main agent completed",
+                        },
+                    );
+                }
                 remove_runtime_state_for_issue(&config, &latest.identifier)?;
                 println!(
                     "run_loop_action=handoff issue={} target_state=agent_review",
@@ -8636,19 +8992,37 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     upsert_runtime_state(&config, &runtime_state)?;
                     let pause_workpad =
                         run_loop_usage_limit_pause_workpad(&latest, &result, pause, retry_delay_ms);
-                    adapter.upsert_workpad(&latest.identifier, &pause_workpad)?;
-                    append_tracker_mutation_audit(
-                        &config,
-                        TrackerMutationAudit {
-                            command: "main loop",
-                            mutation_type: "workpad_write",
-                            issue_ref: Some(&latest.identifier),
-                            target: Some(pause.classifier.clone()),
-                            from_state: Some(latest.state.clone()),
-                            to_state: None,
-                            reason: "usage-limit pause evidence",
-                        },
+                    let pause_key = recovery_key(
+                        "main-usage-limit-workpad",
+                        &latest.identifier,
+                        &format!(
+                            "{}|{}|{}",
+                            latest.identifier,
+                            main_claim.run,
+                            stable_recovery_hash(&pause_workpad)
+                        ),
                     );
+                    let pause_outcome = upsert_workpad_with_recovery(
+                        adapter.as_ref(),
+                        &latest.identifier,
+                        Some(&latest),
+                        &pause_workpad,
+                        &pause_key,
+                    )?;
+                    if pause_outcome.should_record_audit() {
+                        append_tracker_mutation_audit(
+                            &config,
+                            TrackerMutationAudit {
+                                command: "main loop",
+                                mutation_type: "workpad_write",
+                                issue_ref: Some(&latest.identifier),
+                                target: Some(pause.classifier.clone()),
+                                from_state: Some(latest.state.clone()),
+                                to_state: None,
+                                reason: "usage-limit pause evidence",
+                            },
+                        );
+                    }
                     append_runtime_supervision_event(
                         &config,
                         Some(&runtime_state),
@@ -8689,22 +9063,30 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                         &main_claim,
                         LaneClaimState::Failed,
                     )?;
-                    adapter.set_state(&latest.identifier, "need_human_input")?;
-                    append_tracker_mutation_audit(
-                        &config,
-                        TrackerMutationAudit {
-                            command: "main loop",
-                            mutation_type: "state_change",
-                            issue_ref: Some(&latest.identifier),
-                            target: result
-                                .live_handoff
-                                .as_ref()
-                                .map(|handoff| handoff.publication.pr_url.clone()),
-                            from_state: Some(latest.state.clone()),
-                            to_state: Some("need_human_input".into()),
-                            reason: "handoff PR linkage invariant failed",
-                        },
-                    );
+                    let state_outcome = set_state_with_recovery(
+                        adapter.as_ref(),
+                        &latest.identifier,
+                        Some(&latest),
+                        "need_human_input",
+                        "state_change",
+                    )?;
+                    if state_outcome.should_record_audit() {
+                        append_tracker_mutation_audit(
+                            &config,
+                            TrackerMutationAudit {
+                                command: "main loop",
+                                mutation_type: "state_change",
+                                issue_ref: Some(&latest.identifier),
+                                target: result
+                                    .live_handoff
+                                    .as_ref()
+                                    .map(|handoff| handoff.publication.pr_url.clone()),
+                                from_state: Some(latest.state.clone()),
+                                to_state: Some("need_human_input".into()),
+                                reason: "handoff PR linkage invariant failed",
+                            },
+                        );
+                    }
                     remove_runtime_state_for_issue(&config, &latest.identifier)?;
                     println!(
                     "run_loop_action=blocked issue={} target_state=need_human_input reason=handoff_pr_linkage_invariant_failed",
@@ -8762,19 +9144,27 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                     );
                     mark_runtime_state_updated(&mut runtime_state, current_time_ms());
                     upsert_runtime_state(&config, &runtime_state)?;
-                    adapter.set_state(&latest.identifier, "need_human_input")?;
-                    append_tracker_mutation_audit(
-                        &config,
-                        TrackerMutationAudit {
-                            command: "main loop",
-                            mutation_type: "state_change",
-                            issue_ref: Some(&latest.identifier),
-                            target: None,
-                            from_state: Some(latest.state.clone()),
-                            to_state: Some("need_human_input".into()),
-                            reason: "backend run failed after retry limit",
-                        },
-                    );
+                    let state_outcome = set_state_with_recovery(
+                        adapter.as_ref(),
+                        &latest.identifier,
+                        Some(&latest),
+                        "need_human_input",
+                        "state_change",
+                    )?;
+                    if state_outcome.should_record_audit() {
+                        append_tracker_mutation_audit(
+                            &config,
+                            TrackerMutationAudit {
+                                command: "main loop",
+                                mutation_type: "state_change",
+                                issue_ref: Some(&latest.identifier),
+                                target: None,
+                                from_state: Some(latest.state.clone()),
+                                to_state: Some("need_human_input".into()),
+                                reason: "backend run failed after retry limit",
+                            },
+                        );
+                    }
                     remove_runtime_state_for_issue(&config, &latest.identifier)?;
                     println!(
                         "run_loop_action=blocked issue={} target_state=need_human_input",
@@ -9054,31 +9444,36 @@ fn write_lane_claim_field(
         );
         return Ok(());
     }
-    adapter.set_project_field(
-        &issue.identifier,
+    let outcome = set_project_field_with_recovery(
+        adapter,
+        issue,
         &ProjectFieldAssignment {
             name: lane.claim_field().into(),
             value: claim_value.clone(),
         },
+        "claim_field",
     )?;
-    append_tracker_mutation_audit(
-        config,
-        TrackerMutationAudit {
-            command: lane.label(),
-            mutation_type: "claim_field",
-            issue_ref: Some(&issue.identifier),
-            target: Some(format!("{}={claim_value}", lane.claim_field())),
-            from_state: Some(issue.state.clone()),
-            to_state: None,
-            reason: "lane worker claim",
-        },
-    );
+    if outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            config,
+            TrackerMutationAudit {
+                command: lane.label(),
+                mutation_type: "claim_field",
+                issue_ref: Some(&issue.identifier),
+                target: Some(format!("{}={claim_value}", lane.claim_field())),
+                from_state: Some(issue.state.clone()),
+                to_state: None,
+                reason: "lane worker claim",
+            },
+        );
+    }
     println!(
-        "{}_pool_action=claim_field issue={} field={:?} run={}",
+        "{}_pool_action=claim_field issue={} field={:?} run={} outcome={}",
         lane.label(),
         issue.identifier,
         lane.claim_field(),
-        claim.run
+        claim.run,
+        outcome.as_str()
     );
     Ok(())
 }
@@ -9093,32 +9488,37 @@ fn write_lane_claim_state(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let updated = claim.with_state(state);
     let value = render_parseable_lane_claim(&updated)?;
-    adapter.set_project_field(
-        &issue.identifier,
+    let outcome = set_project_field_with_recovery(
+        adapter,
+        issue,
         &ProjectFieldAssignment {
             name: lane.claim_field().into(),
             value: value.clone(),
         },
+        "claim_field",
     )?;
-    append_tracker_mutation_audit(
-        config,
-        TrackerMutationAudit {
-            command: lane.label(),
-            mutation_type: "claim_field",
-            issue_ref: Some(&issue.identifier),
-            target: Some(format!("{}={value}", lane.claim_field())),
-            from_state: Some(issue.state.clone()),
-            to_state: None,
-            reason: "lane worker claim state update",
-        },
-    );
+    if outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            config,
+            TrackerMutationAudit {
+                command: lane.label(),
+                mutation_type: "claim_field",
+                issue_ref: Some(&issue.identifier),
+                target: Some(format!("{}={value}", lane.claim_field())),
+                from_state: Some(issue.state.clone()),
+                to_state: None,
+                reason: "lane worker claim state update",
+            },
+        );
+    }
     println!(
-        "{}_pool_action=claim_field_state issue={} field={:?} run={} state={}",
+        "{}_pool_action=claim_field_state issue={} field={:?} run={} state={} outcome={}",
         lane.label(),
         issue.identifier,
         lane.claim_field(),
         claim.run,
-        state.as_str()
+        state.as_str(),
+        outcome.as_str()
     );
     Ok(())
 }
@@ -10479,6 +10879,403 @@ fn append_tracker_mutation_audit(config: &RuntimeConfig, audit: TrackerMutationA
         message: audit.reason.into(),
     }) {
         eprintln!("audit_warning=tracker_mutation_unavailable reason={error}");
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrackerMutationOutcome {
+    Applied,
+    AlreadyApplied,
+    Recovered,
+}
+
+impl TrackerMutationOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Applied => "applied",
+            Self::AlreadyApplied => "already_applied",
+            Self::Recovered => "recovered",
+        }
+    }
+
+    fn should_record_audit(self) -> bool {
+        !matches!(self, Self::AlreadyApplied)
+    }
+}
+
+fn tracker_recovery_marker(key: &str) -> String {
+    format!(
+        "<!-- jade-symphony-tracker-recovery key={} -->",
+        recovery_key_component(key)
+    )
+}
+
+fn ensure_tracker_recovery_marker(markdown: &str, key: &str) -> String {
+    let marker = tracker_recovery_marker(key);
+    if markdown.contains(&marker) {
+        return markdown.to_string();
+    }
+
+    let mut body = markdown.trim_end().to_string();
+    if !body.is_empty() {
+        body.push_str("\n\n");
+    }
+    body.push_str(&marker);
+    body
+}
+
+fn recovery_key(label: &str, issue_ref: &str, seed: &str) -> String {
+    format!(
+        "{}-{}-{}",
+        recovery_key_component(label),
+        recovery_key_component(issue_ref),
+        stable_recovery_hash(seed)
+    )
+}
+
+fn recovery_key_component(value: &str) -> String {
+    let mut out = String::new();
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+        } else if matches!(ch, '-' | '_' | '.') {
+            out.push(ch);
+        } else {
+            out.push('-');
+        }
+    }
+    while out.contains("--") {
+        out = out.replace("--", "-");
+    }
+    out.trim_matches('-').to_string()
+}
+
+fn stable_recovery_hash(value: &str) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+}
+
+fn issue_has_recovery_marker(issue: &TrackerIssue, key: &str) -> bool {
+    issue
+        .description
+        .as_deref()
+        .is_some_and(|description| description.contains(&tracker_recovery_marker(key)))
+}
+
+fn issue_project_field_matches(issue: &TrackerIssue, field_name: &str, value: &str) -> bool {
+    project_text_field(issue, field_name).as_deref() == Some(value)
+}
+
+fn issue_state_matches(issue: &TrackerIssue, normalized_state: &str) -> bool {
+    tracker_state_match_key(&issue.state) == tracker_state_match_key(normalized_state)
+}
+
+fn issue_is_closed(issue: &TrackerIssue) -> bool {
+    issue
+        .project_fields
+        .get("GitHub Issue State")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|state| tracker_state_match_key(state) == "closed")
+}
+
+fn tracker_state_match_key(value: &str) -> String {
+    normalize_state(value).replace('_', " ")
+}
+
+fn recoverable_project_state_failure(kind: ProjectStateFailureKind) -> bool {
+    matches!(
+        kind,
+        ProjectStateFailureKind::Network
+            | ProjectStateFailureKind::TransientBackend
+            | ProjectStateFailureKind::RateLimit
+    )
+}
+
+fn tracker_recovery_next_action(kind: ProjectStateFailureKind) -> &'static str {
+    match kind {
+        ProjectStateFailureKind::RateLimit => "wait_then_readback_or_rerun_same_lane",
+        ProjectStateFailureKind::TransientBackend => "wait_then_readback_or_rerun_same_lane",
+        ProjectStateFailureKind::Network => "readback_or_rerun_same_lane",
+        _ => "human_input_required",
+    }
+}
+
+fn recover_after_tracker_error<F>(
+    adapter: &dyn TrackerAdapter,
+    issue_ref: &str,
+    mutation_type: &str,
+    error: TrackerError,
+    expected: F,
+) -> Result<TrackerMutationOutcome, Box<dyn std::error::Error>>
+where
+    F: Fn(&TrackerIssue) -> bool,
+{
+    let kind = classify_project_state_error(&error);
+    if !recoverable_project_state_failure(kind) {
+        return Err(error.into());
+    }
+
+    match adapter.get_issue(issue_ref) {
+        Ok(Some(issue)) if expected(&issue) => {
+            println!(
+                "tracker_recovery action=recovered mutation_type={} issue={} failure_kind={} next=continue",
+                mutation_type,
+                issue_ref,
+                kind.as_str()
+            );
+            Ok(TrackerMutationOutcome::Recovered)
+        }
+        Ok(Some(issue)) => Err(format!(
+            "recoverable_tracker_mutation_uncertain mutation_type={} issue={} failure_kind={} current_state={:?} next={} error={}",
+            mutation_type,
+            issue_ref,
+            kind.as_str(),
+            issue.state,
+            tracker_recovery_next_action(kind),
+            error
+        )
+        .into()),
+        Ok(None) => Err(format!(
+            "recoverable_tracker_mutation_uncertain mutation_type={} issue={} failure_kind={} current_state=missing next={} error={}",
+            mutation_type,
+            issue_ref,
+            kind.as_str(),
+            tracker_recovery_next_action(kind),
+            error
+        )
+        .into()),
+        Err(readback_error) => {
+            let readback_kind = classify_project_state_error(&readback_error);
+            Err(format!(
+                "recoverable_tracker_mutation_readback_failed mutation_type={} issue={} failure_kind={} readback_kind={} next={} error={} readback_error={}",
+                mutation_type,
+                issue_ref,
+                kind.as_str(),
+                readback_kind.as_str(),
+                tracker_recovery_next_action(kind),
+                error,
+                readback_error
+            )
+            .into())
+        }
+    }
+}
+
+fn set_project_field_with_recovery(
+    adapter: &dyn TrackerAdapter,
+    issue: &TrackerIssue,
+    assignment: &ProjectFieldAssignment,
+    mutation_type: &str,
+) -> Result<TrackerMutationOutcome, Box<dyn std::error::Error>> {
+    if issue_project_field_matches(issue, &assignment.name, &assignment.value) {
+        println!(
+            "tracker_recovery action=already_applied mutation_type={} issue={} field={:?}",
+            mutation_type, issue.identifier, assignment.name
+        );
+        return Ok(TrackerMutationOutcome::AlreadyApplied);
+    }
+
+    match adapter.set_project_field(&issue.identifier, assignment) {
+        Ok(()) => Ok(TrackerMutationOutcome::Applied),
+        Err(error) => recover_after_tracker_error(
+            adapter,
+            &issue.identifier,
+            mutation_type,
+            error,
+            |readback| issue_project_field_matches(readback, &assignment.name, &assignment.value),
+        ),
+    }
+}
+
+fn set_state_with_recovery(
+    adapter: &dyn TrackerAdapter,
+    issue_ref: &str,
+    initial_issue: Option<&TrackerIssue>,
+    normalized_state: &str,
+    mutation_type: &str,
+) -> Result<TrackerMutationOutcome, Box<dyn std::error::Error>> {
+    if initial_issue.is_some_and(|issue| issue_state_matches(issue, normalized_state)) {
+        println!(
+            "tracker_recovery action=already_applied mutation_type={} issue={} state={}",
+            mutation_type, issue_ref, normalized_state
+        );
+        return Ok(TrackerMutationOutcome::AlreadyApplied);
+    }
+
+    match adapter.set_state(issue_ref, normalized_state) {
+        Ok(()) => Ok(TrackerMutationOutcome::Applied),
+        Err(error) => {
+            recover_after_tracker_error(adapter, issue_ref, mutation_type, error, |readback| {
+                issue_state_matches(readback, normalized_state)
+            })
+        }
+    }
+}
+
+fn upsert_workpad_with_recovery(
+    adapter: &dyn TrackerAdapter,
+    issue_ref: &str,
+    initial_issue: Option<&TrackerIssue>,
+    markdown: &str,
+    key: &str,
+) -> Result<TrackerMutationOutcome, Box<dyn std::error::Error>> {
+    if initial_issue.is_some_and(|issue| issue_has_recovery_marker(issue, key)) {
+        println!(
+            "tracker_recovery action=already_applied mutation_type=workpad_write issue={} key={}",
+            issue_ref,
+            recovery_key_component(key)
+        );
+        return Ok(TrackerMutationOutcome::AlreadyApplied);
+    }
+
+    let body = ensure_tracker_recovery_marker(markdown, key);
+    match adapter.upsert_workpad(issue_ref, &body) {
+        Ok(()) => Ok(TrackerMutationOutcome::Applied),
+        Err(error) => {
+            recover_after_tracker_error(adapter, issue_ref, "workpad_write", error, |readback| {
+                issue_has_recovery_marker(readback, key)
+            })
+        }
+    }
+}
+
+fn add_timeline_comment_with_recovery(
+    adapter: &dyn TrackerAdapter,
+    issue_ref: &str,
+    initial_issue: Option<&TrackerIssue>,
+    markdown: &str,
+    key: &str,
+    mutation_type: &str,
+) -> Result<TrackerMutationOutcome, Box<dyn std::error::Error>> {
+    if initial_issue.is_some_and(|issue| issue_has_recovery_marker(issue, key)) {
+        println!(
+            "tracker_recovery action=already_applied mutation_type={} issue={} key={}",
+            mutation_type,
+            issue_ref,
+            recovery_key_component(key)
+        );
+        return Ok(TrackerMutationOutcome::AlreadyApplied);
+    }
+
+    let body = ensure_tracker_recovery_marker(markdown, key);
+    match adapter.add_issue_comment(issue_ref, &body) {
+        Ok(()) => Ok(TrackerMutationOutcome::Applied),
+        Err(error) => {
+            recover_after_tracker_error(adapter, issue_ref, mutation_type, error, |readback| {
+                issue_has_recovery_marker(readback, key)
+            })
+        }
+    }
+}
+
+fn close_issue_with_recovery(
+    adapter: &dyn TrackerAdapter,
+    issue_ref: &str,
+    initial_issue: Option<&TrackerIssue>,
+) -> Result<TrackerMutationOutcome, Box<dyn std::error::Error>> {
+    if initial_issue.is_some_and(issue_is_closed) {
+        println!(
+            "tracker_recovery action=already_applied mutation_type=issue_close issue={issue_ref}"
+        );
+        return Ok(TrackerMutationOutcome::AlreadyApplied);
+    }
+
+    match adapter.close_issue(issue_ref) {
+        Ok(()) => Ok(TrackerMutationOutcome::Applied),
+        Err(TrackerError::NotImplemented(message)) => {
+            eprintln!("merge_once_warning=issue_close_unavailable reason={message}");
+            Ok(TrackerMutationOutcome::AlreadyApplied)
+        }
+        Err(error) => {
+            recover_after_tracker_error(adapter, issue_ref, "issue_close", error, issue_is_closed)
+        }
+    }
+}
+
+fn merge_completion_recovery_key(issue: &TrackerIssue, pr_ref: &str) -> String {
+    let run = project_text_field(issue, "Merging Agent")
+        .as_deref()
+        .and_then(|value| LaneClaim::parse(value).ok())
+        .map(|claim| claim.run)
+        .unwrap_or_else(|| "run-not-recorded".into());
+    recovery_key(
+        "merge-completion",
+        &issue.identifier,
+        &format!("{}|{}|{}", issue.identifier, run, pr_ref),
+    )
+}
+
+fn merge_decision_recovery_key(
+    issue: &TrackerIssue,
+    decision: &jade_symphony::merge_lane::MergeLaneDecision,
+) -> String {
+    recovery_key(
+        "merge-decision",
+        &issue.identifier,
+        &format!(
+            "{}|{:?}|{}|{}",
+            issue.identifier,
+            decision.kind,
+            decision.pr_url.as_deref().unwrap_or("missing"),
+            decision.target_state.unwrap_or("none")
+        ),
+    )
+}
+
+fn merge_pull_request_with_recovery(
+    pr_ref: &str,
+    runner: &dyn HandoffCommandRunner,
+    cwd: &Path,
+) -> Result<(CommandOutput, TrackerMutationOutcome), Box<dyn std::error::Error>> {
+    match merge_pull_request(pr_ref, runner, cwd) {
+        Ok(output) => Ok((output, TrackerMutationOutcome::Applied)),
+        Err(error) => {
+            let kind = classify_project_state_failure_message(&error.to_string());
+            if !recoverable_project_state_failure(kind) {
+                return Err(error.into());
+            }
+            match fetch_pull_request_status_with_recheck(pr_ref, runner, cwd, 2) {
+                Ok(status) if normalize_state(&status.state) == "merged" => {
+                    println!(
+                        "tracker_recovery action=recovered mutation_type=pr_merge pr={} failure_kind={} next=continue",
+                        pr_ref,
+                        kind.as_str()
+                    );
+                    Ok((
+                        CommandOutput {
+                            status: 0,
+                            stdout: format!(
+                                "merge command failed after possible server-side success; readback shows PR merged: {pr_ref}"
+                            ),
+                            stderr: error.to_string(),
+                        },
+                        TrackerMutationOutcome::Recovered,
+                    ))
+                }
+                Ok(status) => Err(format!(
+                    "recoverable_tracker_mutation_uncertain mutation_type=pr_merge pr={} failure_kind={} readback_state={} next={} error={}",
+                    pr_ref,
+                    kind.as_str(),
+                    status.state,
+                    tracker_recovery_next_action(kind),
+                    error
+                )
+                .into()),
+                Err(readback_error) => Err(format!(
+                    "recoverable_tracker_mutation_readback_failed mutation_type=pr_merge pr={} failure_kind={} next={} error={} readback_error={}",
+                    pr_ref,
+                    kind.as_str(),
+                    tracker_recovery_next_action(kind),
+                    error,
+                    readback_error
+                )
+                .into()),
+            }
+        }
     }
 }
 
@@ -13982,6 +14779,11 @@ mod tests {
         fail_workpad: bool,
         fail_comment: bool,
         fail_link_pr: bool,
+        fail_state_after_apply: bool,
+        fail_project_field_after_apply: bool,
+        fail_workpad_after_apply: bool,
+        fail_comment_after_apply: bool,
+        fail_close_after_apply: bool,
         confirm_link_pr: bool,
         fail_get_issue: bool,
     }
@@ -13996,6 +14798,11 @@ mod tests {
                 fail_workpad: false,
                 fail_comment: false,
                 fail_link_pr: false,
+                fail_state_after_apply: false,
+                fail_project_field_after_apply: false,
+                fail_workpad_after_apply: false,
+                fail_comment_after_apply: false,
+                fail_close_after_apply: false,
                 confirm_link_pr: true,
                 fail_get_issue: false,
             }
@@ -14063,6 +14870,13 @@ mod tests {
             self.operations
                 .borrow_mut()
                 .push(format!("set_state:{issue_ref}:{normalized_state}"));
+            if self.fail_state_after_apply {
+                return Err(
+                    jade_symphony::tracker::TrackerError::IntegrationUnavailable(
+                        "GitHub GraphQL operation failed: HTTP 502 Bad Gateway".into(),
+                    ),
+                );
+            }
             Ok(())
         }
 
@@ -14085,6 +14899,16 @@ mod tests {
             self.operations
                 .borrow_mut()
                 .push(format!("workpad:{issue_ref}"));
+            if let Some(issue) = self.issues.borrow_mut().get_mut(issue_ref) {
+                issue.description = Some(markdown.to_string());
+            }
+            if self.fail_workpad_after_apply {
+                return Err(
+                    jade_symphony::tracker::TrackerError::IntegrationUnavailable(
+                        "GitHub GraphQL operation failed: HTTP 502 Bad Gateway".into(),
+                    ),
+                );
+            }
             Ok(())
         }
 
@@ -14126,6 +14950,21 @@ mod tests {
             self.operations
                 .borrow_mut()
                 .push(format!("comment:{issue_ref}"));
+            if let Some(issue) = self.issues.borrow_mut().get_mut(issue_ref) {
+                let mut description = issue.description.clone().unwrap_or_default();
+                if !description.is_empty() {
+                    description.push_str("\n\n");
+                }
+                description.push_str(markdown);
+                issue.description = Some(description);
+            }
+            if self.fail_comment_after_apply {
+                return Err(
+                    jade_symphony::tracker::TrackerError::IntegrationUnavailable(
+                        "GitHub GraphQL operation failed: HTTP 502 Bad Gateway".into(),
+                    ),
+                );
+            }
             Ok(())
         }
 
@@ -14164,6 +15003,31 @@ mod tests {
             self.operations
                 .borrow_mut()
                 .push(format!("add_project:{issue_id}:{normalized_state}"));
+            Ok(())
+        }
+
+        fn set_project_field(
+            &self,
+            issue_ref: &str,
+            assignment: &ProjectFieldAssignment,
+        ) -> Result<(), jade_symphony::tracker::TrackerError> {
+            if let Some(issue) = self.issues.borrow_mut().get_mut(issue_ref) {
+                issue.project_fields.insert(
+                    assignment.name.clone(),
+                    serde_json::Value::String(assignment.value.clone()),
+                );
+            }
+            self.operations.borrow_mut().push(format!(
+                "set_project_field:{issue_ref}:{}={}",
+                assignment.name, assignment.value
+            ));
+            if self.fail_project_field_after_apply {
+                return Err(
+                    jade_symphony::tracker::TrackerError::IntegrationUnavailable(
+                        "GitHub GraphQL operation failed: HTTP 502 Bad Gateway".into(),
+                    ),
+                );
+            }
             Ok(())
         }
 
@@ -14210,8 +15074,231 @@ mod tests {
             self.operations
                 .borrow_mut()
                 .push(format!("close_issue:{issue_ref}"));
+            if let Some(issue) = self.issues.borrow_mut().get_mut(issue_ref) {
+                issue.project_fields.insert(
+                    "GitHub Issue State".into(),
+                    serde_json::Value::String("CLOSED".into()),
+                );
+            }
+            if self.fail_close_after_apply {
+                return Err(
+                    jade_symphony::tracker::TrackerError::IntegrationUnavailable(
+                        "GitHub GraphQL operation failed: HTTP 502 Bad Gateway".into(),
+                    ),
+                );
+            }
             Ok(())
         }
+    }
+
+    struct MergeRecoveryRunner {
+        calls: RefCell<Vec<String>>,
+    }
+
+    impl MergeRecoveryRunner {
+        fn new() -> Self {
+            Self {
+                calls: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl HandoffCommandRunner for MergeRecoveryRunner {
+        fn run(
+            &self,
+            program: &str,
+            args: &[String],
+            _cwd: &Path,
+        ) -> Result<CommandOutput, jade_symphony::git_handoff::GitHandoffError> {
+            self.calls
+                .borrow_mut()
+                .push(format!("{program} {}", args.join(" ")));
+            if args.iter().any(|arg| arg == "merge") {
+                return Ok(CommandOutput {
+                    status: 1,
+                    stdout: String::new(),
+                    stderr: "GitHub returned HTTP 502 Bad Gateway after merge request".into(),
+                });
+            }
+            if args.iter().any(|arg| arg == "view") {
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: serde_json::json!({
+                        "number": 351,
+                        "url": "https://github.com/Alive24/jade-symphony/pull/351",
+                        "state": "MERGED",
+                        "isDraft": false,
+                        "mergeStateStatus": "CLEAN",
+                        "reviewDecision": "APPROVED",
+                        "baseRefName": "main",
+                        "headRefName": "feature/issue-351",
+                        "statusCheckRollup": []
+                    })
+                    .to_string(),
+                    stderr: String::new(),
+                });
+            }
+            Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    #[test]
+    fn recoverable_lane_claim_write_recovers_after_transient_failure() {
+        let config = test_config();
+        let adapter = RecordingAdapter {
+            fail_project_field_after_apply: true,
+            ..RecordingAdapter::default()
+        };
+        let issue = tracker_issue_with_ref("#351", "Recover claim", "Todo");
+        adapter
+            .issues
+            .borrow_mut()
+            .insert(issue.identifier.clone(), issue.clone());
+        let claim = LaneClaim::active(
+            "#351",
+            LaneClaimLane::Main,
+            LaneClaimActor::Codex,
+            LaneClaimSource::Loop,
+            1_779_100_000_000,
+        )
+        .with_worker("Jade Symphony Agent");
+        let claim_value = claim.render();
+
+        write_lane_claim_field(&config, &adapter, &issue, WorkerLane::Main, &claim, true).unwrap();
+
+        let updated = adapter.get_issue("#351").unwrap().unwrap();
+        assert_eq!(
+            project_text_field(&updated, "Main Agent").as_deref(),
+            Some(claim_value.as_str())
+        );
+        assert_eq!(
+            adapter.operations(),
+            vec![format!("set_project_field:#351:Main Agent={claim_value}")]
+        );
+    }
+
+    #[test]
+    fn recoverable_timeline_comment_recovers_and_skips_duplicate_marker() {
+        let adapter = RecordingAdapter {
+            fail_comment_after_apply: true,
+            ..RecordingAdapter::default()
+        };
+        let mut issue = tracker_issue_with_ref("#351", "Recover evidence", "Merging");
+        issue.description = Some("## Issue body".into());
+        adapter
+            .issues
+            .borrow_mut()
+            .insert(issue.identifier.clone(), issue.clone());
+        let key = recovery_key("merge-evidence", &issue.identifier, "run-1|pr-351");
+        let workpad = "## Jade Symphony Merge Run\n\n- Result: `merged_or_done`";
+
+        let first = add_timeline_comment_with_recovery(
+            &adapter,
+            &issue.identifier,
+            Some(&issue),
+            workpad,
+            &key,
+            "timeline_comment",
+        )
+        .unwrap();
+        let updated = adapter.get_issue("#351").unwrap().unwrap();
+        let second = add_timeline_comment_with_recovery(
+            &adapter,
+            &issue.identifier,
+            Some(&updated),
+            workpad,
+            &key,
+            "timeline_comment",
+        )
+        .unwrap();
+
+        assert_eq!(first, TrackerMutationOutcome::Recovered);
+        assert_eq!(second, TrackerMutationOutcome::AlreadyApplied);
+        assert_eq!(adapter.operations(), vec!["comment:#351".to_string()]);
+        assert!(updated
+            .description
+            .as_deref()
+            .unwrap()
+            .contains(&tracker_recovery_marker(&key)));
+    }
+
+    #[test]
+    fn recoverable_state_write_recovers_after_transient_failure() {
+        let adapter = RecordingAdapter {
+            fail_state_after_apply: true,
+            ..RecordingAdapter::default()
+        };
+        let issue = tracker_issue_with_ref("#351", "Recover state", "Merging");
+        adapter
+            .issues
+            .borrow_mut()
+            .insert(issue.identifier.clone(), issue.clone());
+
+        let outcome = set_state_with_recovery(
+            &adapter,
+            &issue.identifier,
+            Some(&issue),
+            "done",
+            "state_change",
+        )
+        .unwrap();
+
+        assert_eq!(outcome, TrackerMutationOutcome::Recovered);
+        assert_eq!(
+            adapter
+                .get_issue("#351")
+                .unwrap()
+                .unwrap()
+                .normalized_state(),
+            "done"
+        );
+    }
+
+    #[test]
+    fn recoverable_issue_close_recovers_after_transient_failure() {
+        let adapter = RecordingAdapter {
+            fail_close_after_apply: true,
+            ..RecordingAdapter::default()
+        };
+        let mut issue = tracker_issue_with_ref("#351", "Recover close", "Done");
+        issue.project_fields.insert(
+            "GitHub Issue State".into(),
+            serde_json::Value::String("OPEN".into()),
+        );
+        adapter
+            .issues
+            .borrow_mut()
+            .insert(issue.identifier.clone(), issue.clone());
+
+        let outcome = close_issue_with_recovery(&adapter, &issue.identifier, Some(&issue)).unwrap();
+
+        assert_eq!(outcome, TrackerMutationOutcome::Recovered);
+        assert!(issue_is_closed(
+            &adapter.get_issue("#351").unwrap().unwrap()
+        ));
+    }
+
+    #[test]
+    fn recoverable_pr_merge_uses_readback_when_command_fails_after_merge() {
+        let runner = MergeRecoveryRunner::new();
+
+        let (output, outcome) = merge_pull_request_with_recovery(
+            "https://github.com/Alive24/jade-symphony/pull/351",
+            &runner,
+            Path::new("."),
+        )
+        .unwrap();
+
+        assert_eq!(outcome, TrackerMutationOutcome::Recovered);
+        assert_eq!(output.status, 0);
+        assert!(output.stdout.contains("readback shows PR merged"));
+        let calls = runner.calls.borrow();
+        assert!(calls.iter().any(|call| call.contains("pr merge")));
+        assert!(calls.iter().any(|call| call.contains("pr view")));
     }
 
     #[test]

@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use clap::{error::ErrorKind, Args, Parser, Subcommand, ValueEnum};
 use jade_symphony::agent::{
     backend_from_config, persist_prompt_artifact, usage_limit_pause_from_events, AgentBackend,
-    TmuxBackend, UsageLimitPause,
+    ClaudeCodeBackend, CodexBackend, DryRunBackend, TmuxBackend, UsageLimitPause,
 };
 use jade_symphony::artifacts::{artifact_layout, cleanup_plan, ArtifactClass, CleanupPlan};
 use jade_symphony::canonical_checkout::{
@@ -5292,7 +5292,7 @@ fn agent_session_start(
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
-    validate_tmux_session_config(&config)?;
+    let backend_spec = agent_session_backend_spec(&config, lane)?;
     if write {
         enforce_canonical_checkout_before_write(&config, "session start")?;
     }
@@ -5302,17 +5302,18 @@ fn agent_session_start(
         .get_issue(&issue_ref)?
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
     let workspace_key = agent_session_workspace_key(&config, &issue, lane)?;
-    let prompt_path = rendered_lane_prompt_artifact_path(&config, &issue, lane, 1);
+    let prompt_path =
+        rendered_lane_prompt_artifact_path(&config, &issue, lane, 1, &backend_spec.backend);
     let claim = matching_lane_claim_for_session(&issue, lane, &run_id)?;
-    let agent_command = tmux_agent_command_for_lane(&config, lane)?;
 
     if !write {
         println!(
-            "session_dry_run action=start issue={} lane={} run={} backend=tmux agent_command={} workspace_key={} prompt_artifact={}",
+            "session_dry_run action=start issue={} lane={} run={} backend={} agent_command={} workspace_key={} prompt_artifact={}",
             issue.identifier,
             lane.label(),
             claim.run,
-            shell_quote_display(&agent_command),
+            backend_spec.backend,
+            shell_quote_display(&backend_spec.command),
             workspace_key,
             prompt_path.display()
         );
@@ -5355,6 +5356,12 @@ struct AgentSessionStartResult {
     prompt_path: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AgentSessionBackendSpec {
+    backend: String,
+    command: String,
+}
+
 fn start_agent_session_with_claim(
     workflow: &WorkflowDefinition,
     config: &RuntimeConfig,
@@ -5364,8 +5371,10 @@ fn start_agent_session_with_claim(
     claim: &LaneClaim,
     audit_command: &'static str,
 ) -> Result<AgentSessionStartResult, Box<dyn std::error::Error>> {
+    let backend_spec = agent_session_backend_spec(config, lane)?;
     let workspace_key = agent_session_workspace_key(config, issue, lane)?;
-    let prompt_path = rendered_lane_prompt_artifact_path(config, issue, lane, 1);
+    let prompt_path =
+        rendered_lane_prompt_artifact_path(config, issue, lane, 1, &backend_spec.backend);
     let workspace = prepare_workspace(&config.workspace.root, &workspace_key, &config.hooks)?;
     let git_identity = apply_local_git_identity(&workspace.path, &config.identity.git)?;
     let prompt = render_prompt_with_claim(
@@ -5374,17 +5383,26 @@ fn start_agent_session_with_claim(
         None,
         Some(claim),
     )?;
-    let agent_command = tmux_agent_command_for_lane(config, lane)?;
-    let backend = TmuxBackend;
+    let backend = agent_session_backend(&backend_spec.backend)?;
     let mut prepared = backend.prepare(workspace.path.clone(), prompt, config)?;
-    prepared.command = Some(agent_command.clone());
+    prepared.command = Some(backend_spec.command.clone());
     prepared
         .env
         .insert("JADE_SYMPHONY_AGENT_LANE".into(), lane.label().to_string());
     prepared.env.insert(
-        "JADE_SYMPHONY_TMUX_AGENT_COMMAND".into(),
+        "JADE_SYMPHONY_AGENT_COMMAND".into(),
         prepared.command.clone().unwrap_or_default(),
     );
+    prepared.env.insert(
+        "JADE_SYMPHONY_AGENT_BACKEND".into(),
+        backend_spec.backend.clone(),
+    );
+    if backend_spec.backend == "tmux" {
+        prepared.env.insert(
+            "JADE_SYMPHONY_TMUX_AGENT_COMMAND".into(),
+            prepared.command.clone().unwrap_or_default(),
+        );
+    }
     prepared.prompt_artifact_path = Some(prompt_path.clone());
     prepared.issue_id = Some(issue.id.clone());
     prepared.issue_identifier = Some(issue.identifier.clone());
@@ -5412,7 +5430,7 @@ fn start_agent_session_with_claim(
         summary: &summary,
         prompt_path: &prompt_path,
         claim_value: &claim_value,
-        agent_command: &agent_command,
+        agent_command: &backend_spec.command,
         git_identity: &git_identity,
     });
     let (mutation_type, outcome) = if lane == AgentSessionLaneArg::Main {
@@ -5463,7 +5481,7 @@ fn start_agent_session_with_claim(
                 target: summary.session_id.clone(),
                 from_state: Some(issue.state.clone()),
                 to_state: None,
-                reason: "manual tmux lane session evidence",
+                reason: "manual lane session evidence",
             },
         );
     }
@@ -5620,6 +5638,93 @@ fn validate_tmux_session_config(config: &RuntimeConfig) -> Result<(), Box<dyn st
     Ok(())
 }
 
+fn agent_session_backend_spec(
+    config: &RuntimeConfig,
+    lane: AgentSessionLaneArg,
+) -> Result<AgentSessionBackendSpec, Box<dyn std::error::Error>> {
+    match lane {
+        AgentSessionLaneArg::Main | AgentSessionLaneArg::Review => {
+            tmux_agent_session_backend_spec(config, lane)
+        }
+        AgentSessionLaneArg::Merge => merge_agent_session_backend_spec(config, lane),
+    }
+}
+
+fn tmux_agent_session_backend_spec(
+    config: &RuntimeConfig,
+    lane: AgentSessionLaneArg,
+) -> Result<AgentSessionBackendSpec, Box<dyn std::error::Error>> {
+    validate_tmux_session_config(config)?;
+    Ok(AgentSessionBackendSpec {
+        backend: "tmux".into(),
+        command: tmux_agent_command_for_lane(config, lane)?,
+    })
+}
+
+fn merge_agent_session_backend_spec(
+    config: &RuntimeConfig,
+    lane: AgentSessionLaneArg,
+) -> Result<AgentSessionBackendSpec, Box<dyn std::error::Error>> {
+    let requested = config.merge_lane.agent_backend.trim();
+    let backend = match requested {
+        "" | "codex" | "codex-app-server" | "app-server" => "codex",
+        "tmux" => "tmux",
+        "claude-code" => "claude-code",
+        "dry-run" => "dry-run",
+        other => {
+            return Err(format!(
+                "unsupported merge_lane.agent_backend `{other}`; expected codex, tmux, claude-code, or dry-run"
+            )
+            .into())
+        }
+    };
+    let command = match backend {
+        "codex" => non_empty_session_command(
+            &config.codex.command,
+            "codex.command must not be empty for merge session start",
+        )?,
+        "tmux" => {
+            validate_tmux_session_config(config)?;
+            tmux_agent_command_for_lane(config, lane)?
+        }
+        "claude-code" => non_empty_session_command(
+            &config.claude.command,
+            "claude.command must not be empty for merge session start",
+        )?,
+        "dry-run" => "dry-run".into(),
+        _ => unreachable!("validated merge agent backend"),
+    };
+
+    Ok(AgentSessionBackendSpec {
+        backend: backend.into(),
+        command,
+    })
+}
+
+fn non_empty_session_command(
+    value: &str,
+    message: &'static str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let command = value.trim();
+    if command.is_empty() {
+        Err(message.into())
+    } else {
+        Ok(command.to_string())
+    }
+}
+
+fn agent_session_backend(
+    backend: &str,
+) -> Result<Box<dyn AgentBackend>, Box<dyn std::error::Error>> {
+    match backend {
+        "codex" => Ok(Box::<CodexBackend>::default()),
+        "claude-code" => Ok(Box::<ClaudeCodeBackend>::default()),
+        "tmux" => Ok(Box::<TmuxBackend>::default()),
+        "dry-run" => Ok(Box::<DryRunBackend>::default()),
+        other => Err(format!("unsupported agent session backend `{other}`").into()),
+    }
+}
+
 fn tmux_agent_command_for_lane(
     config: &RuntimeConfig,
     lane: AgentSessionLaneArg,
@@ -5688,12 +5793,14 @@ fn rendered_lane_prompt_artifact_path(
     issue: &TrackerIssue,
     lane: AgentSessionLaneArg,
     attempt: u32,
+    backend: &str,
 ) -> PathBuf {
     config.observability.logs_root.join("prompts").join(format!(
-        "{}-{}-attempt-{}-tmux-{}.prompt.md",
+        "{}-{}-attempt-{}-{}-{}.prompt.md",
         safe_identifier(&issue.identifier),
         lane.label(),
         attempt,
+        safe_identifier(backend),
         current_time_ms()
     ))
 }
@@ -5766,10 +5873,20 @@ fn agent_session_workpad(input: AgentSessionWorkpadInput<'_>) -> String {
         AgentSessionLaneArg::Review => "## Jade Symphony Agent Review Run",
         AgentSessionLaneArg::Merge => "## Jade Symphony Merge Run",
     };
+    let session_heading = if input.summary.backend == "tmux" {
+        "### Local tmux Agent Session"
+    } else {
+        "### Local Agent Session"
+    };
+    let evidence_summary = if input.summary.backend == "tmux" {
+        "tmux session, prompt artifact, log path, workspace, and claim metadata recorded."
+    } else {
+        "backend session, prompt artifact, workspace, and claim metadata recorded."
+    };
     [
         title.to_string(),
         String::new(),
-        "### Local tmux Agent Session".to_string(),
+        session_heading.to_string(),
         format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", input.issue.identifier, input.issue.title),
         format!("- Lane: `{}`", input.lane.label()),
@@ -5833,7 +5950,7 @@ fn agent_session_workpad(input: AgentSessionWorkpadInput<'_>) -> String {
         format!("- Session log: `{log_path}`"),
         format!("- Attach command: `{attach_command}`"),
         format!("- Git identity: `{}`", input.git_identity.summary()),
-        "- Evidence summary: tmux session, prompt artifact, log path, workspace, and claim metadata recorded.".to_string(),
+        format!("- Evidence summary: {evidence_summary}"),
         String::new(),
         input.summary.message.clone(),
     ]
@@ -17257,6 +17374,53 @@ mod tests {
             tmux_agent_command_for_lane(&config, AgentSessionLaneArg::Review).unwrap(),
             "custom-gemini --model pro"
         );
+    }
+
+    #[test]
+    fn merge_session_defaults_to_codex_app_server_command() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\ncodex:\n  command: /opt/homebrew/bin/codex app-server\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        let spec = agent_session_backend_spec(&config, AgentSessionLaneArg::Merge).unwrap();
+
+        assert_eq!(spec.backend, "codex");
+        assert_eq!(spec.command, "/opt/homebrew/bin/codex app-server");
+    }
+
+    #[test]
+    fn merge_session_keeps_tmux_as_explicit_fallback() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nmerge_lane:\n  agent_backend: tmux\ntmux:\n  agent_command: codex\n  merge_agent_command: codex --profile merge\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        let spec = agent_session_backend_spec(&config, AgentSessionLaneArg::Merge).unwrap();
+
+        assert_eq!(spec.backend, "tmux");
+        assert_eq!(spec.command, "codex --profile merge");
+    }
+
+    #[test]
+    fn clean_merge_tick_does_not_require_merge_agent_backend() {
+        let temp = tempfile::tempdir().unwrap();
+        let workflow_path = temp.path().join("WORKFLOW.md");
+        std::fs::write(
+            &workflow_path,
+            "---\ntracker:\n  kind: memory\nmerge_lane:\n  agent_backend: definitely-not-a-session-backend\n---\nPrompt",
+        )
+        .unwrap();
+
+        let outcome = merge_once_tick(workflow_path, false, false).unwrap();
+
+        assert_eq!(outcome, MergeOnceOutcome::NoMergingIssue);
     }
 
     #[test]

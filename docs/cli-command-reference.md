@@ -250,10 +250,13 @@ value in its handoff evidence.
 `session list WORKFLOW` shows active tmux sessions with attach commands, and
 `session attach WORKFLOW SESSION` prints the exact attach command without
 joining the terminal unless `--exec` is provided.
-`status` and `status serve` include registered tmux session summaries from the
-durable session registry. `doctor` flags stale, failed, orphaned, usage-limited,
-or runtime/session mismatch cases, while `clean audit` classifies the registry,
-rendered prompts, tmux logs, and individual sessions without deleting them.
+`status` and `status serve` include registered runtime session summaries from
+the durable session registry with a backend label, so app-server, tmux fallback,
+and manual Codex App evidence do not collapse into one tmux-only surface.
+`doctor` flags stale, failed, orphaned, usage-limited, or runtime/session
+mismatch cases with backend-aware recovery wording, while `clean audit`
+classifies the registry, rendered prompts, tmux logs, and individual sessions
+without deleting them.
 Unknown persisted registry status values are tolerated on read: they classify
 as `unknown`, keep the raw status value in diagnostics, and are not migrated,
 repaired, or rewritten by normal read-only commands.

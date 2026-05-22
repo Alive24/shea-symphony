@@ -1411,6 +1411,7 @@ fn session_status_snapshots(
         snapshots.push(SessionStatusSnapshot {
             session_id: record.session_name.clone(),
             lane: record.lane.clone(),
+            backend: record.backend.clone(),
             run_id: record.run_id.clone(),
             status: probe.status.as_str().into(),
             evidence_source: probe.source.as_str().into(),
@@ -16977,6 +16978,7 @@ mod tests {
             SessionStatusSnapshot {
                 session_id: "one".into(),
                 lane: "main".into(),
+                backend: "tmux".into(),
                 run_id: None,
                 status: "running".into(),
                 evidence_source: "pane".into(),
@@ -16990,6 +16992,7 @@ mod tests {
             SessionStatusSnapshot {
                 session_id: "two".into(),
                 lane: "review".into(),
+                backend: "tmux".into(),
                 run_id: None,
                 status: "running".into(),
                 evidence_source: "pane".into(),

@@ -42,6 +42,25 @@ workflows may still use an inline prompt body.
 | `skills status` | Read-only per-repo skill readiness matrix across source suite, Codex, Gemini, metadata, links, and optional session input. | `cargo run -- skills status workflows/jade-symphony.md` |
 | `profiles` | List configured/discovered execution profiles. | `cargo run -- profiles examples/cockpit-profiles-workflow.md` |
 | `debug` | Read-only human report combining Project, doctor, smoke readiness, runtime/session, cleanup, and lane next-action signals. | `cargo run -- debug workflows/jade-symphony.md` |
+| `autopilot plan` | Read-only Main/Review/Merge lane preflight with parked operator queues and future write-mode readiness. | `cargo run -- autopilot plan workflows/jade-symphony.md` |
+
+`autopilot plan` is the mandatory planning bridge before any future all-lane
+write-mode autopilot. It does not claim Project issues, launch Main/Review/Merge
+workers, start tmux sessions, write workpads, update runtime state, or mutate
+PRs. Its human output gives one compact row for Main, Review, and Merge, plus
+parked `Human Review`, `Need Human Input`, and dogfood/coordination queues. Its
+JSON output is the stable preflight shape future automation should consume:
+
+```bash
+cargo run -- autopilot plan workflows/jade-symphony.md
+cargo run -- autopilot plan workflows/jade-symphony.md --json
+```
+
+Readiness is explicit: `ready`, `idle_but_healthy`,
+`blocked_by_doctor_or_canonical_checkout`, or
+`blocked_by_ambiguous_lane_or_runtime_state`. Doctor blockers and canonical
+checkout safety are blockers for future write-mode autopilot; historical Doctor
+warnings remain visible evidence without automatically blocking the plan.
 
 `project state`, `main loop`, `review loop`, `merge loop`, and the global
 Doctor scan use lightweight Project queue reads by default. Those reads keep

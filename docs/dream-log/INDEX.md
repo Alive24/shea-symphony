@@ -10,6 +10,24 @@ instructions, or a CLI invariant.
 
 ## Current Runs
 
+- `2026-05-23-01-post-app-server-dogfood-backlog/`
+  - Themes: post-app-server dogfood second-order backlog, parent integration
+    branch merge stack order, native subissue Review evidence routing, terminal
+    lane claim finalization, parent-batch Human Review UAT evidence, scoped
+    Issac/Jade Dream source inventory, stale Issac tmux ADR consolidation, and
+    Project write resilience.
+  - Created Backlog: #380, #381, #382, #383, #384, #385, #386, #387, #388,
+    #389.
+  - Watchlist: Review job ledger normalization looked already fixed in current
+    #369 ledger evidence; Doctor topology repair UX should wait for #364/#389;
+    full Issac ADR Dream pass should be a separate round.
+  - Slept enough: yes for this source window; another immediate round would
+    mostly reread the same dogfood evidence or broaden into a separate Issac
+    architectural memory pass.
+  - Gemini review: unavailable; external Gemini review was rejected by the
+    local approval reviewer because it would send private Dream-log contents to
+    an external service.
+
 - `2026-05-19-04-final-parity-audit/`
   - Themes: Liquid-compatible prompt rendering, runtime state persistence and
     resume wiring, final partial-row duplicate audit.

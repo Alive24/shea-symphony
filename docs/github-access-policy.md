@@ -9,9 +9,10 @@ helpers.
 
 - Prefer REST-backed `gh api` reads when REST exposes the required issue, PR, or
   repository fact.
-- Use ProjectV2 GraphQL only for Project item reads, Project fields, Project
-  mutations, issue/comment mutations that require node IDs, and GitHub surfaces
-  that REST cannot provide in the required shape.
+- Prefer REST-backed ProjectV2 metadata, field, item, and supported item-field
+  update paths when GitHub exposes the required data. Use GraphQL only for
+  Project relationships, issue/comment mutations that require node IDs, item
+  addition, or explicit REST capability gaps.
 - Set `tracker.project_owner_type` to `user` or `organization` when the Project
   owner type is known. Omit it only for legacy organization-first/user-fallback
   workflows.
@@ -30,7 +31,8 @@ helpers.
 
 | Surface | Current usage | Classification | Target |
 | --- | --- | --- | --- |
-| `src/tracker.rs` ProjectV2 queries and mutations | `gh api graphql` through tracker helper methods | Must stay behind CLI helper | Centralized in `GithubCliAccess`; keep small pages and explicit fields. |
+| `src/tracker.rs` ProjectV2 metadata, field, item, and supported item-field updates | REST `gh api .../projectsV2/...` through tracker helper methods, with GraphQL fallback for gaps | Must stay behind CLI helper | Cache Project id, field ids, Status option ids, and supported field metadata process-locally; parse paginated REST output; keep fallback reasons explicit. |
+| `src/tracker.rs` ProjectV2 rich issue reads, item addition, workpad/comment mutations, and unsupported field updates | `gh api graphql` through tracker helper methods | GraphQL fallback or required node-id path | Keep page sizes small, field selection explicit, and fallback reasons visible in code/tests/operator diagnostics. |
 | `src/tracker.rs` native blocker reads | REST `gh api repos/{owner}/{repo}/issues/.../dependencies/blocked_by` | Preferred REST read | Keep REST-first helper path. |
 | `src/tracker.rs` issue edits and assignment | `gh issue edit` from CLI commands | CLI-owned mutation helper | Route through `GithubCliAccess::run_status` for consistent diagnostics. |
 | `src/tracker.rs` workpad comments, issue creation, PR linkage comment, issue close | GraphQL mutations | GraphQL required or currently node-id-shaped | Keep inside CLI; do not expose raw operator commands. |
@@ -49,5 +51,6 @@ helpers.
   use ordinary Git/GitHub PR reads when local checkout or review context needs
   them, but linked-PR state and draft/ready gates must be verified through CLI
   readback.
-- ProjectV2 still requires GraphQL for item fields and mutations. This policy
+- ProjectV2 still requires GraphQL for rich issue/comment relationship reads,
+  adding items to Projects by node ID, and REST capability gaps. This policy
   optimizes and centralizes GraphQL; it does not remove it.

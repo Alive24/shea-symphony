@@ -43,6 +43,14 @@ workflows may still use an inline prompt body.
 | `profiles` | List configured/discovered execution profiles. | `cargo run -- profiles examples/cockpit-profiles-workflow.md` |
 | `debug` | Read-only human report combining Project, doctor, smoke readiness, runtime/session, cleanup, and lane next-action signals. | `cargo run -- debug workflows/jade-symphony.md` |
 
+`project state`, `main loop`, `review loop`, `merge loop`, and the global
+Doctor scan use lightweight Project queue reads by default. Those reads keep
+status, claim fields, assignee, priority, dependency, and parent/subissue gate
+fields, but avoid issue bodies, comment/workpad streams, and rich linked-PR
+hydration. Use `project issue '#<issue>' --json` or `project inspect '#<issue>'`
+when an operator or lane needs the rich issue body, workpad/timeline comments,
+linked PR readback, or detailed native topology evidence for one issue.
+
 Doctor repair helpers:
 
 ```bash

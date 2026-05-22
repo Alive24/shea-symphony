@@ -206,7 +206,14 @@ fn malformed_event(raw: &str, session_id: Option<&str>, message: &str) -> CodexA
 fn input_required_method(method: &str) -> bool {
     matches!(
         method,
-        "item/tool/requestUserInput" | "tool/requestUserInput"
+        "applyPatchApproval"
+            | "execCommandApproval"
+            | "item/commandExecution/requestApproval"
+            | "item/fileChange/requestApproval"
+            | "item/tool/call"
+            | "item/tool/requestUserInput"
+            | "tool/requestUserInput"
+            | "turn/input_required"
     )
 }
 
@@ -291,6 +298,29 @@ mod tests {
             event.agent_event,
             Some(AgentEvent::Failed { ref error, .. }) if error.contains("requires unavailable user input")
         ));
+    }
+
+    #[test]
+    fn maps_approval_and_tool_calls_to_failed_agent_event() {
+        for method in [
+            "item/commandExecution/requestApproval",
+            "execCommandApproval",
+            "applyPatchApproval",
+            "item/fileChange/requestApproval",
+            "item/tool/call",
+        ] {
+            let event = normalize_json_rpc_line(
+                &format!(r#"{{"method":"{method}","id":7,"params":{{}}}}"#),
+                Some("s1"),
+            );
+
+            assert_eq!(event.event, CodexAppServerEventKind::TurnInputRequired);
+            assert!(matches!(
+                event.agent_event,
+                Some(AgentEvent::Failed { ref error, .. })
+                    if error.contains("requires unavailable user input")
+            ));
+        }
     }
 
     #[test]

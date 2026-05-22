@@ -41,6 +41,7 @@ pub struct TrackerConfig {
     pub owner: Option<String>,
     pub repo: Option<String>,
     pub project_owner: Option<String>,
+    pub project_owner_type: Option<String>,
     pub project_number: Option<u64>,
     pub project_slug: Option<String>,
     pub status_field: String,
@@ -502,6 +503,16 @@ impl RuntimeConfig {
                 "tracker.project_owner",
                 self.tracker.project_owner.as_deref(),
             )?;
+            if let Some(owner_type) = self.tracker.project_owner_type.as_deref() {
+                match owner_type.trim().to_ascii_lowercase().as_str() {
+                    "user" | "organization" => {}
+                    other => {
+                        return Err(ConfigError::Invalid(format!(
+                            "tracker.project_owner_type must be user or organization; got {other}"
+                        )))
+                    }
+                }
+            }
             if self.tracker.project_number.is_none() {
                 return Err(ConfigError::Invalid(
                     "tracker.project_number is required for github_project_v2".into(),
@@ -556,6 +567,7 @@ fn parse_tracker(value: Option<&Value>, workflow_dir: &Path) -> TrackerConfig {
         owner: get_string(value, "owner"),
         repo: get_string(value, "repo"),
         project_owner: get_string(value, "project_owner"),
+        project_owner_type: get_string(value, "project_owner_type"),
         project_number: get_u64(value, "project_number"),
         project_slug: get_string(value, "project_slug"),
         status_field: get_string(value, "status_field").unwrap_or_else(|| "Status".to_string()),
@@ -925,7 +937,39 @@ mod tests {
             config.tracker.workpad.marker,
             "<!-- jade-symphony-workpad -->"
         );
+        assert_eq!(config.tracker.project_owner_type, None);
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn accepts_explicit_github_project_owner_type() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_owner_type: user\n  project_number: 1\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.tracker.project_owner_type.as_deref(), Some("user"));
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_unknown_github_project_owner_type() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_owner_type: team\n  project_number: 1\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert!(config
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("tracker.project_owner_type must be user or organization"));
     }
 
     #[test]

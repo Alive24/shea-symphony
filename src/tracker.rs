@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -140,6 +140,7 @@ pub enum TrackerError {
 pub enum ProjectStateFailureKind {
     Auth,
     Network,
+    TransientBackend,
     RateLimit,
     ResourceLimit,
     Schema,
@@ -154,6 +155,7 @@ impl ProjectStateFailureKind {
         match self {
             Self::Auth => "auth",
             Self::Network => "network",
+            Self::TransientBackend => "transient_backend",
             Self::RateLimit => "rate_limit",
             Self::ResourceLimit => "resource_limit",
             Self::Schema => "schema",
@@ -202,9 +204,18 @@ pub fn classify_project_state_failure_message(message: &str) -> ProjectStateFail
         || normalized.contains("http 403")
     {
         ProjectStateFailureKind::Auth
+    } else if normalized.contains("http 502")
+        || normalized.contains("http 503")
+        || normalized.contains("http 504")
+        || normalized.contains("bad gateway")
+        || normalized.contains("service unavailable")
+        || normalized.contains("gateway timeout")
+    {
+        ProjectStateFailureKind::TransientBackend
     } else if normalized.contains("could not resolve host")
         || normalized.contains("failed to connect")
         || normalized.contains("connection timed out")
+        || normalized.contains("timed out after")
         || normalized.contains("connection reset")
         || normalized.contains("network")
         || normalized.contains("tls")
@@ -575,6 +586,22 @@ impl TrackerAdapter for GithubProjectV2Adapter {
     }
 
     fn get_issue(&self, issue_ref: &str) -> Result<Option<TrackerIssue>, TrackerError> {
+        if self.fixture_issues.is_empty()
+            && self.config.tracker.fixture_path.is_none()
+            && github_issue_number(issue_ref).is_some()
+        {
+            let client = GithubProjectV2GhClient::new(&self.config);
+            let Some(mut issue) = client.fetch_project_issue(issue_ref)? else {
+                return Ok(None);
+            };
+            if !status_is_mapped(&issue.state, &self.config) {
+                return Ok(None);
+            }
+            self.enrich_native_subissue_project_statuses(std::slice::from_mut(&mut issue))?;
+            client.enrich_native_issue_blockers(std::slice::from_mut(&mut issue))?;
+            return Ok(Some(issue));
+        }
+
         let mut issues = self.load_mapped_issues(GithubProjectReadMode::QueueScan)?;
         enrich_native_subissue_project_statuses_from_project_read(&mut issues);
         let project_context = issues.clone();
@@ -775,11 +802,64 @@ struct GithubProjectV2GhClient {
     config: RuntimeConfig,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProjectV2OwnerType {
+    Organization,
+    User,
+}
+
+impl ProjectV2OwnerType {
+    fn parse(value: &str) -> Result<Self, TrackerError> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "organization" => Ok(Self::Organization),
+            "user" => Ok(Self::User),
+            other => Err(TrackerError::IntegrationUnavailable(format!(
+                "tracker.project_owner_type must be user or organization; got {other}"
+            ))),
+        }
+    }
+
+    fn query_field(self) -> &'static str {
+        match self {
+            Self::Organization => "organization",
+            Self::User => "user",
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        self.query_field()
+    }
+}
+
 impl GithubProjectV2GhClient {
     fn new(config: &RuntimeConfig) -> Self {
         Self {
             config: config.clone(),
         }
+    }
+
+    fn project_owner_query_order(&self) -> Result<Vec<ProjectV2OwnerType>, TrackerError> {
+        project_owner_query_order(&self.config)
+    }
+
+    fn query_project_owner<F>(
+        &self,
+        operation: &str,
+        mut query: F,
+    ) -> Result<(ProjectV2OwnerType, serde_json::Value), TrackerError>
+    where
+        F: FnMut(ProjectV2OwnerType) -> Result<serde_json::Value, TrackerError>,
+    {
+        let mut attempts = Vec::new();
+
+        for owner_type in self.project_owner_query_order()? {
+            match query(owner_type) {
+                Ok(response) => return Ok((owner_type, response)),
+                Err(error) => attempts.push((owner_type, error)),
+            }
+        }
+
+        Err(project_owner_query_error(operation, attempts))
     }
 
     fn fetch_project_issues(
@@ -804,16 +884,8 @@ impl GithubProjectV2GhClient {
         let mut cursor = None;
 
         loop {
-            let response = self
-                .graphql_project_page(true, cursor.as_deref(), mode)
-                .or_else(|org_error| {
-                    self.graphql_project_page(false, cursor.as_deref(), mode)
-                        .map_err(|user_error| {
-                            TrackerError::IntegrationUnavailable(format!(
-                                "failed to query ProjectV2 as organization or user: org={org_error}; user={user_error}"
-                            ))
-                        })
-                })?;
+            let response =
+                self.graphql_project_page(metadata.owner_type, cursor.as_deref(), mode)?;
 
             let (mut page_issues, next_cursor, has_next_page) =
                 issues_from_project_response(&response, &self.config)?;
@@ -906,6 +978,38 @@ impl GithubProjectV2GhClient {
         }
 
         Ok(())
+    }
+
+    fn fetch_project_issue(&self, issue_ref: &str) -> Result<Option<TrackerIssue>, TrackerError> {
+        let owner = self
+            .config
+            .tracker
+            .owner
+            .as_deref()
+            .ok_or_else(|| TrackerError::Payload("tracker.owner is required".into()))?;
+        let repo = self
+            .config
+            .tracker
+            .repo
+            .as_deref()
+            .ok_or_else(|| TrackerError::Payload("tracker.repo is required".into()))?;
+        let issue_number = github_issue_number(issue_ref).ok_or_else(|| {
+            TrackerError::Payload(format!(
+                "issue ref {issue_ref:?} is not a GitHub issue number"
+            ))
+        })?;
+
+        let response = self.graphql_magic(
+            &github_issue_project_item_query(),
+            &[
+                ("owner", owner.to_string()),
+                ("repo", repo.to_string()),
+                ("number", issue_number.to_string()),
+            ],
+            &["number"],
+        )?;
+
+        issue_from_repository_issue_response(&response, &self.config)
     }
 
     fn fetch_native_issue_blockers(
@@ -1316,6 +1420,13 @@ impl GithubProjectV2GhClient {
         &self,
         issue_ref: &str,
     ) -> Result<Vec<LinkedPullRequest>, TrackerError> {
+        if github_issue_number(issue_ref).is_some() {
+            return Ok(self
+                .fetch_project_issue(issue_ref)?
+                .map(|issue| issue.linked_pull_requests)
+                .unwrap_or_default());
+        }
+
         let mut issue = self.resolve_issue(issue_ref)?;
         let project_states = BTreeMap::new();
         self.enrich_issue_evidence(&mut issue, &project_states)?;
@@ -1397,31 +1508,24 @@ impl GithubProjectV2GhClient {
                 TrackerError::IntegrationUnavailable("missing project_number".into())
             })?;
 
-        let response = self
-            .graphql_project_metadata(true, owner, number)
-            .or_else(|org_error| {
-                self.graphql_project_metadata(false, owner, number)
-                    .map_err(|user_error| {
-                        TrackerError::IntegrationUnavailable(format!(
-                            "failed to query ProjectV2 metadata as organization or user: org={org_error}; user={user_error}"
-                        ))
-                    })
+        let (owner_type, response) = self
+            .query_project_owner("ProjectV2 metadata", |owner_type| {
+                self.graphql_project_metadata(owner_type, owner, number)
             })?;
 
-        project_metadata_from_response(&response, &self.config.tracker.status_field)
+        let mut metadata =
+            project_metadata_from_response(&response, &self.config.tracker.status_field)?;
+        metadata.owner_type = owner_type;
+        Ok(metadata)
     }
 
     fn graphql_project_metadata(
         &self,
-        organization_owner: bool,
+        owner_type: ProjectV2OwnerType,
         owner: &str,
         number: u64,
     ) -> Result<serde_json::Value, TrackerError> {
-        let query = if organization_owner {
-            github_project_metadata_query("organization")
-        } else {
-            github_project_metadata_query("user")
-        };
+        let query = github_project_metadata_query(owner_type.query_field());
 
         self.graphql_magic(
             &query,
@@ -1432,7 +1536,7 @@ impl GithubProjectV2GhClient {
 
     fn graphql_project_page(
         &self,
-        organization_owner: bool,
+        owner_type: ProjectV2OwnerType,
         cursor: Option<&str>,
         mode: GithubProjectReadMode,
     ) -> Result<serde_json::Value, TrackerError> {
@@ -1453,11 +1557,7 @@ impl GithubProjectV2GhClient {
             "-f".to_string(),
             format!(
                 "query={}",
-                if organization_owner {
-                    github_project_query("organization", mode)
-                } else {
-                    github_project_query("user", mode)
-                }
+                github_project_query(owner_type.query_field(), mode)
             ),
             "-F".to_string(),
             format!("owner={owner}"),
@@ -1513,8 +1613,65 @@ impl GithubProjectV2GhClient {
     }
 }
 
+fn project_owner_query_order(
+    config: &RuntimeConfig,
+) -> Result<Vec<ProjectV2OwnerType>, TrackerError> {
+    if let Some(owner_type) = config.tracker.project_owner_type.as_deref() {
+        return Ok(vec![ProjectV2OwnerType::parse(owner_type)?]);
+    }
+
+    Ok(vec![
+        ProjectV2OwnerType::Organization,
+        ProjectV2OwnerType::User,
+    ])
+}
+
+fn project_owner_query_error(
+    operation: &str,
+    attempts: Vec<(ProjectV2OwnerType, TrackerError)>,
+) -> TrackerError {
+    let Some((last_type, last_error)) = attempts.last() else {
+        return TrackerError::IntegrationUnavailable(format!("{operation} failed"));
+    };
+
+    let prior_attempts_are_owner_misses = attempts
+        .iter()
+        .take(attempts.len().saturating_sub(1))
+        .all(|(_, error)| project_owner_type_miss(error));
+    if prior_attempts_are_owner_misses && !project_owner_type_miss(last_error) {
+        return TrackerError::IntegrationUnavailable(format!(
+            "{operation} failed as {} owner: {last_error}",
+            last_type.as_str()
+        ));
+    }
+
+    let details = attempts
+        .iter()
+        .map(|(owner_type, error)| format!("{}={error}", owner_type.as_str()))
+        .collect::<Vec<_>>()
+        .join("; ");
+    TrackerError::IntegrationUnavailable(format!(
+        "{operation} failed for ProjectV2 owner attempts: {details}"
+    ))
+}
+
+fn project_owner_type_miss(error: &TrackerError) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("projectv2 organization owner lookup missed")
+        || message.contains("projectv2 user owner lookup missed")
+        || message.contains("could not resolve to an organization")
+        || message.contains("could not resolve to a organization")
+        || message.contains("could not resolve to organization")
+        || message.contains("could not resolve to a user")
+        || message.contains("could not resolve to an user")
+        || message.contains("could not resolve to user")
+        || message.contains("not an organization account")
+        || message.contains("not a user account")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProjectMetadata {
+    owner_type: ProjectV2OwnerType,
     project_id: String,
     status_field_id: String,
     status_options: Vec<(String, String)>,
@@ -1595,7 +1752,8 @@ impl GithubCliApi {
 struct GithubCliAccess;
 
 impl GithubCliAccess {
-    const MAX_ATTEMPTS: usize = 3;
+    const MAX_ATTEMPTS: usize = 2;
+    const TIMEOUT: Duration = Duration::from_secs(10);
 
     fn run_json(api: GithubCliApi, args: Vec<String>) -> Result<serde_json::Value, TrackerError> {
         let mut last_error = None;
@@ -1628,10 +1786,7 @@ impl GithubCliAccess {
     }
 
     fn run_status(args: Vec<String>, operation: &str) -> Result<(), TrackerError> {
-        let output = Command::new("gh")
-            .args(args)
-            .output()
-            .map_err(|error| TrackerError::IntegrationUnavailable(error.to_string()))?;
+        let output = run_gh_command(&args, operation)?;
 
         if !output.status.success() {
             let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -1649,10 +1804,7 @@ impl GithubCliAccess {
         api: GithubCliApi,
         args: &[String],
     ) -> Result<serde_json::Value, TrackerError> {
-        let output = Command::new("gh")
-            .args(args)
-            .output()
-            .map_err(|error| TrackerError::IntegrationUnavailable(error.to_string()))?;
+        let output = run_gh_command(args, api.operation_label())?;
 
         if !output.status.success() {
             let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -1670,6 +1822,102 @@ impl GithubCliAccess {
             })?;
         api.validate_response(&response)?;
         Ok(response)
+    }
+}
+
+fn run_gh_command(args: &[String], operation: &str) -> Result<Output, TrackerError> {
+    run_command_with_timeout("gh", args, operation, GithubCliAccess::TIMEOUT)
+}
+
+fn run_command_with_timeout(
+    program: &str,
+    args: &[String],
+    operation: &str,
+    timeout: Duration,
+) -> Result<Output, TrackerError> {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let base = format!("jade-symphony-command-{}-{suffix}", std::process::id());
+    let stdout_path = std::env::temp_dir().join(format!("{base}.stdout"));
+    let stderr_path = std::env::temp_dir().join(format!("{base}.stderr"));
+    let stdout_file = fs::File::create(&stdout_path).map_err(|error| {
+        TrackerError::IntegrationUnavailable(format!("{operation} stdout capture failed: {error}"))
+    })?;
+    let stderr_file = fs::File::create(&stderr_path).map_err(|error| {
+        let _ = fs::remove_file(&stdout_path);
+        TrackerError::IntegrationUnavailable(format!("{operation} stderr capture failed: {error}"))
+    })?;
+
+    let mut child = Command::new(program)
+        .args(args)
+        .env("GH_PROMPT_DISABLED", "1")
+        .stdout(Stdio::from(stdout_file))
+        .stderr(Stdio::from(stderr_file))
+        .spawn()
+        .map_err(|error| {
+            let _ = fs::remove_file(&stdout_path);
+            let _ = fs::remove_file(&stderr_path);
+            TrackerError::IntegrationUnavailable(error.to_string())
+        })?;
+
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = fs::read(&stdout_path).map_err(|error| {
+                    TrackerError::IntegrationUnavailable(format!(
+                        "{operation} stdout read failed: {error}"
+                    ))
+                })?;
+                let stderr = fs::read(&stderr_path).map_err(|error| {
+                    TrackerError::IntegrationUnavailable(format!(
+                        "{operation} stderr read failed: {error}"
+                    ))
+                })?;
+                let _ = fs::remove_file(&stdout_path);
+                let _ = fs::remove_file(&stderr_path);
+                return Ok(Output {
+                    status,
+                    stdout,
+                    stderr,
+                });
+            }
+            Ok(None) if started.elapsed() >= timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = fs::remove_file(&stdout_path);
+                let _ = fs::remove_file(&stderr_path);
+                return Err(TrackerError::IntegrationUnavailable(format!(
+                    "{operation} timed out after {}ms",
+                    timeout.as_millis()
+                )));
+            }
+            Ok(None) => {
+                let elapsed = started.elapsed();
+                if elapsed >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = fs::remove_file(&stdout_path);
+                    let _ = fs::remove_file(&stderr_path);
+                    return Err(TrackerError::IntegrationUnavailable(format!(
+                        "{operation} timed out after {}ms",
+                        timeout.as_millis()
+                    )));
+                }
+                thread::sleep((timeout - elapsed).min(Duration::from_millis(100)));
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = fs::remove_file(&stdout_path);
+                let _ = fs::remove_file(&stderr_path);
+                return Err(TrackerError::IntegrationUnavailable(format!(
+                    "{operation} wait failed: {error}"
+                )));
+            }
+        }
     }
 }
 
@@ -1750,7 +1998,9 @@ fn run_gh_api_json(args: Vec<String>) -> Result<serde_json::Value, TrackerError>
 fn project_state_error_is_retryable(error: &TrackerError) -> bool {
     matches!(
         classify_project_state_error(error),
-        ProjectStateFailureKind::Network | ProjectStateFailureKind::RateLimit
+        ProjectStateFailureKind::Network
+            | ProjectStateFailureKind::TransientBackend
+            | ProjectStateFailureKind::RateLimit
     )
 }
 
@@ -1771,6 +2021,7 @@ const GITHUB_PROJECT_LINKED_PR_PAGE_SIZE: usize = 10;
 const GITHUB_PROJECT_COMMENT_PAGE_SIZE: usize = 100;
 const GITHUB_PROJECT_METADATA_FIELD_PAGE_SIZE: usize = 50;
 const GITHUB_WORKPAD_COMMENT_PAGE_SIZE: usize = 50;
+const GITHUB_ISSUE_PROJECT_ITEM_PAGE_SIZE: usize = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GithubProjectReadMode {
@@ -1944,6 +2195,111 @@ query JadeSymphonyIssueEvidence($owner: String!, $repo: String!, $number: Int!) 
 }}
 "#,
         rich_issue_evidence_fields()
+    )
+}
+
+fn github_issue_project_item_query() -> String {
+    format!(
+        r#"
+query JadeSymphonyIssueProjectItem($owner: String!, $repo: String!, $number: Int!) {{
+  repository(owner: $owner, name: $repo) {{
+    issue(number: $number) {{
+      __typename
+      id
+      number
+      title
+      body
+      url
+      state
+      createdAt
+      updatedAt
+      labels(first: {GITHUB_PROJECT_LABEL_PAGE_SIZE}) {{
+        nodes {{
+          name
+        }}
+      }}
+      assignees(first: {GITHUB_PROJECT_ASSIGNEE_PAGE_SIZE}) {{
+        nodes {{
+          login
+        }}
+      }}
+      parent {{
+        id
+        number
+        title
+        state
+        url
+      }}
+      subIssues(first: {GITHUB_PROJECT_SUBISSUE_PAGE_SIZE}) {{
+        nodes {{
+          id
+          number
+          title
+          state
+          url
+        }}
+      }}
+      closedByPullRequestsReferences(first: {GITHUB_PROJECT_LINKED_PR_PAGE_SIZE}) {{
+        nodes {{
+          id
+          number
+          url
+          state
+          isDraft
+          baseRefName
+          headRefName
+        }}
+      }}
+      comments(first: {GITHUB_PROJECT_COMMENT_PAGE_SIZE}) {{
+        nodes {{
+          body
+        }}
+      }}
+      recentComments: comments(last: {GITHUB_PROJECT_COMMENT_PAGE_SIZE}) {{
+        nodes {{
+          body
+        }}
+      }}
+      projectItems(first: {GITHUB_ISSUE_PROJECT_ITEM_PAGE_SIZE}) {{
+        nodes {{
+          id
+          project {{
+            number
+          }}
+          fieldValues(first: {GITHUB_PROJECT_FIELD_VALUE_PAGE_SIZE}) {{
+            nodes {{
+              ... on ProjectV2ItemFieldSingleSelectValue {{
+                name
+                field {{
+                  ... on ProjectV2SingleSelectField {{
+                    name
+                  }}
+                }}
+              }}
+              ... on ProjectV2ItemFieldTextValue {{
+                text
+                field {{
+                  ... on ProjectV2FieldCommon {{
+                    name
+                  }}
+                }}
+              }}
+              ... on ProjectV2ItemFieldNumberValue {{
+                number
+                field {{
+                  ... on ProjectV2FieldCommon {{
+                    name
+                  }}
+                }}
+              }}
+            }}
+          }}
+        }}
+      }}
+    }}
+  }}
+}}
+"#
     )
 }
 
@@ -2150,9 +2506,14 @@ fn project_metadata_from_response(
     response: &serde_json::Value,
     status_field: &str,
 ) -> Result<ProjectMetadata, TrackerError> {
-    let project = response
+    let (owner_type, project) = response
         .pointer("/data/organization/projectV2")
-        .or_else(|| response.pointer("/data/user/projectV2"))
+        .map(|project| (ProjectV2OwnerType::Organization, project))
+        .or_else(|| {
+            response
+                .pointer("/data/user/projectV2")
+                .map(|project| (ProjectV2OwnerType::User, project))
+        })
         .ok_or_else(|| TrackerError::Payload("missing ProjectV2 metadata payload".into()))?;
     let project_id = project
         .get("id")
@@ -2170,6 +2531,7 @@ fn project_metadata_from_response(
 
     if let Some(status_field_metadata) = fields.iter().find(|field| field.name == status_field) {
         return Ok(ProjectMetadata {
+            owner_type,
             project_id: project_id.to_string(),
             status_field_id: status_field_metadata.id.clone(),
             status_options: status_field_metadata.options.clone(),
@@ -2494,6 +2856,42 @@ fn graphql_error_message(response: &serde_json::Value) -> Option<String> {
     }
 }
 
+fn issue_from_repository_issue_response(
+    response: &serde_json::Value,
+    config: &RuntimeConfig,
+) -> Result<Option<TrackerIssue>, TrackerError> {
+    let issue = response
+        .pointer("/data/repository/issue")
+        .ok_or_else(|| TrackerError::Payload("missing GitHub issue payload".into()))?;
+    if issue.is_null() {
+        return Ok(None);
+    }
+    let project_number = config
+        .tracker
+        .project_number
+        .ok_or_else(|| TrackerError::IntegrationUnavailable("missing project_number".into()))?;
+    let project_items = issue
+        .pointer("/projectItems/nodes")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| {
+            TrackerError::Payload("partial GitHub issue response missing projectItems".into())
+        })?;
+    let Some(project_item) = project_items.iter().find(|item| {
+        item.pointer("/project/number")
+            .and_then(serde_json::Value::as_u64)
+            == Some(project_number)
+    }) else {
+        return Ok(None);
+    };
+
+    let item = serde_json::json!({
+        "id": project_item.get("id").cloned().unwrap_or(serde_json::Value::Null),
+        "fieldValues": project_item.get("fieldValues").cloned().unwrap_or(serde_json::Value::Null),
+        "content": issue,
+    });
+    issue_from_project_item(&item, config)
+}
+
 fn issue_from_project_item(
     item: &serde_json::Value,
     config: &RuntimeConfig,
@@ -2532,10 +2930,14 @@ fn issue_from_project_item(
     }
     insert_native_subissue_fields(&mut project_fields, content);
     let blocked_by = blocker_refs_from_project_fields(&project_fields);
+    let comment_bodies = github_issue_comment_bodies(content)
+        .into_iter()
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
     let linked_pull_requests = merge_linked_pull_requests(
         pull_requests_from_issue(content),
         linked_pull_requests_from_workpads(
-            &comment_bodies(content.pointer("/comments/nodes")),
+            &comment_bodies,
             config.tracker.owner.as_deref(),
             config.tracker.repo.as_deref(),
         ),
@@ -2616,10 +3018,14 @@ fn merge_github_issue_evidence(
 
     insert_native_subissue_fields(&mut issue.project_fields, content);
     issue.blocked_by = blocker_refs_from_project_fields(&issue.project_fields);
+    let comment_bodies = github_issue_comment_bodies(content)
+        .into_iter()
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
     issue.linked_pull_requests = merge_linked_pull_requests(
         pull_requests_from_issue(content),
         linked_pull_requests_from_workpads(
-            &comment_bodies(content.pointer("/comments/nodes")),
+            &comment_bodies,
             config.tracker.owner.as_deref(),
             config.tracker.repo.as_deref(),
         ),
@@ -3283,16 +3689,6 @@ fn string_nodes(nodes: Option<&serde_json::Value>, field: &str) -> Vec<String> {
         .into_iter()
         .flatten()
         .filter_map(|node| node.get(field).and_then(serde_json::Value::as_str))
-        .map(ToOwned::to_owned)
-        .collect()
-}
-
-fn comment_bodies(nodes: Option<&serde_json::Value>) -> Vec<String> {
-    nodes
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|node| node.get("body").and_then(serde_json::Value::as_str))
         .map(ToOwned::to_owned)
         .collect()
 }
@@ -4580,6 +4976,69 @@ mod tests {
     }
 
     #[test]
+    fn project_owner_query_order_uses_explicit_user_without_org_probe() {
+        let config = github_config(
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_owner_type: user\n  project_number: 1\n---\nPrompt",
+        );
+
+        let order = project_owner_query_order(&config).unwrap();
+
+        assert_eq!(order, vec![ProjectV2OwnerType::User]);
+        let query = github_project_query(order[0].query_field(), GithubProjectReadMode::QueueScan);
+        assert!(query.contains("user(login: $owner)"));
+        assert!(!query.contains("organization(login: $owner)"));
+    }
+
+    #[test]
+    fn project_owner_query_order_supports_explicit_org_and_legacy_fallback() {
+        let org_config = github_config(
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_owner_type: organization\n  project_number: 1\n---\nPrompt",
+        );
+        assert_eq!(
+            project_owner_query_order(&org_config).unwrap(),
+            vec![ProjectV2OwnerType::Organization]
+        );
+
+        let fallback_config = github_config(
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
+        );
+        assert_eq!(
+            project_owner_query_order(&fallback_config).unwrap(),
+            vec![ProjectV2OwnerType::Organization, ProjectV2OwnerType::User]
+        );
+    }
+
+    #[test]
+    fn project_owner_query_error_hides_expected_owner_miss_before_real_failure() {
+        let error = project_owner_query_error(
+            "ProjectV2 metadata",
+            vec![
+                (
+                    ProjectV2OwnerType::Organization,
+                    TrackerError::IntegrationUnavailable(
+                        "GitHub GraphQL returned errors: Could not resolve to an Organization with the login of 'Alive24'".into(),
+                    ),
+                ),
+                (
+                    ProjectV2OwnerType::User,
+                    TrackerError::IntegrationUnavailable(
+                        "GitHub GraphQL operation failed kind=transient_backend: HTTP 504 Gateway Timeout".into(),
+                    ),
+                ),
+            ],
+        );
+        let rendered = error.to_string();
+
+        assert!(rendered.contains("ProjectV2 metadata failed as user owner"));
+        assert!(rendered.contains("HTTP 504"));
+        assert!(!rendered.contains("Organization with the login"));
+        assert_eq!(
+            classify_project_state_error(&error),
+            ProjectStateFailureKind::TransientBackend
+        );
+    }
+
+    #[test]
     fn parses_github_project_v2_issue_items() {
         let config = github_config(
             "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
@@ -5038,6 +5497,7 @@ Prompt
         });
 
         let metadata = project_metadata_from_response(&response, "Status").unwrap();
+        assert_eq!(metadata.owner_type, ProjectV2OwnerType::User);
         assert_eq!(metadata.project_id, "PVT_1");
         assert_eq!(metadata.status_field_id, "FIELD_STATUS");
         assert_eq!(
@@ -5057,6 +5517,7 @@ Prompt
     #[test]
     fn resolves_project_status_option_id() {
         let metadata = ProjectMetadata {
+            owner_type: ProjectV2OwnerType::User,
             project_id: "PVT_1".into(),
             status_field_id: "FIELD_STATUS".into(),
             status_options: vec![
@@ -5436,6 +5897,87 @@ Prompt
     }
 
     #[test]
+    fn targeted_github_issue_response_parses_project_item_status() {
+        let config = github_config(
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 9\n---\nPrompt",
+        );
+        let response = serde_json::json!({
+            "data": {
+                "repository": {
+                    "issue": {
+                        "__typename": "Issue",
+                        "id": "I_349",
+                        "number": 349,
+                        "title": "Add ProjectV2 metadata cache",
+                        "body": "Issue body",
+                        "url": "https://github.com/Alive24/jade-symphony/issues/349",
+                        "state": "OPEN",
+                        "createdAt": "2026-05-21T00:00:00Z",
+                        "updatedAt": "2026-05-21T00:10:00Z",
+                        "labels": { "nodes": [{ "name": "area:tracker" }] },
+                        "assignees": { "nodes": [{ "login": "Alive24" }] },
+                        "parent": null,
+                        "subIssues": { "nodes": [] },
+                        "closedByPullRequestsReferences": { "nodes": [] },
+                        "comments": { "nodes": [] },
+                        "recentComments": {
+                            "nodes": [
+                                {
+                                    "body": "Jade Symphony linked pull request: https://github.com/Alive24/jade-symphony/pull/355"
+                                }
+                            ]
+                        },
+                        "projectItems": {
+                            "nodes": [
+                                {
+                                    "id": "PVTI_OTHER",
+                                    "project": { "number": 8 },
+                                    "fieldValues": { "nodes": [] }
+                                },
+                                {
+                                    "id": "PVTI_349",
+                                    "project": { "number": 9 },
+                                    "fieldValues": {
+                                        "nodes": [
+                                            {
+                                                "name": "In Progress",
+                                                "field": { "name": "Status" }
+                                            },
+                                            {
+                                                "text": "v=1 issue=#349 lane=main",
+                                                "field": { "name": "Main Agent" }
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        });
+
+        let issue = issue_from_repository_issue_response(&response, &config)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(issue.identifier, "#349");
+        assert_eq!(issue.item_id.as_deref(), Some("PVTI_349"));
+        assert_eq!(issue.state, "In Progress");
+        assert_eq!(issue.assignees, vec!["Alive24"]);
+        assert_eq!(
+            issue.project_fields.get("Main Agent"),
+            Some(&serde_json::Value::String(
+                "v=1 issue=#349 lane=main".into()
+            ))
+        );
+        assert!(issue
+            .linked_pull_requests
+            .iter()
+            .any(|pr| pr.number == Some(355)));
+    }
+
+    #[test]
     fn classifies_project_state_failures() {
         assert_eq!(
             classify_project_state_failure_message("API rate limit exceeded"),
@@ -5447,6 +5989,37 @@ Prompt
         );
         assert_eq!(
             classify_project_state_failure_message("could not resolve host api.github.com"),
+            ProjectStateFailureKind::Network
+        );
+        for status in [
+            "HTTP 502 Bad Gateway",
+            "HTTP 503 Service Unavailable",
+            "HTTP 504 Gateway Timeout",
+        ] {
+            assert_eq!(
+                classify_project_state_failure_message(status),
+                ProjectStateFailureKind::TransientBackend
+            );
+            assert!(project_state_error_is_retryable(
+                &TrackerError::IntegrationUnavailable(status.into())
+            ));
+        }
+        assert_eq!(
+            classify_project_state_failure_message(
+                "HTTP 403 Resource not accessible by integration"
+            ),
+            ProjectStateFailureKind::Auth
+        );
+        assert_eq!(
+            classify_project_state_failure_message(
+                "GitHub GraphQL returned errors: Could not resolve to a ProjectV2"
+            ),
+            ProjectStateFailureKind::Schema
+        );
+        assert_eq!(
+            classify_project_state_failure_message(
+                "GitHub GraphQL operation timed out after 30000ms"
+            ),
             ProjectStateFailureKind::Network
         );
         assert_eq!(
@@ -5467,6 +6040,25 @@ Prompt
             )),
             ProjectStateFailureKind::MissingCapability
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_timeout_returns_transient_tracker_error() {
+        let args = vec!["-c".into(), "sleep 0.05".into()];
+        let error = run_command_with_timeout(
+            "sh",
+            &args,
+            "GitHub GraphQL operation",
+            Duration::from_millis(1),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            classify_project_state_error(&error),
+            ProjectStateFailureKind::Network
+        );
+        assert!(error.to_string().contains("timed out after"));
     }
 
     #[test]

@@ -82,6 +82,8 @@ pub enum GitHandoffError {
     },
     #[error("pull request command did not return a URL")]
     MissingPullRequestUrl,
+    #[error("pull request view command returned invalid JSON: {0}")]
+    InvalidPullRequestViewPayload(String),
     #[error("pull request ready command returned invalid JSON: {0}")]
     InvalidPullRequestReadyPayload(String),
     #[error("worktree {path} has uncommitted changes before PR handoff: {status}")]
@@ -190,17 +192,16 @@ pub fn publish_issue_pull_request(
             "view".into(),
             plan.branch_name.clone(),
             "--json".into(),
-            "url".into(),
-            "--jq".into(),
-            ".url".into(),
+            "url,body".into(),
         ],
         &plan.workspace_path,
     )?;
     if existing.status == 0 {
-        let url = extract_url(&existing.stdout)?;
+        let view = parse_pull_request_view(&existing.stdout)?;
+        ensure_existing_pull_request_body_links_issue(plan, &view.body, runner)?;
         return Ok(PullRequestPublication {
             branch_pushed: true,
-            pr_url: url,
+            pr_url: view.url,
             pr_created: false,
         });
     }
@@ -228,6 +229,106 @@ pub fn publish_issue_pull_request(
         pr_url: extract_url(&created.stdout)?,
         pr_created: true,
     })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PullRequestView {
+    url: String,
+    body: String,
+}
+
+fn parse_pull_request_view(stdout: &str) -> Result<PullRequestView, GitHandoffError> {
+    let value: serde_json::Value = serde_json::from_str(stdout)
+        .map_err(|error| GitHandoffError::InvalidPullRequestViewPayload(error.to_string()))?;
+    let url = value
+        .get("url")
+        .and_then(serde_json::Value::as_str)
+        .filter(|url| !url.trim().is_empty())
+        .ok_or(GitHandoffError::MissingPullRequestUrl)?
+        .to_string();
+    let body = value
+        .get("body")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    Ok(PullRequestView { url, body })
+}
+
+fn ensure_existing_pull_request_body_links_issue(
+    plan: &IssueHandoffPlan,
+    existing_body: &str,
+    runner: &dyn HandoffCommandRunner,
+) -> Result<(), GitHandoffError> {
+    if pull_request_body_has_closing_issue_reference(existing_body, &plan.issue_ref) {
+        return Ok(());
+    }
+
+    let updated_body = append_issue_closing_reference(existing_body, &plan.issue_ref);
+    require_success(
+        "gh",
+        runner.run(
+            "gh",
+            &[
+                "pr".into(),
+                "edit".into(),
+                plan.branch_name.clone(),
+                "--body".into(),
+                updated_body,
+            ],
+            &plan.workspace_path,
+        )?,
+    )
+}
+
+fn pull_request_body_has_closing_issue_reference(body: &str, issue_ref: &str) -> bool {
+    let issue_ref = issue_ref.trim().to_ascii_lowercase();
+    if issue_ref.is_empty() {
+        return false;
+    }
+    body.lines().any(|line| {
+        let line = line.to_ascii_lowercase();
+        let has_closing_keyword = line
+            .split(|character: char| !character.is_ascii_alphabetic())
+            .any(|token| {
+                matches!(
+                    token,
+                    "close"
+                        | "closes"
+                        | "closed"
+                        | "fix"
+                        | "fixes"
+                        | "fixed"
+                        | "resolve"
+                        | "resolves"
+                        | "resolved"
+                )
+            });
+        has_closing_keyword && line_contains_issue_ref(&line, &issue_ref)
+    })
+}
+
+fn line_contains_issue_ref(line: &str, issue_ref: &str) -> bool {
+    let mut rest = line;
+    while let Some(index) = rest.find(issue_ref) {
+        let after_index = index + issue_ref.len();
+        let after = rest[after_index..].chars().next();
+        if !after
+            .map(|character| character.is_ascii_digit())
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        rest = &rest[after_index..];
+    }
+    false
+}
+
+fn append_issue_closing_reference(body: &str, issue_ref: &str) -> String {
+    let body = body.trim_end();
+    if body.is_empty() {
+        return format!("Closes {}\n", issue_ref.trim());
+    }
+    format!("{body}\n\n## Issue Link\n\nCloses {}\n", issue_ref.trim())
 }
 
 pub fn ensure_pull_request_ready(
@@ -381,6 +482,7 @@ mod tests {
         commands: RefCell<Vec<String>>,
         existing_branch: bool,
         existing_pr_url: Option<String>,
+        existing_pr_body: String,
         worktree_branch: Option<String>,
         dirty_status: Option<String>,
         ahead_count: u32,
@@ -440,6 +542,12 @@ mod tests {
                         status: 0,
                         stdout: if command.contains("url,isDraft") {
                             format!("{{\"url\":\"{}\",\"isDraft\":{}}}\n", url, self.pr_is_draft)
+                        } else if command.contains("url,body") {
+                            serde_json::json!({
+                                "url": url,
+                                "body": self.existing_pr_body,
+                            })
+                            .to_string()
                         } else {
                             format!("{url}\n")
                         },
@@ -460,6 +568,13 @@ mod tests {
                 });
             }
             if command.starts_with("gh pr ready") {
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                });
+            }
+            if command.starts_with("gh pr edit") {
                 return Ok(CommandOutput {
                     status: 0,
                     stdout: String::new(),
@@ -538,6 +653,7 @@ mod tests {
         let runner = FakeRunner {
             ahead_count: 1,
             existing_pr_url: Some("https://github.com/Alive24/jade-symphony/pull/45".into()),
+            existing_pr_body: "Closes #45".into(),
             ..Default::default()
         };
 
@@ -551,7 +667,50 @@ mod tests {
         );
         let commands = runner.commands.borrow().join("\n");
         assert!(commands.contains("git push -u origin"));
+        assert!(!commands.contains("gh pr edit"));
         assert!(!commands.contains("gh pr create"));
+    }
+
+    #[test]
+    fn repairs_existing_pull_request_body_without_issue_closing_reference() {
+        let temp = tempfile::tempdir().unwrap();
+        let plan = plan_issue_handoff(temp.path(), &issue(), "main").unwrap();
+        let runner = FakeRunner {
+            ahead_count: 1,
+            existing_pr_url: Some("https://github.com/Alive24/jade-symphony/pull/45".into()),
+            existing_pr_body: "## Summary\n\nRecovered implementation.".into(),
+            ..Default::default()
+        };
+
+        let result = publish_issue_pull_request(&plan, &runner).unwrap();
+
+        assert!(result.branch_pushed);
+        assert!(!result.pr_created);
+        assert_eq!(
+            result.pr_url,
+            "https://github.com/Alive24/jade-symphony/pull/45"
+        );
+        let commands = runner.commands.borrow().join("\n");
+        assert!(commands.contains("gh pr edit"));
+        assert!(commands.contains("## Issue Link"));
+        assert!(commands.contains("Closes #45"));
+        assert!(!commands.contains("gh pr create"));
+    }
+
+    #[test]
+    fn closing_issue_reference_requires_exact_issue_number() {
+        assert!(pull_request_body_has_closing_issue_reference(
+            "Resolves #45.",
+            "#45"
+        ));
+        assert!(!pull_request_body_has_closing_issue_reference(
+            "Resolves #450.",
+            "#45"
+        ));
+        assert!(!pull_request_body_has_closing_issue_reference(
+            "Mentioned #45 without a closing keyword.",
+            "#45"
+        ));
     }
 
     #[test]

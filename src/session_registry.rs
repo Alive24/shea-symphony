@@ -410,6 +410,7 @@ pub fn classify_session_output(
     } else if contains_any(
         &normalized,
         &[
+            "conversation interrupted",
             "need human input",
             "needs human input",
             "waiting for human",
@@ -690,6 +691,10 @@ mod tests {
             ),
             (
                 "Need human input before continuing",
+                SessionStatus::WaitingForHumanInput,
+            ),
+            (
+                "Conversation interrupted - tell the model what to do differently.",
                 SessionStatus::WaitingForHumanInput,
             ),
             (

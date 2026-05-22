@@ -68,6 +68,7 @@ use jade_symphony::presentation::{
     render_doctor_panel, render_project_state_panel, render_run_loop_panel, RunLoopPanel,
 };
 use jade_symphony::profiles::{discover_execution_profiles, selected_execution_profile};
+use jade_symphony::progress::{run_with_progress_heartbeat, ProgressHeartbeatSpec};
 use jade_symphony::prompt::render_prompt;
 use jade_symphony::quality_gate::{
     evaluate_issue_with_dependency_preflight, evaluate_issue_with_llm_gate,
@@ -1445,9 +1446,14 @@ fn quality_gate(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config(&workflow_path)?;
     let adapter = adapter_from_config(&config);
-    let issue = adapter
-        .get_issue(&issue_ref)?
-        .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
+    let issue = run_with_progress_heartbeat(
+        progress_spec_for_config(&config, "github_project_read")
+            .issue(issue_ref.clone())
+            .backend(tracker_backend_label(&config))
+            .next("inspect_issue"),
+        || adapter.get_issue(&issue_ref),
+    )?
+    .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
     let decision = evaluate_issue_for_current_source(&config, &issue)?;
 
     println!(
@@ -2994,9 +3000,14 @@ fn review_fake(
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
     let adapter = adapter_from_config(&config);
-    let issue = adapter
-        .get_issue(&issue_ref)?
-        .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
+    let issue = run_with_progress_heartbeat(
+        progress_spec_with_event_log(&config, "github_project_read")
+            .issue(issue_ref.clone())
+            .backend(tracker_backend_label(&config))
+            .next("review_issue_read"),
+        || adapter.get_issue(&issue_ref),
+    )?
+    .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
     let request = ReviewRequest {
         issue: issue.clone(),
         prompt: render_automatic_review_prompt(&workflow, &issue)?,
@@ -3051,12 +3062,17 @@ fn review_once(
                 config.review.gemini_allowed_tools.clone(),
             );
             match backend.start(request) {
-                Ok(job) => poll_review_job_until_terminal(
-                    &backend,
-                    job,
-                    Duration::from_millis(config.review.timeout_ms),
-                    Duration::from_millis(500),
-                )?,
+                Ok(job) => {
+                    let spec = review_backend_progress_spec(&config, &issue, backend.kind(), &job);
+                    run_with_progress_heartbeat(spec, || {
+                        poll_review_job_until_terminal(
+                            &backend,
+                            job,
+                            Duration::from_millis(config.review.timeout_ms),
+                            Duration::from_millis(500),
+                        )
+                    })?
+                }
                 Err(error) => ReviewJob::failed_unavailable(
                     issue.identifier.clone(),
                     "gemini-cli",
@@ -3415,9 +3431,14 @@ fn review_clear_claim(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config(&workflow_path)?;
     let adapter = adapter_from_config(&config);
-    let issue = adapter
-        .get_issue(&issue_ref)?
-        .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
+    let issue = run_with_progress_heartbeat(
+        progress_spec_for_config(&config, "github_project_read")
+            .issue(issue_ref.clone())
+            .backend(tracker_backend_label(&config))
+            .next("inspect_issue"),
+        || adapter.get_issue(&issue_ref),
+    )?
+    .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
     if !write {
         println!(
             "review_clear_claim_dry_run action=clear_claim_field issue_ref={} field=\"Review Agent\"",
@@ -4025,9 +4046,22 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
             enforce_canonical_checkout_before_write(&config, "review_loop")?;
         }
         let adapter = adapter_from_config(&config);
-        let issues = adapter
-            .fetch_issues_by_states(std::slice::from_ref(&config.tracker.state_map.agent_review))?;
-        let issues = hydrate_issues_for_review_lane(adapter.as_ref(), issues)?;
+        let issues = run_with_progress_heartbeat(
+            progress_spec_with_event_log(&config, "github_project_read")
+                .backend(tracker_backend_label(&config))
+                .next("review_queue_scan"),
+            || {
+                adapter.fetch_issues_by_states(std::slice::from_ref(
+                    &config.tracker.state_map.agent_review,
+                ))
+            },
+        )?;
+        let issues = run_with_progress_heartbeat(
+            progress_spec_with_event_log(&config, "github_project_read")
+                .backend(tracker_backend_label(&config))
+                .next("review_hydrate_issues"),
+            || hydrate_issues_for_review_lane(adapter.as_ref(), issues),
+        )?;
 
         if issues.is_empty() {
             println!("review_loop=stopped reason=no_agent_review_issue iterations={iterations}");
@@ -4142,15 +4176,19 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                         continue;
                     }
 
-                    let latest =
-                        adapter
-                            .get_issue(&selected_issue.identifier)?
-                            .ok_or_else(|| {
-                                format!(
-                                    "issue disappeared before review: {}",
-                                    selected_issue.identifier
-                                )
-                            })?;
+                    let latest = run_with_progress_heartbeat(
+                        progress_spec_with_event_log(&config, "github_project_read")
+                            .issue(selected_issue.identifier.clone())
+                            .backend(tracker_backend_label(&config))
+                            .next("review_issue_read"),
+                        || adapter.get_issue(&selected_issue.identifier),
+                    )?
+                    .ok_or_else(|| {
+                        format!(
+                            "issue disappeared before review: {}",
+                            selected_issue.identifier
+                        )
+                    })?;
                     match review_run_eligibility(
                         &latest,
                         &config.tracker.state_map.agent_review,
@@ -4461,7 +4499,12 @@ fn merge_once_tick(
 
     let adapter = adapter_from_config(&config);
     let merging_state = config.tracker.state_map.merging.clone();
-    let mut issues = adapter.fetch_issues_by_states(std::slice::from_ref(&merging_state))?;
+    let mut issues = run_with_progress_heartbeat(
+        progress_spec_with_event_log(&config, "github_project_read")
+            .backend(tracker_backend_label(&config))
+            .next("merge_queue_scan"),
+        || adapter.fetch_issues_by_states(std::slice::from_ref(&merging_state)),
+    )?;
     if issues.is_empty() {
         println!("merge_once=stopped reason=no_merging_issue");
         return Ok(MergeOnceOutcome::NoMergingIssue);
@@ -4476,7 +4519,13 @@ fn merge_once_tick(
         println!("merge_once=stopped reason=no_unclaimed_merging_issue");
         return Ok(MergeOnceOutcome::NoMergingIssue);
     };
-    let latest_issue = adapter.get_issue(&selected.issue.identifier)?;
+    let latest_issue = run_with_progress_heartbeat(
+        progress_spec_with_event_log(&config, "github_project_read")
+            .issue(selected.issue.identifier.clone())
+            .backend(tracker_backend_label(&config))
+            .next("merge_issue_read"),
+        || adapter.get_issue(&selected.issue.identifier),
+    )?;
     let (issue, recovery_reason) = match latest_issue {
         Some(issue) => {
             let recovery_reason = recover
@@ -4520,7 +4569,13 @@ fn merge_once_tick(
         &merge_claim,
         write,
     )?;
-    let linked_pull_requests = adapter.list_linked_pull_requests(&issue.identifier)?;
+    let linked_pull_requests = run_with_progress_heartbeat(
+        progress_spec_with_event_log(&config, "github_project_read")
+            .issue(issue.identifier.clone())
+            .backend(tracker_backend_label(&config))
+            .next("linked_pr_read"),
+        || adapter.list_linked_pull_requests(&issue.identifier),
+    )?;
     let runner = ProcessHandoffCommandRunner;
     let default_expected_base = expected_merge_base_branch(&config);
     let expected_base = expected_merge_base_branch_for_issue(&issue, default_expected_base);
@@ -5138,12 +5193,15 @@ fn run_review_job(
     if let Some(outcome) = fake_outcome {
         let backend = FakeReviewBackend::new(outcome);
         let job = backend.start(request)?;
-        return Ok(poll_review_job_until_terminal(
-            &backend,
-            job,
-            Duration::from_millis(config.review.timeout_ms),
-            Duration::from_millis(250),
-        )?);
+        let spec = review_backend_progress_spec(config, issue, backend.kind(), &job);
+        return Ok(run_with_progress_heartbeat(spec, || {
+            poll_review_job_until_terminal(
+                &backend,
+                job,
+                Duration::from_millis(config.review.timeout_ms),
+                Duration::from_millis(250),
+            )
+        })?);
     }
 
     match config.review.backend.as_str() {
@@ -5165,12 +5223,17 @@ fn run_review_job(
                 config.review.gemini_allowed_tools.clone(),
             );
             match backend.start(request) {
-                Ok(job) => Ok(poll_review_job_until_terminal(
-                    &backend,
-                    job,
-                    Duration::from_millis(config.review.timeout_ms),
-                    Duration::from_millis(500),
-                )?),
+                Ok(job) => {
+                    let spec = review_backend_progress_spec(config, issue, backend.kind(), &job);
+                    Ok(run_with_progress_heartbeat(spec, || {
+                        poll_review_job_until_terminal(
+                            &backend,
+                            job,
+                            Duration::from_millis(config.review.timeout_ms),
+                            Duration::from_millis(500),
+                        )
+                    })?)
+                }
                 Err(error) => Ok(ReviewJob::failed_unavailable(
                     issue.identifier.clone(),
                     "gemini-cli",
@@ -5183,6 +5246,22 @@ fn run_review_job(
             Ok(backend.poll(backend.start(request)?)?)
         }
     }
+}
+
+fn review_backend_progress_spec(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    backend: &str,
+    job: &ReviewJob,
+) -> ProgressHeartbeatSpec {
+    let mut spec = progress_spec_with_event_log(config, "review_backend")
+        .issue(issue.identifier.clone())
+        .backend(backend)
+        .next("waiting_for_child");
+    if let Some(path) = &job.artifact_path {
+        spec = spec.artifact(path.display().to_string());
+    }
+    spec
 }
 
 fn review_workspace_for_issue(config: &RuntimeConfig, issue: &TrackerIssue) -> PathBuf {
@@ -6226,6 +6305,27 @@ fn load_config(workflow_path: &Path) -> Result<RuntimeConfig, Box<dyn std::error
     Ok(config)
 }
 
+fn progress_spec_for_config(config: &RuntimeConfig, wait: &str) -> ProgressHeartbeatSpec {
+    ProgressHeartbeatSpec::new(wait).actor(
+        config.identity.actor_role.clone(),
+        config.identity.actor_label.clone(),
+    )
+}
+
+fn progress_spec_with_event_log(config: &RuntimeConfig, wait: &str) -> ProgressHeartbeatSpec {
+    progress_spec_for_config(config, wait)
+        .event_log_path(config.observability.logs_root.join("jade-symphony.jsonl"))
+}
+
+fn tracker_backend_label(config: &RuntimeConfig) -> &'static str {
+    match config.tracker.kind.as_str() {
+        "github_project_v2" => "gh",
+        "linear" => "linear",
+        "memory" => "memory",
+        _ => "tracker",
+    }
+}
+
 fn validate(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     warn_if_temporary_workflow_path(&workflow_path);
     let workflow = WorkflowDefinition::load(&workflow_path)?;
@@ -6250,7 +6350,13 @@ fn inspect(
     config.validate()?;
 
     let adapter = adapter_from_config(&config);
-    let issues = filter_issues_by_state(adapter.list_project_summary_issues()?, &state_filters);
+    let issues = run_with_progress_heartbeat(
+        progress_spec_for_config(&config, "github_project_read")
+            .backend(tracker_backend_label(&config))
+            .next("load_project_summary"),
+        || adapter.list_project_summary_issues(),
+    )?;
+    let issues = filter_issues_by_state(issues, &state_filters);
 
     if !state_filters.is_empty() {
         println!("state_filter={}", state_filters.join(","));
@@ -6286,7 +6392,13 @@ fn project_state(options: ProjectStateOptions) -> Result<(), Box<dyn std::error:
     config.validate()?;
 
     let adapter = adapter_from_config(&config);
-    match adapter.list_project_summary_issues() {
+    let read_result = run_with_progress_heartbeat(
+        progress_spec_for_config(&config, "github_project_read")
+            .backend(tracker_backend_label(&config))
+            .next("load_project_summary"),
+        || adapter.list_project_summary_issues(),
+    );
+    match read_result {
         Ok(issues) => {
             let mut integration_gaps = adapter.integration_gaps();
             append_canonical_checkout_gap(&config, &mut integration_gaps);
@@ -6329,9 +6441,14 @@ fn project_issue(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config(&workflow_path)?;
     let adapter = adapter_from_config(&config);
-    let issue = adapter
-        .get_issue(&issue_ref)?
-        .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
+    let issue = run_with_progress_heartbeat(
+        progress_spec_for_config(&config, "github_project_read")
+            .issue(issue_ref.clone())
+            .backend(tracker_backend_label(&config))
+            .next("load_issue"),
+        || adapter.get_issue(&issue_ref),
+    )?
+    .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
 
     if json {
         println!("{}", serde_json::to_string_pretty(&issue)?);
@@ -6619,8 +6736,18 @@ fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::Error>> {
     config.validate()?;
 
     let adapter = adapter_from_config(&config);
-    let issues = adapter.fetch_issues_by_states(&all_mapped_tracker_states(&config))?;
-    let issues = hydrate_issues_for_doctor(adapter.as_ref(), issues)?;
+    let issues = run_with_progress_heartbeat(
+        progress_spec_for_config(&config, "github_project_read")
+            .backend(tracker_backend_label(&config))
+            .next("doctor_project_scan"),
+        || adapter.fetch_issues_by_states(&all_mapped_tracker_states(&config)),
+    )?;
+    let issues = run_with_progress_heartbeat(
+        progress_spec_for_config(&config, "github_project_read")
+            .backend(tracker_backend_label(&config))
+            .next("doctor_hydrate_issues"),
+        || hydrate_issues_for_doctor(adapter.as_ref(), issues),
+    )?;
     let mut integration_gaps = adapter.integration_gaps();
     append_canonical_checkout_gap(&config, &mut integration_gaps);
     let runtime_states = match load_runtime_states(&config) {
@@ -8720,7 +8847,14 @@ fn execute_issue_once_in_workspace(
     prepared.attempt = attempt;
     prepared.branch_name = current_git_branch(&workspace.path).ok().flatten();
     let prompt_artifact_path = persist_prompt_artifact(&prepared)?;
-    let events = backend.run(prepared)?;
+    let mut backend_wait = progress_spec_with_event_log(config, "main_backend")
+        .issue(issue.identifier.clone())
+        .backend(prepared.backend.clone())
+        .next("waiting_for_child");
+    if let Some(path) = &prepared.prompt_artifact_path {
+        backend_wait = backend_wait.artifact(path.display().to_string());
+    }
+    let events = run_with_progress_heartbeat(backend_wait, || backend.run(prepared))?;
     let summary = backend.summarize(&events);
     let usage_limit_pause = usage_limit_pause_from_events(&events);
     run_after_run(&workspace.path, &config.hooks);
@@ -8911,7 +9045,12 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         let issues = if recovery_only {
             Vec::new()
         } else {
-            adapter.list_queue_scan_issues()?
+            run_with_progress_heartbeat(
+                progress_spec_with_event_log(&config, "github_project_read")
+                    .backend(tracker_backend_label(&config))
+                    .next("main_queue_scan"),
+                || adapter.list_queue_scan_issues(),
+            )?
         };
         let orchestrator = Orchestrator::new(config.clone());
         let mut plan = orchestrator.plan_dispatch(issues.clone());
@@ -9160,9 +9299,14 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             let latest = if options.recover && normalize_state(&issue.state) == "in progress" {
                 issue.clone()
             } else {
-                adapter.get_issue(&issue.identifier)?.ok_or_else(|| {
-                    format!("issue disappeared before claim: {}", issue.identifier)
-                })?
+                run_with_progress_heartbeat(
+                    progress_spec_with_event_log(&config, "github_project_read")
+                        .issue(issue.identifier.clone())
+                        .backend(tracker_backend_label(&config))
+                        .next("main_issue_read"),
+                    || adapter.get_issue(&issue.identifier),
+                )?
+                .ok_or_else(|| format!("issue disappeared before claim: {}", issue.identifier))?
             };
             let eligibility =
                 pool_claim_eligibility(&latest, WorkerLane::Main, &worker_id, &config);

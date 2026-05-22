@@ -140,6 +140,14 @@ and log tails, and reports a conservative session classification such as
 `failed`, `completed`, `stale`, or `unknown`. The status surface includes only
 compact evidence snippets plus attach/log locations; attach manually when raw
 scrollback is needed.
+Long-running live waits also print compact `progress ...` heartbeats to stderr
+after the configured threshold, defaulting to 30 seconds. These lines identify
+the wait reason, issue or PR when known, backend or child process, elapsed time,
+and next expected action. They are liveness and diagnosis hints only; they do
+not alter timeout, retry, routing, review, or merge behavior, and they are kept
+out of JSON stdout. For local UAT, set
+`JADE_SYMPHONY_PROGRESS_HEARTBEAT_MS=1000` or another small value; set it to `0`
+to suppress heartbeat output for that process.
 Persisted session registry statuses that are not recognized by the current
 binary are read as `unknown` without rewriting or dropping the record. Status
 and doctor diagnostics preserve the raw drifted value so operators can inspect

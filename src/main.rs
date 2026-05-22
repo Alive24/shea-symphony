@@ -144,6 +144,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             workflow_path,
             json,
         } => autopilot_plan(workflow_path, json),
+        Command::AutopilotLoop { options } => autopilot_loop(options),
         Command::StatusApi {
             workflow_path,
             bind,
@@ -400,6 +401,266 @@ fn autopilot_plan(workflow_path: PathBuf, json: bool) -> Result<(), Box<dyn std:
         println!("{}", render_autopilot_plan_human(&snapshot));
     }
     Ok(())
+}
+
+fn autopilot_loop(options: AutopilotLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let max_iterations = options
+        .iteration_limit()
+        .ok_or("autopilot loop requires --max-iterations or --once for this bounded slice")?;
+    let mut had_lane_error = false;
+
+    for iteration in 1..=max_iterations {
+        warn_if_temporary_workflow_path(&options.workflow_path);
+        let workflow = WorkflowDefinition::load(&options.workflow_path)?;
+        let config = RuntimeConfig::from_workflow(&workflow, &options.workflow_path)?;
+        config.validate()?;
+        let settings = AutopilotLoopTickSettings::from_options(&config, &options);
+        let plan = match build_autopilot_plan(&options.workflow_path) {
+            Ok(plan) => Some(plan),
+            Err(error) => {
+                println!(
+                    "autopilot_loop_preflight status=warning reason=plan_unavailable error={}",
+                    compact_evidence(&error.to_string())
+                );
+                None
+            }
+        };
+
+        println!(
+            "autopilot_loop_iteration={} mode={} order=main,review,merge recover={} main_max_concurrent={} review_max_concurrent={} merge_max_concurrent={}",
+            iteration,
+            if options.write { "write" } else { "dry-run" },
+            settings.recover,
+            settings.main_max_concurrent,
+            settings.review_max_concurrent,
+            settings.merge_max_concurrent
+        );
+
+        let lane_results = vec![
+            autopilot_main_tick(&options, &settings, plan.as_ref()),
+            autopilot_review_tick(&options, &settings, plan.as_ref()),
+            autopilot_merge_tick(&options, &settings, plan.as_ref()),
+        ];
+        had_lane_error |= lane_results.iter().any(|result| result.status == "error");
+
+        let result = AutopilotLoopIterationResult {
+            schema_version: 1,
+            iteration,
+            mode: if options.write { "write" } else { "dry-run" }.into(),
+            execution_order: vec!["main".into(), "review".into(), "merge".into()],
+            settings,
+            lanes: lane_results,
+            parked_queues: plan
+                .map(|snapshot| snapshot.parked_queues)
+                .unwrap_or_default(),
+        };
+        println!("{}", render_autopilot_loop_iteration_result(&result));
+    }
+
+    if had_lane_error {
+        Err("one or more autopilot lane ticks failed; see per-lane results above".into())
+    } else {
+        println!("autopilot_loop=stopped reason=max_iterations iterations={max_iterations}");
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct AutopilotLoopTickSettings {
+    recover: bool,
+    main_max_concurrent: usize,
+    review_max_concurrent: usize,
+    merge_max_concurrent: usize,
+}
+
+impl AutopilotLoopTickSettings {
+    fn from_options(config: &RuntimeConfig, options: &AutopilotLoopOptions) -> Self {
+        Self {
+            recover: options.recover,
+            main_max_concurrent: options.main_worker_limit(config),
+            review_max_concurrent: options.review_worker_limit(config),
+            merge_max_concurrent: options.merge_worker_limit(config),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct AutopilotLoopIterationResult {
+    schema_version: u8,
+    iteration: usize,
+    mode: String,
+    execution_order: Vec<String>,
+    settings: AutopilotLoopTickSettings,
+    lanes: Vec<AutopilotLoopLaneResult>,
+    parked_queues: Vec<AutopilotParkedQueue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct AutopilotLoopLaneResult {
+    lane: String,
+    status: String,
+    action: String,
+    selected_issue: Option<AutopilotIssueSummary>,
+    target_state: Option<String>,
+    max_concurrent: usize,
+    recover: bool,
+    evidence: Vec<String>,
+}
+
+fn autopilot_main_tick(
+    options: &AutopilotLoopOptions,
+    settings: &AutopilotLoopTickSettings,
+    plan: Option<&AutopilotPlanSnapshot>,
+) -> AutopilotLoopLaneResult {
+    let lane_plan = autopilot_plan_lane(plan, "main");
+    let result = run_loop(RunLoopOptions {
+        workflow_path: options.workflow_path.clone(),
+        max_iterations: Some(1),
+        once: false,
+        write: options.write,
+        recover: settings.recover,
+        max_concurrent: Some(settings.main_max_concurrent),
+        display: DisplayMode::Plain,
+    });
+    autopilot_lane_result_from_execution(
+        "main",
+        lane_plan,
+        settings.main_max_concurrent,
+        settings.recover,
+        result,
+    )
+}
+
+fn autopilot_review_tick(
+    options: &AutopilotLoopOptions,
+    settings: &AutopilotLoopTickSettings,
+    plan: Option<&AutopilotPlanSnapshot>,
+) -> AutopilotLoopLaneResult {
+    let lane_plan = autopilot_plan_lane(plan, "review");
+    let result = review_loop(ReviewLoopOptions {
+        workflow_path: options.workflow_path.clone(),
+        max_iterations: Some(1),
+        once: false,
+        write: options.write,
+        fake_outcome: None,
+        max_concurrent: Some(settings.review_max_concurrent),
+    });
+    autopilot_lane_result_from_execution(
+        "review",
+        lane_plan,
+        settings.review_max_concurrent,
+        false,
+        result,
+    )
+}
+
+fn autopilot_merge_tick(
+    options: &AutopilotLoopOptions,
+    settings: &AutopilotLoopTickSettings,
+    plan: Option<&AutopilotPlanSnapshot>,
+) -> AutopilotLoopLaneResult {
+    let lane_plan = autopilot_plan_lane(plan, "merge");
+    let result = merge_loop(MergeLoopOptions {
+        workflow_path: options.workflow_path.clone(),
+        max_iterations: Some(1),
+        once: false,
+        write: options.write,
+        recover: settings.recover,
+        max_concurrent: Some(settings.merge_max_concurrent),
+    });
+    autopilot_lane_result_from_execution(
+        "merge",
+        lane_plan,
+        settings.merge_max_concurrent,
+        settings.recover,
+        result,
+    )
+}
+
+fn autopilot_plan_lane<'a>(
+    plan: Option<&'a AutopilotPlanSnapshot>,
+    lane: &str,
+) -> Option<&'a AutopilotLanePlan> {
+    plan.and_then(|snapshot| {
+        snapshot
+            .lanes
+            .iter()
+            .find(|candidate| candidate.lane == lane)
+    })
+}
+
+fn autopilot_lane_result_from_execution(
+    lane: &str,
+    lane_plan: Option<&AutopilotLanePlan>,
+    max_concurrent: usize,
+    recover: bool,
+    result: Result<(), Box<dyn std::error::Error>>,
+) -> AutopilotLoopLaneResult {
+    let mut evidence = lane_plan
+        .map(|plan| plan.evidence.clone())
+        .unwrap_or_else(|| vec!["source=autopilot_loop".into()]);
+    if let Some(plan) = lane_plan {
+        evidence.push(format!("planned_status={}", plan.status));
+        evidence.push(format!("planned_action={}", plan.proposed_action));
+        evidence.push(format!("planned_reason={}", plan.reason));
+    }
+    let (status, action) = match result {
+        Ok(()) => ("completed".into(), "lane_tick_completed".into()),
+        Err(error) => {
+            evidence.push(format!("error={}", compact_evidence(&error.to_string())));
+            ("error".into(), "tick_failed".into())
+        }
+    };
+
+    AutopilotLoopLaneResult {
+        lane: lane.into(),
+        status,
+        action,
+        selected_issue: lane_plan.and_then(|plan| plan.selected_issue.clone()),
+        target_state: lane_plan.and_then(|plan| plan.target_state.clone()),
+        max_concurrent,
+        recover,
+        evidence,
+    }
+}
+
+fn render_autopilot_loop_iteration_result(result: &AutopilotLoopIterationResult) -> String {
+    let mut lines = vec![format!(
+        "autopilot_loop_result iteration={} mode={} order={} recover={} main_max_concurrent={} review_max_concurrent={} merge_max_concurrent={}",
+        result.iteration,
+        result.mode,
+        result.execution_order.join(","),
+        result.settings.recover,
+        result.settings.main_max_concurrent,
+        result.settings.review_max_concurrent,
+        result.settings.merge_max_concurrent
+    )];
+    for lane in &result.lanes {
+        let selected = lane
+            .selected_issue
+            .as_ref()
+            .map(|issue| issue.identifier.as_str())
+            .unwrap_or("none");
+        lines.push(format!(
+            "autopilot_loop_lane lane={} status={} action={} selected={} target={} max_concurrent={} recover={}",
+            lane.lane,
+            lane.status,
+            lane.action,
+            selected,
+            lane.target_state.as_deref().unwrap_or("none"),
+            lane.max_concurrent,
+            lane.recover
+        ));
+    }
+    for queue in &result.parked_queues {
+        lines.push(format!(
+            "autopilot_loop_parked_queue name={} state={} count={}",
+            shell_quote_display(&queue.name),
+            shell_quote_display(&queue.state),
+            queue.count
+        ));
+    }
+    lines.join("\n")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -8924,41 +9185,29 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
         let worker_id = worker_identity(&config, WorkerLane::Main);
-        let mut selected = Vec::new();
-        if options.write && options.recover {
-            for candidate in &recoverable_runtime_states {
-                if selected.len() >= available_slots {
-                    break;
-                }
-                let issue = candidate.issue.clone();
-                println!(
-                    "run_loop_recovery_candidate issue={} attempt={} reason={}",
-                    issue.identifier, candidate.state.attempt_count, candidate.reason
-                );
-                if selected.iter().any(|selected_issue: &TrackerIssue| {
-                    selected_issue.identifier == issue.identifier
-                }) {
-                    continue;
-                }
-                selected.push(issue);
-            }
-        }
-        let remaining_slots = available_slots.saturating_sub(selected.len());
+        let recoverable_issues = if options.write && options.recover {
+            recoverable_runtime_states
+                .iter()
+                .map(|candidate| {
+                    println!(
+                        "run_loop_recovery_candidate issue={} attempt={} reason={}",
+                        candidate.issue.identifier, candidate.state.attempt_count, candidate.reason
+                    );
+                    candidate.issue.clone()
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         let normal_selected = select_pool_worker_issues(
             &plan.selected,
             WorkerLane::Main,
             &worker_id,
-            remaining_slots,
+            available_slots,
             &config,
         );
-        for issue in normal_selected {
-            if !selected
-                .iter()
-                .any(|selected_issue: &TrackerIssue| selected_issue.identifier == issue.identifier)
-            {
-                selected.push(issue);
-            }
-        }
+        let selected =
+            recover_first_issue_selection(recoverable_issues, normal_selected, available_slots);
 
         let Some(issue) = selected.first().cloned() else {
             plan.snapshot.latest_status = Some(LatestStatus {
@@ -10276,6 +10525,43 @@ fn select_pool_worker_issues(
         .collect::<Vec<_>>();
     selected.sort_by_key(|issue| issue.priority.unwrap_or(i64::MAX));
     selected.truncate(pool.max(1));
+    selected
+}
+
+fn recover_first_issue_selection(
+    recoverable: Vec<TrackerIssue>,
+    fresh: Vec<TrackerIssue>,
+    pool: usize,
+) -> Vec<TrackerIssue> {
+    let limit = pool.max(1);
+    let mut selected = Vec::new();
+
+    for issue in recoverable {
+        if selected.len() >= limit {
+            break;
+        }
+        if selected
+            .iter()
+            .any(|selected_issue: &TrackerIssue| selected_issue.identifier == issue.identifier)
+        {
+            continue;
+        }
+        selected.push(issue);
+    }
+
+    for issue in fresh {
+        if selected.len() >= limit {
+            break;
+        }
+        if selected
+            .iter()
+            .any(|selected_issue: &TrackerIssue| selected_issue.identifier == issue.identifier)
+        {
+            continue;
+        }
+        selected.push(issue);
+    }
+
     selected
 }
 
@@ -13247,6 +13533,9 @@ enum Command {
         workflow_path: PathBuf,
         json: bool,
     },
+    AutopilotLoop {
+        options: AutopilotLoopOptions,
+    },
     StatusApi {
         workflow_path: PathBuf,
         bind: SocketAddr,
@@ -13513,6 +13802,18 @@ struct RunLoopOptions {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct AutopilotLoopOptions {
+    workflow_path: PathBuf,
+    max_iterations: Option<usize>,
+    once: bool,
+    write: bool,
+    recover: bool,
+    main_max_concurrent: Option<usize>,
+    review_max_concurrent: Option<usize>,
+    merge_max_concurrent: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ProjectStateOptions {
     workflow_path: PathBuf,
     display: DisplayMode,
@@ -13586,6 +13887,34 @@ impl ReviewLoopOptions {
     fn worker_limit(&self, config: &RuntimeConfig) -> usize {
         self.max_concurrent
             .unwrap_or(config.review.max_concurrent_workers)
+            .max(1)
+    }
+}
+
+impl AutopilotLoopOptions {
+    fn iteration_limit(&self) -> Option<usize> {
+        if self.once {
+            Some(1)
+        } else {
+            self.max_iterations
+        }
+    }
+
+    fn main_worker_limit(&self, config: &RuntimeConfig) -> usize {
+        self.main_max_concurrent
+            .unwrap_or(config.agent.max_concurrent_agents)
+            .max(1)
+    }
+
+    fn review_worker_limit(&self, config: &RuntimeConfig) -> usize {
+        self.review_max_concurrent
+            .unwrap_or(config.review.max_concurrent_workers)
+            .max(1)
+    }
+
+    fn merge_worker_limit(&self, config: &RuntimeConfig) -> usize {
+        self.merge_max_concurrent
+            .unwrap_or(config.merge_lane.max_concurrent_workers)
             .max(1)
     }
 }
@@ -13699,7 +14028,7 @@ enum CliCommand {
     #[command(
         next_help_heading = "Lane orchestration",
         name = "autopilot",
-        about = "Read-only all-lane planning preflight"
+        about = "Read-only planning and bounded all-lane loop"
     )]
     Autopilot(AutopilotArgs),
     Status(StatusArgs),
@@ -13755,6 +14084,8 @@ enum AutopilotCommandArgs {
         about = "Plan Main, Review, and Merge lanes without mutating tracker or runtime state"
     )]
     Plan(AutopilotPlanArgs),
+    #[command(about = "Run one bounded composed Main, Review, and Merge lane tick")]
+    Loop(AutopilotLoopArgs),
 }
 
 #[derive(Debug, Args)]
@@ -13763,6 +14094,38 @@ struct AutopilotPlanArgs {
     workflow_path: PathBuf,
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Debug, Args)]
+struct AutopilotLoopArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long)]
+    max_iterations: Option<usize>,
+    #[arg(long, conflicts_with = "max_iterations")]
+    once: bool,
+    #[arg(long, conflicts_with = "dry_run")]
+    write: bool,
+    #[arg(long = "dry-run", conflicts_with = "write")]
+    dry_run: bool,
+    #[arg(
+        long,
+        conflicts_with = "no_recover",
+        help = "Enable recover-first handling for interrupted Main and Merge work"
+    )]
+    recover: bool,
+    #[arg(
+        long = "no-recover",
+        conflicts_with = "recover",
+        help = "Disable default recover-first handling in write mode"
+    )]
+    no_recover: bool,
+    #[arg(long)]
+    main_max_concurrent: Option<usize>,
+    #[arg(long)]
+    review_max_concurrent: Option<usize>,
+    #[arg(long)]
+    merge_max_concurrent: Option<usize>,
 }
 
 #[derive(Debug, Args)]
@@ -14756,6 +15119,29 @@ fn run_loop_command(args: RunLoopArgs) -> Result<Command, String> {
     })
 }
 
+fn autopilot_loop_command(args: AutopilotLoopArgs) -> Result<Command, String> {
+    if args.max_iterations == Some(0)
+        || args.main_max_concurrent == Some(0)
+        || args.review_max_concurrent == Some(0)
+        || args.merge_max_concurrent == Some(0)
+        || (!args.once && args.max_iterations.is_none())
+    {
+        return Err(usage());
+    }
+    Ok(Command::AutopilotLoop {
+        options: AutopilotLoopOptions {
+            workflow_path: args.workflow_path,
+            max_iterations: args.max_iterations,
+            once: args.once,
+            write: args.write,
+            recover: loop_recover_enabled(args.write, args.recover, args.no_recover),
+            main_max_concurrent: args.main_max_concurrent,
+            review_max_concurrent: args.review_max_concurrent,
+            merge_max_concurrent: args.merge_max_concurrent,
+        },
+    })
+}
+
 fn merge_loop_command(args: MergeLoopArgs) -> Result<Command, String> {
     if args.max_iterations == Some(0)
         || args.max_concurrent == Some(0)
@@ -14924,6 +15310,7 @@ impl TryFrom<Cli> for Command {
                             workflow_path: args.workflow_path,
                             json: args.json,
                         }),
+                        AutopilotCommandArgs::Loop(args) => autopilot_loop_command(args),
                     },
                     CliCommand::Status(args) => match args.command {
                         StatusCommandArgs::Show(show) => Ok(Self::Plan {
@@ -15321,7 +15708,7 @@ fn usage() -> String {
         "  session                     Start, list, or attach supervised lane sessions",
         "",
         "Lane orchestration:",
-        "  autopilot                   Read-only all-lane planning preflight",
+        "  autopilot                   Read-only planning and bounded all-lane loop",
         "  main                        Main Agent claim, once, and loop commands",
         "  review                      Review Agent claim, pass/reject, session, freshness, and loop commands",
         "  merge                       Merging Agent claim, once, and loop commands",
@@ -15793,6 +16180,253 @@ mod tests {
 
         assert_eq!(workflow_path, PathBuf::from("workflows/jade-symphony.md"));
         assert!(json);
+    }
+
+    #[test]
+    fn parses_grouped_autopilot_loop_flags() {
+        let Command::AutopilotLoop { options } = parse(&[
+            "autopilot",
+            "loop",
+            "workflows/jade-symphony.md",
+            "--max-iterations",
+            "2",
+            "--write",
+            "--main-max-concurrent",
+            "3",
+            "--review-max-concurrent",
+            "2",
+            "--merge-max-concurrent",
+            "1",
+        ]) else {
+            panic!("expected autopilot loop command");
+        };
+
+        assert_eq!(
+            options.workflow_path,
+            PathBuf::from("workflows/jade-symphony.md")
+        );
+        assert_eq!(options.max_iterations, Some(2));
+        assert!(options.write);
+        assert!(options.recover);
+        assert_eq!(options.main_max_concurrent, Some(3));
+        assert_eq!(options.review_max_concurrent, Some(2));
+        assert_eq!(options.merge_max_concurrent, Some(1));
+    }
+
+    #[test]
+    fn autopilot_loop_once_defaults_to_dry_run_without_recover() {
+        let Command::AutopilotLoop { options } = parse(&[
+            "autopilot",
+            "loop",
+            "workflows/jade-symphony.md",
+            "--once",
+            "--dry-run",
+        ]) else {
+            panic!("expected autopilot loop command");
+        };
+
+        assert_eq!(options.iteration_limit(), Some(1));
+        assert!(!options.write);
+        assert!(!options.recover);
+    }
+
+    #[test]
+    fn rejects_unbounded_autopilot_loop_for_now() {
+        let error = Command::parse(vec![
+            "autopilot".into(),
+            "loop".into(),
+            "WORKFLOW.md".into(),
+            "--write".into(),
+        ])
+        .unwrap_err();
+
+        assert!(error.contains("Usage:"));
+    }
+
+    #[test]
+    fn rejects_zero_autopilot_loop_concurrency() {
+        let error = Command::parse(vec![
+            "autopilot".into(),
+            "loop".into(),
+            "WORKFLOW.md".into(),
+            "--max-iterations".into(),
+            "1".into(),
+            "--main-max-concurrent".into(),
+            "0".into(),
+        ])
+        .unwrap_err();
+
+        assert!(error.contains("Usage:"));
+    }
+
+    #[test]
+    fn autopilot_loop_settings_honor_per_lane_concurrency() {
+        let config = test_config();
+        let options = AutopilotLoopOptions {
+            workflow_path: PathBuf::from("WORKFLOW.md"),
+            max_iterations: Some(1),
+            once: false,
+            write: true,
+            recover: true,
+            main_max_concurrent: Some(5),
+            review_max_concurrent: Some(4),
+            merge_max_concurrent: Some(3),
+        };
+
+        let settings = AutopilotLoopTickSettings::from_options(&config, &options);
+
+        assert_eq!(settings.main_max_concurrent, 5);
+        assert_eq!(settings.review_max_concurrent, 4);
+        assert_eq!(settings.merge_max_concurrent, 3);
+        assert!(settings.recover);
+    }
+
+    #[test]
+    fn recover_first_issue_selection_prioritizes_main_recovery() {
+        let mut recoverable = tracker_issue_with_ref("#360", "Recover me first", "In Progress");
+        recoverable.priority = Some(100);
+        let mut fresh = tracker_issue_with_ref("#361", "Fresh todo", "Todo");
+        fresh.priority = Some(1);
+
+        let selected = recover_first_issue_selection(vec![recoverable], vec![fresh], 1);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].identifier, "#360");
+    }
+
+    #[test]
+    fn recover_first_issue_selection_fills_remaining_slots_with_fresh_work() {
+        let recoverable = tracker_issue_with_ref("#360", "Recover me first", "In Progress");
+        let fresh = tracker_issue_with_ref("#361", "Fresh todo", "Todo");
+
+        let selected = recover_first_issue_selection(vec![recoverable], vec![fresh], 2);
+
+        assert_eq!(
+            selected
+                .iter()
+                .map(|issue| issue.identifier.as_str())
+                .collect::<Vec<_>>(),
+            vec!["#360", "#361"]
+        );
+    }
+
+    #[test]
+    fn autopilot_loop_reports_parked_queues_without_lane_selection() {
+        let human_review = tracker_issue_with_ref("#41", "Needs human approval", "Human Review");
+        let need_human_input =
+            tracker_issue_with_ref("#42", "Needs operator decision", "Need Human Input");
+        let plan = test_autopilot_plan(vec![human_review, need_human_input]);
+        let settings = AutopilotLoopTickSettings {
+            recover: false,
+            main_max_concurrent: 1,
+            review_max_concurrent: 1,
+            merge_max_concurrent: 1,
+        };
+        let result = AutopilotLoopIterationResult {
+            schema_version: 1,
+            iteration: 1,
+            mode: "dry-run".into(),
+            execution_order: vec!["main".into(), "review".into(), "merge".into()],
+            settings,
+            lanes: plan
+                .lanes
+                .iter()
+                .map(|lane| AutopilotLoopLaneResult {
+                    lane: lane.lane.clone(),
+                    status: lane.status.clone(),
+                    action: lane.proposed_action.clone(),
+                    selected_issue: lane.selected_issue.clone(),
+                    target_state: lane.target_state.clone(),
+                    max_concurrent: 1,
+                    recover: false,
+                    evidence: lane.evidence.clone(),
+                })
+                .collect(),
+            parked_queues: plan.parked_queues.clone(),
+        };
+
+        assert!(result
+            .lanes
+            .iter()
+            .all(|lane| lane.selected_issue.is_none()));
+        assert_eq!(
+            result
+                .parked_queues
+                .iter()
+                .map(|queue| (queue.name.as_str(), queue.count))
+                .collect::<Vec<_>>(),
+            vec![
+                ("Human Review", 1),
+                ("Need Human Input", 1),
+                ("Dogfood / Coordination", 0)
+            ]
+        );
+    }
+
+    #[test]
+    fn autopilot_loop_merge_selection_prioritizes_recoverable_claim() {
+        let config = test_config();
+        let worker = "Jade Symphony Agent";
+        let interrupted_claim = LaneClaim::active(
+            "#6",
+            LaneClaimLane::Merge,
+            LaneClaimActor::Codex,
+            LaneClaimSource::Loop,
+            1_779_000_000_000,
+        )
+        .with_worker("previous merger");
+        let mut interrupted = tracker_issue_with_ref("#6", "Interrupted merge", "Merging");
+        interrupted.priority = Some(20);
+        interrupted.project_fields.insert(
+            "Merging Agent".into(),
+            serde_json::Value::String(interrupted_claim.render()),
+        );
+        let mut unclaimed = tracker_issue_with_ref("#7", "Ready merge", "Merging");
+        unclaimed.priority = Some(1);
+
+        let selected =
+            select_merge_worker_issues(&[unclaimed, interrupted], worker, 1, &config, true);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].issue.identifier, "#6");
+        assert!(selected[0].recovery_reason.is_some());
+    }
+
+    #[test]
+    fn autopilot_loop_iteration_render_includes_lane_outcomes() {
+        let result =
+            AutopilotLoopIterationResult {
+                schema_version: 1,
+                iteration: 1,
+                mode: "dry-run".into(),
+                execution_order: vec!["main".into(), "review".into(), "merge".into()],
+                settings: AutopilotLoopTickSettings {
+                    recover: true,
+                    main_max_concurrent: 3,
+                    review_max_concurrent: 2,
+                    merge_max_concurrent: 1,
+                },
+                lanes: vec![AutopilotLoopLaneResult {
+                    lane: "main".into(),
+                    status: "ready".into(),
+                    action: "claim_main_issue".into(),
+                    selected_issue: Some(AutopilotIssueSummary::from_issue(
+                        &tracker_issue_with_ref("#360", "Compose lanes", "Todo"),
+                    )),
+                    target_state: Some("Agent Review".into()),
+                    max_concurrent: 3,
+                    recover: true,
+                    evidence: vec!["source=test".into()],
+                }],
+                parked_queues: Vec::new(),
+            };
+
+        let rendered = render_autopilot_loop_iteration_result(&result);
+
+        assert!(rendered.contains("autopilot_loop_result iteration=1"));
+        assert!(rendered.contains("autopilot_loop_lane lane=main"));
+        assert!(rendered.contains("selected=#360"));
+        assert!(rendered.contains("main_max_concurrent=3"));
     }
 
     #[test]

@@ -4,6 +4,7 @@ tracker:
   owner: Alive24
   repo: jade-symphony
   project_owner: Alive24
+  project_owner_type: user
   project_number: 9
   status_field: Status
   state_map:

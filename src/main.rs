@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::net::SocketAddr;
@@ -55,8 +55,8 @@ use jade_symphony::merge_lane::{
     repair_dirty_pull_request, update_pull_request_branch, MergeLaneDecisionKind,
 };
 use jade_symphony::model::{
-    native_subissue_gate_blocker, normalize_state, GateDecision, GateDecisionKind, LatestStatus,
-    SessionStatusSnapshot, TrackerIssue,
+    native_subissue_gate_blocker, native_subissue_statuses, normalize_state, GateDecision,
+    GateDecisionKind, LatestStatus, SessionStatusSnapshot, TrackerIssue,
 };
 use jade_symphony::observability_api::serve_once;
 use jade_symphony::orchestrator::Orchestrator;
@@ -416,7 +416,7 @@ fn build_plan_snapshot(
 
     let adapter = adapter_from_config(&config);
     let integration_gaps = adapter.integration_gaps();
-    let issues = adapter.list_dispatchable_issues()?;
+    let issues = adapter.list_project_summary_issues()?;
     let session_statuses = session_status_snapshots(&config);
     let event_log_path = config
         .observability
@@ -1040,7 +1040,7 @@ fn write_forge_created_issue(
     adapter: &dyn TrackerAdapter,
     input: ForgeCreateWriteInput<'_>,
 ) -> Result<ForgeCreateResult, Box<dyn std::error::Error>> {
-    let existing_issues = adapter.list_dispatchable_issues()?;
+    let existing_issues = adapter.list_project_summary_issues()?;
     if let Some(duplicate) = find_duplicate_issue_title(&existing_issues, &input.title) {
         return Err(format!(
             "duplicate tracker issue title detected: {} {}",
@@ -3084,6 +3084,7 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
         let adapter = adapter_from_config(&config);
         let issues = adapter
             .fetch_issues_by_states(std::slice::from_ref(&config.tracker.state_map.agent_review))?;
+        let issues = hydrate_issues_for_review_lane(adapter.as_ref(), issues)?;
 
         if issues.is_empty() {
             println!("review_loop=stopped reason=no_agent_review_issue iterations={iterations}");
@@ -3401,7 +3402,7 @@ fn review_status(options: ReviewStatusCliOptions) -> Result<(), Box<dyn std::err
         }) {
             states.push(config.tracker.state_map.agent_review.clone());
         }
-        adapter.fetch_issues_by_states(&states)?
+        hydrate_issues_for_review_lane(adapter.as_ref(), adapter.fetch_issues_by_states(&states)?)?
     };
     let payload = load_review_status(
         &config,
@@ -5296,7 +5297,7 @@ fn inspect(
     config.validate()?;
 
     let adapter = adapter_from_config(&config);
-    let issues = filter_issues_by_state(adapter.list_dispatchable_issues()?, &state_filters);
+    let issues = filter_issues_by_state(adapter.list_project_summary_issues()?, &state_filters);
 
     if !state_filters.is_empty() {
         println!("state_filter={}", state_filters.join(","));
@@ -5332,7 +5333,7 @@ fn project_state(options: ProjectStateOptions) -> Result<(), Box<dyn std::error:
     config.validate()?;
 
     let adapter = adapter_from_config(&config);
-    match adapter.list_dispatchable_issues() {
+    match adapter.list_project_summary_issues() {
         Ok(issues) => {
             let mut integration_gaps = adapter.integration_gaps();
             append_canonical_checkout_gap(&config, &mut integration_gaps);
@@ -5375,12 +5376,9 @@ fn project_issue(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config(&workflow_path)?;
     let adapter = adapter_from_config(&config);
-    let mut issue = adapter
+    let issue = adapter
         .get_issue(&issue_ref)?
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
-    issue.linked_pull_requests = adapter
-        .list_linked_pull_requests(&issue.identifier)
-        .unwrap_or_else(|_| issue.linked_pull_requests.clone());
 
     if json {
         println!("{}", serde_json::to_string_pretty(&issue)?);
@@ -5435,6 +5433,83 @@ fn project_issue(
     Ok(())
 }
 
+fn hydrate_issue_for_evidence(
+    adapter: &dyn TrackerAdapter,
+    issue: TrackerIssue,
+    project_context: &[TrackerIssue],
+) -> Result<TrackerIssue, TrackerError> {
+    adapter.hydrate_issue_evidence(issue, project_context)
+}
+
+fn hydrate_issues_for_review_lane(
+    adapter: &dyn TrackerAdapter,
+    issues: Vec<TrackerIssue>,
+) -> Result<Vec<TrackerIssue>, TrackerError> {
+    let project_context = issues.clone();
+    issues
+        .into_iter()
+        .map(|issue| hydrate_issue_for_evidence(adapter, issue, &project_context))
+        .collect()
+}
+
+fn hydrate_issues_for_doctor(
+    adapter: &dyn TrackerAdapter,
+    issues: Vec<TrackerIssue>,
+) -> Result<Vec<TrackerIssue>, TrackerError> {
+    let project_context = issues.clone();
+    let rich_refs = doctor_issue_refs_requiring_rich_hydration(&issues);
+    issues
+        .into_iter()
+        .map(|issue| {
+            if rich_refs.contains(&issue.identifier) {
+                hydrate_issue_for_evidence(adapter, issue, &project_context)
+            } else {
+                Ok(issue)
+            }
+        })
+        .collect()
+}
+
+fn doctor_issue_refs_requiring_rich_hydration(issues: &[TrackerIssue]) -> BTreeSet<String> {
+    let mut refs = BTreeSet::new();
+    for issue in issues {
+        let topology_needs_rich = doctor_issue_topology_needs_rich_hydration(issue);
+        if doctor_issue_state_needs_rich_hydration(issue) || topology_needs_rich {
+            refs.insert(issue.identifier.clone());
+        }
+        if topology_needs_rich {
+            for subissue in native_subissue_statuses(issue) {
+                refs.insert(subissue.identifier);
+            }
+        }
+    }
+    refs
+}
+
+fn doctor_issue_state_needs_rich_hydration(issue: &TrackerIssue) -> bool {
+    matches!(
+        issue.normalized_state().as_str(),
+        "todo" | "need to clarify" | "in progress" | "agent review" | "human review" | "merging"
+    )
+}
+
+fn doctor_issue_topology_needs_rich_hydration(issue: &TrackerIssue) -> bool {
+    if !issue_has_native_topology(issue) {
+        return false;
+    }
+    matches!(
+        issue.normalized_state().as_str(),
+        "todo" | "in progress" | "agent review" | "human review" | "rework" | "merging"
+    )
+}
+
+fn issue_has_native_topology(issue: &TrackerIssue) -> bool {
+    issue.project_fields.contains_key("GitHub Native Parent")
+        || issue.project_fields.contains_key("Native Parent Issue")
+        || issue.project_fields.contains_key("GitHub Native Subissues")
+        || issue.project_fields.contains_key("Native Subissues")
+}
+
 fn project_inspect(
     workflow_path: PathBuf,
     issue_ref: String,
@@ -5442,12 +5517,9 @@ fn project_inspect(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config(&workflow_path)?;
     let adapter = adapter_from_config(&config);
-    let mut issue = adapter
+    let issue = adapter
         .get_issue(&issue_ref)?
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
-    issue.linked_pull_requests = adapter
-        .list_linked_pull_requests(&issue.identifier)
-        .unwrap_or_else(|_| issue.linked_pull_requests.clone());
     let gate = evaluate_issue_for_current_source(&config, &issue)?;
     let terminal_states = config.terminal_state_set().into_iter().collect();
     let native_subissue_blocker = native_subissue_gate_blocker(&issue, &terminal_states);
@@ -5595,6 +5667,7 @@ fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::Error>> {
 
     let adapter = adapter_from_config(&config);
     let issues = adapter.fetch_issues_by_states(&all_mapped_tracker_states(&config))?;
+    let issues = hydrate_issues_for_doctor(adapter.as_ref(), issues)?;
     let mut integration_gaps = adapter.integration_gaps();
     append_canonical_checkout_gap(&config, &mut integration_gaps);
     let runtime_states = match load_runtime_states(&config) {
@@ -6119,7 +6192,8 @@ fn doctor_repair_human_review(
     config.validate()?;
 
     let adapter = adapter_from_config(&config);
-    let issues = adapter.list_dispatchable_issues()?;
+    let issues = adapter.fetch_issues_by_states(&all_mapped_tracker_states(&config))?;
+    let issues = hydrate_issues_for_doctor(adapter.as_ref(), issues)?;
     let report = audit_project_issues(&issues);
     let candidates = human_review_repair_candidates(&report);
 
@@ -6199,8 +6273,9 @@ fn debug_report(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>
 
     let adapter = adapter_from_config(&config);
     let integration_gaps = adapter.integration_gaps();
-    let project_issues = adapter.list_dispatchable_issues()?;
+    let project_issues = adapter.list_project_summary_issues()?;
     let doctor_issues = adapter.fetch_issues_by_states(&all_mapped_tracker_states(&config))?;
+    let doctor_issues = hydrate_issues_for_doctor(adapter.as_ref(), doctor_issues)?;
 
     let mut report_gaps = integration_gaps.clone();
     let runtime_states = match load_runtime_states(&config) {
@@ -7531,16 +7606,17 @@ fn run_once(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     config.validate()?;
 
     let adapter = adapter_from_config(&config);
-    let issues = adapter.list_dispatchable_issues()?;
+    let issues = adapter.list_queue_scan_issues()?;
     let orchestrator = Orchestrator::new(config.clone());
-    let plan = orchestrator.plan_dispatch(issues);
+    let plan = orchestrator.plan_dispatch(issues.clone());
     let Some(issue) = plan.selected.first() else {
         println!("{}", render_snapshot(&plan.snapshot));
         println!("run_once=skipped reason=no_dispatchable_issue");
         return Ok(());
     };
+    let issue = hydrate_issue_for_evidence(adapter.as_ref(), issue.clone(), &issues)?;
 
-    let result = execute_issue_once(&workflow, &config, issue)?;
+    let result = execute_issue_once(&workflow, &config, &issue)?;
 
     println!("run_once=completed");
     println!("issue={} {}", issue.identifier, issue.title);
@@ -7882,10 +7958,10 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         let issues = if recovery_only {
             Vec::new()
         } else {
-            adapter.list_dispatchable_issues()?
+            adapter.list_queue_scan_issues()?
         };
         let orchestrator = Orchestrator::new(config.clone());
-        let mut plan = orchestrator.plan_dispatch(issues);
+        let mut plan = orchestrator.plan_dispatch(issues.clone());
         plan.integration_gaps.extend(adapter.integration_gaps());
         plan.snapshot.integration_gaps = plan.integration_gaps.clone();
         plan.snapshot.event_log_path = Some(
@@ -7990,6 +8066,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             }
         };
         let dispatch_candidates = selected.clone();
+        let issue = hydrate_issue_for_evidence(adapter.as_ref(), issue, &issues)?;
 
         let decision = evaluate_issue_for_current_source(&config, &issue)?;
         if !decision.is_dispatchable() {
@@ -14697,6 +14774,7 @@ mod tests {
     struct RecordingAdapter {
         operations: RefCell<Vec<String>>,
         issues: RefCell<BTreeMap<String, TrackerIssue>>,
+        hydrated_issues: RefCell<Vec<String>>,
         linked_pull_requests: RefCell<Vec<jade_symphony::model::LinkedPullRequest>>,
         fail_workpad: bool,
         fail_comment: bool,
@@ -14715,6 +14793,7 @@ mod tests {
             Self {
                 operations: RefCell::new(Vec::new()),
                 issues: RefCell::new(BTreeMap::new()),
+                hydrated_issues: RefCell::new(Vec::new()),
                 linked_pull_requests: RefCell::new(Vec::new()),
                 fail_workpad: false,
                 fail_comment: false,
@@ -14759,6 +14838,18 @@ mod tests {
                 );
             }
             Ok(self.issues.borrow().get(issue_ref).cloned())
+        }
+
+        fn hydrate_issue_evidence(
+            &self,
+            mut issue: TrackerIssue,
+            _project_context: &[TrackerIssue],
+        ) -> Result<TrackerIssue, jade_symphony::tracker::TrackerError> {
+            self.hydrated_issues
+                .borrow_mut()
+                .push(issue.identifier.clone());
+            issue.description = Some(format!("rich evidence for {}", issue.identifier));
+            Ok(issue)
         }
 
         fn fetch_issues_by_states(
@@ -15208,6 +15299,67 @@ mod tests {
         let calls = runner.calls.borrow();
         assert!(calls.iter().any(|call| call.contains("pr merge")));
         assert!(calls.iter().any(|call| call.contains("pr view")));
+    }
+
+    #[test]
+    fn doctor_hydrates_only_issue_states_that_need_rich_evidence() {
+        let adapter = RecordingAdapter::default();
+        let issues = vec![
+            tracker_issue_with_ref("#1", "Backlog", "Backlog"),
+            tracker_issue_with_ref("#2", "Done", "Done"),
+            tracker_issue_with_ref("#3", "Agent Review", "Agent Review"),
+            tracker_issue_with_ref("#4", "Todo", "Todo"),
+            tracker_issue_with_ref("#5", "Need Human Input", "Need Human Input"),
+            tracker_issue_with_ref("#6", "Rework", "Rework"),
+        ];
+
+        let hydrated = hydrate_issues_for_doctor(&adapter, issues).unwrap();
+
+        assert_eq!(adapter.hydrated_issues.borrow().as_slice(), ["#3", "#4"]);
+        assert_eq!(
+            hydrated[2].description.as_deref(),
+            Some("rich evidence for #3")
+        );
+        assert_eq!(
+            hydrated[3].description.as_deref(),
+            Some("rich evidence for #4")
+        );
+        assert_eq!(hydrated[4].description, None);
+        assert_eq!(hydrated[5].description, None);
+    }
+
+    #[test]
+    fn doctor_hydrates_active_native_topology_and_declared_subissues() {
+        let adapter = RecordingAdapter::default();
+        let mut parent = tracker_issue_with_ref("#243", "Parent", "Rework");
+        parent.project_fields.insert(
+            "GitHub Native Subissues".into(),
+            serde_json::json!([
+                {"identifier": "#272", "project_state": "Done"},
+                {"identifier": "#273", "project_state": "Agent Review"}
+            ]),
+        );
+        let done_subissue = tracker_issue_with_ref("#272", "Done subissue", "Done");
+        let active_subissue = tracker_issue_with_ref("#273", "Active subissue", "Agent Review");
+        let backlog_parent = {
+            let mut issue = tracker_issue_with_ref("#300", "Backlog parent", "Backlog");
+            issue.project_fields.insert(
+                "GitHub Native Subissues".into(),
+                serde_json::json!([{"identifier": "#301", "project_state": "Todo"}]),
+            );
+            issue
+        };
+
+        let _ = hydrate_issues_for_doctor(
+            &adapter,
+            vec![parent, done_subissue, active_subissue, backlog_parent],
+        )
+        .unwrap();
+
+        assert_eq!(
+            adapter.hydrated_issues.borrow().as_slice(),
+            ["#243", "#272", "#273"]
+        );
     }
 
     fn active_runtime_state(identifier: &str) -> RuntimeState {

@@ -473,6 +473,23 @@ impl GithubProjectV2Adapter {
 
         Ok(())
     }
+
+    fn enrich_missing_native_subissue_project_statuses(
+        &self,
+        client: &GithubProjectV2GhClient,
+        issue: &mut TrackerIssue,
+        project_states: &mut BTreeMap<String, String>,
+    ) -> Result<(), TrackerError> {
+        enrich_native_subissue_project_statuses_for_issue(issue, project_states);
+        let missing_refs = native_subissue_refs_missing_project_state(issue);
+        if missing_refs.is_empty() {
+            return Ok(());
+        }
+
+        project_states.extend(client.fetch_project_states_for_issue_refs(&missing_refs)?);
+        enrich_native_subissue_project_statuses_for_issue(issue, project_states);
+        Ok(())
+    }
 }
 
 fn apply_github_status_filters(
@@ -601,6 +618,12 @@ impl TrackerAdapter for GithubProjectV2Adapter {
                 return Ok(None);
             }
             self.enrich_native_subissue_project_statuses(std::slice::from_mut(&mut issue))?;
+            let mut project_states = BTreeMap::new();
+            self.enrich_missing_native_subissue_project_statuses(
+                &client,
+                &mut issue,
+                &mut project_states,
+            )?;
             client.enrich_native_issue_blockers(std::slice::from_mut(&mut issue))?;
             return Ok(Some(issue));
         }
@@ -623,10 +646,14 @@ impl TrackerAdapter for GithubProjectV2Adapter {
         project_context: &[TrackerIssue],
     ) -> Result<TrackerIssue, TrackerError> {
         if self.fixture_issues.is_empty() && self.config.tracker.fixture_path.is_none() {
-            let project_states = project_state_map(project_context);
+            let mut project_states = project_state_map(project_context);
             let client = GithubProjectV2GhClient::new(&self.config);
             client.enrich_issue_evidence(&mut issue, &project_states)?;
-            enrich_native_subissue_project_statuses_for_issue(&mut issue, &project_states);
+            self.enrich_missing_native_subissue_project_statuses(
+                &client,
+                &mut issue,
+                &mut project_states,
+            )?;
             client.enrich_native_issue_blockers(std::slice::from_mut(&mut issue))?;
         }
         Ok(issue)
@@ -1078,6 +1105,19 @@ impl GithubProjectV2GhClient {
         ])?;
 
         native_subissue_refs_from_rest_response(&response)
+    }
+
+    fn fetch_project_states_for_issue_refs(
+        &self,
+        issue_refs: &[String],
+    ) -> Result<BTreeMap<String, String>, TrackerError> {
+        let mut states = BTreeMap::new();
+        for issue_ref in issue_refs {
+            if let Some(issue) = self.fetch_project_issue(issue_ref)? {
+                states.insert(issue.identifier, issue.state);
+            }
+        }
+        Ok(states)
     }
 
     fn set_state(&self, issue_ref: &str, normalized_state: &str) -> Result<(), TrackerError> {
@@ -3901,6 +3941,20 @@ fn enrich_native_subissue_project_statuses_for_issue(
     );
 }
 
+fn native_subissue_refs_missing_project_state(issue: &TrackerIssue) -> Vec<String> {
+    let mut missing: Vec<String> = Vec::new();
+    for subissue in native_subissues_from_project_fields(issue) {
+        if subissue.project_state.is_none()
+            && !missing
+                .iter()
+                .any(|existing| issue_refs_match(existing.as_str(), &subissue.identifier))
+        {
+            missing.push(subissue.identifier);
+        }
+    }
+    missing
+}
+
 fn native_subissues_from_project_fields(issue: &TrackerIssue) -> Vec<NativeSubissueRef> {
     let mut subissues = Vec::new();
     if let Some(values) = issue
@@ -5453,6 +5507,28 @@ mod tests {
             .unwrap();
         assert_eq!(native[0]["project_state"], "Done");
         assert_eq!(native[1]["project_state"], "Agent Review");
+    }
+
+    #[test]
+    fn finds_native_subissue_refs_that_still_need_project_status() {
+        let mut parent = issue("Todo");
+        parent.identifier = "#347".into();
+        parent.project_fields.insert(
+            "GitHub Native Subissues".into(),
+            serde_json::json!([
+                {"identifier": "#348", "project_state": null},
+                {"identifier": "#349", "project_state": "Done"}
+            ]),
+        );
+        parent.project_fields.insert(
+            "Native Subissues".into(),
+            serde_json::Value::String("#348, #350".into()),
+        );
+
+        assert_eq!(
+            native_subissue_refs_missing_project_state(&parent),
+            vec!["#348".to_string(), "#350".to_string()]
+        );
     }
 
     #[test]

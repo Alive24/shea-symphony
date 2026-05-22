@@ -168,8 +168,9 @@ cargo run -- merge claim workflows/jade-symphony.md '#265' --worker codex-manual
 
 For parent tracking issues with native GitHub subissues, `main claim` uses the
 same execution gate as `main loop`: it rejects `Todo` or `Rework` parents while
-any native subissue is missing from the Project read or has a non-`Done` Project
-status. This is independent from tracker blocker relationships so native
+any native subissue has a missing or non-`Done` Project status after bounded
+targeted child issue reads have had a chance to fill statuses omitted from the
+parent read. This is independent from tracker blocker relationships so native
 subissue changes cannot silently bypass parent dispatch safety.
 
 Live write-mode claim, session, and lane loop commands refuse to run unless the

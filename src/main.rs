@@ -5644,11 +5644,49 @@ fn agent_session_backend_spec(
     lane: AgentSessionLaneArg,
 ) -> Result<AgentSessionBackendSpec, Box<dyn std::error::Error>> {
     match lane {
-        AgentSessionLaneArg::Main | AgentSessionLaneArg::Review => {
-            tmux_agent_session_backend_spec(config, lane)
-        }
+        AgentSessionLaneArg::Main => main_agent_session_backend_spec(config, lane),
+        AgentSessionLaneArg::Review => tmux_agent_session_backend_spec(config, lane),
         AgentSessionLaneArg::Merge => merge_agent_session_backend_spec(config, lane),
     }
+}
+
+fn main_agent_session_backend_spec(
+    config: &RuntimeConfig,
+    lane: AgentSessionLaneArg,
+) -> Result<AgentSessionBackendSpec, Box<dyn std::error::Error>> {
+    let backend = match config.backend.kind.as_str() {
+        "codex" => "codex",
+        "tmux" => "tmux",
+        "claude-code" => "claude-code",
+        "dry-run" => "dry-run",
+        other => {
+            return Err(format!(
+                "unsupported main_lane.backend `{other}`; expected codex, tmux, claude-code, or dry-run"
+            )
+            .into())
+        }
+    };
+    let command = match backend {
+        "codex" => non_empty_session_command(
+            &config.codex.command,
+            "codex.command must not be empty for main session start",
+        )?,
+        "tmux" => {
+            validate_tmux_session_config(config)?;
+            tmux_agent_command_for_lane(config, lane)?
+        }
+        "claude-code" => non_empty_session_command(
+            &config.claude.command,
+            "claude.command must not be empty for main session start",
+        )?,
+        "dry-run" => "dry-run".into(),
+        _ => unreachable!("validated main agent backend"),
+    };
+
+    Ok(AgentSessionBackendSpec {
+        backend: backend.into(),
+        command,
+    })
 }
 
 fn tmux_agent_session_backend_spec(
@@ -11155,7 +11193,7 @@ fn recover_registered_main_sessions(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let registry = load_session_registry(&session_registry_path(config))?;
     for record in registry.sessions.iter().rev() {
-        if !registered_main_tmux_session(record) {
+        if !registered_main_runtime_session(record) {
             continue;
         }
         let Some(issue_identifier) = record.issue_identifier.as_deref() else {
@@ -11378,7 +11416,7 @@ fn active_runtime_session_for_issue(
     let registry = load_session_registry(&session_registry_path(config))?;
     let mut best: Option<(u8, ActiveRuntimeSessionProbe)> = None;
     for record in registry.sessions.iter().rev() {
-        if !registered_main_tmux_session(record)
+        if !registered_main_runtime_session(record)
             || record.issue_identifier.as_deref() != Some(issue_identifier)
         {
             continue;
@@ -11425,8 +11463,8 @@ fn active_runtime_session_for_issue(
     }))
 }
 
-fn registered_main_tmux_session(record: &AgentSessionRecord) -> bool {
-    record.lane.eq_ignore_ascii_case("main") && record.backend == "tmux"
+fn registered_main_runtime_session(record: &AgentSessionRecord) -> bool {
+    record.lane.eq_ignore_ascii_case("main") && record.backend != "codex-app-manual"
 }
 
 fn runtime_state_issue_identifier(state: &RuntimeState) -> Option<&str> {
@@ -11600,19 +11638,18 @@ fn runtime_recovery_reason(
         )));
     };
 
-    if record.backend == "tmux" {
-        match runtime_session_probe_from_record(config, record, now_ms) {
-            Ok(probe) if matches!(probe.status, SessionStatus::Stale) => {
-                return Ok(Some(format!(
-                    "session_stale source={} evidence={}",
-                    probe.source.as_str(),
-                    compact_evidence(&probe.evidence)
-                )));
-            }
-            Ok(_) => {}
-            Err(error) => {
-                return Ok(Some(compact_evidence(&error.to_string())));
-            }
+    match runtime_session_probe_from_record(config, record, now_ms) {
+        Ok(probe) if matches!(probe.status, SessionStatus::Stale | SessionStatus::Failed) => {
+            return Ok(Some(format!(
+                "session_{} source={} evidence={}",
+                probe.status.as_str(),
+                probe.source.as_str(),
+                compact_evidence(&probe.evidence)
+            )));
+        }
+        Ok(_) => {}
+        Err(error) => {
+            return Ok(Some(compact_evidence(&error.to_string())));
         }
     }
 
@@ -14062,7 +14099,7 @@ struct RunLoopArgs {
     #[arg(
         long,
         conflicts_with = "no_recover",
-        help = "Enable recover-first handling for interrupted Main tmux sessions (default in --write mode)"
+        help = "Enable recover-first handling for interrupted Main runtime sessions (default in --write mode)"
     )]
     recover: bool,
     #[arg(
@@ -17380,6 +17417,38 @@ mod tests {
     }
 
     #[test]
+    fn main_session_defaults_to_codex_app_server_command() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nmain_lane:\n  backend: codex\ncodex:\n  command: /opt/homebrew/bin/codex app-server\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        let spec = agent_session_backend_spec(&config, AgentSessionLaneArg::Main).unwrap();
+
+        assert_eq!(spec.backend, "codex");
+        assert_eq!(spec.command, "/opt/homebrew/bin/codex app-server");
+    }
+
+    #[test]
+    fn main_session_keeps_tmux_as_explicit_fallback() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nmain_lane:\n  backend: tmux\ntmux:\n  agent_command: codex\n  main_agent_command: codex --profile main\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        let spec = agent_session_backend_spec(&config, AgentSessionLaneArg::Main).unwrap();
+
+        assert_eq!(spec.backend, "tmux");
+        assert_eq!(spec.command, "codex --profile main");
+    }
+
+    #[test]
     fn merge_session_defaults_to_codex_app_server_command() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
@@ -19251,6 +19320,44 @@ mod tests {
         assert_eq!(summary.blocked, None);
         assert_eq!(summary.retained_states.len(), 1);
         assert_eq!(summary.recoverable_states.len(), 0);
+        assert_eq!(
+            runtime_state_issue_identifier(&summary.retained_states[0]),
+            Some("#29")
+        );
+    }
+
+    #[test]
+    fn resume_preflight_many_recovers_registry_only_failed_app_server_session() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
+        config.observability.logs_root = temp.path().join("logs");
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let mut record = main_tmux_session_record("#29", SessionStatus::Failed);
+        record.backend = "codex".into();
+        record.session_source = Some("codex-app-server".into());
+        record.session_name = "thread-29-turn-1".into();
+        record.pane_target = String::new();
+        record.attach_command =
+            "not a tmux session; inspect app-server artifacts for recovery evidence".into();
+        record.log_path = temp.path().join("logs/app-server/29.events.json");
+        save_session_registry(
+            &session_registry_path(&config),
+            &jade_symphony::session_registry::SessionRegistry {
+                sessions: vec![record],
+            },
+        )
+        .unwrap();
+
+        let summary = run_loop_resume_preflight_many(&tracker, &config, &[], 2_000, true).unwrap();
+
+        assert_eq!(summary.active_main_workers, 0);
+        assert_eq!(summary.blocked, None);
+        assert_eq!(summary.retained_states.len(), 1);
+        assert_eq!(summary.recoverable_states.len(), 1);
+        assert!(summary.recoverable_states[0]
+            .reason
+            .contains("status=failed"));
         assert_eq!(
             runtime_state_issue_identifier(&summary.retained_states[0]),
             Some("#29")

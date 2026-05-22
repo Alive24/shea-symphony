@@ -15,8 +15,8 @@ use crate::config::RuntimeConfig;
 use crate::model::AgentEvent;
 use crate::profiles::{selected_execution_profile, ExecutionProfile};
 use crate::session_registry::{
-    deterministic_session_name, save_session_record, session_registry_path, unix_timestamp_ms,
-    AgentSessionRecord, SessionStatus,
+    deterministic_session_name, load_session_registry, save_session_record, save_session_registry,
+    session_registry_path, unix_timestamp_ms, AgentSessionRecord, SessionStatus,
 };
 
 const DEFAULT_TMUX_CAPTURE_LINES: usize = 200;
@@ -217,7 +217,7 @@ impl AgentBackend for CodexBackend {
             run_id: None,
             attempt: 1,
             branch_name: None,
-            session_registry_path: None,
+            session_registry_path: Some(session_registry_path(config)),
         })
     }
 
@@ -602,6 +602,10 @@ fn run_codex_app_server_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>
         &mut stdin,
         &stdout_rx,
         &mut child,
+        AppServerRegistryContext {
+            artifacts: &artifacts,
+            prompt_artifact_path: &prompt_artifact_path,
+        },
         &mut protocol_log,
         &mut events,
     );
@@ -620,9 +624,16 @@ fn run_codex_app_server_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>
 
     if let Err(error) = run_result {
         events.push(AgentEvent::Failed {
-            backend: prepared.backend,
+            backend: prepared.backend.clone(),
             error,
         });
+    }
+    if let Some(session_id) = terminal_session_id.as_deref() {
+        update_app_server_session_status(
+            prepared.session_registry_path.as_deref(),
+            session_id,
+            app_server_final_session_status(&events),
+        )?;
     }
 
     events.push(AgentEvent::Message {
@@ -651,6 +662,7 @@ fn run_codex_app_server_protocol(
     stdin: &mut std::process::ChildStdin,
     stdout_rx: &Receiver<Result<String, String>>,
     child: &mut Child,
+    registry_context: AppServerRegistryContext<'_>,
     protocol_log: &mut String,
     events: &mut Vec<AgentEvent>,
 ) -> Result<(), String> {
@@ -745,6 +757,15 @@ fn run_codex_app_server_protocol(
         backend: prepared.backend.clone(),
         session_id: session_id.clone(),
     });
+    save_app_server_session_record(
+        prepared,
+        registry_context.artifacts,
+        registry_context.prompt_artifact_path,
+        &thread_id,
+        &session_id,
+        SessionStatus::Running,
+    )
+    .map_err(|error| error.to_string())?;
 
     await_app_server_terminal_event(child, stdout_rx, protocol_log, events, &session_id, timeout)
 }
@@ -944,6 +965,12 @@ struct AppServerArtifactPaths {
     events_path: PathBuf,
 }
 
+#[derive(Clone, Copy)]
+struct AppServerRegistryContext<'a> {
+    artifacts: &'a AppServerArtifactPaths,
+    prompt_artifact_path: &'a Path,
+}
+
 fn app_server_artifact_paths(
     prepared: &PreparedRun,
     prompt_artifact_path: &Path,
@@ -963,6 +990,100 @@ fn app_server_artifact_paths(
         stderr_path: artifact_dir.join(format!("{base}.stderr.log")),
         events_path: artifact_dir.join(format!("{base}.events.json")),
     }
+}
+
+fn save_app_server_session_record(
+    prepared: &PreparedRun,
+    artifacts: &AppServerArtifactPaths,
+    prompt_artifact_path: &Path,
+    thread_id: &str,
+    session_id: &str,
+    status: SessionStatus,
+) -> Result<(), AgentError> {
+    let Some(registry_path) = prepared.session_registry_path.as_deref() else {
+        return Ok(());
+    };
+    let now_ms = unix_timestamp_ms();
+    let record = AgentSessionRecord {
+        issue_id: prepared.issue_id.clone(),
+        issue_identifier: prepared.issue_identifier.clone(),
+        issue_title: prepared.issue_title.clone(),
+        lane: prepared.lane.clone().unwrap_or_else(|| "main".into()),
+        run_id: prepared.run_id.clone(),
+        thread: Some(thread_id.to_string()),
+        session_source: Some(crate::codex_app_server::BACKEND_NAME.into()),
+        claim_value: prepared.env.get("JADE_SYMPHONY_CLAIM").cloned(),
+        actor_role: prepared.actor_role.clone(),
+        actor_label: prepared.actor_label.clone(),
+        git_author: prepared.git_author.clone(),
+        profile_id: prepared.profile_id.clone(),
+        instance_name: prepared.instance_name.clone(),
+        worktree: prepared.workspace.clone(),
+        branch: prepared.branch_name.clone(),
+        backend: prepared.backend.clone(),
+        session_name: session_id.to_string(),
+        pane_target: String::new(),
+        prompt_artifact_path: prompt_artifact_path.to_path_buf(),
+        log_path: artifacts.events_path.clone(),
+        attach_command: format!(
+            "not a tmux session; inspect app-server artifacts: protocol={} stderr={} events={}",
+            artifacts.protocol_path.display(),
+            artifacts.stderr_path.display(),
+            artifacts.events_path.display()
+        ),
+        attempt: prepared.attempt.max(1),
+        status,
+        started_at_ms: now_ms,
+        updated_at_ms: now_ms,
+    };
+    save_session_record(registry_path, record).map_err(|error| {
+        AgentError::Unavailable(format!("app-server session registry failed: {error}"))
+    })
+}
+
+fn update_app_server_session_status(
+    registry_path: Option<&Path>,
+    session_id: &str,
+    status: SessionStatus,
+) -> Result<(), AgentError> {
+    let Some(registry_path) = registry_path else {
+        return Ok(());
+    };
+    let mut registry = load_session_registry(registry_path).map_err(|error| {
+        AgentError::Unavailable(format!("app-server session registry failed: {error}"))
+    })?;
+    let Some(record) = registry
+        .sessions
+        .iter_mut()
+        .find(|record| record.session_name == session_id)
+    else {
+        return Ok(());
+    };
+    record.status = status;
+    record.updated_at_ms = unix_timestamp_ms();
+    save_session_registry(registry_path, &registry).map_err(|error| {
+        AgentError::Unavailable(format!("app-server session registry failed: {error}"))
+    })
+}
+
+fn app_server_final_session_status(events: &[AgentEvent]) -> SessionStatus {
+    if events
+        .iter()
+        .any(|event| matches!(event, AgentEvent::Completed { .. }))
+    {
+        return SessionStatus::Completed;
+    }
+
+    if events.iter().any(|event| match event {
+        AgentEvent::Message { text, .. } | AgentEvent::Failed { error: text, .. } => {
+            classify_usage_limit_text(text).is_some()
+        }
+        _ => false,
+    }) {
+        return SessionStatus::UsageLimited;
+    }
+
+    SessionStatus::Failed
 }
 
 fn finish_app_server_run(
@@ -1710,7 +1831,9 @@ fn summarize_events(backend: &str, events: &[AgentEvent]) -> AgentSummary {
         message: failure
             .or(completed)
             .unwrap_or_else(|| "no terminal event".into()),
-        log_path: None,
+        log_path: message_field(events, "normalized_events_artifact=")
+            .or_else(|| message_field(events, "log_path="))
+            .map(PathBuf::from),
         attach_command: None,
     }
 }
@@ -2652,6 +2775,7 @@ done
         let protocol_path = message_field(&events, "protocol_artifact=").unwrap();
         let stderr_path = message_field(&events, "stderr_artifact=").unwrap();
         let events_path = message_field(&events, "normalized_events_artifact=").unwrap();
+        assert_eq!(summary.log_path.as_deref(), Some(Path::new(&events_path)));
         assert!(fs::read_to_string(protocol_path)
             .unwrap()
             .contains("turn/completed"));
@@ -2667,6 +2791,65 @@ done
         assert!(trace.contains("\"method\":\"thread/start\""));
         assert!(trace.contains("\"method\":\"turn/start\""));
         assert!(trace.contains("hello app-server"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_app_server_records_session_registry_evidence() {
+        let temp = tempfile::tempdir().unwrap();
+        let (codex, trace_path) = fake_codex_app_server(temp.path());
+        let workspace = temp.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let config = codex_config(&format!("{} app-server", codex.display()), 5_000);
+        let backend = CodexBackend;
+        let registry_path = temp.path().join("sessions/session-registry.json");
+        let mut prepared = backend
+            .prepare(workspace.clone(), "hello app-server".into(), &config)
+            .unwrap();
+        prepared.prompt_artifact_path = Some(temp.path().join("logs/prompts/app-server.prompt.md"));
+        prepared.issue_id = Some("issue-368".into());
+        prepared.issue_identifier = Some("#368".into());
+        prepared.issue_title = Some("Add Codex app-server transport backend harness".into());
+        prepared.lane = Some("main".into());
+        prepared.run_id = Some("run-368".into());
+        prepared.session_registry_path = Some(registry_path.clone());
+        prepared.branch_name = Some("feature/issue-368".into());
+        prepared.env.insert(
+            "JADE_SYMPHONY_CLAIM".into(),
+            "v=1 lane=main issue=#368".into(),
+        );
+        prepared
+            .env
+            .insert("FAKE_CODEX_TRACE".into(), trace_path.display().to_string());
+        prepared
+            .env
+            .insert("FAKE_CODEX_MODE".into(), "completed".into());
+
+        let events = backend.run(prepared).unwrap();
+        let summary = backend.summarize(&events);
+        let registry = load_session_registry(&registry_path).unwrap();
+        let record = registry
+            .sessions
+            .iter()
+            .find(|record| record.session_name == "thread-368-turn-368")
+            .expect("app-server session record");
+
+        assert!(summary.success);
+        assert_eq!(record.backend, "codex");
+        assert_eq!(record.lane, "main");
+        assert_eq!(record.thread.as_deref(), Some("thread-368"));
+        assert_eq!(record.session_source.as_deref(), Some("codex-app-server"));
+        assert_eq!(record.status, SessionStatus::Completed);
+        assert_eq!(record.worktree, workspace);
+        assert!(record.attach_command.contains("not a tmux session"));
+        assert!(record
+            .log_path
+            .display()
+            .to_string()
+            .contains("/logs/app-server/368-"));
+        assert!(record
+            .prompt_artifact_path
+            .ends_with("app-server.prompt.md"));
     }
 
     #[cfg(unix)]

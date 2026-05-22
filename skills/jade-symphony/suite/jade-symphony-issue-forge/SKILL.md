@@ -70,11 +70,30 @@ non-interactive and owns the guarded body/evidence/status writes.
 - Always tell the user they can skip remaining questions and proceed to handoff
   if the remaining ambiguity is acceptable.
 - If the user skips, record reasonable assumptions in the draft.
+- Always evaluate whether the candidate should be split into a native
+  parent/subissue batch before drafting. Ask this explicitly when the work spans
+  multiple independently testable implementation slices, touches multiple lanes
+  or operator surfaces, carries high review risk, or would otherwise create one
+  oversized PR.
+- If the operator chooses a parent/subissue batch, draft the parent as the final
+  Human Review and UAT owner. Draft subissues as implementation slices that
+  still require independent Agent Review but do not require routine direct UAT
+  or direct Human Review unless an explicit exception is recorded.
+- When using a parent/subissue batch before subissue automation is fully fixed,
+  capture any required workflow dependency or guardrail, such as depending on
+  the issue that enforces parent-owned Human Review routing.
+- Do not create a dispatchable `Todo` issue that relies only on body text for a
+  blocking dependency. If the workflow cannot create a structured blocked-by
+  relationship in the same creation flow, recommend `Backlog` until the blocker
+  is Done, then promote it to `Todo`.
 
 Resolve these before creation:
 
 - Goal.
 - Why now.
+- Parent/subissue shape: single issue or native parent/subissue batch; if
+  batched, identify the parent contract, child slices, parent-owned UAT, and any
+  dependency needed to avoid routine child Human Review.
 - Target Repository / Package, usually `Alive24/jade-symphony`.
 - Scope and out-of-scope boundaries.
 - Non-negotiable guardrails.

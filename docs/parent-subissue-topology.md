@@ -111,6 +111,11 @@ subissue is also `Done`. GitHub issue `closed` state is useful context but is
 not enough for this gate; Jade Symphony checks Project status so the operator
 lane evidence and merge semantics stay aligned.
 
+When a parent issue read exposes native subissues without their Project status,
+Jade Symphony may perform bounded targeted reads of those child issues to fill
+the missing statuses. The gate still blocks if any child status remains missing
+or is not `Done`.
+
 ## Parent Human Review Gate
 
 The parent issue remains the final Human Review unit.

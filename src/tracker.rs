@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::process::{Command, Output, Stdio};
@@ -12,8 +13,21 @@ use crate::model::{normalize_state, BlockerRef, LinkedPullRequest, TrackerIssue}
 
 pub trait TrackerAdapter {
     fn kind(&self) -> &'static str;
+    fn list_queue_scan_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError> {
+        self.list_dispatchable_issues()
+    }
+    fn list_project_summary_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError> {
+        self.list_queue_scan_issues()
+    }
     fn list_dispatchable_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError>;
     fn get_issue(&self, issue_ref: &str) -> Result<Option<TrackerIssue>, TrackerError>;
+    fn hydrate_issue_evidence(
+        &self,
+        issue: TrackerIssue,
+        _project_context: &[TrackerIssue],
+    ) -> Result<TrackerIssue, TrackerError> {
+        Ok(self.get_issue(&issue.identifier)?.unwrap_or(issue))
+    }
     fn fetch_issues_by_states(&self, states: &[String]) -> Result<Vec<TrackerIssue>, TrackerError>;
     fn set_state(&self, issue_ref: &str, normalized_state: &str) -> Result<(), TrackerError>;
     fn upsert_workpad(&self, issue_ref: &str, markdown: &str) -> Result<(), TrackerError>;
@@ -127,6 +141,7 @@ pub enum TrackerError {
 pub enum ProjectStateFailureKind {
     Auth,
     Network,
+    TransientBackend,
     RateLimit,
     ResourceLimit,
     Schema,
@@ -141,6 +156,7 @@ impl ProjectStateFailureKind {
         match self {
             Self::Auth => "auth",
             Self::Network => "network",
+            Self::TransientBackend => "transient_backend",
             Self::RateLimit => "rate_limit",
             Self::ResourceLimit => "resource_limit",
             Self::Schema => "schema",
@@ -189,11 +205,30 @@ pub fn classify_project_state_failure_message(message: &str) -> ProjectStateFail
         || normalized.contains("http 403")
     {
         ProjectStateFailureKind::Auth
+    } else if normalized.contains("http 500")
+        || normalized.contains("http 502")
+        || normalized.contains("http 503")
+        || normalized.contains("http 504")
+        || normalized.contains("bad gateway")
+        || normalized.contains("service unavailable")
+        || normalized.contains("gateway timeout")
+        || normalized.contains("internal server error")
+    {
+        ProjectStateFailureKind::TransientBackend
     } else if normalized.contains("could not resolve host")
+        || normalized.contains("error connecting to")
         || normalized.contains("failed to connect")
+        || normalized.contains("could not connect")
         || normalized.contains("connection timed out")
         || normalized.contains("timed out after")
         || normalized.contains("connection reset")
+        || normalized.contains("connection refused")
+        || normalized.contains("connection closed")
+        || normalized.contains("temporary failure in name resolution")
+        || normalized.contains("no route to host")
+        || normalized.contains("i/o timeout")
+        || normalized.contains("context deadline exceeded")
+        || is_transport_eof_message(&normalized)
         || normalized.contains("network")
         || normalized.contains("tls")
     {
@@ -226,6 +261,27 @@ pub fn classify_project_state_failure_message(message: &str) -> ProjectStateFail
     } else {
         ProjectStateFailureKind::Unknown
     }
+}
+
+fn is_transport_eof_message(normalized: &str) -> bool {
+    let trimmed = normalized.trim();
+    let eof_suffix = trimmed == "eof" || trimmed.ends_with(": eof") || trimmed.ends_with(" eof");
+    if !eof_suffix {
+        return false;
+    }
+
+    let looks_like_json_parse_error = normalized.contains("invalid gh")
+        || normalized.contains("invalid github")
+        || normalized.contains("while parsing");
+    if looks_like_json_parse_error {
+        return false;
+    }
+
+    normalized.contains("api.github.com")
+        || normalized.contains("graphql")
+        || normalized.contains("rest")
+        || normalized.contains("http://")
+        || normalized.contains("https://")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -386,19 +442,22 @@ impl GithubProjectV2Adapter {
         }
     }
 
-    fn load_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError> {
-        let mut issues = apply_github_read_filters(self.load_mapped_issues()?, &self.config);
+    fn load_issues(&self, mode: GithubProjectReadMode) -> Result<Vec<TrackerIssue>, TrackerError> {
+        let mut issues = apply_github_read_filters(self.load_mapped_issues(mode)?, &self.config);
         self.enrich_native_subissue_project_statuses(&mut issues)?;
         self.enrich_native_issue_blockers_for_claimable_issues(&mut issues)?;
         Ok(issues)
     }
 
-    fn load_mapped_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError> {
+    fn load_mapped_issues(
+        &self,
+        mode: GithubProjectReadMode,
+    ) -> Result<Vec<TrackerIssue>, TrackerError> {
         let issues =
             if !self.fixture_issues.is_empty() || self.config.tracker.fixture_path.is_some() {
                 self.fixture_issues.clone()
             } else {
-                GithubProjectV2GhClient::new(&self.config).fetch_project_issues()?
+                GithubProjectV2GhClient::new(&self.config).fetch_project_issues(mode)?
             };
 
         Ok(apply_github_status_filters(issues, &self.config))
@@ -447,6 +506,23 @@ impl GithubProjectV2Adapter {
             |issue_ref| client.fetch_project_issue(issue_ref),
         )?;
 
+        Ok(())
+    }
+
+    fn enrich_missing_native_subissue_project_statuses(
+        &self,
+        client: &GithubProjectV2GhClient,
+        issue: &mut TrackerIssue,
+        project_states: &mut BTreeMap<String, String>,
+    ) -> Result<(), TrackerError> {
+        enrich_native_subissue_project_statuses_for_issue(issue, project_states);
+        let missing_refs = native_subissue_refs_missing_project_state(issue);
+        if missing_refs.is_empty() {
+            return Ok(());
+        }
+
+        project_states.extend(client.fetch_project_states_for_issue_refs(&missing_refs)?);
+        enrich_native_subissue_project_statuses_for_issue(issue, project_states);
         Ok(())
     }
 }
@@ -552,8 +628,16 @@ impl TrackerAdapter for GithubProjectV2Adapter {
         "github_project_v2"
     }
 
+    fn list_queue_scan_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError> {
+        self.load_issues(GithubProjectReadMode::QueueScan)
+    }
+
+    fn list_project_summary_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError> {
+        self.list_queue_scan_issues()
+    }
+
     fn list_dispatchable_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError> {
-        self.load_issues()
+        self.list_queue_scan_issues()
     }
 
     fn get_issue(&self, issue_ref: &str) -> Result<Option<TrackerIssue>, TrackerError> {
@@ -569,36 +653,49 @@ impl TrackerAdapter for GithubProjectV2Adapter {
                 return Ok(None);
             }
             self.enrich_native_subissue_project_statuses(std::slice::from_mut(&mut issue))?;
-            if github_issue_needs_native_blocker_prefetch(&issue, &self.config) {
-                client.enrich_native_issue_blockers(std::slice::from_mut(&mut issue))?;
-            }
+            let mut project_states = BTreeMap::new();
+            self.enrich_missing_native_subissue_project_statuses(
+                &client,
+                &mut issue,
+                &mut project_states,
+            )?;
+            client.enrich_native_issue_blockers(std::slice::from_mut(&mut issue))?;
             return Ok(Some(issue));
         }
 
-        let mut issues = self.load_mapped_issues()?;
+        let mut issues = self.load_mapped_issues(GithubProjectReadMode::QueueScan)?;
         enrich_native_subissue_project_statuses_from_project_read(&mut issues);
-        let project_states = project_state_map(&issues);
-        let mut issue = issues
+        let project_context = issues.clone();
+        let issue = issues
             .into_iter()
             .find(|issue| issue.id == issue_ref || issue.identifier == issue_ref)
-            .map(|mut issue| {
-                if self.fixture_issues.is_empty() && self.config.tracker.fixture_path.is_none() {
-                    let client = GithubProjectV2GhClient::new(&self.config);
-                    self.enrich_native_subissue_project_statuses(std::slice::from_mut(&mut issue))?;
-                    enrich_native_subissue_project_statuses_for_issue(&mut issue, &project_states);
-                    if github_issue_needs_native_blocker_prefetch(&issue, &self.config) {
-                        client.enrich_native_issue_blockers(std::slice::from_mut(&mut issue))?;
-                    }
-                }
-                Ok(issue)
-            })
+            .map(|issue| self.hydrate_issue_evidence(issue, &project_context))
             .transpose()?;
 
-        Ok(issue.take())
+        Ok(issue)
+    }
+
+    fn hydrate_issue_evidence(
+        &self,
+        mut issue: TrackerIssue,
+        project_context: &[TrackerIssue],
+    ) -> Result<TrackerIssue, TrackerError> {
+        if self.fixture_issues.is_empty() && self.config.tracker.fixture_path.is_none() {
+            let mut project_states = project_state_map(project_context);
+            let client = GithubProjectV2GhClient::new(&self.config);
+            client.enrich_issue_evidence(&mut issue, &project_states)?;
+            self.enrich_missing_native_subissue_project_statuses(
+                &client,
+                &mut issue,
+                &mut project_states,
+            )?;
+            client.enrich_native_issue_blockers(std::slice::from_mut(&mut issue))?;
+        }
+        Ok(issue)
     }
 
     fn fetch_issues_by_states(&self, states: &[String]) -> Result<Vec<TrackerIssue>, TrackerError> {
-        let mut mapped_issues = self.load_mapped_issues()?;
+        let mut mapped_issues = self.load_mapped_issues(GithubProjectReadMode::QueueScan)?;
         self.enrich_native_subissue_project_statuses(&mut mapped_issues)?;
         let mut issues = MemoryTracker::new(mapped_issues).fetch_issues_by_states(states)?;
         self.enrich_native_issue_blockers_for_claimable_issues(&mut issues)?;
@@ -768,16 +865,74 @@ impl TrackerAdapter for GithubProjectV2Adapter {
 #[derive(Debug, Clone)]
 struct GithubProjectV2GhClient {
     config: RuntimeConfig,
+    metadata_cache: ProjectMetadataCache,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProjectV2OwnerType {
+    Organization,
+    User,
+}
+
+impl ProjectV2OwnerType {
+    fn parse(value: &str) -> Result<Self, TrackerError> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "organization" => Ok(Self::Organization),
+            "user" => Ok(Self::User),
+            other => Err(TrackerError::IntegrationUnavailable(format!(
+                "tracker.project_owner_type must be user or organization; got {other}"
+            ))),
+        }
+    }
+
+    fn query_field(self) -> &'static str {
+        match self {
+            Self::Organization => "organization",
+            Self::User => "user",
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        self.query_field()
+    }
 }
 
 impl GithubProjectV2GhClient {
     fn new(config: &RuntimeConfig) -> Self {
         Self {
             config: config.clone(),
+            metadata_cache: ProjectMetadataCache::default(),
         }
     }
 
-    fn fetch_project_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError> {
+    fn project_owner_query_order(&self) -> Result<Vec<ProjectV2OwnerType>, TrackerError> {
+        project_owner_query_order(&self.config)
+    }
+
+    fn query_project_owner<F, T>(
+        &self,
+        operation: &str,
+        mut query: F,
+    ) -> Result<(ProjectV2OwnerType, T), TrackerError>
+    where
+        F: FnMut(ProjectV2OwnerType) -> Result<T, TrackerError>,
+    {
+        let mut attempts = Vec::new();
+
+        for owner_type in self.project_owner_query_order()? {
+            match query(owner_type) {
+                Ok(response) => return Ok((owner_type, response)),
+                Err(error) => attempts.push((owner_type, error)),
+            }
+        }
+
+        Err(project_owner_query_error(operation, attempts))
+    }
+
+    fn fetch_project_issues(
+        &self,
+        mode: GithubProjectReadMode,
+    ) -> Result<Vec<TrackerIssue>, TrackerError> {
         if !gh_available() {
             return Err(TrackerError::IntegrationUnavailable(
                 "GitHub Project v2 live reads require the `gh` CLI on PATH".into(),
@@ -791,22 +946,31 @@ impl GithubProjectV2GhClient {
                 self.config.tracker.status_field
             )));
         }
+        let (rest_item_overlays, rest_item_overlay_fallback) =
+            match self.rest_project_item_overlays(&metadata) {
+                Ok(overlays) => (overlays, None),
+                Err(rest_error) => (
+                    BTreeMap::new(),
+                    Some(format!(
+                        "REST Projects v2 item overlay fallback reason: {rest_error}; using GraphQL Project item fields where available"
+                    )),
+                ),
+            };
 
         let mut issues = Vec::new();
         let mut cursor = None;
 
         loop {
-            let response = self.graphql_project_page(true, cursor.as_deref()).or_else(|org_error| {
-                self.graphql_project_page(false, cursor.as_deref())
-                    .map_err(|user_error| {
-                        TrackerError::IntegrationUnavailable(format!(
-                            "failed to query ProjectV2 as organization or user: org={org_error}; user={user_error}"
-                        ))
-                    })
-            })?;
+            let response =
+                self.graphql_project_page(metadata.owner_type, cursor.as_deref(), mode)?;
 
             let (mut page_issues, next_cursor, has_next_page) =
                 issues_from_project_response(&response, &self.config)?;
+            apply_rest_project_item_overlays(&mut page_issues, &rest_item_overlays);
+            apply_rest_project_item_overlay_fallback(
+                &mut page_issues,
+                rest_item_overlay_fallback.as_deref(),
+            );
             issues.append(&mut page_issues);
 
             if has_next_page {
@@ -817,6 +981,52 @@ impl GithubProjectV2GhClient {
         }
 
         Ok(issues)
+    }
+
+    fn enrich_issue_evidence(
+        &self,
+        issue: &mut TrackerIssue,
+        project_states: &BTreeMap<String, String>,
+    ) -> Result<(), TrackerError> {
+        let Some(number) = github_issue_number(&issue.identifier) else {
+            return Ok(());
+        };
+        let content = self.fetch_issue_evidence(number)?;
+        merge_github_issue_evidence(issue, &content, &self.config)?;
+        enrich_native_subissue_project_statuses_for_issue(issue, project_states);
+        Ok(())
+    }
+
+    fn fetch_issue_evidence(&self, issue_number: u64) -> Result<serde_json::Value, TrackerError> {
+        let owner = self
+            .config
+            .tracker
+            .owner
+            .as_deref()
+            .ok_or_else(|| TrackerError::Payload("tracker.owner is required".into()))?;
+        let repo = self
+            .config
+            .tracker
+            .repo
+            .as_deref()
+            .ok_or_else(|| TrackerError::Payload("tracker.repo is required".into()))?;
+        let response = self.graphql_magic(
+            &github_issue_evidence_query(),
+            &[
+                ("owner", owner.to_string()),
+                ("repo", repo.to_string()),
+                ("number", issue_number.to_string()),
+            ],
+            &["number"],
+        )?;
+        response
+            .pointer("/data/repository/issue")
+            .cloned()
+            .ok_or_else(|| {
+                TrackerError::Payload(format!(
+                    "GitHub issue evidence response missing issue #{issue_number}"
+                ))
+            })
     }
 
     fn enrich_native_issue_blockers(
@@ -932,6 +1142,19 @@ impl GithubProjectV2GhClient {
         native_subissue_refs_from_rest_response(&response)
     }
 
+    fn fetch_project_states_for_issue_refs(
+        &self,
+        issue_refs: &[String],
+    ) -> Result<BTreeMap<String, String>, TrackerError> {
+        let mut states = BTreeMap::new();
+        for issue_ref in issue_refs {
+            if let Some(issue) = self.fetch_project_issue(issue_ref)? {
+                states.insert(issue.identifier, issue.state);
+            }
+        }
+        Ok(states)
+    }
+
     fn set_state(&self, issue_ref: &str, normalized_state: &str) -> Result<(), TrackerError> {
         let issue = self.resolve_issue(issue_ref)?;
         let option_name = self.state_option_name(normalized_state)?;
@@ -939,23 +1162,26 @@ impl GithubProjectV2GhClient {
             return Ok(());
         }
 
-        let item_id = issue.item_id.ok_or_else(|| {
+        let item_id = issue.item_id.clone().ok_or_else(|| {
             TrackerError::IntegrationUnavailable(format!(
                 "issue {issue_ref} has no ProjectV2 item id"
             ))
         })?;
-        let metadata = self.project_metadata()?;
-        let option_id =
-            status_option_id(&metadata, &option_name, &self.config.tracker.status_field)?;
+        let (metadata, option_id) = self.status_option_id_with_refresh(&option_name)?;
+        if let Ok(()) = self.update_project_item_field_rest(
+            &issue,
+            &metadata,
+            &metadata.status_field(),
+            ProjectFieldUpdateValue::String(option_id.clone()),
+        ) {
+            return Ok(());
+        }
 
-        self.graphql(
-            GITHUB_UPDATE_PROJECT_ITEM_FIELD_MUTATION,
-            &[
-                ("projectId", metadata.project_id),
-                ("itemId", item_id),
-                ("fieldId", metadata.status_field_id),
-                ("optionId", option_id),
-            ],
+        self.graphql_update_project_single_select_field(
+            metadata.project_id,
+            item_id,
+            metadata.status_field_id,
+            option_id,
         )?;
         Ok(())
     }
@@ -1131,10 +1357,8 @@ impl GithubProjectV2GhClient {
         issue_id: &str,
         normalized_state: &str,
     ) -> Result<(), TrackerError> {
-        let metadata = self.project_metadata()?;
         let option_name = self.state_option_name(normalized_state)?;
-        let option_id =
-            status_option_id(&metadata, &option_name, &self.config.tracker.status_field)?;
+        let (metadata, option_id) = self.status_option_id_with_refresh(&option_name)?;
         let response = self.graphql(
             GITHUB_ADD_PROJECT_ITEM_MUTATION,
             &[
@@ -1143,14 +1367,11 @@ impl GithubProjectV2GhClient {
             ],
         )?;
         let item_id = project_item_id_from_add_response(&response)?;
-        self.graphql(
-            GITHUB_UPDATE_PROJECT_ITEM_FIELD_MUTATION,
-            &[
-                ("projectId", metadata.project_id),
-                ("itemId", item_id),
-                ("fieldId", metadata.status_field_id),
-                ("optionId", option_id),
-            ],
+        self.graphql_update_project_single_select_field(
+            metadata.project_id,
+            item_id,
+            metadata.status_field_id,
+            option_id,
         )?;
         Ok(())
     }
@@ -1161,52 +1382,71 @@ impl GithubProjectV2GhClient {
         assignment: &ProjectFieldAssignment,
     ) -> Result<(), TrackerError> {
         let issue = self.resolve_issue(issue_ref)?;
-        let item_id = issue.item_id.ok_or_else(|| {
+        let item_id = issue.item_id.clone().ok_or_else(|| {
             TrackerError::IntegrationUnavailable(format!(
                 "issue {issue_ref} is not a ProjectV2 item; add it to the project before setting fields"
             ))
         })?;
-        let metadata = self.project_metadata()?;
-        let field = metadata.field(&assignment.name).ok_or_else(|| {
-            TrackerError::IntegrationUnavailable(format!(
-                "ProjectV2 field {:?} was not found",
-                assignment.name
-            ))
-        })?;
+        let (metadata, field) = self.project_field_with_refresh(&assignment.name)?;
         let project_id = metadata.project_id.clone();
         let field_id = field.id.clone();
         match field.kind {
             ProjectFieldKind::SingleSelect => {
-                let option_id = field.option_id(&assignment.value).ok_or_else(|| {
-                    TrackerError::IntegrationUnavailable(format!(
-                        "option {:?} was not found in ProjectV2 field {:?}",
-                        assignment.value, assignment.name
-                    ))
-                })?;
-                self.graphql(
-                    GITHUB_UPDATE_PROJECT_ITEM_FIELD_MUTATION,
-                    &[
-                        ("projectId", project_id),
-                        ("itemId", item_id),
-                        ("fieldId", field_id),
-                        ("optionId", option_id),
-                    ],
+                let option_id =
+                    self.project_field_option_id_with_refresh(&assignment.name, &assignment.value)?;
+                if let Ok(()) = self.update_project_item_field_rest(
+                    &issue,
+                    &metadata,
+                    &field,
+                    ProjectFieldUpdateValue::String(option_id.clone()),
+                ) {
+                    return Ok(());
+                }
+                self.graphql_update_project_single_select_field(
+                    project_id, item_id, field_id, option_id,
                 )?;
             }
             ProjectFieldKind::Text => {
-                self.graphql(
-                    GITHUB_UPDATE_PROJECT_ITEM_TEXT_FIELD_MUTATION,
-                    &[
-                        ("projectId", project_id),
-                        ("itemId", item_id),
-                        ("fieldId", field_id),
-                        ("text", assignment.value.clone()),
-                    ],
+                if let Ok(()) = self.update_project_item_field_rest(
+                    &issue,
+                    &metadata,
+                    &field,
+                    ProjectFieldUpdateValue::String(assignment.value.clone()),
+                ) {
+                    return Ok(());
+                }
+                self.graphql_update_project_text_field(
+                    project_id,
+                    item_id,
+                    field_id,
+                    assignment.value.clone(),
+                )?;
+            }
+            ProjectFieldKind::Number => {
+                let number = assignment.value.parse::<f64>().map_err(|error| {
+                    TrackerError::Payload(format!(
+                        "ProjectV2 number field {:?} value {:?} is invalid: {error}",
+                        assignment.name, assignment.value
+                    ))
+                })?;
+                self.update_project_item_field_rest(
+                    &issue,
+                    &metadata,
+                    &field,
+                    ProjectFieldUpdateValue::Number(number),
+                )?;
+            }
+            ProjectFieldKind::Date => {
+                self.update_project_item_field_rest(
+                    &issue,
+                    &metadata,
+                    &field,
+                    ProjectFieldUpdateValue::String(assignment.value.clone()),
                 )?;
             }
             _ => {
                 return Err(TrackerError::IntegrationUnavailable(format!(
-                    "ProjectV2 field {:?} is {:?}; only single-select and text field assignment are currently supported",
+                    "ProjectV2 field {:?} is {:?}; REST-first assignment supports single-select, text, number, and date; GraphQL fallback is unavailable for this field kind",
                     assignment.name, field.kind
                 )));
             }
@@ -1216,19 +1456,23 @@ impl GithubProjectV2GhClient {
 
     fn clear_project_field(&self, issue_ref: &str, field_name: &str) -> Result<(), TrackerError> {
         let issue = self.resolve_issue(issue_ref)?;
-        let item_id = issue.item_id.ok_or_else(|| {
+        let item_id = issue.item_id.clone().ok_or_else(|| {
             TrackerError::IntegrationUnavailable(format!(
                 "issue {issue_ref} is not a ProjectV2 item; add it to the project before clearing fields"
             ))
         })?;
-        let metadata = self.project_metadata()?;
-        let field = metadata.field(field_name).ok_or_else(|| {
-            TrackerError::IntegrationUnavailable(format!(
-                "ProjectV2 field {field_name:?} was not found"
-            ))
-        })?;
+        let (metadata, field) = self.project_field_with_refresh(field_name)?;
         let project_id = metadata.project_id.clone();
         let field_id = field.id.clone();
+        if let Ok(()) = self.update_project_item_field_rest(
+            &issue,
+            &metadata,
+            &field,
+            ProjectFieldUpdateValue::Null,
+        ) {
+            return Ok(());
+        }
+
         self.graphql(
             GITHUB_CLEAR_PROJECT_ITEM_FIELD_MUTATION,
             &[
@@ -1241,7 +1485,7 @@ impl GithubProjectV2GhClient {
     }
 
     fn resolve_issue(&self, issue_ref: &str) -> Result<TrackerIssue, TrackerError> {
-        self.fetch_project_issues()?
+        self.fetch_project_issues(GithubProjectReadMode::QueueScan)?
             .into_iter()
             .find(|issue| issue.id == issue_ref || issue.identifier == issue_ref)
             .ok_or_else(|| {
@@ -1299,7 +1543,9 @@ impl GithubProjectV2GhClient {
                 .unwrap_or_default());
         }
 
-        let issue = self.resolve_issue(issue_ref)?;
+        let mut issue = self.resolve_issue(issue_ref)?;
+        let project_states = BTreeMap::new();
+        self.enrich_issue_evidence(&mut issue, &project_states)?;
         Ok(issue.linked_pull_requests)
     }
 
@@ -1367,6 +1613,15 @@ impl GithubProjectV2GhClient {
     }
 
     fn project_metadata(&self) -> Result<ProjectMetadata, TrackerError> {
+        self.metadata_cache
+            .get_or_try_init(|| self.load_project_metadata())
+    }
+
+    fn refresh_project_metadata(&self) -> Result<ProjectMetadata, TrackerError> {
+        self.metadata_cache.refresh(|| self.load_project_metadata())
+    }
+
+    fn load_project_metadata(&self) -> Result<ProjectMetadata, TrackerError> {
         let owner = self
             .config
             .tracker
@@ -1378,31 +1633,251 @@ impl GithubProjectV2GhClient {
                 TrackerError::IntegrationUnavailable("missing project_number".into())
             })?;
 
-        let response = self
-            .graphql_project_metadata(true, owner, number)
-            .or_else(|org_error| {
-                self.graphql_project_metadata(false, owner, number)
-                    .map_err(|user_error| {
-                        TrackerError::IntegrationUnavailable(format!(
-                            "failed to query ProjectV2 metadata as organization or user: org={org_error}; user={user_error}"
-                        ))
+        match self.query_project_owner("ProjectV2 REST metadata", |owner_type| {
+            self.rest_project_metadata(owner_type, owner, number)
+        }) {
+            Ok((_owner_type, metadata)) => Ok(metadata),
+            Err(rest_error) => {
+                let (_owner_type, response) = self
+                    .query_project_owner("ProjectV2 metadata", |owner_type| {
+                        self.graphql_project_metadata(owner_type, owner, number)
                     })
-            })?;
+                    .map_err(|graphql_error| {
+                        TrackerError::IntegrationUnavailable(format!(
+                            "REST ProjectV2 metadata fallback reason: {rest_error}; GraphQL fallback failed: {graphql_error}"
+                        ))
+                    })?;
 
-        project_metadata_from_response(&response, &self.config.tracker.status_field)
+                project_metadata_from_response(&response, &self.config.tracker.status_field)
+            }
+        }
+    }
+
+    fn project_field_with_refresh(
+        &self,
+        field_name: &str,
+    ) -> Result<(ProjectMetadata, ProjectFieldMetadata), TrackerError> {
+        project_field_from_metadata_with_refresh(&self.metadata_cache, field_name, || {
+            self.load_project_metadata()
+        })
+    }
+
+    fn status_option_id_with_refresh(
+        &self,
+        option_name: &str,
+    ) -> Result<(ProjectMetadata, String), TrackerError> {
+        let (metadata, field) =
+            self.project_field_with_refresh(&self.config.tracker.status_field)?;
+        let Some(option_id) = field.option_id(option_name) else {
+            let refreshed = self.refresh_project_metadata()?;
+            let refreshed_field = refreshed
+                .field(&self.config.tracker.status_field)
+                .ok_or_else(|| {
+                    TrackerError::IntegrationUnavailable(format!(
+                        "ProjectV2 field {:?} was not found after metadata refresh",
+                        self.config.tracker.status_field
+                    ))
+                })?;
+            let option_id = refreshed_field.option_id(option_name).ok_or_else(|| {
+                TrackerError::IntegrationUnavailable(format!(
+                    "status option {option_name:?} was not found in ProjectV2 field {:?} after metadata refresh",
+                    self.config.tracker.status_field
+                ))
+            })?;
+            return Ok((refreshed, option_id));
+        };
+        Ok((metadata, option_id))
+    }
+
+    fn project_field_option_id_with_refresh(
+        &self,
+        field_name: &str,
+        option_name: &str,
+    ) -> Result<String, TrackerError> {
+        let (_metadata, field) = self.project_field_with_refresh(field_name)?;
+        if let Some(option_id) = field.option_id(option_name) {
+            return Ok(option_id);
+        }
+
+        let refreshed = self.refresh_project_metadata()?;
+        let refreshed_field = refreshed.field(field_name).ok_or_else(|| {
+            TrackerError::IntegrationUnavailable(format!(
+                "ProjectV2 field {field_name:?} was not found after metadata refresh"
+            ))
+        })?;
+        refreshed_field.option_id(option_name).ok_or_else(|| {
+            TrackerError::IntegrationUnavailable(format!(
+                "option {option_name:?} was not found in ProjectV2 field {field_name:?} after metadata refresh"
+            ))
+        })
+    }
+
+    fn rest_project_metadata(
+        &self,
+        owner_type: ProjectV2OwnerType,
+        owner: &str,
+        number: u64,
+    ) -> Result<ProjectMetadata, TrackerError> {
+        let base_path = github_rest_project_path(owner_type, owner, number);
+        let project = run_gh_api_json(vec!["api".into(), base_path.clone()])?;
+        let fields = run_gh_api_json(vec![
+            "api".into(),
+            format!("{base_path}/fields?per_page=100"),
+            "--paginate".into(),
+            "--slurp".into(),
+        ])?;
+
+        rest_project_metadata_from_response(
+            &project,
+            &fields,
+            &self.config.tracker.status_field,
+            owner_type,
+        )
+    }
+
+    fn rest_project_item_overlays(
+        &self,
+        metadata: &ProjectMetadata,
+    ) -> Result<BTreeMap<String, RestProjectItemOverlay>, TrackerError> {
+        let field_ids = metadata
+            .supported_rest_field_ids()
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let owner = self
+            .config
+            .tracker
+            .project_owner
+            .as_deref()
+            .ok_or_else(|| TrackerError::IntegrationUnavailable("missing project_owner".into()))?;
+        let number =
+            self.config.tracker.project_number.ok_or_else(|| {
+                TrackerError::IntegrationUnavailable("missing project_number".into())
+            })?;
+        let base_path = github_rest_project_path(metadata.owner_type, owner, number);
+        let endpoint = if field_ids.is_empty() {
+            format!("{base_path}/items?per_page=100")
+        } else {
+            format!("{base_path}/items?per_page=100&fields={field_ids}")
+        };
+        let response = run_gh_api_json(vec![
+            "api".into(),
+            endpoint,
+            "--paginate".into(),
+            "--slurp".into(),
+        ])?;
+        rest_project_item_overlays_from_response(&response)
+    }
+
+    fn update_project_item_field_rest(
+        &self,
+        issue: &TrackerIssue,
+        metadata: &ProjectMetadata,
+        field: &ProjectFieldMetadata,
+        value: ProjectFieldUpdateValue,
+    ) -> Result<(), TrackerError> {
+        let item_rest_id = project_rest_item_id(issue).ok_or_else(|| {
+            TrackerError::NotImplemented(
+                "REST Projects v2 item update fallback reason: current Project read lacks REST item id; using GraphQL where available"
+                    .into(),
+            )
+        })?;
+        self.update_project_item_field_rest_by_id(metadata, item_rest_id, field, value)
+    }
+
+    fn update_project_item_field_rest_by_id(
+        &self,
+        metadata: &ProjectMetadata,
+        item_rest_id: u64,
+        field: &ProjectFieldMetadata,
+        value: ProjectFieldUpdateValue,
+    ) -> Result<(), TrackerError> {
+        let field_rest_id = field.rest_id.ok_or_else(|| {
+            TrackerError::NotImplemented(format!(
+                "REST Projects v2 item update fallback reason: ProjectV2 field {:?} lacks a REST field id; using GraphQL where available",
+                field.name
+            ))
+        })?;
+        let owner = self
+            .config
+            .tracker
+            .project_owner
+            .as_deref()
+            .ok_or_else(|| TrackerError::IntegrationUnavailable("missing project_owner".into()))?;
+        let number =
+            self.config.tracker.project_number.ok_or_else(|| {
+                TrackerError::IntegrationUnavailable("missing project_number".into())
+            })?;
+        let base_path = github_rest_project_path(metadata.owner_type, owner, number);
+        let body = rest_project_item_field_update_body(field_rest_id, value)?;
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis())
+            .unwrap_or_default();
+        let body_path =
+            std::env::temp_dir().join(format!("jade-symphony-project-item-field-{nonce}.json"));
+        let body_bytes = serde_json::to_vec(&body)
+            .map_err(|error| TrackerError::Payload(format!("invalid REST update body: {error}")))?;
+        fs::write(&body_path, body_bytes)
+            .map_err(|error| TrackerError::IntegrationUnavailable(error.to_string()))?;
+        let result = run_gh_api_json(vec![
+            "api".into(),
+            "-X".into(),
+            "PATCH".into(),
+            format!("{base_path}/items/{item_rest_id}"),
+            "--input".into(),
+            body_path.to_string_lossy().to_string(),
+        ]);
+        let _ = fs::remove_file(&body_path);
+        result.map(|_| ())
+    }
+
+    fn graphql_update_project_single_select_field(
+        &self,
+        project_id: String,
+        item_id: String,
+        field_id: String,
+        option_id: String,
+    ) -> Result<(), TrackerError> {
+        self.graphql(
+            GITHUB_UPDATE_PROJECT_ITEM_FIELD_MUTATION,
+            &[
+                ("projectId", project_id),
+                ("itemId", item_id),
+                ("fieldId", field_id),
+                ("optionId", option_id),
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn graphql_update_project_text_field(
+        &self,
+        project_id: String,
+        item_id: String,
+        field_id: String,
+        text: String,
+    ) -> Result<(), TrackerError> {
+        self.graphql(
+            GITHUB_UPDATE_PROJECT_ITEM_TEXT_FIELD_MUTATION,
+            &[
+                ("projectId", project_id),
+                ("itemId", item_id),
+                ("fieldId", field_id),
+                ("text", text),
+            ],
+        )?;
+        Ok(())
     }
 
     fn graphql_project_metadata(
         &self,
-        organization_owner: bool,
+        owner_type: ProjectV2OwnerType,
         owner: &str,
         number: u64,
     ) -> Result<serde_json::Value, TrackerError> {
-        let query = if organization_owner {
-            github_project_metadata_query("organization")
-        } else {
-            github_project_metadata_query("user")
-        };
+        let query = github_project_metadata_query(owner_type.query_field());
 
         self.graphql_magic(
             &query,
@@ -1413,8 +1888,9 @@ impl GithubProjectV2GhClient {
 
     fn graphql_project_page(
         &self,
-        organization_owner: bool,
+        owner_type: ProjectV2OwnerType,
         cursor: Option<&str>,
+        mode: GithubProjectReadMode,
     ) -> Result<serde_json::Value, TrackerError> {
         let owner = self
             .config
@@ -1433,11 +1909,7 @@ impl GithubProjectV2GhClient {
             "-f".to_string(),
             format!(
                 "query={}",
-                if organization_owner {
-                    github_project_query("organization")
-                } else {
-                    github_project_query("user")
-                }
+                github_project_query(owner_type.query_field(), mode)
             ),
             "-F".to_string(),
             format!("owner={owner}"),
@@ -1493,8 +1965,65 @@ impl GithubProjectV2GhClient {
     }
 }
 
+fn project_owner_query_order(
+    config: &RuntimeConfig,
+) -> Result<Vec<ProjectV2OwnerType>, TrackerError> {
+    if let Some(owner_type) = config.tracker.project_owner_type.as_deref() {
+        return Ok(vec![ProjectV2OwnerType::parse(owner_type)?]);
+    }
+
+    Ok(vec![
+        ProjectV2OwnerType::Organization,
+        ProjectV2OwnerType::User,
+    ])
+}
+
+fn project_owner_query_error(
+    operation: &str,
+    attempts: Vec<(ProjectV2OwnerType, TrackerError)>,
+) -> TrackerError {
+    let Some((last_type, last_error)) = attempts.last() else {
+        return TrackerError::IntegrationUnavailable(format!("{operation} failed"));
+    };
+
+    let prior_attempts_are_owner_misses = attempts
+        .iter()
+        .take(attempts.len().saturating_sub(1))
+        .all(|(_, error)| project_owner_type_miss(error));
+    if prior_attempts_are_owner_misses && !project_owner_type_miss(last_error) {
+        return TrackerError::IntegrationUnavailable(format!(
+            "{operation} failed as {} owner: {last_error}",
+            last_type.as_str()
+        ));
+    }
+
+    let details = attempts
+        .iter()
+        .map(|(owner_type, error)| format!("{}={error}", owner_type.as_str()))
+        .collect::<Vec<_>>()
+        .join("; ");
+    TrackerError::IntegrationUnavailable(format!(
+        "{operation} failed for ProjectV2 owner attempts: {details}"
+    ))
+}
+
+fn project_owner_type_miss(error: &TrackerError) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("projectv2 organization owner lookup missed")
+        || message.contains("projectv2 user owner lookup missed")
+        || message.contains("could not resolve to an organization")
+        || message.contains("could not resolve to a organization")
+        || message.contains("could not resolve to organization")
+        || message.contains("could not resolve to a user")
+        || message.contains("could not resolve to an user")
+        || message.contains("could not resolve to user")
+        || message.contains("not an organization account")
+        || message.contains("not a user account")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProjectMetadata {
+    owner_type: ProjectV2OwnerType,
     project_id: String,
     status_field_id: String,
     status_options: Vec<(String, String)>,
@@ -1505,6 +2034,36 @@ impl ProjectMetadata {
     fn field(&self, name: &str) -> Option<&ProjectFieldMetadata> {
         self.fields.iter().find(|field| field.name == name)
     }
+
+    fn status_field(&self) -> ProjectFieldMetadata {
+        if let Some(field) = self
+            .fields
+            .iter()
+            .find(|field| field.id == self.status_field_id)
+        {
+            return field.clone();
+        }
+
+        ProjectFieldMetadata {
+            id: self.status_field_id.clone(),
+            name: "Status".into(),
+            kind: ProjectFieldKind::SingleSelect,
+            options: self.status_options.clone(),
+            rest_id: self
+                .fields
+                .iter()
+                .find(|field| field.id == self.status_field_id)
+                .and_then(|field| field.rest_id),
+        }
+    }
+
+    fn supported_rest_field_ids(&self) -> Vec<u64> {
+        self.fields
+            .iter()
+            .filter(|field| field.kind.supports_rest_update())
+            .filter_map(|field| field.rest_id)
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1513,6 +2072,7 @@ struct ProjectFieldMetadata {
     name: String,
     kind: ProjectFieldKind,
     options: Vec<(String, String)>,
+    rest_id: Option<u64>,
 }
 
 impl ProjectFieldMetadata {
@@ -1531,6 +2091,66 @@ enum ProjectFieldKind {
     Date,
     Iteration,
     Unknown,
+}
+
+impl ProjectFieldKind {
+    fn supports_rest_update(self) -> bool {
+        matches!(
+            self,
+            Self::SingleSelect | Self::Text | Self::Number | Self::Date
+        )
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct ProjectMetadataCache {
+    value: RefCell<Option<ProjectMetadata>>,
+}
+
+impl ProjectMetadataCache {
+    fn get_or_try_init<F>(&self, fetch: F) -> Result<ProjectMetadata, TrackerError>
+    where
+        F: FnOnce() -> Result<ProjectMetadata, TrackerError>,
+    {
+        if let Some(metadata) = self.value.borrow().clone() {
+            return Ok(metadata);
+        }
+
+        let metadata = fetch()?;
+        *self.value.borrow_mut() = Some(metadata.clone());
+        Ok(metadata)
+    }
+
+    fn refresh<F>(&self, fetch: F) -> Result<ProjectMetadata, TrackerError>
+    where
+        F: FnOnce() -> Result<ProjectMetadata, TrackerError>,
+    {
+        let metadata = fetch()?;
+        *self.value.borrow_mut() = Some(metadata.clone());
+        Ok(metadata)
+    }
+}
+
+fn project_field_from_metadata_with_refresh<F>(
+    cache: &ProjectMetadataCache,
+    field_name: &str,
+    fetch: F,
+) -> Result<(ProjectMetadata, ProjectFieldMetadata), TrackerError>
+where
+    F: Fn() -> Result<ProjectMetadata, TrackerError>,
+{
+    let metadata = cache.get_or_try_init(&fetch)?;
+    if let Some(field) = metadata.field(field_name) {
+        return Ok((metadata.clone(), field.clone()));
+    }
+
+    let refreshed = cache.refresh(fetch)?;
+    let field = refreshed.field(field_name).cloned().ok_or_else(|| {
+        TrackerError::IntegrationUnavailable(format!(
+            "ProjectV2 field {field_name:?} was not found after metadata refresh"
+        ))
+    })?;
+    Ok((refreshed, field))
 }
 
 fn gh_available() -> bool {
@@ -1821,7 +2441,9 @@ fn run_gh_api_json(args: Vec<String>) -> Result<serde_json::Value, TrackerError>
 fn project_state_error_is_retryable(error: &TrackerError) -> bool {
     matches!(
         classify_project_state_error(error),
-        ProjectStateFailureKind::Network | ProjectStateFailureKind::RateLimit
+        ProjectStateFailureKind::Network
+            | ProjectStateFailureKind::TransientBackend
+            | ProjectStateFailureKind::RateLimit
     )
 }
 
@@ -1844,7 +2466,17 @@ const GITHUB_PROJECT_METADATA_FIELD_PAGE_SIZE: usize = 50;
 const GITHUB_WORKPAD_COMMENT_PAGE_SIZE: usize = 50;
 const GITHUB_ISSUE_PROJECT_ITEM_PAGE_SIZE: usize = 20;
 
-fn github_project_query(owner_field: &str) -> String {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GithubProjectReadMode {
+    QueueScan,
+    RichEvidence,
+}
+
+fn github_project_query(owner_field: &str, mode: GithubProjectReadMode) -> String {
+    let rich_issue_fields = match mode {
+        GithubProjectReadMode::QueueScan => String::new(),
+        GithubProjectReadMode::RichEvidence => rich_issue_evidence_fields(),
+    };
     format!(
         r#"
 query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
@@ -1891,7 +2523,6 @@ query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
               id
               number
               title
-              body
               url
               state
               createdAt
@@ -1922,6 +2553,22 @@ query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
                   url
                 }}
               }}
+{rich_issue_fields}
+            }}
+          }}
+        }}
+      }}
+    }}
+  }}
+}}
+"#
+    )
+}
+
+fn rich_issue_evidence_fields() -> String {
+    format!(
+        r#"
+              body
               closedByPullRequestsReferences(first: {GITHUB_PROJECT_LINKED_PR_PAGE_SIZE}) {{
                 nodes {{
                   id
@@ -1942,15 +2589,55 @@ query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
                 nodes {{
                   body
                 }}
-              }}
-            }}
-          }}
+              }}"#
+    )
+}
+
+fn github_issue_evidence_query() -> String {
+    format!(
+        r#"
+query JadeSymphonyIssueEvidence($owner: String!, $repo: String!, $number: Int!) {{
+  repository(owner: $owner, name: $repo) {{
+    issue(number: $number) {{
+      id
+      number
+      title
+      url
+      state
+      createdAt
+      updatedAt
+      labels(first: {GITHUB_PROJECT_LABEL_PAGE_SIZE}) {{
+        nodes {{
+          name
         }}
       }}
+      assignees(first: {GITHUB_PROJECT_ASSIGNEE_PAGE_SIZE}) {{
+        nodes {{
+          login
+        }}
+      }}
+      parent {{
+        id
+        number
+        title
+        state
+        url
+      }}
+      subIssues(first: {GITHUB_PROJECT_SUBISSUE_PAGE_SIZE}) {{
+        nodes {{
+          id
+          number
+          title
+          state
+          url
+        }}
+      }}
+{}
     }}
   }}
 }}
-"#
+"#,
+        rich_issue_evidence_fields()
     )
 }
 
@@ -2262,9 +2949,14 @@ fn project_metadata_from_response(
     response: &serde_json::Value,
     status_field: &str,
 ) -> Result<ProjectMetadata, TrackerError> {
-    let project = response
+    let (owner_type, project) = response
         .pointer("/data/organization/projectV2")
-        .or_else(|| response.pointer("/data/user/projectV2"))
+        .map(|project| (ProjectV2OwnerType::Organization, project))
+        .or_else(|| {
+            response
+                .pointer("/data/user/projectV2")
+                .map(|project| (ProjectV2OwnerType::User, project))
+        })
         .ok_or_else(|| TrackerError::Payload("missing ProjectV2 metadata payload".into()))?;
     let project_id = project
         .get("id")
@@ -2282,6 +2974,7 @@ fn project_metadata_from_response(
 
     if let Some(status_field_metadata) = fields.iter().find(|field| field.name == status_field) {
         return Ok(ProjectMetadata {
+            owner_type,
             project_id: project_id.to_string(),
             status_field_id: status_field_metadata.id.clone(),
             status_options: status_field_metadata.options.clone(),
@@ -2328,7 +3021,287 @@ fn project_field_metadata(field: &serde_json::Value) -> Option<ProjectFieldMetad
         name,
         kind,
         options,
+        rest_id: None,
     })
+}
+
+fn rest_project_metadata_from_response(
+    project: &serde_json::Value,
+    fields_response: &serde_json::Value,
+    status_field: &str,
+    owner_type: ProjectV2OwnerType,
+) -> Result<ProjectMetadata, TrackerError> {
+    let project_id = project
+        .get("node_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| TrackerError::Payload("REST ProjectV2 metadata missing node_id".into()))?;
+    let fields =
+        rest_paginated_array_items(fields_response, "REST ProjectV2 metadata fields response")?;
+    let fields = fields
+        .into_iter()
+        .filter_map(rest_project_field_metadata)
+        .collect::<Vec<_>>();
+    let Some(status_field_metadata) = fields.iter().find(|field| field.name == status_field) else {
+        return Err(TrackerError::Payload(format!(
+            "REST ProjectV2 status field {status_field:?} was not found"
+        )));
+    };
+
+    Ok(ProjectMetadata {
+        owner_type,
+        project_id: project_id.to_string(),
+        status_field_id: status_field_metadata.id.clone(),
+        status_options: status_field_metadata.options.clone(),
+        fields,
+    })
+}
+
+fn rest_project_field_metadata(field: &serde_json::Value) -> Option<ProjectFieldMetadata> {
+    let id = field.get("node_id")?.as_str()?.to_string();
+    let rest_id = field.get("id").and_then(serde_json::Value::as_u64);
+    let name = field.get("name")?.as_str()?.to_string();
+    let kind = match field
+        .get("data_type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+    {
+        "single_select" => ProjectFieldKind::SingleSelect,
+        "text" => ProjectFieldKind::Text,
+        "number" => ProjectFieldKind::Number,
+        "date" => ProjectFieldKind::Date,
+        "iteration" => ProjectFieldKind::Iteration,
+        _ => ProjectFieldKind::Unknown,
+    };
+    let options = field
+        .get("options")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|option| {
+            Some((
+                option.get("id")?.as_str()?.to_string(),
+                rich_text_or_string(option.get("name")?)?,
+            ))
+        })
+        .collect();
+
+    Some(ProjectFieldMetadata {
+        id,
+        name,
+        kind,
+        options,
+        rest_id,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RestProjectItemOverlay {
+    item_node_id: String,
+    content_node_id: String,
+    project_fields: BTreeMap<String, serde_json::Value>,
+}
+
+fn rest_project_item_overlays_from_response(
+    response: &serde_json::Value,
+) -> Result<BTreeMap<String, RestProjectItemOverlay>, TrackerError> {
+    let items = rest_paginated_array_items(response, "REST ProjectV2 items response")?;
+    let mut overlays = BTreeMap::new();
+    for item in items {
+        if let Some(overlay) = rest_project_item_overlay(item)? {
+            overlays.insert(overlay.content_node_id.clone(), overlay);
+        }
+    }
+    Ok(overlays)
+}
+
+fn rest_project_item_overlay(
+    item: &serde_json::Value,
+) -> Result<Option<RestProjectItemOverlay>, TrackerError> {
+    let content = match item.get("content") {
+        Some(content) if content.get("node_id").is_some() => content,
+        _ => return Ok(None),
+    };
+    let item_rest_id = item
+        .get("id")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| TrackerError::Payload("REST ProjectV2 item missing id".into()))?;
+    let item_node_id = item
+        .get("node_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| TrackerError::Payload("REST ProjectV2 item missing node_id".into()))?;
+    let content_node_id = content
+        .get("node_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            TrackerError::Payload("REST ProjectV2 item content missing node_id".into())
+        })?;
+    let mut project_fields = BTreeMap::new();
+    project_fields.insert(
+        "GitHub Project Item REST ID".into(),
+        serde_json::Value::Number(item_rest_id.into()),
+    );
+    project_fields.insert(
+        "GitHub Project Item Node ID".into(),
+        serde_json::Value::String(item_node_id.to_string()),
+    );
+    for field in item
+        .get("fields")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(name) = field.get("name").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let value = rest_project_field_value(field);
+        project_fields.insert(name.to_string(), value);
+    }
+
+    Ok(Some(RestProjectItemOverlay {
+        item_node_id: item_node_id.to_string(),
+        content_node_id: content_node_id.to_string(),
+        project_fields,
+    }))
+}
+
+fn rest_project_field_value(field: &serde_json::Value) -> serde_json::Value {
+    let Some(value) = field.get("value") else {
+        return serde_json::Value::Null;
+    };
+    match field
+        .get("data_type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+    {
+        "single_select" => value
+            .get("name")
+            .and_then(rich_text_or_string)
+            .map(serde_json::Value::String)
+            .unwrap_or(serde_json::Value::Null),
+        "text" | "date" => value
+            .as_str()
+            .map(|text| serde_json::Value::String(text.to_string()))
+            .unwrap_or(serde_json::Value::Null),
+        "number" => value.clone(),
+        _ => value.clone(),
+    }
+}
+
+fn apply_rest_project_item_overlays(
+    issues: &mut [TrackerIssue],
+    overlays: &BTreeMap<String, RestProjectItemOverlay>,
+) {
+    for issue in issues {
+        if let Some(overlay) = overlays.get(&issue.id) {
+            for (name, value) in &overlay.project_fields {
+                issue.project_fields.insert(name.clone(), value.clone());
+            }
+            issue
+                .item_id
+                .get_or_insert_with(|| overlay.item_node_id.clone());
+        }
+    }
+}
+
+fn apply_rest_project_item_overlay_fallback(issues: &mut [TrackerIssue], reason: Option<&str>) {
+    let Some(reason) = reason else {
+        return;
+    };
+    for issue in issues {
+        issue.project_fields.insert(
+            "GitHub REST Project Item Fallback Reason".into(),
+            serde_json::Value::String(reason.to_string()),
+        );
+    }
+}
+
+fn rest_paginated_array_items<'a>(
+    response: &'a serde_json::Value,
+    label: &str,
+) -> Result<Vec<&'a serde_json::Value>, TrackerError> {
+    let values = response
+        .as_array()
+        .ok_or_else(|| TrackerError::Payload(format!("{label} was not an array")))?;
+    if values.is_empty() {
+        return Ok(Vec::new());
+    }
+    if values.iter().all(serde_json::Value::is_array) {
+        return Ok(values
+            .iter()
+            .flat_map(|page| page.as_array().into_iter().flatten())
+            .collect());
+    }
+    if values.iter().all(serde_json::Value::is_object) {
+        return Ok(values.iter().collect());
+    }
+    Err(TrackerError::Payload(format!(
+        "{label} mixed paginated pages and item objects"
+    )))
+}
+
+fn project_rest_item_id(issue: &TrackerIssue) -> Option<u64> {
+    issue
+        .project_fields
+        .get("GitHub Project Item REST ID")
+        .and_then(serde_json::Value::as_u64)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum ProjectFieldUpdateValue {
+    String(String),
+    Number(f64),
+    Null,
+}
+
+fn rest_project_item_field_update_body(
+    field_rest_id: u64,
+    value: ProjectFieldUpdateValue,
+) -> Result<serde_json::Value, TrackerError> {
+    let value = match value {
+        ProjectFieldUpdateValue::String(value) => serde_json::Value::String(value),
+        ProjectFieldUpdateValue::Number(value) => {
+            let number = serde_json::Number::from_f64(value).ok_or_else(|| {
+                TrackerError::Payload(format!(
+                    "ProjectV2 REST number value {value:?} is not finite"
+                ))
+            })?;
+            serde_json::Value::Number(number)
+        }
+        ProjectFieldUpdateValue::Null => serde_json::Value::Null,
+    };
+    Ok(serde_json::json!({
+        "fields": [
+            {
+                "id": field_rest_id,
+                "value": value
+            }
+        ]
+    }))
+}
+
+fn github_rest_project_path(kind: ProjectV2OwnerType, owner: &str, number: u64) -> String {
+    match kind {
+        ProjectV2OwnerType::Organization => format!("orgs/{owner}/projectsV2/{number}"),
+        ProjectV2OwnerType::User => format!("users/{owner}/projectsV2/{number}"),
+    }
+}
+
+fn rich_text_or_string(value: &serde_json::Value) -> Option<String> {
+    value
+        .as_str()
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            value
+                .get("raw")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .or_else(|| {
+            value
+                .get("html")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned)
+        })
 }
 
 fn ensure_workpad_marker(markdown: &str, marker: &str) -> String {
@@ -2516,6 +3489,7 @@ fn marked_block<'a>(text: &'a str, start: &str, end: &str) -> Option<&'a str> {
     Some(&text[start_index..end_index])
 }
 
+#[cfg(test)]
 fn status_option_id(
     metadata: &ProjectMetadata,
     option_name: &str,
@@ -2739,6 +3713,71 @@ fn issue_from_project_item(
             .and_then(serde_json::Value::as_str)
             .map(ToOwned::to_owned),
     }))
+}
+
+fn merge_github_issue_evidence(
+    issue: &mut TrackerIssue,
+    content: &serde_json::Value,
+    config: &RuntimeConfig,
+) -> Result<(), TrackerError> {
+    let number = content.get("number").and_then(serde_json::Value::as_u64);
+    if let Some(number) = number {
+        issue.identifier = format!("#{number}");
+    }
+    if let Some(id) = content.get("id").and_then(serde_json::Value::as_str) {
+        issue.id = id.to_string();
+    }
+    if let Some(title) = content.get("title").and_then(serde_json::Value::as_str) {
+        issue.title = title.to_string();
+    }
+    if let Some(url) = content.get("url").and_then(serde_json::Value::as_str) {
+        issue.url = Some(url.to_string());
+    }
+    if let Some(issue_state) = content.get("state").and_then(serde_json::Value::as_str) {
+        issue.project_fields.insert(
+            "GitHub Issue State".into(),
+            serde_json::Value::String(issue_state.to_string()),
+        );
+    }
+
+    insert_native_subissue_fields(&mut issue.project_fields, content);
+    issue.blocked_by = blocker_refs_from_project_fields(&issue.project_fields);
+    let comment_bodies = github_issue_comment_bodies(content)
+        .into_iter()
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    issue.linked_pull_requests = merge_linked_pull_requests(
+        pull_requests_from_issue(content),
+        linked_pull_requests_from_workpads(
+            &comment_bodies,
+            config.tracker.owner.as_deref(),
+            config.tracker.repo.as_deref(),
+        ),
+    );
+    issue.description =
+        github_issue_description_with_workpad(content, &config.tracker.workpad.marker);
+    issue.labels = string_nodes(content.pointer("/labels/nodes"), "name")
+        .into_iter()
+        .map(|label| label.to_lowercase())
+        .collect();
+    issue.assignees = string_nodes(content.pointer("/assignees/nodes"), "login");
+    issue.created_at = content
+        .get("createdAt")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned);
+    issue.updated_at = content
+        .get("updatedAt")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned);
+
+    if number.is_none() {
+        return Err(TrackerError::Payload(format!(
+            "GitHub issue evidence for {} missing number",
+            issue.identifier
+        )));
+    }
+
+    Ok(())
 }
 
 fn native_issue_ref(issue: Option<&serde_json::Value>) -> Option<serde_json::Value> {
@@ -2970,13 +4009,7 @@ fn enrich_native_subissue_project_statuses_for_issue(
 fn native_subissue_refs_missing_project_state(issue: &TrackerIssue) -> Vec<String> {
     native_subissues_from_project_fields(issue)
         .into_iter()
-        .filter(|subissue| {
-            subissue
-                .project_state
-                .as_deref()
-                .map(|state| normalize_state(state) == "missing")
-                .unwrap_or(true)
-        })
+        .filter(|subissue| subissue_project_state_missing(subissue.project_state.as_deref()))
         .map(|subissue| subissue.identifier)
         .collect()
 }
@@ -4430,6 +5463,7 @@ fn load_fixture(config: &RuntimeConfig) -> Result<Vec<TrackerIssue>, TrackerErro
 mod tests {
     use super::*;
     use crate::workflow::WorkflowDefinition;
+    use std::cell::Cell;
     use std::path::Path;
 
     fn issue(state: &str) -> TrackerIssue {
@@ -4457,6 +5491,44 @@ mod tests {
     fn github_config(source: &str) -> RuntimeConfig {
         let workflow = WorkflowDefinition::parse("/tmp/WORKFLOW.md", source).unwrap();
         RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap()
+    }
+
+    fn test_status_field() -> ProjectFieldMetadata {
+        ProjectFieldMetadata {
+            id: "FIELD_STATUS".into(),
+            name: "Status".into(),
+            kind: ProjectFieldKind::SingleSelect,
+            options: vec![
+                ("OPT_TODO".into(), "Todo".into()),
+                ("OPT_DONE".into(), "Done".into()),
+            ],
+            rest_id: Some(345980099),
+        }
+    }
+
+    fn test_text_field(name: &str, id: &str, rest_id: Option<u64>) -> ProjectFieldMetadata {
+        ProjectFieldMetadata {
+            id: id.into(),
+            name: name.into(),
+            kind: ProjectFieldKind::Text,
+            options: Vec::new(),
+            rest_id,
+        }
+    }
+
+    fn test_metadata(fields: Vec<ProjectFieldMetadata>) -> ProjectMetadata {
+        let status = fields
+            .iter()
+            .find(|field| field.name == "Status")
+            .cloned()
+            .unwrap_or_else(test_status_field);
+        ProjectMetadata {
+            owner_type: ProjectV2OwnerType::User,
+            project_id: "PVT_1".into(),
+            status_field_id: status.id.clone(),
+            status_options: status.options,
+            fields,
+        }
     }
 
     #[test]
@@ -4540,6 +5612,192 @@ mod tests {
     }
 
     #[test]
+    fn finds_native_subissue_refs_that_still_need_project_status() {
+        let mut parent = issue("Todo");
+        parent.identifier = "#347".into();
+        parent.project_fields.insert(
+            "GitHub Native Subissues".into(),
+            serde_json::json!([
+                {"identifier": "#348", "project_state": null},
+                {"identifier": "#349", "project_state": "Done"}
+            ]),
+        );
+        parent.project_fields.insert(
+            "Native Subissues".into(),
+            serde_json::Value::String("#348, #350".into()),
+        );
+
+        assert_eq!(
+            native_subissue_refs_missing_project_state(&parent),
+            vec!["#348".to_string(), "#350".to_string()]
+        );
+    }
+
+    #[test]
+    fn github_queue_scan_query_omits_rich_issue_evidence() {
+        let query = github_project_query("organization", GithubProjectReadMode::QueueScan);
+
+        assert!(query.contains("fieldValues"));
+        assert!(query.contains("assignees"));
+        assert!(query.contains("subIssues"));
+        assert!(!query.contains("body"));
+        assert!(!query.contains("closedByPullRequestsReferences"));
+        assert!(!query.contains("comments(first"));
+        assert!(!query.contains("recentComments"));
+
+        let rich_query = github_project_query("organization", GithubProjectReadMode::RichEvidence);
+        assert!(rich_query.contains("body"));
+        assert!(rich_query.contains("closedByPullRequestsReferences"));
+        assert!(rich_query.contains("comments(first"));
+        assert!(rich_query.contains("recentComments"));
+    }
+
+    #[test]
+    fn queue_scan_project_response_does_not_require_body_comments_or_prs() {
+        let config = github_config(
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
+        );
+        let response = serde_json::json!({
+            "data": {
+                "organization": {
+                    "projectV2": {
+                        "items": {
+                            "nodes": [
+                                {
+                                    "id": "PVTI_7",
+                                    "content": {
+                                        "__typename": "Issue",
+                                        "id": "I_7",
+                                        "number": 7,
+                                        "title": "Queue scan",
+                                        "url": "https://github.com/Alive24/jade-symphony/issues/7",
+                                        "state": "OPEN",
+                                        "createdAt": "2026-05-21T00:00:00Z",
+                                        "updatedAt": "2026-05-21T00:00:00Z",
+                                        "labels": {"nodes": [{"name": "Tracker"}]},
+                                        "assignees": {"nodes": [{"login": "Alive24"}]},
+                                        "parent": null,
+                                        "subIssues": {"nodes": []}
+                                    },
+                                    "fieldValues": {
+                                        "nodes": [
+                                            {
+                                                "name": "Todo",
+                                                "field": {"name": "Status"}
+                                            }
+                                        ]
+                                    }
+                                }
+                            ],
+                            "pageInfo": {
+                                "hasNextPage": false,
+                                "endCursor": null
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        let (issues, cursor, has_next_page) = issues_from_project_response(&response, &config)
+            .expect("queue scan payload should parse without rich issue evidence");
+
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].identifier, "#7");
+        assert_eq!(issues[0].state, "Todo");
+        assert_eq!(issues[0].description, None);
+        assert!(issues[0].linked_pull_requests.is_empty());
+        assert_eq!(issues[0].assignees, vec!["Alive24"]);
+        assert_eq!(cursor, None);
+        assert!(!has_next_page);
+    }
+
+    #[test]
+    fn rich_issue_evidence_hydration_merges_body_comments_prs_and_topology() {
+        let config = github_config(
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
+        );
+        let mut issue = issue("Todo");
+        issue.identifier = "#350".into();
+        issue
+            .project_fields
+            .insert("Status".into(), serde_json::Value::String("Todo".into()));
+        let content = serde_json::json!({
+            "id": "I_350",
+            "number": 350,
+            "title": "Rich targeted read",
+            "url": "https://github.com/Alive24/jade-symphony/issues/350",
+            "state": "OPEN",
+            "createdAt": "2026-05-21T00:00:00Z",
+            "updatedAt": "2026-05-21T00:10:00Z",
+            "labels": {"nodes": [{"name": "Tracker"}]},
+            "assignees": {"nodes": [{"login": "Alive24"}]},
+            "parent": {
+                "id": "I_347",
+                "number": 347,
+                "title": "Parent tracker hardening",
+                "state": "OPEN",
+                "url": "https://github.com/Alive24/jade-symphony/issues/347"
+            },
+            "subIssues": {
+                "nodes": [
+                    {
+                        "id": "I_351",
+                        "number": 351,
+                        "title": "Sibling",
+                        "state": "OPEN",
+                        "url": "https://github.com/Alive24/jade-symphony/issues/351"
+                    }
+                ]
+            },
+            "body": "Issue body evidence.",
+            "closedByPullRequestsReferences": {
+                "nodes": [
+                    {
+                        "id": "PR_9",
+                        "number": 9,
+                        "url": "https://github.com/Alive24/jade-symphony/pull/9",
+                        "state": "OPEN",
+                        "isDraft": false,
+                        "baseRefName": "integration/issue-347-github-projectv2-rest-first-tracker",
+                        "headRefName": "feature/issue-350"
+                    }
+                ]
+            },
+            "comments": {
+                "nodes": [
+                    {"body": "<!-- jade-symphony-workpad -->\n## Jade Symphony Workpad\n\nWorkpad evidence."}
+                ]
+            },
+            "recentComments": {
+                "nodes": [
+                    {"body": "## Jade Symphony Agent Review Run\n\nReview pass evidence: `recorded`"}
+                ]
+            }
+        });
+
+        merge_github_issue_evidence(&mut issue, &content, &config).unwrap();
+
+        let description = issue.description.as_deref().unwrap();
+        assert!(description.contains("Issue body evidence."));
+        assert!(description.contains("## Jade Symphony Workpad"));
+        assert!(description.contains("## Jade Symphony Agent Review Run"));
+        assert_eq!(issue.linked_pull_requests.len(), 1);
+        assert_eq!(issue.linked_pull_requests[0].number, Some(9));
+        assert_eq!(
+            issue
+                .project_fields
+                .get("Native Parent Issue")
+                .and_then(serde_json::Value::as_str),
+            Some("#347")
+        );
+        assert_eq!(
+            crate::model::native_subissue_statuses(&issue)[0].identifier,
+            "#351"
+        );
+    }
+
+    #[test]
     fn github_auth_mode_distinguishes_fixture_env_token_and_gh_cli() {
         let mut config = github_config(
             "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
@@ -4581,6 +5839,69 @@ mod tests {
         assert!(gap.contains("gh auth login"));
         assert!(gap.contains("GITHUB_TOKEN/GH_TOKEN"));
         assert!(gap.contains("invalid token"));
+    }
+
+    #[test]
+    fn project_owner_query_order_uses_explicit_user_without_org_probe() {
+        let config = github_config(
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_owner_type: user\n  project_number: 1\n---\nPrompt",
+        );
+
+        let order = project_owner_query_order(&config).unwrap();
+
+        assert_eq!(order, vec![ProjectV2OwnerType::User]);
+        let query = github_project_query(order[0].query_field(), GithubProjectReadMode::QueueScan);
+        assert!(query.contains("user(login: $owner)"));
+        assert!(!query.contains("organization(login: $owner)"));
+    }
+
+    #[test]
+    fn project_owner_query_order_supports_explicit_org_and_legacy_fallback() {
+        let org_config = github_config(
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_owner_type: organization\n  project_number: 1\n---\nPrompt",
+        );
+        assert_eq!(
+            project_owner_query_order(&org_config).unwrap(),
+            vec![ProjectV2OwnerType::Organization]
+        );
+
+        let fallback_config = github_config(
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
+        );
+        assert_eq!(
+            project_owner_query_order(&fallback_config).unwrap(),
+            vec![ProjectV2OwnerType::Organization, ProjectV2OwnerType::User]
+        );
+    }
+
+    #[test]
+    fn project_owner_query_error_hides_expected_owner_miss_before_real_failure() {
+        let error = project_owner_query_error(
+            "ProjectV2 metadata",
+            vec![
+                (
+                    ProjectV2OwnerType::Organization,
+                    TrackerError::IntegrationUnavailable(
+                        "GitHub GraphQL returned errors: Could not resolve to an Organization with the login of 'Alive24'".into(),
+                    ),
+                ),
+                (
+                    ProjectV2OwnerType::User,
+                    TrackerError::IntegrationUnavailable(
+                        "GitHub GraphQL operation failed kind=transient_backend: HTTP 504 Gateway Timeout".into(),
+                    ),
+                ),
+            ],
+        );
+        let rendered = error.to_string();
+
+        assert!(rendered.contains("ProjectV2 metadata failed as user owner"));
+        assert!(rendered.contains("HTTP 504"));
+        assert!(!rendered.contains("Organization with the login"));
+        assert_eq!(
+            classify_project_state_error(&error),
+            ProjectStateFailureKind::TransientBackend
+        );
     }
 
     #[test]
@@ -5042,6 +6363,7 @@ Prompt
         });
 
         let metadata = project_metadata_from_response(&response, "Status").unwrap();
+        assert_eq!(metadata.owner_type, ProjectV2OwnerType::User);
         assert_eq!(metadata.project_id, "PVT_1");
         assert_eq!(metadata.status_field_id, "FIELD_STATUS");
         assert_eq!(
@@ -5059,8 +6381,292 @@ Prompt
     }
 
     #[test]
+    fn project_metadata_cache_reuses_loaded_metadata() {
+        let cache = ProjectMetadataCache::default();
+        let calls = Cell::new(0);
+        let metadata = test_metadata(vec![test_status_field()]);
+
+        let first = cache
+            .get_or_try_init(|| {
+                calls.set(calls.get() + 1);
+                Ok(metadata.clone())
+            })
+            .unwrap();
+        let second = cache
+            .get_or_try_init(|| {
+                calls.set(calls.get() + 1);
+                Ok(test_metadata(vec![]))
+            })
+            .unwrap();
+
+        assert_eq!(calls.get(), 1);
+        assert_eq!(first.project_id, "PVT_1");
+        assert_eq!(second.status_field_id, "FIELD_STATUS");
+    }
+
+    #[test]
+    fn project_field_lookup_refreshes_stale_metadata() {
+        let cache = ProjectMetadataCache::default();
+        let calls = Cell::new(0);
+
+        let (_metadata, field) =
+            project_field_from_metadata_with_refresh(&cache, "Main Agent", || {
+                calls.set(calls.get() + 1);
+                if calls.get() == 1 {
+                    Ok(test_metadata(vec![test_status_field()]))
+                } else {
+                    Ok(test_metadata(vec![
+                        test_status_field(),
+                        test_text_field("Main Agent", "FIELD_MAIN_AGENT", Some(347408996)),
+                    ]))
+                }
+            })
+            .unwrap();
+
+        assert_eq!(calls.get(), 2);
+        assert_eq!(field.name, "Main Agent");
+        assert_eq!(field.rest_id, Some(347408996));
+    }
+
+    #[test]
+    fn parses_rest_project_metadata_from_paginated_fields() {
+        let project = serde_json::json!({"node_id": "PVT_1"});
+        let fields = serde_json::json!([
+            [
+                {
+                    "id": 345980099,
+                    "node_id": "FIELD_STATUS",
+                    "name": "Status",
+                    "data_type": "single_select",
+                    "options": [
+                        {"id": "OPT_TODO", "name": {"raw": "Todo", "html": "Todo"}},
+                        {"id": "OPT_DONE", "name": {"raw": "Done", "html": "Done"}}
+                    ]
+                }
+            ],
+            [
+                {
+                    "id": 347408996,
+                    "node_id": "FIELD_MAIN_AGENT",
+                    "name": "Main Agent",
+                    "data_type": "text"
+                },
+                {
+                    "id": 348315440,
+                    "node_id": "FIELD_REVIEW_AGENT",
+                    "name": "Review Agent",
+                    "data_type": "text"
+                }
+            ]
+        ]);
+
+        let metadata = rest_project_metadata_from_response(
+            &project,
+            &fields,
+            "Status",
+            ProjectV2OwnerType::Organization,
+        )
+        .unwrap();
+
+        assert_eq!(metadata.project_id, "PVT_1");
+        assert_eq!(metadata.owner_type, ProjectV2OwnerType::Organization);
+        assert_eq!(metadata.status_field_id, "FIELD_STATUS");
+        assert_eq!(
+            metadata.status_options[0],
+            ("OPT_TODO".into(), "Todo".into())
+        );
+        assert_eq!(metadata.field("Status").unwrap().rest_id, Some(345980099));
+        assert_eq!(
+            metadata.field("Main Agent").unwrap().rest_id,
+            Some(347408996)
+        );
+    }
+
+    #[test]
+    fn parses_rest_project_item_overlays_from_paginated_items() {
+        let response = serde_json::json!([
+            [
+                {
+                    "id": 190539790,
+                    "node_id": "PVTI_1",
+                    "content": {
+                        "node_id": "I_1",
+                        "number": 349
+                    },
+                    "fields": [
+                        {
+                            "id": 345980099,
+                            "name": "Status",
+                            "data_type": "single_select",
+                            "value": {"id": "OPT_TODO", "name": {"raw": "Todo"}}
+                        },
+                        {
+                            "id": 347408996,
+                            "name": "Main Agent",
+                            "data_type": "text",
+                            "value": "v=1 lane=main"
+                        }
+                    ]
+                }
+            ],
+            [
+                {
+                    "id": 190539791,
+                    "node_id": "PVTI_2",
+                    "content": {
+                        "node_id": "I_2",
+                        "number": 350
+                    },
+                    "fields": [
+                        {
+                            "id": 1,
+                            "name": "Priority",
+                            "data_type": "number",
+                            "value": 3
+                        },
+                        {
+                            "id": 2,
+                            "name": "Target Date",
+                            "data_type": "date",
+                            "value": "2026-05-22"
+                        }
+                    ]
+                }
+            ]
+        ]);
+
+        let overlays = rest_project_item_overlays_from_response(&response).unwrap();
+
+        let first = overlays.get("I_1").unwrap();
+        assert_eq!(first.item_node_id, "PVTI_1");
+        assert_eq!(
+            first
+                .project_fields
+                .get("GitHub Project Item REST ID")
+                .and_then(serde_json::Value::as_u64),
+            Some(190539790)
+        );
+        assert_eq!(
+            first
+                .project_fields
+                .get("Status")
+                .and_then(serde_json::Value::as_str),
+            Some("Todo")
+        );
+        assert_eq!(
+            first
+                .project_fields
+                .get("Main Agent")
+                .and_then(serde_json::Value::as_str),
+            Some("v=1 lane=main")
+        );
+
+        let mut issue = issue("Todo");
+        issue.id = "I_1".into();
+        apply_rest_project_item_overlays(std::slice::from_mut(&mut issue), &overlays);
+        assert_eq!(issue.item_id.as_deref(), Some("PVTI_1"));
+        assert_eq!(
+            issue
+                .project_fields
+                .get("GitHub Project Item REST ID")
+                .and_then(serde_json::Value::as_u64),
+            Some(190539790)
+        );
+
+        let second = overlays.get("I_2").unwrap();
+        assert_eq!(
+            second.project_fields.get("Priority"),
+            Some(&serde_json::json!(3))
+        );
+        assert_eq!(
+            second
+                .project_fields
+                .get("Target Date")
+                .and_then(serde_json::Value::as_str),
+            Some("2026-05-22")
+        );
+    }
+
+    #[test]
+    fn builds_rest_project_item_field_update_payloads() {
+        assert_eq!(
+            rest_project_item_field_update_body(
+                345980099,
+                ProjectFieldUpdateValue::String("f75ad846".into())
+            )
+            .unwrap(),
+            serde_json::json!({
+                "fields": [
+                    {"id": 345980099, "value": "f75ad846"}
+                ]
+            })
+        );
+        assert_eq!(
+            rest_project_item_field_update_body(
+                347408996,
+                ProjectFieldUpdateValue::String("v=1 lane=main".into())
+            )
+            .unwrap(),
+            serde_json::json!({
+                "fields": [
+                    {"id": 347408996, "value": "v=1 lane=main"}
+                ]
+            })
+        );
+        assert_eq!(
+            rest_project_item_field_update_body(42, ProjectFieldUpdateValue::Null).unwrap(),
+            serde_json::json!({
+                "fields": [
+                    {"id": 42, "value": null}
+                ]
+            })
+        );
+    }
+
+    #[test]
+    fn rest_update_reports_graphql_fallback_reasons_for_missing_rest_ids() {
+        let client = GithubProjectV2GhClient::new(&github_config(
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 9\n---\nPrompt",
+        ));
+        let metadata = test_metadata(vec![
+            test_status_field(),
+            test_text_field("Main Agent", "FIELD_MAIN_AGENT", None),
+        ]);
+        let field_without_rest_id = metadata.field("Main Agent").unwrap().clone();
+        let mut issue_with_rest_item = issue("Todo");
+        issue_with_rest_item.project_fields.insert(
+            "GitHub Project Item REST ID".into(),
+            serde_json::json!(190539790),
+        );
+
+        let error = client
+            .update_project_item_field_rest(
+                &issue_with_rest_item,
+                &metadata,
+                &field_without_rest_id,
+                ProjectFieldUpdateValue::String("v=1 lane=main".into()),
+            )
+            .unwrap_err();
+        assert!(format!("{error}").contains("lacks a REST field id"));
+        assert!(format!("{error}").contains("using GraphQL where available"));
+
+        let field_with_rest_id = test_text_field("Main Agent", "FIELD_MAIN_AGENT", Some(347408996));
+        let issue_without_rest_item = issue("Todo");
+        let error = client
+            .update_project_item_field_rest(
+                &issue_without_rest_item,
+                &metadata,
+                &field_with_rest_id,
+                ProjectFieldUpdateValue::String("v=1 lane=main".into()),
+            )
+            .unwrap_err();
+        assert!(format!("{error}").contains("current Project read lacks REST item id"));
+    }
+
+    #[test]
     fn resolves_project_status_option_id() {
         let metadata = ProjectMetadata {
+            owner_type: ProjectV2OwnerType::User,
             project_id: "PVT_1".into(),
             status_field_id: "FIELD_STATUS".into(),
             status_options: vec![
@@ -5075,6 +6681,7 @@ Prompt
                     ("OPT_TODO".into(), "Todo".into()),
                     ("OPT_DONE".into(), "Done".into()),
                 ],
+                rest_id: None,
             }],
         };
 
@@ -5535,10 +7142,59 @@ Prompt
             ProjectStateFailureKind::Network
         );
         assert_eq!(
+            classify_project_state_failure_message("error connecting to api.github.com"),
+            ProjectStateFailureKind::Network
+        );
+        let graphql_eof = r#"GitHub GraphQL operation failed kind=unknown: Post "https://api.github.com/graphql": EOF"#;
+        assert_eq!(
+            classify_project_state_failure_message(graphql_eof),
+            ProjectStateFailureKind::Network
+        );
+        assert!(project_state_error_is_retryable(
+            &TrackerError::IntegrationUnavailable(graphql_eof.into())
+        ));
+        for status in [
+            "HTTP 502 Bad Gateway",
+            "HTTP 503 Service Unavailable",
+            "HTTP 504 Gateway Timeout",
+        ] {
+            assert_eq!(
+                classify_project_state_failure_message(status),
+                ProjectStateFailureKind::TransientBackend
+            );
+            assert!(project_state_error_is_retryable(
+                &TrackerError::IntegrationUnavailable(status.into())
+            ));
+        }
+        assert_eq!(
+            classify_project_state_failure_message(
+                "HTTP 403 Resource not accessible by integration"
+            ),
+            ProjectStateFailureKind::Auth
+        );
+        assert_eq!(
+            classify_project_state_failure_message(
+                "GitHub GraphQL returned errors: Could not resolve to a ProjectV2"
+            ),
+            ProjectStateFailureKind::Schema
+        );
+        assert_eq!(
             classify_project_state_failure_message(
                 "GitHub GraphQL operation timed out after 30000ms"
             ),
             ProjectStateFailureKind::Network
+        );
+        assert_eq!(
+            classify_project_state_failure_message(
+                "GitHub GraphQL operation failed: HTTP 502 Bad Gateway"
+            ),
+            ProjectStateFailureKind::TransientBackend
+        );
+        assert_eq!(
+            classify_project_state_failure_message(
+                "GitHub GraphQL operation failed: HTTP 500 Internal Server Error"
+            ),
+            ProjectStateFailureKind::TransientBackend
         );
         assert_eq!(
             classify_project_state_failure_message(
@@ -5551,6 +7207,12 @@ Prompt
                 "partial ProjectV2 response missing status field \"Status\" for issue #7".into()
             )),
             ProjectStateFailureKind::PartialResponse
+        );
+        assert_eq!(
+            classify_project_state_failure_message(
+                "invalid GitHub GraphQL JSON: EOF while parsing a value at line 1 column 0"
+            ),
+            ProjectStateFailureKind::Payload
         );
         assert_eq!(
             classify_project_state_error(&TrackerError::NotImplemented(

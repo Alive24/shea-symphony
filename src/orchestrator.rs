@@ -51,15 +51,17 @@ impl Orchestrator {
                 continue;
             }
 
-            let gate = evaluate_issue_with_dependency_preflight(&issue, &terminal_states);
-            if !gate.is_dispatchable() {
-                skipped.push(SkippedIssue {
-                    issue_id: issue.id.clone(),
-                    identifier: issue.identifier.clone(),
-                    reason: "issue quality gate did not pass".into(),
-                    gate: Some(gate),
-                });
-                continue;
+            if issue_has_rich_contract(&issue) {
+                let gate = evaluate_issue_with_dependency_preflight(&issue, &terminal_states);
+                if !gate.is_dispatchable() {
+                    skipped.push(SkippedIssue {
+                        issue_id: issue.id.clone(),
+                        identifier: issue.identifier.clone(),
+                        reason: "issue quality gate did not pass".into(),
+                        gate: Some(gate),
+                    });
+                    continue;
+                }
             }
 
             if selected.len() >= self.config.agent.max_concurrent_agents {
@@ -164,6 +166,14 @@ fn issue_blocked_by_non_terminal(issue: &TrackerIssue, terminal_states: &BTreeSe
                 .map(|state| !terminal_states.contains(&state))
                 .unwrap_or(true)
         })
+}
+
+fn issue_has_rich_contract(issue: &TrackerIssue) -> bool {
+    issue
+        .description
+        .as_deref()
+        .map(|description| !description.trim().is_empty())
+        .unwrap_or(false)
 }
 
 fn skip(issue: &TrackerIssue, reason: &str) -> SkippedIssue {
@@ -293,6 +303,19 @@ mod tests {
         assert!(plan.selected.is_empty());
         assert_eq!(plan.snapshot.skipped[0].identifier, "#1");
         assert!(plan.snapshot.skipped[0].reason.contains("dependencies"));
+    }
+
+    #[test]
+    fn dispatch_planning_allows_lightweight_issue_without_contract_body() {
+        let mut lightweight = issue("1", 1);
+        lightweight.description = None;
+        lightweight.linked_pull_requests = Vec::new();
+
+        let plan = Orchestrator::new(config()).plan_dispatch(vec![lightweight]);
+
+        assert_eq!(plan.selected.len(), 1);
+        assert_eq!(plan.selected[0].identifier, "#1");
+        assert!(plan.snapshot.skipped.is_empty());
     }
 
     #[test]

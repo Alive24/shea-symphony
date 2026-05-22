@@ -62,6 +62,14 @@ Readiness is explicit: `ready`, `idle_but_healthy`,
 checkout safety are blockers for future write-mode autopilot; historical Doctor
 warnings remain visible evidence without automatically blocking the plan.
 
+`project state`, `main loop`, `review loop`, `merge loop`, and the global
+Doctor scan use lightweight Project queue reads by default. Those reads keep
+status, claim fields, assignee, priority, dependency, and parent/subissue gate
+fields, but avoid issue bodies, comment/workpad streams, and rich linked-PR
+hydration. Use `project issue '#<issue>' --json` or `project inspect '#<issue>'`
+when an operator or lane needs the rich issue body, workpad/timeline comments,
+linked PR readback, or detailed native topology evidence for one issue.
+
 Doctor repair helpers:
 
 ```bash
@@ -179,8 +187,9 @@ cargo run -- merge claim workflows/jade-symphony.md '#265' --worker codex-manual
 
 For parent tracking issues with native GitHub subissues, `main claim` uses the
 same execution gate as `main loop`: it rejects `Todo` or `Rework` parents while
-any native subissue is missing from the Project read or has a non-`Done` Project
-status. This is independent from tracker blocker relationships so native
+any native subissue has a missing or non-`Done` Project status after bounded
+targeted child issue reads have had a chance to fill statuses omitted from the
+parent read. This is independent from tracker blocker relationships so native
 subissue changes cannot silently bypass parent dispatch safety.
 
 Live write-mode claim, session, and lane loop commands refuse to run unless the
@@ -298,6 +307,13 @@ subissues are complete.
 
 These commands can mutate live tracker state and require `--write`.
 
+GitHub Project v2 field writes are REST-first where GitHub supports the field
+kind and the Project read exposes REST item and field IDs. Status and lane claim
+text fields use the REST item update path first, then fall back to the existing
+GraphQL mutations when REST capability data is missing. Project metadata and
+field IDs are cached only within the current CLI process and refreshed once when
+a lookup appears stale.
+
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `project set-state` | Move one issue to a normalized workflow state. | Refuses `Human Review` from the main implementation role. |
@@ -306,6 +322,17 @@ These commands can mutate live tracker state and require `--write`.
 | `project link-pr` | Repair PR linkage when Project readback cannot already see the PR. | First checks linked-PR readback and skips the fallback comment when linkage is already visible; if GitHub Project v2 still cannot expose the PR, it may post a linkage repair comment as a fallback. |
 | `create-follow-up` | Create a follow-up issue from a body file. | Lower-level creation path; prefer `forge create` for quality-gated issues. |
 | `project add` | Add an existing GitHub issue node to the configured Project. | Initializes configured Project status where supported. |
+
+Transient GitHub REST or GraphQL failures after a write are reconciled with a
+readback before the command fails. For claim fields, workpads, timeline
+comments, Project status, merge completion, and issue closure the CLI prints
+`tracker_recovery action=recovered ... next=continue` when readback proves the
+mutation landed. If readback cannot prove the outcome, the command fails with
+`recoverable_tracker_mutation_uncertain` and a `next=` hint; rerun the same
+lane command after waiting or read back the issue through `project issue`.
+Append-only lane evidence carries a hidden recovery marker, so rerunning the
+same lane/run skips already-recorded evidence instead of posting a duplicate
+large comment.
 
 Examples:
 

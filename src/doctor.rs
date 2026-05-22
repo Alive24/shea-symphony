@@ -1476,8 +1476,11 @@ fn audit_session_consistency(
             violations.push(session_violation(
                 session,
                 "tmux_session_missing_issue",
-                "Registered tmux session has no issue identifier.",
-                "Inspect the session registry and attach/log evidence before cleaning or reusing the session.",
+                &format!(
+                    "Registered {} session has no issue identifier.",
+                    session_backend(session)
+                ),
+                session_inspection_suggestion(session),
             ));
             continue;
         }
@@ -1486,7 +1489,10 @@ fn audit_session_consistency(
             violations.push(session_violation(
                 session,
                 "tmux_session_orphaned_issue",
-                "Registered tmux session points at an issue that is not present in the current Project read.",
+                &format!(
+                    "Registered {} session points at an issue that is not present in the current Project read.",
+                    session_backend(session)
+                ),
                 "Inspect the registry entry, tracker state, and worktree before cleaning or reassigning the session.",
             ));
             continue;
@@ -1502,10 +1508,12 @@ fn audit_session_consistency(
                 AuditSeverity::Warning,
                 "tmux_session_stale",
                 &format!(
-                    "Registered tmux session `{}` is stale: {}.",
-                    session.session_id, session.evidence
+                    "Registered {} session `{}` is stale: {}.",
+                    session_backend(session),
+                    session.session_id,
+                    session.evidence
                 ),
-                "Attach to the session or inspect its log before clearing runtime state or cleaning artifacts.",
+                session_inspection_suggestion(session),
             ));
         } else if session_status_needs_operator(status) {
             violations.push(violation(
@@ -1513,10 +1521,14 @@ fn audit_session_consistency(
                 AuditSeverity::Warning,
                 "tmux_session_needs_operator_attention",
                 &format!(
-                    "Registered tmux session `{}` is `{}` from {} evidence: {}.",
-                    session.session_id, session.status, session.evidence_source, session.evidence
+                    "Registered {} session `{}` is `{}` from {} evidence: {}.",
+                    session_backend(session),
+                    session.session_id,
+                    session.status,
+                    session.evidence_source,
+                    session.evidence
                 ),
-                "Use the recorded attach command or log path to decide whether to resume, retry, or route the issue with evidence.",
+                session_inspection_suggestion(session),
             ));
         }
 
@@ -1526,7 +1538,8 @@ fn audit_session_consistency(
                 AuditSeverity::Warning,
                 "tmux_session_active_for_terminal_issue",
                 &format!(
-                    "Registered tmux session `{}` still appears active for a Done issue.",
+                    "Registered {} session `{}` still appears active for a Done issue.",
+                    session_backend(session),
                     session.session_id
                 ),
                 "Confirm the session is finished and evidence is preserved before cleanup.",
@@ -1556,8 +1569,8 @@ fn audit_session_consistency(
                 issue,
                 AuditSeverity::Warning,
                 "runtime_session_missing_registry",
-                "Runtime state references a tmux session that is missing from the session registry.",
-                "Inspect runtime-state.json and tmux sessions before clearing or retrying the run.",
+                "Runtime state references a backend session that is missing from the session registry.",
+                "Inspect runtime-state.json and backend artifacts before clearing or retrying the run.",
             ));
             continue;
         };
@@ -1570,10 +1583,27 @@ fn audit_session_consistency(
                 issue,
                 AuditSeverity::Warning,
                 "runtime_session_issue_mismatch",
-                "Runtime state active issue and registered tmux session issue do not match.",
+                "Runtime state active issue and registered backend session issue do not match.",
                 "Inspect both records before dispatching another worker or cleaning artifacts.",
             ));
         }
+    }
+}
+
+fn session_backend(session: &SessionStatusSnapshot) -> &str {
+    let backend = session.backend.trim();
+    if backend.is_empty() {
+        "runtime"
+    } else {
+        backend
+    }
+}
+
+fn session_inspection_suggestion(session: &SessionStatusSnapshot) -> &'static str {
+    if session.backend == "tmux" {
+        "Use the recorded attach command or log path to decide whether to resume, retry, or route the issue with evidence."
+    } else {
+        "Inspect the recorded runtime artifacts, event log, and tracker evidence before clearing, retrying, or routing the issue."
     }
 }
 
@@ -1898,6 +1928,7 @@ mod tests {
         SessionStatusSnapshot {
             session_id: "jade-main-202-attempt-1-runtime".into(),
             lane: "main".into(),
+            backend: "tmux".into(),
             run_id: None,
             status: status.into(),
             evidence_source: "registry".into(),
@@ -2573,6 +2604,30 @@ mod tests {
             .violations
             .iter()
             .any(|violation| violation.code == "tmux_session_stale"));
+    }
+
+    #[test]
+    fn reports_app_server_session_attention_without_tmux_recovery_wording() {
+        let issue = issue("#202", "In Progress");
+        let mut context = runtime_context("#202", 19_000);
+        let mut app_server_session = session(Some("#202"), "failed");
+        app_server_session.backend = "codex".into();
+        app_server_session.attach_command = None;
+        app_server_session.log_path = None;
+        context.sessions = vec![app_server_session];
+
+        let report = audit_project_issues_with_context(&[issue], Some(&context));
+        let violation = report
+            .violations
+            .iter()
+            .find(|violation| violation.code == "tmux_session_needs_operator_attention")
+            .expect("expected session attention warning");
+
+        assert!(violation
+            .message
+            .contains("Registered codex session `jade-main-202-attempt-1-runtime`"));
+        assert!(violation.suggestion.contains("runtime artifacts"));
+        assert!(!violation.suggestion.contains("attach command"));
     }
 
     #[test]

@@ -38,6 +38,22 @@ fn skill_suite_records_parent_owned_subissue_contract() {
     assert!(manual_review.contains("routes to `Merging`, not `Human Review`"));
     assert!(manual_merge.contains("For native subissue PRs"));
     assert!(manual_merge.contains("Do not route native subissue merge repair to `Rework`"));
+    assert!(manual_merge.contains("Clean merge is CLI-owned and non-LLM"));
+    assert!(manual_merge.contains("merge_lane.agent_backend: codex"));
+}
+
+#[test]
+fn skill_suite_documents_app_server_first_manual_boundaries() {
+    let human_review = repo_file("skills/jade-symphony/suite/jade-symphony-human-review/SKILL.md");
+    let manual_merge = repo_file("skills/jade-symphony/suite/jade-symphony-manual-merge/SKILL.md");
+    let manual_main = repo_file("skills/jade-symphony/suite/jade-symphony-manual-main/SKILL.md");
+
+    assert!(human_review.contains("Match the operator-facing language"));
+    assert!(human_review.contains("Do not force English"));
+    assert!(manual_main.contains("cargo run -- project state workflows/jade-symphony.md"));
+    assert!(manual_merge.contains("cargo run -- merge loop workflows/jade-symphony.md"));
+    assert!(manual_merge.contains("app-server"));
+    assert!(!manual_merge.contains("merge-once"));
 }
 
 #[test]

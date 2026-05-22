@@ -3,7 +3,7 @@ name: jade-symphony-manual-review
 description: Use when manually reviewing a Jade Symphony GitHub issue or pull request as a Review Agent, while recording evidence in the Jade Symphony tracker without confusing manual review with automatic review loop evidence.
 metadata:
   short-description: Jade Symphony manual review
-  suite-version: 2026.05.17
+  suite-version: 2026.05.22
 ---
 
 # Jade Symphony Manual Review
@@ -79,7 +79,10 @@ command, stop and ask the operator for the intended workspace.
     evidence-backed, non-UAT satisfied items are checked. Leave unsupported,
     skipped, failed, and all UAT items unchecked.
 11. Save the review evidence to a local evidence file.
-12. Route the result with `review pass` or `review reject`.
+12. Route the result with `review pass` or `review reject`. For routine native
+    subissues, `review pass` routes to `Merging`, not `Human Review`; parent
+    final issues and ordinary issues still route to `Human Review`. Direct
+    subissue Human Review requires `Subissue Human Review Exception: <reason>`.
 
 Status transition ordering: `review pass` or `review reject` must be the final
 mutating step of the manual review session. After the status changes, do only

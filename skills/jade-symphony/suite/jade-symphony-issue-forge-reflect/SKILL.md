@@ -3,7 +3,7 @@ name: jade-symphony-issue-forge-reflect
 description: Use when reflecting over recent Jade Symphony conversations, Project state, dogfood logs, or work records to extract issue backlog candidates, create them as non-dispatchable Project Backlog drafts, or promote existing Backlog drafts through conversational Issue Forge into executable Todo issues.
 metadata:
   short-description: Reflect Jade Symphony backlog into forgeable issues
-  suite-version: 2026.05.17
+  suite-version: 2026.05.22
 ---
 
 # Jade Symphony Issue Forge Reflect
@@ -132,6 +132,11 @@ Discuss like Issue Forge:
 - Ask 1-3 focused questions per turn.
 - Resolve goal, why now, scope, guardrails, dependencies, parent/subissue shape,
   current code-state freshness, verification, and UAT.
+- If promotion uses a native parent/subissue batch, make the parent issue the
+  final Human Review and UAT owner. Routine native subissues should keep
+  independent Agent Review, default to no direct UAT/Human Review, and route
+  passing review to `Merging`. Record `Subissue Human Review Exception:
+  <reason>` only for child slices that truly need direct Human Review.
 - After each question round, include a short promotion-readiness note.
 - Do not promote until the operator explicitly confirms promotion.
 

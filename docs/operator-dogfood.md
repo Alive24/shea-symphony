@@ -372,11 +372,14 @@ break-glass recovery paths. The current inventory and classification live in
 For parent tracking issues with native GitHub subissues, use
 `docs/parent-subissue-topology.md` as the design source. Native sub-issue links
 define hierarchy, subissue PRs target the parent integration branch by default,
-and the parent issue remains the final Human Review unit. `doctor` now reports
-read-only topology blockers for native subissue PRs targeting `main`, missing or
-ambiguous parent integration branch evidence, `Done` subissues without merge
-evidence into the parent branch, and parent `Human Review` before all native
-subissues are `Done` and merged.
+routine subissue Review PASS routes directly to `Merging`, and the parent issue
+remains the final Human Review and UAT unit. Direct subissue Human Review
+requires an explicit `Subissue Human Review Exception: <reason>` in the issue
+contract or Project evidence. `doctor` now reports read-only topology blockers
+for native subissue PRs targeting `main`, missing or ambiguous parent
+integration branch evidence, `Done` subissues without merge evidence into the
+parent branch, and parent `Human Review` before all native subissues are `Done`
+and merged.
 
 Lane handoff and merge flows must make branch target evidence explicit. A
 subissue keeps its normal `feature/issue-*` head branch but uses the parent
@@ -488,7 +491,8 @@ target/debug/jade-symphony review reject workflows/jade-symphony.md '#226' --evi
 The evidence file for `review pass` or `review reject` must include the exact
 structured `Review Agent` claim from `review claim`. `review pass` writes an
 append-only Agent Review timeline comment with the review pass marker before
-moving to `Human Review`; `review reject` refuses
+moving ordinary and parent final issues to `Human Review`, or routine native
+subissues to `Merging`; `review reject` refuses
 `Human Review` and may route only to `Agent Review`, `Rework`, or
 `Need Human Input`. Both commands preserve the `Review Agent` field as terminal
 audit evidence instead of clearing it.

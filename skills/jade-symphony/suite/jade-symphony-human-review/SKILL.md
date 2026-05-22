@@ -3,7 +3,7 @@ name: jade-symphony-human-review
 description: Use when briefing a Jade Symphony operator for Human Review after independent Review Agent pass evidence, guiding UAT, recording a structured decision note, and routing only after explicit operator confirmation.
 metadata:
   short-description: Jade Symphony Human Review briefing
-  suite-version: 2026.05.18
+  suite-version: 2026.05.22
 ---
 
 # Jade Symphony Human Review
@@ -51,6 +51,10 @@ workflows/template/workpad/human-review.md
 - Accepted Human Review routes to `Merging`.
 - Treat UAT checklist items as Human Review-owned unless the issue explicitly
   says otherwise.
+- Native GitHub subissues are not routine Human Review surfaces. If invoked on a
+  native subissue without `Subissue Human Review Exception: <reason>` evidence,
+  stop before UAT and explain that passing subissue Agent Review should route
+  directly to `Merging`; the parent issue owns final Human Review and UAT.
 - Never mutate Project state until the operator explicitly confirms the decision
   after the briefing and UAT discussion.
 - Use Jade Symphony CLI for Project reads and confirmed state routing. Do not
@@ -176,6 +180,12 @@ Give a concise Human Review brief with:
 If the issue is not in `Human Review`, or if Review Agent pass evidence or a
 reliable linked PR is missing, stop before UAT and recommend the smallest safe
 route such as `Need Human Input`, `Agent Review`, or no state change.
+
+If the issue is a native subissue, check whether direct Human Review was
+explicitly excepted. Without `Subissue Human Review Exception: <reason>`, do
+not ask the operator for routine child approval; recommend returning the child
+to the correct Review PASS -> `Merging` path and reviewing the parent issue for
+final UAT.
 
 ## Interactive Guidance
 

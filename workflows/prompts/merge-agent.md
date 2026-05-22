@@ -59,6 +59,10 @@ Project GraphQL or Project UI changes are break-glass only.
   when a clean local PR worktree is available and the base can be merged without
   rewriting history or leaving uncommitted changes. If that proof is missing,
   route to `Need Human Input` with diagnostic evidence.
+- For native subissue PRs, treat dirty or conflicted mergeability as
+  merge-lane repair work first. Keep safe stale-base or conflict repair in
+  `Merging`; route only unresolved, semantic, dirty-worktree, or
+  verification-failing conflicts to `Need Human Input`.
 - Failing checks route to `Need Human Input` unless a later issue adds a
   similarly bounded, verified merge-lane-only repair path.
 - Missing or ambiguous verified PR targets and missing approvals go to

@@ -3,7 +3,7 @@ name: jade-symphony-issue-forge-dream
 description: Use when slowly mining broader Jade Symphony history, recent runs, workpads, skills, docs, Project state, and memory summaries for evidence-backed Backlog seeds and bounded Dream Logs.
 metadata:
   short-description: Deep Jade Symphony backlog mining
-  suite-version: 2026.05.18
+  suite-version: 2026.05.22
 ---
 
 # Jade Symphony Issue Forge Dream

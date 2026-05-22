@@ -467,7 +467,7 @@ fn entry_from_ledger(
             .clone()
             .or_else(|| record.error.clone())
             .or_else(|| Some(format!("{:?}", record.state))),
-        review_outcome: Some(record.decision_outcome.clone()),
+        review_outcome: Some(record.decision_outcome),
         job_state: Some(record.state.clone()),
         stderr_summary,
         session_name: None,
@@ -925,6 +925,7 @@ fn contains_backend_attention(value: &str) -> bool {
 fn review_outcome_label(outcome: &ReviewOutcome) -> &'static str {
     match outcome {
         ReviewOutcome::PassedToHumanReview => "passed_to_human_review",
+        ReviewOutcome::PassedToMerging => "passed_to_merging",
         ReviewOutcome::NeedsRework => "needs_rework",
         ReviewOutcome::InconclusiveNeedsRework => "inconclusive_needs_rework",
         ReviewOutcome::NeedsHumanInput => "needs_human_input",

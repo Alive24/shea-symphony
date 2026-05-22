@@ -3,7 +3,7 @@ name: jade-symphony-manual-main
 description: Use when manually running a Codex Main Agent session for Jade Symphony implementation or Main-lane Rework from a fresh Codex session. This skill claims Todo, Main-lane Rework, or resumable In Progress work through the Main Agent lane, preserves issue quality and dependency gates, creates or resumes isolated workspaces and PRs, and hands off only to Agent Review.
 metadata:
   short-description: Jade Symphony manual Main Agent
-  suite-version: 2026.05.17
+  suite-version: 2026.05.22
 ---
 
 # Jade Symphony Manual Main Agent
@@ -54,6 +54,9 @@ Parent issues with native GitHub subissues are not claimable just because they
 are `Todo` or Main-lane `Rework`. Treat the native subissue set as dynamic and
 require every native subissue to have Project status `Done` before selecting or
 claiming the parent. A GitHub issue `closed` state is not enough for this gate.
+Native subissues still use normal Main implementation and Agent Review handoff,
+but routine Review PASS routes to `Merging`; the parent owns final Human Review
+and UAT unless a child records `Subissue Human Review Exception: <reason>`.
 
 Do not use this skill for merge-lane `Rework` or `Merging` work. Use
 `$jade-symphony-manual-merge` for those. When `Rework` came from

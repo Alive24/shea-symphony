@@ -84,7 +84,10 @@ Status mutation must respect actor authority:
   the workflow.
 - Main implementation agent must never set `Human Review`.
 - Independent Review Agent may set `Human Review` only after an asynchronous
-  review passes and evidence is recorded.
+  review passes and evidence is recorded for ordinary issues or parent final
+  issues. Routine native subissue pass evidence routes to `Merging`; direct
+  subissue Human Review requires an explicit exception in issue or Project
+  evidence.
 - Independent Review Agent must set `Rework` when confirmed findings require
   changes.
 - Failed, timed out, inconclusive, or backend-unavailable review must not set

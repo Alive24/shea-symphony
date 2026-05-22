@@ -1085,6 +1085,27 @@ mod tests {
     }
 
     #[test]
+    fn dirty_native_subissue_pr_attempts_repair_before_human_input() {
+        let parent_branch = "integration/issue-243-parent-subissue-orchestration";
+        let issue = subissue("Merging", vec![pr()]);
+        let mut status = clean_status();
+        status.merge_state_status = Some("DIRTY".into());
+        status.base_ref_name = Some(parent_branch.into());
+        status.review_decision = Some(String::new());
+        let decision = merge_lane_decision(
+            &issue,
+            "Merging",
+            parent_branch,
+            &issue.linked_pull_requests,
+            Some(&status),
+        );
+
+        assert_eq!(decision.kind, MergeLaneDecisionKind::MergeDirty);
+        assert_eq!(decision.target_state, None);
+        assert!(decision.reason.contains("safe local conflict repair"));
+    }
+
+    #[test]
     fn behind_pr_stays_in_merging_for_safe_update_and_retry() {
         let issue = issue("Merging", vec![pr()]);
         let mut status = clean_status();

@@ -15,7 +15,9 @@ use thiserror::Error;
 
 use crate::agent::{classify_usage_limit_text, UsageLimitPause};
 use crate::lane_claim::{LaneClaim, LaneClaimState};
-use crate::model::{normalize_state, TrackerIssue};
+use crate::model::{
+    is_native_subissue, native_subissue_human_review_exception, normalize_state, TrackerIssue,
+};
 use crate::workspace::safe_identifier;
 
 const AGENT_REVIEW_WORKPAD_TEMPLATE: &str =
@@ -170,15 +172,22 @@ pub struct ReviewJobLedgerRecord {
     pub gemini_health: Option<GeminiReviewHealthDiagnostic>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReviewOutcome {
     PassedToHumanReview,
+    PassedToMerging,
     NeedsRework,
     InconclusiveNeedsRework,
     NeedsHumanInput,
     BackendUnavailable,
     StillRunning,
     Cancelled,
+}
+
+impl ReviewOutcome {
+    pub fn is_passed(self) -> bool {
+        matches!(self, Self::PassedToHumanReview | Self::PassedToMerging)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1245,6 +1254,28 @@ pub fn review_gate_decision(job: &ReviewJob) -> ReviewGateDecision {
     review_gate_decision_for_actor(job, ReviewActor::IndependentReviewAgent)
 }
 
+pub fn review_gate_decision_for_issue(job: &ReviewJob, issue: &TrackerIssue) -> ReviewGateDecision {
+    let decision = review_gate_decision(job);
+    if decision.outcome == ReviewOutcome::PassedToHumanReview
+        && review_pass_target_state(issue) == "merging"
+    {
+        return ReviewGateDecision {
+            outcome: ReviewOutcome::PassedToMerging,
+            target_state: Some("merging"),
+            message: "Independent Agent Review passed with recorded evidence; native subissue routes directly to Merging because the parent issue owns final Human Review and UAT.".into(),
+        };
+    }
+    decision
+}
+
+pub fn review_pass_target_state(issue: &TrackerIssue) -> &'static str {
+    if is_native_subissue(issue) && !native_subissue_human_review_exception(issue) {
+        "merging"
+    } else {
+        "human_review"
+    }
+}
+
 pub fn review_gate_decision_for_actor(job: &ReviewJob, actor: ReviewActor) -> ReviewGateDecision {
     if actor == ReviewActor::MainImplementationAgent {
         return main_agent_completion_decision();
@@ -1607,11 +1638,13 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
         .and_then(|report| render_log_section("Stderr", report.stderr.as_deref()))
         .unwrap_or_default();
 
-    let pass_evidence_section = if decision.outcome == ReviewOutcome::PassedToHumanReview {
-        render_section(
-            "Review Pass Evidence",
-            "- Review pass evidence: `recorded`\nEvidence recorded. Independent Review Agent may move this issue to Human Review; the main implementation agent must not.",
-        )
+    let pass_evidence_section = if decision.outcome.is_passed() {
+        let routing_note = if decision.outcome == ReviewOutcome::PassedToMerging {
+            "- Review pass evidence: `recorded`\nEvidence recorded. Independent Review Agent may move this native subissue directly to Merging; final Human Review and UAT remain owned by the parent issue."
+        } else {
+            "- Review pass evidence: `recorded`\nEvidence recorded. Independent Review Agent may move this issue to Human Review; the main implementation agent must not."
+        };
+        render_section("Review Pass Evidence", routing_note)
     } else {
         String::new()
     };
@@ -1972,7 +2005,7 @@ pub fn review_job_ledger_record(
     job: &ReviewJob,
     ledger_path: PathBuf,
 ) -> ReviewJobLedgerRecord {
-    let decision = review_gate_decision_for_actor(job, ReviewActor::IndependentReviewAgent);
+    let decision = review_gate_decision_for_issue(job, issue);
     ReviewJobLedgerRecord {
         issue_ref: issue.identifier.clone(),
         issue_title: issue.title.clone(),
@@ -2126,6 +2159,7 @@ pub fn transition_allowed_for_review_agent(
 ) -> bool {
     match normalized_state {
         "human_review" | "human review" => decision.outcome == ReviewOutcome::PassedToHumanReview,
+        "merging" => decision.outcome == ReviewOutcome::PassedToMerging,
         "rework" => matches!(
             decision.outcome,
             ReviewOutcome::NeedsRework | ReviewOutcome::InconclusiveNeedsRework
@@ -2398,6 +2432,29 @@ mod tests {
             created_at: None,
             updated_at: None,
         }
+    }
+
+    fn native_subissue(mut issue: TrackerIssue) -> TrackerIssue {
+        issue.identifier = "#272".into();
+        issue.project_fields.insert(
+            "GitHub Native Parent".into(),
+            serde_json::json!({"identifier": "#243", "state": "OPEN"}),
+        );
+        issue
+            .project_fields
+            .insert("Native Parent Issue".into(), serde_json::json!("#243"));
+        issue
+    }
+
+    fn parent_issue(mut issue: TrackerIssue) -> TrackerIssue {
+        issue.identifier = "#243".into();
+        issue.project_fields.insert(
+            "GitHub Native Subissues".into(),
+            serde_json::json!([
+                {"identifier": "#272", "project_state": "Done"}
+            ]),
+        );
+        issue
     }
 
     fn completed_gemini_review(output: &str) -> ReviewJob {
@@ -2994,6 +3051,52 @@ mod tests {
             "human_review",
             &decision
         ));
+    }
+
+    #[test]
+    fn review_agent_passed_native_subissue_routes_to_merging() {
+        let backend = FakeReviewBackend::new(FakeReviewOutcome::Pass);
+        let temp = tempfile::tempdir().unwrap();
+        let request = review_request_with_temp_roots(&temp);
+        let job = backend.poll(backend.start(request).unwrap()).unwrap();
+        let issue = native_subissue(issue());
+        let decision = review_gate_decision_for_issue(&job, &issue);
+
+        assert_eq!(decision.outcome, ReviewOutcome::PassedToMerging);
+        assert_eq!(decision.target_state, Some("merging"));
+        assert!(transition_allowed_for_review_agent("merging", &decision));
+        assert!(!transition_allowed_for_review_agent(
+            "human_review",
+            &decision
+        ));
+    }
+
+    #[test]
+    fn review_agent_passed_native_subissue_exception_routes_to_human_review() {
+        let backend = FakeReviewBackend::new(FakeReviewOutcome::Pass);
+        let temp = tempfile::tempdir().unwrap();
+        let request = review_request_with_temp_roots(&temp);
+        let job = backend.poll(backend.start(request).unwrap()).unwrap();
+        let mut issue = native_subissue(issue());
+        issue.description =
+            Some("Subissue Human Review Exception: operator-owned release risk.".into());
+        let decision = review_gate_decision_for_issue(&job, &issue);
+
+        assert_eq!(decision.outcome, ReviewOutcome::PassedToHumanReview);
+        assert_eq!(decision.target_state, Some("human_review"));
+    }
+
+    #[test]
+    fn review_agent_passed_parent_final_issue_routes_to_human_review() {
+        let backend = FakeReviewBackend::new(FakeReviewOutcome::Pass);
+        let temp = tempfile::tempdir().unwrap();
+        let request = review_request_with_temp_roots(&temp);
+        let job = backend.poll(backend.start(request).unwrap()).unwrap();
+        let issue = parent_issue(issue());
+        let decision = review_gate_decision_for_issue(&job, &issue);
+
+        assert_eq!(decision.outcome, ReviewOutcome::PassedToHumanReview);
+        assert_eq!(decision.target_state, Some("human_review"));
     }
 
     #[test]

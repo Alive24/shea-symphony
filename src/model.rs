@@ -72,6 +72,58 @@ impl TrackerIssue {
     }
 }
 
+pub fn native_parent_identifier(issue: &TrackerIssue) -> Option<String> {
+    issue
+        .project_fields
+        .get("GitHub Native Parent")
+        .and_then(|value| {
+            value
+                .get("identifier")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+                .or_else(|| issue_ref_from_value(value))
+        })
+        .or_else(|| {
+            issue
+                .project_fields
+                .get("Native Parent Issue")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+}
+
+pub fn is_native_subissue(issue: &TrackerIssue) -> bool {
+    native_parent_identifier(issue).is_some()
+}
+
+pub fn native_subissue_human_review_exception(issue: &TrackerIssue) -> bool {
+    let exception_fields = [
+        "Subissue Human Review Exception",
+        "Direct Human Review Required",
+        "subissue_human_review_exception",
+        "direct_human_review_required",
+    ];
+    if exception_fields
+        .iter()
+        .any(|field| explicit_truthy_project_field(issue, field))
+    {
+        return true;
+    }
+
+    issue
+        .description
+        .as_deref()
+        .map(|description| {
+            let text = description.to_ascii_lowercase();
+            text.contains("subissue human review exception:")
+                || text.contains("direct human review exception:")
+                || text.contains("direct human review required: yes")
+                || text.contains("requires direct human review: yes")
+                || text.contains("requires routine direct human review: yes")
+        })
+        .unwrap_or(false)
+}
+
 pub fn native_subissue_statuses(issue: &TrackerIssue) -> Vec<NativeSubissueStatus> {
     let mut statuses = Vec::new();
     if let Some(values) = issue
@@ -180,6 +232,24 @@ pub fn native_subissue_gate_blocker(
             .collect::<Vec<_>>()
             .join(", ")
     ))
+}
+
+fn explicit_truthy_project_field(issue: &TrackerIssue, field: &str) -> bool {
+    issue
+        .project_fields
+        .get(field)
+        .is_some_and(|value| match value {
+            serde_json::Value::Bool(value) => *value,
+            serde_json::Value::String(value) => {
+                let normalized = value.trim().to_ascii_lowercase();
+                !normalized.is_empty()
+                    && !matches!(
+                        normalized.as_str(),
+                        "false" | "no" | "none" | "n/a" | "not required"
+                    )
+            }
+            _ => false,
+        })
 }
 
 fn push_native_subissue_status(

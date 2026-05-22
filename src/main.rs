@@ -4,6 +4,10 @@ use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -56,7 +60,7 @@ use jade_symphony::merge_lane::{
 };
 use jade_symphony::model::{
     native_subissue_gate_blocker, native_subissue_statuses, normalize_state, GateDecision,
-    GateDecisionKind, LatestStatus, SessionStatusSnapshot, TrackerIssue,
+    GateDecisionKind, LatestStatus, PollingSnapshot, SessionStatusSnapshot, TrackerIssue,
 };
 use jade_symphony::observability_api::serve_once;
 use jade_symphony::orchestrator::Orchestrator;
@@ -144,6 +148,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             workflow_path,
             json,
         } => autopilot_plan(workflow_path, json),
+        Command::AutopilotLoop { options } => autopilot_loop(options),
         Command::StatusApi {
             workflow_path,
             bind,
@@ -402,6 +407,184 @@ fn autopilot_plan(workflow_path: PathBuf, json: bool) -> Result<(), Box<dyn std:
     Ok(())
 }
 
+fn autopilot_loop(options: AutopilotLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let cancellation = install_autopilot_cancellation_handler()?;
+    autopilot_loop_with_cancellation(options, cancellation)
+}
+
+fn autopilot_loop_with_cancellation(
+    options: AutopilotLoopOptions,
+    cancellation: Arc<AtomicBool>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let limit = options.iteration_limit();
+    let mut iterations = 0usize;
+    let mut transient_attempt = 0u32;
+    let mut recent_transient_failures = Vec::new();
+
+    loop {
+        if cancellation.load(Ordering::SeqCst) {
+            let status = autopilot_loop_cancelled_status(
+                &options,
+                iterations,
+                "cancellation requested before next poll".into(),
+            );
+            print_autopilot_loop_status(&status, options.json)?;
+            println!("autopilot_loop=stopped reason=cancelled iterations={iterations}");
+            break;
+        }
+        if let Some(max) = limit {
+            if iterations >= max {
+                println!("autopilot_loop=stopped reason=max_iterations iterations={iterations}");
+                break;
+            }
+        }
+
+        iterations += 1;
+        let checking_status =
+            autopilot_loop_checking_status(&options, iterations, &recent_transient_failures);
+        print_autopilot_loop_status(&checking_status, options.json)?;
+
+        let workflow = match WorkflowDefinition::load(&options.workflow_path) {
+            Ok(workflow) => workflow,
+            Err(error) => {
+                let status = autopilot_loop_blocked_status(
+                    &options,
+                    iterations,
+                    format!("workflow_load_error={error}"),
+                    &recent_transient_failures,
+                );
+                print_autopilot_loop_status(&status, options.json)?;
+                if !autopilot_loop_should_continue(limit, iterations) {
+                    continue;
+                }
+                if autopilot_sleep_or_cancel(status.settings.poll_interval_ms, &cancellation) {
+                    continue;
+                }
+                continue;
+            }
+        };
+        let config = match RuntimeConfig::from_workflow(&workflow, &options.workflow_path).and_then(
+            |config| {
+                config.validate()?;
+                Ok(config)
+            },
+        ) {
+            Ok(config) => config,
+            Err(error) => {
+                let status = autopilot_loop_blocked_status(
+                    &options,
+                    iterations,
+                    format!("workflow_config_error={error}"),
+                    &recent_transient_failures,
+                );
+                print_autopilot_loop_status(&status, options.json)?;
+                if !autopilot_loop_should_continue(limit, iterations) {
+                    continue;
+                }
+                if autopilot_sleep_or_cancel(status.settings.poll_interval_ms, &cancellation) {
+                    continue;
+                }
+                continue;
+            }
+        };
+        let settings = AutopilotLoopSettings::from_config(&config, &options);
+
+        match build_autopilot_plan(&options.workflow_path) {
+            Ok(plan) => {
+                transient_attempt = 0;
+                let status = autopilot_loop_status_from_plan(
+                    &plan,
+                    settings,
+                    iterations,
+                    Some(settings.poll_interval_ms),
+                    &recent_transient_failures,
+                    cancellation.load(Ordering::SeqCst),
+                );
+                print_autopilot_loop_status(&status, options.json)?;
+                if !autopilot_loop_should_continue(limit, iterations) {
+                    continue;
+                }
+                if autopilot_sleep_or_cancel(settings.poll_interval_ms, &cancellation) {
+                    let cancelled = autopilot_loop_status_from_plan(
+                        &plan,
+                        settings,
+                        iterations,
+                        None,
+                        &recent_transient_failures,
+                        true,
+                    );
+                    print_autopilot_loop_status(&cancelled, options.json)?;
+                    println!("autopilot_loop=stopped reason=cancelled iterations={iterations}");
+                    break;
+                }
+            }
+            Err(error) => {
+                let error_text = error.to_string();
+                if autopilot_failure_is_recoverable(&error_text) {
+                    transient_attempt = transient_attempt.saturating_add(1);
+                    let retry_delay_ms =
+                        Orchestrator::new(config.clone()).retry_delay_ms(transient_attempt, false);
+                    let failure = AutopilotTransientFailure {
+                        at_ms: current_time_ms(),
+                        attempt: transient_attempt,
+                        delay_ms: retry_delay_ms,
+                        error: compact_evidence(&error_text),
+                        recovery_policy: "retry_with_backoff".into(),
+                    };
+                    recent_transient_failures.push(failure);
+                    keep_recent_transient_failures(&mut recent_transient_failures);
+                    let status = autopilot_loop_failure_status(
+                        &options,
+                        settings,
+                        iterations,
+                        &recent_transient_failures,
+                        "retrying",
+                        Some(retry_delay_ms),
+                    );
+                    print_autopilot_loop_status(&status, options.json)?;
+                    if !autopilot_loop_should_continue(limit, iterations) {
+                        continue;
+                    }
+                    if autopilot_sleep_or_cancel(retry_delay_ms, &cancellation) {
+                        let cancelled = autopilot_loop_cancelled_status(
+                            &options,
+                            iterations,
+                            "cancellation requested during retry backoff".into(),
+                        );
+                        print_autopilot_loop_status(&cancelled, options.json)?;
+                        println!("autopilot_loop=stopped reason=cancelled iterations={iterations}");
+                        break;
+                    }
+                } else {
+                    let status = autopilot_loop_failure_status(
+                        &options,
+                        settings,
+                        iterations,
+                        &[AutopilotTransientFailure {
+                            at_ms: current_time_ms(),
+                            attempt: 1,
+                            delay_ms: settings.poll_interval_ms,
+                            error: compact_evidence(&error_text),
+                            recovery_policy: "blocked_unrecoverable".into(),
+                        }],
+                        "blocked",
+                        Some(settings.poll_interval_ms),
+                    );
+                    print_autopilot_loop_status(&status, options.json)?;
+                    if !autopilot_loop_should_continue(limit, iterations) {
+                        continue;
+                    }
+                    if autopilot_sleep_or_cancel(settings.poll_interval_ms, &cancellation) {
+                        continue;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct AutopilotPlanSnapshot {
     schema_version: u8,
@@ -479,8 +662,86 @@ struct AutopilotRuntimeSummary {
     runtime_state_count: usize,
     session_count: usize,
     session_attention_count: usize,
+    retrying_count: usize,
+    active_issues: Vec<AutopilotActiveIssue>,
+    retrying: Vec<AutopilotRetryRecord>,
     blockers: Vec<String>,
     evidence: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+struct AutopilotLoopSettings {
+    write: bool,
+    dry_run: bool,
+    poll_interval_ms: u64,
+    main_max_concurrent: usize,
+    review_max_concurrent: usize,
+    merge_max_concurrent: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct AutopilotLoopStatusSnapshot {
+    schema_version: u8,
+    workflow_path: String,
+    iteration: usize,
+    mode: String,
+    phase: String,
+    message: String,
+    cancellation_requested: bool,
+    polling: PollingSnapshot,
+    settings: AutopilotLoopSettings,
+    lane_activity: Vec<AutopilotLaneActivity>,
+    counts: AutopilotLoopCounts,
+    selected_issues: Vec<AutopilotIssueSummary>,
+    active_issues: Vec<AutopilotActiveIssue>,
+    parked_queues: Vec<AutopilotParkedQueue>,
+    blocked_reasons: Vec<String>,
+    retrying: Vec<AutopilotRetryRecord>,
+    recent_transient_failures: Vec<AutopilotTransientFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct AutopilotLaneActivity {
+    lane: String,
+    status: String,
+    action: String,
+    selected_issue: Option<AutopilotIssueSummary>,
+    reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
+struct AutopilotLoopCounts {
+    running: usize,
+    retrying: usize,
+    blocked: usize,
+    idle: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct AutopilotActiveIssue {
+    lane: String,
+    identifier: String,
+    backend: String,
+    session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct AutopilotRetryRecord {
+    lane: String,
+    issue_identifier: Option<String>,
+    attempt: u32,
+    due_in_ms: u64,
+    next_retry_at_ms: u64,
+    error: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct AutopilotTransientFailure {
+    at_ms: u64,
+    attempt: u32,
+    delay_ms: u64,
+    error: String,
+    recovery_policy: String,
 }
 
 fn build_autopilot_plan(
@@ -1188,6 +1449,38 @@ impl AutopilotRuntimeSummary {
         if !attention_sessions.is_empty() {
             blockers.push(format!("session_attention={}", attention_sessions.len()));
         }
+        let now_ms = current_time_ms();
+        let active_issues = runtime_states
+            .iter()
+            .filter_map(|state| {
+                state
+                    .active_issue
+                    .as_ref()
+                    .map(|issue| AutopilotActiveIssue {
+                        lane: state.lane.clone().unwrap_or_else(|| "unknown".into()),
+                        identifier: issue.identifier.clone(),
+                        backend: state.backend.clone(),
+                        session_id: state.backend_session_id.clone(),
+                    })
+            })
+            .collect::<Vec<_>>();
+        let retrying = runtime_states
+            .iter()
+            .filter_map(|state| {
+                let retry = state.retry.as_ref()?;
+                Some(AutopilotRetryRecord {
+                    lane: state.lane.clone().unwrap_or_else(|| "unknown".into()),
+                    issue_identifier: state
+                        .active_issue
+                        .as_ref()
+                        .map(|issue| issue.identifier.clone()),
+                    attempt: retry.attempt,
+                    due_in_ms: retry.due_in_ms(now_ms),
+                    next_retry_at_ms: retry.next_retry_at_ms,
+                    error: retry.error.clone(),
+                })
+            })
+            .collect::<Vec<_>>();
         let mut evidence = runtime_states
             .iter()
             .filter_map(|state| {
@@ -1215,10 +1508,509 @@ impl AutopilotRuntimeSummary {
             runtime_state_count: runtime_states.len(),
             session_count: sessions.len(),
             session_attention_count: attention_sessions.len(),
+            retrying_count: retrying.len(),
+            active_issues,
+            retrying,
             blockers,
             evidence,
         }
     }
+}
+
+impl AutopilotLoopSettings {
+    fn from_config(config: &RuntimeConfig, options: &AutopilotLoopOptions) -> Self {
+        Self {
+            write: options.write,
+            dry_run: options.dry_run || !options.write,
+            poll_interval_ms: options
+                .poll_interval_ms
+                .unwrap_or(config.polling.interval_ms)
+                .max(1),
+            main_max_concurrent: options
+                .main_max_concurrent
+                .unwrap_or(config.agent.max_concurrent_agents)
+                .max(1),
+            review_max_concurrent: options
+                .review_max_concurrent
+                .unwrap_or(config.review.max_concurrent_workers)
+                .max(1),
+            merge_max_concurrent: options
+                .merge_max_concurrent
+                .unwrap_or(config.merge_lane.max_concurrent_workers)
+                .max(1),
+        }
+    }
+
+    fn fallback(options: &AutopilotLoopOptions) -> Self {
+        Self {
+            write: options.write,
+            dry_run: options.dry_run || !options.write,
+            poll_interval_ms: options.poll_interval_ms.unwrap_or(30_000).max(1),
+            main_max_concurrent: options.main_max_concurrent.unwrap_or(1).max(1),
+            review_max_concurrent: options.review_max_concurrent.unwrap_or(1).max(1),
+            merge_max_concurrent: options.merge_max_concurrent.unwrap_or(1).max(1),
+        }
+    }
+}
+
+fn autopilot_loop_checking_status(
+    options: &AutopilotLoopOptions,
+    iteration: usize,
+    recent_transient_failures: &[AutopilotTransientFailure],
+) -> AutopilotLoopStatusSnapshot {
+    let settings = AutopilotLoopSettings::fallback(options);
+    AutopilotLoopStatusSnapshot {
+        schema_version: 1,
+        workflow_path: options.workflow_path.display().to_string(),
+        iteration,
+        mode: autopilot_loop_mode(settings).into(),
+        phase: "checking".into(),
+        message: "checking Project, lane state, runtime state, and readiness".into(),
+        cancellation_requested: false,
+        polling: PollingSnapshot {
+            checking: true,
+            next_poll_in_ms: None,
+            poll_interval_ms: settings.poll_interval_ms,
+        },
+        settings,
+        lane_activity: Vec::new(),
+        counts: AutopilotLoopCounts::default(),
+        selected_issues: Vec::new(),
+        active_issues: Vec::new(),
+        parked_queues: Vec::new(),
+        blocked_reasons: Vec::new(),
+        retrying: retry_records_from_transient_failures(recent_transient_failures),
+        recent_transient_failures: recent_transient_failures.to_vec(),
+    }
+}
+
+fn autopilot_loop_status_from_plan(
+    plan: &AutopilotPlanSnapshot,
+    settings: AutopilotLoopSettings,
+    iteration: usize,
+    next_poll_in_ms: Option<u64>,
+    recent_transient_failures: &[AutopilotTransientFailure],
+    cancellation_requested: bool,
+) -> AutopilotLoopStatusSnapshot {
+    let lane_activity = plan
+        .lanes
+        .iter()
+        .map(|lane| AutopilotLaneActivity {
+            lane: lane.lane.clone(),
+            status: lane.status.clone(),
+            action: lane.proposed_action.clone(),
+            selected_issue: lane.selected_issue.clone(),
+            reason: lane.reason.clone(),
+        })
+        .collect::<Vec<_>>();
+    let selected_issues = plan
+        .lanes
+        .iter()
+        .filter_map(|lane| lane.selected_issue.clone())
+        .collect::<Vec<_>>();
+    let readiness_blocker_count = plan.readiness.blockers.len();
+    let mut blocked_reasons = plan.readiness.blockers.clone();
+    blocked_reasons.extend(
+        plan.lanes
+            .iter()
+            .filter(|lane| lane.status == "blocked")
+            .map(|lane| format!("{}:{}", lane.lane, lane.reason)),
+    );
+    let mut retrying = plan.runtime.retrying.clone();
+    retrying.extend(retry_records_from_transient_failures(
+        recent_transient_failures,
+    ));
+    let counts = autopilot_loop_counts(
+        &lane_activity,
+        readiness_blocker_count,
+        plan.runtime
+            .retrying_count
+            .saturating_add(recent_transient_failures.len()),
+    );
+    let phase = if cancellation_requested {
+        "cancelled".into()
+    } else {
+        autopilot_loop_phase(&counts, &plan.readiness.status)
+    };
+    let message = match phase.as_str() {
+        "cancelled" => "cancellation requested; no further lane work will be started",
+        "blocked" => "blocked state is visible and non-mutating",
+        "retrying" => "retry/backoff is active; loop remains alive",
+        "running" => "one or more lanes have useful work ready",
+        "idle" => "healthy idle; waiting for the next poll",
+        _ => "checking",
+    }
+    .to_string();
+    AutopilotLoopStatusSnapshot {
+        schema_version: 1,
+        workflow_path: plan.workflow_path.clone(),
+        iteration,
+        mode: autopilot_loop_mode(settings).into(),
+        phase,
+        message,
+        cancellation_requested,
+        polling: PollingSnapshot {
+            checking: false,
+            next_poll_in_ms,
+            poll_interval_ms: settings.poll_interval_ms,
+        },
+        settings,
+        lane_activity,
+        counts,
+        selected_issues,
+        active_issues: plan.runtime.active_issues.clone(),
+        parked_queues: plan.parked_queues.clone(),
+        blocked_reasons,
+        retrying,
+        recent_transient_failures: recent_transient_failures.to_vec(),
+    }
+}
+
+fn autopilot_loop_blocked_status(
+    options: &AutopilotLoopOptions,
+    iteration: usize,
+    reason: String,
+    recent_transient_failures: &[AutopilotTransientFailure],
+) -> AutopilotLoopStatusSnapshot {
+    let settings = AutopilotLoopSettings::fallback(options);
+    AutopilotLoopStatusSnapshot {
+        schema_version: 1,
+        workflow_path: options.workflow_path.display().to_string(),
+        iteration,
+        mode: autopilot_loop_mode(settings).into(),
+        phase: "blocked".into(),
+        message: "blocked before mutation; operator intervention or config repair is required"
+            .into(),
+        cancellation_requested: false,
+        polling: PollingSnapshot {
+            checking: false,
+            next_poll_in_ms: Some(settings.poll_interval_ms),
+            poll_interval_ms: settings.poll_interval_ms,
+        },
+        settings,
+        lane_activity: Vec::new(),
+        counts: AutopilotLoopCounts {
+            blocked: 1,
+            retrying: recent_transient_failures.len(),
+            ..Default::default()
+        },
+        selected_issues: Vec::new(),
+        active_issues: Vec::new(),
+        parked_queues: Vec::new(),
+        blocked_reasons: vec![reason],
+        retrying: retry_records_from_transient_failures(recent_transient_failures),
+        recent_transient_failures: recent_transient_failures.to_vec(),
+    }
+}
+
+fn autopilot_loop_failure_status(
+    options: &AutopilotLoopOptions,
+    settings: AutopilotLoopSettings,
+    iteration: usize,
+    recent_failures: &[AutopilotTransientFailure],
+    phase: &str,
+    next_poll_in_ms: Option<u64>,
+) -> AutopilotLoopStatusSnapshot {
+    let retrying = retry_records_from_transient_failures(recent_failures);
+    let blocked_reasons = if phase == "blocked" {
+        recent_failures
+            .last()
+            .map(|failure| vec![failure.error.clone()])
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    AutopilotLoopStatusSnapshot {
+        schema_version: 1,
+        workflow_path: options.workflow_path.display().to_string(),
+        iteration,
+        mode: autopilot_loop_mode(settings).into(),
+        phase: phase.into(),
+        message: if phase == "blocked" {
+            "unrecoverable preflight failure; no mutation attempted".into()
+        } else {
+            "recoverable backend failure recorded; retry/backoff scheduled".into()
+        },
+        cancellation_requested: false,
+        polling: PollingSnapshot {
+            checking: false,
+            next_poll_in_ms,
+            poll_interval_ms: settings.poll_interval_ms,
+        },
+        settings,
+        lane_activity: Vec::new(),
+        counts: AutopilotLoopCounts {
+            retrying: retrying.len(),
+            blocked: usize::from(phase == "blocked"),
+            ..Default::default()
+        },
+        selected_issues: Vec::new(),
+        active_issues: Vec::new(),
+        parked_queues: Vec::new(),
+        blocked_reasons,
+        retrying,
+        recent_transient_failures: recent_failures.to_vec(),
+    }
+}
+
+fn autopilot_loop_cancelled_status(
+    options: &AutopilotLoopOptions,
+    iteration: usize,
+    message: String,
+) -> AutopilotLoopStatusSnapshot {
+    let settings = AutopilotLoopSettings::fallback(options);
+    AutopilotLoopStatusSnapshot {
+        schema_version: 1,
+        workflow_path: options.workflow_path.display().to_string(),
+        iteration,
+        mode: autopilot_loop_mode(settings).into(),
+        phase: "cancelled".into(),
+        message,
+        cancellation_requested: true,
+        polling: PollingSnapshot {
+            checking: false,
+            next_poll_in_ms: None,
+            poll_interval_ms: settings.poll_interval_ms,
+        },
+        settings,
+        lane_activity: Vec::new(),
+        counts: AutopilotLoopCounts::default(),
+        selected_issues: Vec::new(),
+        active_issues: Vec::new(),
+        parked_queues: Vec::new(),
+        blocked_reasons: Vec::new(),
+        retrying: Vec::new(),
+        recent_transient_failures: Vec::new(),
+    }
+}
+
+fn autopilot_loop_counts(
+    lane_activity: &[AutopilotLaneActivity],
+    blocked_reasons: usize,
+    retrying: usize,
+) -> AutopilotLoopCounts {
+    let mut counts = AutopilotLoopCounts {
+        retrying,
+        blocked: blocked_reasons,
+        ..Default::default()
+    };
+    for lane in lane_activity {
+        match lane.status.as_str() {
+            "ready" | "waiting" => counts.running += 1,
+            "blocked" => counts.blocked += 1,
+            "idle" => counts.idle += 1,
+            "retrying" => counts.retrying += 1,
+            _ => {}
+        }
+    }
+    counts
+}
+
+fn autopilot_loop_phase(counts: &AutopilotLoopCounts, readiness_status: &str) -> String {
+    if counts.retrying > 0 {
+        "retrying".into()
+    } else if readiness_status.starts_with("blocked") || counts.blocked > 0 {
+        "blocked".into()
+    } else if counts.running > 0 {
+        "running".into()
+    } else {
+        "idle".into()
+    }
+}
+
+fn retry_records_from_transient_failures(
+    failures: &[AutopilotTransientFailure],
+) -> Vec<AutopilotRetryRecord> {
+    failures
+        .iter()
+        .filter(|failure| failure.recovery_policy == "retry_with_backoff")
+        .map(|failure| AutopilotRetryRecord {
+            lane: "autopilot".into(),
+            issue_identifier: None,
+            attempt: failure.attempt,
+            due_in_ms: failure.delay_ms,
+            next_retry_at_ms: failure.at_ms.saturating_add(failure.delay_ms),
+            error: failure.error.clone(),
+        })
+        .collect()
+}
+
+fn keep_recent_transient_failures(failures: &mut Vec<AutopilotTransientFailure>) {
+    const MAX_RECENT_FAILURES: usize = 5;
+    if failures.len() > MAX_RECENT_FAILURES {
+        let extra = failures.len() - MAX_RECENT_FAILURES;
+        failures.drain(0..extra);
+    }
+}
+
+fn autopilot_loop_mode(settings: AutopilotLoopSettings) -> &'static str {
+    if settings.write {
+        "write"
+    } else {
+        "dry-run"
+    }
+}
+
+fn autopilot_loop_should_continue(limit: Option<usize>, iterations: usize) -> bool {
+    limit.map(|max| iterations < max).unwrap_or(true)
+}
+
+fn autopilot_failure_is_recoverable(error: &str) -> bool {
+    let value = error.to_ascii_lowercase();
+    if value.contains("permission denied")
+        || value.contains("invalid workflow")
+        || value.contains("workflow_config_error")
+        || value.contains("canonical checkout")
+        || value.contains("not found in worker path")
+        || value.contains("configured command")
+    {
+        return false;
+    }
+    value.contains("network")
+        || value.contains("timed out")
+        || value.contains("timeout")
+        || value.contains("rate limit")
+        || value.contains("retry-after")
+        || value.contains("http 5")
+        || value.contains("502")
+        || value.contains("503")
+        || value.contains("504")
+        || value.contains("temporarily unavailable")
+        || value.contains("github graphql operation failed")
+        || value.contains("mergeability")
+        || value.contains("merge state is `unknown`")
+        || value.contains("gemini")
+        || value.contains("please retry")
+}
+
+fn install_autopilot_cancellation_handler() -> Result<Arc<AtomicBool>, Box<dyn std::error::Error>> {
+    let cancellation = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&cancellation))?;
+    Ok(cancellation)
+}
+
+fn autopilot_sleep_or_cancel(delay_ms: u64, cancellation: &Arc<AtomicBool>) -> bool {
+    let mut slept_ms = 0u64;
+    while slept_ms < delay_ms {
+        if cancellation.load(Ordering::SeqCst) {
+            return true;
+        }
+        let step_ms = (delay_ms - slept_ms).min(250);
+        thread::sleep(Duration::from_millis(step_ms));
+        slept_ms = slept_ms.saturating_add(step_ms);
+    }
+    cancellation.load(Ordering::SeqCst)
+}
+
+fn print_autopilot_loop_status(
+    status: &AutopilotLoopStatusSnapshot,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(status)?);
+    } else {
+        println!("{}", render_autopilot_loop_status_human(status));
+    }
+    Ok(())
+}
+
+fn render_autopilot_loop_status_human(status: &AutopilotLoopStatusSnapshot) -> String {
+    let mut lines = vec![
+        "Autopilot Loop".to_string(),
+        format!(
+            "iteration={} mode={} phase={} message={}",
+            status.iteration, status.mode, status.phase, status.message
+        ),
+        format!(
+            "polling: checking={} interval_ms={} next_poll_in_ms={}",
+            status.polling.checking,
+            status.polling.poll_interval_ms,
+            status
+                .polling
+                .next_poll_in_ms
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "n/a".into())
+        ),
+        format!(
+            "counts: running={} retrying={} blocked={} idle={}",
+            status.counts.running,
+            status.counts.retrying,
+            status.counts.blocked,
+            status.counts.idle
+        ),
+        format!(
+            "settings: main={} review={} merge={} dry_run={} write={}",
+            status.settings.main_max_concurrent,
+            status.settings.review_max_concurrent,
+            status.settings.merge_max_concurrent,
+            status.settings.dry_run,
+            status.settings.write
+        ),
+    ];
+    if !status.lane_activity.is_empty() {
+        lines.push("lanes:".into());
+        for lane in &status.lane_activity {
+            let selected = lane
+                .selected_issue
+                .as_ref()
+                .map(|issue| issue.identifier.clone())
+                .unwrap_or_else(|| "none".into());
+            lines.push(format!(
+                "- {} status={} action={} selected={} reason={}",
+                lane.lane, lane.status, lane.action, selected, lane.reason
+            ));
+        }
+    }
+    if !status.parked_queues.is_empty() {
+        lines.push("parked queues:".into());
+        for queue in &status.parked_queues {
+            lines.push(format!(
+                "- {} state={} count={}",
+                queue.name, queue.state, queue.count
+            ));
+        }
+    }
+    if !status.active_issues.is_empty() {
+        lines.push("active issues:".into());
+        for issue in &status.active_issues {
+            lines.push(format!(
+                "- {} lane={} backend={} session={}",
+                issue.identifier,
+                issue.lane,
+                issue.backend,
+                issue.session_id.as_deref().unwrap_or("n/a")
+            ));
+        }
+    }
+    if !status.retrying.is_empty() {
+        lines.push("retrying:".into());
+        for retry in &status.retrying {
+            lines.push(format!(
+                "- lane={} issue={} attempt={} due_in_ms={} error={}",
+                retry.lane,
+                retry.issue_identifier.as_deref().unwrap_or("n/a"),
+                retry.attempt,
+                retry.due_in_ms,
+                retry.error
+            ));
+        }
+    }
+    if !status.blocked_reasons.is_empty() {
+        lines.push("blocked reasons:".into());
+        for reason in &status.blocked_reasons {
+            lines.push(format!("- {reason}"));
+        }
+    }
+    if !status.recent_transient_failures.is_empty() {
+        lines.push("recent transient failures:".into());
+        for failure in &status.recent_transient_failures {
+            lines.push(format!(
+                "- attempt={} delay_ms={} policy={} error={}",
+                failure.attempt, failure.delay_ms, failure.recovery_policy, failure.error
+            ));
+        }
+    }
+    lines.join("\n")
 }
 
 fn session_needs_autopilot_attention(session: &SessionStatusSnapshot) -> bool {
@@ -13247,6 +14039,9 @@ enum Command {
         workflow_path: PathBuf,
         json: bool,
     },
+    AutopilotLoop {
+        options: AutopilotLoopOptions,
+    },
     StatusApi {
         workflow_path: PathBuf,
         bind: SocketAddr,
@@ -13513,6 +14308,20 @@ struct RunLoopOptions {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct AutopilotLoopOptions {
+    workflow_path: PathBuf,
+    max_iterations: Option<usize>,
+    once: bool,
+    write: bool,
+    dry_run: bool,
+    poll_interval_ms: Option<u64>,
+    main_max_concurrent: Option<usize>,
+    review_max_concurrent: Option<usize>,
+    merge_max_concurrent: Option<usize>,
+    json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ProjectStateOptions {
     workflow_path: PathBuf,
     display: DisplayMode,
@@ -13619,6 +14428,16 @@ impl RunLoopOptions {
         self.max_concurrent
             .unwrap_or(config.agent.max_concurrent_agents)
             .max(1)
+    }
+}
+
+impl AutopilotLoopOptions {
+    fn iteration_limit(&self) -> Option<usize> {
+        if self.once {
+            Some(1)
+        } else {
+            self.max_iterations
+        }
     }
 }
 
@@ -13755,12 +14574,40 @@ enum AutopilotCommandArgs {
         about = "Plan Main, Review, and Merge lanes without mutating tracker or runtime state"
     )]
     Plan(AutopilotPlanArgs),
+    #[command(
+        about = "Run a foreground all-lane autopilot status loop with explicit write-mode gating"
+    )]
+    Loop(AutopilotLoopArgs),
 }
 
 #[derive(Debug, Args)]
 struct AutopilotPlanArgs {
     #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
     workflow_path: PathBuf,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct AutopilotLoopArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    dry_run: bool,
+    #[arg(long)]
+    max_iterations: Option<usize>,
+    #[arg(long)]
+    once: bool,
+    #[arg(long)]
+    poll_interval_ms: Option<u64>,
+    #[arg(long)]
+    main_max_concurrent: Option<usize>,
+    #[arg(long)]
+    review_max_concurrent: Option<usize>,
+    #[arg(long)]
+    merge_max_concurrent: Option<usize>,
     #[arg(long)]
     json: bool,
 }
@@ -14756,6 +15603,31 @@ fn run_loop_command(args: RunLoopArgs) -> Result<Command, String> {
     })
 }
 
+fn autopilot_loop_command(args: AutopilotLoopArgs) -> Result<Command, String> {
+    if args.max_iterations == Some(0)
+        || args.poll_interval_ms == Some(0)
+        || args.main_max_concurrent == Some(0)
+        || args.review_max_concurrent == Some(0)
+        || args.merge_max_concurrent == Some(0)
+    {
+        return Err(usage());
+    }
+    Ok(Command::AutopilotLoop {
+        options: AutopilotLoopOptions {
+            workflow_path: args.workflow_path,
+            max_iterations: args.max_iterations,
+            once: args.once,
+            write: args.write,
+            dry_run: args.dry_run,
+            poll_interval_ms: args.poll_interval_ms,
+            main_max_concurrent: args.main_max_concurrent,
+            review_max_concurrent: args.review_max_concurrent,
+            merge_max_concurrent: args.merge_max_concurrent,
+            json: args.json,
+        },
+    })
+}
+
 fn merge_loop_command(args: MergeLoopArgs) -> Result<Command, String> {
     if args.max_iterations == Some(0)
         || args.max_concurrent == Some(0)
@@ -14924,6 +15796,7 @@ impl TryFrom<Cli> for Command {
                             workflow_path: args.workflow_path,
                             json: args.json,
                         }),
+                        AutopilotCommandArgs::Loop(args) => autopilot_loop_command(args),
                     },
                     CliCommand::Status(args) => match args.command {
                         StatusCommandArgs::Show(show) => Ok(Self::Plan {
@@ -15732,6 +16605,9 @@ mod tests {
             runtime_state_count: 0,
             session_count: 0,
             session_attention_count: 0,
+            retrying_count: 0,
+            active_issues: Vec::new(),
+            retrying: Vec::new(),
             blockers: Vec::new(),
             evidence: Vec::new(),
         }
@@ -15760,6 +16636,21 @@ mod tests {
             integration_gaps: Vec::new(),
         })
         .unwrap()
+    }
+
+    fn test_autopilot_loop_options() -> AutopilotLoopOptions {
+        AutopilotLoopOptions {
+            workflow_path: PathBuf::from("workflows/jade-symphony.md"),
+            max_iterations: Some(1),
+            once: false,
+            write: false,
+            dry_run: true,
+            poll_interval_ms: Some(250),
+            main_max_concurrent: Some(2),
+            review_max_concurrent: Some(3),
+            merge_max_concurrent: Some(4),
+            json: false,
+        }
     }
 
     #[test]
@@ -15793,6 +16684,202 @@ mod tests {
 
         assert_eq!(workflow_path, PathBuf::from("workflows/jade-symphony.md"));
         assert!(json);
+    }
+
+    #[test]
+    fn parses_grouped_autopilot_loop_flags() {
+        let Command::AutopilotLoop { options } = parse(&[
+            "autopilot",
+            "loop",
+            "workflows/jade-symphony.md",
+            "--max-iterations",
+            "2",
+            "--write",
+            "--poll-interval-ms",
+            "750",
+            "--main-max-concurrent",
+            "3",
+            "--review-max-concurrent",
+            "2",
+            "--merge-max-concurrent",
+            "1",
+            "--json",
+        ]) else {
+            panic!("expected autopilot loop command");
+        };
+
+        assert_eq!(
+            options.workflow_path,
+            PathBuf::from("workflows/jade-symphony.md")
+        );
+        assert_eq!(options.max_iterations, Some(2));
+        assert!(options.write);
+        assert_eq!(options.poll_interval_ms, Some(750));
+        assert_eq!(options.main_max_concurrent, Some(3));
+        assert_eq!(options.review_max_concurrent, Some(2));
+        assert_eq!(options.merge_max_concurrent, Some(1));
+        assert!(options.json);
+    }
+
+    #[test]
+    fn autopilot_loop_status_reports_idle_and_next_poll() {
+        let plan = test_autopilot_plan(Vec::new());
+        let config = test_config();
+        let options = test_autopilot_loop_options();
+        let settings = AutopilotLoopSettings::from_config(&config, &options);
+
+        let status = autopilot_loop_status_from_plan(&plan, settings, 1, Some(250), &[], false);
+
+        assert_eq!(status.phase, "idle");
+        assert_eq!(status.polling.next_poll_in_ms, Some(250));
+        assert_eq!(status.polling.poll_interval_ms, 250);
+        assert_eq!(status.counts.idle, 3);
+        assert_eq!(status.settings.main_max_concurrent, 2);
+        assert_eq!(status.settings.review_max_concurrent, 3);
+        assert_eq!(status.settings.merge_max_concurrent, 4);
+        assert_eq!(status.parked_queues.len(), 3);
+    }
+
+    #[test]
+    fn autopilot_loop_status_records_runtime_retry_backoff() {
+        let config = test_config();
+        let adapter = jade_symphony::tracker::MemoryTracker::new(Vec::new());
+        let mut state = RuntimeState::active(
+            RuntimeIssueState {
+                id: "I_361".into(),
+                identifier: "#361".into(),
+            },
+            "tmux",
+        );
+        state.lane = Some("main".into());
+        state.backend_session_id = Some("jade-main-361".into());
+        state.attempt_count = 2;
+        record_runtime_retry(&mut state, current_time_ms(), 5_000, "rate limited");
+        let runtime = AutopilotRuntimeSummary::from_parts(&[state], &[], None, None);
+        let plan = build_autopilot_plan_from_parts(AutopilotPlanInputs {
+            workflow_path: Path::new("/tmp/WORKFLOW.md"),
+            config: &config,
+            adapter: &adapter,
+            issues: Vec::new(),
+            doctor_report: clean_autopilot_doctor(0),
+            canonical_checkout: clean_autopilot_canonical(),
+            runtime,
+            integration_gaps: Vec::new(),
+        })
+        .unwrap();
+        let options = test_autopilot_loop_options();
+        let settings = AutopilotLoopSettings::from_config(&config, &options);
+
+        let status = autopilot_loop_status_from_plan(&plan, settings, 1, Some(250), &[], false);
+
+        assert_eq!(status.phase, "retrying");
+        assert_eq!(status.counts.retrying, 1);
+        assert_eq!(status.retrying[0].issue_identifier.as_deref(), Some("#361"));
+        assert_eq!(status.retrying[0].attempt, 2);
+        assert!(status.retrying[0].due_in_ms <= 5_000);
+        assert_eq!(
+            status.active_issues[0].session_id.as_deref(),
+            Some("jade-main-361")
+        );
+    }
+
+    #[test]
+    fn autopilot_loop_transient_failure_records_backoff_and_keeps_loop_alive() {
+        let options = test_autopilot_loop_options();
+        let settings = AutopilotLoopSettings::fallback(&options);
+        let failures = vec![AutopilotTransientFailure {
+            at_ms: 1_000,
+            attempt: 1,
+            delay_ms: 10_000,
+            error: "GitHub GraphQL operation failed kind=network".into(),
+            recovery_policy: "retry_with_backoff".into(),
+        }];
+
+        let status = autopilot_loop_failure_status(
+            &options,
+            settings,
+            1,
+            &failures,
+            "retrying",
+            Some(10_000),
+        );
+
+        assert_eq!(status.phase, "retrying");
+        assert_eq!(status.polling.next_poll_in_ms, Some(10_000));
+        assert_eq!(status.retrying.len(), 1);
+        assert_eq!(status.recent_transient_failures.len(), 1);
+        assert!(autopilot_failure_is_recoverable(
+            "tracker integration is unavailable: GitHub GraphQL operation failed kind=network"
+        ));
+        assert!(!autopilot_failure_is_recoverable(
+            "permission denied while executing configured command"
+        ));
+    }
+
+    #[test]
+    fn autopilot_loop_status_blocks_unsafe_preflight_without_mutation() {
+        let config = test_config();
+        let issues = Vec::new();
+        let adapter = jade_symphony::tracker::MemoryTracker::new(issues.clone());
+        let doctor = ProjectAuditReport {
+            total_issues: 0,
+            violations: vec![ProjectAuditViolation {
+                issue_ref: "canonical".into(),
+                title: "Canonical checkout has tracked dirty files".into(),
+                state: "local".into(),
+                severity: AuditSeverity::Blocker,
+                code: "canonical_checkout_tracked_dirty".into(),
+                message: "tracked dirty files".into(),
+                suggestion: "clean checkout".into(),
+            }],
+            integration_gaps: Vec::new(),
+            skill_readiness_summary: None,
+        };
+        let canonical = AutopilotCanonicalCheckout {
+            safe_for_write: false,
+            reason: Some("current branch is \"feature/test\", expected \"main\"".into()),
+            ..clean_autopilot_canonical()
+        };
+        let plan = build_autopilot_plan_from_parts(AutopilotPlanInputs {
+            workflow_path: Path::new("/tmp/WORKFLOW.md"),
+            config: &config,
+            adapter: &adapter,
+            issues,
+            doctor_report: doctor,
+            canonical_checkout: canonical,
+            runtime: clean_autopilot_runtime(),
+            integration_gaps: Vec::new(),
+        })
+        .unwrap();
+        let options = test_autopilot_loop_options();
+        let settings = AutopilotLoopSettings::from_config(&config, &options);
+
+        let status = autopilot_loop_status_from_plan(&plan, settings, 1, Some(250), &[], false);
+
+        assert_eq!(status.phase, "blocked");
+        assert!(status
+            .blocked_reasons
+            .iter()
+            .any(|reason| reason.contains("doctor_blockers=1")));
+        assert!(status
+            .blocked_reasons
+            .iter()
+            .any(|reason| reason.contains("canonical_checkout=")));
+        assert!(status.selected_issues.is_empty());
+    }
+
+    #[test]
+    fn autopilot_loop_cancellation_status_is_clean_and_non_mutating() {
+        let options = test_autopilot_loop_options();
+        let status = autopilot_loop_cancelled_status(&options, 2, "cancellation fixture".into());
+
+        assert_eq!(status.phase, "cancelled");
+        assert!(status.cancellation_requested);
+        assert_eq!(status.polling.next_poll_in_ms, None);
+        assert!(status.selected_issues.is_empty());
+        assert!(status.active_issues.is_empty());
+        assert!(status.retrying.is_empty());
+        assert!(status.blocked_reasons.is_empty());
     }
 
     #[test]

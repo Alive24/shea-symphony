@@ -4246,7 +4246,7 @@ enum MergeOnceOutcome {
 }
 
 fn merge_once(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std::error::Error>> {
-    merge_once_tick(workflow_path, write).map(|_| ())
+    merge_once_tick(workflow_path, write, false).map(|_| ())
 }
 
 fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
@@ -4261,12 +4261,17 @@ fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::error::Error
 
     for iteration in 1..=max {
         println!(
-            "merge_loop_iteration={} mode={} max_concurrent={max_concurrent}",
+            "merge_loop_iteration={} mode={} recover={} max_concurrent={max_concurrent}",
             iteration,
-            if options.write { "write" } else { "dry-run" }
+            if options.write { "write" } else { "dry-run" },
+            options.recover
         );
         for slot in 1..=max_concurrent {
-            match merge_once_tick(options.workflow_path.clone(), options.write)? {
+            match merge_once_tick(
+                options.workflow_path.clone(),
+                options.write,
+                options.recover,
+            )? {
                 MergeOnceOutcome::NoMergingIssue => {
                     println!(
                         "merge_loop=stopped reason=no_merging_issue iterations={iteration} slot={slot}"
@@ -4314,6 +4319,7 @@ fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::error::Error
 fn merge_once_tick(
     workflow_path: PathBuf,
     write: bool,
+    recover: bool,
 ) -> Result<MergeOnceOutcome, Box<dyn std::error::Error>> {
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
@@ -4333,19 +4339,34 @@ fn merge_once_tick(
 
     issues.sort_by_key(|issue| issue.priority.unwrap_or(i64::MAX));
     let worker_id = worker_identity(&config, WorkerLane::Merging);
-    let Some(selected) =
-        select_pool_worker_issues(&issues, WorkerLane::Merging, &worker_id, 1, &config)
-            .into_iter()
-            .next()
+    let Some(selected) = select_merge_worker_issues(&issues, &worker_id, 1, &config, recover)
+        .into_iter()
+        .next()
     else {
         println!("merge_once=stopped reason=no_unclaimed_merging_issue");
         return Ok(MergeOnceOutcome::NoMergingIssue);
     };
-    let issue = adapter
-        .get_issue(&selected.identifier)?
-        .unwrap_or(selected.clone());
+    let latest_issue = adapter.get_issue(&selected.issue.identifier)?;
+    let (issue, recovery_reason) = match latest_issue {
+        Some(issue) => {
+            let recovery_reason = recover
+                .then(|| merge_recovery_reason(&issue, &worker_id, &config))
+                .flatten();
+            (issue, recovery_reason)
+        }
+        None => {
+            let recovery_reason = recover.then_some(selected.recovery_reason).flatten();
+            (selected.issue.clone(), recovery_reason)
+        }
+    };
+    if let Some(reason) = recovery_reason.as_deref() {
+        println!(
+            "merge_loop_recovery_candidate issue={} reason={}",
+            issue.identifier, reason
+        );
+    }
     let eligibility = pool_claim_eligibility(&issue, WorkerLane::Merging, &worker_id, &config);
-    if !eligibility.is_claimable() {
+    if !eligibility.is_claimable() && recovery_reason.is_none() {
         println!(
             "merge_once_action=skipped issue={} reason={}",
             issue.identifier,
@@ -9791,6 +9812,90 @@ fn select_pool_worker_issues(
     selected
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct MergeWorkerSelection {
+    issue: TrackerIssue,
+    recovery_reason: Option<String>,
+}
+
+fn select_merge_worker_issues(
+    issues: &[TrackerIssue],
+    worker_id: &str,
+    pool: usize,
+    config: &RuntimeConfig,
+    recover: bool,
+) -> Vec<MergeWorkerSelection> {
+    let limit = pool.max(1);
+    let mut selected = Vec::new();
+
+    if recover {
+        let mut recovery_candidates = issues
+            .iter()
+            .filter_map(|issue| {
+                merge_recovery_reason(issue, worker_id, config).map(|reason| MergeWorkerSelection {
+                    issue: issue.clone(),
+                    recovery_reason: Some(reason),
+                })
+            })
+            .collect::<Vec<_>>();
+        recovery_candidates.sort_by_key(|candidate| candidate.issue.priority.unwrap_or(i64::MAX));
+        for candidate in recovery_candidates {
+            if selected.len() >= limit {
+                break;
+            }
+            selected.push(candidate);
+        }
+    }
+
+    let remaining = limit.saturating_sub(selected.len());
+    if remaining > 0 {
+        for issue in
+            select_pool_worker_issues(issues, WorkerLane::Merging, worker_id, remaining, config)
+        {
+            if selected.iter().any(|candidate: &MergeWorkerSelection| {
+                candidate.issue.identifier == issue.identifier
+            }) {
+                continue;
+            }
+            selected.push(MergeWorkerSelection {
+                issue,
+                recovery_reason: None,
+            });
+        }
+    }
+
+    selected
+}
+
+fn merge_recovery_reason(
+    issue: &TrackerIssue,
+    worker_id: &str,
+    config: &RuntimeConfig,
+) -> Option<String> {
+    let normalized_state = issue.normalized_state();
+    if normalized_state != normalize_state(&config.tracker.state_map.merging) {
+        return None;
+    }
+
+    let owner = project_text_field(issue, WorkerLane::Merging.claim_field())?;
+    let claim = LaneClaim::parse(&owner).ok()?;
+    if claim.lane != LaneClaimLane::Merge
+        || claim.issue != issue.identifier
+        || claim.state != LaneClaimState::Active
+        || !matches!(claim.source, LaneClaimSource::Loop | LaneClaimSource::Goal)
+        || claim.worker.as_deref() == Some(worker_id)
+    {
+        return None;
+    }
+
+    Some(format!(
+        "recover_active_merge_claim previous_worker={} run={} source={}",
+        claim.worker.as_deref().unwrap_or("unknown"),
+        claim.run,
+        claim.source.as_str()
+    ))
+}
+
 fn write_lane_claim_field(
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
@@ -9914,6 +10019,13 @@ struct RuntimeRecoveryCandidate {
     state: RuntimeState,
     issue: TrackerIssue,
     reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ActiveRuntimeSessionProbe {
+    state: RuntimeState,
+    session_name: String,
+    probe: SessionStatusProbe,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10234,8 +10346,10 @@ fn run_loop_resume_preflight_many(
                 }
             };
             if let Some(issue) = in_progress_issue {
-                if let Some(probe) = runtime_session_probe_for_state(config, state, now_ms)? {
-                    if session_status_counts_as_active_worker(&probe.status) {
+                if let Some(active_session) =
+                    active_runtime_session_for_issue(config, state, now_ms)?
+                {
+                    if session_status_counts_as_active_worker(&active_session.probe.status) {
                         let issue_identifier = state
                             .active_issue
                             .as_ref()
@@ -10247,20 +10361,22 @@ fn run_loop_resume_preflight_many(
                             Some(state),
                             "RuntimeRecoverSkippedActiveSession",
                             &format!(
-                                "issue={issue_identifier} status={} source={} evidence={}",
-                                probe.status.as_str(),
-                                probe.source.as_str(),
-                                compact_evidence(&probe.evidence)
+                                "issue={issue_identifier} session={} status={} source={} evidence={}",
+                                active_session.session_name,
+                                active_session.probe.status.as_str(),
+                                active_session.probe.source.as_str(),
+                                compact_evidence(&active_session.probe.evidence)
                             ),
                         )?;
                         println!(
-                            "run_loop_resume_preflight action=active_session issue={} status={} source={} evidence={}",
+                            "run_loop_resume_preflight action=active_session issue={} session={} status={} source={} evidence={}",
                             issue_identifier,
-                            probe.status.as_str(),
-                            probe.source.as_str(),
-                            compact_evidence(&probe.evidence)
+                            active_session.session_name,
+                            active_session.probe.status.as_str(),
+                            active_session.probe.source.as_str(),
+                            compact_evidence(&active_session.probe.evidence)
                         );
-                        retained_states.push(state.clone());
+                        retained_states.push(active_session.state);
                         continue;
                     }
                 }
@@ -10444,16 +10560,18 @@ fn recover_registered_main_sessions(
         {
             continue;
         }
-        let Some(issue) = adapter.get_issue(issue_identifier)? else {
-            continue;
-        };
-        if normalize_state(&issue.state) != "in progress" {
-            continue;
-        }
 
         let state = runtime_state_from_session_record(record);
         match runtime_session_probe_from_record(config, record, now_ms) {
             Ok(probe) if session_status_counts_as_active_worker(&probe.status) => {
+                if !recover_registry_issue_allows_active_retention(
+                    adapter,
+                    config,
+                    &state,
+                    issue_identifier,
+                )? {
+                    continue;
+                }
                 *active_main_workers += 1;
                 append_runtime_supervision_event(
                     config,
@@ -10477,12 +10595,15 @@ fn recover_registered_main_sessions(
                 );
                 retained_states.push(state);
             }
-            Ok(probe)
-                if matches!(
-                    probe.status,
-                    SessionStatus::Stale | SessionStatus::Failed | SessionStatus::UsageLimited
-                ) =>
-            {
+            Ok(probe) => {
+                if !matches!(probe.status, SessionStatus::Stale | SessionStatus::Failed) {
+                    continue;
+                }
+                let Some(issue) =
+                    recover_registry_issue_for_restart(adapter, config, &state, issue_identifier)?
+                else {
+                    continue;
+                };
                 let reason = format!(
                     "registry_session_recoverable session={} status={} source={} evidence={}",
                     record.session_name,
@@ -10490,53 +10611,208 @@ fn recover_registered_main_sessions(
                     probe.source.as_str(),
                     compact_evidence(&probe.evidence)
                 );
-                append_runtime_supervision_event(
+                recover_registered_session_candidate(
                     config,
-                    Some(&state),
-                    "RuntimeRecoverable",
-                    &format!("issue={issue_identifier} reason={reason}"),
+                    recoverable_states,
+                    retained_states,
+                    RecoverRegisteredSessionCandidateInput {
+                        state: &state,
+                        issue,
+                        issue_identifier,
+                        session_name: &record.session_name,
+                        reason: &reason,
+                        status: Some((&probe.status, probe.source.as_str())),
+                    },
                 )?;
-                println!(
-                    "run_loop_resume_preflight action=recoverable_registry_session issue={} session={} status={} source={}",
-                    issue_identifier,
-                    record.session_name,
-                    probe.status.as_str(),
-                    probe.source.as_str()
-                );
-                recoverable_states.push(RuntimeRecoveryCandidate {
-                    state: state.clone(),
-                    issue,
-                    reason,
-                });
-                retained_states.push(state);
             }
-            Ok(_) => {}
             Err(error) => {
+                let Some(issue) =
+                    recover_registry_issue_for_restart(adapter, config, &state, issue_identifier)?
+                else {
+                    continue;
+                };
                 let reason = format!(
                     "registry_session_unavailable session={} reason={}",
                     record.session_name,
                     compact_evidence(&error.to_string())
                 );
-                append_runtime_supervision_event(
+                recover_registered_session_candidate(
                     config,
-                    Some(&state),
-                    "RuntimeRecoverable",
-                    &format!("issue={issue_identifier} reason={reason}"),
+                    recoverable_states,
+                    retained_states,
+                    RecoverRegisteredSessionCandidateInput {
+                        state: &state,
+                        issue,
+                        issue_identifier,
+                        session_name: &record.session_name,
+                        reason: &reason,
+                        status: None,
+                    },
                 )?;
-                println!(
-                    "run_loop_resume_preflight action=recoverable_registry_session issue={} session={} status=unavailable",
-                    issue_identifier, record.session_name
-                );
-                recoverable_states.push(RuntimeRecoveryCandidate {
-                    state: state.clone(),
-                    issue,
-                    reason,
-                });
-                retained_states.push(state);
             }
         }
     }
     Ok(())
+}
+
+fn recover_registry_issue_allows_active_retention(
+    adapter: &dyn jade_symphony::tracker::TrackerAdapter,
+    config: &RuntimeConfig,
+    state: &RuntimeState,
+    issue_identifier: &str,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    match adapter.get_issue(issue_identifier) {
+        Ok(Some(issue)) => Ok(normalize_state(&issue.state) == "in progress"),
+        Ok(None) => Ok(false),
+        Err(error) => {
+            let reason = format!(
+                "tracker_read_failed: {}",
+                compact_evidence(&error.to_string())
+            );
+            append_runtime_supervision_event(
+                config,
+                Some(state),
+                "RuntimeRecoverReadSkipped",
+                &format!("issue={issue_identifier} reason={reason}"),
+            )?;
+            println!(
+                "run_loop_resume_preflight action=recover_registry_read_skipped issue={} reason={}",
+                issue_identifier, reason
+            );
+            Ok(true)
+        }
+    }
+}
+
+fn recover_registry_issue_for_restart(
+    adapter: &dyn jade_symphony::tracker::TrackerAdapter,
+    config: &RuntimeConfig,
+    state: &RuntimeState,
+    issue_identifier: &str,
+) -> Result<Option<TrackerIssue>, Box<dyn std::error::Error>> {
+    match adapter.get_issue(issue_identifier) {
+        Ok(Some(issue)) if normalize_state(&issue.state) == "in progress" => Ok(Some(issue)),
+        Ok(_) => Ok(None),
+        Err(error) => {
+            let reason = format!(
+                "tracker_read_failed: {}",
+                compact_evidence(&error.to_string())
+            );
+            append_runtime_supervision_event(
+                config,
+                Some(state),
+                "RuntimeRecoverReadSkipped",
+                &format!("issue={issue_identifier} reason={reason}"),
+            )?;
+            println!(
+                "run_loop_resume_preflight action=recover_registry_read_skipped issue={} reason={}",
+                issue_identifier, reason
+            );
+            Ok(None)
+        }
+    }
+}
+
+struct RecoverRegisteredSessionCandidateInput<'a> {
+    state: &'a RuntimeState,
+    issue: TrackerIssue,
+    issue_identifier: &'a str,
+    session_name: &'a str,
+    reason: &'a str,
+    status: Option<(&'a SessionStatus, &'a str)>,
+}
+
+fn recover_registered_session_candidate(
+    config: &RuntimeConfig,
+    recoverable_states: &mut Vec<RuntimeRecoveryCandidate>,
+    retained_states: &mut Vec<RuntimeState>,
+    input: RecoverRegisteredSessionCandidateInput<'_>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    append_runtime_supervision_event(
+        config,
+        Some(input.state),
+        "RuntimeRecoverable",
+        &format!("issue={} reason={}", input.issue_identifier, input.reason),
+    )?;
+    if let Some((status, source)) = input.status {
+        println!(
+            "run_loop_resume_preflight action=recoverable_registry_session issue={} session={} status={} source={}",
+            input.issue_identifier,
+            input.session_name,
+            status.as_str(),
+            source
+        );
+    } else {
+        println!(
+            "run_loop_resume_preflight action=recoverable_registry_session issue={} session={} status=unavailable",
+            input.issue_identifier, input.session_name
+        );
+    }
+    recoverable_states.push(RuntimeRecoveryCandidate {
+        state: input.state.clone(),
+        issue: input.issue,
+        reason: input.reason.to_string(),
+    });
+    retained_states.push(input.state.clone());
+    Ok(())
+}
+
+fn active_runtime_session_for_issue(
+    config: &RuntimeConfig,
+    state: &RuntimeState,
+    now_ms: u64,
+) -> Result<Option<ActiveRuntimeSessionProbe>, Box<dyn std::error::Error>> {
+    let Some(issue_identifier) = runtime_state_issue_identifier(state) else {
+        return Ok(None);
+    };
+    let registry = load_session_registry(&session_registry_path(config))?;
+    let mut best: Option<(u8, ActiveRuntimeSessionProbe)> = None;
+    for record in registry.sessions.iter().rev() {
+        if !registered_main_tmux_session(record)
+            || record.issue_identifier.as_deref() != Some(issue_identifier)
+        {
+            continue;
+        }
+        let Ok(probe) = runtime_session_probe_from_record(config, record, now_ms) else {
+            continue;
+        };
+        if !session_status_counts_as_active_worker(&probe.status) {
+            continue;
+        }
+        let priority = active_session_status_priority(&probe.status);
+        if best
+            .as_ref()
+            .map(|(best_priority, _)| priority < *best_priority)
+            .unwrap_or(true)
+        {
+            best = Some((
+                priority,
+                ActiveRuntimeSessionProbe {
+                    state: runtime_state_from_session_record(record),
+                    session_name: record.session_name.clone(),
+                    probe,
+                },
+            ));
+        }
+    }
+    if let Some((_, active_session)) = best {
+        return Ok(Some(active_session));
+    }
+
+    let Some(probe) = runtime_session_probe_for_state(config, state, now_ms).unwrap_or(None) else {
+        return Ok(None);
+    };
+    if !session_status_counts_as_active_worker(&probe.status) {
+        return Ok(None);
+    }
+    Ok(Some(ActiveRuntimeSessionProbe {
+        state: state.clone(),
+        session_name: state
+            .backend_session_id
+            .clone()
+            .unwrap_or_else(|| "unknown".into()),
+        probe,
+    }))
 }
 
 fn registered_main_tmux_session(record: &AgentSessionRecord) -> bool {
@@ -10658,6 +10934,22 @@ fn session_status_counts_as_active_worker(status: &SessionStatus) -> bool {
             | SessionStatus::Unknown
             | SessionStatus::UnknownPersisted(_)
     )
+}
+
+fn active_session_status_priority(status: &SessionStatus) -> u8 {
+    match status {
+        SessionStatus::Running => 0,
+        SessionStatus::Starting => 1,
+        SessionStatus::WaitingForApproval
+        | SessionStatus::WaitingForHumanInput
+        | SessionStatus::WaitingForTrust => 2,
+        SessionStatus::UsageLimited => 3,
+        SessionStatus::Unknown | SessionStatus::UnknownPersisted(_) => 4,
+        SessionStatus::Completed
+        | SessionStatus::Recorded
+        | SessionStatus::Failed
+        | SessionStatus::Stale => 5,
+    }
 }
 
 fn runtime_recovery_reason(
@@ -12404,6 +12696,7 @@ struct MergeLoopOptions {
     max_iterations: Option<usize>,
     once: bool,
     write: bool,
+    recover: bool,
     max_concurrent: Option<usize>,
 }
 
@@ -12761,9 +13054,16 @@ struct RunLoopArgs {
     write: bool,
     #[arg(
         long,
-        help = "Recover interrupted Main tmux sessions by restarting recoverable In Progress runtime slots"
+        conflicts_with = "no_recover",
+        help = "Enable recover-first handling for interrupted Main tmux sessions (default in --write mode)"
     )]
     recover: bool,
+    #[arg(
+        long = "no-recover",
+        conflicts_with = "recover",
+        help = "Disable default recover-first handling in --write mode"
+    )]
+    no_recover: bool,
     #[arg(long = "max-concurrent")]
     max_concurrent: Option<usize>,
     #[arg(long, value_enum, default_value_t = CliDisplayMode::Plain)]
@@ -12939,6 +13239,18 @@ struct MergeLoopArgs {
     once: bool,
     #[arg(long)]
     write: bool,
+    #[arg(
+        long,
+        conflicts_with = "no_recover",
+        help = "Enable recover-first handling for interrupted Merge loop claims (default in --write mode)"
+    )]
+    recover: bool,
+    #[arg(
+        long = "no-recover",
+        conflicts_with = "recover",
+        help = "Disable default recover-first handling in --write mode"
+    )]
+    no_recover: bool,
     #[arg(long = "max-concurrent")]
     max_concurrent: Option<usize>,
     #[arg(long = "dry-run")]
@@ -13563,7 +13875,7 @@ fn run_loop_command(args: RunLoopArgs) -> Result<Command, String> {
             max_iterations: args.max_iterations,
             once: args.once,
             write: args.write,
-            recover: args.recover,
+            recover: loop_recover_enabled(args.write, args.recover, args.no_recover),
             max_concurrent: args.max_concurrent,
             display: args.display.into(),
         },
@@ -13583,9 +13895,14 @@ fn merge_loop_command(args: MergeLoopArgs) -> Result<Command, String> {
             max_iterations: args.max_iterations,
             once: args.once,
             write: args.write,
+            recover: loop_recover_enabled(args.write, args.recover, args.no_recover),
             max_concurrent: args.max_concurrent,
         },
     })
+}
+
+fn loop_recover_enabled(write: bool, explicit_recover: bool, no_recover: bool) -> bool {
+    explicit_recover || (write && !no_recover)
 }
 
 fn command_from_project_args(command: ProjectCommandArgs) -> Result<Command, String> {
@@ -14822,6 +15139,7 @@ mod tests {
         fail_comment: bool,
         fail_link_pr: bool,
         confirm_link_pr: bool,
+        fail_get_issue: bool,
     }
 
     impl Default for RecordingAdapter {
@@ -14834,6 +15152,7 @@ mod tests {
                 fail_comment: false,
                 fail_link_pr: false,
                 confirm_link_pr: true,
+                fail_get_issue: false,
             }
         }
     }
@@ -14859,6 +15178,13 @@ mod tests {
             &self,
             issue_ref: &str,
         ) -> Result<Option<TrackerIssue>, jade_symphony::tracker::TrackerError> {
+            if self.fail_get_issue {
+                return Err(
+                    jade_symphony::tracker::TrackerError::IntegrationUnavailable(
+                        "simulated get_issue failure".into(),
+                    ),
+                );
+            }
             Ok(self.issues.borrow().get(issue_ref).cloned())
         }
 
@@ -16451,6 +16777,28 @@ mod tests {
         assert_eq!(options.max_concurrent, Some(2));
         assert_eq!(options.worker_limit(&test_config()), 2);
         assert!(options.write);
+        assert!(options.recover);
+    }
+
+    #[test]
+    fn merge_loop_no_recover_disables_write_default() {
+        let command = Command::parse(vec![
+            "merge".into(),
+            "loop".into(),
+            "WORKFLOW.md".into(),
+            "--max-iterations".into(),
+            "1".into(),
+            "--write".into(),
+            "--no-recover".into(),
+        ])
+        .unwrap();
+
+        let Command::MergeLoop { options } = command else {
+            panic!("expected merge loop command");
+        };
+
+        assert!(options.write);
+        assert!(!options.recover);
     }
 
     #[test]
@@ -16786,13 +17134,12 @@ mod tests {
     }
 
     #[test]
-    fn parses_run_loop_recover_flag() {
+    fn run_loop_write_defaults_to_recover() {
         let command = Command::parse(vec![
             "main".into(),
             "loop".into(),
             "WORKFLOW.md".into(),
             "--write".into(),
-            "--recover".into(),
         ])
         .unwrap();
 
@@ -16802,6 +17149,25 @@ mod tests {
 
         assert!(options.write);
         assert!(options.recover);
+    }
+
+    #[test]
+    fn run_loop_no_recover_disables_write_default() {
+        let command = Command::parse(vec![
+            "main".into(),
+            "loop".into(),
+            "WORKFLOW.md".into(),
+            "--write".into(),
+            "--no-recover".into(),
+        ])
+        .unwrap();
+
+        let Command::RunLoop { options } = command else {
+            panic!("expected main loop command");
+        };
+
+        assert!(options.write);
+        assert!(!options.recover);
     }
 
     #[test]
@@ -16823,6 +17189,7 @@ mod tests {
 
         assert_eq!(options.iteration_limit(), Some(1));
         assert!(options.write);
+        assert!(options.recover);
     }
 
     #[test]
@@ -16966,6 +17333,65 @@ mod tests {
 
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].identifier, "#6");
+    }
+
+    #[test]
+    fn merge_recover_selection_prioritizes_interrupted_loop_claims() {
+        let config = test_config();
+        let worker = "Jade Symphony Agent";
+        let interrupted_claim = LaneClaim::active(
+            "#6",
+            LaneClaimLane::Merge,
+            LaneClaimActor::Codex,
+            LaneClaimSource::Loop,
+            1_779_000_000_000,
+        )
+        .with_worker("previous merger");
+        let mut interrupted = tracker_issue_with_ref("#6", "Interrupted merge", "Merging");
+        interrupted.priority = Some(20);
+        interrupted.project_fields.insert(
+            "Merging Agent".into(),
+            serde_json::Value::String(interrupted_claim.render()),
+        );
+        let mut unclaimed = tracker_issue_with_ref("#7", "Ready merge", "Merging");
+        unclaimed.priority = Some(1);
+
+        let selected =
+            select_merge_worker_issues(&[unclaimed, interrupted], worker, 1, &config, true);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].issue.identifier, "#6");
+        assert!(selected[0]
+            .recovery_reason
+            .as_deref()
+            .unwrap()
+            .contains("previous_worker=previous merger"));
+    }
+
+    #[test]
+    fn merge_recover_selection_does_not_adopt_manual_claims() {
+        let config = test_config();
+        let worker = "Jade Symphony Agent";
+        let manual_claim = LaneClaim::active(
+            "#6",
+            LaneClaimLane::Merge,
+            LaneClaimActor::Codex,
+            LaneClaimSource::Manual,
+            1_779_000_000_000,
+        )
+        .with_worker("manual merger");
+        let mut manual = tracker_issue_with_ref("#6", "Manual merge", "Merging");
+        manual.project_fields.insert(
+            "Merging Agent".into(),
+            serde_json::Value::String(manual_claim.render()),
+        );
+        let unclaimed = tracker_issue_with_ref("#7", "Ready merge", "Merging");
+
+        let selected = select_merge_worker_issues(&[manual, unclaimed], worker, 2, &config, true);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].issue.identifier, "#7");
+        assert!(selected[0].recovery_reason.is_none());
     }
 
     #[test]
@@ -17412,6 +17838,120 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn resume_preflight_registry_active_session_does_not_require_live_issue_read() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
+        config.observability.logs_root = temp.path().join("logs");
+        config.tmux.command = fake_tmux_capture_script(
+            temp.path(),
+            "Codex\n◦ Running cargo test\n› Improve documentation in @filename",
+        );
+        let tracker = RecordingAdapter {
+            fail_get_issue: true,
+            ..Default::default()
+        };
+        let mut record = main_tmux_session_record("#29", SessionStatus::Running);
+        record.session_name = "jade-main-29-attempt-1".into();
+        record.pane_target = "jade-main-29-attempt-1".into();
+        record.log_path = temp.path().join("session.log");
+        save_session_registry(
+            &session_registry_path(&config),
+            &jade_symphony::session_registry::SessionRegistry {
+                sessions: vec![record],
+            },
+        )
+        .unwrap();
+
+        let summary = run_loop_resume_preflight_many(&tracker, &config, &[], 2_000, true).unwrap();
+
+        assert_eq!(summary.active_main_workers, 1);
+        assert_eq!(summary.recoverable_states.len(), 0);
+        assert_eq!(summary.retained_states.len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resume_preflight_registry_active_session_skips_non_in_progress_tracker_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
+        config.observability.logs_root = temp.path().join("logs");
+        config.tmux.command = fake_tmux_capture_script(
+            temp.path(),
+            "Codex\n◦ Running cargo test\n› Improve documentation in @filename",
+        );
+        let tracker = MemoryTracker::new(vec![tracker_issue("Agent Review")]);
+        let mut record = main_tmux_session_record("#29", SessionStatus::Running);
+        record.session_name = "jade-main-29-attempt-1".into();
+        record.pane_target = "jade-main-29-attempt-1".into();
+        record.log_path = temp.path().join("session.log");
+        save_session_registry(
+            &session_registry_path(&config),
+            &jade_symphony::session_registry::SessionRegistry {
+                sessions: vec![record],
+            },
+        )
+        .unwrap();
+
+        let summary = run_loop_resume_preflight_many(&tracker, &config, &[], 2_000, true).unwrap();
+
+        assert_eq!(summary.active_main_workers, 0);
+        assert_eq!(summary.recoverable_states.len(), 0);
+        assert_eq!(summary.retained_states.len(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resume_preflight_prefers_running_sibling_session_over_interrupted_runtime_session() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
+        config.observability.logs_root = temp.path().join("logs");
+        config.tmux.command = fake_tmux_split_session_script(temp.path());
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let mut attempt_two = main_tmux_session_record("#29", SessionStatus::Running);
+        attempt_two.session_name = "jade-main-29-attempt-2".into();
+        attempt_two.pane_target = "jade-main-29-attempt-2".into();
+        attempt_two.log_path = temp.path().join("attempt-2.log");
+        attempt_two.attempt = 2;
+        let mut attempt_three = main_tmux_session_record("#29", SessionStatus::Running);
+        attempt_three.session_name = "jade-main-29-attempt-3".into();
+        attempt_three.pane_target = "jade-main-29-attempt-3".into();
+        attempt_three.log_path = temp.path().join("attempt-3.log");
+        attempt_three.attempt = 3;
+        save_session_registry(
+            &session_registry_path(&config),
+            &jade_symphony::session_registry::SessionRegistry {
+                sessions: vec![attempt_two, attempt_three],
+            },
+        )
+        .unwrap();
+        let mut state = active_runtime_state("#29");
+        state.backend = "tmux".into();
+        state.last_event = Some("SessionRunning".into());
+        state.backend_session_id = Some("jade-main-29-attempt-3".into());
+        state.updated_at_ms = Some(1_000);
+
+        let summary = run_loop_resume_preflight_many(
+            &tracker,
+            &config,
+            &[state],
+            config.codex.stall_timeout_ms + 2_000,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(summary.active_main_workers, 1);
+        assert_eq!(summary.recoverable_states.len(), 0);
+        assert_eq!(
+            summary.retained_states[0].backend_session_id.as_deref(),
+            Some("jade-main-29-attempt-2")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn resume_preflight_many_recovers_registry_only_unavailable_tmux_session() {
         let temp = tempfile::tempdir().unwrap();
         let mut config = test_config();
@@ -17443,6 +17983,43 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn resume_preflight_many_recovers_runtime_state_unavailable_tmux_session() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
+        config.observability.logs_root = temp.path().join("logs");
+        config.tmux.command = fake_tmux_unavailable_script(temp.path());
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let mut record = main_tmux_session_record("#29", SessionStatus::Running);
+        record.session_name = "jade-main-29-attempt-1".into();
+        record.pane_target = "jade-main-29-attempt-1".into();
+        record.log_path = temp.path().join("session.log");
+        save_session_registry(
+            &session_registry_path(&config),
+            &jade_symphony::session_registry::SessionRegistry {
+                sessions: vec![record],
+            },
+        )
+        .unwrap();
+        let mut state = active_runtime_state("#29");
+        state.backend = "tmux".into();
+        state.last_event = Some("SessionRunning".into());
+        state.backend_session_id = Some("jade-main-29-attempt-1".into());
+
+        let summary =
+            run_loop_resume_preflight_many(&tracker, &config, &[state], 2_000, true).unwrap();
+
+        assert_eq!(summary.active_main_workers, 0);
+        assert_eq!(summary.blocked, None);
+        assert_eq!(summary.retained_states.len(), 1);
+        assert_eq!(summary.recoverable_states.len(), 1);
+        assert!(summary.recoverable_states[0]
+            .reason
+            .contains("tmux_pane_unavailable"));
+    }
+
+    #[cfg(unix)]
     fn fake_tmux_capture_script(root: &Path, output: &str) -> String {
         use std::os::unix::fs::PermissionsExt;
 
@@ -17452,6 +18029,26 @@ mod tests {
             format!(
                 "#!/bin/sh\nif [ \"${{1:-}}\" = \"capture-pane\" ]; then\ncat <<'EOF'\n{output}\nEOF\nexit 0\nfi\nexit 0\n"
             ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path.display().to_string()
+    }
+
+    #[cfg(unix)]
+    fn fake_tmux_split_session_script(root: &Path) -> String {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = root.join("fake-tmux-split-session");
+        std::fs::write(
+            &path,
+            r#"#!/bin/sh
+case "$*" in
+  *attempt-2*) printf '%s\n' 'Codex' '◦ Running cargo test' '› Improve documentation in @filename'; exit 0 ;;
+  *attempt-3*) printf '%s\n' 'Conversation interrupted - tell the model what to do differently.' '› Write tests for @filename'; exit 0 ;;
+esac
+exit 1
+"#,
         )
         .unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();

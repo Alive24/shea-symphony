@@ -103,9 +103,9 @@ Project v2 issues:
      blockers, and linked PRs. Direct `gh issue view` / `gh pr view` is still
      allowed for raw issue and PR context when the CLI lacks an equivalent
      content read, but not for normal Project state reads.
-   - Retry transient network, backend 502/503/504, and rate-limit failures,
-     classify GraphQL resource limits separately, and fail partial Project
-     payloads loudly when required item fields are missing.
+   - Retry transient network, GitHub API EOF/connectivity, backend 502/503/504,
+     and rate-limit failures, classify GraphQL resource limits separately, and
+     fail partial Project payloads loudly when required item fields are missing.
    - Filter to real GitHub Issues, not draft items or PR items.
    - Resolve configured status field and option IDs.
    - Normalize issue body, labels, assignees, linked PRs, project fields, and

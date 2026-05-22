@@ -216,10 +216,19 @@ pub fn classify_project_state_failure_message(message: &str) -> ProjectStateFail
     {
         ProjectStateFailureKind::TransientBackend
     } else if normalized.contains("could not resolve host")
+        || normalized.contains("error connecting to")
         || normalized.contains("failed to connect")
+        || normalized.contains("could not connect")
         || normalized.contains("connection timed out")
         || normalized.contains("timed out after")
         || normalized.contains("connection reset")
+        || normalized.contains("connection refused")
+        || normalized.contains("connection closed")
+        || normalized.contains("temporary failure in name resolution")
+        || normalized.contains("no route to host")
+        || normalized.contains("i/o timeout")
+        || normalized.contains("context deadline exceeded")
+        || is_transport_eof_message(&normalized)
         || normalized.contains("network")
         || normalized.contains("tls")
     {
@@ -252,6 +261,27 @@ pub fn classify_project_state_failure_message(message: &str) -> ProjectStateFail
     } else {
         ProjectStateFailureKind::Unknown
     }
+}
+
+fn is_transport_eof_message(normalized: &str) -> bool {
+    let trimmed = normalized.trim();
+    let eof_suffix = trimmed == "eof" || trimmed.ends_with(": eof") || trimmed.ends_with(" eof");
+    if !eof_suffix {
+        return false;
+    }
+
+    let looks_like_json_parse_error = normalized.contains("invalid gh")
+        || normalized.contains("invalid github")
+        || normalized.contains("while parsing");
+    if looks_like_json_parse_error {
+        return false;
+    }
+
+    normalized.contains("api.github.com")
+        || normalized.contains("graphql")
+        || normalized.contains("rest")
+        || normalized.contains("http://")
+        || normalized.contains("https://")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -7039,6 +7069,18 @@ Prompt
             classify_project_state_failure_message("could not resolve host api.github.com"),
             ProjectStateFailureKind::Network
         );
+        assert_eq!(
+            classify_project_state_failure_message("error connecting to api.github.com"),
+            ProjectStateFailureKind::Network
+        );
+        let graphql_eof = r#"GitHub GraphQL operation failed kind=unknown: Post "https://api.github.com/graphql": EOF"#;
+        assert_eq!(
+            classify_project_state_failure_message(graphql_eof),
+            ProjectStateFailureKind::Network
+        );
+        assert!(project_state_error_is_retryable(
+            &TrackerError::IntegrationUnavailable(graphql_eof.into())
+        ));
         for status in [
             "HTTP 502 Bad Gateway",
             "HTTP 503 Service Unavailable",
@@ -7093,6 +7135,12 @@ Prompt
                 "partial ProjectV2 response missing status field \"Status\" for issue #7".into()
             )),
             ProjectStateFailureKind::PartialResponse
+        );
+        assert_eq!(
+            classify_project_state_failure_message(
+                "invalid GitHub GraphQL JSON: EOF while parsing a value at line 1 column 0"
+            ),
+            ProjectStateFailureKind::Payload
         );
         assert_eq!(
             classify_project_state_error(&TrackerError::NotImplemented(

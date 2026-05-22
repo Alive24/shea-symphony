@@ -350,8 +350,10 @@ the launch checkout. A failed read prints `project_state_access=blocked`,
 `trusted=false`, and a `failure_kind` such as `auth`, `network`, `rate_limit`,
 `transient_backend`, `resource_limit`, `schema`, `partial_response`, `payload`,
 or `missing_capability`; treat that as a blocker, not as an empty queue. HTTP
-502, 503, and 504 failures are `transient_backend` and retry with bounded
-backoff rather than being treated as owner/configuration failures.
+502, 503, and 504 failures are `transient_backend`; GitHub API connection
+errors such as resolver/connect failures or GraphQL `Post "...": EOF` transport
+closures are `network`. Both classes retry with bounded backoff rather than
+being treated as owner/configuration failures.
 This is a queue scan surface: it keeps lane-safe status, claim, assignee,
 priority, dependency, and parent/subissue gate data while avoiding issue bodies,
 comment/workpad streams, and rich linked-PR hydration.

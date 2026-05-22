@@ -81,6 +81,12 @@ Raw `gh issue view` and `gh pr view` are acceptable for ordinary issue and PR
 content. Raw Project field/status/claim reads or mutations are break-glass only;
 record the reason if they are needed.
 
+Write-mode lane/control commands may automatically refresh the canonical
+checkout when clean local `main` is only behind upstream. That `ff-only` sync is
+allowed control-surface progress. Implementation edits, PR branch freshness, and
+review/merge work still belong in the isolated issue or PR worktree, not in the
+canonical checkout.
+
 ## Selection
 
 Pick the issue only when all are true:

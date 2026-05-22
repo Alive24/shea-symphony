@@ -130,6 +130,10 @@ Before any PR-specific UAT, verify that the reviewed PR branch contains the
 latest `origin/main`. Run this only from the linked PR/issue worktree, never
 from the canonical `main` checkout.
 
+Jade Symphony write-mode lane commands may now fast-forward the canonical
+checkout before tracker mutation. That is separate control-surface
+synchronization and is not evidence that the reviewed PR branch is fresh.
+
 From the linked PR/issue worktree, run:
 
 ```bash

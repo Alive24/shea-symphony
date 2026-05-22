@@ -12,11 +12,14 @@ helpers.
 - Use ProjectV2 GraphQL only for Project item reads, Project fields, Project
   mutations, issue/comment mutations that require node IDs, and GitHub surfaces
   that REST cannot provide in the required shape.
+- Set `tracker.project_owner_type` to `user` or `organization` when the Project
+  owner type is known. Omit it only for legacy organization-first/user-fallback
+  workflows.
 - Keep ProjectV2 GraphQL shallow: small page sizes, explicit field selection,
   split metadata from item-page queries, and paginate with cursors.
 - Route GitHub CLI execution through `GithubCliAccess` in `src/tracker.rs` so
-  retry, JSON parsing, auth, rate-limit, resource-limit, partial-response, and
-  missing-capability diagnostics stay consistent.
+  retry, JSON parsing, auth, rate-limit, transient-backend, resource-limit,
+  partial-response, and missing-capability diagnostics stay consistent.
 - Raw `gh issue view` or `gh pr view` is allowed for read-only diagnostics when
   the CLI lacks the needed content read. Record it as a CLI gap in workpad or
   report evidence when it affects workflow decisions.

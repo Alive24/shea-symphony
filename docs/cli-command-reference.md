@@ -93,7 +93,7 @@ failure. Gemini absence is a blocker only when `--require-gemini` is used.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `main once` | Execute one selected issue through the configured backend. | Fixture-safe by default when the workflow has `tracker.fixture_path`. |
-| `main loop` | Poll/select/claim/run/reconcile/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; tmux sessions stay active until a later loop observes terminal evidence; Agent Review handoff requires a verified Project-visible, ready, non-draft PR; native subissue PRs target the parent integration branch when topology evidence is present; parent issues with native subissues are skipped until every native subissue has Project status `Done`. |
+| `main loop` | Poll/select/claim/run/reconcile/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; recover-first handling is enabled by default in `--write` mode and can be disabled with `--no-recover`; tmux sessions stay active until a later loop observes terminal evidence; Agent Review handoff requires a verified Project-visible, ready, non-draft PR; native subissue PRs target the parent integration branch when topology evidence is present; parent issues with native subissues are skipped until every native subissue has Project status `Done`. |
 
 Examples:
 
@@ -102,6 +102,7 @@ cargo run -- main once examples/dry-run-workflow.md
 cargo run -- main loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
 cargo run -- main loop examples/dry-run-workflow.md --max-iterations 1 --dry-run --display tui
 cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
+cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 3 --write
 cargo run -- clean plan workflows/jade-symphony.md
 cargo run -- clean audit workflows/jade-symphony.md
 ```
@@ -117,6 +118,15 @@ and starts up to the remaining capacity in the same bounded loop iteration. The
 runtime-state file is backward-compatible with the old single active issue
 shape, but can now persist multiple active Main worker entries without
 overwriting another issue's session, workspace, retry, or transition evidence.
+`main loop --write` uses recover-first handling by default for interrupted Main
+tmux runtime slots. It treats stalled runtime entries, missing session-registry
+records, and unavailable tmux panes as recoverable capacity instead of blocking
+the lane, then restarts the same `In Progress` issue as a new attempt while
+preserving the existing issue state, claim, workspace, dirty local changes, and
+runtime evidence. Use `--no-recover` only for debugging or a deliberately
+conservative operator pass. Recovery does not route through `Rework` and does
+not advance to `Agent Review`; normal handoff still requires a later successful
+Main result.
 `doctor` evaluates those runtime entries per issue so legitimate parallel Main
 workers do not create false `runtime_active_issue_disagrees` warnings while
 still surfacing missing, stale, or conflicting ownership. Planned claimable work
@@ -165,6 +175,10 @@ identify the intended PR, but the issue must expose that PR through the
 Project/issue linked-PR read surface before Main handoff, Review routing, or
 Merge landing. If Jade Symphony cannot verify the relationship after a repair
 attempt, it routes the issue to `Need Human Input` with the blocker preserved.
+When Main handoff reuses an existing PR for the issue branch, the CLI preserves
+the current PR body but appends a missing `Closes #<issue>` reference before
+readback so GitHub can establish a native issue/PR relationship instead of
+relying only on a timeline comment.
 
 The canonical `workflows/jade-symphony.md` file uses the local `tmux` main-agent
 backend. A launched tmux session records its session name, log path, workspace,
@@ -178,7 +192,9 @@ session registry plus bounded tmux pane/log evidence before launching anything
 new. Completed sessions continue through verification, PR publication,
 linked-PR readback, PR readiness, and `Agent Review` handoff; active, waiting,
 unknown, or missing-registry sessions are preserved without launching a
-duplicate Main Agent. If an operator
+duplicate Main Agent unless recover-first handling is enabled and the session is
+classified as interrupted or unavailable. Recover-first handling is enabled by
+default for `--write` and can be disabled with `--no-recover`. If an operator
 overrides the workflow back to `main_lane.backend: dry-run`, `main loop --write`
 exits non-zero before loading runtime state, creating worktrees, claiming
 Project fields, or writing workpads.
@@ -507,6 +523,7 @@ Doctor lanes.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `merge once` | Inspect one `Merging` issue, verify a single linked PR, and either merge, safely refresh a stale branch, attempt safe conflict repair, or route blockers. | Live merge requires explicit `--write`; fixture workflows synthesize merge or conflict-repair command evidence without touching GitHub. Native subissues expect the parent integration branch as the PR base; parent final PRs expect `main`. `BEHIND` PRs are updated with `gh pr update-branch` and left in `Merging` for retry, transient `UNKNOWN` mergeability stays in `Merging`, `DIRTY` PRs first try a clean local PR-worktree repair when available, and unrepaired dirty/failing blockers route to `Need Human Input` with a concrete question instead of defaulting to `Rework`. |
+| `merge loop` | Repeat guarded merge ticks for an explicit bounded iteration count. | Requires `--max-iterations` or `--once`; `--max-concurrent N` processes up to `N` merge slots while respecting `Merging Agent` claim fields; recover-first handling is enabled by default in `--write` mode and can be disabled with `--no-recover`. |
 
 Examples:
 
@@ -514,12 +531,21 @@ Examples:
 cargo run -- merge once workflows/jade-symphony.md --dry-run
 cargo run -- merge loop examples/merge-fixture-workflow.md --max-iterations 1 --write
 cargo run -- merge loop examples/merge-conflict-repair-fixture-workflow.md --max-iterations 1 --write
+cargo run -- merge loop workflows/jade-symphony.md --max-iterations 2 --max-concurrent 2 --write
 ```
 
 `merge once` is separate from main implementation and review work. It should
 only consume issues already in `Merging`. `Rework` remains a Main/Review repair
 lane unless an operator explicitly chooses a historical merge-lane recovery
 path.
+`merge loop --write` uses recover-first handling by default for interrupted
+in-process merge runs. Because merge work has no long-lived tmux session to
+probe, recovery is tracker-first: it only adopts structured active merge claims
+created by loop or goal sources, leaves manual claims alone, keeps the issue in
+`Merging` for safe stale-base updates or merge-lane repairs, and falls back to
+normal unclaimed merge selection after recoverable claims have been handled.
+Use `--no-recover` only for debugging or a deliberately conservative operator
+pass.
 
 ## Live Dogfood Boundary
 

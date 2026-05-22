@@ -29,15 +29,25 @@ Gemini-backed `review loop` uses the headless CLI path by default: it writes the
 Review prompt through stdin, requests JSON output, applies configured model and
 interim allowed-tools settings, and records stdout/stderr/job evidence for the
 review handoff.
-Manual tmux recovery is a two-step path. Use `main claim`, `review claim`, or
-`merge claim` to write the matching Project claim field, print the structured
-`run=`, and record minimum non-tmux registry evidence for the manual Codex App
-claim. Worker labels may be human-readable display labels with spaces; claim
-commands quote and validate those values before Project writes. Then use
-`session start --lane ... --run ...` to render the lane prompt and start the
-tmux runtime when a supervised terminal is needed. Session commands validate the
-existing claim and write attach/log evidence without approving reviews, merging
-PRs, or closing issues.
+Main-lane crash recovery is enabled by default for bounded `main loop --write`
+ticks. It restarts recoverable interrupted `In Progress` tmux runtime slots as
+new attempts while preserving issue state, dirty worktrees, and existing claim
+evidence. Use `--no-recover` only for debugging or a deliberately conservative
+operator pass. Manual tmux recovery remains a two-step break-glass path: use
+`main claim`, `review claim`, or `merge claim` to write the matching Project
+claim field, print the structured `run=`, and record minimum non-tmux registry
+evidence for the manual Codex App claim. Worker labels may be human-readable
+display labels with spaces; claim commands quote and validate those values
+before Project writes. Then use `session start --lane ... --run ...` to render
+the lane prompt and start the tmux runtime when a supervised terminal is needed.
+Session commands validate the existing claim and write attach/log evidence
+without approving reviews, merging PRs, or closing issues.
+
+Merge-lane crash recovery is enabled by default for bounded
+`merge loop --write` ticks. It adopts interrupted structured merge-loop/goal
+claims first, leaves manual claims alone, keeps merge-lane transport repair
+inside `Merging` or `Need Human Input`, and never routes merge repair through
+`Rework`.
 
 Lane prompt files:
 

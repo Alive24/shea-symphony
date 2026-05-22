@@ -14,6 +14,25 @@ promote selected Backlog drafts into executable issues.
 Reflection is a skill behavior, not a Jade Symphony CLI subcommand. Do not
 expect or ask for `jade-symphony forge reflect`.
 
+## Backlog Semantics
+
+Jade Symphony `Backlog` is a parking lot and memory surface, not an execution
+queue. A Backlog item means "there is probably useful work here, but the shape,
+priority, dependencies, UAT, or dispatchability still needs operator discussion."
+
+Backlog items may be intentionally rough, stale, overlapping, speculative, or
+waiting on another lane experiment. They are not claims, agent work orders,
+implementation commitments, priorities, or proof that the work should start.
+
+Promotion is the conversion point: re-check the seed against current code and
+Project state, explain what the Backlog item was preserving, narrow it into a
+Todo-ready contract, and only then move it to `Todo` after explicit operator
+confirmation.
+
+When listing or selecting Backlog candidates, include a short explanation of why
+each item was parked in Backlog and what question promotion must answer. Do not
+present Backlog titles as if they are already scoped executable tasks.
+
 ## Repository
 
 Default repo:

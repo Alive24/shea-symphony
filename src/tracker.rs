@@ -128,6 +128,7 @@ pub enum TrackerError {
 pub enum ProjectStateFailureKind {
     Auth,
     Network,
+    TransientBackend,
     RateLimit,
     ResourceLimit,
     Schema,
@@ -142,6 +143,7 @@ impl ProjectStateFailureKind {
         match self {
             Self::Auth => "auth",
             Self::Network => "network",
+            Self::TransientBackend => "transient_backend",
             Self::RateLimit => "rate_limit",
             Self::ResourceLimit => "resource_limit",
             Self::Schema => "schema",
@@ -190,6 +192,14 @@ pub fn classify_project_state_failure_message(message: &str) -> ProjectStateFail
         || normalized.contains("http 403")
     {
         ProjectStateFailureKind::Auth
+    } else if normalized.contains("http 502")
+        || normalized.contains("http 503")
+        || normalized.contains("http 504")
+        || normalized.contains("bad gateway")
+        || normalized.contains("service unavailable")
+        || normalized.contains("gateway timeout")
+    {
+        ProjectStateFailureKind::TransientBackend
     } else if normalized.contains("could not resolve host")
         || normalized.contains("failed to connect")
         || normalized.contains("connection timed out")
@@ -767,12 +777,65 @@ struct GithubProjectV2GhClient {
     metadata_cache: ProjectMetadataCache,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProjectV2OwnerType {
+    Organization,
+    User,
+}
+
+impl ProjectV2OwnerType {
+    fn parse(value: &str) -> Result<Self, TrackerError> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "organization" => Ok(Self::Organization),
+            "user" => Ok(Self::User),
+            other => Err(TrackerError::IntegrationUnavailable(format!(
+                "tracker.project_owner_type must be user or organization; got {other}"
+            ))),
+        }
+    }
+
+    fn query_field(self) -> &'static str {
+        match self {
+            Self::Organization => "organization",
+            Self::User => "user",
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        self.query_field()
+    }
+}
+
 impl GithubProjectV2GhClient {
     fn new(config: &RuntimeConfig) -> Self {
         Self {
             config: config.clone(),
             metadata_cache: ProjectMetadataCache::default(),
         }
+    }
+
+    fn project_owner_query_order(&self) -> Result<Vec<ProjectV2OwnerType>, TrackerError> {
+        project_owner_query_order(&self.config)
+    }
+
+    fn query_project_owner<F, T>(
+        &self,
+        operation: &str,
+        mut query: F,
+    ) -> Result<(ProjectV2OwnerType, T), TrackerError>
+    where
+        F: FnMut(ProjectV2OwnerType) -> Result<T, TrackerError>,
+    {
+        let mut attempts = Vec::new();
+
+        for owner_type in self.project_owner_query_order()? {
+            match query(owner_type) {
+                Ok(response) => return Ok((owner_type, response)),
+                Err(error) => attempts.push((owner_type, error)),
+            }
+        }
+
+        Err(project_owner_query_error(operation, attempts))
     }
 
     fn fetch_project_issues(&self) -> Result<Vec<TrackerIssue>, TrackerError> {
@@ -804,14 +867,7 @@ impl GithubProjectV2GhClient {
         let mut cursor = None;
 
         loop {
-            let response = self.graphql_project_page(true, cursor.as_deref()).or_else(|org_error| {
-                self.graphql_project_page(false, cursor.as_deref())
-                    .map_err(|user_error| {
-                        TrackerError::IntegrationUnavailable(format!(
-                            "failed to query ProjectV2 as organization or user: org={org_error}; user={user_error}"
-                        ))
-                    })
-            })?;
+            let response = self.graphql_project_page(metadata.owner_type, cursor.as_deref())?;
 
             let (mut page_issues, next_cursor, has_next_page) =
                 issues_from_project_response(&response, &self.config)?;
@@ -1421,34 +1477,22 @@ impl GithubProjectV2GhClient {
                 TrackerError::IntegrationUnavailable("missing project_number".into())
             })?;
 
-        match self.rest_project_metadata(true, owner, number).or_else(|org_error| {
-            self.rest_project_metadata(false, owner, number)
-                .map_err(|user_error| {
-                    TrackerError::IntegrationUnavailable(format!(
-                        "failed to query ProjectV2 metadata with REST as organization or user: org={org_error}; user={user_error}"
-                    ))
-                })
+        match self.query_project_owner("ProjectV2 REST metadata", |owner_type| {
+            self.rest_project_metadata(owner_type, owner, number)
         }) {
-            Ok(metadata) => Ok(metadata),
+            Ok((_owner_type, metadata)) => Ok(metadata),
             Err(rest_error) => {
-                let (response, owner_kind) = self
-                    .graphql_project_metadata(true, owner, number)
-                    .map(|response| (response, GithubProjectOwnerKind::Organization))
-                    .or_else(|org_error| {
-                        self.graphql_project_metadata(false, owner, number)
-                            .map(|response| (response, GithubProjectOwnerKind::User))
-                            .map_err(|user_error| {
-                                TrackerError::IntegrationUnavailable(format!(
-                                    "REST ProjectV2 metadata fallback reason: {rest_error}; failed to query ProjectV2 metadata as organization or user with GraphQL: org={org_error}; user={user_error}"
-                                ))
-                            })
+                let (_owner_type, response) = self
+                    .query_project_owner("ProjectV2 metadata", |owner_type| {
+                        self.graphql_project_metadata(owner_type, owner, number)
+                    })
+                    .map_err(|graphql_error| {
+                        TrackerError::IntegrationUnavailable(format!(
+                            "REST ProjectV2 metadata fallback reason: {rest_error}; GraphQL fallback failed: {graphql_error}"
+                        ))
                     })?;
 
-                project_metadata_from_response(
-                    &response,
-                    &self.config.tracker.status_field,
-                    owner_kind,
-                )
+                project_metadata_from_response(&response, &self.config.tracker.status_field)
             }
         }
     }
@@ -1514,16 +1558,11 @@ impl GithubProjectV2GhClient {
 
     fn rest_project_metadata(
         &self,
-        organization_owner: bool,
+        owner_type: ProjectV2OwnerType,
         owner: &str,
         number: u64,
     ) -> Result<ProjectMetadata, TrackerError> {
-        let owner_kind = if organization_owner {
-            GithubProjectOwnerKind::Organization
-        } else {
-            GithubProjectOwnerKind::User
-        };
-        let base_path = github_rest_project_path(owner_kind, owner, number);
+        let base_path = github_rest_project_path(owner_type, owner, number);
         let project = run_gh_api_json(vec!["api".into(), base_path.clone()])?;
         let fields = run_gh_api_json(vec![
             "api".into(),
@@ -1536,7 +1575,7 @@ impl GithubProjectV2GhClient {
             &project,
             &fields,
             &self.config.tracker.status_field,
-            owner_kind,
+            owner_type,
         )
     }
 
@@ -1560,7 +1599,7 @@ impl GithubProjectV2GhClient {
             self.config.tracker.project_number.ok_or_else(|| {
                 TrackerError::IntegrationUnavailable("missing project_number".into())
             })?;
-        let base_path = github_rest_project_path(metadata.owner_kind, owner, number);
+        let base_path = github_rest_project_path(metadata.owner_type, owner, number);
         let endpoint = if field_ids.is_empty() {
             format!("{base_path}/items?per_page=100")
         } else {
@@ -1614,7 +1653,7 @@ impl GithubProjectV2GhClient {
             self.config.tracker.project_number.ok_or_else(|| {
                 TrackerError::IntegrationUnavailable("missing project_number".into())
             })?;
-        let base_path = github_rest_project_path(metadata.owner_kind, owner, number);
+        let base_path = github_rest_project_path(metadata.owner_type, owner, number);
         let body = rest_project_item_field_update_body(field_rest_id, value)?;
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1678,15 +1717,11 @@ impl GithubProjectV2GhClient {
 
     fn graphql_project_metadata(
         &self,
-        organization_owner: bool,
+        owner_type: ProjectV2OwnerType,
         owner: &str,
         number: u64,
     ) -> Result<serde_json::Value, TrackerError> {
-        let query = if organization_owner {
-            github_project_metadata_query("organization")
-        } else {
-            github_project_metadata_query("user")
-        };
+        let query = github_project_metadata_query(owner_type.query_field());
 
         self.graphql_magic(
             &query,
@@ -1697,7 +1732,7 @@ impl GithubProjectV2GhClient {
 
     fn graphql_project_page(
         &self,
-        organization_owner: bool,
+        owner_type: ProjectV2OwnerType,
         cursor: Option<&str>,
     ) -> Result<serde_json::Value, TrackerError> {
         let owner = self
@@ -1715,14 +1750,7 @@ impl GithubProjectV2GhClient {
             "api".to_string(),
             "graphql".to_string(),
             "-f".to_string(),
-            format!(
-                "query={}",
-                if organization_owner {
-                    github_project_query("organization")
-                } else {
-                    github_project_query("user")
-                }
-            ),
+            format!("query={}", github_project_query(owner_type.query_field())),
             "-F".to_string(),
             format!("owner={owner}"),
             "-F".to_string(),
@@ -1777,10 +1805,66 @@ impl GithubProjectV2GhClient {
     }
 }
 
+fn project_owner_query_order(
+    config: &RuntimeConfig,
+) -> Result<Vec<ProjectV2OwnerType>, TrackerError> {
+    if let Some(owner_type) = config.tracker.project_owner_type.as_deref() {
+        return Ok(vec![ProjectV2OwnerType::parse(owner_type)?]);
+    }
+
+    Ok(vec![
+        ProjectV2OwnerType::Organization,
+        ProjectV2OwnerType::User,
+    ])
+}
+
+fn project_owner_query_error(
+    operation: &str,
+    attempts: Vec<(ProjectV2OwnerType, TrackerError)>,
+) -> TrackerError {
+    let Some((last_type, last_error)) = attempts.last() else {
+        return TrackerError::IntegrationUnavailable(format!("{operation} failed"));
+    };
+
+    let prior_attempts_are_owner_misses = attempts
+        .iter()
+        .take(attempts.len().saturating_sub(1))
+        .all(|(_, error)| project_owner_type_miss(error));
+    if prior_attempts_are_owner_misses && !project_owner_type_miss(last_error) {
+        return TrackerError::IntegrationUnavailable(format!(
+            "{operation} failed as {} owner: {last_error}",
+            last_type.as_str()
+        ));
+    }
+
+    let details = attempts
+        .iter()
+        .map(|(owner_type, error)| format!("{}={error}", owner_type.as_str()))
+        .collect::<Vec<_>>()
+        .join("; ");
+    TrackerError::IntegrationUnavailable(format!(
+        "{operation} failed for ProjectV2 owner attempts: {details}"
+    ))
+}
+
+fn project_owner_type_miss(error: &TrackerError) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("projectv2 organization owner lookup missed")
+        || message.contains("projectv2 user owner lookup missed")
+        || message.contains("could not resolve to an organization")
+        || message.contains("could not resolve to a organization")
+        || message.contains("could not resolve to organization")
+        || message.contains("could not resolve to a user")
+        || message.contains("could not resolve to an user")
+        || message.contains("could not resolve to user")
+        || message.contains("not an organization account")
+        || message.contains("not a user account")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProjectMetadata {
+    owner_type: ProjectV2OwnerType,
     project_id: String,
-    owner_kind: GithubProjectOwnerKind,
     status_field_id: String,
     status_options: Vec<(String, String)>,
     fields: Vec<ProjectFieldMetadata>,
@@ -1856,12 +1940,6 @@ impl ProjectFieldKind {
             Self::SingleSelect | Self::Text | Self::Number | Self::Date
         )
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GithubProjectOwnerKind {
-    Organization,
-    User,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -2203,7 +2281,9 @@ fn run_gh_api_json(args: Vec<String>) -> Result<serde_json::Value, TrackerError>
 fn project_state_error_is_retryable(error: &TrackerError) -> bool {
     matches!(
         classify_project_state_error(error),
-        ProjectStateFailureKind::Network | ProjectStateFailureKind::RateLimit
+        ProjectStateFailureKind::Network
+            | ProjectStateFailureKind::TransientBackend
+            | ProjectStateFailureKind::RateLimit
     )
 }
 
@@ -2643,11 +2723,15 @@ fn issues_from_project_response(
 fn project_metadata_from_response(
     response: &serde_json::Value,
     status_field: &str,
-    owner_kind: GithubProjectOwnerKind,
 ) -> Result<ProjectMetadata, TrackerError> {
-    let project = response
+    let (owner_type, project) = response
         .pointer("/data/organization/projectV2")
-        .or_else(|| response.pointer("/data/user/projectV2"))
+        .map(|project| (ProjectV2OwnerType::Organization, project))
+        .or_else(|| {
+            response
+                .pointer("/data/user/projectV2")
+                .map(|project| (ProjectV2OwnerType::User, project))
+        })
         .ok_or_else(|| TrackerError::Payload("missing ProjectV2 metadata payload".into()))?;
     let project_id = project
         .get("id")
@@ -2665,8 +2749,8 @@ fn project_metadata_from_response(
 
     if let Some(status_field_metadata) = fields.iter().find(|field| field.name == status_field) {
         return Ok(ProjectMetadata {
+            owner_type,
             project_id: project_id.to_string(),
-            owner_kind,
             status_field_id: status_field_metadata.id.clone(),
             status_options: status_field_metadata.options.clone(),
             fields,
@@ -2720,7 +2804,7 @@ fn rest_project_metadata_from_response(
     project: &serde_json::Value,
     fields_response: &serde_json::Value,
     status_field: &str,
-    owner_kind: GithubProjectOwnerKind,
+    owner_type: ProjectV2OwnerType,
 ) -> Result<ProjectMetadata, TrackerError> {
     let project_id = project
         .get("node_id")
@@ -2739,8 +2823,8 @@ fn rest_project_metadata_from_response(
     };
 
     Ok(ProjectMetadata {
+        owner_type,
         project_id: project_id.to_string(),
-        owner_kind,
         status_field_id: status_field_metadata.id.clone(),
         status_options: status_field_metadata.options.clone(),
         fields,
@@ -2970,10 +3054,10 @@ fn rest_project_item_field_update_body(
     }))
 }
 
-fn github_rest_project_path(kind: GithubProjectOwnerKind, owner: &str, number: u64) -> String {
+fn github_rest_project_path(kind: ProjectV2OwnerType, owner: &str, number: u64) -> String {
     match kind {
-        GithubProjectOwnerKind::Organization => format!("orgs/{owner}/projectsV2/{number}"),
-        GithubProjectOwnerKind::User => format!("users/{owner}/projectsV2/{number}"),
+        ProjectV2OwnerType::Organization => format!("orgs/{owner}/projectsV2/{number}"),
+        ProjectV2OwnerType::User => format!("users/{owner}/projectsV2/{number}"),
     }
 }
 
@@ -5105,8 +5189,8 @@ mod tests {
             .cloned()
             .unwrap_or_else(test_status_field);
         ProjectMetadata {
+            owner_type: ProjectV2OwnerType::User,
             project_id: "PVT_1".into(),
-            owner_kind: GithubProjectOwnerKind::User,
             status_field_id: status.id.clone(),
             status_options: status.options,
             fields,
@@ -5198,6 +5282,69 @@ mod tests {
         assert!(gap.contains("gh auth login"));
         assert!(gap.contains("GITHUB_TOKEN/GH_TOKEN"));
         assert!(gap.contains("invalid token"));
+    }
+
+    #[test]
+    fn project_owner_query_order_uses_explicit_user_without_org_probe() {
+        let config = github_config(
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_owner_type: user\n  project_number: 1\n---\nPrompt",
+        );
+
+        let order = project_owner_query_order(&config).unwrap();
+
+        assert_eq!(order, vec![ProjectV2OwnerType::User]);
+        let query = github_project_query(order[0].query_field());
+        assert!(query.contains("user(login: $owner)"));
+        assert!(!query.contains("organization(login: $owner)"));
+    }
+
+    #[test]
+    fn project_owner_query_order_supports_explicit_org_and_legacy_fallback() {
+        let org_config = github_config(
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_owner_type: organization\n  project_number: 1\n---\nPrompt",
+        );
+        assert_eq!(
+            project_owner_query_order(&org_config).unwrap(),
+            vec![ProjectV2OwnerType::Organization]
+        );
+
+        let fallback_config = github_config(
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
+        );
+        assert_eq!(
+            project_owner_query_order(&fallback_config).unwrap(),
+            vec![ProjectV2OwnerType::Organization, ProjectV2OwnerType::User]
+        );
+    }
+
+    #[test]
+    fn project_owner_query_error_hides_expected_owner_miss_before_real_failure() {
+        let error = project_owner_query_error(
+            "ProjectV2 metadata",
+            vec![
+                (
+                    ProjectV2OwnerType::Organization,
+                    TrackerError::IntegrationUnavailable(
+                        "GitHub GraphQL returned errors: Could not resolve to an Organization with the login of 'Alive24'".into(),
+                    ),
+                ),
+                (
+                    ProjectV2OwnerType::User,
+                    TrackerError::IntegrationUnavailable(
+                        "GitHub GraphQL operation failed kind=transient_backend: HTTP 504 Gateway Timeout".into(),
+                    ),
+                ),
+            ],
+        );
+        let rendered = error.to_string();
+
+        assert!(rendered.contains("ProjectV2 metadata failed as user owner"));
+        assert!(rendered.contains("HTTP 504"));
+        assert!(!rendered.contains("Organization with the login"));
+        assert_eq!(
+            classify_project_state_error(&error),
+            ProjectStateFailureKind::TransientBackend
+        );
     }
 
     #[test]
@@ -5658,9 +5805,8 @@ Prompt
             }
         });
 
-        let metadata =
-            project_metadata_from_response(&response, "Status", GithubProjectOwnerKind::User)
-                .unwrap();
+        let metadata = project_metadata_from_response(&response, "Status").unwrap();
+        assert_eq!(metadata.owner_type, ProjectV2OwnerType::User);
         assert_eq!(metadata.project_id, "PVT_1");
         assert_eq!(metadata.status_field_id, "FIELD_STATUS");
         assert_eq!(
@@ -5761,12 +5907,12 @@ Prompt
             &project,
             &fields,
             "Status",
-            GithubProjectOwnerKind::Organization,
+            ProjectV2OwnerType::Organization,
         )
         .unwrap();
 
         assert_eq!(metadata.project_id, "PVT_1");
-        assert_eq!(metadata.owner_kind, GithubProjectOwnerKind::Organization);
+        assert_eq!(metadata.owner_type, ProjectV2OwnerType::Organization);
         assert_eq!(metadata.status_field_id, "FIELD_STATUS");
         assert_eq!(
             metadata.status_options[0],
@@ -5963,8 +6109,8 @@ Prompt
     #[test]
     fn resolves_project_status_option_id() {
         let metadata = ProjectMetadata {
+            owner_type: ProjectV2OwnerType::User,
             project_id: "PVT_1".into(),
-            owner_kind: GithubProjectOwnerKind::User,
             status_field_id: "FIELD_STATUS".into(),
             status_options: vec![
                 ("OPT_TODO".into(), "Todo".into()),
@@ -6437,6 +6583,31 @@ Prompt
         assert_eq!(
             classify_project_state_failure_message("could not resolve host api.github.com"),
             ProjectStateFailureKind::Network
+        );
+        for status in [
+            "HTTP 502 Bad Gateway",
+            "HTTP 503 Service Unavailable",
+            "HTTP 504 Gateway Timeout",
+        ] {
+            assert_eq!(
+                classify_project_state_failure_message(status),
+                ProjectStateFailureKind::TransientBackend
+            );
+            assert!(project_state_error_is_retryable(
+                &TrackerError::IntegrationUnavailable(status.into())
+            ));
+        }
+        assert_eq!(
+            classify_project_state_failure_message(
+                "HTTP 403 Resource not accessible by integration"
+            ),
+            ProjectStateFailureKind::Auth
+        );
+        assert_eq!(
+            classify_project_state_failure_message(
+                "GitHub GraphQL returned errors: Could not resolve to a ProjectV2"
+            ),
+            ProjectStateFailureKind::Schema
         );
         assert_eq!(
             classify_project_state_failure_message(

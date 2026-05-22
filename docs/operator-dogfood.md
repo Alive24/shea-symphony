@@ -332,8 +332,10 @@ healthy read prints `project_state_access=ok`, `trusted=true`, the issue count,
 and a state summary, plus a read-only `canonical_checkout` cleanliness line for
 the launch checkout. A failed read prints `project_state_access=blocked`,
 `trusted=false`, and a `failure_kind` such as `auth`, `network`, `rate_limit`,
-`resource_limit`, `schema`, `partial_response`, `payload`, or
-`missing_capability`; treat that as a blocker, not as an empty queue.
+`transient_backend`, `resource_limit`, `schema`, `partial_response`, `payload`,
+or `missing_capability`; treat that as a blocker, not as an empty queue. HTTP
+502, 503, and 504 failures are `transient_backend` and retry with bounded
+backoff rather than being treated as owner/configuration failures.
 
 The canonical checkout is only the harness launch directory. Do not use it as a
 Main, Review, or Merge issue worktree, and do not leave runtime state, logs,

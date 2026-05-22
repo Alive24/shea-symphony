@@ -26,6 +26,7 @@ tracker:
   owner: Alive24
   repo: jade-symphony
   project_owner: Alive24
+  project_owner_type: user # optional: user or organization
   project_number: 1
   status_field: Status
   state_map:
@@ -47,6 +48,11 @@ tracker:
     source: issue_comment
     marker: "<!-- jade-symphony-workpad -->"
 ```
+
+`project_owner_type` is optional for compatibility with older workflows. When
+it is omitted, the adapter keeps the legacy organization-then-user owner
+resolution path. When it is set to `user` or `organization`, ProjectV2 metadata
+and item reads use only that owner type for the configured run.
 
 ## Adapter Operations
 

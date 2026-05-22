@@ -332,8 +332,10 @@ healthy read prints `project_state_access=ok`, `trusted=true`, the issue count,
 and a state summary, plus a read-only `canonical_checkout` cleanliness line for
 the launch checkout. A failed read prints `project_state_access=blocked`,
 `trusted=false`, and a `failure_kind` such as `auth`, `network`, `rate_limit`,
-`resource_limit`, `schema`, `partial_response`, `payload`, or
-`missing_capability`; treat that as a blocker, not as an empty queue.
+`transient_backend`, `resource_limit`, `schema`, `partial_response`, `payload`,
+or `missing_capability`; treat that as a blocker, not as an empty queue. HTTP
+502, 503, and 504 failures are `transient_backend` and retry with bounded
+backoff rather than being treated as owner/configuration failures.
 
 The canonical checkout is only the harness launch directory. Do not use it as a
 Main, Review, or Merge issue worktree, and do not leave runtime state, logs,
@@ -513,7 +515,33 @@ Interrupted tmux recovery flow:
 2. Run `target/debug/jade-symphony doctor workflows/jade-symphony.md` before
    retrying or clearing runtime state; stale, failed, usage-limited, or
    unattributed sessions require operator inspection.
-3. Run `target/debug/jade-symphony clean audit workflows/jade-symphony.md` only
+3. For interrupted Main-lane tmux work where the issue is still `In Progress`,
+   run a bounded recovery tick:
+
+```bash
+target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 3 --write
+```
+
+`main loop --write` restarts recoverable Main runtime slots as new attempts by
+default without moving the issue to `Rework`, clearing dirty worktrees, or
+advancing to `Agent Review`. It reuses a tracker/runtime/discovery-backed git
+worktree under the configured workspace root and leaves normal handoff to a
+later successful Main result. Use `--no-recover` only for debugging or a
+deliberately conservative operator pass.
+4. For interrupted Merge-lane loop work where the issue is still `Merging`, run
+   a bounded recovery tick:
+
+```bash
+target/debug/jade-symphony merge loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 2 --write
+```
+
+`merge loop --write` adopts interrupted structured merge-loop/goal claims first
+by default, then continues normal merge selection. It leaves manual claims
+alone, keeps safe stale-base refreshes or merge-lane repairs in `Merging`, and
+routes serious blockers to `Need Human Input` rather than `Rework`. Use
+`--no-recover` only for debugging or a deliberately conservative operator pass.
+
+5. Run `target/debug/jade-symphony clean audit workflows/jade-symphony.md` only
    after evidence is preserved. Active or uncertain sessions stay
    `needs_human_decision`; completed sessions and terminal clean worktrees may
    become cleanup candidates.

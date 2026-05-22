@@ -52,6 +52,22 @@ After preflight, dry-run mode executes:
 target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 
+Before comparing individual lane dry-runs, use the unified read-only preflight:
+
+```bash
+target/debug/jade-symphony autopilot plan workflows/jade-symphony.md
+target/debug/jade-symphony autopilot plan workflows/jade-symphony.md --json
+```
+
+`autopilot plan` is not write-mode automation. It reuses the current Main,
+Review, and Merge lane decision helpers to show what each lane would do, which
+operator queues are parked in `Human Review` or `Need Human Input`, and whether
+Doctor, canonical checkout, runtime/session evidence, or ambiguous Project
+state would block a future all-lane write command. If it reports
+`idle_but_healthy`, the lanes have no work but the system is not failing; if it
+reports a blocked readiness state, resolve that evidence before running write
+lane commands.
+
 For a more scannable operator view, keep the same dry-run boundary and opt into
 the terminal panel:
 

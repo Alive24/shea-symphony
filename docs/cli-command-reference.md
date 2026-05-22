@@ -236,15 +236,17 @@ readiness then fails closed and preserves attach/log evidence for inspection.
 
 For manual lane recovery, first claim the lane and keep the printed `run=`.
 Then `session start WORKFLOW ISSUE --lane main|review|merge --run RUN --write`
-starts the configured local tmux command with the lane-specific prompt only
-after confirming that the Project claim field already matches the issue, lane,
-and run. Manual claim evidence is truthful non-tmux registry evidence; `session
-start` is the step that creates attach/log evidence for a real tmux session and
-never writes claim fields. Main and Merge default to `tmux.agent_command`;
-Review uses `tmux.review_agent_command` when set and otherwise uses
-`review_lane.gemini_command` for `review_lane.backend: gemini-cli`. The rendered prompt
-includes the assigned `run=` and registry pointer so the spawned agent can
-preserve that value in its handoff evidence.
+starts the configured lane runtime with the lane-specific prompt only after
+confirming that the Project claim field already matches the issue, lane, and
+run. Manual claim evidence is truthful non-tmux registry evidence; `session
+start` never writes claim fields. Main and Review still use tmux session
+commands here. Merge-agent sessions default to `merge_lane.agent_backend: codex`,
+which runs `codex.command` and therefore uses Codex app-server in the canonical
+workflow; set `merge_lane.agent_backend: tmux` only for explicit fallback/debug.
+Clean `merge once` / `merge loop` does not use this agent-session backend and
+remains direct in-process CLI merge behavior. The rendered prompt includes the
+assigned `run=` and registry pointer so the spawned agent can preserve that
+value in its handoff evidence.
 `session list WORKFLOW` shows active tmux sessions with attach commands, and
 `session attach WORKFLOW SESSION` prints the exact attach command without
 joining the terminal unless `--exec` is provided.
@@ -474,7 +476,7 @@ changes.
 | `review session` | Hidden legacy review session alias. | Does not write the `Review Agent` claim; use `review claim` or `review loop` for claim ownership. |
 | `review freshness` | Record/inspect review freshness evidence. | Used around merging/rework conflict repair. |
 | `review-clear-claim` | Clear one issue's `Review Agent` claim through the tracker adapter. | Requires `--write`; use after terminal manual review routing. |
-| `session start` | Start an attachable local tmux session for a selected lane and `run`. | Manual recovery path; validates an existing lane claim, selects the lane-specific command, and does not write Project claim fields. |
+| `session start` | Start the configured local runtime for a selected lane and `run`. | Manual recovery path; validates an existing lane claim, selects the lane-specific command/backend, and does not write Project claim fields. Main/Review remain tmux-backed here; Merge agent sessions default to Codex app-server. |
 | `session list` | List active Jade Symphony tmux sessions by configured prefix. | Read-only operator summary. |
 | `session attach` | Print or execute the tmux attach command for one session. | Defaults to printing the command; `--exec` enters tmux. |
 

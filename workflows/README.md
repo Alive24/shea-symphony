@@ -39,9 +39,14 @@ claim field, print the structured `run=`, and record minimum non-tmux registry
 evidence for the manual Codex App claim. Worker labels may be human-readable
 display labels with spaces; claim commands quote and validate those values
 before Project writes. Then use `session start --lane ... --run ...` to render
-the lane prompt and start the tmux runtime when a supervised terminal is needed.
-Session commands validate the existing claim and write attach/log evidence
-without approving reviews, merging PRs, or closing issues.
+the lane prompt and start the configured runtime when a supervised session is
+needed. Main and Review session start remain tmux-oriented. Merge-agent sessions
+default to Codex app-server through `merge_lane.agent_backend: codex` and
+`codex.command`, with tmux available only as an explicit fallback/debug setting.
+Clean `merge once` / `merge loop` remains direct CLI merge behavior and does not
+launch a merge-agent runtime. Session commands validate the existing claim and
+write runtime evidence without approving reviews, merging PRs, or closing
+issues.
 
 Merge-lane crash recovery is enabled by default for bounded
 `merge loop --write` ticks. It adopts interrupted structured merge-loop/goal

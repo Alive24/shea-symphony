@@ -160,6 +160,7 @@ pub struct ReviewConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeLaneConfig {
     pub max_concurrent_workers: usize,
+    pub agent_backend: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -377,6 +378,8 @@ impl RuntimeConfig {
             max_concurrent_workers: get_u64(merge_lane_config, "max_concurrent_workers")
                 .unwrap_or(1)
                 .max(1) as usize,
+            agent_backend: get_string(merge_lane_config, "agent_backend")
+                .unwrap_or_else(|| "codex".to_string()),
         };
         let quality_gate = parse_quality_gate(root.get("quality_gate"));
         let verification = parse_verification(root.get("verification"));
@@ -1013,6 +1016,33 @@ mod tests {
         assert_eq!(config.tmux.merge_agent_command.as_deref(), Some("codex"));
         assert_eq!(config.tmux.session_prefix, "jade-local");
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn merge_lane_agent_backend_defaults_to_codex() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.merge_lane.agent_backend, "codex");
+    }
+
+    #[test]
+    fn parses_merge_lane_agent_backend_override() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nmerge_lane:\n  agent_backend: tmux\n  max_concurrent_workers: 2\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.merge_lane.agent_backend, "tmux");
+        assert_eq!(config.merge_lane.max_concurrent_workers, 2);
     }
 
     #[test]

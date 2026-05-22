@@ -91,6 +91,10 @@ Pick the issue only when all are true:
 
 ## Merge-Lane Recovery
 
+Clean merge is CLI-owned and non-LLM. Do not start Codex, Gemini, tmux, or
+app-server just to land a clean approved PR; use `merge loop` / `merge once`
+and preserve its direct `gh pr merge` behavior.
+
 For historical or operator-selected merge-lane recovery:
 
 1. Claim through the `Merging Agent` field.
@@ -105,6 +109,11 @@ For historical or operator-selected merge-lane recovery:
 
 Do not send merge-lane-only repair back to `Agent Review` just because the
 branch was rebased or conflicts were resolved.
+
+When a merge-agent runtime session is explicitly needed after a structured
+`Merging Agent` claim, the default session backend is Codex app-server through
+`merge_lane.agent_backend: codex` and `codex.command: codex app-server`. Use
+`merge_lane.agent_backend: tmux` only as an explicit fallback/debug choice.
 
 For automated interrupted merge-loop recovery, prefer:
 

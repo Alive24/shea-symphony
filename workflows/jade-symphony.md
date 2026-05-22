@@ -68,6 +68,7 @@ review_lane:
   timeout_ms: 1200000
   max_concurrent_workers: 2
 merge_lane:
+  agent_backend: codex
   max_concurrent_workers: 3
 verification:
   timeout_ms: 600000

@@ -77,12 +77,13 @@ use jade_symphony::review::{
     classify_review_freshness, gemini_cli_headless_args, gemini_prelaunch_health_diagnostic,
     gemini_review_health_diagnostic, poll_review_job_until_terminal,
     render_repeated_review_failure_workpad, render_review_freshness_workpad, render_review_workpad,
-    review_failure_signature, review_gate_decision, review_run_eligibility, review_worker_key,
-    transition_allowed_for_main_agent, transition_allowed_for_review_agent,
-    write_review_job_ledger_record, FakeReviewBackend, FakeReviewOutcome, GeminiCliReviewBackend,
-    GeminiReviewRecoveryPolicy, ReviewBackend, ReviewFreshnessInput, ReviewGateDecision, ReviewJob,
-    ReviewJobState, ReviewOutcome, ReviewRepeatedFailureEvidence, ReviewRequest, ReviewReworkClass,
-    ReviewRunEligibility, ReviewStaleReason,
+    review_failure_signature, review_gate_decision_for_issue, review_pass_target_state,
+    review_run_eligibility, review_worker_key, transition_allowed_for_main_agent,
+    transition_allowed_for_review_agent, write_review_job_ledger_record, FakeReviewBackend,
+    FakeReviewOutcome, GeminiCliReviewBackend, GeminiReviewRecoveryPolicy, ReviewBackend,
+    ReviewFreshnessInput, ReviewGateDecision, ReviewJob, ReviewJobState, ReviewOutcome,
+    ReviewRepeatedFailureEvidence, ReviewRequest, ReviewReworkClass, ReviewRunEligibility,
+    ReviewStaleReason,
 };
 use jade_symphony::review_status::{
     load_review_status, render_project_inspect_review_summary, render_review_status_human,
@@ -3014,7 +3015,7 @@ fn review_fake(
         None,
     )?;
 
-    let decision = review_gate_decision(&job);
+    let decision = review_gate_decision_for_issue(&job, &issue);
     println!(
         "review_fake=ok issue_ref={issue_ref} outcome={:?} target_state={:?}",
         decision.outcome, decision.target_state
@@ -3078,7 +3079,7 @@ fn review_once(
         None,
     )?;
 
-    let decision = review_gate_decision(&job);
+    let decision = review_gate_decision_for_issue(&job, &issue);
     println!(
         "review_once=ok issue_ref={issue_ref} backend={} outcome={:?} target_state={:?}",
         job.backend, decision.outcome, decision.target_state
@@ -3470,7 +3471,7 @@ fn review_manual_pass(
         validate_manual_review_pass_claim(&issue, &evidence)?;
     let terminal_claim_value =
         terminal_review_claim_value(&current_claim, LaneClaimState::Done, "passed");
-    let target_state = "human_review";
+    let target_state = review_pass_target_state(&issue);
     let workpad = render_manual_review_workpad(
         &issue,
         "passed",
@@ -3738,7 +3739,11 @@ fn render_manual_review_workpad(
     if pass {
         lines.push(String::new());
         lines.push("- Review pass evidence: `recorded`".into());
-        lines.push("Evidence recorded. Independent Review Agent may move this issue to Human Review; the main implementation agent must not.".into());
+        if normalize_state(target_state) == "merging" {
+            lines.push("Evidence recorded. Independent Review Agent may move this native subissue directly to Merging; final Human Review and UAT remain owned by the parent issue.".into());
+        } else {
+            lines.push("Evidence recorded. Independent Review Agent may move this issue to Human Review; the main implementation agent must not.".into());
+        }
     } else {
         lines.push(String::new());
         lines.push(
@@ -4265,7 +4270,7 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                 Some(&claim),
                 repeat_evidence.as_ref(),
             )?;
-            let decision = review_gate_decision(&job);
+            let decision = review_gate_decision_for_issue(&job, &latest);
             println!(
                 "review_loop_action=reconciled issue={} worker_slot={} backend={} outcome={:?} target_state={:?} ledger={}",
                 latest.identifier,
@@ -5796,7 +5801,9 @@ fn agent_session_workpad(input: AgentSessionWorkpadInput<'_>) -> String {
             "- Target state after run: `{}`",
             match input.lane {
                 AgentSessionLaneArg::Main => "Agent Review",
-                AgentSessionLaneArg::Review => "Human Review | Rework | Need Human Input | unchanged",
+                AgentSessionLaneArg::Review => {
+                    "Human Review | Merging | Rework | Need Human Input | unchanged"
+                }
                 AgentSessionLaneArg::Merge => "Done | Need Human Input | unchanged",
             }
         ),
@@ -5842,7 +5849,7 @@ fn apply_review_result(
     claim: Option<&LaneClaim>,
     repeat_evidence: Option<&ReviewRepeatedFailureEvidence>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let decision = review_gate_decision(job);
+    let decision = review_gate_decision_for_issue(job, issue);
     if let Some(value) = terminal_review_loop_claim_value(claim, job, &decision) {
         write_terminal_review_claim(
             config,
@@ -5853,8 +5860,13 @@ fn apply_review_result(
             "review loop terminal claim evidence",
         )?;
     }
-    if decision.outcome == ReviewOutcome::PassedToHumanReview {
-        update_review_checklist_for_pass(config, adapter, issue)?;
+    if decision.outcome.is_passed() {
+        update_review_checklist_for_pass(
+            config,
+            adapter,
+            issue,
+            decision.target_state.unwrap_or("none"),
+        )?;
     }
     if let Some(target_state) = decision.target_state {
         if !transition_allowed_for_review_agent(target_state, &decision) {
@@ -5938,6 +5950,7 @@ fn update_review_checklist_for_pass(
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
     issue: &TrackerIssue,
+    target_state: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let Some(description) = issue.description.as_deref() else {
         return Ok(());
@@ -5957,7 +5970,7 @@ fn update_review_checklist_for_pass(
             issue_ref: Some(&issue.identifier),
             target: Some("non-UAT review checkboxes".into()),
             from_state: Some(issue.state.clone()),
-            to_state: Some("human_review".into()),
+            to_state: Some(target_state.into()),
             reason: "automatic review pass checklist evidence",
         },
     );
@@ -6048,7 +6061,9 @@ fn terminal_review_loop_claim_value(
 ) -> Option<String> {
     let claim = claim?;
     let (state, result) = match decision.outcome {
-        ReviewOutcome::PassedToHumanReview => (LaneClaimState::Done, "passed"),
+        ReviewOutcome::PassedToHumanReview | ReviewOutcome::PassedToMerging => {
+            (LaneClaimState::Done, "passed")
+        }
         ReviewOutcome::NeedsRework => (LaneClaimState::Done, "rejected"),
         ReviewOutcome::InconclusiveNeedsRework => (LaneClaimState::Failed, "inconclusive"),
         ReviewOutcome::NeedsHumanInput => (LaneClaimState::Failed, "blocked"),

@@ -168,6 +168,9 @@ lane logs back into the Main Agent Workpad. Record:
   but open the PR against the parent integration branch recorded in topology
   evidence. For parent issues with native subissues, the parent final PR uses
   the parent integration branch as the head and `main` as the base.
+- Native subissues still stop Main work at `Agent Review`; passing Review Agent
+  evidence routes routine child issues to `Merging`, not direct Human Review,
+  unless the child records `Subissue Human Review Exception: <reason>`.
 - The canonical harness checkout must stay on latest `main`; dogfood branches
   belong in separate issue worktrees.
 - Use a branch name that includes the issue number.

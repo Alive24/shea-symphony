@@ -3,7 +3,7 @@ name: jade-symphony-doctor
 description: Use when diagnosing Jade Symphony doctor findings, Need Human Input items, issue or PR blockers, and install-health gaps, then giving an explicit repair recommendation and executing confirmed safe repairs in the same session when the workflow contract allows it.
 metadata:
   short-description: Jade Symphony doctor triage
-  suite-version: 2026.05.18
+  suite-version: 2026.05.22
 ---
 
 # Jade Symphony Doctor

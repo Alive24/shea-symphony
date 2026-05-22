@@ -47,6 +47,12 @@ fn happy_path_fixture_matches_documented_topology() {
         assert!(
             done_allowed_when
                 .iter()
+                .any(|condition| condition == "agent_review_passed_to_merging"),
+            "routine subissue Done must require Review PASS routing to Merging"
+        );
+        assert!(
+            done_allowed_when
+                .iter()
                 .any(|condition| condition == "pr_merged_into_parent_branch"),
             "subissue Done must require merge into the parent integration branch"
         );
@@ -122,6 +128,7 @@ fn documentation_states_the_non_competing_sources_and_boundaries() {
         "GitHub native sub-issue links are the source of truth",
         "Subissue PRs target the parent integration branch by default",
         "The parent issue remains the final Human Review unit",
+        "a passing native subissue review routes directly to",
         "The Main Agent still stops at `Agent Review`",
         "Issue #273 should turn these into doctor invariants",
         "Issue #274 should teach",

@@ -54,6 +54,11 @@ Project GraphQL or Project UI changes are break-glass only.
 - Confirm the linked PR is ready, not draft. If the PR is draft, do not run a
   normal review; record invalid handoff evidence and leave the issue out of
   `Human Review`.
+- For native GitHub subissues, preserve independent Agent Review but do not
+  route a routine PASS to `Human Review`. Passing native subissue review routes
+  directly to `Merging`; the parent issue owns final Human Review and UAT.
+  Direct subissue Human Review requires explicit
+  `Subissue Human Review Exception: <reason>` evidence.
 - Use `workspace show` to discover the issue worktree when local inspection is
   needed. Treat discovered Main Agent worktrees as read-only by default.
 - If `workspace show` reports multiple strong candidates, stop and request an
@@ -95,9 +100,11 @@ Project GraphQL or Project UI changes are break-glass only.
 
 ## Allowed Transitions
 
-- In manual review only: if review passes and evidence is recorded, the Review
-  Agent may move the issue to `Human Review` through `review pass` as the final
-  mutating step of the review session.
+- In manual review only: if review passes and evidence is recorded, route with
+  `review pass` as the final mutating step of the review session. Ordinary
+  issues and parent final issues move to `Human Review`; routine native
+  subissues move to `Merging` unless they record an explicit
+  `Subissue Human Review Exception: <reason>`.
 - In manual review only: if confirmed findings require implementation work,
   move the issue to `Rework` with the finding summary and reproduction evidence
   through `review reject` as the final mutating step of the review session.

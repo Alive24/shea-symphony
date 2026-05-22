@@ -147,6 +147,13 @@ merged without rewriting history or leaving uncommitted changes. Otherwise,
 record one concrete `Need Human Input` question unless the operator confirms a
 different merge-lane-only repair path.
 
+For native subissue PRs, treat dirty or conflicted mergeability as merge-lane
+repair work first. Attempt the safe existing-worktree repair before asking for
+human input, and keep successful mechanical repair in `Merging` for retry.
+Escalate only unresolved conflicts, semantic choices, dirty starting worktrees,
+missing worktree evidence, or verification-failing repairs to
+`Need Human Input`. Do not route native subissue merge repair to `Rework`.
+
 ## Status Transition Ordering
 
 Project `Status` changes must be the final mutating step of the session. Before

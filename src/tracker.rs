@@ -499,7 +499,12 @@ impl GithubProjectV2Adapter {
         {
             client.enrich_native_subissues(std::slice::from_mut(issue))?;
         }
-        enrich_native_subissue_project_statuses_from_project_read(issues);
+        let mut project_states = project_state_map(issues);
+        hydrate_missing_native_subissue_project_statuses(
+            issues,
+            &mut project_states,
+            |issue_ref| client.fetch_project_issue(issue_ref),
+        )?;
 
         Ok(())
     }
@@ -3944,6 +3949,36 @@ fn enrich_native_subissue_project_statuses_from_project_read(issues: &mut [Track
     }
 }
 
+fn hydrate_missing_native_subissue_project_statuses<F>(
+    issues: &mut [TrackerIssue],
+    project_states: &mut BTreeMap<String, String>,
+    mut fetch_issue: F,
+) -> Result<(), TrackerError>
+where
+    F: FnMut(&str) -> Result<Option<TrackerIssue>, TrackerError>,
+{
+    let mut missing = BTreeSet::new();
+    for issue in issues.iter() {
+        for issue_ref in native_subissue_refs_missing_project_state(issue) {
+            if !project_states.contains_key(&issue_ref) {
+                missing.insert(issue_ref);
+            }
+        }
+    }
+
+    for issue_ref in missing {
+        if let Some(issue) = fetch_issue(&issue_ref)? {
+            project_states.insert(issue.identifier, issue.state);
+        }
+    }
+
+    for issue in issues {
+        enrich_native_subissue_project_statuses_for_issue(issue, project_states);
+    }
+
+    Ok(())
+}
+
 fn project_state_map(issues: &[TrackerIssue]) -> BTreeMap<String, String> {
     issues
         .iter()
@@ -3960,7 +3995,7 @@ fn enrich_native_subissue_project_statuses_for_issue(
         return;
     }
     for subissue in &mut native_subissues {
-        if subissue.project_state.is_none() {
+        if subissue_project_state_missing(subissue.project_state.as_deref()) {
             subissue.project_state = project_states.get(&subissue.identifier).cloned();
         }
     }
@@ -3972,17 +4007,11 @@ fn enrich_native_subissue_project_statuses_for_issue(
 }
 
 fn native_subissue_refs_missing_project_state(issue: &TrackerIssue) -> Vec<String> {
-    let mut missing: Vec<String> = Vec::new();
-    for subissue in native_subissues_from_project_fields(issue) {
-        if subissue.project_state.is_none()
-            && !missing
-                .iter()
-                .any(|existing| issue_refs_match(existing.as_str(), &subissue.identifier))
-        {
-            missing.push(subissue.identifier);
-        }
-    }
-    missing
+    native_subissues_from_project_fields(issue)
+        .into_iter()
+        .filter(|subissue| subissue_project_state_missing(subissue.project_state.as_deref()))
+        .map(|subissue| subissue.identifier)
+        .collect()
 }
 
 fn native_subissues_from_project_fields(issue: &TrackerIssue) -> Vec<NativeSubissueRef> {
@@ -4075,7 +4104,7 @@ fn insert_native_subissue_status_fields(
 
     let mut normalized = Vec::new();
     for mut subissue in native_subissues {
-        if subissue.project_state.is_none() {
+        if subissue_project_state_missing(subissue.project_state.as_deref()) {
             subissue.project_state = project_states.get(&subissue.identifier).cloned();
         }
         push_native_subissue_ref(&mut normalized, subissue);
@@ -4147,12 +4176,18 @@ fn push_native_subissue_ref(
         if existing.url.is_none() {
             existing.url = candidate.url.take();
         }
-        if existing.project_state.is_none() {
+        if subissue_project_state_missing(existing.project_state.as_deref()) {
             existing.project_state = candidate.project_state.take();
         }
         return;
     }
     subissues.push(candidate);
+}
+
+fn subissue_project_state_missing(value: Option<&str>) -> bool {
+    value
+        .map(|state| normalize_state(state) == "missing")
+        .unwrap_or(true)
 }
 
 fn issue_refs_match(left: &str, right: &str) -> bool {
@@ -5537,6 +5572,43 @@ mod tests {
             .unwrap();
         assert_eq!(native[0]["project_state"], "Done");
         assert_eq!(native[1]["project_state"], "Agent Review");
+    }
+
+    #[test]
+    fn hydrates_missing_native_subissue_project_statuses_from_targeted_reads() {
+        let mut parent = issue("Agent Review");
+        parent.identifier = "#347".into();
+        parent.project_fields.insert(
+            "GitHub Native Subissues".into(),
+            serde_json::json!([
+                {"identifier": "#348", "state": "closed", "project_state": null},
+                {"identifier": "#349", "state": "closed", "project_state": "missing"}
+            ]),
+        );
+        let mut issues = vec![parent];
+        let mut project_states = project_state_map(&issues);
+        let mut fetched = Vec::new();
+
+        hydrate_missing_native_subissue_project_statuses(
+            &mut issues,
+            &mut project_states,
+            |issue_ref| {
+                fetched.push(issue_ref.to_string());
+                let mut child = issue("Done");
+                child.identifier = issue_ref.to_string();
+                Ok(Some(child))
+            },
+        )
+        .unwrap();
+
+        assert_eq!(fetched, vec!["#348", "#349"]);
+        assert_eq!(
+            issues[0]
+                .project_fields
+                .get("Native Subissue Project States")
+                .and_then(serde_json::Value::as_str),
+            Some("#348=Done, #349=Done")
+        );
     }
 
     #[test]

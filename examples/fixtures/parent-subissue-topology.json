@@ -21,7 +21,7 @@
         "branch": "feature/issue-272-parent-subissue-topology",
         "pr_base": "integration/issue-243-parent-subissue-orchestration",
         "done_allowed_when": [
-          "agent_review_passed",
+          "agent_review_passed_to_merging",
           "pr_merged_into_parent_branch",
           "workpad_records_review_and_merge_evidence"
         ]
@@ -32,7 +32,7 @@
         "branch": "feature/issue-273-parent-subissue-doctor-checks",
         "pr_base": "integration/issue-243-parent-subissue-orchestration",
         "done_allowed_when": [
-          "agent_review_passed",
+          "agent_review_passed_to_merging",
           "pr_merged_into_parent_branch",
           "workpad_records_review_and_merge_evidence"
         ]
@@ -43,7 +43,7 @@
         "branch": "feature/issue-274-parent-branch-lane-flows",
         "pr_base": "integration/issue-243-parent-subissue-orchestration",
         "done_allowed_when": [
-          "agent_review_passed",
+          "agent_review_passed_to_merging",
           "pr_merged_into_parent_branch",
           "workpad_records_review_and_merge_evidence"
         ]

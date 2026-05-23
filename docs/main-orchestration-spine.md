@@ -122,6 +122,9 @@ runtime owner:
   ownership workpad text, configured handoff verification, live PR link
   readback, Agent Review handoff evidence, and usage-limit pause workpad text.
   It does not perform the final Project state transition.
+- `src/lanes/main_loop/preflight.rs`: Main-loop backend preflight facts. It owns
+  app-server smoke readiness classification and the write-mode guard that
+  blocks `main loop --write` when the configured Main backend is `dry-run`.
 - `src/lanes/main_loop/session.rs`: Main-loop pending-session reconciliation
   and runtime-state result shaping. It owns session registry readback,
   stale/unknown active-session classification, terminal session reconstruction,

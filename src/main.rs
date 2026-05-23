@@ -173,12 +173,13 @@ use lanes::main_loop::IssueExecutionResult;
 pub(crate) use lanes::main_loop::{
     apply_live_handoff_pr_link, compact_evidence, execute_issue_once,
     execute_issue_once_with_workspace_key, linked_pull_requests_contain,
-    main_session_active_recoverable, pull_request_number_from_url, reconcile_pending_main_session,
-    run_handoff_verification, run_loop, run_loop_agent_review_handoff_evidence,
-    run_loop_apply_recovery_handoff, run_loop_assignee_ownership_decision,
-    run_loop_assignee_ownership_workpad, run_loop_claim_action, run_loop_handoff_failure_workpad,
-    run_loop_handoff_plan, run_loop_handoff_workpad, run_loop_live_handoff_enabled,
-    run_loop_ownership_workpad, run_loop_runtime_ownership, run_loop_runtime_state_for_issue,
+    main_app_server_smoke_gate, main_session_active_recoverable, pull_request_number_from_url,
+    reconcile_pending_main_session, run_handoff_verification, run_loop,
+    run_loop_agent_review_handoff_evidence, run_loop_apply_recovery_handoff,
+    run_loop_assignee_ownership_decision, run_loop_assignee_ownership_workpad,
+    run_loop_claim_action, run_loop_handoff_failure_workpad, run_loop_handoff_plan,
+    run_loop_handoff_workpad, run_loop_live_handoff_enabled, run_loop_ownership_workpad,
+    run_loop_runtime_ownership, run_loop_runtime_state_for_issue,
     run_loop_runtime_state_with_result, run_loop_runtime_state_with_transition,
     run_loop_usage_limit_pause_workpad, AssigneeOwnershipDecision, HandoffVerification,
     MainSessionReconciliation, RunLoopClaimAction, RunLoopLiveHandoff, RunLoopOptions,
@@ -733,79 +734,6 @@ fn all_mapped_tracker_states(config: &RuntimeConfig) -> Vec<String> {
         state_map.merging.clone(),
         state_map.done.clone(),
     ]
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct MainAppServerSmokeGate {
-    backend: String,
-    backend_source: String,
-    command: String,
-    approval_policy: String,
-    app_server_live_smoke_ready: bool,
-    app_server_live_smoke_reason: String,
-}
-
-fn main_app_server_smoke_gate(config: &RuntimeConfig) -> MainAppServerSmokeGate {
-    match config.backend.kind.as_str() {
-        "codex" if config.codex.command.contains("app-server") => MainAppServerSmokeGate {
-            backend: config.backend.kind.clone(),
-            backend_source: "codex-app-server".into(),
-            command: config.codex.command.clone(),
-            approval_policy: codex_approval_policy_label(config),
-            app_server_live_smoke_ready: true,
-            app_server_live_smoke_reason:
-                "main_lane.backend=codex and codex.command includes app-server".into(),
-        },
-        "codex" => MainAppServerSmokeGate {
-            backend: config.backend.kind.clone(),
-            backend_source: "codex-subprocess".into(),
-            command: config.codex.command.clone(),
-            approval_policy: codex_approval_policy_label(config),
-            app_server_live_smoke_ready: false,
-            app_server_live_smoke_reason: "codex command does not select the app-server transport"
-                .into(),
-        },
-        "tmux" => MainAppServerSmokeGate {
-            backend: config.backend.kind.clone(),
-            backend_source: "tmux-fallback".into(),
-            command: config
-                .tmux
-                .main_agent_command
-                .clone()
-                .unwrap_or_else(|| config.tmux.agent_command.clone()),
-            approval_policy: "n/a".into(),
-            app_server_live_smoke_ready: false,
-            app_server_live_smoke_reason:
-                "tmux is explicit fallback/debug and is not the app-server smoke path".into(),
-        },
-        "dry-run" => MainAppServerSmokeGate {
-            backend: config.backend.kind.clone(),
-            backend_source: "dry-run".into(),
-            command: "dry-run".into(),
-            approval_policy: "n/a".into(),
-            app_server_live_smoke_ready: false,
-            app_server_live_smoke_reason: "dry-run backend cannot perform a live app-server smoke"
-                .into(),
-        },
-        other => MainAppServerSmokeGate {
-            backend: config.backend.kind.clone(),
-            backend_source: other.into(),
-            command: other.into(),
-            approval_policy: "n/a".into(),
-            app_server_live_smoke_ready: false,
-            app_server_live_smoke_reason:
-                "configured Main backend is not the Codex app-server runtime".into(),
-        },
-    }
-}
-
-fn codex_approval_policy_label(config: &RuntimeConfig) -> String {
-    config
-        .codex
-        .approval_policy
-        .as_str()
-        .map(str::to_string)
-        .unwrap_or_else(|| config.codex.approval_policy.to_string())
 }
 
 fn run_once(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
@@ -2284,25 +2212,6 @@ fn current_gh_login() -> Result<Option<String>, Box<dyn std::error::Error>> {
 
     let login = String::from_utf8_lossy(&output.stdout).trim().to_string();
     Ok((!login.is_empty()).then_some(login))
-}
-
-fn ensure_write_mode_main_agent_backend(
-    workflow_path: &Path,
-    config: &RuntimeConfig,
-    command: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if config.backend.kind != "dry-run" {
-        return Ok(());
-    }
-
-    Err(io::Error::new(
-        io::ErrorKind::InvalidInput,
-        format!(
-            "write-mode {command} is blocked because workflow={} configures main_lane.backend=dry-run; configure a real main-agent backend such as tmux, codex, or claude-code before using --write",
-            workflow_path.display()
-        ),
-    )
-    .into())
 }
 
 fn unbounded_loop_sleep_ms(limit: Option<usize>, poll_interval_ms: u64) -> Option<u64> {

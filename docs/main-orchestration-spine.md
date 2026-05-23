@@ -35,6 +35,10 @@ clear owner:
 - `src/commands/forge.rs`: Issue Forge create, validate, promote, and rework
   execution. It preserves quality-gate checks, Project write ordering, readback
   verification, and rework evidence-before-status behavior.
+- `src/commands/gate.rs`: quality-gate command execution plus shared gate
+  evaluation helpers used by Forge, Project inspect, and Main lane dispatch.
+  It keeps gate workpad rendering and gate-to-state mapping with the gate
+  decision logic.
 - `src/commands/project.rs`: Project read and write command execution for
   state, issue, inspect, set-state, workpad, link-pr, add, and
   timeline-comment. It keeps write intent checks, recovery-aware mutations, and

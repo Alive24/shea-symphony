@@ -242,15 +242,22 @@ the current PR body but appends a missing `Closes #<issue>` reference before
 readback so GitHub can establish a native issue/PR relationship instead of
 relying only on a timeline comment.
 
-The canonical `workflows/jade-symphony.md` file uses the local `tmux` main-agent
-backend. A launched tmux session records its session name, log path, workspace,
-branch, attach command, prompt artifact, actor, lane, attempt, and running
-status in a durable session registry under the configured artifact root. The
-registry is terminal-session evidence only; tracker state remains the issue
-lifecycle source of truth. The issue stays in the active main lane until later
-completion evidence satisfies the existing handoff rules. On later ticks,
-`main loop --write` probes the runtime state's recorded session through the
-session registry plus bounded tmux pane/log evidence before launching anything
+The canonical Main runtime is Codex app-server: `main_lane.backend: codex` plus
+`codex.command: codex app-server` and `codex.approval_policy: never`, matching
+the current local app-server approval-policy schema. `main loop --write` records prompt,
+protocol, stderr, normalized-event, runtime-state, and session-registry
+evidence for that app-server turn before any `Agent Review` handoff. If
+`main_lane.backend: tmux` is selected as explicit fallback/debug, the tmux path
+records its session name, log path, workspace, branch, attach command, prompt
+artifact, actor, lane, attempt, and running status in the durable session
+registry under the configured artifact root. It still captures the pane before
+prompt injection and may auto-advance the Codex workspace trust prompt only
+inside the configured Jade Symphony issue worktree root. Set
+`JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to opt out; a visible trust prompt or missing
+readiness then fails closed and preserves attach/log evidence for inspection.
+The registry is runtime evidence only; tracker state remains the issue lifecycle
+source of truth. On later ticks,
+`main loop --write` probes runtime/session evidence before launching anything
 new. Completed sessions continue through verification, PR publication,
 linked-PR readback, PR readiness, and `Agent Review` handoff; active, waiting,
 unknown, or missing-registry sessions are preserved without launching a
@@ -259,19 +266,10 @@ classified as interrupted or unavailable. Recover-first handling is enabled by
 default for `--write` and can be disabled with `--no-recover`. If an operator
 overrides the workflow back to `main_lane.backend: dry-run`, `main loop --write`
 exits non-zero before loading runtime state, creating worktrees, claiming
-Project fields, or writing workpads.
-
-The canonical Main runtime is Codex app-server: `main_lane.backend: codex` plus
-`codex.command: codex app-server` and `codex.approval_policy: never`, matching
-the current local app-server approval-policy schema. `main loop --write` records prompt,
-protocol, stderr, normalized-event, runtime-state, and session-registry
-evidence for that app-server turn before any `Agent Review` handoff. If
-`main_lane.backend: tmux` is selected as explicit fallback/debug, the tmux path
-captures the pane before prompt injection and may auto-advance the Codex
-workspace trust prompt only inside the configured Jade Symphony issue worktree
-root. Set `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to opt out; a visible trust prompt
-or missing readiness then fails closed and preserves attach/log evidence for
-inspection.
+Project fields, or writing workpads. The dry-run preflight prints the selected
+Main backend, backend source, command, approval policy, and session-registry
+path so a bounded post-merge app-server smoke can stop before write mode if the
+selected issue or backend is unexpected.
 
 For manual lane recovery, first claim the lane and keep the printed `run=`.
 Then `session start WORKFLOW ISSUE --lane main|review|merge --run RUN --write`

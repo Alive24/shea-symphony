@@ -1,0 +1,3 @@
+display_name: Jade Symphony Doctor
+short_description: Diagnose Jade Symphony doctor findings and execute confirmed safe repairs.
+default_prompt: Inspect Jade Symphony doctor output, identify the exact blocker, propose one concrete repair path, and execute the confirmed same-session repair only when the workflow contract and target paths are clear.

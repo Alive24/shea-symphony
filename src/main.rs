@@ -59,7 +59,7 @@ use jade_symphony::ownership::{
     render_runtime_ownership_marker, runtime_ownership_decision, RuntimeOwnershipDecision,
     RuntimeOwnershipMarker,
 };
-use jade_symphony::profiles::{discover_execution_profiles, selected_execution_profile};
+use jade_symphony::profiles::selected_execution_profile;
 use jade_symphony::progress::{run_with_progress_heartbeat, ProgressHeartbeatSpec};
 use jade_symphony::prompt::render_prompt;
 use jade_symphony::review::{
@@ -83,10 +83,7 @@ use jade_symphony::session_registry::{
     save_session_record, save_session_registry, session_registry_path, unix_timestamp_ms,
     AgentSessionRecord, SessionStatus,
 };
-use jade_symphony::skill_status::{
-    build_skill_readiness_report, doctor_skill_readiness_summary, render_skill_readiness_report,
-    render_skill_readiness_report_json, SkillStatusInput,
-};
+use jade_symphony::skill_status::{doctor_skill_readiness_summary, SkillStatusInput};
 use jade_symphony::status_surface::{render_latest_status_bar, render_snapshot};
 use jade_symphony::tracker::{
     adapter_from_config, claim_decision, classify_project_state_error,
@@ -134,6 +131,7 @@ use commands::gate::live_missing_assignee_gate_blocker;
 pub(crate) use commands::gate::{
     evaluate_issue_for_current_source, gate_target_state, gate_workpad, quality_gate,
 };
+use commands::profiles::list_profiles;
 #[cfg(test)]
 use commands::project::filter_issues_by_state;
 #[cfg(test)]
@@ -143,6 +141,7 @@ use commands::project::{
     add_to_project, append_timeline_comment, link_pr, project_inspect, project_issue,
     project_state, render_state_summary, set_state, upsert_workpad,
 };
+use commands::skills::skills_status;
 #[cfg(test)]
 use commands::status::render_plan_snapshot;
 use commands::status::{plan, status_api};
@@ -2658,16 +2657,6 @@ fn hydrate_issues_for_review_lane(
         .collect()
 }
 
-fn skills_status(input: SkillStatusInput, json: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let report = build_skill_readiness_report(input);
-    if json {
-        println!("{}", render_skill_readiness_report_json(&report)?);
-    } else {
-        println!("{}", render_skill_readiness_report(&report));
-    }
-    Ok(())
-}
-
 fn all_mapped_tracker_states(config: &RuntimeConfig) -> Vec<String> {
     let state_map = &config.tracker.state_map;
     vec![
@@ -2682,29 +2671,6 @@ fn all_mapped_tracker_states(config: &RuntimeConfig) -> Vec<String> {
         state_map.merging.clone(),
         state_map.done.clone(),
     ]
-}
-
-fn list_profiles(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let config = load_config(&workflow_path)?;
-    let profiles = discover_execution_profiles(&config.profiles)?;
-    let selected = selected_execution_profile(&config.profiles)?;
-
-    println!("profiles={}", profiles.len());
-    if let Some(profile) = selected {
-        println!("selected_profile={}", profile.profile_id);
-        println!("selected_instance={}", profile.instance_name);
-    }
-    for profile in profiles {
-        println!(
-            "- profile_id={} instance_name={} source={} workspace_namespace={} backend={}",
-            profile.profile_id,
-            profile.instance_name,
-            profile.source,
-            profile.workspace_namespace,
-            profile.backend.as_deref().unwrap_or("configured")
-        );
-    }
-    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

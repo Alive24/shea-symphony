@@ -42,10 +42,15 @@ clear owner:
   evaluation helpers used by Forge, Project inspect, and Main lane dispatch.
   It keeps gate workpad rendering and gate-to-state mapping with the gate
   decision logic.
+- `src/commands/profiles.rs`: execution profile listing. It owns profile
+  discovery output while shared profile selection for lane execution remains
+  with the lane/runtime callers.
 - `src/commands/project.rs`: Project read and write command execution for
   state, issue, inspect, set-state, workpad, link-pr, add, and
   timeline-comment. It keeps write intent checks, recovery-aware mutations, and
   readback-oriented output close to the Project command family.
+- `src/commands/skills.rs`: skill readiness status rendering for the grouped
+  `skills status` surface.
 - `src/commands/status.rs`: read-only runtime status surfaces for `plan` and
   `status serve`. It owns snapshot assembly, JSON/human rendering, and loopback
   status serving while reusing shared session inspection.

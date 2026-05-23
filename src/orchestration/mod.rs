@@ -1,4 +1,5 @@
 pub(crate) mod canonical_checkout;
+pub(crate) mod progress;
 pub(crate) mod session_status;
 pub(crate) mod time;
 pub(crate) mod tracker_context;

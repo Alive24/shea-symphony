@@ -40,7 +40,7 @@ use jade_symphony::orchestrator::Orchestrator;
 #[cfg(test)]
 use jade_symphony::ownership::render_runtime_ownership_marker;
 use jade_symphony::ownership::{runtime_ownership_decision, RuntimeOwnershipDecision};
-use jade_symphony::progress::{run_with_progress_heartbeat, ProgressHeartbeatSpec};
+use jade_symphony::progress::run_with_progress_heartbeat;
 use jade_symphony::prompt::render_prompt;
 use jade_symphony::review::{
     transition_allowed_for_main_agent, FakeReviewOutcome, ReviewFreshnessInput,
@@ -215,6 +215,7 @@ pub(crate) use orchestration::canonical_checkout::{
 };
 #[cfg(test)]
 use orchestration::canonical_checkout::{canonical_checkout_report, CanonicalCheckoutReport};
+pub(crate) use orchestration::progress::{progress_spec_for_config, progress_spec_with_event_log};
 pub(crate) use orchestration::session_status::{
     session_status_snapshots, DEFAULT_SESSION_STALE_AFTER_MS, DEFAULT_SESSION_STATUS_LINES,
 };
@@ -555,18 +556,6 @@ fn load_config(workflow_path: &Path) -> Result<RuntimeConfig, Box<dyn std::error
     let config = RuntimeConfig::from_workflow(&workflow, workflow_path)?;
     config.validate()?;
     Ok(config)
-}
-
-fn progress_spec_for_config(config: &RuntimeConfig, wait: &str) -> ProgressHeartbeatSpec {
-    ProgressHeartbeatSpec::new(wait).actor(
-        config.identity.actor_role.clone(),
-        config.identity.actor_label.clone(),
-    )
-}
-
-fn progress_spec_with_event_log(config: &RuntimeConfig, wait: &str) -> ProgressHeartbeatSpec {
-    progress_spec_for_config(config, wait)
-        .event_log_path(config.observability.logs_root.join("jade-symphony.jsonl"))
 }
 
 fn current_git_branch(workspace_path: &Path) -> Result<Option<String>, io::Error> {

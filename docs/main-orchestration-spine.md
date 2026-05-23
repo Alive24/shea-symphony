@@ -103,6 +103,10 @@ have a narrow shared responsibility:
 - `src/orchestration/time.rs`: shared runtime clock and GMT timestamp helpers
   used in session evidence, Forge/Rework notes, audit records, and runtime
   state updates.
+- `src/orchestration/progress.rs`: command/lane progress heartbeat spec
+  builders. It attaches actor identity and the shared event-log path while the
+  heartbeat implementation and stdout/stderr safety live in the library
+  `src/progress.rs`.
 
 `src/main.rs` still owns:
 

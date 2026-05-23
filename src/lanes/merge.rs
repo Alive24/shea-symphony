@@ -8,7 +8,9 @@ use jade_symphony::git_handoff::{
     CommandOutput, HandoffCommandRunner, ProcessHandoffCommandRunner,
 };
 use jade_symphony::handoff::expected_merge_base_branch_for_issue;
-use jade_symphony::lane_claim::{LaneClaim, LaneClaimActor, LaneClaimSource};
+use jade_symphony::lane_claim::{
+    LaneClaim, LaneClaimActor, LaneClaimLane, LaneClaimSource, LaneClaimState,
+};
 use jade_symphony::merge_lane::{
     expected_merge_base_branch, fetch_pull_request_status_with_recheck, fixture_merge_output,
     merge_lane_decision, merge_lane_workpad, merge_lane_workpad_with_repair_evidence,
@@ -27,7 +29,7 @@ use crate::{
     merge_completion_recovery_key, merge_decision_recovery_key, merge_pull_request_with_recovery,
     pool_claim_eligibility, preflight_canonical_checkout_for_write_mode, print_latest_status,
     progress_spec_with_event_log, project_text_field, record_agent_session_events,
-    render_prompt_with_claim, rendered_lane_prompt_artifact_path, select_merge_worker_issues,
+    render_prompt_with_claim, rendered_lane_prompt_artifact_path, select_pool_worker_issues,
     set_state_with_recovery, single_line, tracker_backend_label, worker_identity,
     AgentSessionLaneArg, TrackerMutationAudit, TrackerMutationOutcome, WorkerLane,
 };
@@ -204,7 +206,7 @@ pub(crate) fn merge_once_tick(
     let (issue, recovery_reason) = match latest_issue {
         Some(issue) => {
             let recovery_reason = recover
-                .then(|| crate::merge_recovery_reason(&issue, &worker_id, &config))
+                .then(|| merge_recovery_reason(&issue, &worker_id, &config))
                 .flatten();
             (issue, recovery_reason)
         }
@@ -557,6 +559,90 @@ pub(crate) fn merge_once_tick(
     }
 
     Ok(MergeOnceOutcome::Skipped)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct MergeWorkerSelection {
+    pub(crate) issue: TrackerIssue,
+    pub(crate) recovery_reason: Option<String>,
+}
+
+pub(crate) fn select_merge_worker_issues(
+    issues: &[TrackerIssue],
+    worker_id: &str,
+    pool: usize,
+    config: &RuntimeConfig,
+    recover: bool,
+) -> Vec<MergeWorkerSelection> {
+    let limit = pool.max(1);
+    let mut selected = Vec::new();
+
+    if recover {
+        let mut recovery_candidates = issues
+            .iter()
+            .filter_map(|issue| {
+                merge_recovery_reason(issue, worker_id, config).map(|reason| MergeWorkerSelection {
+                    issue: issue.clone(),
+                    recovery_reason: Some(reason),
+                })
+            })
+            .collect::<Vec<_>>();
+        recovery_candidates.sort_by_key(|candidate| candidate.issue.priority.unwrap_or(i64::MAX));
+        for candidate in recovery_candidates {
+            if selected.len() >= limit {
+                break;
+            }
+            selected.push(candidate);
+        }
+    }
+
+    let remaining = limit.saturating_sub(selected.len());
+    if remaining > 0 {
+        for issue in
+            select_pool_worker_issues(issues, WorkerLane::Merging, worker_id, remaining, config)
+        {
+            if selected.iter().any(|candidate: &MergeWorkerSelection| {
+                candidate.issue.identifier == issue.identifier
+            }) {
+                continue;
+            }
+            selected.push(MergeWorkerSelection {
+                issue,
+                recovery_reason: None,
+            });
+        }
+    }
+
+    selected
+}
+
+fn merge_recovery_reason(
+    issue: &TrackerIssue,
+    worker_id: &str,
+    config: &RuntimeConfig,
+) -> Option<String> {
+    let normalized_state = issue.normalized_state();
+    if normalized_state != normalize_state(&config.tracker.state_map.merging) {
+        return None;
+    }
+
+    let owner = project_text_field(issue, WorkerLane::Merging.claim_field())?;
+    let claim = LaneClaim::parse(&owner).ok()?;
+    if claim.lane != LaneClaimLane::Merge
+        || claim.issue != issue.identifier
+        || claim.state != LaneClaimState::Active
+        || !matches!(claim.source, LaneClaimSource::Loop | LaneClaimSource::Goal)
+        || claim.worker.as_deref() == Some(worker_id)
+    {
+        return None;
+    }
+
+    Some(format!(
+        "recover_active_merge_claim previous_worker={} run={} source={}",
+        claim.worker.as_deref().unwrap_or("unknown"),
+        claim.run,
+        claim.source.as_str()
+    ))
 }
 
 fn refresh_canonical_checkout_after_merge(

@@ -70,6 +70,33 @@ hydration. Use `project issue '#<issue>' --json` or `project inspect '#<issue>'`
 when an operator or lane needs the rich issue body, workpad/timeline comments,
 linked PR readback, or detailed native topology evidence for one issue.
 
+## Long-Running Command Progress
+
+Live commands that wait longer than the centralized heartbeat threshold emit
+compact progress lines to stderr, for example:
+
+```text
+progress wait=github_project_read elapsed=30s issue=#318 backend=gh next=load_issue
+progress wait=review_backend elapsed=60s issue=#243 backend=gemini-cli artifact=/path/to/job.json next=waiting_for_child
+```
+
+These lines mean the command is still alive and waiting on the named backend or
+child process. They do not change retry, timeout, routing, review, or merge
+semantics. Timeout and backend failures still print their normal errors.
+
+Heartbeat output is deliberately kept away from stdout, so JSON commands such as
+`project issue --json`, `review status --json`, and `autopilot plan --json`
+remain machine-readable. Lane loop heartbeats also append local
+`progress_heartbeat` records to the configured `jade-symphony.jsonl` event log
+when that command path already uses local runtime evidence.
+
+The default threshold and repeat interval are 30 seconds. For UAT or local
+simulation, set `JADE_SYMPHONY_PROGRESS_HEARTBEAT_MS` to a smaller value; set it
+to `0` to disable heartbeat output for that process. If a progress line keeps
+repeating, use the `wait=`, `issue=`, `backend=`, `artifact=`, and `next=`
+fields to choose the next diagnostic surface: `status show`, `review status`,
+`doctor`, the referenced artifact path, or a recorded tmux attach command.
+
 Doctor repair helpers:
 
 ```bash
@@ -161,11 +188,16 @@ is reported separately from real active sessions; a Todo candidate is not
 `running` until a backend session or runtime record exists. `main loop`, `review
 loop`, and `merge once` print compact `Latest:` status bars in addition to their
 detailed line logs.
-`main loop --write`, `review loop --write`, and `merge loop --write` also
-enforce a clean canonical launch checkout before the first tracker mutation.
-Tracked dirty files block the lane; recognized untracked
-runtime/log/prompt/evidence/draft artifacts are moved to artifact quarantine
-with a warning; unclassified untracked files block for operator repair.
+Write-mode lane/control commands first run a guarded canonical checkout refresh
+before the first tracker mutation. From a clean attached `main` checkout, the
+CLI fetches the upstream branch and fast-forwards with `git merge --ff-only`
+when local `main` is only behind. Output includes
+`canonical_checkout_refresh=already_current`, `ff_only`, `would_ff_only`, or
+`blocked`, followed by the normal `canonical_checkout ...` safety line.
+Tracked dirty files, detached HEAD, non-`main` branches, missing upstreams,
+unclassified untracked files, and non-fast-forward updates block the lane.
+Recognized untracked runtime/log/prompt/evidence/draft artifacts are moved to
+artifact quarantine with a warning before write-mode git or tracker mutation.
 New lane claims are written as single-line `v=1` key/value audit pointers, for
 example `v=1 lane=main actor=codex worker=codex-manual-main source=manual
 issue=#244 run=... state=active thread=unknown registry=run/...`. Worker display
@@ -192,10 +224,12 @@ targeted child issue reads have had a chance to fill statuses omitted from the
 parent read. This is independent from tracker blocker relationships so native
 subissue changes cannot silently bypass parent dispatch safety.
 
-Live write-mode claim, session, and lane loop commands refuse to run unless the
-canonical checkout is attached to `main` and exactly matches `origin/main` after
-a fetch. They report the blocker and leave git untouched when HEAD is detached,
-the branch is not `main`, or local `main` is stale.
+Live write-mode claim, session, lane loop, review pass/reject, forge rework, and
+workspace ensure commands refuse to run unless the canonical checkout is a clean
+attached `main` checkout with a configured upstream. If local `main` is behind
+and can fast-forward, the CLI performs that canonical-only `ff-only` refresh
+before continuing. It never refreshes issue worktrees or PR branches in this
+path.
 
 PR relationship verification is a lane invariant, not just evidence text. A PR
 URL found in a workpad, issue comment, or local branch can help operators

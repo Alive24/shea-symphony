@@ -137,6 +137,14 @@ fallback sessions, and reports a conservative session classification such as
 compact evidence snippets plus artifact, attach, or log locations; inspect the
 recorded app-server artifacts or attach manually only when raw evidence is
 needed.
+Long-running live waits also print compact `progress ...` heartbeats to stderr
+after the configured threshold, defaulting to 30 seconds. These lines identify
+the wait reason, issue or PR when known, backend or child process, elapsed time,
+and next expected action. They are liveness and diagnosis hints only; they do
+not alter timeout, retry, routing, review, or merge behavior, and they are kept
+out of JSON stdout. For local UAT, set
+`JADE_SYMPHONY_PROGRESS_HEARTBEAT_MS=1000` or another small value; set it to `0`
+to suppress heartbeat output for that process.
 Persisted session registry statuses that are not recognized by the current
 binary are read as `unknown` without rewriting or dropping the record. Status
 and doctor diagnostics preserve the raw drifted value so operators can inspect
@@ -359,10 +367,15 @@ comment/workpad streams, and rich linked-PR hydration.
 The canonical checkout is only the harness launch directory. Do not use it as a
 Main, Review, or Merge issue worktree, and do not leave runtime state, logs,
 prompts, drafts, or evidence there. `main loop --write`, `review loop --write`,
-and `merge loop --write` check the launch checkout before tracker mutation:
-tracked dirty files block the lane, recognized local artifacts are moved to the
-artifact quarantine with a warning, and unclassified untracked files block until
-the operator moves them to an issue worktree or artifact location.
+and `merge loop --write` refresh and check the launch checkout before tracker
+mutation. From a clean attached `main`, Jade Symphony fetches the configured
+upstream and performs a canonical-only `git merge --ff-only` when local `main`
+is only behind. The terminal output reports
+`canonical_checkout_refresh=already_current`, `ff_only`, `would_ff_only`, or
+`blocked`, then prints the canonical safety line. Tracked dirty files,
+detached HEAD, non-`main`, missing upstream, unclassified untracked files, and
+non-fast-forward updates block until the operator repairs the canonical checkout.
+Recognized local artifacts are moved to artifact quarantine with a warning.
 
 Use `project issue` for per-issue Project status, Project fields, blocker
 relationships, claim locks, rich issue body, workpad/timeline comments, native

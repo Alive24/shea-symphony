@@ -19,6 +19,14 @@ cargo run -- session start workflows/jade-symphony.md '#123' --lane main --run <
 cargo run -- session list workflows/jade-symphony.md
 ```
 
+Write-mode lane/control commands are safe to run from the canonical checkout on
+`main` even when local `main` is only behind `origin/main`: before tracker
+mutation, Jade Symphony fetches the configured upstream and performs a
+canonical-only `git merge --ff-only`. Dry-runs report `would_ff_only` without
+changing the checkout. Dirty, detached, non-`main`, missing-upstream, and
+non-fast-forward cases still fail closed; issue worktrees and PR branches are
+not refreshed by this path.
+
 Main Agent execution defaults to the Codex app-server backend through
 `main_lane.backend: codex` and `codex.command: codex app-server`. A bounded
 write tick creates or resumes the issue worktree, runs one app-server turn,

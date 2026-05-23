@@ -369,10 +369,15 @@ comment/workpad streams, and rich linked-PR hydration.
 The canonical checkout is only the harness launch directory. Do not use it as a
 Main, Review, or Merge issue worktree, and do not leave runtime state, logs,
 prompts, drafts, or evidence there. `main loop --write`, `review loop --write`,
-and `merge loop --write` check the launch checkout before tracker mutation:
-tracked dirty files block the lane, recognized local artifacts are moved to the
-artifact quarantine with a warning, and unclassified untracked files block until
-the operator moves them to an issue worktree or artifact location.
+and `merge loop --write` refresh and check the launch checkout before tracker
+mutation. From a clean attached `main`, Jade Symphony fetches the configured
+upstream and performs a canonical-only `git merge --ff-only` when local `main`
+is only behind. The terminal output reports
+`canonical_checkout_refresh=already_current`, `ff_only`, `would_ff_only`, or
+`blocked`, then prints the canonical safety line. Tracked dirty files,
+detached HEAD, non-`main`, missing upstream, unclassified untracked files, and
+non-fast-forward updates block until the operator repairs the canonical checkout.
+Recognized local artifacts are moved to artifact quarantine with a warning.
 
 Use `project issue` for per-issue Project status, Project fields, blocker
 relationships, claim locks, rich issue body, workpad/timeline comments, native

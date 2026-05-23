@@ -117,6 +117,12 @@ by default, then continues normal merge selection. It must not adopt manual
 claims, and it must not route merge repair through `Rework`. Use `--no-recover`
 only for debugging or a deliberately conservative operator pass.
 
+Write-mode merge commands may automatically refresh the canonical checkout with
+a canonical-only `git merge --ff-only` when clean local `main` is behind its
+configured upstream. Treat that as control-surface synchronization only. It does
+not refresh PR branches or issue worktrees; those remain merge-lane freshness or
+conflict-repair work.
+
 ## Merging
 
 For `Merging` issues:

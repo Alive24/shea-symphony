@@ -136,9 +136,12 @@ Project v2 issues:
      explicitly allowed, and otherwise compares issue assignees against the
      current `gh` login or selected profile login before claim.
    - Live write-mode claim, session, main loop, review loop, and merge loop
-     commands require the canonical launch checkout to be attached to latest
-     `main`; detached HEAD, non-`main`, or stale `main` states block with
-     operator guidance instead of mutating git.
+     commands require the canonical launch checkout to be clean and attached to
+     `main`. When local `main` is only behind its configured upstream, the CLI
+     fetches and performs a canonical-only `git merge --ff-only` before tracker
+     mutation; dry-runs report `would_ff_only` without changing the checkout.
+     Detached HEAD, non-`main`, missing upstream, dirty/unclassified paths, and
+     non-fast-forward updates block with operator guidance.
    - `main loop` reuses tracker claim helpers to claim only `Todo` / `Rework`,
      resume active `In Progress`, and stop/replan on externally changed states.
    - Main-agent dispatch treats structured tracker blockers as authoritative,
@@ -164,7 +167,8 @@ Project v2 issues:
      `review reject` refuses `Human Review`; both commands require the exact
      current `Review Agent` claim in the evidence file and preserve the field
      as terminal audit evidence.
-   - Review mutating commands hard-stop unless the canonical checkout is clean
+   - Review mutating commands use the same canonical-only `ff-only` pre-write
+     refresh as other lane commands, then hard-stop unless the checkout is clean
      latest `main`; local PR inspection must happen through `workspace show`,
      `workspace adopt`, or `workspace ensure`, not by checking out PR branches
      in the canonical checkout.

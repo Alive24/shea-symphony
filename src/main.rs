@@ -14,8 +14,9 @@ use jade_symphony::agent::{
 };
 use jade_symphony::artifacts::{artifact_layout, cleanup_plan, ArtifactClass, CleanupPlan};
 use jade_symphony::canonical_checkout::{
-    canonical_checkout_status_line, canonical_checkout_warning_lines, canonical_quarantine_root,
-    enforce_clean_canonical_checkout_for_write, inspect_canonical_checkout,
+    canonical_checkout_refresh_status_line, canonical_checkout_status_line,
+    canonical_checkout_warning_lines, canonical_quarantine_root, inspect_canonical_checkout,
+    refresh_canonical_checkout_before_write, CanonicalCheckoutRefreshMode,
 };
 use jade_symphony::config::RuntimeConfig;
 use jade_symphony::doctor::{
@@ -2337,6 +2338,7 @@ fn forge_rework(options: ForgeReworkOptions) -> Result<(), Box<dyn std::error::E
     }
     let dry_run = !write || dry_run;
     let config = load_config(&workflow_path)?;
+    preflight_canonical_checkout_for_write_mode(&config, "forge rework", write)?;
     let adapter = adapter_from_config(&config);
     forge_rework_with_adapter(
         &config,
@@ -3111,9 +3113,7 @@ fn review_claim(
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config(&workflow_path)?;
-    if write {
-        enforce_canonical_checkout_before_write(&config, "review claim")?;
-    }
+    preflight_canonical_checkout_for_write_mode(&config, "review claim", write)?;
     let adapter = adapter_from_config(&config);
     let issue = adapter
         .get_issue(&issue_ref)?
@@ -3199,9 +3199,11 @@ fn lane_claim_command(
     }
 
     let config = load_config(&workflow_path)?;
-    if write {
-        enforce_canonical_checkout_before_write(&config, &format!("{} claim", lane.label()))?;
-    }
+    preflight_canonical_checkout_for_write_mode(
+        &config,
+        &format!("{} claim", lane.label()),
+        write,
+    )?;
 
     let adapter = adapter_from_config(&config);
     let issue = adapter
@@ -3473,9 +3475,7 @@ fn review_manual_pass(
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config(&workflow_path)?;
-    if write {
-        enforce_canonical_checkout_before_write(&config, "review pass")?;
-    }
+    preflight_canonical_checkout_for_write_mode(&config, "review pass", write)?;
     let adapter = adapter_from_config(&config);
     let issue = adapter
         .get_issue(&issue_ref)?
@@ -3606,9 +3606,7 @@ fn review_manual_reject(
     }
 
     let config = load_config(&workflow_path)?;
-    if write {
-        enforce_canonical_checkout_before_write(&config, "review reject")?;
-    }
+    preflight_canonical_checkout_for_write_mode(&config, "review reject", write)?;
     let adapter = adapter_from_config(&config);
     let issue = adapter
         .get_issue(&issue_ref)?
@@ -4042,9 +4040,7 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
         let workflow = WorkflowDefinition::load(&options.workflow_path)?;
         let config = RuntimeConfig::from_workflow(&workflow, &options.workflow_path)?;
         config.validate()?;
-        if options.write {
-            enforce_canonical_checkout_before_write(&config, "review_loop")?;
-        }
+        preflight_canonical_checkout_for_write_mode(&config, "review_loop", options.write)?;
         let adapter = adapter_from_config(&config);
         let issues = run_with_progress_heartbeat(
             progress_spec_with_event_log(&config, "github_project_read")
@@ -4492,8 +4488,8 @@ fn merge_once_tick(
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
-    if write && config.tracker.fixture_path.is_none() {
-        enforce_canonical_checkout_before_write(&config, "merge_loop")?;
+    if config.tracker.fixture_path.is_none() {
+        preflight_canonical_checkout_for_write_mode(&config, "merge_loop", write)?;
     }
     let _merge_prompt = workflow.prompt_for_lane(AgentLane::MergeAgent);
 
@@ -5372,9 +5368,7 @@ fn agent_session_start(
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
     validate_tmux_session_config(&config)?;
-    if write {
-        enforce_canonical_checkout_before_write(&config, "session start")?;
-    }
+    preflight_canonical_checkout_for_write_mode(&config, "session start", write)?;
 
     let adapter = adapter_from_config(&config);
     let issue = adapter
@@ -8181,9 +8175,7 @@ fn workspace_ensure(
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config(&workflow_path)?;
-    if write {
-        enforce_canonical_checkout_before_write(&config, "workspace ensure")?;
-    }
+    preflight_canonical_checkout_for_write_mode(&config, "workspace ensure", write)?;
 
     let adapter = adapter_from_config(&config);
     let issue = adapter
@@ -8990,12 +8982,71 @@ fn enforce_canonical_checkout_before_write(
     command: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let root = std::env::current_dir()?;
-    let report = enforce_clean_canonical_checkout_for_write(&root, config)?;
-    println!("{}", canonical_checkout_status_line(&report));
-    for line in canonical_checkout_warning_lines(&report) {
-        println!("{command}_{line}");
+    match refresh_canonical_checkout_before_write(
+        &root,
+        config,
+        CanonicalCheckoutRefreshMode::Apply,
+    ) {
+        Ok(refresh) => {
+            println!("{}", canonical_checkout_refresh_status_line(&refresh));
+            println!("{}", canonical_checkout_status_line(&refresh.checkout));
+            for line in canonical_checkout_warning_lines(&refresh.checkout) {
+                println!("{command}_{line}");
+            }
+            Ok(())
+        }
+        Err(error) => {
+            println!(
+                "canonical_checkout_refresh=blocked command={} reason=\"{}\"",
+                shell_quote_display(command),
+                single_line(&error.to_string())
+            );
+            Err(error.into())
+        }
     }
-    Ok(())
+}
+
+fn preview_canonical_checkout_before_dry_run(config: &RuntimeConfig, command: &str) {
+    let Ok(root) = std::env::current_dir() else {
+        println!(
+            "canonical_checkout_refresh=blocked command={} reason=\"current directory unavailable\"",
+            shell_quote_display(command)
+        );
+        return;
+    };
+    match refresh_canonical_checkout_before_write(
+        &root,
+        config,
+        CanonicalCheckoutRefreshMode::DryRun,
+    ) {
+        Ok(refresh) => {
+            println!("{}", canonical_checkout_refresh_status_line(&refresh));
+            println!("{}", canonical_checkout_status_line(&refresh.checkout));
+            for line in canonical_checkout_warning_lines(&refresh.checkout) {
+                println!("{command}_{line}");
+            }
+        }
+        Err(error) => {
+            println!(
+                "canonical_checkout_refresh=blocked command={} reason=\"{}\"",
+                shell_quote_display(command),
+                single_line(&error.to_string())
+            );
+        }
+    }
+}
+
+fn preflight_canonical_checkout_for_write_mode(
+    config: &RuntimeConfig,
+    command: &str,
+    write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if write {
+        enforce_canonical_checkout_before_write(config, command)
+    } else {
+        preview_canonical_checkout_before_dry_run(config, command);
+        Ok(())
+    }
 }
 
 fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
@@ -9018,8 +9069,8 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         let max_concurrent = options.worker_limit(&config);
         if options.write {
             ensure_write_mode_main_agent_backend(&options.workflow_path, &config, "main loop")?;
-            enforce_canonical_checkout_before_write(&config, "run_loop")?;
         }
+        preflight_canonical_checkout_for_write_mode(&config, "run_loop", options.write)?;
         let adapter = adapter_from_config(&config);
         let mut active_main_workers = 0usize;
         let mut recoverable_runtime_states = Vec::new();

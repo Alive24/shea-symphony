@@ -93,7 +93,7 @@ cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
 That write tick requires a real main-agent backend. The canonical workflow uses
-`main_lane.backend: codex` with `codex.command: codex app-server` and
+`main_lane.backend: codex` with `codex.command: codex app-server -c 'service_tier="fast"'` and
 `codex.approval_policy: never`, so a
 successful tick starts one app-server turn, records the prompt artifact,
 protocol log, stderr log, normalized event artifact, session registry entry,
@@ -265,9 +265,10 @@ The merge lane should:
 - merge clean approved work;
 - safely update `BEHIND` PR branches and leave the issue in `Merging` for the
   next retry;
-- route dirty or failing work to `Need Human Input` with a standalone merge
-  timeline comment unless a future command can prove safe merge-lane-only
-  repair;
+- route dirty work through direct mechanical repair first, then merge-agent
+  repair for trusted content conflicts, and use `Need Human Input` only for
+  unresolved, unsafe, untrusted, backend-failing, push-failing, or
+  verification-failing repair;
 - retry transient missing or `UNKNOWN` mergeability instead of treating it as a
   human decision;
 - include a `Required Human Input` question whenever a blocker really needs a

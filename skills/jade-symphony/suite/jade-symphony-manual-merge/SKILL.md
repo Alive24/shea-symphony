@@ -112,7 +112,7 @@ branch was rebased or conflicts were resolved.
 
 When a merge-agent runtime session is explicitly needed after a structured
 `Merging Agent` claim, the default session backend is Codex app-server through
-`merge_lane.agent_backend: codex` and `codex.command: codex app-server`. Use
+`merge_lane.agent_backend: codex` and `codex.command: codex app-server -c 'service_tier="fast"'`. Use
 `merge_lane.agent_backend: tmux` only as an explicit fallback/debug choice.
 
 For automated interrupted merge-loop recovery, prefer:
@@ -156,18 +156,20 @@ query before making a routing decision. Only merge after the status returns
 If `mergeStateStatus` is `BEHIND`, prefer the same safe branch-update behavior
 as automated `merge once`: update the PR branch without rewriting history,
 record evidence, and leave the issue in `Merging` for a later retry. If
-`mergeStateStatus` is `DIRTY` or checks are failing, do not default to `Rework`;
-attempt repair only when the existing PR worktree is clean and the base can be
-merged without rewriting history or leaving uncommitted changes. Otherwise,
-record one concrete `Need Human Input` question unless the operator confirms a
-different merge-lane-only repair path.
+`mergeStateStatus` is `DIRTY` or checks are failing, do not default to `Rework`.
+Keep clean mechanical base merges direct-CLI-owned. When the mechanical base
+merge hits content conflicts in a trusted clean PR worktree, use the configured
+merge-agent backend for landing repair before asking the operator. Record one
+concrete `Need Human Input` question only when branch/worktree evidence is
+untrusted, semantic safety is uncertain, verification fails, push fails, or the
+backend cannot complete.
 
 For native subissue PRs, treat dirty or conflicted mergeability as merge-lane
 repair work first. Attempt the safe existing-worktree repair before asking for
-human input, and keep successful mechanical repair in `Merging` for retry.
-Escalate only unresolved conflicts, semantic choices, dirty starting worktrees,
-missing worktree evidence, or verification-failing repairs to
-`Need Human Input`. Do not route native subissue merge repair to `Rework`.
+human input, and keep successful mechanical or merge-agent repair in `Merging`
+for retry. Escalate only unresolved conflicts, semantic choices, dirty starting
+worktrees, missing worktree evidence, backend failures, push failures, or
+verification-failing repairs to `Need Human Input`. Do not route native subissue merge repair to `Rework`.
 
 ## Status Transition Ordering
 

@@ -322,7 +322,7 @@ impl RuntimeConfig {
         };
         let codex = CodexConfig {
             command: get_string(root.get("codex"), "command")
-                .unwrap_or_else(|| "codex app-server".to_string()),
+                .unwrap_or_else(default_codex_app_server_command),
             model: get_string(root.get("codex"), "model"),
             reasoning_effort: get_string(root.get("codex"), "reasoning_effort")
                 .unwrap_or_else(|| "high".to_string()),
@@ -898,6 +898,10 @@ fn default_codex_approval_policy() -> Value {
     serde_json::Value::String("never".to_string())
 }
 
+fn default_codex_app_server_command() -> String {
+    "codex app-server -c 'service_tier=\"fast\"'".to_string()
+}
+
 fn require_positive(name: &str, value: u64) -> Result<(), ConfigError> {
     if value == 0 {
         Err(ConfigError::Invalid(format!("{name} must be positive")))
@@ -953,6 +957,10 @@ mod tests {
         let config =
             RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
 
+        assert_eq!(
+            config.codex.command,
+            "codex app-server -c 'service_tier=\"fast\"'"
+        );
         assert_eq!(config.codex.approval_policy, serde_json::json!("never"));
     }
 

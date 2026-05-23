@@ -41,7 +41,7 @@ main_lane:
   max_concurrent_agents: 1
   max_turns: 1
 codex:
-  command: codex app-server
+  command: codex app-server -c 'service_tier="fast"'
 claude:
   command: claude
 review_lane:

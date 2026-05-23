@@ -28,7 +28,7 @@ non-fast-forward cases still fail closed; issue worktrees and PR branches are
 not refreshed by this path.
 
 Main Agent execution defaults to the Codex app-server backend through
-`main_lane.backend: codex`, `codex.command: codex app-server`, and
+`main_lane.backend: codex`, `codex.command: codex app-server -c 'service_tier="fast"'`, and
 `codex.approval_policy: never`. A bounded write tick creates or resumes the issue worktree, runs one app-server turn,
 records prompt/protocol/stderr/normalized-event artifacts, persists a backend
 session registry record, and reconciles the normal Main handoff only after PR
@@ -53,7 +53,9 @@ needed. Main and Merge-agent sessions default to Codex app-server through the
 lane backend config and `codex.command`; Review session start remains the tmux
 supervised fallback while automatic Review uses Gemini headless.
 Clean `merge once` / `merge loop` remains direct CLI merge behavior and does not
-launch a merge-agent runtime. Session commands validate the existing claim and
+launch a merge-agent runtime. Dirty PRs still try the mechanical direct-CLI
+repair first; only content conflicts in a trusted clean PR worktree launch the
+configured merge-agent backend. Session commands validate the existing claim and
 write runtime evidence without approving reviews, merging PRs, or closing
 issues.
 

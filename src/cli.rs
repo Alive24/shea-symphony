@@ -1151,10 +1151,7 @@ fn run_loop_command(args: RunLoopArgs) -> Result<Command, String> {
 }
 
 fn merge_loop_command(args: MergeLoopArgs) -> Result<Command, String> {
-    if args.max_iterations == Some(0)
-        || args.max_concurrent == Some(0)
-        || (!args.once && args.max_iterations.is_none())
-    {
+    if args.max_iterations == Some(0) || args.max_concurrent == Some(0) {
         return Err(usage());
     }
     Ok(Command::MergeLoop {

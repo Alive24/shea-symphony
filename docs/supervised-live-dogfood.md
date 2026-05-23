@@ -265,9 +265,10 @@ The merge lane should:
 - merge clean approved work;
 - safely update `BEHIND` PR branches and leave the issue in `Merging` for the
   next retry;
-- route dirty or failing work to `Need Human Input` with a standalone merge
-  timeline comment unless a future command can prove safe merge-lane-only
-  repair;
+- route dirty work through direct mechanical repair first, then merge-agent
+  repair for trusted content conflicts, and use `Need Human Input` only for
+  unresolved, unsafe, untrusted, backend-failing, push-failing, or
+  verification-failing repair;
 - retry transient missing or `UNKNOWN` mergeability instead of treating it as a
   human decision;
 - include a `Required Human Input` question whenever a blocker really needs a

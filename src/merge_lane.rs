@@ -78,6 +78,39 @@ pub struct MergeConflictRepairOutcome {
     pub worktree_path: Option<PathBuf>,
     pub output: CommandOutput,
     pub reason: String,
+    pub failure_kind: Option<MergeConflictRepairFailureKind>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MergeConflictRepairFailureKind {
+    MissingHeadBranch,
+    MissingWorktree,
+    DirtyWorktree,
+    ContentConflict,
+    PostMergeDirty,
+    PushFailed,
+}
+
+impl MergeConflictRepairOutcome {
+    pub fn is_agent_repair_eligible(&self) -> bool {
+        !self.repaired
+            && matches!(
+                self.failure_kind,
+                Some(MergeConflictRepairFailureKind::ContentConflict)
+            )
+            && self.worktree_path.is_some()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeRepairEvidence {
+    pub method: String,
+    pub conflict_summary: String,
+    pub resolution_summary: String,
+    pub semantic_safety: String,
+    pub verification: String,
+    pub push_evidence: String,
+    pub next_state_rationale: String,
 }
 
 pub fn merge_lane_decision(
@@ -403,6 +436,7 @@ pub fn repair_dirty_pull_request(
                 stderr: String::new(),
             },
             reason: "fixture-mode safe conflict repair rehearsal completed".into(),
+            failure_kind: None,
         });
     }
 
@@ -416,6 +450,7 @@ pub fn repair_dirty_pull_request(
                 stderr: "pull request head branch is missing from preflight metadata".into(),
             },
             reason: "cannot attempt safe conflict repair without a PR head branch".into(),
+            failure_kind: Some(MergeConflictRepairFailureKind::MissingHeadBranch),
         });
     };
 
@@ -431,6 +466,7 @@ pub fn repair_dirty_pull_request(
             reason: format!(
                 "no local worktree is available for PR branch `{head_ref_name}`; operator must adopt or create the existing PR worktree before merge-lane repair"
             ),
+            failure_kind: Some(MergeConflictRepairFailureKind::MissingWorktree),
         });
     };
 
@@ -446,6 +482,7 @@ pub fn repair_dirty_pull_request(
             worktree_path: Some(worktree_path),
             output: status,
             reason: "PR worktree is dirty before merge-lane repair".into(),
+            failure_kind: Some(MergeConflictRepairFailureKind::DirtyWorktree),
         });
     }
 
@@ -471,6 +508,7 @@ pub fn repair_dirty_pull_request(
             reason: format!(
                 "safe merge-lane repair could not merge `{fetch_ref}` into `{head_ref_name}` without manual conflict resolution"
             ),
+            failure_kind: Some(MergeConflictRepairFailureKind::ContentConflict),
         });
     }
 
@@ -486,6 +524,7 @@ pub fn repair_dirty_pull_request(
             worktree_path: Some(worktree_path),
             output: post_status,
             reason: "merge-lane repair left uncommitted changes in the PR worktree".into(),
+            failure_kind: Some(MergeConflictRepairFailureKind::PostMergeDirty),
         });
     }
 
@@ -502,6 +541,7 @@ pub fn repair_dirty_pull_request(
             reason:
                 "merge-lane repair succeeded locally, but pushing the repaired PR branch failed"
                     .into(),
+            failure_kind: Some(MergeConflictRepairFailureKind::PushFailed),
         });
     }
 
@@ -512,6 +552,7 @@ pub fn repair_dirty_pull_request(
         reason: format!(
             "safe merge-lane repair merged `{fetch_ref}` into `{head_ref_name}` and pushed the existing PR branch"
         ),
+        failure_kind: None,
     })
 }
 
@@ -527,6 +568,15 @@ pub fn merge_lane_workpad(
     issue: &TrackerIssue,
     decision: &MergeLaneDecision,
     merge_output: Option<&CommandOutput>,
+) -> String {
+    merge_lane_workpad_with_repair_evidence(issue, decision, merge_output, None)
+}
+
+pub fn merge_lane_workpad_with_repair_evidence(
+    issue: &TrackerIssue,
+    decision: &MergeLaneDecision,
+    merge_output: Option<&CommandOutput>,
+    repair_evidence: Option<&MergeRepairEvidence>,
 ) -> String {
     let mut lines = vec![
         "## Jade Symphony Merge Run".to_string(),
@@ -589,6 +639,20 @@ pub fn merge_lane_workpad(
             format!("- Exit status: `{}`", output.status),
             format!("- Stdout: `{}`", single_line(&output.stdout)),
             format!("- Stderr: `{}`", single_line(&output.stderr)),
+        ]);
+    }
+
+    if let Some(evidence) = repair_evidence {
+        lines.extend([
+            String::new(),
+            "### Merge Repair Evidence".to_string(),
+            format!("- Method: `{}`", evidence.method),
+            format!("- Conflict summary: {}", evidence.conflict_summary),
+            format!("- Resolution summary: {}", evidence.resolution_summary),
+            format!("- Semantic safety: {}", evidence.semantic_safety),
+            format!("- Verification: {}", evidence.verification),
+            format!("- Push evidence: {}", evidence.push_evidence),
+            format!("- Next-state rationale: {}", evidence.next_state_rationale),
         ]);
     }
 
@@ -1290,6 +1354,52 @@ branch refs/heads/feature/issue-60
         assert!(!outcome.repaired);
         assert!(outcome.reason.contains("without a PR head branch"));
         assert!(runner.program.borrow().is_none());
+    }
+
+    #[test]
+    fn content_conflict_repair_failure_is_merge_agent_eligible() {
+        let outcome = MergeConflictRepairOutcome {
+            repaired: false,
+            worktree_path: Some(PathBuf::from("/repo/pr")),
+            output: CommandOutput {
+                status: 1,
+                stdout: String::new(),
+                stderr: "CONFLICT (content): Merge conflict in src/main.rs".into(),
+            },
+            reason: "safe merge-lane repair could not merge `origin/main` without manual conflict resolution".into(),
+            failure_kind: Some(MergeConflictRepairFailureKind::ContentConflict),
+        };
+
+        assert!(outcome.is_agent_repair_eligible());
+    }
+
+    #[test]
+    fn merge_workpad_records_merge_agent_repair_evidence() {
+        let issue = issue("Merging", vec![pr()]);
+        let decision = MergeLaneDecision {
+            kind: MergeLaneDecisionKind::MergeDirty,
+            issue_ref: issue.identifier.clone(),
+            pr_url: Some("https://github.com/Alive24/jade-symphony/pull/60".into()),
+            target_state: None,
+            reason: "merge-agent repaired the conflicted branch".into(),
+        };
+        let evidence = MergeRepairEvidence {
+            method: "merge_agent".into(),
+            conflict_summary: "src/main.rs conflicted".into(),
+            resolution_summary: "kept approved behavior".into(),
+            semantic_safety: "reviewed intent preserved".into(),
+            verification: "git diff --check; git status --porcelain".into(),
+            push_evidence: "git push origin feature/issue-60 exit status `0`".into(),
+            next_state_rationale: "stay in Merging for reread".into(),
+        };
+
+        let workpad =
+            merge_lane_workpad_with_repair_evidence(&issue, &decision, None, Some(&evidence));
+
+        assert!(workpad.contains("### Merge Repair Evidence"));
+        assert!(workpad.contains("- Method: `merge_agent`"));
+        assert!(workpad.contains("reviewed intent preserved"));
+        assert!(workpad.contains("stay in Merging for reread"));
     }
 
     #[test]

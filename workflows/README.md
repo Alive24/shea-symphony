@@ -53,7 +53,9 @@ needed. Main and Merge-agent sessions default to Codex app-server through the
 lane backend config and `codex.command`; Review session start remains the tmux
 supervised fallback while automatic Review uses Gemini headless.
 Clean `merge once` / `merge loop` remains direct CLI merge behavior and does not
-launch a merge-agent runtime. Session commands validate the existing claim and
+launch a merge-agent runtime. Dirty PRs still try the mechanical direct-CLI
+repair first; only content conflicts in a trusted clean PR worktree launch the
+configured merge-agent backend. Session commands validate the existing claim and
 write runtime evidence without approving reviews, merging PRs, or closing
 issues.
 

@@ -120,6 +120,15 @@ have a narrow shared responsibility:
 - small binary-scoped helper shims and re-exports that have not yet moved to
   library or orchestration modules.
 
+Binary integration-style tests live under `src/main/` instead of inline in the
+entrypoint:
+
+- `src/main/tests.rs`: shared binary test fixtures and cross-surface behavior
+  tests that still need access to private binary shims while extraction
+  continues.
+- `src/main/tests/parser.rs`: CLI parser/help/flag compatibility tests for the
+  grouped command surface produced by `src/cli.rs`.
+
 Lane execution now lives under `src/lanes/` when a lane boundary has a clear
 runtime owner:
 

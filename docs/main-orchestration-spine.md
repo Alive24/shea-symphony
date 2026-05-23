@@ -109,6 +109,9 @@ have a narrow shared responsibility:
   `src/progress.rs`.
 - `src/orchestration/text.rs`: shared human-output formatting helpers for
   single-line evidence summaries and shell command display strings.
+- `src/orchestration/workflow_config.rs`: workflow config loading, temporary
+  workflow path operator warnings, and explicit write-intent gating shared by
+  commands and lanes.
 
 `src/main.rs` still owns:
 

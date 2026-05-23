@@ -233,6 +233,11 @@ pub(crate) use orchestration::tracker_recovery::{
 };
 #[cfg(test)]
 use orchestration::tracker_recovery::{issue_is_closed, tracker_recovery_marker};
+#[cfg(test)]
+use orchestration::workflow_config::temporary_workflow_warning;
+pub(crate) use orchestration::workflow_config::{
+    load_config, require_write_intent, warn_if_temporary_workflow_path,
+};
 
 const DEFAULT_RUN_LOOP_BASE_BRANCH: &str = "main";
 const CODEX_APP_SERVER_HANDOFF_BOUNDARY: &str = "\n\n## Codex App-Server Runtime Boundary\n\n\
@@ -503,45 +508,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
     }
-}
-
-fn require_write_intent(write: bool) -> Result<(), Box<dyn std::error::Error>> {
-    if write {
-        Ok(())
-    } else {
-        Err("live write command requires explicit --write".into())
-    }
-}
-
-fn warn_if_temporary_workflow_path(workflow_path: &Path) {
-    if let Some(warning) = temporary_workflow_warning(workflow_path) {
-        eprintln!("{warning}");
-    }
-}
-
-fn temporary_workflow_warning(workflow_path: &Path) -> Option<String> {
-    if !is_temporary_workflow_path(workflow_path) {
-        return None;
-    }
-    Some(format!(
-        "workflow_warning=temporary_path path={} action=promote durable_config=examples/ docs=docs/operator-dogfood.md",
-        workflow_path.display()
-    ))
-}
-
-fn is_temporary_workflow_path(workflow_path: &Path) -> bool {
-    [Path::new("/private/tmp"), Path::new("/tmp")]
-        .iter()
-        .any(|prefix| workflow_path.starts_with(prefix))
-        || workflow_path.starts_with(std::env::temp_dir())
-}
-
-fn load_config(workflow_path: &Path) -> Result<RuntimeConfig, Box<dyn std::error::Error>> {
-    warn_if_temporary_workflow_path(workflow_path);
-    let workflow = WorkflowDefinition::load(workflow_path)?;
-    let config = RuntimeConfig::from_workflow(&workflow, workflow_path)?;
-    config.validate()?;
-    Ok(config)
 }
 
 fn current_git_branch(workspace_path: &Path) -> Result<Option<String>, io::Error> {

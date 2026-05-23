@@ -122,9 +122,10 @@ Lane execution now lives under `src/lanes/` when a lane boundary has a clear
 runtime owner:
 
 - `src/lanes/claim.rs`: shared lane claim primitives used by Main and Merge
-  workers: worker identity, Project claim field names, claimability checks, and
-  pool selection. It owns selection rules only, not Project mutations or runtime
-  transitions.
+  workers: worker identity, Project claim field names, claimability checks,
+  claim value rendering, recovery-aware claim-field writes, and pool
+  selection. It owns claim records and claim-field mutation glue, not broader
+  Project state transitions or runtime execution.
 - `src/lanes/main_loop.rs`: outer Main loop command execution and
   `RunLoopOptions`. It owns one-shot Main execution, loop iteration, dry-run
   rendering, concurrency-slot selection, and delegation into narrower Main-lane

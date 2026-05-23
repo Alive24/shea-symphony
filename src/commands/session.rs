@@ -28,8 +28,8 @@ use crate::{
     add_timeline_comment_with_recovery, append_tracker_mutation_audit, current_git_branch,
     current_gmt_timestamp, current_time_ms, load_config,
     preflight_canonical_checkout_for_write_mode, project_text_field, recovery_key,
-    render_prompt_with_claim, set_project_field_with_recovery, shell_quote_display,
-    stable_recovery_hash, upsert_workpad_with_recovery, TrackerMutationAudit,
+    render_parseable_lane_claim, render_prompt_with_claim, set_project_field_with_recovery,
+    shell_quote_display, stable_recovery_hash, upsert_workpad_with_recovery, TrackerMutationAudit,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -254,21 +254,6 @@ pub(crate) fn lane_claim_for_manual_worker(
         current_time_ms(),
     )
     .with_worker(worker))
-}
-
-pub(crate) fn render_parseable_lane_claim(
-    claim: &LaneClaim,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let value = claim.render();
-    let parsed = LaneClaim::parse(&value)
-        .map_err(|error| format!("rendered lane claim is not parseable: {error}; value={value}"))?;
-    if parsed != *claim {
-        return Err(format!(
-            "rendered lane claim did not round-trip; rendered={value} parsed={parsed:?} original={claim:?}"
-        )
-        .into());
-    }
-    Ok(value)
 }
 
 pub(crate) fn record_manual_lane_claim_evidence(

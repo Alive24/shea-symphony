@@ -15,7 +15,7 @@ mod live_handoff;
 mod terminal;
 
 use live_handoff::apply_live_handoff_steps;
-use terminal::apply_terminal_transition;
+use terminal::{apply_terminal_transition, TerminalTransitionContext};
 
 use super::{
     append_runtime_supervision_event, current_gh_login, execute_issue_once_with_workspace_key,
@@ -546,12 +546,14 @@ pub(crate) fn run_loop_dispatch_write_candidate(
     }
 
     apply_terminal_transition(
-        config,
-        adapter,
-        &latest,
-        &main_claim,
-        &handoff,
-        &workpad,
+        TerminalTransitionContext {
+            config,
+            adapter,
+            latest: &latest,
+            main_claim: &main_claim,
+            handoff: &handoff,
+            workpad: &workpad,
+        },
         runtime_state,
         &result,
     )

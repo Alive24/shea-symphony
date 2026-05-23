@@ -23,42 +23,41 @@ use crate::{
     write_lane_claim_state, TrackerMutationAudit, WorkerLane,
 };
 
+pub(super) struct TerminalTransitionContext<'a> {
+    pub(super) config: &'a RuntimeConfig,
+    pub(super) adapter: &'a dyn TrackerAdapter,
+    pub(super) latest: &'a TrackerIssue,
+    pub(super) main_claim: &'a LaneClaim,
+    pub(super) handoff: &'a IssueHandoffPlan,
+    pub(super) workpad: &'a str,
+}
+
 pub(super) fn apply_terminal_transition(
-    config: &RuntimeConfig,
-    adapter: &dyn TrackerAdapter,
-    latest: &TrackerIssue,
-    main_claim: &LaneClaim,
-    handoff: &IssueHandoffPlan,
-    workpad: &str,
+    context: TerminalTransitionContext<'_>,
     runtime_state: RuntimeState,
     result: &IssueExecutionResult,
 ) -> Result<RunLoopWorkerOutcome, Box<dyn std::error::Error>> {
     if result.success {
-        return complete_successful_run(
-            config,
-            adapter,
-            latest,
-            main_claim,
-            handoff,
-            workpad,
-            runtime_state,
-            result,
-        );
+        return complete_successful_run(context, runtime_state, result);
     }
 
-    complete_failed_run(config, adapter, latest, main_claim, runtime_state, result)
+    complete_failed_run(context, runtime_state, result)
 }
 
 fn complete_successful_run(
-    config: &RuntimeConfig,
-    adapter: &dyn TrackerAdapter,
-    latest: &TrackerIssue,
-    main_claim: &LaneClaim,
-    handoff: &IssueHandoffPlan,
-    workpad: &str,
+    context: TerminalTransitionContext<'_>,
     mut runtime_state: RuntimeState,
     result: &IssueExecutionResult,
 ) -> Result<RunLoopWorkerOutcome, Box<dyn std::error::Error>> {
+    let TerminalTransitionContext {
+        config,
+        adapter,
+        latest,
+        main_claim,
+        handoff,
+        workpad,
+    } = context;
+
     if !transition_allowed_for_main_agent("agent_review") {
         return Err("main implementation agent cannot set requested review state".into());
     }
@@ -209,13 +208,18 @@ fn complete_successful_run(
 }
 
 fn complete_failed_run(
-    config: &RuntimeConfig,
-    adapter: &dyn TrackerAdapter,
-    latest: &TrackerIssue,
-    main_claim: &LaneClaim,
+    context: TerminalTransitionContext<'_>,
     mut runtime_state: RuntimeState,
     result: &IssueExecutionResult,
 ) -> Result<RunLoopWorkerOutcome, Box<dyn std::error::Error>> {
+    let TerminalTransitionContext {
+        config,
+        adapter,
+        latest,
+        main_claim,
+        ..
+    } = context;
+
     let retry_delay_ms =
         Orchestrator::new(config.clone()).retry_delay_ms(runtime_state.attempt_count, false);
     if let Some(pause) = &result.usage_limit_pause {

@@ -70,6 +70,10 @@ clear owner:
   resolution for Main, Review, and Merge. It keeps backend names, fallback
   rules, and command validation together without touching claim creation or
   tracker evidence.
+- `src/commands/session/claim.rs`: Manual lane-claim command execution and
+  claim-to-session validation. It owns accepted claim states, active-claim
+  blockers, worker labels, manual registry evidence, and structured claim
+  parsing without changing session startup.
 - `src/commands/skills.rs`: skill readiness status rendering for the grouped
   `skills status` surface.
 - `src/commands/status.rs`: read-only runtime status surfaces for `plan` and
@@ -245,8 +249,8 @@ lane routing, runtime recovery, or workpad rendering.
   runtime/session recovery helpers grouped with the lane that owns the state
   transition.
 - Split remaining session helpers only when the child module has a clear owner,
-  such as manual claim creation or session-start evidence; keep parser/help
-  conversion in `src/cli.rs` and top-level session command dispatch in
+  such as session-start evidence rendering; keep parser/help conversion in
+  `src/cli.rs` and top-level session command dispatch in
   `src/commands/session.rs`.
 - Keep future `LanePolicy` or `WorkerProfile` abstractions as follow-up design
   work; do not introduce them as part of a mechanical extraction.

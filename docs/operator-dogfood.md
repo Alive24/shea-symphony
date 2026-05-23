@@ -104,7 +104,8 @@ target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations
 
 If the normal preflight surfaces fail, the launcher exits before claiming
 tracker work.
-The canonical workflow now uses the Codex app-server Main backend. A write tick
+The canonical workflow now uses the Codex app-server Main backend with
+`codex.approval_policy: never`, matching the local app-server schema. A write tick
 starts one app-server turn in the prepared issue worktree, records
 prompt/protocol/stderr/normalized-event artifacts, persists a session registry
 record under the configured artifact root, and reconciles through verification,

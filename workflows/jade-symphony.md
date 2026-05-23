@@ -57,6 +57,7 @@ tmux:
   session_prefix: jade
 codex:
   command: codex app-server
+  approval_policy: never
 claude:
   command: claude
 review_lane:

@@ -262,7 +262,8 @@ exits non-zero before loading runtime state, creating worktrees, claiming
 Project fields, or writing workpads.
 
 The canonical Main runtime is Codex app-server: `main_lane.backend: codex` plus
-`codex.command: codex app-server`. `main loop --write` records prompt,
+`codex.command: codex app-server` and `codex.approval_policy: never`, matching
+the current local app-server approval-policy schema. `main loop --write` records prompt,
 protocol, stderr, normalized-event, runtime-state, and session-registry
 evidence for that app-server turn before any `Agent Review` handoff. If
 `main_lane.backend: tmux` is selected as explicit fallback/debug, the tmux path

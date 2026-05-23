@@ -890,13 +890,7 @@ fn default_artifact_root() -> PathBuf {
 }
 
 fn default_codex_approval_policy() -> Value {
-    serde_json::json!({
-        "reject": {
-            "sandbox_approval": true,
-            "rules": true,
-            "mcp_elicitations": true
-        }
-    })
+    serde_json::Value::String("never".to_string())
 }
 
 fn require_positive(name: &str, value: u64) -> Result<(), ConfigError> {
@@ -942,6 +936,19 @@ mod tests {
         );
         assert_eq!(config.tracker.project_owner_type, None);
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn codex_approval_policy_defaults_to_app_server_supported_never() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nmain_lane:\n  backend: codex\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.codex.approval_policy, serde_json::json!("never"));
     }
 
     #[test]

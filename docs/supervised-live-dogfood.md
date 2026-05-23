@@ -93,7 +93,8 @@ cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
 That write tick requires a real main-agent backend. The canonical workflow uses
-`main_lane.backend: codex` with `codex.command: codex app-server`, so a
+`main_lane.backend: codex` with `codex.command: codex app-server` and
+`codex.approval_policy: never`, so a
 successful tick starts one app-server turn, records the prompt artifact,
 protocol log, stderr log, normalized event artifact, session registry entry,
 and runtime state, then proceeds to verification, PR publication, linked-PR

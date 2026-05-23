@@ -920,9 +920,16 @@ fn is_terminal_or_fail_closed_app_server_event(kind: CodexAppServerEventKind) ->
 }
 
 fn app_server_approval_policy(value: Option<&str>) -> serde_json::Value {
-    value
-        .and_then(|value| serde_json::from_str(value).ok())
-        .unwrap_or_else(|| serde_json::Value::String(value.unwrap_or("default").to_string()))
+    let parsed = value.and_then(|value| serde_json::from_str(value).ok());
+    match parsed {
+        Some(serde_json::Value::Object(policy))
+            if policy.len() == 1 && policy.contains_key("reject") =>
+        {
+            serde_json::Value::String("never".to_string())
+        }
+        Some(policy) => policy,
+        None => serde_json::Value::String(value.unwrap_or("never").to_string()),
+    }
 }
 
 fn app_server_turn_title(prepared: &PreparedRun) -> String {
@@ -2790,7 +2797,27 @@ done
         assert!(trace.contains("\"method\":\"initialize\""));
         assert!(trace.contains("\"method\":\"thread/start\""));
         assert!(trace.contains("\"method\":\"turn/start\""));
+        assert!(trace.contains("\"approvalPolicy\":\"never\""));
         assert!(trace.contains("hello app-server"));
+    }
+
+    #[test]
+    fn app_server_approval_policy_uses_current_schema_and_legacy_reject_fallback() {
+        assert_eq!(
+            app_server_approval_policy(Some("\"on-request\"")),
+            serde_json::json!("on-request")
+        );
+        assert_eq!(
+            app_server_approval_policy(Some("never")),
+            serde_json::json!("never")
+        );
+        assert_eq!(
+            app_server_approval_policy(Some(
+                r#"{"reject":{"sandbox_approval":true,"rules":true,"mcp_elicitations":true}}"#
+            )),
+            serde_json::json!("never")
+        );
+        assert_eq!(app_server_approval_policy(None), serde_json::json!("never"));
     }
 
     #[cfg(unix)]

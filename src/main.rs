@@ -11479,6 +11479,42 @@ fn run_loop_resume_preflight_many(
                         continue;
                     }
                 }
+                if let Some(terminal_session) =
+                    terminal_runtime_session_for_issue(config, state, now_ms)?
+                {
+                    let issue_identifier = state
+                        .active_issue
+                        .as_ref()
+                        .map(|issue| issue.identifier.as_str())
+                        .unwrap_or("unknown");
+                    let reason = format!(
+                        "registry_session_terminal session={} status={} source={} evidence={}",
+                        terminal_session.session_name,
+                        terminal_session.probe.status.as_str(),
+                        terminal_session.probe.source.as_str(),
+                        compact_evidence(&terminal_session.probe.evidence)
+                    );
+                    append_runtime_supervision_event(
+                        config,
+                        Some(&terminal_session.state),
+                        "RuntimeRecoverableTerminalSession",
+                        &format!("issue={issue_identifier} reason={reason}"),
+                    )?;
+                    println!(
+                        "run_loop_resume_preflight action=recoverable_terminal_session issue={} session={} status={} source={}",
+                        issue_identifier,
+                        terminal_session.session_name,
+                        terminal_session.probe.status.as_str(),
+                        terminal_session.probe.source.as_str()
+                    );
+                    recoverable_states.push(RuntimeRecoveryCandidate {
+                        state: terminal_session.state.clone(),
+                        issue,
+                        reason,
+                    });
+                    retained_states.push(terminal_session.state);
+                    continue;
+                }
                 if let Some(reason) = runtime_recovery_reason(config, state, now_ms)? {
                     let issue_identifier = state
                         .active_issue
@@ -11914,6 +11950,41 @@ fn active_runtime_session_for_issue(
     }))
 }
 
+fn terminal_runtime_session_for_issue(
+    config: &RuntimeConfig,
+    state: &RuntimeState,
+    now_ms: u64,
+) -> Result<Option<ActiveRuntimeSessionProbe>, Box<dyn std::error::Error>> {
+    let Some(issue_identifier) = runtime_state_issue_identifier(state) else {
+        return Ok(None);
+    };
+    let registry = load_session_registry(&session_registry_path(config))?;
+    for record in registry.sessions.iter().rev() {
+        if !registered_main_runtime_session(record)
+            || record.issue_identifier.as_deref() != Some(issue_identifier)
+        {
+            continue;
+        }
+        let Ok(probe) = runtime_session_probe_from_record(config, record, now_ms) else {
+            continue;
+        };
+        if matches!(probe.status, SessionStatus::Completed) {
+            let mut state = runtime_state_from_session_record(record);
+            state.last_event = Some("SessionTerminal".into());
+            return Ok(Some(ActiveRuntimeSessionProbe {
+                state,
+                session_name: record.session_name.clone(),
+                probe,
+            }));
+        }
+        if session_status_counts_as_active_worker(&probe.status) {
+            return Ok(None);
+        }
+    }
+
+    Ok(None)
+}
+
 fn registered_main_runtime_session(record: &AgentSessionRecord) -> bool {
     record.lane.eq_ignore_ascii_case("main") && record.backend != "codex-app-manual"
 }
@@ -11963,7 +12034,10 @@ fn runtime_session_probe_for_state(
     state: &RuntimeState,
     now_ms: u64,
 ) -> Result<Option<SessionStatusProbe>, Box<dyn std::error::Error>> {
-    if state.last_event.as_deref() != Some("SessionRunning") {
+    if !matches!(
+        state.last_event.as_deref(),
+        Some("SessionRunning" | "SessionTerminal")
+    ) {
         return Ok(None);
     }
     let Some(session_id) = state.backend_session_id.as_deref() else {
@@ -12074,7 +12148,10 @@ fn runtime_recovery_reason(
         )));
     }
 
-    if state.last_event.as_deref() != Some("SessionRunning") {
+    if !matches!(
+        state.last_event.as_deref(),
+        Some("SessionRunning" | "SessionTerminal")
+    ) {
         return Ok(None);
     }
 
@@ -12850,6 +12927,19 @@ fn run_loop_runtime_state_for_issue(
     event: &str,
     claim: &LaneClaim,
 ) -> RuntimeState {
+    if event == "Resumed" {
+        if let Some(existing) = existing
+            .filter(|state| {
+                runtime_state_issue_identifier(state) == Some(issue.identifier.as_str())
+            })
+            .filter(|state| state.last_event.as_deref() == Some("SessionTerminal"))
+        {
+            let mut state = existing.clone();
+            state.run_id.get_or_insert_with(|| claim.run.clone());
+            return state;
+        }
+    }
+
     let profile = selected_execution_profile(&config.profiles).ok().flatten();
     let mut state = RuntimeState::active(
         RuntimeIssueState {
@@ -12936,7 +13026,10 @@ fn reconcile_pending_main_session(
     if active_issue.identifier != issue.identifier {
         return Ok(None);
     }
-    if state.last_event.as_deref() != Some("SessionRunning") {
+    if !matches!(
+        state.last_event.as_deref(),
+        Some("SessionRunning" | "SessionTerminal")
+    ) {
         return Ok(None);
     }
 
@@ -13138,7 +13231,10 @@ fn run_loop_apply_recovery_handoff(
     handoff: &mut IssueHandoffPlan,
     state: &RuntimeState,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    if state.last_event.as_deref() != Some("SessionRunning") {
+    if !matches!(
+        state.last_event.as_deref(),
+        Some("SessionRunning" | "SessionTerminal")
+    ) {
         return Ok(None);
     }
 
@@ -18219,6 +18315,85 @@ done
         assert_eq!(summary.blocked, None);
         assert_eq!(summary.retained_states.len(), 1);
         assert_eq!(summary.recoverable_states.len(), 1);
+    }
+
+    #[test]
+    fn resume_preflight_many_prefers_completed_app_server_session_over_stale_runtime_clock() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
+        config.observability.logs_root = temp.path().join("logs");
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let mut state = active_runtime_state("#29");
+        state.backend = "codex".into();
+        state.last_event = Some("Resumed".into());
+        state.backend_session_id = None;
+        state.updated_at_ms = Some(1_000);
+
+        let mut record = main_tmux_session_record("#29", SessionStatus::Completed);
+        record.backend = "codex".into();
+        record.session_source = Some("codex-app-server".into());
+        record.session_name = "thread-29-turn-1".into();
+        record.pane_target = String::new();
+        record.log_path = temp.path().join("logs/app-server/29.events.json");
+        record.updated_at_ms = 2_000;
+        save_session_registry(
+            &session_registry_path(&config),
+            &jade_symphony::session_registry::SessionRegistry {
+                sessions: vec![record],
+            },
+        )
+        .unwrap();
+
+        let summary = run_loop_resume_preflight_many(
+            &tracker,
+            &config,
+            &[state],
+            config.codex.stall_timeout_ms + 2_000,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(summary.active_main_workers, 0);
+        assert_eq!(summary.blocked, None);
+        assert_eq!(summary.recoverable_states.len(), 1);
+        assert!(summary.recoverable_states[0]
+            .reason
+            .contains("status=completed"));
+        assert_eq!(
+            summary.recoverable_states[0].state.last_event.as_deref(),
+            Some("SessionTerminal")
+        );
+        assert_eq!(
+            summary.recoverable_states[0]
+                .state
+                .backend_session_id
+                .as_deref(),
+            Some("thread-29-turn-1")
+        );
+    }
+
+    #[test]
+    fn resumed_pending_session_state_preserves_backend_session_for_reconciliation() {
+        let config = test_config();
+        let issue = tracker_issue("In Progress");
+        let claim = test_claim(&issue);
+        let mut existing = active_runtime_state(&issue.identifier);
+        existing.backend = "codex".into();
+        existing.last_event = Some("SessionTerminal".into());
+        existing.backend_session_id = Some("thread-29-turn-1".into());
+        existing.backend_log_path = Some(PathBuf::from("/tmp/29.events.json"));
+        existing.workspace_path = Some(PathBuf::from("/tmp/issue-29"));
+
+        let state =
+            run_loop_runtime_state_for_issue(Some(&existing), &issue, &config, "Resumed", &claim);
+
+        assert_eq!(state.last_event.as_deref(), Some("SessionTerminal"));
+        assert_eq!(
+            state.backend_session_id.as_deref(),
+            Some("thread-29-turn-1")
+        );
+        assert_eq!(state.attempt_count, existing.attempt_count);
     }
 
     #[test]

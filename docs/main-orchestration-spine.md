@@ -207,10 +207,13 @@ runtime owner:
   sessions, profiles, instances, and actor identity; tracker mutation audit
   remains under `src/orchestration/tracker_recovery.rs`.
 - `src/lanes/merge.rs`: Merge once/loop execution, merge queue selection,
-  recovery selection for interrupted merge claims, merge-agent conflict repair,
-  merge-specific evidence, and done-state issue closure ordering. It keeps
-  timeline-comment evidence before state mutation and keeps repaired dirty PRs
-  in `Merging` for a later readback tick.
+  recovery selection for interrupted merge claims, stale/dirty/readiness
+  routing, merge-specific evidence, and done-state issue closure ordering. It
+  keeps timeline-comment evidence before state mutation and keeps repaired
+  dirty PRs in `Merging` for a later readback tick.
+- `src/lanes/merge/repair.rs`: Merge-agent conflict repair. It owns the
+  trusted repair preflight, merge-agent prompt, backend event capture, semantic
+  safety markers, verification, push, and repair evidence text for dirty PRs.
 - `src/lanes/review/`: Review lane command execution. `status.rs` owns
   freshness and status reporting, `manual.rs` owns manual Review
   claim/pass/reject routing, and `automatic.rs` owns fake/once/loop runs,

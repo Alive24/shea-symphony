@@ -4,7 +4,6 @@ use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(test)]
 use cli::DisplayMode;
@@ -219,6 +218,7 @@ use orchestration::canonical_checkout::{canonical_checkout_report, CanonicalChec
 pub(crate) use orchestration::session_status::{
     session_status_snapshots, DEFAULT_SESSION_STALE_AFTER_MS, DEFAULT_SESSION_STATUS_LINES,
 };
+pub(crate) use orchestration::time::{current_gmt_timestamp, current_time_ms};
 pub(crate) use orchestration::tracker_context::{
     all_mapped_tracker_states, hydrate_issue_for_evidence, hydrate_issues_for_review_lane,
     live_github_tracker, tracker_backend_label,
@@ -1782,46 +1782,6 @@ fn write_lane_claim_state(
 
 fn unbounded_loop_sleep_ms(limit: Option<usize>, poll_interval_ms: u64) -> Option<u64> {
     limit.is_none().then_some(poll_interval_ms)
-}
-
-fn current_time_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
-}
-
-fn current_gmt_timestamp() -> String {
-    let seconds = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or_default();
-    format_gmt_timestamp(seconds)
-}
-
-fn format_gmt_timestamp(seconds_since_unix_epoch: u64) -> String {
-    let days = (seconds_since_unix_epoch / 86_400) as i64;
-    let seconds_of_day = seconds_since_unix_epoch % 86_400;
-    let (year, month, day) = civil_from_days(days);
-    let hour = seconds_of_day / 3_600;
-    let minute = (seconds_of_day % 3_600) / 60;
-    let second = seconds_of_day % 60;
-    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02} GMT")
-}
-
-fn civil_from_days(days_since_unix_epoch: i64) -> (i64, u32, u32) {
-    let days = days_since_unix_epoch + 719_468;
-    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
-    let day_of_era = days - era * 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let mut year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_prime = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
-    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
-    year += if month <= 2 { 1 } else { 0 };
-    (year, month as u32, day as u32)
 }
 
 fn lane_claim_for_issue(

@@ -100,6 +100,9 @@ have a narrow shared responsibility:
 - `src/orchestration/tracker_context.rs`: shared tracker context helpers:
   backend labels for progress output, live GitHub detection, issue evidence
   hydration, and configured Project state lists used across commands and lanes.
+- `src/orchestration/time.rs`: shared runtime clock and GMT timestamp helpers
+  used in session evidence, Forge/Rework notes, audit records, and runtime
+  state updates.
 
 `src/main.rs` still owns:
 

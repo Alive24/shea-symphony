@@ -35,6 +35,9 @@ clear owner:
 - `src/commands/autopilot.rs`: read-only `autopilot plan` execution. It owns
   the preflight snapshot shape, lane proposals, parked queue summaries,
   readiness rendering, and the explicit no-mutation planning contract.
+- `src/commands/autopilot/readiness.rs`: read-only autopilot readiness and
+  safety summary assembly. It owns Doctor/canonical-checkout/runtime blockers
+  and warnings while leaving lane proposal selection in `autopilot.rs`.
 - `src/commands/clean.rs`: artifact cleanup plan and audit command execution.
   It keeps cleanup rendering, artifact-class paths, and read-only audit output
   together while leaving actual workspace cleanup under `workspace`.

@@ -89,6 +89,10 @@ Jade Symphony-specific bootstrap docs require:
 
 Initial crate layout:
 
+- `cli`: raw Clap command surface, grouped command aliases, help text, flag
+  normalization, and conversion into the internal dispatcher model. See
+  `docs/main-orchestration-spine.md` for the decomposition map that keeps new
+  command glue out of the binary entrypoint.
 - `workflow`: source-faithful loader for Markdown plus optional YAML front matter.
 - `config`: typed settings, defaults, `$VAR` resolution, path normalization, and
   supported tracker/backend selection.
@@ -108,8 +112,8 @@ Initial crate layout:
   state checks, and snapshot production.
 - `event_log`: structured JSONL event sink.
 - `status_surface`: terminal/operator-readable snapshot rendering.
-- `main`: CLI for loading config, validating, rendering status, and dry-run
-  dispatch planning.
+- `main`: binary entrypoint, internal command dispatcher, and orchestration
+  execution glue that has not yet moved to narrower command modules.
 
 The first vertical slice intentionally avoids hard-coded GitHub Project v2 logic
 inside `orchestrator`; the orchestrator only consumes `TrackerIssue` records from

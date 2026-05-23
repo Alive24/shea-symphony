@@ -113,6 +113,10 @@ runtime owner:
   issue workspace. It owns prompt artifact persistence, backend event logging,
   hook execution, usage-limit detection, and the `IssueExecutionResult` shape
   consumed by Main-loop handoff logic.
+- `src/lanes/main_loop/session.rs`: Main-loop pending-session reconciliation
+  and runtime-state result shaping. It owns session registry readback,
+  stale/unknown active-session classification, terminal session reconstruction,
+  and runtime-state transitions derived from backend results.
 - `src/lanes/main_loop/runtime.rs`: Main-loop runtime preflight and recovery:
   persisted runtime-state retention, active session detection, recoverable
   terminal/stale session selection, retry backoff, and stale runtime-state

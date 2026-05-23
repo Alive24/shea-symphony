@@ -27,6 +27,7 @@ use crate::{
 
 mod execution;
 mod runtime;
+mod session;
 pub(crate) use execution::{
     execute_issue_once, execute_issue_once_with_workspace_key, IssueExecutionResult,
 };
@@ -34,6 +35,11 @@ pub(crate) use execution::{
 pub(crate) use runtime::{run_loop_resume_preflight, ResumePreflightAction};
 pub(crate) use runtime::{
     run_loop_resume_preflight_many, runtime_state_issue_identifier, RuntimeRecoveryCandidate,
+};
+pub(crate) use session::{
+    main_session_active_recoverable, reconcile_pending_main_session,
+    run_loop_runtime_state_for_issue, run_loop_runtime_state_with_result,
+    run_loop_runtime_state_with_transition, MainSessionReconciliation,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

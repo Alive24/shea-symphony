@@ -133,6 +133,9 @@ entrypoint:
 - `src/main/tests/main_loop.rs`: Main-loop selection, runtime recovery,
   pending-session reconciliation, handoff evidence, live PR linkage,
   usage-limit pause, and write-mode guard tests.
+- `src/main/tests/merge.rs`: Merge session backend defaults, clean merge tick,
+  merge-agent repair evidence, merge worker selection/recovery, and Done-state
+  completion ordering tests.
 - `src/main/tests/parser.rs`: CLI parser/help/flag compatibility tests for the
   grouped command surface produced by `src/cli.rs`.
 - `src/main/tests/review.rs`: automatic and manual review command glue tests,

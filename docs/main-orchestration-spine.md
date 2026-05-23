@@ -23,17 +23,24 @@ Issue Contract -> Lane Decision -> Runtime Attempt -> Evidence -> State Transiti
 - `Recovery/Doctor`: interrupted runtime reconciliation, merge repair,
   canonical-checkout checks, Doctor diagnostics, and safe repair commands.
 
-## Current Boundary
+## Current Boundaries
 
 The first extracted boundary is `src/cli.rs`. It owns the raw Clap command
 surface, grouped command aliases, help text, flag normalization, and conversion
 from parsed arguments into the internal `Command` dispatcher model.
 
+Command execution now lives under `src/commands/` when a command family has a
+clear owner:
+
+- `src/commands/forge.rs`: Issue Forge create, validate, promote, and rework
+  execution. It preserves quality-gate checks, Project write ordering, readback
+  verification, and rework evidence-before-status behavior.
+
 `src/main.rs` still owns:
 
 - `main()` and `run()`;
 - the internal `Command` enum and dispatch match;
-- concrete command execution functions;
+- concrete command execution functions that have not yet been extracted;
 - lane orchestration helpers that touch tracker, workspace, runtime, or
   evidence state.
 
@@ -42,10 +49,9 @@ lane routing, runtime recovery, or workpad rendering.
 
 ## Preferred Next Extractions
 
-- Move Project command execution glue toward a `project_commands` module after
-  the parser boundary settles.
-- Move Forge command execution glue toward a `forge_commands` module without
-  changing Issue Forge quality gates.
+- Move Project command execution glue to `src/commands/project.rs`, preserving
+  state, issue, inspect, set-state, workpad, link-pr, add, and timeline-comment
+  behavior.
 - Move Review and Merge command execution glue only as lane-specific modules,
   preserving their current authority boundaries and transition ordering.
 - Move workspace command execution glue separately from runtime attempt logic.

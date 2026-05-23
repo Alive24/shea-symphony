@@ -69,8 +69,11 @@ runtime owner:
   transitions.
 - `src/lanes/main_loop.rs`: outer Main loop command execution and
   `RunLoopOptions`. It owns loop iteration, dry-run rendering, concurrency-slot
-  selection, and delegation into existing runtime/handoff helpers while those
-  helpers are still being extracted.
+  selection, and delegation into narrower Main-lane helpers.
+- `src/lanes/main_loop/runtime.rs`: Main-loop runtime preflight and recovery:
+  persisted runtime-state retention, active session detection, recoverable
+  terminal/stale session selection, retry backoff, and stale runtime-state
+  archiving. It does not own Project mutation or Agent Review handoff evidence.
 - `src/lanes/merge.rs`: Merge once/loop execution, merge queue selection,
   merge-agent conflict repair, merge-specific evidence, and done-state issue
   closure ordering. It keeps timeline-comment evidence before state mutation

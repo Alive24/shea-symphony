@@ -71,7 +71,7 @@ use jade_symphony::skill_status::SkillStatusInput;
 use jade_symphony::status_surface::render_latest_status_bar;
 #[cfg(test)]
 use jade_symphony::tracker::FollowUpIssueInput;
-use jade_symphony::tracker::{ProjectFieldAssignment, TrackerAdapter, TrackerError};
+use jade_symphony::tracker::{ProjectFieldAssignment, TrackerAdapter};
 use jade_symphony::workflow::WorkflowDefinition;
 #[cfg(test)]
 use jade_symphony::workspace::GitIdentityApplyResult;
@@ -218,6 +218,10 @@ pub(crate) use orchestration::canonical_checkout::{
 use orchestration::canonical_checkout::{canonical_checkout_report, CanonicalCheckoutReport};
 pub(crate) use orchestration::session_status::{
     session_status_snapshots, DEFAULT_SESSION_STALE_AFTER_MS, DEFAULT_SESSION_STATUS_LINES,
+};
+pub(crate) use orchestration::tracker_context::{
+    all_mapped_tracker_states, hydrate_issue_for_evidence, hydrate_issues_for_review_lane,
+    live_github_tracker, tracker_backend_label,
 };
 pub(crate) use orchestration::tracker_recovery::{
     add_timeline_comment_with_recovery, append_tracker_mutation_audit, close_issue_with_recovery,
@@ -563,50 +567,6 @@ fn progress_spec_for_config(config: &RuntimeConfig, wait: &str) -> ProgressHeart
 fn progress_spec_with_event_log(config: &RuntimeConfig, wait: &str) -> ProgressHeartbeatSpec {
     progress_spec_for_config(config, wait)
         .event_log_path(config.observability.logs_root.join("jade-symphony.jsonl"))
-}
-
-fn tracker_backend_label(config: &RuntimeConfig) -> &'static str {
-    match config.tracker.kind.as_str() {
-        "github_project_v2" => "gh",
-        "linear" => "linear",
-        "memory" => "memory",
-        _ => "tracker",
-    }
-}
-
-fn hydrate_issue_for_evidence(
-    adapter: &dyn TrackerAdapter,
-    issue: TrackerIssue,
-    project_context: &[TrackerIssue],
-) -> Result<TrackerIssue, TrackerError> {
-    adapter.hydrate_issue_evidence(issue, project_context)
-}
-
-fn hydrate_issues_for_review_lane(
-    adapter: &dyn TrackerAdapter,
-    issues: Vec<TrackerIssue>,
-) -> Result<Vec<TrackerIssue>, TrackerError> {
-    let project_context = issues.clone();
-    issues
-        .into_iter()
-        .map(|issue| hydrate_issue_for_evidence(adapter, issue, &project_context))
-        .collect()
-}
-
-fn all_mapped_tracker_states(config: &RuntimeConfig) -> Vec<String> {
-    let state_map = &config.tracker.state_map;
-    vec![
-        state_map.backlog.clone(),
-        state_map.todo.clone(),
-        state_map.need_to_clarify.clone(),
-        state_map.in_progress.clone(),
-        state_map.need_human_input.clone(),
-        state_map.agent_review.clone(),
-        state_map.human_review.clone(),
-        state_map.rework.clone(),
-        state_map.merging.clone(),
-        state_map.done.clone(),
-    ]
 }
 
 fn current_git_branch(workspace_path: &Path) -> Result<Option<String>, io::Error> {
@@ -1818,10 +1778,6 @@ fn write_lane_claim_state(
         outcome.as_str()
     );
     Ok(())
-}
-
-fn live_github_tracker(config: &RuntimeConfig) -> bool {
-    config.tracker.kind == "github_project_v2" && config.tracker.fixture_path.is_none()
 }
 
 fn unbounded_loop_sleep_ms(limit: Option<usize>, poll_interval_ms: u64) -> Option<u64> {

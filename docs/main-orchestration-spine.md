@@ -97,6 +97,9 @@ have a narrow shared responsibility:
   guard/report glue. It owns write-mode refresh output, dry-run preview output,
   and Project/Doctor integration-gap reporting while the lower-level checkout
   scanner stays in the library module.
+- `src/orchestration/tracker_context.rs`: shared tracker context helpers:
+  backend labels for progress output, live GitHub detection, issue evidence
+  hydration, and configured Project state lists used across commands and lanes.
 
 `src/main.rs` still owns:
 

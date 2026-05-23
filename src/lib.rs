@@ -18,6 +18,7 @@ pub mod orchestrator;
 pub mod ownership;
 pub mod presentation;
 pub mod profiles;
+pub mod progress;
 pub mod prompt;
 pub mod quality_gate;
 pub mod review;

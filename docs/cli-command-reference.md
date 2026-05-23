@@ -70,6 +70,33 @@ hydration. Use `project issue '#<issue>' --json` or `project inspect '#<issue>'`
 when an operator or lane needs the rich issue body, workpad/timeline comments,
 linked PR readback, or detailed native topology evidence for one issue.
 
+## Long-Running Command Progress
+
+Live commands that wait longer than the centralized heartbeat threshold emit
+compact progress lines to stderr, for example:
+
+```text
+progress wait=github_project_read elapsed=30s issue=#318 backend=gh next=load_issue
+progress wait=review_backend elapsed=60s issue=#243 backend=gemini-cli artifact=/path/to/job.json next=waiting_for_child
+```
+
+These lines mean the command is still alive and waiting on the named backend or
+child process. They do not change retry, timeout, routing, review, or merge
+semantics. Timeout and backend failures still print their normal errors.
+
+Heartbeat output is deliberately kept away from stdout, so JSON commands such as
+`project issue --json`, `review status --json`, and `autopilot plan --json`
+remain machine-readable. Lane loop heartbeats also append local
+`progress_heartbeat` records to the configured `jade-symphony.jsonl` event log
+when that command path already uses local runtime evidence.
+
+The default threshold and repeat interval are 30 seconds. For UAT or local
+simulation, set `JADE_SYMPHONY_PROGRESS_HEARTBEAT_MS` to a smaller value; set it
+to `0` to disable heartbeat output for that process. If a progress line keeps
+repeating, use the `wait=`, `issue=`, `backend=`, `artifact=`, and `next=`
+fields to choose the next diagnostic surface: `status show`, `review status`,
+`doctor`, the referenced artifact path, or a recorded tmux attach command.
+
 Doctor repair helpers:
 
 ```bash

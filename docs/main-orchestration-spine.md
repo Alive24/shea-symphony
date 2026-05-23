@@ -54,6 +54,10 @@ clear owner:
   selective issue hydration, and command-level Doctor diagnostics. It keeps
   repair suggestions and write-mode repair evidence close to the Doctor surface
   while exposing read-only summaries for debug and autopilot preflight.
+- `src/commands/debug.rs`: read-only debug report execution, Project/Doctor
+  summary rendering, smoke-readiness classification, session summaries, and
+  lane next-action hints. Shared app-server smoke-gate facts stay with Main
+  orchestration while the command owns the report layout.
 
 `src/main.rs` still owns:
 

@@ -18,12 +18,13 @@ use crate::{
     current_time_ms, evaluate_issue_for_current_source, handle_run_loop_gate_failure,
     handle_run_loop_handoff_failure, hydrate_issue_for_evidence, lane_claim_for_issue,
     latest_status_for_issue, preflight_canonical_checkout_for_write_mode, print_latest_status,
-    print_run_loop_dry_run_actions, progress_spec_with_event_log, project_text_field,
-    tracker_backend_label, unbounded_loop_sleep_ms, warn_if_temporary_workflow_path,
-    worker_identity, write_lane_claim_field, WorkerLane,
+    progress_spec_with_event_log, project_text_field, tracker_backend_label,
+    unbounded_loop_sleep_ms, warn_if_temporary_workflow_path, worker_identity,
+    write_lane_claim_field, WorkerLane,
 };
 
 mod dispatch;
+mod dry_run;
 mod execution;
 mod handoff;
 mod preflight;
@@ -31,6 +32,7 @@ mod runtime;
 mod selection;
 mod session;
 pub(crate) use dispatch::{run_loop_dispatch_write_candidates, RunLoopWorkerOutcome};
+pub(crate) use dry_run::print_run_loop_dry_run_actions;
 pub(crate) use execution::{
     execute_issue_once, execute_issue_once_with_workspace_key, IssueExecutionResult,
 };

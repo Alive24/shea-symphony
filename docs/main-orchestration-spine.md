@@ -56,13 +56,21 @@ clear owner:
 - lane orchestration helpers that touch tracker, workspace, runtime, or
   evidence state.
 
+Lane execution now lives under `src/lanes/` when a lane boundary has a clear
+runtime owner:
+
+- `src/lanes/merge.rs`: Merge once/loop execution, merge queue selection,
+  merge-agent conflict repair, merge-specific evidence, and done-state issue
+  closure ordering. It keeps timeline-comment evidence before state mutation
+  and keeps repaired dirty PRs in `Merging` for a later readback tick.
+
 This keeps command parsing reviewable without mixing it with Project mutation,
 lane routing, runtime recovery, or workpad rendering.
 
 ## Preferred Next Extractions
 
-- Move Review and Merge command execution glue only as lane-specific modules,
-  preserving their current authority boundaries and transition ordering.
+- Move Review command execution glue as a lane-specific module, preserving its
+  current authority boundaries, review-ledger writes, and transition ordering.
 - Move Main loop command execution only after the smaller command families are
   stable; keep runtime/session recovery helpers grouped with the lane that owns
   the state transition.

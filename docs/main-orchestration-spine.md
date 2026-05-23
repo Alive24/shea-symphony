@@ -49,6 +49,10 @@ clear owner:
 - `src/commands/status.rs`: read-only runtime status surfaces for `plan` and
   `status serve`. It owns snapshot assembly, JSON/human rendering, and loopback
   status serving while reusing shared session inspection.
+- `src/commands/workflow.rs`: workflow validation and top-level workflow
+  inspection glue. It keeps config loading, progress-wrapped Project summary
+  reads, state filtering, and gate summary rendering out of the binary
+  entrypoint.
 - `src/commands/workspace.rs`: Workspace command execution for discovery,
   adoption, ensure, and cleanup. It owns command-level worktree safety checks
   and evidence writes, while shared lane handoff planning remains outside the

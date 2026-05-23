@@ -135,15 +135,18 @@ pub(crate) use commands::gate::{
     evaluate_issue_for_current_source, gate_target_state, gate_workpad, quality_gate,
 };
 #[cfg(test)]
+use commands::project::filter_issues_by_state;
+#[cfg(test)]
 use commands::project::link_pr_with_adapter;
 pub(crate) use commands::project::ProjectStateOptions;
 use commands::project::{
-    add_to_project, append_timeline_comment, filter_issues_by_state, link_pr, project_inspect,
-    project_issue, project_state, render_state_summary, set_state, upsert_workpad,
+    add_to_project, append_timeline_comment, link_pr, project_inspect, project_issue,
+    project_state, render_state_summary, set_state, upsert_workpad,
 };
 #[cfg(test)]
 use commands::status::render_plan_snapshot;
 use commands::status::{plan, status_api};
+use commands::workflow::{inspect, validate};
 use commands::workspace::{
     cleanup_workspaces, workspace_adopt, workspace_ensure, workspace_list, workspace_show,
 };
@@ -2634,64 +2637,6 @@ fn tracker_backend_label(config: &RuntimeConfig) -> &'static str {
         "memory" => "memory",
         _ => "tracker",
     }
-}
-
-fn validate(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    warn_if_temporary_workflow_path(&workflow_path);
-    let workflow = WorkflowDefinition::load(&workflow_path)?;
-    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
-    config.validate()?;
-
-    println!("workflow={}", workflow_path.display());
-    println!("tracker={}", config.tracker.kind);
-    println!("backend={}", config.backend.kind);
-    println!("workspace_root={}", config.workspace.root.display());
-    println!("prompt_template_bytes={}", workflow.prompt_template.len());
-    println!("status=valid");
-    Ok(())
-}
-
-fn inspect(
-    workflow_path: PathBuf,
-    state_filters: Vec<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let workflow = WorkflowDefinition::load(&workflow_path)?;
-    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
-    config.validate()?;
-
-    let adapter = adapter_from_config(&config);
-    let issues = run_with_progress_heartbeat(
-        progress_spec_for_config(&config, "github_project_read")
-            .backend(tracker_backend_label(&config))
-            .next("load_project_summary"),
-        || adapter.list_project_summary_issues(),
-    )?;
-    let issues = filter_issues_by_state(issues, &state_filters);
-
-    if !state_filters.is_empty() {
-        println!("state_filter={}", state_filters.join(","));
-    }
-    println!("issues={}", issues.len());
-    println!("{}", render_state_summary(&issues));
-    for issue in issues {
-        let gate = evaluate_issue_for_current_source(&config, &issue)?;
-        println!(
-            "- {} {} state={} gate={:?}",
-            issue.identifier, issue.title, issue.state, gate.kind
-        );
-        if !gate.missing.is_empty() {
-            println!("  missing={}", gate.missing.join(", "));
-        }
-        if !gate.assumptions.is_empty() {
-            println!("  assumptions={}", gate.assumptions.join("; "));
-        }
-    }
-
-    for gap in adapter.integration_gaps() {
-        println!("integration_gap={gap}");
-    }
-
-    Ok(())
 }
 
 fn hydrate_issue_for_evidence(

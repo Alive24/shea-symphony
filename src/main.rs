@@ -54,7 +54,6 @@ use jade_symphony::model::{
     native_subissue_gate_blocker, normalize_state, GateDecision, LatestStatus,
     SessionStatusSnapshot, TrackerIssue,
 };
-use jade_symphony::observability_api::serve_once;
 use jade_symphony::orchestrator::Orchestrator;
 use jade_symphony::ownership::{
     render_runtime_ownership_marker, runtime_ownership_decision, RuntimeOwnershipDecision,
@@ -142,6 +141,9 @@ use commands::project::{
     add_to_project, append_timeline_comment, filter_issues_by_state, link_pr, project_inspect,
     project_issue, project_state, render_state_summary, set_state, upsert_workpad,
 };
+#[cfg(test)]
+use commands::status::render_plan_snapshot;
+use commands::status::{plan, status_api};
 use commands::workspace::{
     cleanup_workspaces, workspace_adopt, workspace_ensure, workspace_list, workspace_show,
 };
@@ -459,13 +461,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
     }
-}
-
-fn plan(workflow_path: PathBuf, json: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let snapshot = build_plan_snapshot(&workflow_path)?;
-    println!("{}", render_plan_snapshot(&snapshot, json)?);
-
-    Ok(())
 }
 
 fn autopilot_plan(workflow_path: PathBuf, json: bool) -> Result<(), Box<dyn std::error::Error>> {
@@ -1401,57 +1396,6 @@ fn render_autopilot_plan_human(snapshot: &AutopilotPlanSnapshot) -> String {
     lines.join("\n")
 }
 
-fn status_api(
-    workflow_path: PathBuf,
-    bind: SocketAddr,
-    once: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if !once {
-        return Err("status serve currently requires --once".into());
-    }
-    if !bind.ip().is_loopback() {
-        return Err("status serve bind address must be loopback for this first slice".into());
-    }
-
-    let snapshot = build_plan_snapshot(&workflow_path)?;
-    println!("status_api=serving bind={bind} mode=once");
-    let local_addr = serve_once(bind, &snapshot)?;
-    println!("status_api=stopped bind={local_addr} mode=once");
-    Ok(())
-}
-
-fn build_plan_snapshot(
-    workflow_path: &Path,
-) -> Result<jade_symphony::model::RuntimeSnapshot, Box<dyn std::error::Error>> {
-    warn_if_temporary_workflow_path(workflow_path);
-    let workflow = WorkflowDefinition::load(workflow_path)?;
-    let config = RuntimeConfig::from_workflow(&workflow, workflow_path)?;
-    config.validate()?;
-
-    let adapter = adapter_from_config(&config);
-    let integration_gaps = adapter.integration_gaps();
-    let issues = adapter.list_project_summary_issues()?;
-    let session_statuses = session_status_snapshots(&config);
-    let event_log_path = config
-        .observability
-        .logs_root
-        .join("jade-symphony.jsonl")
-        .display()
-        .to_string();
-    let orchestrator = Orchestrator::new(config);
-    let mut plan = orchestrator.plan_dispatch(issues);
-    plan.integration_gaps.extend(integration_gaps);
-    match session_statuses {
-        Ok(sessions) => plan.snapshot.sessions = sessions,
-        Err(error) => plan
-            .integration_gaps
-            .push(format!("tmux session status unavailable: {error}")),
-    }
-    plan.snapshot.integration_gaps = plan.integration_gaps.clone();
-    plan.snapshot.event_log_path = Some(event_log_path);
-    Ok(plan.snapshot)
-}
-
 fn session_status_snapshots(
     config: &RuntimeConfig,
 ) -> Result<Vec<SessionStatusSnapshot>, Box<dyn std::error::Error>> {
@@ -1500,17 +1444,6 @@ fn session_status_snapshots(
     }
 
     Ok(snapshots)
-}
-
-fn render_plan_snapshot(
-    snapshot: &jade_symphony::model::RuntimeSnapshot,
-    json: bool,
-) -> Result<String, Box<dyn std::error::Error>> {
-    if json {
-        Ok(serde_json::to_string_pretty(snapshot)?)
-    } else {
-        Ok(render_snapshot(snapshot))
-    }
 }
 
 fn reconcile_main_handoff_runtime_state(

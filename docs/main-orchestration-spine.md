@@ -46,6 +46,9 @@ clear owner:
   state, issue, inspect, set-state, workpad, link-pr, add, and
   timeline-comment. It keeps write intent checks, recovery-aware mutations, and
   readback-oriented output close to the Project command family.
+- `src/commands/status.rs`: read-only runtime status surfaces for `plan` and
+  `status serve`. It owns snapshot assembly, JSON/human rendering, and loopback
+  status serving while reusing shared session inspection.
 - `src/commands/workspace.rs`: Workspace command execution for discovery,
   adoption, ensure, and cleanup. It owns command-level worktree safety checks
   and evidence writes, while shared lane handoff planning remains outside the

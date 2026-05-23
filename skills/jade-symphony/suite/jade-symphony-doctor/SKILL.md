@@ -3,7 +3,7 @@ name: jade-symphony-doctor
 description: Use when diagnosing Jade Symphony doctor findings, Need Human Input items, issue or PR blockers, and install-health gaps, then giving an explicit repair recommendation and executing confirmed safe repairs in the same session when the workflow contract allows it.
 metadata:
   short-description: Jade Symphony doctor triage
-  suite-version: 2026.05.18
+  suite-version: 2026.05.23
 ---
 
 # Jade Symphony Doctor
@@ -33,6 +33,7 @@ Start with read-only diagnosis:
 
 ```bash
 cargo run -- project state workflows/jade-symphony.md
+cargo run -- autopilot plan workflows/jade-symphony.md
 cargo run -- doctor workflows/jade-symphony.md
 cargo run -- debug workflows/jade-symphony.md
 ```
@@ -73,6 +74,8 @@ with one concrete next action:
 
 - a lane handoff command, such as `$jade-symphony-manual-main`,
   `$jade-symphony-manual-review`, or `$jade-symphony-manual-merge`;
+- the normal all-lane foreground command, when no focused repair is needed:
+  `cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --write`;
 - a Jade Symphony CLI repair command, such as `project set-state`,
   `project link-pr`, `doctor ... repair`, or `project timeline-comment`;
 - a local install-health command, such as suite dry-run, validate, or a targeted

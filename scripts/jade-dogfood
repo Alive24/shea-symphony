@@ -10,14 +10,14 @@ usage() {
   cat <<'EOF'
 Usage: scripts/jade-dogfood [--dry-run | --write --confirm-write] [--workflow PATH] [--max-iterations N]
 
-Runs real-command preflights for supervised Jade Symphony dogfood.
+Runs real-command preflights for supervised Jade Symphony autopilot dogfood.
 
 Options:
-  --dry-run            Preview the bounded lane tick without tracker mutation.
-  --write              Run one bounded live write-mode tick after preflight.
+  --dry-run            Preview the bounded all-lane autopilot tick without tracker mutation.
+  --write              Run one bounded foreground autopilot loop after preflight.
   --confirm-write      Required with --write.
   --workflow PATH      Workflow markdown path. Default: workflows/jade-symphony.md
-  --max-iterations N   Bounded run-loop iterations. Default: 1
+  --max-iterations N   Bounded autopilot loop iterations. Default: 1
   --help               Show this help.
 EOF
 }
@@ -94,10 +94,11 @@ check "gh auth status" gh auth status
 
 if [ -x "$BIN" ]; then
   check "workflow validates" "$BIN" validate "$WORKFLOW"
-  check "project state reads" "$BIN" project-state "$WORKFLOW"
+  check "project state reads" "$BIN" project state "$WORKFLOW"
+  check "autopilot plan reads" "$BIN" autopilot plan "$WORKFLOW"
   check "doctor reads" "$BIN" doctor "$WORKFLOW"
   if [ "$MODE" = "write" ]; then
-    check "bounded run-loop dry-run" "$BIN" run-loop "$WORKFLOW" --max-iterations "$MAX_ITERATIONS" --dry-run
+    check "bounded autopilot loop dry-run" "$BIN" autopilot loop "$WORKFLOW" --max-iterations "$MAX_ITERATIONS" --dry-run
   fi
 fi
 
@@ -105,9 +106,11 @@ echo
 echo "Recommended commands:"
 echo "- preview: scripts/jade-dogfood --dry-run"
 echo "- supervised write: scripts/jade-dogfood --write --confirm-write --max-iterations 1"
-echo "- inspect: $BIN inspect $WORKFLOW"
+echo "- inspect: $BIN project state $WORKFLOW"
+echo "- plan: $BIN autopilot plan $WORKFLOW"
 echo "- debug report: $BIN debug $WORKFLOW"
-echo "- resume tick: $BIN run-loop $WORKFLOW --max-iterations 1 --write"
+echo "- foreground autopilot: $BIN autopilot loop $WORKFLOW --max-iterations 1 --write"
+echo "- focused Main fallback: $BIN main loop $WORKFLOW --max-iterations 1 --write"
 
 if [ "$FAILED" = "true" ]; then
   echo "dogfood_preflight=failed" >&2
@@ -116,8 +119,8 @@ fi
 
 if [ "$MODE" = "dry-run" ]; then
   echo "dogfood_preflight=ok"
-  exec "$BIN" run-loop "$WORKFLOW" --max-iterations "$MAX_ITERATIONS" --dry-run
+  exec "$BIN" autopilot loop "$WORKFLOW" --max-iterations "$MAX_ITERATIONS" --dry-run
 fi
 
 echo "dogfood_preflight=ok"
-exec "$BIN" run-loop "$WORKFLOW" --max-iterations "$MAX_ITERATIONS" --write
+exec "$BIN" autopilot loop "$WORKFLOW" --max-iterations "$MAX_ITERATIONS" --write

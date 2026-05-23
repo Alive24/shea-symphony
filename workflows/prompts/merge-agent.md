@@ -68,6 +68,9 @@ Project GraphQL or Project UI changes are break-glass only.
 - Interrupted automated merge-loop work is recovered by default in
   `merge loop --write`: adopt structured loop/goal merge claims first, leave
   manual claims alone, and continue normal merge selection after recovery.
+- When `autopilot loop` invokes the merge lane, it is still consuming the same
+  approved `Merging` queue through merge-loop authority. It does not relax human
+  approval, PR cleanliness, or append-only merge-evidence requirements.
 - Any Project status change, including `Done` or `Need Human Input`,
   must be the final mutating step of the merge session. Finish merge evidence,
   PR/issue reconciliation, and the standalone `Jade Symphony Merge Run`

@@ -14910,7 +14910,10 @@ enum AutopilotCommandArgs {
         about = "Plan Main, Review, and Merge lanes without mutating tracker or runtime state"
     )]
     Plan(AutopilotPlanArgs),
-    #[command(about = "Run a bounded composed all-lane autopilot status and worker tick")]
+    #[command(
+        about = "Run bounded foreground Main, Review, and Merge lane ticks",
+        long_about = "`autopilot loop` is a bounded foreground CLI supervisor, not a daemon, background service, or app-server. It composes Main, Review, and Merge lane ticks in order, prints status and parked queues, and returns after the explicit iteration budget. Mutations require --write; dry-run remains the default preview boundary."
+    )]
     Loop(AutopilotLoopArgs),
 }
 
@@ -14926,13 +14929,28 @@ struct AutopilotPlanArgs {
 struct AutopilotLoopArgs {
     #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
     workflow_path: PathBuf,
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Bounded number of foreground autopilot iterations to run"
+    )]
     max_iterations: Option<usize>,
-    #[arg(long, conflicts_with = "max_iterations")]
+    #[arg(
+        long,
+        conflicts_with = "max_iterations",
+        help = "Run exactly one bounded iteration"
+    )]
     once: bool,
-    #[arg(long, conflicts_with = "dry_run")]
+    #[arg(
+        long,
+        conflicts_with = "dry_run",
+        help = "Allow lane ticks to mutate tracker, runtime, worktrees, and PR state"
+    )]
     write: bool,
-    #[arg(long = "dry-run", conflicts_with = "write")]
+    #[arg(
+        long = "dry-run",
+        conflicts_with = "write",
+        help = "Preview the bounded all-lane tick without mutation"
+    )]
     dry_run: bool,
     #[arg(
         long,
@@ -14946,15 +14964,18 @@ struct AutopilotLoopArgs {
         help = "Disable default recover-first handling in write mode"
     )]
     no_recover: bool,
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Delay between bounded iterations when the loop waits or retries"
+    )]
     poll_interval_ms: Option<u64>,
-    #[arg(long)]
+    #[arg(long, help = "Maximum Main-lane worker slots per iteration")]
     main_max_concurrent: Option<usize>,
-    #[arg(long)]
+    #[arg(long, help = "Maximum Review-lane worker slots per iteration")]
     review_max_concurrent: Option<usize>,
-    #[arg(long)]
+    #[arg(long, help = "Maximum Merge-lane worker slots per iteration")]
     merge_max_concurrent: Option<usize>,
-    #[arg(long)]
+    #[arg(long, help = "Print structured JSON status snapshots")]
     json: bool,
 }
 
@@ -17069,6 +17090,17 @@ mod tests {
         assert_eq!(options.review_max_concurrent, Some(2));
         assert_eq!(options.merge_max_concurrent, Some(1));
         assert!(options.json);
+    }
+
+    #[test]
+    fn autopilot_loop_help_documents_foreground_boundary() {
+        let help = help_text(&["autopilot", "loop", "--help"]);
+
+        assert!(help.contains("bounded foreground CLI supervisor"));
+        assert!(help.contains("not a daemon, background service, or app-server"));
+        assert!(help.contains("Mutations require --write"));
+        assert!(help.contains("Bounded number of foreground autopilot iterations"));
+        assert!(help.contains("Preview the bounded all-lane tick without mutation"));
     }
 
     #[test]

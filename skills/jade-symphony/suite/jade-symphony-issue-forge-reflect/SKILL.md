@@ -3,7 +3,7 @@ name: jade-symphony-issue-forge-reflect
 description: Use when reflecting over recent Jade Symphony conversations, Project state, dogfood logs, or work records to extract issue backlog candidates, create them as non-dispatchable Project Backlog drafts, or promote existing Backlog drafts through conversational Issue Forge into executable Todo issues.
 metadata:
   short-description: Reflect Jade Symphony backlog into forgeable issues
-  suite-version: 2026.05.17
+  suite-version: 2026.05.23
 ---
 
 # Jade Symphony Issue Forge Reflect

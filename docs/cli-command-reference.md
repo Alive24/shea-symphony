@@ -43,6 +43,7 @@ workflows may still use an inline prompt body.
 | `profiles` | List configured/discovered execution profiles. | `cargo run -- profiles examples/cockpit-profiles-workflow.md` |
 | `debug` | Read-only human report combining Project, doctor, smoke readiness, runtime/session, cleanup, and lane next-action signals. | `cargo run -- debug workflows/jade-symphony.md` |
 | `autopilot plan` | Read-only Main/Review/Merge lane preflight with parked operator queues and future write-mode readiness. | `cargo run -- autopilot plan workflows/jade-symphony.md` |
+| `autopilot loop` | Bounded foreground skeleton for the future all-lane supervisor. Resolves workflow defaults and explicit CLI overrides, but does not dispatch lane work in this slice. | `cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --dry-run` |
 
 `autopilot plan` is the mandatory planning bridge before any future all-lane
 write-mode autopilot. It does not claim Project issues, launch Main/Review/Merge
@@ -61,6 +62,24 @@ Readiness is explicit: `ready`, `idle_but_healthy`,
 `blocked_by_ambiguous_lane_or_runtime_state`. Doctor blockers and canonical
 checkout safety are blockers for future write-mode autopilot; historical Doctor
 warnings remain visible evidence without automatically blocking the plan.
+
+`autopilot loop` is the reserved write-mode supervisor entrypoint. This skeleton
+keeps the command foreground and bounded: pass `--max-iterations N` or `--once`.
+Dry-run mode resolves the same workflow-configured loop defaults without
+mutation. Future mutating behavior must require explicit `--write`.
+
+Default resolution comes from workflow front matter unless a CLI override is
+provided:
+
+- `polling.interval_ms` -> `--poll-interval-ms`
+- `main_lane.max_concurrent_agents` -> `--main-max-concurrent`
+- `review_lane.max_concurrent_workers` -> `--review-max-concurrent`
+- `merge_lane.max_concurrent_workers` -> `--merge-max-concurrent`
+
+```bash
+cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --write
+```
 
 `project state`, `main loop`, `review loop`, `merge loop`, and the global
 Doctor scan use lightweight Project queue reads by default. Those reads keep

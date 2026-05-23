@@ -39,6 +39,10 @@ clear owner:
   state, issue, inspect, set-state, workpad, link-pr, add, and
   timeline-comment. It keeps write intent checks, recovery-aware mutations, and
   readback-oriented output close to the Project command family.
+- `src/commands/workspace.rs`: Workspace command execution for discovery,
+  adoption, ensure, and cleanup. It owns command-level worktree safety checks
+  and evidence writes, while shared lane handoff planning remains outside the
+  command module.
 
 `src/main.rs` still owns:
 
@@ -53,8 +57,9 @@ lane routing, runtime recovery, or workpad rendering.
 
 ## Preferred Next Extractions
 
-- Move workspace command execution glue to `src/commands/workspace.rs` while
-  keeping local worktree discovery separate from runtime attempt logic.
+- Move Doctor command execution glue only after deciding which diagnostic
+  helpers are shared support code versus Doctor-owned rendering and repair
+  command behavior.
 - Move Review and Merge command execution glue only as lane-specific modules,
   preserving their current authority boundaries and transition ordering.
 - Keep future `LanePolicy` or `WorkerProfile` abstractions as follow-up design

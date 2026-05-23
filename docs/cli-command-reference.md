@@ -42,14 +42,15 @@ workflows may still use an inline prompt body.
 | `skills status` | Read-only per-repo skill readiness matrix across source suite, Codex, Gemini, metadata, links, and optional session input. | `cargo run -- skills status workflows/jade-symphony.md` |
 | `profiles` | List configured/discovered execution profiles. | `cargo run -- profiles examples/cockpit-profiles-workflow.md` |
 | `debug` | Read-only human report combining Project, doctor, smoke readiness, runtime/session, cleanup, and lane next-action signals. | `cargo run -- debug workflows/jade-symphony.md` |
-| `autopilot plan` | Read-only Main/Review/Merge lane preflight with parked operator queues and future write-mode readiness. | `cargo run -- autopilot plan workflows/jade-symphony.md` |
+| `autopilot plan` | Read-only Main/Review/Merge lane preflight with parked operator queues and foreground autopilot readiness. | `cargo run -- autopilot plan workflows/jade-symphony.md` |
+| `autopilot loop` | Bounded foreground all-lane supervisor tick that runs Main, Review, and Merge lane loops in order. | `cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --write` |
 
-`autopilot plan` is the mandatory planning bridge before any future all-lane
-write-mode autopilot. It does not claim Project issues, launch Main/Review/Merge
-workers, start tmux sessions, write workpads, update runtime state, or mutate
-PRs. Its human output gives one compact row for Main, Review, and Merge, plus
-parked `Human Review`, `Need Human Input`, and dogfood/coordination queues. Its
-JSON output is the stable preflight shape future automation should consume:
+`autopilot plan` is the mandatory planning bridge before `autopilot loop`. It
+does not claim Project issues, launch Main/Review/Merge workers, start sessions,
+write workpads, update runtime state, or mutate PRs. Its human output gives one
+compact row for Main, Review, and Merge, plus parked `Human Review`,
+`Need Human Input`, and dogfood/coordination queues. Its JSON output is the
+stable preflight shape foreground automation should consume:
 
 ```bash
 cargo run -- autopilot plan workflows/jade-symphony.md
@@ -59,16 +60,37 @@ cargo run -- autopilot plan workflows/jade-symphony.md --json
 Readiness is explicit: `ready`, `idle_but_healthy`,
 `blocked_by_doctor_or_canonical_checkout`, or
 `blocked_by_ambiguous_lane_or_runtime_state`. Doctor blockers and canonical
-checkout safety are blockers for future write-mode autopilot; historical Doctor
+checkout safety are blockers for write-mode autopilot; historical Doctor
 warnings remain visible evidence without automatically blocking the plan.
 
-`project state`, `main loop`, `review loop`, `merge loop`, and the global
-Doctor scan use lightweight Project queue reads by default. Those reads keep
-status, claim fields, assignee, priority, dependency, and parent/subissue gate
-fields, but avoid issue bodies, comment/workpad streams, and rich linked-PR
-hydration. Use `project issue '#<issue>' --json` or `project inspect '#<issue>'`
-when an operator or lane needs the rich issue body, workpad/timeline comments,
-linked PR readback, or detailed native topology evidence for one issue.
+`autopilot loop` is a foreground command, not a daemon, background service, or
+app-server. It currently requires `--max-iterations N` or `--once`; use a larger
+explicit iteration count for a longer supervised run. `--write` is still the
+mutation boundary. In write mode, recover-first handling is enabled by default
+for interrupted Main and Merge lane work; use `--no-recover` only for focused
+debugging. Per-lane capacity uses `--main-max-concurrent`,
+`--review-max-concurrent`, and `--merge-max-concurrent`.
+
+```bash
+cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --write
+cargo run -- autopilot loop workflows/jade-symphony.md --once --dry-run --json
+cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 3 --write --poll-interval-ms 30000
+```
+
+Normal dogfood should run `autopilot plan` first, then `autopilot loop --write`
+from a clean canonical checkout on `main`. Use `main loop`, `review loop`, and
+`merge loop` directly when the operator is intentionally debugging one lane,
+replaying a bounded lane tick, or recovering a specific lane blocker.
+
+`project state`, `autopilot plan`, `autopilot loop`, `main loop`, `review loop`,
+`merge loop`, and the global Doctor scan use lightweight Project queue reads by
+default. Those reads keep status, claim fields, assignee, priority, dependency,
+and parent/subissue gate fields, but avoid issue bodies, comment/workpad streams,
+and rich linked-PR hydration. Use `project issue '#<issue>' --json` or
+`project inspect '#<issue>'` when an operator or lane needs the rich issue body,
+workpad/timeline comments, linked PR readback, or detailed native topology
+evidence for one issue.
 
 Doctor repair helpers:
 
@@ -120,12 +142,14 @@ failure. Gemini absence is a blocker only when `--require-gemini` is used.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `main once` | Execute one selected issue through the configured backend. | Fixture-safe by default when the workflow has `tracker.fixture_path`. |
-| `main loop` | Poll/select/claim/run/reconcile/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; recover-first handling is enabled by default in `--write` mode and can be disabled with `--no-recover`; tmux sessions stay active until a later loop observes terminal evidence; Agent Review handoff requires a verified Project-visible, ready, non-draft PR; native subissue PRs target the parent integration branch when topology evidence is present; parent issues with native subissues are skipped until every native subissue has Project status `Done`. |
+| `main loop` | Focused Main-lane poll/select/claim/run/reconcile/handoff in bounded or idle-loop modes. | Normal all-lane dogfood should enter through `autopilot plan` then `autopilot loop`; use `main loop` directly for Main-lane debugging, recovery, or deliberately bounded implementation-only work. Live write mode requires `--write` and a real main-agent backend; recover-first handling is enabled by default in `--write` mode and can be disabled with `--no-recover`; tmux sessions stay active until a later loop observes terminal evidence; Agent Review handoff requires a verified Project-visible, ready, non-draft PR; native subissue PRs target the parent integration branch when topology evidence is present; parent issues with native subissues are skipped until every native subissue has Project status `Done`. |
 
 Examples:
 
 ```bash
 cargo run -- main once examples/dry-run-workflow.md
+cargo run -- autopilot plan workflows/jade-symphony.md
+cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --write
 cargo run -- main loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
 cargo run -- main loop examples/dry-run-workflow.md --max-iterations 1 --dry-run --display tui
 cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
@@ -134,8 +158,9 @@ cargo run -- clean plan workflows/jade-symphony.md
 cargo run -- clean audit workflows/jade-symphony.md
 ```
 
-Use `--display tui` for an opt-in operator panel on `main loop`, `project state`,
-and `doctor`. The default output stays line-oriented for logs and scripts.
+Use `--display tui` for an opt-in operator panel on focused `main loop`,
+`project state`, and `doctor`. The default output stays line-oriented for logs
+and scripts.
 
 `main loop --max-concurrent N` is a supervised planning, claim-locking, and
 runtime-slot boundary. Dry-run mode previews up to `N` eligible main-lane issues
@@ -208,58 +233,58 @@ the current PR body but appends a missing `Closes #<issue>` reference before
 readback so GitHub can establish a native issue/PR relationship instead of
 relying only on a timeline comment.
 
-The canonical `workflows/jade-symphony.md` file uses the local `tmux` main-agent
-backend. A launched tmux session records its session name, log path, workspace,
-branch, attach command, prompt artifact, actor, lane, attempt, and running
-status in a durable session registry under the configured artifact root. The
-registry is terminal-session evidence only; tracker state remains the issue
-lifecycle source of truth. The issue stays in the active main lane until later
-completion evidence satisfies the existing handoff rules. On later ticks,
-`main loop --write` probes the runtime state's recorded session through the
-session registry plus bounded tmux pane/log evidence before launching anything
-new. Completed sessions continue through verification, PR publication,
-linked-PR readback, PR readiness, and `Agent Review` handoff; active, waiting,
-unknown, or missing-registry sessions are preserved without launching a
-duplicate Main Agent unless recover-first handling is enabled and the session is
-classified as interrupted or unavailable. Recover-first handling is enabled by
-default for `--write` and can be disabled with `--no-recover`. If an operator
-overrides the workflow back to `main_lane.backend: dry-run`, `main loop --write`
-exits non-zero before loading runtime state, creating worktrees, claiming
-Project fields, or writing workpads.
+The canonical `workflows/jade-symphony.md` file uses the configured Main backend
+for implementation work. Depending on the workflow version, Main may run through
+Codex app-server, tmux fallback/debug sessions, or another supported backend.
+`autopilot loop` itself is neither backend; it is the foreground CLI supervisor
+that invokes the lane commands. Runtime artifacts, protocol or scrollback logs,
+tmux attach commands when present, actor, lane, attempt, and status are recorded
+in the durable session registry under the configured artifact root.
+The registry is runtime evidence only; tracker state remains the issue lifecycle
+source of truth. Completed Main runs continue through verification, PR
+publication, linked-PR readback, PR readiness, and `Agent Review` handoff;
+active, waiting, unknown, or missing-registry runtime evidence is preserved
+without launching a duplicate Main Agent unless recover-first handling is
+enabled and the runtime is classified as interrupted or unavailable. Recover-
+first handling is enabled by default for `--write` and can be disabled with
+`--no-recover`. If an operator overrides the workflow back to
+`main_lane.backend: dry-run`, `main loop --write` and `autopilot loop --write`
+exit non-zero before loading runtime state, creating worktrees, claiming Project
+fields, or writing workpads.
 
-When the tmux agent command is Codex, `main loop --write` captures the pane before
-prompt injection. The default behavior auto-advances the Codex workspace trust
-prompt only inside the configured Jade Symphony issue worktree root, then injects the
-rendered prompt after a ready viewport is observed. Set
+When the tmux fallback agent command is Codex, `main loop --write` captures the
+pane before prompt injection. The default behavior auto-advances the Codex
+workspace trust prompt only inside the configured Jade Symphony issue worktree
+root, then injects the rendered prompt after a ready viewport is observed. Set
 `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to opt out; a visible trust prompt or missing
 readiness then fails closed and preserves attach/log evidence for inspection.
 
 For manual lane recovery, first claim the lane and keep the printed `run=`.
 Then `session start WORKFLOW ISSUE --lane main|review|merge --run RUN --write`
-starts the configured local tmux command with the lane-specific prompt only
-after confirming that the Project claim field already matches the issue, lane,
-and run. Manual claim evidence is truthful non-tmux registry evidence; `session
-start` is the step that creates attach/log evidence for a real tmux session and
-never writes claim fields. Main and Merge default to `tmux.agent_command`;
-Review uses `tmux.review_agent_command` when set and otherwise uses
-`review_lane.gemini_command` for `review_lane.backend: gemini-cli`. The rendered prompt
-includes the assigned `run=` and registry pointer so the spawned agent can
-preserve that value in its handoff evidence.
-`session list WORKFLOW` shows active tmux sessions with attach commands, and
-`session attach WORKFLOW SESSION` prints the exact attach command without
-joining the terminal unless `--exec` is provided.
-`status` and `status serve` include registered tmux session summaries from the
-durable session registry. `doctor` flags stale, failed, orphaned, usage-limited,
-or runtime/session mismatch cases, while `clean audit` classifies the registry,
-rendered prompts, tmux logs, and individual sessions without deleting them.
+starts the configured lane runtime with the lane-specific prompt only after
+confirming that the Project claim field already matches the issue, lane, and
+run. Manual claim evidence is truthful non-runtime registry evidence; `session
+start` is the step that creates backend evidence and never writes claim fields.
+Main and Merge sessions follow the configured lane backend and Codex command;
+Review manual sessions remain the supervised tmux fallback while automatic
+Review uses Gemini headless. The rendered prompt includes the assigned `run=`
+and registry pointer so the spawned agent can preserve that value in its
+handoff evidence.
+`session list WORKFLOW` shows active registered sessions. `session attach
+WORKFLOW SESSION` prints the exact tmux attach command only for tmux-backed
+sessions and does not join the terminal unless `--exec` is provided.
+`status` and `status serve` include registered runtime summaries from the durable
+session registry. `doctor` flags stale, failed, orphaned, usage-limited, or
+runtime/session mismatch cases, while `clean audit` classifies the registry,
+rendered prompts, app-server artifacts, tmux fallback logs, and individual
+sessions without deleting them.
 Unknown persisted registry status values are tolerated on read: they classify
 as `unknown`, keep the raw status value in diagnostics, and are not migrated,
 repaired, or rewritten by normal read-only commands.
-After a successful Main handoff to `Agent Review`, Jade Symphony preserves the
-tmux log and attach command but reconciles matching Main session records to
-`completed` and clears matching active runtime state. This keeps `doctor` from
-treating a completed handoff pane as active work while preserving recovery
-evidence.
+After a successful Main handoff to `Agent Review`, Jade Symphony preserves
+runtime artifacts and reconciles matching Main session records to `completed`
+while clearing matching active runtime state. This keeps `doctor` from treating
+a completed handoff runtime as active work while preserving recovery evidence.
 
 ## Workspace Discovery
 

@@ -8,10 +8,12 @@ contract under `workflows/prompts/`.
 Use it for live Project #9 operations:
 
 ```bash
-cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --write
+cargo run -- autopilot plan workflows/jade-symphony.md
+cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --write
 cargo run -- forge validate --workflow workflows/jade-symphony.md --status Todo --title "<title>" --body-file /private/tmp/issue.md
 cargo run -- forge validate --workflow workflows/jade-symphony.md --issue '#123' --status Todo --title "<candidate title>" --body-file /private/tmp/candidate.md
 cargo run -- forge create --workflow workflows/jade-symphony.md --status Todo --title "<title>" --body-file /private/tmp/issue.md --assignee Alive24 --write
+cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --write
 cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --write
 cargo run -- merge once workflows/jade-symphony.md --write
 cargo run -- main claim workflows/jade-symphony.md '#123' --worker "Codex Manual Main" --write
@@ -19,12 +21,19 @@ cargo run -- session start workflows/jade-symphony.md '#123' --lane main --run <
 cargo run -- session list workflows/jade-symphony.md
 ```
 
-Main Agent execution uses the local `tmux` backend. A bounded write tick creates
-an attachable session, prints `tmux attach-session -t ...`, records the session
-log path, persists a session registry record, and leaves the issue active until
-real implementation evidence is available for the normal handoff path. Status
-commands classify registered tmux sessions from bounded pane/log evidence while
-keeping full scrollback out of routine output.
+Normal all-lane dogfood starts with read-only `autopilot plan`, then uses
+bounded foreground `autopilot loop --write`. `autopilot loop` is not a daemon,
+background service, or app-server; it composes Main, Review, and Merge lane
+ticks in order and returns control to the operator after the explicit iteration
+budget. Use `main loop`, `review loop`, or `merge loop` directly for focused
+debugging, break-glass recovery, or deliberately lane-specific dogfood.
+
+Main Agent execution uses the configured Main backend. A bounded write tick
+creates or resumes the issue runtime, records durable runtime artifacts, and
+leaves the issue active until real implementation evidence is available for the
+normal handoff path. Status commands classify registered sessions from bounded
+runtime evidence while keeping raw backend scrollback/protocol details out of
+routine output.
 Gemini-backed `review loop` uses the headless CLI path by default: it writes the
 Review prompt through stdin, requests JSON output, applies configured model and
 interim allowed-tools settings, and records stdout/stderr/job evidence for the

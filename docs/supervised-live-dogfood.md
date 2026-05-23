@@ -70,39 +70,43 @@ normal work:
 
 ```bash
 cargo run -- project state workflows/jade-symphony.md
+cargo run -- autopilot plan workflows/jade-symphony.md
 cargo run -- doctor workflows/jade-symphony.md
-cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 
-Proceed only when tracker access is trusted, the selected issue is claimable,
-and the dry-run shows no blocking integration gaps. Use `debug` when a compact
-human-readable readiness report is useful.
+Proceed only when tracker access is trusted, `autopilot plan` reports readiness
+or a clear idle state, and the dry-run shows no blocking integration gaps. Use
+`debug` when a compact human-readable readiness report is useful.
 
-## One Implementation Tick
+## One Autopilot Tick
 
-Preview the same bounded implementation tick without tracker mutation:
+Preview the same bounded all-lane foreground tick without tracker mutation:
 
 ```bash
-cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 
 Use one bounded write tick:
 
 ```bash
-cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --write
+cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
-That write tick requires a real main-agent backend. The canonical workflow uses
-`main_lane.backend: tmux`, so a successful tick starts an attachable local session,
-prints the `tmux attach-session` command, records the prompt artifact, session
-registry entry, and log path, and keeps the issue active. A running tmux session
-alone is not completion evidence and must not move the issue to `Agent Review`.
-Run another bounded `main loop --write` tick after the Main Agent session
-finishes. The loop first reconciles the recorded runtime/session registry entry;
-only a terminal completed session proceeds to verification, PR publication,
-linked-PR readback, PR readiness, and the final `Agent Review` state change.
-Active, waiting, unknown, or missing-registry sessions are kept out of duplicate
-launch and out of `Agent Review`.
+`autopilot loop` is a bounded foreground CLI supervisor, not a daemon,
+background service, or app-server. It composes Main, Review, and Merge lane ticks
+in order and returns control to the operator after the explicit iteration
+budget. Drop to `main loop`, `review loop`, or `merge loop` only for focused
+debugging, break-glass recovery, or deliberately lane-specific dogfood.
+
+That write tick requires the configured lane backends to be usable. If Main
+starts a runtime session, a running session alone is not completion evidence and
+must not move the issue to `Agent Review`. A later bounded autopilot or focused
+Main tick first reconciles the recorded runtime/session registry entry; only a
+terminal completed session proceeds to verification, PR publication, linked-PR
+readback, PR readiness, and the final `Agent Review` state change. Active,
+waiting, unknown, or missing-registry sessions are kept out of duplicate launch
+and out of `Agent Review`.
 Codex tmux startup captures the pane before sending the issue prompt. By
 default, if a Jade Symphony-created issue worktree shows the Codex workspace trust
 prompt, Jade Symphony sends two `C-m` submissions and waits until the pane reaches a

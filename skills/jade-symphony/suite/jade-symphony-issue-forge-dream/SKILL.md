@@ -3,7 +3,7 @@ name: jade-symphony-issue-forge-dream
 description: Use when slowly mining broader Jade Symphony history, recent runs, workpads, skills, docs, Project state, and memory summaries for evidence-backed Backlog seeds and bounded Dream Logs.
 metadata:
   short-description: Deep Jade Symphony backlog mining
-  suite-version: 2026.05.18
+  suite-version: 2026.05.23
 ---
 
 # Jade Symphony Issue Forge Dream
@@ -95,8 +95,9 @@ Default reads:
 
 ```bash
 cd /Volumes/Bohemialive/GitHub/jade-symphony
-cargo run -- project-state workflows/jade-symphony.md
-cargo run -- inspect workflows/jade-symphony.md
+cargo run -- project state workflows/jade-symphony.md
+cargo run -- autopilot plan workflows/jade-symphony.md
+cargo run -- debug workflows/jade-symphony.md
 cargo run -- doctor workflows/jade-symphony.md
 ```
 

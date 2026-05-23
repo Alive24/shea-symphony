@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(test)]
 use cli::DisplayMode;
 use cli::{CliLaneClaimSource, ForgeStatusArg};
+#[cfg(test)]
 use jade_symphony::agent::UsageLimitPause;
 use jade_symphony::canonical_checkout::{
     canonical_checkout_refresh_status_line, canonical_checkout_status_line,
@@ -24,18 +25,19 @@ use jade_symphony::doctor::{AuditSeverity, ProjectAuditReport};
 use jade_symphony::event_log::{EventLog, EventRecord};
 use jade_symphony::git_handoff::{
     commit_issue_worktree_changes, ensure_pull_request_ready, prepare_issue_worktree,
-    publish_issue_pull_request, LiveWorktreeResult, ProcessHandoffCommandRunner,
-    PullRequestPublication, PullRequestReadyStatus,
+    publish_issue_pull_request, ProcessHandoffCommandRunner,
 };
 #[cfg(test)]
 use jade_symphony::git_handoff::{CommandOutput, HandoffCommandRunner};
-use jade_symphony::handoff::{
-    evaluate_agent_review_handoff, plan_issue_handoff_for_profile,
-    render_agent_review_handoff_workpad, AgentReviewHandoffEvidence, HandoffError,
-    IssueHandoffPlan,
+#[cfg(test)]
+use jade_symphony::git_handoff::{
+    LiveWorktreeResult, PullRequestPublication, PullRequestReadyStatus,
 };
-use jade_symphony::issue_workspace::{
-    discover_issue_workspaces, infer_issue_ref_from_branch_or_path,
+#[cfg(test)]
+use jade_symphony::handoff::plan_issue_handoff_for_profile;
+use jade_symphony::handoff::{
+    evaluate_agent_review_handoff, render_agent_review_handoff_workpad, HandoffError,
+    IssueHandoffPlan,
 };
 use jade_symphony::lane_claim::{
     LaneClaim, LaneClaimActor, LaneClaimLane, LaneClaimSource, LaneClaimState,
@@ -44,10 +46,9 @@ use jade_symphony::model::{
     normalize_state, GateDecision, LatestStatus, SessionStatusSnapshot, TrackerIssue,
 };
 use jade_symphony::orchestrator::Orchestrator;
-use jade_symphony::ownership::{
-    render_runtime_ownership_marker, runtime_ownership_decision, RuntimeOwnershipDecision,
-    RuntimeOwnershipMarker,
-};
+#[cfg(test)]
+use jade_symphony::ownership::render_runtime_ownership_marker;
+use jade_symphony::ownership::{runtime_ownership_decision, RuntimeOwnershipDecision};
 use jade_symphony::profiles::selected_execution_profile;
 use jade_symphony::progress::{run_with_progress_heartbeat, ProgressHeartbeatSpec};
 use jade_symphony::prompt::render_prompt;
@@ -84,7 +85,6 @@ use jade_symphony::tracker::{
     TrackerError,
 };
 use jade_symphony::workflow::WorkflowDefinition;
-use jade_symphony::workspace::run_workspace_command;
 #[cfg(test)]
 use jade_symphony::workspace::GitIdentityApplyResult;
 
@@ -170,11 +170,20 @@ pub(crate) use lanes::claim::{
     pool_claim_eligibility, project_text_field, select_pool_worker_issues, worker_identity,
     WorkerLane,
 };
+#[cfg(test)]
+use lanes::main_loop::IssueExecutionResult;
 pub(crate) use lanes::main_loop::{
-    execute_issue_once, execute_issue_once_with_workspace_key, main_session_active_recoverable,
-    reconcile_pending_main_session, run_loop, run_loop_runtime_state_for_issue,
-    run_loop_runtime_state_with_result, run_loop_runtime_state_with_transition,
-    IssueExecutionResult, MainSessionReconciliation, RunLoopOptions, RuntimeRecoveryCandidate,
+    apply_live_handoff_pr_link, compact_evidence, execute_issue_once,
+    execute_issue_once_with_workspace_key, linked_pull_requests_contain,
+    main_session_active_recoverable, pull_request_number_from_url, reconcile_pending_main_session,
+    run_handoff_verification, run_loop, run_loop_agent_review_handoff_evidence,
+    run_loop_apply_recovery_handoff, run_loop_assignee_ownership_workpad,
+    run_loop_handoff_failure_workpad, run_loop_handoff_plan, run_loop_handoff_workpad,
+    run_loop_live_handoff_enabled, run_loop_ownership_workpad, run_loop_runtime_ownership,
+    run_loop_runtime_state_for_issue, run_loop_runtime_state_with_result,
+    run_loop_runtime_state_with_transition, run_loop_usage_limit_pause_workpad,
+    HandoffVerification, MainSessionReconciliation, RunLoopLiveHandoff, RunLoopOptions,
+    RuntimeRecoveryCandidate,
 };
 #[cfg(test)]
 use lanes::main_loop::{
@@ -834,21 +843,6 @@ fn run_once(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
             .display()
     );
     Ok(())
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RunLoopLiveHandoff {
-    pub(crate) worktree: LiveWorktreeResult,
-    pub(crate) publication: PullRequestPublication,
-    pub(crate) verification: String,
-    pub(crate) project_pr_link_verified: Option<bool>,
-    pub(crate) pull_request_ready: Option<PullRequestReadyStatus>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct HandoffVerification {
-    success: bool,
-    summary: String,
 }
 
 fn current_git_branch(workspace_path: &Path) -> Result<Option<String>, io::Error> {
@@ -2674,232 +2668,6 @@ fn append_runtime_supervision_event(
     Ok(())
 }
 
-fn run_loop_handoff_plan(
-    config: &RuntimeConfig,
-    issue: &TrackerIssue,
-) -> Result<IssueHandoffPlan, HandoffError> {
-    let profile = selected_execution_profile(&config.profiles)
-        .ok()
-        .flatten()
-        .map(|profile| profile.workspace_namespace);
-    let mut plan = plan_issue_handoff_for_profile(
-        &config.workspace.root,
-        issue,
-        DEFAULT_RUN_LOOP_BASE_BRANCH,
-        profile.as_deref(),
-    )?;
-
-    if issue.normalized_state() == "rework" {
-        if let Ok(repo_root) = std::env::current_dir() {
-            if let Ok(report) = discover_issue_workspaces(config, issue, &repo_root) {
-                if let Some(candidate) = report
-                    .canonical_index
-                    .and_then(|index| report.candidates.get(index))
-                {
-                    if candidate.branch.as_deref() == Some(plan.branch_name.as_str()) {
-                        plan.workspace_path = candidate.path.clone();
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(plan)
-}
-
-fn run_loop_apply_recovery_handoff(
-    config: &RuntimeConfig,
-    issue: &TrackerIssue,
-    handoff: &mut IssueHandoffPlan,
-    state: &RuntimeState,
-) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    if !matches!(
-        state.last_event.as_deref(),
-        Some("SessionRunning" | "SessionTerminal")
-    ) {
-        return Ok(None);
-    }
-
-    if let Some(path) = state.workspace_path.as_ref() {
-        if let Some(branch) = current_git_branch(path)? {
-            apply_recovery_worktree_to_handoff(config, issue, handoff, path, &branch)?;
-            return Ok(Some(format!(
-                "source=runtime_state workspace={} branch={}",
-                path.display(),
-                branch
-            )));
-        }
-    }
-
-    let repo_root = std::env::current_dir()?;
-    let report = discover_issue_workspaces(config, issue, &repo_root)?;
-    if let Some(candidate) = report
-        .canonical_index
-        .and_then(|index| report.candidates.get(index))
-    {
-        let Some(branch) = candidate.branch.as_deref() else {
-            return Ok(None);
-        };
-        apply_recovery_worktree_to_handoff(config, issue, handoff, &candidate.path, branch)?;
-        return Ok(Some(format!(
-            "source=workspace_discovery workspace={} branch={}",
-            candidate.path.display(),
-            branch
-        )));
-    }
-
-    Ok(None)
-}
-
-fn apply_recovery_worktree_to_handoff(
-    config: &RuntimeConfig,
-    issue: &TrackerIssue,
-    handoff: &mut IssueHandoffPlan,
-    path: &Path,
-    branch: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let inferred_issue = infer_issue_ref_from_branch_or_path(Some(branch), path);
-    if inferred_issue.as_deref() != Some(issue.identifier.as_str()) && branch != handoff.branch_name
-    {
-        return Err(format!(
-            "recover refuses worktree {} on branch {}; it does not match issue {}",
-            path.display(),
-            branch,
-            issue.identifier
-        )
-        .into());
-    }
-
-    handoff.workspace_key = recovery_workspace_key(config, path)?;
-    handoff.workspace_path = path.to_path_buf();
-    handoff.branch_name = branch.to_string();
-    handoff.pull_request.head_branch = branch.to_string();
-    Ok(())
-}
-
-fn recovery_workspace_key(
-    config: &RuntimeConfig,
-    path: &Path,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let root = canonicalize_or_self(&config.workspace.root);
-    let path = canonicalize_or_self(path);
-    if !path.starts_with(&root) {
-        return Err(format!(
-            "recover refuses worktree outside configured workspace root: {} not under {}",
-            path.display(),
-            root.display()
-        )
-        .into());
-    }
-    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-        return Err(format!(
-            "recover cannot derive workspace key from path {}",
-            path.display()
-        )
-        .into());
-    };
-    Ok(name.to_string())
-}
-
-fn canonicalize_or_self(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
-}
-
-fn run_loop_runtime_ownership(
-    issue: &TrackerIssue,
-    config: &RuntimeConfig,
-    handoff: &IssueHandoffPlan,
-) -> Result<RuntimeOwnershipMarker, Box<dyn std::error::Error>> {
-    let profile = selected_execution_profile(&config.profiles)?;
-    Ok(RuntimeOwnershipMarker {
-        issue_ref: issue.identifier.clone(),
-        actor_role: config.identity.actor_role.clone(),
-        actor_label: config.identity.actor_label.clone(),
-        profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
-        instance_name: profile
-            .as_ref()
-            .map(|profile| profile.instance_name.clone()),
-        workspace_key: handoff.workspace_key.clone(),
-        branch_name: handoff.branch_name.clone(),
-    })
-}
-
-fn run_loop_ownership_workpad(
-    issue: &TrackerIssue,
-    ownership: &RuntimeOwnershipMarker,
-    event: &str,
-    claim: &LaneClaim,
-) -> String {
-    [
-        "## Jade Symphony Workpad".to_string(),
-        String::new(),
-        "### Runtime Ownership".to_string(),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        format!("- Event: `{event}`"),
-        format!("- Run: `{}`", claim.run),
-        format!("- Claim: `{}`", claim.render()),
-        "- This marker is advisory tracker-visible ownership for active `In Progress` work.".into(),
-        "- Another main loop profile should not resume this issue when the marker differs.".into(),
-        String::new(),
-        render_runtime_ownership_marker(ownership),
-    ]
-    .join("\n")
-}
-
-fn run_loop_live_handoff_enabled(config: &RuntimeConfig) -> bool {
-    config.tracker.kind == "github_project_v2" && config.tracker.fixture_path.is_none()
-}
-
-fn run_handoff_verification(workspace_path: &Path, config: &RuntimeConfig) -> HandoffVerification {
-    if config.verification.commands.is_empty() {
-        return HandoffVerification {
-            success: true,
-            summary: "skipped:not_configured".into(),
-        };
-    }
-
-    for (index, command) in config.verification.commands.iter().enumerate() {
-        let label = format!("verification:{}", index + 1);
-        if let Err(error) = run_workspace_command(
-            &label,
-            command,
-            workspace_path,
-            config.verification.timeout_ms,
-        ) {
-            return HandoffVerification {
-                success: false,
-                summary: format!(
-                    "failed command={} index={} error={}",
-                    shell_summary(command),
-                    index + 1,
-                    compact_evidence(&error.to_string())
-                ),
-            };
-        }
-    }
-
-    HandoffVerification {
-        success: true,
-        summary: format!("passed:{} command(s)", config.verification.commands.len()),
-    }
-}
-
-fn shell_summary(command: &str) -> String {
-    let compact = compact_evidence(command);
-    format!("`{compact}`")
-}
-
-fn compact_evidence(value: &str) -> String {
-    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
-    const LIMIT: usize = 240;
-    let truncated = compact.chars().take(LIMIT).collect::<String>();
-    if truncated.len() < compact.len() {
-        format!("{truncated}...")
-    } else {
-        compact
-    }
-}
-
 fn handle_run_loop_gate_failure(
     adapter: &dyn jade_symphony::tracker::TrackerAdapter,
     issue: &TrackerIssue,
@@ -3053,398 +2821,6 @@ fn print_run_loop_dry_run_actions(
         issue.identifier
     );
     Ok(())
-}
-
-fn run_loop_handoff_workpad(
-    issue: &TrackerIssue,
-    result: &IssueExecutionResult,
-    handoff: &IssueHandoffPlan,
-    ownership: Option<&RuntimeOwnershipMarker>,
-) -> String {
-    let mut lines = vec![
-        "## Jade Symphony Workpad".to_string(),
-        String::new(),
-        "### Context".to_string(),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        "- Source: `jade-symphony main loop`".to_string(),
-        String::new(),
-        "### Plan".to_string(),
-        "- [x] Read the issue contract, Project state, Main Workpad, and timeline evidence."
-            .to_string(),
-        "- [x] Prepare or resume the isolated issue workspace and branch.".to_string(),
-        "- [x] Run the configured Main Agent backend for the implementation slice.".to_string(),
-        "- [x] Verify handoff evidence and prepare the PR for Agent Review.".to_string(),
-        String::new(),
-        "### Work Log".to_string(),
-        format!(
-            "- Run `{}` executed with backend `{}`.",
-            result.run_id.as_deref().unwrap_or("n/a"),
-            result.backend
-        ),
-        format!(
-            "- Workspace `{}` was used for implementation evidence.",
-            result.workspace_path.display()
-        ),
-        format!("- Backend message: {}", result.message),
-        String::new(),
-        "### Run Evidence".to_string(),
-        format!("- Run: `{}`", result.run_id.as_deref().unwrap_or("n/a")),
-        format!("- Workspace: `{}`", result.workspace_path.display()),
-        format!("- Backend: `{}`", result.backend),
-        format!(
-            "- Profile: `{}`",
-            result.profile_id.as_deref().unwrap_or("n/a")
-        ),
-        format!(
-            "- Instance: `{}`",
-            result.instance_name.as_deref().unwrap_or("n/a")
-        ),
-        format!("- Actor role: `{}`", result.actor_role),
-        format!("- Actor label: `{}`", result.actor_label),
-        format!(
-            "- Git author: `{}`",
-            result.git_author.as_deref().unwrap_or("n/a")
-        ),
-        format!("- Git identity: `{}`", result.git_identity.summary()),
-        format!("- Success: `{}`", result.success),
-        format!(
-            "- Session: `{}`",
-            result.session_id.as_deref().unwrap_or("n/a")
-        ),
-        format!(
-            "- Session status: `{}`",
-            if result.pending_session {
-                "running"
-            } else {
-                "terminal"
-            }
-        ),
-        format!(
-            "- Attach command: `{}`",
-            result.backend_attach_command.as_deref().unwrap_or("n/a")
-        ),
-        format!(
-            "- Session log: `{}`",
-            result
-                .backend_log_path
-                .as_ref()
-                .map(|path| path.display().to_string())
-                .unwrap_or_else(|| "n/a".into())
-        ),
-        format!("- Message: {}", result.message),
-        String::new(),
-        "### Planned Handoff".to_string(),
-        format!("- Workspace key: `{}`", handoff.workspace_key),
-        format!("- Workspace path: `{}`", handoff.workspace_path.display()),
-        format!("- Branch: `{}`", handoff.branch_name),
-        format!("- PR title: `{}`", handoff.pull_request.title),
-        format!("- PR base branch: `{}`", handoff.pull_request.base_branch),
-        format!("- Branch target role: `{:?}`", handoff.branch_target.role),
-        branch_target_workpad_line(handoff),
-        rework_continuation_workpad_line(handoff),
-        handoff_verification_workpad_line(result),
-        live_handoff_workpad_line(result),
-        String::new(),
-        "### Main-Agent Boundary".to_string(),
-        "- Locally complete main-agent work stops at `Agent Review`.".to_string(),
-        "- `Human Review` is reserved for independent Review Agent pass evidence.".to_string(),
-    ];
-
-    if let Some(ownership) = ownership {
-        lines.push(String::new());
-        lines.push(render_runtime_ownership_marker(ownership));
-    }
-
-    lines.join("\n")
-}
-
-fn branch_target_workpad_line(handoff: &IssueHandoffPlan) -> String {
-    let mut parts = Vec::new();
-    if let Some(parent_issue) = &handoff.branch_target.parent_issue {
-        parts.push(format!("native_parent={parent_issue}"));
-    }
-    if let Some(parent_integration_branch) = &handoff.branch_target.parent_integration_branch {
-        parts.push(format!(
-            "parent_integration_branch={parent_integration_branch}"
-        ));
-    }
-    if let Some(parent_final_base_branch) = &handoff.branch_target.parent_final_base_branch {
-        parts.push(format!("parent_final_base={parent_final_base_branch}"));
-    }
-
-    if parts.is_empty() {
-        "- Branch target evidence: `single-issue default`".to_string()
-    } else {
-        format!("- Branch target evidence: `{}`", parts.join(" "))
-    }
-}
-
-fn rework_continuation_workpad_line(handoff: &IssueHandoffPlan) -> String {
-    match &handoff.continuation {
-        Some(continuation) => format!(
-            "- Rework continuation: `{}` from `{}` ({}) branch=`{}`",
-            continuation.pull_request_url,
-            continuation.source,
-            continuation.pull_request_state,
-            continuation.branch_name.as_deref().unwrap_or("unknown")
-        ),
-        None => "- Rework continuation: `not-used`".to_string(),
-    }
-}
-
-fn handoff_verification_workpad_line(result: &IssueExecutionResult) -> String {
-    format!(
-        "- Handoff verification: `{}`",
-        result
-            .handoff_verification
-            .as_deref()
-            .unwrap_or("skipped:not_run")
-    )
-}
-
-fn live_handoff_workpad_line(result: &IssueExecutionResult) -> String {
-    match &result.live_handoff {
-        Some(handoff) => {
-            let ready = handoff
-                .pull_request_ready
-                .as_ref()
-                .map(|status| {
-                    format!(
-                        "ready-check: `was_draft={} marked_ready={}`",
-                        status.was_draft, status.marked_ready
-                    )
-                })
-                .unwrap_or_else(|| "ready-check: `not-run`".into());
-            format!(
-                "- Live PR: `{}` (created: `{}`, branch pushed: `{}`, verification: `{}`, {})",
-                handoff.publication.pr_url,
-                handoff.publication.pr_created,
-                handoff.publication.branch_pushed,
-                handoff.verification,
-                ready
-            )
-        }
-        None => "- Live PR: `not-created`".to_string(),
-    }
-}
-
-fn record_live_handoff_pr_link(
-    adapter: &dyn TrackerAdapter,
-    issue_ref: &str,
-    result: &IssueExecutionResult,
-) -> Result<(), String> {
-    let Some(handoff) = &result.live_handoff else {
-        return Ok(());
-    };
-
-    let linked = adapter
-        .list_linked_pull_requests(issue_ref)
-        .map_err(|error| format!("handoff PR link verification failed: {error}"))?;
-    if linked_pull_requests_contain(&linked, &handoff.publication.pr_url) {
-        return Ok(());
-    }
-
-    adapter
-        .link_pull_request(issue_ref, &handoff.publication.pr_url)
-        .map_err(|error| format!("handoff PR link repair failed: {error}"))?;
-
-    let linked = adapter
-        .list_linked_pull_requests(issue_ref)
-        .map_err(|error| format!("handoff PR link verification failed: {error}"))?;
-
-    if linked_pull_requests_contain(&linked, &handoff.publication.pr_url) {
-        Ok(())
-    } else {
-        Err(format!(
-            "handoff PR link was not Project-visible after repair attempt: {}",
-            handoff.publication.pr_url
-        ))
-    }
-}
-
-fn apply_live_handoff_pr_link(
-    adapter: &dyn TrackerAdapter,
-    issue_ref: &str,
-    result: &mut IssueExecutionResult,
-) -> bool {
-    if result.live_handoff.is_none() {
-        return false;
-    }
-
-    match record_live_handoff_pr_link(adapter, issue_ref, result) {
-        Ok(()) => {
-            if let Some(handoff) = result.live_handoff.as_mut() {
-                handoff.project_pr_link_verified = Some(true);
-            }
-            true
-        }
-        Err(error) => {
-            if let Some(handoff) = result.live_handoff.as_mut() {
-                handoff.project_pr_link_verified = Some(false);
-            }
-            result.success = false;
-            result.message = error;
-            false
-        }
-    }
-}
-
-fn linked_pull_requests_contain(
-    linked_pull_requests: &[jade_symphony::model::LinkedPullRequest],
-    pr_url: &str,
-) -> bool {
-    let expected_url = pr_url.trim();
-    let expected_number = pull_request_number_from_ref(expected_url);
-    linked_pull_requests.iter().any(|linked| {
-        linked
-            .url
-            .as_deref()
-            .is_some_and(|url| url.trim() == expected_url)
-            || expected_number.is_some() && linked.number == expected_number
-    })
-}
-
-fn pull_request_number_from_ref(reference: &str) -> Option<u64> {
-    pull_request_number_from_url(reference).or_else(|| {
-        reference
-            .trim()
-            .trim_start_matches('#')
-            .trim_start_matches("PR_")
-            .parse()
-            .ok()
-    })
-}
-
-fn pull_request_number_from_url(url: &str) -> Option<u64> {
-    url.trim()
-        .trim_end_matches('/')
-        .rsplit('/')
-        .next()
-        .and_then(|segment| segment.parse().ok())
-}
-
-fn run_loop_agent_review_handoff_evidence(
-    issue: &TrackerIssue,
-    result: &IssueExecutionResult,
-    handoff: &IssueHandoffPlan,
-    main_workpad_markdown: Option<&str>,
-) -> AgentReviewHandoffEvidence {
-    let mut evidence = AgentReviewHandoffEvidence::from_plan(
-        handoff,
-        format!(
-            "backend={} success={} session={} message={}",
-            result.backend,
-            result.success,
-            result.session_id.as_deref().unwrap_or("n/a"),
-            result.message
-        ),
-        "main agent completed local run",
-    );
-    evidence.record_main_workpad_markdown(main_workpad_markdown);
-    evidence.pull_request_url = result
-        .live_handoff
-        .as_ref()
-        .map(|handoff| handoff.publication.pr_url.clone())
-        .or_else(|| {
-            issue
-                .linked_pull_requests
-                .iter()
-                .find_map(|pr| pr.url.clone())
-        });
-    evidence.pull_request_is_draft = result
-        .live_handoff
-        .as_ref()
-        .and_then(|handoff| {
-            handoff
-                .pull_request_ready
-                .as_ref()
-                .map(|ready| ready.was_draft && !ready.marked_ready)
-        })
-        .or_else(|| {
-            let url = evidence.pull_request_url.as_deref()?;
-            issue
-                .linked_pull_requests
-                .iter()
-                .find(|pr| pr.url.as_deref() == Some(url))
-                .and_then(|pr| pr.is_draft)
-        });
-    evidence.project_pr_link_verified = result
-        .live_handoff
-        .as_ref()
-        .and_then(|handoff| handoff.project_pr_link_verified)
-        .or_else(|| {
-            let url = evidence.pull_request_url.as_deref()?;
-            Some(linked_pull_requests_contain(
-                &issue.linked_pull_requests,
-                url,
-            ))
-        });
-    if evidence.pull_request_url.is_none() {
-        evidence.no_pr_blocker = Some(
-            "No pull request URL was present in tracker data at handoff time; keeping issue out of Agent Review until PR evidence is durable.".into(),
-        );
-    }
-    evidence
-}
-
-fn run_loop_handoff_failure_workpad(issue: &TrackerIssue, error: &HandoffError) -> String {
-    [
-        "## Jade Symphony Workpad".to_string(),
-        String::new(),
-        "### Context".to_string(),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        "- Source: `jade-symphony main loop`".to_string(),
-        String::new(),
-        "### Handoff Planning Blocker".to_string(),
-        format!("- Error: `{}`", error),
-        "- Backend execution was skipped before claim/run to avoid mixing issue scope.".to_string(),
-        String::new(),
-        "### Required Human Decision".to_string(),
-        "- Confirm the correct branch/workspace ownership before retrying.".to_string(),
-    ]
-    .join("\n")
-}
-
-fn run_loop_assignee_ownership_workpad(issue: &TrackerIssue, reason: &str) -> String {
-    [
-        "## Jade Symphony Workpad".to_string(),
-        String::new(),
-        "### Assignee Ownership Blocker".to_string(),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        format!("- Reason: {reason}"),
-        format!("- Issue assignees: `{}`", issue.assignees.join(", ")),
-        String::new(),
-        "### Boundary".to_string(),
-        "- Jade Symphony did not claim this issue or move it to `In Progress`.".to_string(),
-        "- Assign the issue to the active GitHub identity or selected execution profile before retrying.".to_string(),
-    ]
-    .join("\n")
-}
-
-fn run_loop_usage_limit_pause_workpad(
-    issue: &TrackerIssue,
-    result: &IssueExecutionResult,
-    pause: &UsageLimitPause,
-    retry_delay_ms: u64,
-) -> String {
-    [
-        "## Jade Symphony Workpad".to_string(),
-        String::new(),
-        "### Usage-Limit Pause".to_string(),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        "- Source: `jade-symphony main loop`".to_string(),
-        format!("- Backend: `{}`", result.backend),
-        format!("- Classifier: `{}`", pause.classifier),
-        format!("- Evidence: {}", pause.evidence),
-        format!("- Retry backoff: `{retry_delay_ms}ms`"),
-        String::new(),
-        "### State Safety".to_string(),
-        "- Tracker state was not advanced to `Agent Review`.".to_string(),
-        "- Runtime state keeps the active issue and next retry time.".to_string(),
-        "- The main loop will skip this issue until retry backoff expires or an operator intervenes."
-            .to_string(),
-    ]
-    .join("\n")
 }
 
 #[allow(dead_code)]

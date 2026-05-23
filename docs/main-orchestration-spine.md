@@ -145,6 +145,10 @@ runtime owner:
   publish/link/readiness steps after a backend succeeds. It keeps commit,
   verification, PR publication, Project PR link evidence, and draft-to-ready
   handling together.
+- `src/lanes/main_loop/write_candidate/terminal.rs`: terminal Main write
+  candidate transitions. It owns Agent Review handoff evidence, usage-limit
+  pause recording, retry scheduling, PR-linkage invariant failures, and
+  Need Human Input fallback after retry exhaustion.
 - `src/lanes/main_loop/dry_run.rs`: Main-loop dry-run action rendering. It owns
   the read-only preview lines for claim/resume, handoff plan, backend identity,
   worktree, verification, PR, workpad, and Agent Review handoff actions.

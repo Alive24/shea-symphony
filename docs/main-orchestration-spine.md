@@ -43,6 +43,10 @@ clear owner:
   adoption, ensure, and cleanup. It owns command-level worktree safety checks
   and evidence writes, while shared lane handoff planning remains outside the
   command module.
+- `src/commands/doctor.rs`: Doctor command execution, repair entrypoints,
+  selective issue hydration, and command-level Doctor diagnostics. It keeps
+  repair suggestions and write-mode repair evidence close to the Doctor surface
+  while exposing read-only summaries for debug and autopilot preflight.
 
 `src/main.rs` still owns:
 
@@ -57,11 +61,11 @@ lane routing, runtime recovery, or workpad rendering.
 
 ## Preferred Next Extractions
 
-- Move Doctor command execution glue only after deciding which diagnostic
-  helpers are shared support code versus Doctor-owned rendering and repair
-  command behavior.
 - Move Review and Merge command execution glue only as lane-specific modules,
   preserving their current authority boundaries and transition ordering.
+- Move Main loop command execution only after the smaller command families are
+  stable; keep runtime/session recovery helpers grouped with the lane that owns
+  the state transition.
 - Keep future `LanePolicy` or `WorkerProfile` abstractions as follow-up design
   work; do not introduce them as part of a mechanical extraction.
 

@@ -1,3 +1,4 @@
+pub(crate) mod autopilot;
 pub(crate) mod clean;
 pub(crate) mod debug;
 pub(crate) mod doctor;

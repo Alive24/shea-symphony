@@ -55,6 +55,11 @@ clear owner:
   state, issue, inspect, set-state, workpad, link-pr, add, and
   timeline-comment. It keeps write intent checks, recovery-aware mutations, and
   readback-oriented output close to the Project command family.
+- `src/commands/session.rs`: Session startup/list/attach execution plus manual
+  lane-claim command glue. It owns structured manual claim creation, session
+  backend selection, prompt artifact paths, registry evidence, and
+  session-start workpad/timeline evidence while exposing the small lane/session
+  helpers still shared by Review and Merge orchestration.
 - `src/commands/skills.rs`: skill readiness status rendering for the grouped
   `skills status` surface.
 - `src/commands/status.rs`: read-only runtime status surfaces for `plan` and
@@ -120,6 +125,9 @@ lane routing, runtime recovery, or workpad rendering.
 - Move Main loop command execution after the lane modules settle; keep
   runtime/session recovery helpers grouped with the lane that owns the state
   transition.
+- Split remaining session-adjacent runtime helpers only when they clearly
+  belong to a lane runtime module; keep parser/help conversion in `src/cli.rs`
+  and keep session execution in `src/commands/session.rs`.
 - Keep future `LanePolicy` or `WorkerProfile` abstractions as follow-up design
   work; do not introduce them as part of a mechanical extraction.
 

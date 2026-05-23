@@ -135,6 +135,9 @@ entrypoint:
   usage-limit pause, and write-mode guard tests.
 - `src/main/tests/parser.rs`: CLI parser/help/flag compatibility tests for the
   grouped command surface produced by `src/cli.rs`.
+- `src/main/tests/review.rs`: automatic and manual review command glue tests,
+  review worker selection, terminal Review Agent claims, checklist update
+  ordering, and review workspace placement.
 
 Lane execution now lives under `src/lanes/` when a lane boundary has a clear
 runtime owner:

@@ -107,6 +107,8 @@ have a narrow shared responsibility:
   builders. It attaches actor identity and the shared event-log path while the
   heartbeat implementation and stdout/stderr safety live in the library
   `src/progress.rs`.
+- `src/orchestration/text.rs`: shared human-output formatting helpers for
+  single-line evidence summaries and shell command display strings.
 
 `src/main.rs` still owns:
 

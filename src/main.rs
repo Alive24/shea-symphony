@@ -219,6 +219,7 @@ pub(crate) use orchestration::progress::{progress_spec_for_config, progress_spec
 pub(crate) use orchestration::session_status::{
     session_status_snapshots, DEFAULT_SESSION_STALE_AFTER_MS, DEFAULT_SESSION_STATUS_LINES,
 };
+pub(crate) use orchestration::text::{shell_quote_display, single_line};
 pub(crate) use orchestration::time::{current_gmt_timestamp, current_time_ms};
 pub(crate) use orchestration::tracker_context::{
     all_mapped_tracker_states, hydrate_issue_for_evidence, hydrate_issues_for_review_lane,
@@ -501,21 +502,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             print!("{text}");
             Ok(())
         }
-    }
-}
-
-fn single_line(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn shell_quote_display(value: &str) -> String {
-    if value
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '/' | '.' | ':'))
-    {
-        value.to_string()
-    } else {
-        format!("'{}'", value.replace('\'', "'\\''"))
     }
 }
 

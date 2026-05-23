@@ -81,8 +81,7 @@ use jade_symphony::status_surface::{render_latest_status_bar, render_snapshot};
 #[cfg(test)]
 use jade_symphony::tracker::FollowUpIssueInput;
 use jade_symphony::tracker::{
-    adapter_from_config, claim_decision, ClaimDecision, ProjectFieldAssignment, TrackerAdapter,
-    TrackerError,
+    adapter_from_config, ProjectFieldAssignment, TrackerAdapter, TrackerError,
 };
 use jade_symphony::workflow::WorkflowDefinition;
 #[cfg(test)]
@@ -177,13 +176,17 @@ pub(crate) use lanes::main_loop::{
     execute_issue_once_with_workspace_key, linked_pull_requests_contain,
     main_session_active_recoverable, pull_request_number_from_url, reconcile_pending_main_session,
     run_handoff_verification, run_loop, run_loop_agent_review_handoff_evidence,
-    run_loop_apply_recovery_handoff, run_loop_assignee_ownership_workpad,
-    run_loop_handoff_failure_workpad, run_loop_handoff_plan, run_loop_handoff_workpad,
-    run_loop_live_handoff_enabled, run_loop_ownership_workpad, run_loop_runtime_ownership,
-    run_loop_runtime_state_for_issue, run_loop_runtime_state_with_result,
-    run_loop_runtime_state_with_transition, run_loop_usage_limit_pause_workpad,
-    HandoffVerification, MainSessionReconciliation, RunLoopLiveHandoff, RunLoopOptions,
-    RuntimeRecoveryCandidate,
+    run_loop_apply_recovery_handoff, run_loop_assignee_ownership_decision,
+    run_loop_assignee_ownership_workpad, run_loop_claim_action, run_loop_handoff_failure_workpad,
+    run_loop_handoff_plan, run_loop_handoff_workpad, run_loop_live_handoff_enabled,
+    run_loop_ownership_workpad, run_loop_runtime_ownership, run_loop_runtime_state_for_issue,
+    run_loop_runtime_state_with_result, run_loop_runtime_state_with_transition,
+    run_loop_usage_limit_pause_workpad, AssigneeOwnershipDecision, HandoffVerification,
+    MainSessionReconciliation, RunLoopClaimAction, RunLoopLiveHandoff, RunLoopOptions,
+};
+#[cfg(test)]
+use lanes::main_loop::{
+    no_dispatch_action, select_main_run_loop_issues, NoDispatchAction, RuntimeRecoveryCandidate,
 };
 #[cfg(test)]
 use lanes::main_loop::{
@@ -2073,69 +2076,6 @@ fn run_loop_dispatch_write_candidate(
     Ok(RunLoopWorkerOutcome::Completed)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NoDispatchAction {
-    Stop { reason: &'static str },
-    SleepAndContinue { delay_ms: u64 },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum RunLoopClaimAction {
-    Claim,
-    Resume,
-    StopAndReplan { current_state: String },
-}
-
-fn select_main_run_loop_issues(
-    recoverable_runtime_states: &[RuntimeRecoveryCandidate],
-    plan_selected: &[TrackerIssue],
-    available_slots: usize,
-    worker_id: &str,
-    config: &RuntimeConfig,
-) -> Vec<TrackerIssue> {
-    if available_slots == 0 {
-        return Vec::new();
-    }
-
-    let mut selected = Vec::new();
-    for candidate in recoverable_runtime_states {
-        if selected.len() >= available_slots {
-            break;
-        }
-        let issue = candidate.issue.clone();
-        println!(
-            "run_loop_recovery_candidate issue={} attempt={} reason={}",
-            issue.identifier, candidate.state.attempt_count, candidate.reason
-        );
-        if selected
-            .iter()
-            .any(|selected_issue: &TrackerIssue| selected_issue.identifier == issue.identifier)
-        {
-            continue;
-        }
-        selected.push(issue);
-    }
-
-    let remaining_slots = available_slots.saturating_sub(selected.len());
-    let normal_selected = select_pool_worker_issues(
-        plan_selected,
-        WorkerLane::Main,
-        worker_id,
-        remaining_slots,
-        config,
-    );
-    for issue in normal_selected {
-        if !selected
-            .iter()
-            .any(|selected_issue: &TrackerIssue| selected_issue.identifier == issue.identifier)
-        {
-            selected.push(issue);
-        }
-    }
-
-    selected
-}
-
 #[derive(Debug, Clone, PartialEq)]
 struct MergeWorkerSelection {
     issue: TrackerIssue,
@@ -2318,76 +2258,6 @@ fn write_lane_claim_state(
     Ok(())
 }
 
-fn run_loop_claim_action(issue: &TrackerIssue, config: &RuntimeConfig) -> RunLoopClaimAction {
-    match claim_decision(issue, config) {
-        ClaimDecision::Claimable => RunLoopClaimAction::Claim,
-        ClaimDecision::AlreadyInProgress => RunLoopClaimAction::Resume,
-        ClaimDecision::StopAndReplan { current_state } => {
-            RunLoopClaimAction::StopAndReplan { current_state }
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum AssigneeOwnershipDecision {
-    Allowed,
-    Block { reason: String },
-}
-
-fn run_loop_assignee_ownership_decision(
-    issue: &TrackerIssue,
-    config: &RuntimeConfig,
-    active_login: Option<&str>,
-    profile_login: Option<&str>,
-) -> AssigneeOwnershipDecision {
-    if !live_github_tracker(config) {
-        return AssigneeOwnershipDecision::Allowed;
-    }
-
-    if issue.assignees.is_empty() {
-        return if config.tracker.assignee_filter.allow_unassigned {
-            AssigneeOwnershipDecision::Allowed
-        } else {
-            AssigneeOwnershipDecision::Block {
-                reason: "live GitHub issue has no assignee".into(),
-            }
-        };
-    }
-
-    let identities = [profile_login, active_login]
-        .into_iter()
-        .flatten()
-        .map(normalized_login)
-        .filter(|login| !login.is_empty())
-        .collect::<Vec<_>>();
-
-    if identities.is_empty() {
-        return AssigneeOwnershipDecision::Block {
-            reason: "active GitHub identity unavailable for assignee ownership check".into(),
-        };
-    }
-
-    let assigned = issue
-        .assignees
-        .iter()
-        .map(|assignee| normalized_login(assignee))
-        .collect::<Vec<_>>();
-
-    if assigned
-        .iter()
-        .any(|assignee| identities.iter().any(|identity| identity == assignee))
-    {
-        AssigneeOwnershipDecision::Allowed
-    } else {
-        AssigneeOwnershipDecision::Block {
-            reason: format!(
-                "active identity {:?} does not match issue assignees {:?}",
-                identities, issue.assignees
-            ),
-        }
-    }
-}
-
 fn live_github_tracker(config: &RuntimeConfig) -> bool {
     config.tracker.kind == "github_project_v2" && config.tracker.fixture_path.is_none()
 }
@@ -2496,10 +2366,6 @@ fn git_status(path: &Path, args: &[&str]) -> Result<(), String> {
     git_stdout(path, args).map(|_| ())
 }
 
-fn normalized_login(value: &str) -> String {
-    value.trim().trim_start_matches('@').to_ascii_lowercase()
-}
-
 fn selected_profile_github_login(
     config: &RuntimeConfig,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
@@ -2550,18 +2416,6 @@ fn ensure_write_mode_main_agent_backend(
         ),
     )
     .into())
-}
-
-fn no_dispatch_action(limit: Option<usize>, poll_interval_ms: u64) -> NoDispatchAction {
-    if limit.is_some() {
-        return NoDispatchAction::Stop {
-            reason: "no_dispatchable_issue",
-        };
-    }
-
-    NoDispatchAction::SleepAndContinue {
-        delay_ms: poll_interval_ms,
-    }
 }
 
 fn unbounded_loop_sleep_ms(limit: Option<usize>, poll_interval_ms: u64) -> Option<u64> {

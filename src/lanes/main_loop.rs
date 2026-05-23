@@ -17,17 +17,17 @@ use crate::cli::DisplayMode;
 use crate::{
     current_time_ms, ensure_write_mode_main_agent_backend, evaluate_issue_for_current_source,
     handle_run_loop_gate_failure, handle_run_loop_handoff_failure, hydrate_issue_for_evidence,
-    lane_claim_for_issue, latest_status_for_issue, no_dispatch_action,
-    preflight_canonical_checkout_for_write_mode, print_latest_status,
-    print_run_loop_dry_run_actions, progress_spec_with_event_log, project_text_field,
-    run_loop_dispatch_write_candidates, select_main_run_loop_issues, tracker_backend_label,
+    lane_claim_for_issue, latest_status_for_issue, preflight_canonical_checkout_for_write_mode,
+    print_latest_status, print_run_loop_dry_run_actions, progress_spec_with_event_log,
+    project_text_field, run_loop_dispatch_write_candidates, tracker_backend_label,
     unbounded_loop_sleep_ms, warn_if_temporary_workflow_path, worker_identity,
-    write_lane_claim_field, NoDispatchAction, WorkerLane,
+    write_lane_claim_field, WorkerLane,
 };
 
 mod execution;
 mod handoff;
 mod runtime;
+mod selection;
 mod session;
 pub(crate) use execution::{
     execute_issue_once, execute_issue_once_with_workspace_key, IssueExecutionResult,
@@ -41,9 +41,13 @@ pub(crate) use handoff::{
     run_loop_usage_limit_pause_workpad, HandoffVerification, RunLoopLiveHandoff,
 };
 #[cfg(test)]
+pub(crate) use runtime::RuntimeRecoveryCandidate;
+#[cfg(test)]
 pub(crate) use runtime::{run_loop_resume_preflight, ResumePreflightAction};
-pub(crate) use runtime::{
-    run_loop_resume_preflight_many, runtime_state_issue_identifier, RuntimeRecoveryCandidate,
+pub(crate) use runtime::{run_loop_resume_preflight_many, runtime_state_issue_identifier};
+pub(crate) use selection::{
+    no_dispatch_action, run_loop_assignee_ownership_decision, run_loop_claim_action,
+    select_main_run_loop_issues, AssigneeOwnershipDecision, NoDispatchAction, RunLoopClaimAction,
 };
 pub(crate) use session::{
     main_session_active_recoverable, reconcile_pending_main_session,

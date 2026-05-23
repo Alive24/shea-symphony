@@ -82,6 +82,15 @@ clear owner:
   lane next-action hints. Shared app-server smoke-gate facts stay with Main
   orchestration while the command owns the report layout.
 
+Cross-command orchestration helpers live under `src/orchestration/` when they
+have a narrow shared responsibility:
+
+- `src/orchestration/tracker_recovery.rs`: recovery-aware tracker mutations,
+  mutation audit records, recovery markers, stable recovery keys, and PR-merge
+  readback recovery. It is shared by command execution and lane modules because
+  evidence-before-transition ordering depends on the same idempotent write
+  contract in each surface.
+
 `src/main.rs` still owns:
 
 - `main()` and `run()`;

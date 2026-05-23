@@ -23,14 +23,14 @@ use jade_symphony::config::RuntimeConfig;
 use jade_symphony::doctor::ProjectAuditViolation;
 #[cfg(test)]
 use jade_symphony::doctor::{AuditSeverity, ProjectAuditReport};
-use jade_symphony::event_log::{
-    EventLog, EventRecord, TrackerMutationAuditInput, TrackerMutationAuditRecord,
-};
+use jade_symphony::event_log::{EventLog, EventRecord};
 use jade_symphony::git_handoff::{
     commit_issue_worktree_changes, ensure_pull_request_ready, prepare_issue_worktree,
-    publish_issue_pull_request, CommandOutput, HandoffCommandRunner, LiveWorktreeResult,
-    ProcessHandoffCommandRunner, PullRequestPublication, PullRequestReadyStatus,
+    publish_issue_pull_request, LiveWorktreeResult, ProcessHandoffCommandRunner,
+    PullRequestPublication, PullRequestReadyStatus,
 };
+#[cfg(test)]
+use jade_symphony::git_handoff::{CommandOutput, HandoffCommandRunner};
 use jade_symphony::handoff::{
     evaluate_agent_review_handoff, plan_issue_handoff_for_profile,
     render_agent_review_handoff_workpad, AgentReviewHandoffEvidence, HandoffError,
@@ -42,7 +42,6 @@ use jade_symphony::issue_workspace::{
 use jade_symphony::lane_claim::{
     LaneClaim, LaneClaimActor, LaneClaimLane, LaneClaimSource, LaneClaimState,
 };
-use jade_symphony::merge_lane::{fetch_pull_request_status_with_recheck, merge_pull_request};
 use jade_symphony::model::{
     normalize_state, GateDecision, LatestStatus, SessionStatusSnapshot, TrackerIssue,
 };
@@ -81,9 +80,8 @@ use jade_symphony::status_surface::{render_latest_status_bar, render_snapshot};
 #[cfg(test)]
 use jade_symphony::tracker::FollowUpIssueInput;
 use jade_symphony::tracker::{
-    adapter_from_config, claim_decision, classify_project_state_error,
-    classify_project_state_failure_message, ClaimDecision, ProjectFieldAssignment,
-    ProjectStateFailureKind, TrackerAdapter, TrackerError,
+    adapter_from_config, claim_decision, ClaimDecision, ProjectFieldAssignment, TrackerAdapter,
+    TrackerError,
 };
 use jade_symphony::workflow::{AgentLane, WorkflowDefinition};
 use jade_symphony::workspace::{
@@ -94,6 +92,7 @@ use jade_symphony::workspace::{
 mod cli;
 mod commands;
 mod lanes;
+mod orchestration;
 
 use commands::autopilot::autopilot_plan;
 #[cfg(test)]
@@ -203,6 +202,14 @@ use lanes::review::{
     review_manual_pass, review_manual_reject, review_once, review_status,
 };
 pub(crate) use lanes::review::{ReviewLoopOptions, ReviewStatusCliOptions};
+pub(crate) use orchestration::tracker_recovery::{
+    add_timeline_comment_with_recovery, append_tracker_mutation_audit, close_issue_with_recovery,
+    merge_completion_recovery_key, merge_decision_recovery_key, merge_pull_request_with_recovery,
+    recovery_key, set_project_field_with_recovery, set_state_with_recovery, stable_recovery_hash,
+    upsert_workpad_with_recovery, TrackerMutationAudit, TrackerMutationOutcome,
+};
+#[cfg(test)]
+use orchestration::tracker_recovery::{issue_is_closed, tracker_recovery_marker};
 
 const DEFAULT_RUN_LOOP_BASE_BRANCH: &str = "main";
 const DEFAULT_SESSION_STATUS_LINES: usize = 80;
@@ -2862,443 +2869,6 @@ fn append_runtime_supervision_event(
         message: message.into(),
     })?;
     Ok(())
-}
-
-struct TrackerMutationAudit<'a> {
-    command: &'a str,
-    mutation_type: &'a str,
-    issue_ref: Option<&'a str>,
-    target: Option<String>,
-    from_state: Option<String>,
-    to_state: Option<String>,
-    reason: &'a str,
-}
-
-fn append_tracker_mutation_audit(config: &RuntimeConfig, audit: TrackerMutationAudit<'_>) {
-    let issue_ref = audit.issue_ref.map(ToOwned::to_owned);
-    let record = TrackerMutationAuditRecord::from_input(TrackerMutationAuditInput {
-        command: audit.command.into(),
-        mutation_type: audit.mutation_type.into(),
-        issue_ref: issue_ref.clone(),
-        target: audit.target,
-        from_state: audit.from_state,
-        to_state: audit.to_state,
-        reason: audit.reason.into(),
-        timestamp_ms: current_time_ms(),
-    });
-    let log = EventLog::new(config.observability.logs_root.join("jade-symphony.jsonl"));
-    if let Err(error) = log.append(&EventRecord {
-        event: "tracker_mutation".into(),
-        issue_id: None,
-        issue_identifier: issue_ref,
-        session_id: None,
-        profile_id: None,
-        instance_name: None,
-        actor_role: Some(config.identity.actor_role.clone()),
-        actor_label: Some(config.identity.actor_label.clone()),
-        git_author: config.identity.git.author(),
-        tracker_mutation: Some(record),
-        message: audit.reason.into(),
-    }) {
-        eprintln!("audit_warning=tracker_mutation_unavailable reason={error}");
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TrackerMutationOutcome {
-    Applied,
-    AlreadyApplied,
-    Recovered,
-}
-
-impl TrackerMutationOutcome {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Applied => "applied",
-            Self::AlreadyApplied => "already_applied",
-            Self::Recovered => "recovered",
-        }
-    }
-
-    fn should_record_audit(self) -> bool {
-        !matches!(self, Self::AlreadyApplied)
-    }
-}
-
-fn tracker_recovery_marker(key: &str) -> String {
-    format!(
-        "<!-- jade-symphony-tracker-recovery key={} -->",
-        recovery_key_component(key)
-    )
-}
-
-fn ensure_tracker_recovery_marker(markdown: &str, key: &str) -> String {
-    let marker = tracker_recovery_marker(key);
-    if markdown.contains(&marker) {
-        return markdown.to_string();
-    }
-
-    let mut body = markdown.trim_end().to_string();
-    if !body.is_empty() {
-        body.push_str("\n\n");
-    }
-    body.push_str(&marker);
-    body
-}
-
-fn recovery_key(label: &str, issue_ref: &str, seed: &str) -> String {
-    format!(
-        "{}-{}-{}",
-        recovery_key_component(label),
-        recovery_key_component(issue_ref),
-        stable_recovery_hash(seed)
-    )
-}
-
-fn recovery_key_component(value: &str) -> String {
-    let mut out = String::new();
-    for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-        } else if matches!(ch, '-' | '_' | '.') {
-            out.push(ch);
-        } else {
-            out.push('-');
-        }
-    }
-    while out.contains("--") {
-        out = out.replace("--", "-");
-    }
-    out.trim_matches('-').to_string()
-}
-
-fn stable_recovery_hash(value: &str) -> String {
-    let mut hash = 0xcbf29ce484222325_u64;
-    for byte in value.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    format!("{hash:016x}")
-}
-
-fn issue_has_recovery_marker(issue: &TrackerIssue, key: &str) -> bool {
-    issue
-        .description
-        .as_deref()
-        .is_some_and(|description| description.contains(&tracker_recovery_marker(key)))
-}
-
-fn issue_project_field_matches(issue: &TrackerIssue, field_name: &str, value: &str) -> bool {
-    project_text_field(issue, field_name).as_deref() == Some(value)
-}
-
-fn issue_state_matches(issue: &TrackerIssue, normalized_state: &str) -> bool {
-    tracker_state_match_key(&issue.state) == tracker_state_match_key(normalized_state)
-}
-
-fn issue_is_closed(issue: &TrackerIssue) -> bool {
-    issue
-        .project_fields
-        .get("GitHub Issue State")
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(|state| tracker_state_match_key(state) == "closed")
-}
-
-fn tracker_state_match_key(value: &str) -> String {
-    normalize_state(value).replace('_', " ")
-}
-
-fn recoverable_project_state_failure(kind: ProjectStateFailureKind) -> bool {
-    matches!(
-        kind,
-        ProjectStateFailureKind::Network
-            | ProjectStateFailureKind::TransientBackend
-            | ProjectStateFailureKind::RateLimit
-    )
-}
-
-fn tracker_recovery_next_action(kind: ProjectStateFailureKind) -> &'static str {
-    match kind {
-        ProjectStateFailureKind::RateLimit => "wait_then_readback_or_rerun_same_lane",
-        ProjectStateFailureKind::TransientBackend => "wait_then_readback_or_rerun_same_lane",
-        ProjectStateFailureKind::Network => "readback_or_rerun_same_lane",
-        _ => "human_input_required",
-    }
-}
-
-fn recover_after_tracker_error<F>(
-    adapter: &dyn TrackerAdapter,
-    issue_ref: &str,
-    mutation_type: &str,
-    error: TrackerError,
-    expected: F,
-) -> Result<TrackerMutationOutcome, Box<dyn std::error::Error>>
-where
-    F: Fn(&TrackerIssue) -> bool,
-{
-    let kind = classify_project_state_error(&error);
-    if !recoverable_project_state_failure(kind) {
-        return Err(error.into());
-    }
-
-    match adapter.get_issue(issue_ref) {
-        Ok(Some(issue)) if expected(&issue) => {
-            println!(
-                "tracker_recovery action=recovered mutation_type={} issue={} failure_kind={} next=continue",
-                mutation_type,
-                issue_ref,
-                kind.as_str()
-            );
-            Ok(TrackerMutationOutcome::Recovered)
-        }
-        Ok(Some(issue)) => Err(format!(
-            "recoverable_tracker_mutation_uncertain mutation_type={} issue={} failure_kind={} current_state={:?} next={} error={}",
-            mutation_type,
-            issue_ref,
-            kind.as_str(),
-            issue.state,
-            tracker_recovery_next_action(kind),
-            error
-        )
-        .into()),
-        Ok(None) => Err(format!(
-            "recoverable_tracker_mutation_uncertain mutation_type={} issue={} failure_kind={} current_state=missing next={} error={}",
-            mutation_type,
-            issue_ref,
-            kind.as_str(),
-            tracker_recovery_next_action(kind),
-            error
-        )
-        .into()),
-        Err(readback_error) => {
-            let readback_kind = classify_project_state_error(&readback_error);
-            Err(format!(
-                "recoverable_tracker_mutation_readback_failed mutation_type={} issue={} failure_kind={} readback_kind={} next={} error={} readback_error={}",
-                mutation_type,
-                issue_ref,
-                kind.as_str(),
-                readback_kind.as_str(),
-                tracker_recovery_next_action(kind),
-                error,
-                readback_error
-            )
-            .into())
-        }
-    }
-}
-
-fn set_project_field_with_recovery(
-    adapter: &dyn TrackerAdapter,
-    issue: &TrackerIssue,
-    assignment: &ProjectFieldAssignment,
-    mutation_type: &str,
-) -> Result<TrackerMutationOutcome, Box<dyn std::error::Error>> {
-    if issue_project_field_matches(issue, &assignment.name, &assignment.value) {
-        println!(
-            "tracker_recovery action=already_applied mutation_type={} issue={} field={:?}",
-            mutation_type, issue.identifier, assignment.name
-        );
-        return Ok(TrackerMutationOutcome::AlreadyApplied);
-    }
-
-    match adapter.set_project_field(&issue.identifier, assignment) {
-        Ok(()) => Ok(TrackerMutationOutcome::Applied),
-        Err(error) => recover_after_tracker_error(
-            adapter,
-            &issue.identifier,
-            mutation_type,
-            error,
-            |readback| issue_project_field_matches(readback, &assignment.name, &assignment.value),
-        ),
-    }
-}
-
-fn set_state_with_recovery(
-    adapter: &dyn TrackerAdapter,
-    issue_ref: &str,
-    initial_issue: Option<&TrackerIssue>,
-    normalized_state: &str,
-    mutation_type: &str,
-) -> Result<TrackerMutationOutcome, Box<dyn std::error::Error>> {
-    if initial_issue.is_some_and(|issue| issue_state_matches(issue, normalized_state)) {
-        println!(
-            "tracker_recovery action=already_applied mutation_type={} issue={} state={}",
-            mutation_type, issue_ref, normalized_state
-        );
-        return Ok(TrackerMutationOutcome::AlreadyApplied);
-    }
-
-    match adapter.set_state(issue_ref, normalized_state) {
-        Ok(()) => Ok(TrackerMutationOutcome::Applied),
-        Err(error) => {
-            recover_after_tracker_error(adapter, issue_ref, mutation_type, error, |readback| {
-                issue_state_matches(readback, normalized_state)
-            })
-        }
-    }
-}
-
-fn upsert_workpad_with_recovery(
-    adapter: &dyn TrackerAdapter,
-    issue_ref: &str,
-    initial_issue: Option<&TrackerIssue>,
-    markdown: &str,
-    key: &str,
-) -> Result<TrackerMutationOutcome, Box<dyn std::error::Error>> {
-    if initial_issue.is_some_and(|issue| issue_has_recovery_marker(issue, key)) {
-        println!(
-            "tracker_recovery action=already_applied mutation_type=workpad_write issue={} key={}",
-            issue_ref,
-            recovery_key_component(key)
-        );
-        return Ok(TrackerMutationOutcome::AlreadyApplied);
-    }
-
-    let body = ensure_tracker_recovery_marker(markdown, key);
-    match adapter.upsert_workpad(issue_ref, &body) {
-        Ok(()) => Ok(TrackerMutationOutcome::Applied),
-        Err(error) => {
-            recover_after_tracker_error(adapter, issue_ref, "workpad_write", error, |readback| {
-                issue_has_recovery_marker(readback, key)
-            })
-        }
-    }
-}
-
-fn add_timeline_comment_with_recovery(
-    adapter: &dyn TrackerAdapter,
-    issue_ref: &str,
-    initial_issue: Option<&TrackerIssue>,
-    markdown: &str,
-    key: &str,
-    mutation_type: &str,
-) -> Result<TrackerMutationOutcome, Box<dyn std::error::Error>> {
-    if initial_issue.is_some_and(|issue| issue_has_recovery_marker(issue, key)) {
-        println!(
-            "tracker_recovery action=already_applied mutation_type={} issue={} key={}",
-            mutation_type,
-            issue_ref,
-            recovery_key_component(key)
-        );
-        return Ok(TrackerMutationOutcome::AlreadyApplied);
-    }
-
-    let body = ensure_tracker_recovery_marker(markdown, key);
-    match adapter.add_issue_comment(issue_ref, &body) {
-        Ok(()) => Ok(TrackerMutationOutcome::Applied),
-        Err(error) => {
-            recover_after_tracker_error(adapter, issue_ref, mutation_type, error, |readback| {
-                issue_has_recovery_marker(readback, key)
-            })
-        }
-    }
-}
-
-fn close_issue_with_recovery(
-    adapter: &dyn TrackerAdapter,
-    issue_ref: &str,
-    initial_issue: Option<&TrackerIssue>,
-) -> Result<TrackerMutationOutcome, Box<dyn std::error::Error>> {
-    if initial_issue.is_some_and(issue_is_closed) {
-        println!(
-            "tracker_recovery action=already_applied mutation_type=issue_close issue={issue_ref}"
-        );
-        return Ok(TrackerMutationOutcome::AlreadyApplied);
-    }
-
-    match adapter.close_issue(issue_ref) {
-        Ok(()) => Ok(TrackerMutationOutcome::Applied),
-        Err(TrackerError::NotImplemented(message)) => {
-            eprintln!("merge_once_warning=issue_close_unavailable reason={message}");
-            Ok(TrackerMutationOutcome::AlreadyApplied)
-        }
-        Err(error) => {
-            recover_after_tracker_error(adapter, issue_ref, "issue_close", error, issue_is_closed)
-        }
-    }
-}
-
-fn merge_completion_recovery_key(issue: &TrackerIssue, pr_ref: &str) -> String {
-    let run = project_text_field(issue, "Merging Agent")
-        .as_deref()
-        .and_then(|value| LaneClaim::parse(value).ok())
-        .map(|claim| claim.run)
-        .unwrap_or_else(|| "run-not-recorded".into());
-    recovery_key(
-        "merge-completion",
-        &issue.identifier,
-        &format!("{}|{}|{}", issue.identifier, run, pr_ref),
-    )
-}
-
-fn merge_decision_recovery_key(
-    issue: &TrackerIssue,
-    decision: &jade_symphony::merge_lane::MergeLaneDecision,
-) -> String {
-    recovery_key(
-        "merge-decision",
-        &issue.identifier,
-        &format!(
-            "{}|{:?}|{}|{}",
-            issue.identifier,
-            decision.kind,
-            decision.pr_url.as_deref().unwrap_or("missing"),
-            decision.target_state.unwrap_or("none")
-        ),
-    )
-}
-
-fn merge_pull_request_with_recovery(
-    pr_ref: &str,
-    runner: &dyn HandoffCommandRunner,
-    cwd: &Path,
-) -> Result<(CommandOutput, TrackerMutationOutcome), Box<dyn std::error::Error>> {
-    match merge_pull_request(pr_ref, runner, cwd) {
-        Ok(output) => Ok((output, TrackerMutationOutcome::Applied)),
-        Err(error) => {
-            let kind = classify_project_state_failure_message(&error.to_string());
-            if !recoverable_project_state_failure(kind) {
-                return Err(error.into());
-            }
-            match fetch_pull_request_status_with_recheck(pr_ref, runner, cwd, 2) {
-                Ok(status) if normalize_state(&status.state) == "merged" => {
-                    println!(
-                        "tracker_recovery action=recovered mutation_type=pr_merge pr={} failure_kind={} next=continue",
-                        pr_ref,
-                        kind.as_str()
-                    );
-                    Ok((
-                        CommandOutput {
-                            status: 0,
-                            stdout: format!(
-                                "merge command failed after possible server-side success; readback shows PR merged: {pr_ref}"
-                            ),
-                            stderr: error.to_string(),
-                        },
-                        TrackerMutationOutcome::Recovered,
-                    ))
-                }
-                Ok(status) => Err(format!(
-                    "recoverable_tracker_mutation_uncertain mutation_type=pr_merge pr={} failure_kind={} readback_state={} next={} error={}",
-                    pr_ref,
-                    kind.as_str(),
-                    status.state,
-                    tracker_recovery_next_action(kind),
-                    error
-                )
-                .into()),
-                Err(readback_error) => Err(format!(
-                    "recoverable_tracker_mutation_readback_failed mutation_type=pr_merge pr={} failure_kind={} next={} error={} readback_error={}",
-                    pr_ref,
-                    kind.as_str(),
-                    tracker_recovery_next_action(kind),
-                    error,
-                    readback_error
-                )
-                .into()),
-            }
-        }
-    }
 }
 
 fn run_loop_runtime_state_for_issue(

@@ -211,6 +211,9 @@ runtime owner:
   routing, merge-specific evidence, and done-state issue closure ordering. It
   keeps timeline-comment evidence before state mutation and keeps repaired
   dirty PRs in `Merging` for a later readback tick.
+- `src/lanes/merge/evidence.rs`: Merge-lane tracker mutation evidence. It owns
+  timeline-comment recovery keys, mutation audit records, state writes, and
+  Done-state issue closure ordering so evidence is recorded before transitions.
 - `src/lanes/merge/repair.rs`: Merge-agent conflict repair. It owns the
   trusted repair preflight, merge-agent prompt, backend event capture, semantic
   safety markers, verification, push, and repair evidence text for dirty PRs.

@@ -17,21 +17,25 @@ use jade_symphony::merge_lane::{
 };
 use jade_symphony::model::{normalize_state, TrackerIssue};
 use jade_symphony::progress::run_with_progress_heartbeat;
-use jade_symphony::tracker::{adapter_from_config, TrackerAdapter};
+use jade_symphony::tracker::adapter_from_config;
 use jade_symphony::workflow::{AgentLane, WorkflowDefinition};
 
 use crate::{
-    add_timeline_comment_with_recovery, append_tracker_mutation_audit, close_issue_with_recovery,
     enforce_canonical_checkout_before_write, lane_claim_for_issue, latest_status_for_issue,
-    merge_completion_recovery_key, merge_decision_recovery_key, merge_pull_request_with_recovery,
-    pool_claim_eligibility, preflight_canonical_checkout_for_write_mode, print_latest_status,
-    progress_spec_with_event_log, project_text_field, select_pool_worker_issues,
-    set_state_with_recovery, single_line, tracker_backend_label, worker_identity,
-    TrackerMutationAudit, TrackerMutationOutcome, WorkerLane,
+    merge_pull_request_with_recovery, pool_claim_eligibility,
+    preflight_canonical_checkout_for_write_mode, print_latest_status, progress_spec_with_event_log,
+    project_text_field, select_pool_worker_issues, single_line, tracker_backend_label,
+    worker_identity, WorkerLane,
 };
 
+mod evidence;
 mod repair;
 
+pub(crate) use evidence::record_done_merge_lane_completion;
+use evidence::{
+    close_completed_issue, record_merge_timeline_comment_with_recovery,
+    set_merge_state_with_recovery,
+};
 #[cfg(test)]
 pub(crate) use repair::{
     finish_merge_agent_repaired_branch, merge_agent_reports_repaired,
@@ -676,138 +680,6 @@ fn refresh_canonical_checkout_after_merge(
         single_line(&String::from_utf8_lossy(&output.stdout))
     );
     enforce_canonical_checkout_before_write(config, "merge_loop")?;
-    Ok(())
-}
-
-fn record_merge_timeline_comment_with_recovery(
-    config: &RuntimeConfig,
-    adapter: &dyn TrackerAdapter,
-    issue: &TrackerIssue,
-    decision: &jade_symphony::merge_lane::MergeLaneDecision,
-    workpad: &str,
-    reason: &'static str,
-) -> Result<TrackerMutationOutcome, Box<dyn std::error::Error>> {
-    let key = if matches!(
-        decision.kind,
-        MergeLaneDecisionKind::ReadyToMerge | MergeLaneDecisionKind::AlreadyMerged
-    ) {
-        merge_completion_recovery_key(issue, decision.pr_url.as_deref().unwrap_or("missing-pr"))
-    } else {
-        merge_decision_recovery_key(issue, decision)
-    };
-    let outcome = add_timeline_comment_with_recovery(
-        adapter,
-        &issue.identifier,
-        Some(issue),
-        workpad,
-        &key,
-        "timeline_comment",
-    )?;
-    if outcome.should_record_audit() {
-        append_tracker_mutation_audit(
-            config,
-            TrackerMutationAudit {
-                command: "merge once",
-                mutation_type: "timeline_comment",
-                issue_ref: Some(&issue.identifier),
-                target: decision.pr_url.clone(),
-                from_state: Some(issue.state.clone()),
-                to_state: decision.target_state.map(ToOwned::to_owned),
-                reason,
-            },
-        );
-    }
-    Ok(outcome)
-}
-
-fn set_merge_state_with_recovery(
-    config: &RuntimeConfig,
-    adapter: &dyn TrackerAdapter,
-    issue: &TrackerIssue,
-    target_state: &str,
-    pr_url: Option<String>,
-    reason: &'static str,
-) -> Result<TrackerMutationOutcome, Box<dyn std::error::Error>> {
-    let outcome = set_state_with_recovery(
-        adapter,
-        &issue.identifier,
-        Some(issue),
-        target_state,
-        "state_change",
-    )?;
-    if outcome.should_record_audit() {
-        append_tracker_mutation_audit(
-            config,
-            TrackerMutationAudit {
-                command: "merge once",
-                mutation_type: "state_change",
-                issue_ref: Some(&issue.identifier),
-                target: pr_url,
-                from_state: Some(issue.state.clone()),
-                to_state: Some(target_state.into()),
-                reason,
-            },
-        );
-    }
-    Ok(outcome)
-}
-
-pub(crate) fn record_done_merge_lane_completion(
-    config: &RuntimeConfig,
-    adapter: &dyn TrackerAdapter,
-    issue: &TrackerIssue,
-    workpad: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let pr_url = issue
-        .linked_pull_requests
-        .first()
-        .and_then(|pr| pr.url.clone());
-    let completion_decision = jade_symphony::merge_lane::MergeLaneDecision {
-        kind: MergeLaneDecisionKind::ReadyToMerge,
-        issue_ref: issue.identifier.clone(),
-        pr_url: pr_url.clone(),
-        target_state: Some("done"),
-        reason: "merge completed".into(),
-    };
-    record_merge_timeline_comment_with_recovery(
-        config,
-        adapter,
-        issue,
-        &completion_decision,
-        workpad,
-        "merge completion evidence",
-    )?;
-    set_merge_state_with_recovery(config, adapter, issue, "done", pr_url, "merge completed")?;
-    close_completed_issue(config, adapter, &issue.identifier, Some(issue))?;
-    Ok(())
-}
-
-fn close_completed_issue(
-    config: &RuntimeConfig,
-    adapter: &dyn TrackerAdapter,
-    issue_ref: &str,
-    initial_issue: Option<&TrackerIssue>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let outcome = close_issue_with_recovery(adapter, issue_ref, initial_issue)?;
-    if outcome.should_record_audit() {
-        append_tracker_mutation_audit(
-            config,
-            TrackerMutationAudit {
-                command: "merge once",
-                mutation_type: "issue_close",
-                issue_ref: Some(issue_ref),
-                target: None,
-                from_state: initial_issue.map(|issue| issue.state.clone()),
-                to_state: Some("closed".into()),
-                reason: "merge completed issue closure",
-            },
-        );
-    }
-    println!(
-        "merge_once_action=closed_issue issue={} outcome={}",
-        issue_ref,
-        outcome.as_str()
-    );
     Ok(())
 }
 

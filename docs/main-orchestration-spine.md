@@ -63,10 +63,11 @@ runtime owner:
   merge-agent conflict repair, merge-specific evidence, and done-state issue
   closure ordering. It keeps timeline-comment evidence before state mutation
   and keeps repaired dirty PRs in `Merging` for a later readback tick.
-- `src/lanes/review.rs`: Review read and diagnostic command execution for
-  freshness classification and review status reporting. It owns review-facing
-  output assembly while the mutating Review loop remains in `src/main.rs` until
-  that larger state-transition extraction is ready.
+- `src/lanes/review.rs`: Review command execution for freshness
+  classification, review status reporting, and manual Review claim/pass/reject
+  routing. It owns review-facing output assembly and manual review evidence
+  ordering while the automatic Review loop remains in `src/main.rs` until that
+  larger state-transition extraction is ready.
 
 This keeps command parsing reviewable without mixing it with Project mutation,
 lane routing, runtime recovery, or workpad rendering.

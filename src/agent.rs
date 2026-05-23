@@ -15,8 +15,8 @@ use crate::config::RuntimeConfig;
 use crate::model::AgentEvent;
 use crate::profiles::{selected_execution_profile, ExecutionProfile};
 use crate::session_registry::{
-    deterministic_session_name, load_session_registry, save_session_record, save_session_registry,
-    session_registry_path, unix_timestamp_ms, AgentSessionRecord, SessionStatus,
+    deterministic_session_name, save_session_record, session_registry_path, unix_timestamp_ms,
+    update_session_record_status, AgentSessionRecord, SessionStatus,
 };
 
 const DEFAULT_TMUX_CAPTURE_LINES: usize = 200;
@@ -1056,21 +1056,9 @@ fn update_app_server_session_status(
     let Some(registry_path) = registry_path else {
         return Ok(());
     };
-    let mut registry = load_session_registry(registry_path).map_err(|error| {
-        AgentError::Unavailable(format!("app-server session registry failed: {error}"))
-    })?;
-    let Some(record) = registry
-        .sessions
-        .iter_mut()
-        .find(|record| record.session_name == session_id)
-    else {
-        return Ok(());
-    };
-    record.status = status;
-    record.updated_at_ms = unix_timestamp_ms();
-    save_session_registry(registry_path, &registry).map_err(|error| {
-        AgentError::Unavailable(format!("app-server session registry failed: {error}"))
-    })
+    update_session_record_status(registry_path, session_id, status, unix_timestamp_ms()).map_err(
+        |error| AgentError::Unavailable(format!("app-server session registry failed: {error}")),
+    )
 }
 
 fn app_server_final_session_status(events: &[AgentEvent]) -> SessionStatus {
@@ -2854,7 +2842,7 @@ done
 
         let events = backend.run(prepared).unwrap();
         let summary = backend.summarize(&events);
-        let registry = load_session_registry(&registry_path).unwrap();
+        let registry = crate::session_registry::load_session_registry(&registry_path).unwrap();
         let record = registry
             .sessions
             .iter()

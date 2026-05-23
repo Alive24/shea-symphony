@@ -9335,6 +9335,22 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             }
         };
         let dispatch_candidates = selected.clone();
+        if options.write {
+            let should_stop_iteration = run_loop_dispatch_write_candidates(
+                &workflow,
+                &config,
+                dispatch_candidates,
+                &options,
+                options.recover,
+                iterations,
+                max_concurrent,
+            )?;
+            if should_stop_iteration {
+                break;
+            }
+            continue;
+        }
+
         let issue = hydrate_issue_for_evidence(adapter.as_ref(), issue, &issues)?;
 
         let decision = evaluate_issue_for_current_source(&config, &issue)?;
@@ -9451,594 +9467,591 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             }
             continue;
         }
+    }
 
-        for (slot_index, issue) in dispatch_candidates.into_iter().enumerate() {
-            if slot_index > 0 {
-                print_latest_status(&latest_status_for_issue(
-                    &config,
-                    &issue,
-                    "main",
-                    "running",
-                    "selected",
-                    Some("claim or resume".into()),
-                ));
-                println!(
-                    "run_loop_iteration={} issue={} title={:?} mode=write max_concurrent={} selected_count={} slot={}",
-                    iterations,
-                    issue.identifier,
-                    issue.title,
-                    max_concurrent,
-                    selected.len(),
-                    slot_index + 1
-                );
-            }
+    Ok(())
+}
 
-            let latest = if options.recover && normalize_state(&issue.state) == "in progress" {
-                issue.clone()
-            } else {
-                run_with_progress_heartbeat(
-                    progress_spec_with_event_log(&config, "github_project_read")
-                        .issue(issue.identifier.clone())
-                        .backend(tracker_backend_label(&config))
-                        .next("main_issue_read"),
-                    || adapter.get_issue(&issue.identifier),
-                )?
-                .ok_or_else(|| format!("issue disappeared before claim: {}", issue.identifier))?
-            };
-            let eligibility =
-                pool_claim_eligibility(&latest, WorkerLane::Main, &worker_id, &config);
-            if !eligibility.is_claimable() {
-                println!(
-                    "run_loop_action=skip issue={} reason={}",
-                    latest.identifier,
-                    eligibility.skip_reason()
-                );
-                continue;
-            }
-            let latest_gate = evaluate_issue_for_current_source(&config, &latest)?;
-            if !latest_gate.is_dispatchable() {
-                handle_run_loop_gate_failure(
-                    adapter.as_ref(),
-                    &latest,
-                    &latest_gate,
-                    &options,
-                    &config,
-                )?;
-                continue;
-            }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunLoopWorkerOutcome {
+    Completed,
+    StopIteration,
+}
 
-            let mut handoff = match run_loop_handoff_plan(&config, &latest) {
-                Ok(handoff) => handoff,
-                Err(error) => {
-                    handle_run_loop_handoff_failure(
-                        adapter.as_ref(),
-                        &latest,
-                        &error,
-                        &options,
-                        &config,
-                    )?;
-                    continue;
-                }
-            };
+fn run_loop_dispatch_write_candidates(
+    workflow: &WorkflowDefinition,
+    config: &RuntimeConfig,
+    selected: Vec<TrackerIssue>,
+    options: &RunLoopOptions,
+    recover: bool,
+    iterations: usize,
+    max_concurrent: usize,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let selected_count = selected.len();
+    let worker_id = worker_identity(config, WorkerLane::Main);
+    let mut handles = Vec::new();
 
-            let profile_login = selected_profile_github_login(&config)?;
-            let active_login = if live_github_tracker(&config) && profile_login.is_none() {
-                current_gh_login()?
-            } else {
-                None
-            };
-            match run_loop_assignee_ownership_decision(
-                &latest,
-                &config,
-                active_login.as_deref(),
-                profile_login.as_deref(),
-            ) {
-                AssigneeOwnershipDecision::Allowed => {}
-                AssigneeOwnershipDecision::Block { reason } => {
-                    let workpad = run_loop_assignee_ownership_workpad(&latest, &reason);
-                    let workpad_key = recovery_key(
-                        "main-assignee-ownership-workpad",
-                        &latest.identifier,
-                        &format!("{}|{}", latest.identifier, stable_recovery_hash(&workpad)),
-                    );
-                    upsert_workpad_with_recovery(
-                        adapter.as_ref(),
-                        &latest.identifier,
-                        Some(&latest),
-                        &workpad,
-                        &workpad_key,
-                    )?;
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &latest,
-                        "main",
-                        "blocked",
-                        "assignee_ownership",
-                        Some("operator intervention".into()),
-                    ));
-                    println!(
-                        "run_loop_action=skip issue={} reason=assignee_ownership detail={}",
-                        latest.identifier, reason
-                    );
-                    continue;
-                }
-            }
-
-            let existing_runtime_states = load_runtime_states(&config)?;
-            let existing_runtime_state =
-                runtime_state_for_issue(&existing_runtime_states, &latest.identifier);
-            if let Some(state) = existing_runtime_state {
-                if let Some(active_issue) = &state.active_issue {
-                    println!(
-                        "run_loop_runtime_state action=loaded active_issue={} attempt={}",
-                        active_issue.identifier, state.attempt_count
-                    );
-                }
-                if options.recover {
-                    if let Some(evidence) =
-                        run_loop_apply_recovery_handoff(&config, &latest, &mut handoff, state)?
-                    {
-                        println!(
-                            "run_loop_action=recovery_handoff issue={} evidence={}",
-                            latest.identifier, evidence
-                        );
-                    }
-                }
-            }
-
-            let ownership = run_loop_runtime_ownership(&latest, &config, &handoff)?;
-            let claim_action = run_loop_claim_action(&latest, &config);
-            let main_claim = lane_claim_for_issue(
-                &latest,
-                WorkerLane::Main.claim_lane(),
-                LaneClaimActor::Codex,
-                LaneClaimSource::Loop,
-                project_text_field(&latest, WorkerLane::Main.claim_field()).as_deref(),
-            )
-            .with_worker(&worker_id);
-            if matches!(claim_action, RunLoopClaimAction::Resume) {
-                if let RuntimeOwnershipDecision::Mismatched { reason, .. } =
-                    runtime_ownership_decision(latest.description.as_deref(), &ownership)
-                {
-                    println!(
-                        "run_loop_action=skip issue={} reason=ownership_mismatch detail={reason}",
-                        latest.identifier
-                    );
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &latest,
-                        "main",
-                        "blocked",
-                        "ownership_mismatch",
-                        Some("inspect runtime owner".into()),
-                    ));
-                    continue;
-                }
-            }
-
-            let event = match claim_action {
-                RunLoopClaimAction::Claim => {
-                    write_lane_claim_field(
-                        &config,
-                        adapter.as_ref(),
-                        &latest,
-                        WorkerLane::Main,
-                        &main_claim,
-                        true,
-                    )?;
-                    let state_outcome = set_state_with_recovery(
-                        adapter.as_ref(),
-                        &latest.identifier,
-                        Some(&latest),
-                        "in_progress",
-                        "state_change",
-                    )?;
-                    if state_outcome.should_record_audit() {
-                        append_tracker_mutation_audit(
-                            &config,
-                            TrackerMutationAudit {
-                                command: "main loop",
-                                mutation_type: "state_change",
-                                issue_ref: Some(&latest.identifier),
-                                target: None,
-                                from_state: Some(latest.state.clone()),
-                                to_state: Some("in_progress".into()),
-                                reason: "main worker claim",
-                            },
-                        );
-                    }
-                    println!(
-                        "run_loop_action=claim issue={} target_state=in_progress outcome={}",
-                        latest.identifier,
-                        state_outcome.as_str()
-                    );
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &latest,
-                        "main",
-                        "running",
-                        "claimed",
-                        Some("write runtime ownership".into()),
-                    ));
-                    "Claimed"
-                }
-                RunLoopClaimAction::Resume => {
-                    write_lane_claim_field(
-                        &config,
-                        adapter.as_ref(),
-                        &latest,
-                        WorkerLane::Main,
-                        &main_claim,
-                        true,
-                    )?;
-                    println!("run_loop_action=resume issue={}", latest.identifier);
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &latest,
-                        "main",
-                        "running",
-                        "resumed",
-                        Some("continue backend work".into()),
-                    ));
-                    "Resumed"
-                }
-                RunLoopClaimAction::StopAndReplan { current_state } => {
-                    println!(
-                    "run_loop_action=skip issue={} reason=external_state_change current_state={:?}",
-                    latest.identifier, current_state
-                );
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &latest,
-                        "main",
-                        "waiting",
-                        "external_state_change",
-                        Some("replan".into()),
-                    ));
-                    continue;
-                }
-            };
-            let ownership_workpad =
-                run_loop_ownership_workpad(&latest, &ownership, event, &main_claim);
-            let ownership_key = recovery_key(
-                "main-ownership-workpad",
-                &latest.identifier,
-                &format!(
-                    "{}|{}|{}",
-                    latest.identifier,
-                    main_claim.run,
-                    stable_recovery_hash(&ownership_workpad)
-                ),
-            );
-            let ownership_outcome = upsert_workpad_with_recovery(
-                adapter.as_ref(),
-                &latest.identifier,
-                Some(&latest),
-                &ownership_workpad,
-                &ownership_key,
-            )?;
-            if ownership_outcome.should_record_audit() {
-                append_tracker_mutation_audit(
-                    &config,
-                    TrackerMutationAudit {
-                        command: "main loop",
-                        mutation_type: "workpad_write",
-                        issue_ref: Some(&latest.identifier),
-                        target: ownership.profile_id.clone(),
-                        from_state: Some(latest.state.clone()),
-                        to_state: None,
-                        reason: "runtime ownership evidence",
-                    },
-                );
-            }
-            println!(
-                "run_loop_action=ownership issue={} profile={} branch={} outcome={}",
-                latest.identifier,
-                ownership.profile_id.as_deref().unwrap_or("n/a"),
-                ownership.branch_name,
-                ownership_outcome.as_str()
-            );
-
-            let mut runtime_state = run_loop_runtime_state_for_issue(
-                existing_runtime_state,
-                &latest,
-                &config,
-                event,
-                &main_claim,
-            );
-            runtime_state.branch_name = Some(handoff.branch_name.clone());
-            mark_runtime_state_updated(&mut runtime_state, current_time_ms());
-            upsert_runtime_state(&config, &runtime_state)?;
-            println!(
-                "run_loop_runtime_state action=saved issue={} event={event}",
-                latest.identifier
-            );
-
-            let live_worktree = if run_loop_live_handoff_enabled(&config) {
-                let runner = ProcessHandoffCommandRunner;
-                let repo_root = std::env::current_dir()?;
-                let worktree = prepare_issue_worktree(&repo_root, &handoff, &runner)?;
-                println!(
-                    "run_loop_action=worktree issue={} workspace={} branch={} created={}",
-                    latest.identifier,
-                    worktree.workspace_path.display(),
-                    worktree.branch_name,
-                    worktree.created
-                );
-                print_latest_status(&LatestStatus {
-                    lane: "main".into(),
-                    category: "running".into(),
-                    action: "worktree_ready".into(),
-                    issue_identifier: Some(latest.identifier.clone()),
-                    issue_title: Some(latest.title.clone()),
-                    actor_label: Some(config.identity.actor_label.clone()),
-                    workspace: Some(worktree.workspace_path.display().to_string()),
-                    branch: Some(worktree.branch_name.clone()),
-                    session_id: runtime_state.backend_session_id.clone(),
-                    next: Some("run backend".into()),
-                });
-                Some(worktree)
-            } else {
-                None
-            };
-
-            let mut session_reconciliation =
-                reconcile_pending_main_session(&config, &latest, &handoff, &runtime_state)?;
-            if let Some(MainSessionReconciliation::Active {
-                status,
-                source,
-                evidence,
-            }) = &session_reconciliation
-            {
-                let recover_active =
-                    options.recover && main_session_active_recoverable(status, evidence);
-                append_runtime_supervision_event(
-                    &config,
-                    Some(&runtime_state),
-                    if recover_active {
-                        "MainSessionRecovering"
-                    } else {
-                        "MainSessionStillActive"
-                    },
-                    &format!(
-                        "issue={} status={} source={} evidence={}",
-                        latest.identifier, status, source, evidence
-                    ),
-                )?;
-                println!(
-                    "run_loop_action=session_observed issue={} status={} source={} evidence={:?}",
-                    latest.identifier, status, source, evidence
-                );
-                if recover_active {
-                    println!(
-                        "run_loop_action=recover issue={} status={} source={} evidence={:?}",
-                        latest.identifier, status, source, evidence
-                    );
-                    session_reconciliation = None;
-                } else {
-                    print_latest_status(&LatestStatus {
-                        lane: "main".into(),
-                        category: status.clone(),
-                        action: "session_observed".into(),
-                        issue_identifier: Some(latest.identifier.clone()),
-                        issue_title: Some(latest.title.clone()),
-                        actor_label: Some(config.identity.actor_label.clone()),
-                        workspace: runtime_state
-                            .workspace_path
-                            .as_ref()
-                            .map(|path| path.display().to_string()),
-                        branch: runtime_state.branch_name.clone(),
-                        session_id: runtime_state.backend_session_id.clone(),
-                        next: runtime_state.backend_attach_command.clone(),
-                    });
-                    break;
-                }
-            }
-            if let Some(MainSessionReconciliation::Active {
-                status,
-                source: _,
-                evidence: _,
-            }) = &session_reconciliation
-            {
-                print_latest_status(&LatestStatus {
-                    lane: "main".into(),
-                    category: status.clone(),
-                    action: "session_observed".into(),
-                    issue_identifier: Some(latest.identifier.clone()),
-                    issue_title: Some(latest.title.clone()),
-                    actor_label: Some(config.identity.actor_label.clone()),
-                    workspace: runtime_state
-                        .workspace_path
-                        .as_ref()
-                        .map(|path| path.display().to_string()),
-                    branch: runtime_state.branch_name.clone(),
-                    session_id: runtime_state.backend_session_id.clone(),
-                    next: runtime_state.backend_attach_command.clone(),
-                });
-                break;
-            }
-
-            print_latest_status(&latest_status_for_issue(
-                &config,
-                &latest,
-                "main",
-                if session_reconciliation.is_some() {
-                    "reconciling"
-                } else {
-                    "running"
-                },
-                if session_reconciliation.is_some() {
-                    "session_terminal"
-                } else {
-                    "backend"
-                },
-                Some("save result".into()),
-            ));
-            let mut result = match session_reconciliation {
-                Some(MainSessionReconciliation::Terminal(result)) => *result,
-                Some(MainSessionReconciliation::Active { .. }) => unreachable!(),
-                None => execute_issue_once_with_workspace_key(
+    for (slot_index, issue) in selected.into_iter().enumerate() {
+        print_run_loop_write_selection(
+            config,
+            &issue,
+            iterations,
+            max_concurrent,
+            selected_count,
+            slot_index,
+        );
+        let issue_ref = issue.identifier.clone();
+        let workflow = workflow.clone();
+        let config = config.clone();
+        let options = options.clone();
+        let worker_id = worker_id.clone();
+        handles.push((
+            issue_ref,
+            thread::spawn(move || {
+                let adapter = adapter_from_config(&config);
+                run_loop_dispatch_write_candidate(
                     &workflow,
                     &config,
-                    &latest,
-                    &handoff.workspace_key,
-                    runtime_state.attempt_count,
-                    Some(&main_claim),
-                )?,
-            };
-            if result.success {
-                if let Some(worktree) = live_worktree {
-                    let runner = ProcessHandoffCommandRunner;
-                    let verification = run_handoff_verification(&handoff.workspace_path, &config);
-                    println!(
-                        "run_loop_action=verify issue={} success={} summary={}",
-                        latest.identifier, verification.success, verification.summary
-                    );
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &latest,
-                        "main",
-                        if verification.success {
-                            "handoff"
-                        } else {
-                            "failed"
-                        },
-                        "verify",
-                        Some(if verification.success {
-                            "publish PR".into()
-                        } else {
-                            "record failure".into()
-                        }),
-                    ));
-                    result.handoff_verification = Some(verification.summary.clone());
-                    if verification.success {
-                        match publish_issue_pull_request(&handoff, &runner) {
-                            Ok(publication) => {
-                                println!(
-                                    "run_loop_action=pr issue={} url={} created={}",
-                                    latest.identifier, publication.pr_url, publication.pr_created
-                                );
-                                print_latest_status(&LatestStatus {
-                                    lane: "main".into(),
-                                    category: "handoff".into(),
-                                    action: "pr_ready".into(),
-                                    issue_identifier: Some(latest.identifier.clone()),
-                                    issue_title: Some(latest.title.clone()),
-                                    actor_label: Some(config.identity.actor_label.clone()),
-                                    workspace: Some(worktree.workspace_path.display().to_string()),
-                                    branch: Some(worktree.branch_name.clone()),
-                                    session_id: result.session_id.clone(),
-                                    next: Some("link PR".into()),
-                                });
-                                result.live_handoff = Some(RunLoopLiveHandoff {
-                                    worktree,
-                                    publication,
-                                    verification: verification.summary,
-                                    project_pr_link_verified: None,
-                                    pull_request_ready: None,
-                                });
-                            }
-                            Err(error) => {
-                                result.success = false;
-                                result.message = format!("handoff publication failed: {error}");
-                            }
-                        }
-                    } else {
-                        result.success = false;
-                        result.message =
-                            format!("handoff verification failed: {}", verification.summary);
-                    }
-                }
-                if result.success {
-                    let linked = apply_live_handoff_pr_link(
-                        adapter.as_ref(),
-                        &latest.identifier,
-                        &mut result,
-                    );
-                    if linked {
-                        append_tracker_mutation_audit(
-                            &config,
-                            TrackerMutationAudit {
-                                command: "main loop",
-                                mutation_type: "pr_link",
-                                issue_ref: Some(&latest.identifier),
-                                target: result
-                                    .live_handoff
-                                    .as_ref()
-                                    .map(|handoff| handoff.publication.pr_url.clone()),
-                                from_state: Some(latest.state.clone()),
-                                to_state: None,
-                                reason: "live handoff PR link",
-                            },
-                        );
-                        println!(
-                            "run_loop_action=link_pr issue={} evidence=live_handoff",
-                            latest.identifier
-                        );
-                    }
-                }
-                if result.success {
-                    if let Some(handoff) = result.live_handoff.as_mut() {
-                        match ensure_pull_request_ready(
-                            &handoff.publication.pr_url,
-                            &ProcessHandoffCommandRunner,
-                            &handoff.worktree.workspace_path,
-                        ) {
-                            Ok(ready) => {
-                                println!(
-                                "run_loop_action=pr_ready issue={} url={} was_draft={} marked_ready={}",
-                                latest.identifier,
-                                ready.pr_url,
-                                ready.was_draft,
-                                ready.marked_ready
-                            );
-                                handoff.pull_request_ready = Some(ready);
-                            }
-                            Err(error) => {
-                                result.success = false;
-                                result.message = format!("handoff PR ready check failed: {error}");
-                                println!(
-                                "run_loop_action=blocked issue={} reason=pr_ready_check_failed error={}",
-                                latest.identifier, error
-                            );
-                            }
-                        }
-                    }
-                }
-            }
-            runtime_state = run_loop_runtime_state_with_result(runtime_state, &result);
-            mark_runtime_state_updated(&mut runtime_state, current_time_ms());
-            upsert_runtime_state(&config, &runtime_state)?;
-            println!(
-                "run_loop_runtime_state action=updated issue={} event={}",
-                latest.identifier,
-                runtime_state.last_event.as_deref().unwrap_or("unknown")
-            );
+                    adapter.as_ref(),
+                    issue,
+                    recover,
+                    &worker_id,
+                    &options,
+                )
+                .map_err(|error| error.to_string())
+            }),
+        ));
+    }
 
-            let workpad = run_loop_handoff_workpad(&latest, &result, &handoff, Some(&ownership));
-            let handoff_key = recovery_key(
-                "main-handoff-workpad",
+    let mut should_stop_iteration = false;
+    let mut errors = Vec::new();
+    for (issue_ref, handle) in handles {
+        match handle.join() {
+            Ok(Ok(RunLoopWorkerOutcome::Completed)) => {}
+            Ok(Ok(RunLoopWorkerOutcome::StopIteration)) => should_stop_iteration = true,
+            Ok(Err(error)) => errors.push(format!("{issue_ref}: {error}")),
+            Err(_) => errors.push(format!("{issue_ref}: worker thread panicked")),
+        }
+    }
+
+    if !errors.is_empty() {
+        return Err(format!("run_loop concurrent dispatch failed: {}", errors.join("; ")).into());
+    }
+
+    Ok(should_stop_iteration)
+}
+
+fn print_run_loop_write_selection(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    iterations: usize,
+    max_concurrent: usize,
+    selected_count: usize,
+    slot_index: usize,
+) {
+    print_latest_status(&latest_status_for_issue(
+        config,
+        issue,
+        "main",
+        "running",
+        "selected",
+        Some("claim or resume".into()),
+    ));
+    if slot_index == 0 {
+        println!(
+            "run_loop_iteration={} issue={} title={:?} mode=write max_concurrent={} selected_count={}",
+            iterations, issue.identifier, issue.title, max_concurrent, selected_count
+        );
+    } else {
+        println!(
+            "run_loop_iteration={} issue={} title={:?} mode=write max_concurrent={} selected_count={} slot={}",
+            iterations,
+            issue.identifier,
+            issue.title,
+            max_concurrent,
+            selected_count,
+            slot_index + 1
+        );
+    }
+}
+
+fn run_loop_dispatch_write_candidate(
+    workflow: &WorkflowDefinition,
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    issue: TrackerIssue,
+    recover: bool,
+    worker_id: &str,
+    options: &RunLoopOptions,
+) -> Result<RunLoopWorkerOutcome, Box<dyn std::error::Error>> {
+    let latest = if recover && normalize_state(&issue.state) == "in progress" {
+        issue.clone()
+    } else {
+        run_with_progress_heartbeat(
+            progress_spec_with_event_log(config, "github_project_read")
+                .issue(issue.identifier.clone())
+                .backend(tracker_backend_label(config))
+                .next("main_issue_read"),
+            || adapter.get_issue(&issue.identifier),
+        )?
+        .ok_or_else(|| format!("issue disappeared before claim: {}", issue.identifier))?
+    };
+    let eligibility = pool_claim_eligibility(&latest, WorkerLane::Main, worker_id, config);
+    if !eligibility.is_claimable() {
+        println!(
+            "run_loop_action=skip issue={} reason={}",
+            latest.identifier,
+            eligibility.skip_reason()
+        );
+        return Ok(RunLoopWorkerOutcome::Completed);
+    }
+    let latest_gate = evaluate_issue_for_current_source(config, &latest)?;
+    if !latest_gate.is_dispatchable() {
+        handle_run_loop_gate_failure(adapter, &latest, &latest_gate, options, config)?;
+        return Ok(RunLoopWorkerOutcome::Completed);
+    }
+
+    let mut handoff = match run_loop_handoff_plan(config, &latest) {
+        Ok(handoff) => handoff,
+        Err(error) => {
+            handle_run_loop_handoff_failure(adapter, &latest, &error, options, config)?;
+            return Ok(RunLoopWorkerOutcome::Completed);
+        }
+    };
+
+    let profile_login = selected_profile_github_login(config)?;
+    let active_login = if live_github_tracker(config) && profile_login.is_none() {
+        current_gh_login()?
+    } else {
+        None
+    };
+    match run_loop_assignee_ownership_decision(
+        &latest,
+        config,
+        active_login.as_deref(),
+        profile_login.as_deref(),
+    ) {
+        AssigneeOwnershipDecision::Allowed => {}
+        AssigneeOwnershipDecision::Block { reason } => {
+            let workpad = run_loop_assignee_ownership_workpad(&latest, &reason);
+            let workpad_key = recovery_key(
+                "main-assignee-ownership-workpad",
                 &latest.identifier,
-                &format!(
-                    "{}|{}|{}",
-                    latest.identifier,
-                    main_claim.run,
-                    stable_recovery_hash(&workpad)
-                ),
+                &format!("{}|{}", latest.identifier, stable_recovery_hash(&workpad)),
             );
-            let handoff_outcome = upsert_workpad_with_recovery(
-                adapter.as_ref(),
+            upsert_workpad_with_recovery(
+                adapter,
                 &latest.identifier,
                 Some(&latest),
                 &workpad,
-                &handoff_key,
+                &workpad_key,
             )?;
-            if handoff_outcome.should_record_audit() {
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                "blocked",
+                "assignee_ownership",
+                Some("operator intervention".into()),
+            ));
+            println!(
+                "run_loop_action=skip issue={} reason=assignee_ownership detail={}",
+                latest.identifier, reason
+            );
+            return Ok(RunLoopWorkerOutcome::Completed);
+        }
+    }
+
+    let existing_runtime_states = load_runtime_states(config)?;
+    let existing_runtime_state =
+        runtime_state_for_issue(&existing_runtime_states, &latest.identifier);
+    if let Some(state) = existing_runtime_state {
+        if let Some(active_issue) = &state.active_issue {
+            println!(
+                "run_loop_runtime_state action=loaded active_issue={} attempt={}",
+                active_issue.identifier, state.attempt_count
+            );
+        }
+        if recover {
+            if let Some(evidence) =
+                run_loop_apply_recovery_handoff(config, &latest, &mut handoff, state)?
+            {
+                println!(
+                    "run_loop_action=recovery_handoff issue={} evidence={}",
+                    latest.identifier, evidence
+                );
+            }
+        }
+    }
+
+    let ownership = run_loop_runtime_ownership(&latest, config, &handoff)?;
+    let claim_action = run_loop_claim_action(&latest, config);
+    let main_claim = lane_claim_for_issue(
+        &latest,
+        WorkerLane::Main.claim_lane(),
+        LaneClaimActor::Codex,
+        LaneClaimSource::Loop,
+        project_text_field(&latest, WorkerLane::Main.claim_field()).as_deref(),
+    )
+    .with_worker(worker_id);
+    if matches!(claim_action, RunLoopClaimAction::Resume) {
+        if let RuntimeOwnershipDecision::Mismatched { reason, .. } =
+            runtime_ownership_decision(latest.description.as_deref(), &ownership)
+        {
+            println!(
+                "run_loop_action=skip issue={} reason=ownership_mismatch detail={reason}",
+                latest.identifier
+            );
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                "blocked",
+                "ownership_mismatch",
+                Some("inspect runtime owner".into()),
+            ));
+            return Ok(RunLoopWorkerOutcome::Completed);
+        }
+    }
+
+    let event = match claim_action {
+        RunLoopClaimAction::Claim => {
+            write_lane_claim_field(
+                config,
+                adapter,
+                &latest,
+                WorkerLane::Main,
+                &main_claim,
+                true,
+            )?;
+            let state_outcome = set_state_with_recovery(
+                adapter,
+                &latest.identifier,
+                Some(&latest),
+                "in_progress",
+                "state_change",
+            )?;
+            if state_outcome.should_record_audit() {
                 append_tracker_mutation_audit(
-                    &config,
+                    config,
                     TrackerMutationAudit {
                         command: "main loop",
-                        mutation_type: "workpad_write",
+                        mutation_type: "state_change",
+                        issue_ref: Some(&latest.identifier),
+                        target: None,
+                        from_state: Some(latest.state.clone()),
+                        to_state: Some("in_progress".into()),
+                        reason: "main worker claim",
+                    },
+                );
+            }
+            println!(
+                "run_loop_action=claim issue={} target_state=in_progress outcome={}",
+                latest.identifier,
+                state_outcome.as_str()
+            );
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                "running",
+                "claimed",
+                Some("write runtime ownership".into()),
+            ));
+            "Claimed"
+        }
+        RunLoopClaimAction::Resume => {
+            write_lane_claim_field(
+                config,
+                adapter,
+                &latest,
+                WorkerLane::Main,
+                &main_claim,
+                true,
+            )?;
+            println!("run_loop_action=resume issue={}", latest.identifier);
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                "running",
+                "resumed",
+                Some("continue backend work".into()),
+            ));
+            "Resumed"
+        }
+        RunLoopClaimAction::StopAndReplan { current_state } => {
+            println!(
+                "run_loop_action=skip issue={} reason=external_state_change current_state={:?}",
+                latest.identifier, current_state
+            );
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                "waiting",
+                "external_state_change",
+                Some("replan".into()),
+            ));
+            return Ok(RunLoopWorkerOutcome::Completed);
+        }
+    };
+    let ownership_workpad = run_loop_ownership_workpad(&latest, &ownership, event, &main_claim);
+    let ownership_key = recovery_key(
+        "main-ownership-workpad",
+        &latest.identifier,
+        &format!(
+            "{}|{}|{}",
+            latest.identifier,
+            main_claim.run,
+            stable_recovery_hash(&ownership_workpad)
+        ),
+    );
+    let ownership_outcome = upsert_workpad_with_recovery(
+        adapter,
+        &latest.identifier,
+        Some(&latest),
+        &ownership_workpad,
+        &ownership_key,
+    )?;
+    if ownership_outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            config,
+            TrackerMutationAudit {
+                command: "main loop",
+                mutation_type: "workpad_write",
+                issue_ref: Some(&latest.identifier),
+                target: ownership.profile_id.clone(),
+                from_state: Some(latest.state.clone()),
+                to_state: None,
+                reason: "runtime ownership evidence",
+            },
+        );
+    }
+    println!(
+        "run_loop_action=ownership issue={} profile={} branch={} outcome={}",
+        latest.identifier,
+        ownership.profile_id.as_deref().unwrap_or("n/a"),
+        ownership.branch_name,
+        ownership_outcome.as_str()
+    );
+
+    let mut runtime_state = run_loop_runtime_state_for_issue(
+        existing_runtime_state,
+        &latest,
+        config,
+        event,
+        &main_claim,
+    );
+    runtime_state.branch_name = Some(handoff.branch_name.clone());
+    mark_runtime_state_updated(&mut runtime_state, current_time_ms());
+    upsert_runtime_state(config, &runtime_state)?;
+    println!(
+        "run_loop_runtime_state action=saved issue={} event={event}",
+        latest.identifier
+    );
+
+    let live_worktree = if run_loop_live_handoff_enabled(config) {
+        let runner = ProcessHandoffCommandRunner;
+        let repo_root = std::env::current_dir()?;
+        let worktree = prepare_issue_worktree(&repo_root, &handoff, &runner)?;
+        println!(
+            "run_loop_action=worktree issue={} workspace={} branch={} created={}",
+            latest.identifier,
+            worktree.workspace_path.display(),
+            worktree.branch_name,
+            worktree.created
+        );
+        print_latest_status(&LatestStatus {
+            lane: "main".into(),
+            category: "running".into(),
+            action: "worktree_ready".into(),
+            issue_identifier: Some(latest.identifier.clone()),
+            issue_title: Some(latest.title.clone()),
+            actor_label: Some(config.identity.actor_label.clone()),
+            workspace: Some(worktree.workspace_path.display().to_string()),
+            branch: Some(worktree.branch_name.clone()),
+            session_id: runtime_state.backend_session_id.clone(),
+            next: Some("run backend".into()),
+        });
+        Some(worktree)
+    } else {
+        None
+    };
+
+    let mut session_reconciliation =
+        reconcile_pending_main_session(config, &latest, &handoff, &runtime_state)?;
+    if let Some(MainSessionReconciliation::Active {
+        status,
+        source,
+        evidence,
+    }) = &session_reconciliation
+    {
+        let recover_active = recover && main_session_active_recoverable(status, evidence);
+        append_runtime_supervision_event(
+            config,
+            Some(&runtime_state),
+            if recover_active {
+                "MainSessionRecovering"
+            } else {
+                "MainSessionStillActive"
+            },
+            &format!(
+                "issue={} status={} source={} evidence={}",
+                latest.identifier, status, source, evidence
+            ),
+        )?;
+        println!(
+            "run_loop_action=session_observed issue={} status={} source={} evidence={:?}",
+            latest.identifier, status, source, evidence
+        );
+        if recover_active {
+            println!(
+                "run_loop_action=recover issue={} status={} source={} evidence={:?}",
+                latest.identifier, status, source, evidence
+            );
+            session_reconciliation = None;
+        } else {
+            print_latest_status(&LatestStatus {
+                lane: "main".into(),
+                category: status.clone(),
+                action: "session_observed".into(),
+                issue_identifier: Some(latest.identifier.clone()),
+                issue_title: Some(latest.title.clone()),
+                actor_label: Some(config.identity.actor_label.clone()),
+                workspace: runtime_state
+                    .workspace_path
+                    .as_ref()
+                    .map(|path| path.display().to_string()),
+                branch: runtime_state.branch_name.clone(),
+                session_id: runtime_state.backend_session_id.clone(),
+                next: runtime_state.backend_attach_command.clone(),
+            });
+            return Ok(RunLoopWorkerOutcome::StopIteration);
+        }
+    }
+    if let Some(MainSessionReconciliation::Active {
+        status,
+        source: _,
+        evidence: _,
+    }) = &session_reconciliation
+    {
+        print_latest_status(&LatestStatus {
+            lane: "main".into(),
+            category: status.clone(),
+            action: "session_observed".into(),
+            issue_identifier: Some(latest.identifier.clone()),
+            issue_title: Some(latest.title.clone()),
+            actor_label: Some(config.identity.actor_label.clone()),
+            workspace: runtime_state
+                .workspace_path
+                .as_ref()
+                .map(|path| path.display().to_string()),
+            branch: runtime_state.branch_name.clone(),
+            session_id: runtime_state.backend_session_id.clone(),
+            next: runtime_state.backend_attach_command.clone(),
+        });
+        return Ok(RunLoopWorkerOutcome::StopIteration);
+    }
+
+    print_latest_status(&latest_status_for_issue(
+        config,
+        &latest,
+        "main",
+        if session_reconciliation.is_some() {
+            "reconciling"
+        } else {
+            "running"
+        },
+        if session_reconciliation.is_some() {
+            "session_terminal"
+        } else {
+            "backend"
+        },
+        Some("save result".into()),
+    ));
+    let mut result = match session_reconciliation {
+        Some(MainSessionReconciliation::Terminal(result)) => *result,
+        Some(MainSessionReconciliation::Active { .. }) => unreachable!(),
+        None => execute_issue_once_with_workspace_key(
+            workflow,
+            config,
+            &latest,
+            &handoff.workspace_key,
+            runtime_state.attempt_count,
+            Some(&main_claim),
+        )?,
+    };
+    if result.success {
+        if let Some(worktree) = live_worktree {
+            let runner = ProcessHandoffCommandRunner;
+            let verification = run_handoff_verification(&handoff.workspace_path, config);
+            println!(
+                "run_loop_action=verify issue={} success={} summary={}",
+                latest.identifier, verification.success, verification.summary
+            );
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                if verification.success {
+                    "handoff"
+                } else {
+                    "failed"
+                },
+                "verify",
+                Some(if verification.success {
+                    "publish PR".into()
+                } else {
+                    "record failure".into()
+                }),
+            ));
+            result.handoff_verification = Some(verification.summary.clone());
+            if verification.success {
+                match publish_issue_pull_request(&handoff, &runner) {
+                    Ok(publication) => {
+                        println!(
+                            "run_loop_action=pr issue={} url={} created={}",
+                            latest.identifier, publication.pr_url, publication.pr_created
+                        );
+                        print_latest_status(&LatestStatus {
+                            lane: "main".into(),
+                            category: "handoff".into(),
+                            action: "pr_ready".into(),
+                            issue_identifier: Some(latest.identifier.clone()),
+                            issue_title: Some(latest.title.clone()),
+                            actor_label: Some(config.identity.actor_label.clone()),
+                            workspace: Some(worktree.workspace_path.display().to_string()),
+                            branch: Some(worktree.branch_name.clone()),
+                            session_id: result.session_id.clone(),
+                            next: Some("link PR".into()),
+                        });
+                        result.live_handoff = Some(RunLoopLiveHandoff {
+                            worktree,
+                            publication,
+                            verification: verification.summary,
+                            project_pr_link_verified: None,
+                            pull_request_ready: None,
+                        });
+                    }
+                    Err(error) => {
+                        result.success = false;
+                        result.message = format!("handoff publication failed: {error}");
+                    }
+                }
+            } else {
+                result.success = false;
+                result.message = format!("handoff verification failed: {}", verification.summary);
+            }
+        }
+        if result.success {
+            let linked = apply_live_handoff_pr_link(adapter, &latest.identifier, &mut result);
+            if linked {
+                append_tracker_mutation_audit(
+                    config,
+                    TrackerMutationAudit {
+                        command: "main loop",
+                        mutation_type: "pr_link",
                         issue_ref: Some(&latest.identifier),
                         target: result
                             .live_handoff
@@ -10046,418 +10059,482 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                             .map(|handoff| handoff.publication.pr_url.clone()),
                         from_state: Some(latest.state.clone()),
                         to_state: None,
-                        reason: "main worker handoff evidence",
+                        reason: "live handoff PR link",
                     },
                 );
-            }
-
-            if result.pending_session {
-                append_runtime_supervision_event(
-                    &config,
-                    Some(&runtime_state),
-                    "TmuxSessionRunning",
-                    &format!(
-                        "issue={} session={} attach_command={} log_path={}",
-                        latest.identifier,
-                        result.session_id.as_deref().unwrap_or("n/a"),
-                        result.backend_attach_command.as_deref().unwrap_or("n/a"),
-                        result
-                            .backend_log_path
-                            .as_ref()
-                            .map(|path| path.display().to_string())
-                            .unwrap_or_else(|| "n/a".into())
-                    ),
-                )?;
                 println!(
-                "run_loop_action=session_started issue={} backend={} session={} attach_command=\"{}\" log_path={}",
+                    "run_loop_action=link_pr issue={} evidence=live_handoff",
+                    latest.identifier
+                );
+            }
+        }
+        if result.success {
+            if let Some(handoff) = result.live_handoff.as_mut() {
+                match ensure_pull_request_ready(
+                    &handoff.publication.pr_url,
+                    &ProcessHandoffCommandRunner,
+                    &handoff.worktree.workspace_path,
+                ) {
+                    Ok(ready) => {
+                        println!(
+                            "run_loop_action=pr_ready issue={} url={} was_draft={} marked_ready={}",
+                            latest.identifier, ready.pr_url, ready.was_draft, ready.marked_ready
+                        );
+                        handoff.pull_request_ready = Some(ready);
+                    }
+                    Err(error) => {
+                        result.success = false;
+                        result.message = format!("handoff PR ready check failed: {error}");
+                        println!(
+                        "run_loop_action=blocked issue={} reason=pr_ready_check_failed error={}",
+                        latest.identifier, error
+                    );
+                    }
+                }
+            }
+        }
+    }
+    runtime_state = run_loop_runtime_state_with_result(runtime_state, &result);
+    mark_runtime_state_updated(&mut runtime_state, current_time_ms());
+    upsert_runtime_state(config, &runtime_state)?;
+    println!(
+        "run_loop_runtime_state action=updated issue={} event={}",
+        latest.identifier,
+        runtime_state.last_event.as_deref().unwrap_or("unknown")
+    );
+
+    let workpad = run_loop_handoff_workpad(&latest, &result, &handoff, Some(&ownership));
+    let handoff_key = recovery_key(
+        "main-handoff-workpad",
+        &latest.identifier,
+        &format!(
+            "{}|{}|{}",
+            latest.identifier,
+            main_claim.run,
+            stable_recovery_hash(&workpad)
+        ),
+    );
+    let handoff_outcome = upsert_workpad_with_recovery(
+        adapter,
+        &latest.identifier,
+        Some(&latest),
+        &workpad,
+        &handoff_key,
+    )?;
+    if handoff_outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            config,
+            TrackerMutationAudit {
+                command: "main loop",
+                mutation_type: "workpad_write",
+                issue_ref: Some(&latest.identifier),
+                target: result
+                    .live_handoff
+                    .as_ref()
+                    .map(|handoff| handoff.publication.pr_url.clone()),
+                from_state: Some(latest.state.clone()),
+                to_state: None,
+                reason: "main worker handoff evidence",
+            },
+        );
+    }
+
+    if result.pending_session {
+        append_runtime_supervision_event(
+            config,
+            Some(&runtime_state),
+            "TmuxSessionRunning",
+            &format!(
+                "issue={} session={} attach_command={} log_path={}",
                 latest.identifier,
-                result.backend,
                 result.session_id.as_deref().unwrap_or("n/a"),
-                result
-                    .backend_attach_command
-                    .as_deref()
-                    .unwrap_or("n/a"),
+                result.backend_attach_command.as_deref().unwrap_or("n/a"),
                 result
                     .backend_log_path
                     .as_ref()
                     .map(|path| path.display().to_string())
                     .unwrap_or_else(|| "n/a".into())
-            );
-                print_latest_status(&LatestStatus {
-                    lane: "main".into(),
-                    category: "running".into(),
-                    action: "session_started".into(),
-                    issue_identifier: Some(latest.identifier.clone()),
-                    issue_title: Some(latest.title.clone()),
-                    actor_label: Some(config.identity.actor_label.clone()),
-                    workspace: Some(result.workspace_path.display().to_string()),
-                    branch: runtime_state.branch_name.clone(),
-                    session_id: result.session_id.clone(),
-                    next: result.backend_attach_command.clone(),
-                });
-                continue;
-            }
+            ),
+        )?;
+        println!(
+        "run_loop_action=session_started issue={} backend={} session={} attach_command=\"{}\" log_path={}",
+        latest.identifier,
+        result.backend,
+        result.session_id.as_deref().unwrap_or("n/a"),
+        result
+            .backend_attach_command
+            .as_deref()
+            .unwrap_or("n/a"),
+        result
+            .backend_log_path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "n/a".into())
+    );
+        print_latest_status(&LatestStatus {
+            lane: "main".into(),
+            category: "running".into(),
+            action: "session_started".into(),
+            issue_identifier: Some(latest.identifier.clone()),
+            issue_title: Some(latest.title.clone()),
+            actor_label: Some(config.identity.actor_label.clone()),
+            workspace: Some(result.workspace_path.display().to_string()),
+            branch: runtime_state.branch_name.clone(),
+            session_id: result.session_id.clone(),
+            next: result.backend_attach_command.clone(),
+        });
+        return Ok(RunLoopWorkerOutcome::Completed);
+    }
 
-            if result.success {
-                if !transition_allowed_for_main_agent("agent_review") {
-                    return Err(
-                        "main implementation agent cannot set requested review state".into(),
-                    );
-                }
-                let evidence = run_loop_agent_review_handoff_evidence(
-                    &latest,
-                    &result,
-                    &handoff,
-                    Some(&workpad),
+    if result.success {
+        if !transition_allowed_for_main_agent("agent_review") {
+            return Err("main implementation agent cannot set requested review state".into());
+        }
+        let evidence =
+            run_loop_agent_review_handoff_evidence(&latest, &result, &handoff, Some(&workpad));
+        let handoff_report = evaluate_agent_review_handoff(&evidence);
+        let handoff_workpad =
+            render_agent_review_handoff_workpad(&latest, &evidence, &handoff_report);
+        let review_handoff_key = recovery_key(
+            "agent-review-handoff-workpad",
+            &latest.identifier,
+            &format!(
+                "{}|{}|{}",
+                latest.identifier,
+                main_claim.run,
+                stable_recovery_hash(&handoff_workpad)
+            ),
+        );
+        let review_handoff_outcome = upsert_workpad_with_recovery(
+            adapter,
+            &latest.identifier,
+            Some(&latest),
+            &handoff_workpad,
+            &review_handoff_key,
+        )?;
+        if review_handoff_outcome.should_record_audit() {
+            append_tracker_mutation_audit(
+                config,
+                TrackerMutationAudit {
+                    command: "main loop",
+                    mutation_type: "workpad_write",
+                    issue_ref: Some(&latest.identifier),
+                    target: result
+                        .live_handoff
+                        .as_ref()
+                        .map(|handoff| handoff.publication.pr_url.clone()),
+                    from_state: Some(latest.state.clone()),
+                    to_state: Some("agent_review".into()),
+                    reason: "agent review handoff evidence",
+                },
+            );
+        }
+        if !handoff_report.is_ready() {
+            runtime_state = run_loop_runtime_state_with_transition(
+                runtime_state,
+                Some(latest.state.clone()),
+                "need_human_input",
+                "agent review handoff invariant failed",
+            );
+            upsert_runtime_state(config, &runtime_state)?;
+            write_lane_claim_state(
+                config,
+                adapter,
+                &latest,
+                WorkerLane::Main,
+                &main_claim,
+                LaneClaimState::Failed,
+            )?;
+            let state_outcome = set_state_with_recovery(
+                adapter,
+                &latest.identifier,
+                Some(&latest),
+                "need_human_input",
+                "state_change",
+            )?;
+            if state_outcome.should_record_audit() {
+                append_tracker_mutation_audit(
+                    config,
+                    TrackerMutationAudit {
+                        command: "main loop",
+                        mutation_type: "state_change",
+                        issue_ref: Some(&latest.identifier),
+                        target: None,
+                        from_state: Some(latest.state.clone()),
+                        to_state: Some("need_human_input".into()),
+                        reason: "agent review handoff invariant failed",
+                    },
                 );
-                let handoff_report = evaluate_agent_review_handoff(&evidence);
-                let handoff_workpad =
-                    render_agent_review_handoff_workpad(&latest, &evidence, &handoff_report);
-                let review_handoff_key = recovery_key(
-                    "agent-review-handoff-workpad",
-                    &latest.identifier,
-                    &format!(
-                        "{}|{}|{}",
-                        latest.identifier,
-                        main_claim.run,
-                        stable_recovery_hash(&handoff_workpad)
-                    ),
-                );
-                let review_handoff_outcome = upsert_workpad_with_recovery(
-                    adapter.as_ref(),
-                    &latest.identifier,
-                    Some(&latest),
-                    &handoff_workpad,
-                    &review_handoff_key,
-                )?;
-                if review_handoff_outcome.should_record_audit() {
-                    append_tracker_mutation_audit(
-                        &config,
-                        TrackerMutationAudit {
-                            command: "main loop",
-                            mutation_type: "workpad_write",
-                            issue_ref: Some(&latest.identifier),
-                            target: result
-                                .live_handoff
-                                .as_ref()
-                                .map(|handoff| handoff.publication.pr_url.clone()),
-                            from_state: Some(latest.state.clone()),
-                            to_state: Some("agent_review".into()),
-                            reason: "agent review handoff evidence",
-                        },
-                    );
-                }
-                if !handoff_report.is_ready() {
-                    runtime_state = run_loop_runtime_state_with_transition(
-                        runtime_state,
-                        Some(latest.state.clone()),
-                        "need_human_input",
-                        "agent review handoff invariant failed",
-                    );
-                    upsert_runtime_state(&config, &runtime_state)?;
-                    write_lane_claim_state(
-                        &config,
-                        adapter.as_ref(),
-                        &latest,
-                        WorkerLane::Main,
-                        &main_claim,
-                        LaneClaimState::Failed,
-                    )?;
-                    let state_outcome = set_state_with_recovery(
-                        adapter.as_ref(),
-                        &latest.identifier,
-                        Some(&latest),
-                        "need_human_input",
-                        "state_change",
-                    )?;
-                    if state_outcome.should_record_audit() {
-                        append_tracker_mutation_audit(
-                            &config,
-                            TrackerMutationAudit {
-                                command: "main loop",
-                                mutation_type: "state_change",
-                                issue_ref: Some(&latest.identifier),
-                                target: None,
-                                from_state: Some(latest.state.clone()),
-                                to_state: Some("need_human_input".into()),
-                                reason: "agent review handoff invariant failed",
-                            },
-                        );
-                    }
-                    remove_runtime_state_for_issue(&config, &latest.identifier)?;
-                    println!(
-                    "run_loop_action=blocked issue={} target_state=need_human_input reason=handoff_invariant_failed",
-                    latest.identifier
-                );
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &latest,
-                        "main",
-                        "blocked",
-                        "handoff_invariant_failed",
-                        Some("Need Human Input".into()),
-                    ));
-                    continue;
-                }
-                runtime_state = run_loop_runtime_state_with_transition(
-                    runtime_state,
-                    Some(latest.state.clone()),
-                    "agent_review",
-                    "main agent completed",
-                );
-                mark_runtime_state_updated(&mut runtime_state, current_time_ms());
-                upsert_runtime_state(&config, &runtime_state)?;
-                write_lane_claim_state(
-                    &config,
-                    adapter.as_ref(),
-                    &latest,
-                    WorkerLane::Main,
-                    &main_claim,
-                    LaneClaimState::Done,
-                )?;
-                let state_outcome = set_state_with_recovery(
-                    adapter.as_ref(),
-                    &latest.identifier,
-                    Some(&latest),
-                    "agent_review",
-                    "state_change",
-                )?;
-                reconcile_main_handoff_runtime_state(&config, &latest.identifier, "agent_review")?;
-                if state_outcome.should_record_audit() {
-                    append_tracker_mutation_audit(
-                        &config,
-                        TrackerMutationAudit {
-                            command: "main loop",
-                            mutation_type: "state_change",
-                            issue_ref: Some(&latest.identifier),
-                            target: result
-                                .live_handoff
-                                .as_ref()
-                                .map(|handoff| handoff.publication.pr_url.clone()),
-                            from_state: Some(latest.state.clone()),
-                            to_state: Some("agent_review".into()),
-                            reason: "main agent completed",
-                        },
-                    );
-                }
-                remove_runtime_state_for_issue(&config, &latest.identifier)?;
-                println!(
-                    "run_loop_action=handoff issue={} target_state=agent_review",
-                    latest.identifier
-                );
-                print_latest_status(&latest_status_for_issue(
-                    &config,
-                    &latest,
-                    "main",
-                    "handoff",
-                    "agent_review",
-                    Some("Review Agent".into()),
-                ));
-            } else {
-                let retry_delay_ms = Orchestrator::new(config.clone())
-                    .retry_delay_ms(runtime_state.attempt_count, false);
-                if let Some(pause) = &result.usage_limit_pause {
-                    record_runtime_retry(
-                        &mut runtime_state,
-                        current_time_ms(),
-                        retry_delay_ms,
-                        format!("usage-limit pause: {}", pause.evidence),
-                    );
-                    upsert_runtime_state(&config, &runtime_state)?;
-                    let pause_workpad =
-                        run_loop_usage_limit_pause_workpad(&latest, &result, pause, retry_delay_ms);
-                    let pause_key = recovery_key(
-                        "main-usage-limit-workpad",
-                        &latest.identifier,
-                        &format!(
-                            "{}|{}|{}",
-                            latest.identifier,
-                            main_claim.run,
-                            stable_recovery_hash(&pause_workpad)
-                        ),
-                    );
-                    let pause_outcome = upsert_workpad_with_recovery(
-                        adapter.as_ref(),
-                        &latest.identifier,
-                        Some(&latest),
-                        &pause_workpad,
-                        &pause_key,
-                    )?;
-                    if pause_outcome.should_record_audit() {
-                        append_tracker_mutation_audit(
-                            &config,
-                            TrackerMutationAudit {
-                                command: "main loop",
-                                mutation_type: "workpad_write",
-                                issue_ref: Some(&latest.identifier),
-                                target: Some(pause.classifier.clone()),
-                                from_state: Some(latest.state.clone()),
-                                to_state: None,
-                                reason: "usage-limit pause evidence",
-                            },
-                        );
-                    }
-                    append_runtime_supervision_event(
-                        &config,
-                        Some(&runtime_state),
-                        "UsageLimitPaused",
-                        &format!(
-                            "issue={} classifier={} due_in_ms={} evidence={}",
-                            latest.identifier, pause.classifier, retry_delay_ms, pause.evidence
-                        ),
-                    )?;
-                    println!(
-                        "run_loop_action=usage_limit_paused issue={} classifier={} due_in_ms={}",
-                        latest.identifier, pause.classifier, retry_delay_ms
-                    );
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &latest,
-                        "main",
-                        "retrying",
-                        "usage_limit_paused",
-                        Some(format!("retry in {retry_delay_ms}ms")),
-                    ));
-                    break;
-                }
-                if result.message.contains("handoff PR link") {
-                    runtime_state = run_loop_runtime_state_with_transition(
-                        runtime_state,
-                        Some(latest.state.clone()),
-                        "need_human_input",
-                        "handoff PR linkage invariant failed",
-                    );
-                    mark_runtime_state_updated(&mut runtime_state, current_time_ms());
-                    upsert_runtime_state(&config, &runtime_state)?;
-                    write_lane_claim_state(
-                        &config,
-                        adapter.as_ref(),
-                        &latest,
-                        WorkerLane::Main,
-                        &main_claim,
-                        LaneClaimState::Failed,
-                    )?;
-                    let state_outcome = set_state_with_recovery(
-                        adapter.as_ref(),
-                        &latest.identifier,
-                        Some(&latest),
-                        "need_human_input",
-                        "state_change",
-                    )?;
-                    if state_outcome.should_record_audit() {
-                        append_tracker_mutation_audit(
-                            &config,
-                            TrackerMutationAudit {
-                                command: "main loop",
-                                mutation_type: "state_change",
-                                issue_ref: Some(&latest.identifier),
-                                target: result
-                                    .live_handoff
-                                    .as_ref()
-                                    .map(|handoff| handoff.publication.pr_url.clone()),
-                                from_state: Some(latest.state.clone()),
-                                to_state: Some("need_human_input".into()),
-                                reason: "handoff PR linkage invariant failed",
-                            },
-                        );
-                    }
-                    remove_runtime_state_for_issue(&config, &latest.identifier)?;
-                    println!(
-                    "run_loop_action=blocked issue={} target_state=need_human_input reason=handoff_pr_linkage_invariant_failed",
-                    latest.identifier
-                );
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &latest,
-                        "main",
-                        "blocked",
-                        "handoff_pr_linkage",
-                        Some("Need Human Input".into()),
-                    ));
-                    continue;
-                }
-                if runtime_state.attempt_count < config.agent.max_turns {
-                    record_runtime_retry(
-                        &mut runtime_state,
-                        current_time_ms(),
-                        retry_delay_ms,
-                        result.message.clone(),
-                    );
-                    upsert_runtime_state(&config, &runtime_state)?;
-                    append_runtime_supervision_event(
-                        &config,
-                        Some(&runtime_state),
-                        "RetryScheduled",
-                        &format!(
-                            "issue={} attempt={} due_in_ms={} error={}",
-                            latest.identifier,
-                            runtime_state.attempt_count,
-                            retry_delay_ms,
-                            result.message
-                        ),
-                    )?;
-                    println!(
-                        "run_loop_action=retry_scheduled issue={} attempt={} due_in_ms={}",
-                        latest.identifier, runtime_state.attempt_count, retry_delay_ms
-                    );
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &latest,
-                        "main",
-                        "retrying",
-                        "retry_scheduled",
-                        Some(format!("retry in {retry_delay_ms}ms")),
-                    ));
-                    break;
-                } else {
-                    runtime_state = run_loop_runtime_state_with_transition(
-                        runtime_state,
-                        Some(latest.state.clone()),
-                        "need_human_input",
-                        "backend run failed after retry limit",
-                    );
-                    mark_runtime_state_updated(&mut runtime_state, current_time_ms());
-                    upsert_runtime_state(&config, &runtime_state)?;
-                    let state_outcome = set_state_with_recovery(
-                        adapter.as_ref(),
-                        &latest.identifier,
-                        Some(&latest),
-                        "need_human_input",
-                        "state_change",
-                    )?;
-                    if state_outcome.should_record_audit() {
-                        append_tracker_mutation_audit(
-                            &config,
-                            TrackerMutationAudit {
-                                command: "main loop",
-                                mutation_type: "state_change",
-                                issue_ref: Some(&latest.identifier),
-                                target: None,
-                                from_state: Some(latest.state.clone()),
-                                to_state: Some("need_human_input".into()),
-                                reason: "backend run failed after retry limit",
-                            },
-                        );
-                    }
-                    remove_runtime_state_for_issue(&config, &latest.identifier)?;
-                    println!(
-                        "run_loop_action=blocked issue={} target_state=need_human_input",
-                        latest.identifier
-                    );
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &latest,
-                        "main",
-                        "failed",
-                        "need_human_input",
-                        Some("operator repair".into()),
-                    ));
-                }
             }
+            remove_runtime_state_for_issue(config, &latest.identifier)?;
+            println!(
+            "run_loop_action=blocked issue={} target_state=need_human_input reason=handoff_invariant_failed",
+            latest.identifier
+        );
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                "blocked",
+                "handoff_invariant_failed",
+                Some("Need Human Input".into()),
+            ));
+            return Ok(RunLoopWorkerOutcome::Completed);
+        }
+        runtime_state = run_loop_runtime_state_with_transition(
+            runtime_state,
+            Some(latest.state.clone()),
+            "agent_review",
+            "main agent completed",
+        );
+        mark_runtime_state_updated(&mut runtime_state, current_time_ms());
+        upsert_runtime_state(config, &runtime_state)?;
+        write_lane_claim_state(
+            config,
+            adapter,
+            &latest,
+            WorkerLane::Main,
+            &main_claim,
+            LaneClaimState::Done,
+        )?;
+        let state_outcome = set_state_with_recovery(
+            adapter,
+            &latest.identifier,
+            Some(&latest),
+            "agent_review",
+            "state_change",
+        )?;
+        reconcile_main_handoff_runtime_state(config, &latest.identifier, "agent_review")?;
+        if state_outcome.should_record_audit() {
+            append_tracker_mutation_audit(
+                config,
+                TrackerMutationAudit {
+                    command: "main loop",
+                    mutation_type: "state_change",
+                    issue_ref: Some(&latest.identifier),
+                    target: result
+                        .live_handoff
+                        .as_ref()
+                        .map(|handoff| handoff.publication.pr_url.clone()),
+                    from_state: Some(latest.state.clone()),
+                    to_state: Some("agent_review".into()),
+                    reason: "main agent completed",
+                },
+            );
+        }
+        remove_runtime_state_for_issue(config, &latest.identifier)?;
+        println!(
+            "run_loop_action=handoff issue={} target_state=agent_review",
+            latest.identifier
+        );
+        print_latest_status(&latest_status_for_issue(
+            config,
+            &latest,
+            "main",
+            "handoff",
+            "agent_review",
+            Some("Review Agent".into()),
+        ));
+    } else {
+        let retry_delay_ms =
+            Orchestrator::new(config.clone()).retry_delay_ms(runtime_state.attempt_count, false);
+        if let Some(pause) = &result.usage_limit_pause {
+            record_runtime_retry(
+                &mut runtime_state,
+                current_time_ms(),
+                retry_delay_ms,
+                format!("usage-limit pause: {}", pause.evidence),
+            );
+            upsert_runtime_state(config, &runtime_state)?;
+            let pause_workpad =
+                run_loop_usage_limit_pause_workpad(&latest, &result, pause, retry_delay_ms);
+            let pause_key = recovery_key(
+                "main-usage-limit-workpad",
+                &latest.identifier,
+                &format!(
+                    "{}|{}|{}",
+                    latest.identifier,
+                    main_claim.run,
+                    stable_recovery_hash(&pause_workpad)
+                ),
+            );
+            let pause_outcome = upsert_workpad_with_recovery(
+                adapter,
+                &latest.identifier,
+                Some(&latest),
+                &pause_workpad,
+                &pause_key,
+            )?;
+            if pause_outcome.should_record_audit() {
+                append_tracker_mutation_audit(
+                    config,
+                    TrackerMutationAudit {
+                        command: "main loop",
+                        mutation_type: "workpad_write",
+                        issue_ref: Some(&latest.identifier),
+                        target: Some(pause.classifier.clone()),
+                        from_state: Some(latest.state.clone()),
+                        to_state: None,
+                        reason: "usage-limit pause evidence",
+                    },
+                );
+            }
+            append_runtime_supervision_event(
+                config,
+                Some(&runtime_state),
+                "UsageLimitPaused",
+                &format!(
+                    "issue={} classifier={} due_in_ms={} evidence={}",
+                    latest.identifier, pause.classifier, retry_delay_ms, pause.evidence
+                ),
+            )?;
+            println!(
+                "run_loop_action=usage_limit_paused issue={} classifier={} due_in_ms={}",
+                latest.identifier, pause.classifier, retry_delay_ms
+            );
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                "retrying",
+                "usage_limit_paused",
+                Some(format!("retry in {retry_delay_ms}ms")),
+            ));
+            return Ok(RunLoopWorkerOutcome::StopIteration);
+        }
+        if result.message.contains("handoff PR link") {
+            runtime_state = run_loop_runtime_state_with_transition(
+                runtime_state,
+                Some(latest.state.clone()),
+                "need_human_input",
+                "handoff PR linkage invariant failed",
+            );
+            mark_runtime_state_updated(&mut runtime_state, current_time_ms());
+            upsert_runtime_state(config, &runtime_state)?;
+            write_lane_claim_state(
+                config,
+                adapter,
+                &latest,
+                WorkerLane::Main,
+                &main_claim,
+                LaneClaimState::Failed,
+            )?;
+            let state_outcome = set_state_with_recovery(
+                adapter,
+                &latest.identifier,
+                Some(&latest),
+                "need_human_input",
+                "state_change",
+            )?;
+            if state_outcome.should_record_audit() {
+                append_tracker_mutation_audit(
+                    config,
+                    TrackerMutationAudit {
+                        command: "main loop",
+                        mutation_type: "state_change",
+                        issue_ref: Some(&latest.identifier),
+                        target: result
+                            .live_handoff
+                            .as_ref()
+                            .map(|handoff| handoff.publication.pr_url.clone()),
+                        from_state: Some(latest.state.clone()),
+                        to_state: Some("need_human_input".into()),
+                        reason: "handoff PR linkage invariant failed",
+                    },
+                );
+            }
+            remove_runtime_state_for_issue(config, &latest.identifier)?;
+            println!(
+            "run_loop_action=blocked issue={} target_state=need_human_input reason=handoff_pr_linkage_invariant_failed",
+            latest.identifier
+        );
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                "blocked",
+                "handoff_pr_linkage",
+                Some("Need Human Input".into()),
+            ));
+            return Ok(RunLoopWorkerOutcome::Completed);
+        }
+        if runtime_state.attempt_count < config.agent.max_turns {
+            record_runtime_retry(
+                &mut runtime_state,
+                current_time_ms(),
+                retry_delay_ms,
+                result.message.clone(),
+            );
+            upsert_runtime_state(config, &runtime_state)?;
+            append_runtime_supervision_event(
+                config,
+                Some(&runtime_state),
+                "RetryScheduled",
+                &format!(
+                    "issue={} attempt={} due_in_ms={} error={}",
+                    latest.identifier, runtime_state.attempt_count, retry_delay_ms, result.message
+                ),
+            )?;
+            println!(
+                "run_loop_action=retry_scheduled issue={} attempt={} due_in_ms={}",
+                latest.identifier, runtime_state.attempt_count, retry_delay_ms
+            );
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                "retrying",
+                "retry_scheduled",
+                Some(format!("retry in {retry_delay_ms}ms")),
+            ));
+            return Ok(RunLoopWorkerOutcome::StopIteration);
+        } else {
+            runtime_state = run_loop_runtime_state_with_transition(
+                runtime_state,
+                Some(latest.state.clone()),
+                "need_human_input",
+                "backend run failed after retry limit",
+            );
+            mark_runtime_state_updated(&mut runtime_state, current_time_ms());
+            upsert_runtime_state(config, &runtime_state)?;
+            let state_outcome = set_state_with_recovery(
+                adapter,
+                &latest.identifier,
+                Some(&latest),
+                "need_human_input",
+                "state_change",
+            )?;
+            if state_outcome.should_record_audit() {
+                append_tracker_mutation_audit(
+                    config,
+                    TrackerMutationAudit {
+                        command: "main loop",
+                        mutation_type: "state_change",
+                        issue_ref: Some(&latest.identifier),
+                        target: None,
+                        from_state: Some(latest.state.clone()),
+                        to_state: Some("need_human_input".into()),
+                        reason: "backend run failed after retry limit",
+                    },
+                );
+            }
+            remove_runtime_state_for_issue(config, &latest.identifier)?;
+            println!(
+                "run_loop_action=blocked issue={} target_state=need_human_input",
+                latest.identifier
+            );
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                "failed",
+                "need_human_input",
+                Some("operator repair".into()),
+            ));
         }
     }
 
-    Ok(())
+    Ok(RunLoopWorkerOutcome::Completed)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15874,6 +15951,7 @@ mod tests {
     fn tracker_mutation_audit_records_logical_actor_identity() {
         let temp = tempfile::tempdir().unwrap();
         let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
         config.observability.logs_root = temp.path().join("logs");
         config.identity.actor_role = "merge_agent".into();
         config.identity.actor_label = "Jade Symphony Merge Worker".into();
@@ -19034,6 +19112,108 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn main_run_loop_write_dispatch_starts_selected_candidates_concurrently() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let bin_dir = temp.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let codex = bin_dir.join("codex");
+        let start_log = temp.path().join("codex-starts.log");
+        std::fs::write(
+            &codex,
+            format!(
+                r#"#!/bin/sh
+set -eu
+start_log={}
+count=0
+while IFS= read -r line; do
+  count=$((count + 1))
+  case "$count" in
+    1)
+      printf '%s\n' '{{"id":1,"result":{{}}}}'
+      ;;
+    2)
+      ;;
+    3)
+      printf '{{"id":2,"result":{{"thread":{{"id":"thread-%s"}}}}}}\n' "$$"
+      ;;
+    4)
+      printf '{{"id":3,"result":{{"turn":{{"id":"turn-%s"}}}}}}\n' "$$"
+      printf '%s\n' "$$" >> "$start_log"
+      remaining=40
+      while [ "$remaining" -gt 0 ]; do
+        starts="$(wc -l < "$start_log" 2>/dev/null || echo 0)"
+        [ "$starts" -ge 2 ] && break
+        remaining=$((remaining - 1))
+        sleep 0.05
+      done
+      starts="$(wc -l < "$start_log" 2>/dev/null || echo 0)"
+      if [ "$starts" -lt 2 ]; then
+        printf '%s\n' '{{"method":"turn/failed","params":{{"error":{{"message":"second worker did not start before timeout"}}}}}}'
+        exit 0
+      fi
+      printf '%s\n' '{{"method":"thread/tokenUsage/updated","params":{{"inputTokens":1,"outputTokens":1,"totalTokens":2}}}}'
+      printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"status":"completed"}}}}}}'
+      exit 0
+      ;;
+  esac
+done
+"#,
+                shell_quote_display(&start_log.display().to_string())
+            ),
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&codex).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&codex, permissions).unwrap();
+
+        let workflow_path = temp.path().join("WORKFLOW.md");
+        let workflow = WorkflowDefinition::parse(
+            &workflow_path,
+            &format!(
+                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {}\nartifacts:\n  root: {}\nobservability:\n  logs_root: {}\nmain_lane:\n  backend: codex\ncodex:\n  command: {} app-server\n  read_timeout_ms: 1000\n  turn_timeout_ms: 5000\n---\nPrompt for {{{{ issue.identifier }}}}",
+                temp.path().join("worktrees").display(),
+                temp.path().join("artifacts").display(),
+                temp.path().join("logs").display(),
+                shell_quote_display(&codex.display().to_string())
+            ),
+        )
+        .unwrap();
+        let config = RuntimeConfig::from_workflow(&workflow, &workflow_path).unwrap();
+        let mut first = tracker_issue_with_ref("#362", "Recover first", "In Progress");
+        first.id = "ISSUE_362".into();
+        first.description = Some(forge_contract());
+        let mut second = tracker_issue_with_ref("#363", "Start second", "In Progress");
+        second.id = "ISSUE_363".into();
+        second.description = Some(forge_contract());
+        let options = RunLoopOptions {
+            workflow_path,
+            max_iterations: Some(1),
+            once: false,
+            write: true,
+            recover: true,
+            max_concurrent: Some(2),
+            display: DisplayMode::Plain,
+        };
+
+        run_loop_dispatch_write_candidates(
+            &workflow,
+            &config,
+            vec![first, second],
+            &options,
+            true,
+            1,
+            2,
+        )
+        .unwrap();
+
+        let starts = std::fs::read_to_string(start_log).unwrap();
+        assert_eq!(starts.lines().count(), 2);
+    }
+
     #[test]
     fn merge_pool_selection_only_accepts_merging_lane() {
         let config = test_config();
@@ -19410,7 +19590,9 @@ mod tests {
 
     #[test]
     fn resume_preflight_many_counts_active_main_worker_slots() {
-        let config = test_config();
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
         let tracker = MemoryTracker::new(vec![
             tracker_issue_with_ref("#29", "Runtime one", "In Progress"),
             tracker_issue_with_ref("#30", "Runtime two", "In Progress"),
@@ -19429,6 +19611,7 @@ mod tests {
     fn resume_preflight_many_archives_only_stale_slot() {
         let temp = tempfile::tempdir().unwrap();
         let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
         config.observability.logs_root = temp.path().join("logs");
         let tracker = MemoryTracker::new(vec![
             tracker_issue_with_ref("#29", "Handed off", "Agent Review"),
@@ -19454,6 +19637,7 @@ mod tests {
     fn resume_preflight_many_marks_stalled_state_recoverable_when_requested() {
         let temp = tempfile::tempdir().unwrap();
         let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
         config.observability.logs_root = temp.path().join("logs");
         let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
         let mut state = active_runtime_state("#29");
@@ -19956,6 +20140,7 @@ exit 1
     fn resume_preflight_many_marks_due_retry_recoverable_when_requested() {
         let temp = tempfile::tempdir().unwrap();
         let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
         config.observability.logs_root = temp.path().join("logs");
         let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
         let mut state = active_runtime_state("#29");

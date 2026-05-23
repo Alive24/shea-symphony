@@ -1,5 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -8,6 +10,8 @@ use thiserror::Error;
 use crate::config::RuntimeConfig;
 
 pub const RUNTIME_STATE_FILE: &str = "runtime-state.json";
+static RUNTIME_STATE_FILE_LOCK: Mutex<()> = Mutex::new(());
+static RUNTIME_STATE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeState {
@@ -204,6 +208,7 @@ pub fn upsert_runtime_state(
     config: &RuntimeConfig,
     state: &RuntimeState,
 ) -> Result<(), RuntimeStateError> {
+    let _guard = runtime_state_file_guard()?;
     let mut states = load_runtime_states(config)?;
     upsert_runtime_state_entry(&mut states, state.clone());
     save_runtime_states(config, &states)
@@ -213,6 +218,7 @@ pub fn remove_runtime_state_for_issue(
     config: &RuntimeConfig,
     issue_identifier: &str,
 ) -> Result<(), RuntimeStateError> {
+    let _guard = runtime_state_file_guard()?;
     let mut states = load_runtime_states(config)?;
     states.retain(|state| {
         state
@@ -222,6 +228,21 @@ pub fn remove_runtime_state_for_issue(
             .unwrap_or(true)
     });
     save_runtime_states(config, &states)
+}
+
+fn runtime_state_file_guard() -> Result<std::sync::MutexGuard<'static, ()>, RuntimeStateError> {
+    RUNTIME_STATE_FILE_LOCK
+        .lock()
+        .map_err(|_| RuntimeStateError::Io(std::io::Error::other("runtime state lock poisoned")))
+}
+
+fn unique_runtime_state_temp_path(path: &Path) -> PathBuf {
+    let counter = RUNTIME_STATE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(RUNTIME_STATE_FILE);
+    path.with_file_name(format!("{filename}.{}.{}.tmp", std::process::id(), counter))
 }
 
 pub fn clear_runtime_state(config: &RuntimeConfig) -> Result<(), RuntimeStateError> {
@@ -294,7 +315,7 @@ pub fn save_runtime_state_to_path(
         fs::create_dir_all(parent)?;
     }
 
-    let temp_path = path.with_extension("json.tmp");
+    let temp_path = unique_runtime_state_temp_path(path);
     let content = serde_json::to_string_pretty(state)?;
     fs::write(&temp_path, content)?;
     fs::rename(temp_path, path)?;
@@ -316,7 +337,7 @@ pub fn save_runtime_states_to_path(
         fs::create_dir_all(parent)?;
     }
 
-    let temp_path = path.with_extension("json.tmp");
+    let temp_path = unique_runtime_state_temp_path(path);
     let content = serde_json::to_string_pretty(&RuntimeStateStore::new(states.to_vec()))?;
     fs::write(&temp_path, content)?;
     fs::rename(temp_path, path)?;

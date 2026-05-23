@@ -31,9 +31,9 @@ use jade_symphony::event_log::{
     EventLog, EventRecord, TrackerMutationAuditInput, TrackerMutationAuditRecord,
 };
 use jade_symphony::git_handoff::{
-    ensure_pull_request_ready, prepare_issue_worktree, publish_issue_pull_request, CommandOutput,
-    HandoffCommandRunner, LiveWorktreeResult, ProcessHandoffCommandRunner, PullRequestPublication,
-    PullRequestReadyStatus,
+    commit_issue_worktree_changes, ensure_pull_request_ready, prepare_issue_worktree,
+    publish_issue_pull_request, CommandOutput, HandoffCommandRunner, LiveWorktreeResult,
+    ProcessHandoffCommandRunner, PullRequestPublication, PullRequestReadyStatus,
 };
 use jade_symphony::handoff::{
     evaluate_agent_review_handoff, expected_merge_base_branch_for_issue,
@@ -125,6 +125,15 @@ use serde::Serialize;
 
 const DEFAULT_RUN_LOOP_BASE_BRANCH: &str = "main";
 const DEFAULT_SESSION_STATUS_LINES: usize = 80;
+const CODEX_APP_SERVER_HANDOFF_BOUNDARY: &str = "\n\n## Codex App-Server Runtime Boundary\n\n\
+This run is executing inside the Codex app-server backend. Treat the app-server \
+turn as the implementation and local-verification worker only. Do not run \
+GitHub Project reads or mutations, do not create or update pull requests, and \
+do not attempt final Project state transitions from inside this child turn. \
+Leave a concise terminal summary of changed files, verification commands, and \
+any blocker. The outer Jade Symphony CLI will commit eligible worktree changes, \
+publish or update the PR, write durable workpad evidence, verify linked PR \
+readback, and perform the final `Agent Review` handoff.\n";
 const DEFAULT_SESSION_STALE_AFTER_MS: u64 = 15 * 60 * 1000;
 
 fn main() {
@@ -8965,12 +8974,15 @@ fn execute_issue_once_in_workspace(
     let git_identity = apply_local_git_identity(&workspace.path, &config.identity.git)?;
     run_before_run(&workspace.path, &config.hooks)?;
 
-    let prompt = render_prompt_with_claim(
+    let mut prompt = render_prompt_with_claim(
         workflow.prompt_for_lane(AgentLane::MainAgent),
         issue,
         None,
         claim,
     )?;
+    if config.backend.kind == "codex" && config.codex.command.contains("app-server") {
+        prompt.push_str(CODEX_APP_SERVER_HANDOFF_BOUNDARY);
+    }
     let backend = backend_from_config(config);
     let mut prepared = backend.prepare(workspace.path.clone(), prompt, config)?;
     prepared.prompt_artifact_path = Some(rendered_prompt_artifact_path(
@@ -9985,7 +9997,35 @@ fn run_loop_dispatch_write_candidate(
     if result.success {
         if let Some(worktree) = live_worktree {
             let runner = ProcessHandoffCommandRunner;
-            let verification = run_handoff_verification(&handoff.workspace_path, config);
+            if result.backend == "codex" {
+                let commit_message = format!(
+                    "Implement {}: {}",
+                    latest.identifier,
+                    latest.title.replace(['\n', '\r'], " ")
+                );
+                match commit_issue_worktree_changes(&handoff, &runner, &commit_message) {
+                    Ok(commit) => {
+                        println!(
+                            "run_loop_action=commit issue={} committed={} hash={}",
+                            latest.identifier,
+                            commit.committed,
+                            commit.commit_hash.as_deref().unwrap_or("n/a")
+                        );
+                    }
+                    Err(error) => {
+                        result.success = false;
+                        result.message = format!("handoff commit failed: {error}");
+                    }
+                }
+            }
+            let verification = if result.success {
+                run_handoff_verification(&handoff.workspace_path, config)
+            } else {
+                HandoffVerification {
+                    success: false,
+                    summary: result.message.clone(),
+                }
+            };
             println!(
                 "run_loop_action=verify issue={} success={} summary={}",
                 latest.identifier, verification.success, verification.summary

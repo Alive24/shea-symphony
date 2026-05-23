@@ -30,6 +30,10 @@ pub struct PreparedRun {
     pub prompt_artifact_path: Option<PathBuf>,
     pub command: Option<String>,
     pub timeout_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
     pub approval_policy: Option<String>,
     pub sandbox: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -116,6 +120,8 @@ impl AgentBackend for DryRunBackend {
             prompt_artifact_path: None,
             command: None,
             timeout_ms: 0,
+            model: None,
+            reasoning_effort: None,
             approval_policy: None,
             sandbox: None,
             turn_sandbox_policy: None,
@@ -199,6 +205,8 @@ impl AgentBackend for CodexBackend {
             prompt_artifact_path: None,
             command: Some(config.codex.command.clone()),
             timeout_ms: config.codex.turn_timeout_ms,
+            model: config.codex.model.clone(),
+            reasoning_effort: Some(config.codex.reasoning_effort.clone()),
             approval_policy: Some(config.codex.approval_policy.to_string()),
             sandbox: Some(config.codex.thread_sandbox.clone()),
             turn_sandbox_policy: config.codex.turn_sandbox_policy.clone(),
@@ -265,6 +273,8 @@ impl AgentBackend for ClaudeCodeBackend {
             prompt_artifact_path: None,
             command: Some(config.claude.command.clone()),
             timeout_ms: config.claude.turn_timeout_ms,
+            model: None,
+            reasoning_effort: None,
             approval_policy: None,
             sandbox: None,
             turn_sandbox_policy: None,
@@ -336,6 +346,8 @@ impl AgentBackend for TmuxBackend {
             prompt_artifact_path: None,
             command: Some(config.tmux.agent_command.clone()),
             timeout_ms: 0,
+            model: None,
+            reasoning_effort: None,
             approval_policy: None,
             sandbox: None,
             turn_sandbox_policy: None,
@@ -696,15 +708,31 @@ fn run_codex_app_server_protocol(
         protocol_log,
     )?;
 
+    let mut thread_params = serde_json::json!({
+        "approvalPolicy": app_server_approval_policy(prepared.approval_policy.as_deref()),
+        "sandbox": prepared.sandbox.as_deref().unwrap_or("workspace-write"),
+        "cwd": prepared.workspace.display().to_string(),
+        "dynamicTools": []
+    });
+    if let Some(model) = prepared
+        .model
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        thread_params["model"] = serde_json::Value::String(model.to_string());
+    }
+    if let Some(reasoning_effort) = prepared
+        .reasoning_effort
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        thread_params["reasoningEffort"] = serde_json::Value::String(reasoning_effort.to_string());
+    }
+
     let thread_start = serde_json::json!({
         "method": "thread/start",
         "id": 2,
-        "params": {
-            "approvalPolicy": app_server_approval_policy(prepared.approval_policy.as_deref()),
-            "sandbox": prepared.sandbox.as_deref().unwrap_or("workspace-write"),
-            "cwd": prepared.workspace.display().to_string(),
-            "dynamicTools": []
-        }
+        "params": thread_params
     });
     send_app_server_message(stdin, &thread_start, protocol_log)?;
     let thread_response =
@@ -730,6 +758,20 @@ fn run_codex_app_server_protocol(
         "title": app_server_turn_title(prepared),
         "approvalPolicy": app_server_approval_policy(prepared.approval_policy.as_deref())
     });
+    if let Some(model) = prepared
+        .model
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        turn_params["model"] = serde_json::Value::String(model.to_string());
+    }
+    if let Some(reasoning_effort) = prepared
+        .reasoning_effort
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        turn_params["reasoningEffort"] = serde_json::Value::String(reasoning_effort.to_string());
+    }
     if let Some(policy) = prepared.turn_sandbox_policy.clone() {
         turn_params["sandboxPolicy"] = policy;
     }
@@ -1069,12 +1111,7 @@ fn app_server_final_session_status(events: &[AgentEvent]) -> SessionStatus {
         return SessionStatus::Completed;
     }
 
-    if events.iter().any(|event| match event {
-        AgentEvent::Message { text, .. } | AgentEvent::Failed { error: text, .. } => {
-            classify_usage_limit_text(text).is_some()
-        }
-        _ => false,
-    }) {
+    if usage_limit_pause_from_events(events).is_some() {
         return SessionStatus::UsageLimited;
     }
 
@@ -1835,9 +1872,7 @@ fn summarize_events(backend: &str, events: &[AgentEvent]) -> AgentSummary {
 
 pub fn usage_limit_pause_from_events(events: &[AgentEvent]) -> Option<UsageLimitPause> {
     events.iter().find_map(|event| match event {
-        AgentEvent::Message { text, .. } | AgentEvent::Failed { error: text, .. } => {
-            classify_usage_limit_text(text)
-        }
+        AgentEvent::Failed { error, .. } => classify_usage_limit_text(error),
         _ => None,
     })
 }
@@ -2310,6 +2345,8 @@ mod tests {
             prompt_artifact_path: None,
             command: Some("codex".into()),
             timeout_ms: 0,
+            model: None,
+            reasoning_effort: None,
             approval_policy: None,
             sandbox: None,
             turn_sandbox_policy: None,
@@ -2549,16 +2586,28 @@ exit 0
             AgentEvent::Message {
                 backend: "codex".into(),
                 session_id: Some("s1".into()),
-                text: "Resource exhausted, please retry later.".into(),
+                text: "test review::tests::classifies_quota_rate_limit_as_wait_and_retry ... ok"
+                    .into(),
             },
             AgentEvent::Failed {
                 backend: "codex".into(),
-                error: "Codex subprocess exited with status 1".into(),
+                error: "turn/failed: Resource exhausted, please retry later.".into(),
             },
         ];
 
         let pause = usage_limit_pause_from_events(&events).unwrap();
         assert_eq!(pause.classifier, "resource_exhausted");
+    }
+
+    #[test]
+    fn usage_limit_pause_ignores_non_failure_messages() {
+        let events = vec![AgentEvent::Message {
+            backend: "codex-app-server".into(),
+            session_id: Some("s1".into()),
+            text: "test review::tests::classifies_quota_rate_limit_as_wait_and_retry ... ok".into(),
+        }];
+
+        assert!(usage_limit_pause_from_events(&events).is_none());
     }
 
     fn codex_config(command: &str, timeout_ms: u64) -> RuntimeConfig {
@@ -2786,6 +2835,7 @@ done
         assert!(trace.contains("\"method\":\"thread/start\""));
         assert!(trace.contains("\"method\":\"turn/start\""));
         assert!(trace.contains("\"approvalPolicy\":\"never\""));
+        assert_eq!(trace.matches("\"reasoningEffort\":\"high\"").count(), 2);
         assert!(trace.contains("hello app-server"));
     }
 

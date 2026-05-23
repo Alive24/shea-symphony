@@ -123,6 +123,8 @@ pub struct BackendConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CodexConfig {
     pub command: String,
+    pub model: Option<String>,
+    pub reasoning_effort: String,
     pub approval_policy: Value,
     pub thread_sandbox: String,
     pub turn_sandbox_policy: Option<Value>,
@@ -321,6 +323,9 @@ impl RuntimeConfig {
         let codex = CodexConfig {
             command: get_string(root.get("codex"), "command")
                 .unwrap_or_else(|| "codex app-server".to_string()),
+            model: get_string(root.get("codex"), "model"),
+            reasoning_effort: get_string(root.get("codex"), "reasoning_effort")
+                .unwrap_or_else(|| "high".to_string()),
             approval_policy: get_value(root.get("codex"), "approval_policy")
                 .cloned()
                 .unwrap_or_else(default_codex_approval_policy),
@@ -949,6 +954,20 @@ mod tests {
             RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
 
         assert_eq!(config.codex.approval_policy, serde_json::json!("never"));
+    }
+
+    #[test]
+    fn codex_model_and_reasoning_effort_are_configurable() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\ncodex:\n  model: gpt-5.5\n  reasoning_effort: high\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.codex.model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(config.codex.reasoning_effort, "high");
     }
 
     #[test]

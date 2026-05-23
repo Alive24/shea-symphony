@@ -28,6 +28,13 @@ pub struct PullRequestReadyStatus {
     pub marked_ready: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorktreeCommitResult {
+    pub committed: bool,
+    pub commit_hash: Option<String>,
+    pub status_before: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandOutput {
     pub status: i32,
@@ -92,6 +99,52 @@ pub enum GitHandoffError {
     NoCommitsAhead { branch: String, base: String },
     #[error("git rev-list returned an invalid ahead count: {value}")]
     InvalidAheadCount { value: String },
+}
+
+pub fn commit_issue_worktree_changes(
+    plan: &IssueHandoffPlan,
+    runner: &dyn HandoffCommandRunner,
+    message: &str,
+) -> Result<WorktreeCommitResult, GitHandoffError> {
+    let status = runner.run(
+        "git",
+        &["status".into(), "--porcelain".into()],
+        &plan.workspace_path,
+    )?;
+    require_success("git", status.clone())?;
+    let status_before = status.stdout.trim().to_string();
+    if status_before.is_empty() {
+        return Ok(WorktreeCommitResult {
+            committed: false,
+            commit_hash: None,
+            status_before,
+        });
+    }
+
+    require_success(
+        "git",
+        runner.run("git", &["add".into(), "-A".into()], &plan.workspace_path)?,
+    )?;
+    require_success(
+        "git",
+        runner.run(
+            "git",
+            &["commit".into(), "-m".into(), message.to_string()],
+            &plan.workspace_path,
+        )?,
+    )?;
+    let hash = runner.run(
+        "git",
+        &["rev-parse".into(), "--short".into(), "HEAD".into()],
+        &plan.workspace_path,
+    )?;
+    require_success("git", hash.clone())?;
+
+    Ok(WorktreeCommitResult {
+        committed: true,
+        commit_hash: Some(hash.stdout.trim().to_string()),
+        status_before,
+    })
 }
 
 pub fn prepare_issue_worktree(
@@ -536,6 +589,13 @@ mod tests {
                     stderr: String::new(),
                 });
             }
+            if command.contains("rev-parse --short HEAD") {
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: "abc1234\n".into(),
+                    stderr: String::new(),
+                });
+            }
             if command.starts_with("gh pr view") {
                 return Ok(match &self.existing_pr_url {
                     Some(url) => CommandOutput {
@@ -610,6 +670,43 @@ mod tests {
             created_at: None,
             updated_at: None,
         }
+    }
+
+    #[test]
+    fn commits_dirty_issue_worktree_changes_before_handoff_publication() {
+        let temp = tempfile::tempdir().unwrap();
+        let plan = plan_issue_handoff(temp.path(), &issue(), "main").unwrap();
+        let runner = FakeRunner {
+            dirty_status: Some(" M src/main.rs\n?? tests/new.rs\n".into()),
+            ..Default::default()
+        };
+
+        let result = commit_issue_worktree_changes(&plan, &runner, "Implement #45").unwrap();
+
+        assert!(result.committed);
+        assert_eq!(result.commit_hash.as_deref(), Some("abc1234"));
+        assert_eq!(result.status_before, "M src/main.rs\n?? tests/new.rs");
+        let commands = runner.commands.borrow().join("\n");
+        assert!(commands.contains("git status --porcelain"));
+        assert!(commands.contains("git add -A"));
+        assert!(commands.contains("git commit -m Implement #45"));
+        assert!(commands.contains("git rev-parse --short HEAD"));
+    }
+
+    #[test]
+    fn skips_commit_when_issue_worktree_is_clean() {
+        let temp = tempfile::tempdir().unwrap();
+        let plan = plan_issue_handoff(temp.path(), &issue(), "main").unwrap();
+        let runner = FakeRunner::default();
+
+        let result = commit_issue_worktree_changes(&plan, &runner, "Implement #45").unwrap();
+
+        assert!(!result.committed);
+        assert_eq!(result.commit_hash, None);
+        let commands = runner.commands.borrow().join("\n");
+        assert!(commands.contains("git status --porcelain"));
+        assert!(!commands.contains("git add -A"));
+        assert!(!commands.contains("git commit -m Implement #45"));
     }
 
     #[test]

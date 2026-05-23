@@ -110,8 +110,9 @@ runtime owner:
   pool selection. It owns selection rules only, not Project mutations or runtime
   transitions.
 - `src/lanes/main_loop.rs`: outer Main loop command execution and
-  `RunLoopOptions`. It owns loop iteration, dry-run rendering, concurrency-slot
-  selection, and delegation into narrower Main-lane helpers.
+  `RunLoopOptions`. It owns one-shot Main execution, loop iteration, dry-run
+  rendering, concurrency-slot selection, and delegation into narrower Main-lane
+  helpers.
 - `src/lanes/main_loop/dispatch.rs`: Main-loop write dispatch shell. It owns
   selected-worker logging, backend readiness summaries, concurrent worker
   spawning, and per-worker outcome aggregation while delegating the single-issue

@@ -73,12 +73,10 @@ use jade_symphony::session_registry::{
     save_session_registry, session_registry_path, SessionStatus,
 };
 use jade_symphony::skill_status::SkillStatusInput;
-use jade_symphony::status_surface::{render_latest_status_bar, render_snapshot};
+use jade_symphony::status_surface::render_latest_status_bar;
 #[cfg(test)]
 use jade_symphony::tracker::FollowUpIssueInput;
-use jade_symphony::tracker::{
-    adapter_from_config, ProjectFieldAssignment, TrackerAdapter, TrackerError,
-};
+use jade_symphony::tracker::{ProjectFieldAssignment, TrackerAdapter, TrackerError};
 use jade_symphony::workflow::WorkflowDefinition;
 #[cfg(test)]
 use jade_symphony::workspace::GitIdentityApplyResult;
@@ -169,9 +167,9 @@ pub(crate) use lanes::claim::{
 use lanes::main_loop::IssueExecutionResult;
 pub(crate) use lanes::main_loop::{
     append_runtime_supervision_event, apply_live_handoff_pr_link, compact_evidence,
-    current_gh_login, execute_issue_once, execute_issue_once_with_workspace_key,
-    handle_run_loop_gate_failure, handle_run_loop_handoff_failure, linked_pull_requests_contain,
-    main_app_server_smoke_gate, main_session_active_recoverable, pull_request_number_from_url,
+    current_gh_login, execute_issue_once_with_workspace_key, handle_run_loop_gate_failure,
+    handle_run_loop_handoff_failure, linked_pull_requests_contain, main_app_server_smoke_gate,
+    main_session_active_recoverable, pull_request_number_from_url,
     reconcile_main_handoff_runtime_state, reconcile_pending_main_session, run_handoff_verification,
     run_loop, run_loop_agent_review_handoff_evidence, run_loop_apply_recovery_handoff,
     run_loop_assignee_ownership_decision, run_loop_assignee_ownership_workpad,
@@ -179,9 +177,9 @@ pub(crate) use lanes::main_loop::{
     run_loop_handoff_workpad, run_loop_live_handoff_enabled, run_loop_ownership_workpad,
     run_loop_runtime_ownership, run_loop_runtime_state_for_issue,
     run_loop_runtime_state_with_result, run_loop_runtime_state_with_transition,
-    run_loop_usage_limit_pause_workpad, selected_profile_github_login, AssigneeOwnershipDecision,
-    HandoffVerification, MainSessionReconciliation, RunLoopClaimAction, RunLoopLiveHandoff,
-    RunLoopOptions, RunLoopWorkerOutcome,
+    run_loop_usage_limit_pause_workpad, run_once, selected_profile_github_login,
+    AssigneeOwnershipDecision, HandoffVerification, MainSessionReconciliation, RunLoopClaimAction,
+    RunLoopLiveHandoff, RunLoopOptions, RunLoopWorkerOutcome,
 };
 #[cfg(test)]
 use lanes::main_loop::{
@@ -608,47 +606,6 @@ fn all_mapped_tracker_states(config: &RuntimeConfig) -> Vec<String> {
         state_map.merging.clone(),
         state_map.done.clone(),
     ]
-}
-
-fn run_once(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let workflow = WorkflowDefinition::load(&workflow_path)?;
-    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
-    config.validate()?;
-
-    let adapter = adapter_from_config(&config);
-    let issues = adapter.list_queue_scan_issues()?;
-    let orchestrator = Orchestrator::new(config.clone());
-    let plan = orchestrator.plan_dispatch(issues.clone());
-    let Some(issue) = plan.selected.first() else {
-        println!("{}", render_snapshot(&plan.snapshot));
-        println!("run_once=skipped reason=no_dispatchable_issue");
-        return Ok(());
-    };
-    let issue = hydrate_issue_for_evidence(adapter.as_ref(), issue.clone(), &issues)?;
-
-    let result = execute_issue_once(&workflow, &config, &issue)?;
-
-    println!("run_once=completed");
-    println!("issue={} {}", issue.identifier, issue.title);
-    println!("workspace={}", result.workspace_path.display());
-    println!("backend={}", result.backend);
-    println!("actor_role={}", result.actor_role);
-    println!("actor_label={}", result.actor_label);
-    println!(
-        "git_author={}",
-        result.git_author.as_deref().unwrap_or("n/a")
-    );
-    println!("git_identity={}", result.git_identity.summary());
-    println!("success={}", result.success);
-    println!(
-        "event_log={}",
-        config
-            .observability
-            .logs_root
-            .join("jade-symphony.jsonl")
-            .display()
-    );
-    Ok(())
 }
 
 fn current_git_branch(workspace_path: &Path) -> Result<Option<String>, io::Error> {

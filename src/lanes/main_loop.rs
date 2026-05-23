@@ -92,6 +92,47 @@ impl RunLoopOptions {
     }
 }
 
+pub(crate) fn run_once(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let workflow = WorkflowDefinition::load(&workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
+    config.validate()?;
+
+    let adapter = adapter_from_config(&config);
+    let issues = adapter.list_queue_scan_issues()?;
+    let orchestrator = Orchestrator::new(config.clone());
+    let plan = orchestrator.plan_dispatch(issues.clone());
+    let Some(issue) = plan.selected.first() else {
+        println!("{}", render_snapshot(&plan.snapshot));
+        println!("run_once=skipped reason=no_dispatchable_issue");
+        return Ok(());
+    };
+    let issue = hydrate_issue_for_evidence(adapter.as_ref(), issue.clone(), &issues)?;
+
+    let result = execute_issue_once(&workflow, &config, &issue)?;
+
+    println!("run_once=completed");
+    println!("issue={} {}", issue.identifier, issue.title);
+    println!("workspace={}", result.workspace_path.display());
+    println!("backend={}", result.backend);
+    println!("actor_role={}", result.actor_role);
+    println!("actor_label={}", result.actor_label);
+    println!(
+        "git_author={}",
+        result.git_author.as_deref().unwrap_or("n/a")
+    );
+    println!("git_identity={}", result.git_identity.summary());
+    println!("success={}", result.success);
+    println!(
+        "event_log={}",
+        config
+            .observability
+            .logs_root
+            .join("jade-symphony.jsonl")
+            .display()
+    );
+    Ok(())
+}
+
 pub(crate) fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
     let limit = options.iteration_limit();
     let mut iterations = 0usize;

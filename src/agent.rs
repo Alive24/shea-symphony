@@ -3015,6 +3015,9 @@ done
     fn codex_app_server_command_guard_is_specific() {
         assert!(is_codex_app_server_command("codex app-server"));
         assert!(is_codex_app_server_command(
+            "codex app-server -c 'service_tier=\"fast\"'"
+        ));
+        assert!(is_codex_app_server_command(
             "env CODEX_HOME=/tmp/codex /opt/bin/codex app-server --port 0"
         ));
         assert!(is_codex_app_server_command("exec 'codex' app-server"));

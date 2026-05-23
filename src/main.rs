@@ -4073,6 +4073,13 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
         )?;
 
         if issues.is_empty() {
+            if let Some(delay_ms) = unbounded_loop_sleep_ms(limit, config.polling.interval_ms) {
+                println!(
+                    "review_loop_idle action=sleep reason=no_agent_review_issue delay_ms={delay_ms} iterations={iterations}"
+                );
+                thread::sleep(Duration::from_millis(delay_ms));
+                continue;
+            }
             println!("review_loop=stopped reason=no_agent_review_issue iterations={iterations}");
             break;
         };
@@ -4119,6 +4126,12 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                     }
                     ReviewRunEligibility::Eligible { .. } => {}
                 }
+            }
+            if let Some(delay_ms) = unbounded_loop_sleep_ms(limit, config.polling.interval_ms) {
+                println!(
+                    "review_loop_idle action=sleep reason=no_available_review_worker delay_ms={delay_ms} iterations={iterations}"
+                );
+                thread::sleep(Duration::from_millis(delay_ms));
             }
             continue;
         }
@@ -4364,11 +4377,14 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
             }
         }
 
-        if !options.write && limit.is_none() {
+        if !options.write {
+            let Some(delay_ms) = unbounded_loop_sleep_ms(limit, config.polling.interval_ms) else {
+                continue;
+            };
             println!(
-                "review_loop=stopped reason=dry_run_would_repeat_without_mutation iterations={iterations}"
+                "review_loop_idle action=sleep reason=dry_run_would_repeat_without_mutation delay_ms={delay_ms} iterations={iterations}"
             );
-            break;
+            thread::sleep(Duration::from_millis(delay_ms));
         }
     }
 
@@ -4427,16 +4443,24 @@ fn merge_once(workflow_path: PathBuf, write: bool) -> Result<(), Box<dyn std::er
 }
 
 fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
-    let max = options
-        .iteration_limit()
-        .ok_or("merge loop requires --max-iterations or --once")?;
+    let limit = options.iteration_limit();
     let workflow = WorkflowDefinition::load(&options.workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &options.workflow_path)?;
     config.validate()?;
     let max_concurrent = options.worker_limit(&config);
     let mut stopped = false;
+    let mut iteration = 0usize;
 
-    for iteration in 1..=max {
+    loop {
+        if let Some(max) = limit {
+            if iteration >= max {
+                println!("merge_loop=stopped reason=max_iterations iterations={iteration}");
+                break;
+            }
+        }
+
+        iteration += 1;
+        let mut should_sleep = false;
         println!(
             "merge_loop_iteration={} mode={} recover={} max_concurrent={max_concurrent}",
             iteration,
@@ -4450,15 +4474,26 @@ fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::error::Error
                 options.recover,
             )? {
                 MergeOnceOutcome::NoMergingIssue => {
-                    println!(
-                        "merge_loop=stopped reason=no_merging_issue iterations={iteration} slot={slot}"
-                    );
-                    stopped = true;
+                    if limit.is_none() {
+                        should_sleep = true;
+                        println!(
+                            "merge_loop_idle action=sleep reason=no_merging_issue delay_ms={} iterations={iteration} slot={slot}",
+                            config.polling.interval_ms
+                        );
+                    } else {
+                        println!(
+                            "merge_loop=stopped reason=no_merging_issue iterations={iteration} slot={slot}"
+                        );
+                        stopped = true;
+                    }
                     break;
                 }
                 MergeOnceOutcome::DryRun if !options.write => {
                     println!("merge_loop_action=dry_run_tick iterations={iteration} slot={slot}");
-                    if max_concurrent > 1 {
+                    if limit.is_none() {
+                        should_sleep = true;
+                        break;
+                    } else if max_concurrent > 1 {
                         println!(
                             "merge_loop=stopped reason=dry_run_would_repeat_without_mutation iterations={iteration}"
                         );
@@ -4484,10 +4519,9 @@ fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::error::Error
         if stopped {
             break;
         }
-    }
-
-    if !stopped {
-        println!("merge_loop=stopped reason=max_iterations iterations={max}");
+        if should_sleep {
+            thread::sleep(Duration::from_millis(config.polling.interval_ms));
+        }
     }
 
     Ok(())
@@ -10072,11 +10106,20 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             max_concurrent
         };
         if options.write && available_slots == 0 {
-            println!(
-                "run_loop=stopped reason=max_concurrent_reached active_workers={} max_concurrent={}",
-                active_main_workers, max_concurrent
-            );
-            break;
+            if let Some(delay_ms) = unbounded_loop_sleep_ms(limit, config.polling.interval_ms) {
+                println!(
+                    "run_loop_idle action=sleep reason=max_concurrent_reached active_workers={} max_concurrent={} delay_ms={delay_ms} iterations={iterations}",
+                    active_main_workers, max_concurrent
+                );
+                thread::sleep(Duration::from_millis(delay_ms));
+                continue;
+            } else {
+                println!(
+                    "run_loop=stopped reason=max_concurrent_reached active_workers={} max_concurrent={}",
+                    active_main_workers, max_concurrent
+                );
+                break;
+            }
         }
         let worker_id = worker_identity(&config, WorkerLane::Main);
         let selected = select_main_run_loop_issues(
@@ -10120,7 +10163,7 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 println!("{}", render_snapshot(&plan.snapshot));
             }
-            match no_dispatch_action(&options, limit, config.polling.interval_ms) {
+            match no_dispatch_action(limit, config.polling.interval_ms) {
                 NoDispatchAction::Stop { reason } => {
                     println!("run_loop=stopped reason={reason} iterations={iterations}");
                     break;
@@ -10259,11 +10302,11 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
             print_run_loop_dry_run_actions(&issue, &handoff, &config)?;
-            if limit.is_none() {
+            if let Some(delay_ms) = unbounded_loop_sleep_ms(limit, config.polling.interval_ms) {
                 println!(
-                    "run_loop=stopped reason=dry_run_would_repeat_without_mutation iterations={iterations}"
+                    "run_loop_idle action=sleep reason=dry_run_would_repeat_without_mutation delay_ms={delay_ms} iterations={iterations}"
                 );
-                break;
+                thread::sleep(Duration::from_millis(delay_ms));
             }
             continue;
         }
@@ -13051,12 +13094,8 @@ fn ensure_write_mode_main_agent_backend(
     .into())
 }
 
-fn no_dispatch_action(
-    options: &RunLoopOptions,
-    limit: Option<usize>,
-    poll_interval_ms: u64,
-) -> NoDispatchAction {
-    if !options.write || limit.is_some() {
+fn no_dispatch_action(limit: Option<usize>, poll_interval_ms: u64) -> NoDispatchAction {
+    if limit.is_some() {
         return NoDispatchAction::Stop {
             reason: "no_dispatchable_issue",
         };
@@ -13065,6 +13104,10 @@ fn no_dispatch_action(
     NoDispatchAction::SleepAndContinue {
         delay_ms: poll_interval_ms,
     }
+}
+
+fn unbounded_loop_sleep_ms(limit: Option<usize>, poll_interval_ms: u64) -> Option<u64> {
+    limit.is_none().then_some(poll_interval_ms)
 }
 
 fn current_time_ms() -> u64 {
@@ -16170,10 +16213,7 @@ fn run_loop_command(args: RunLoopArgs) -> Result<Command, String> {
 }
 
 fn merge_loop_command(args: MergeLoopArgs) -> Result<Command, String> {
-    if args.max_iterations == Some(0)
-        || args.max_concurrent == Some(0)
-        || (!args.once && args.max_iterations.is_none())
-    {
+    if args.max_iterations == Some(0) || args.max_concurrent == Some(0) {
         return Err(usage());
     }
     Ok(Command::MergeLoop {
@@ -19650,8 +19690,15 @@ MERGE_AGENT_DECISION: needs_human_input";
     }
 
     #[test]
-    fn rejects_unbounded_merge_loop_for_now() {
-        assert!(Command::parse(vec!["merge".into(), "loop".into(), "WORKFLOW.md".into()]).is_err());
+    fn parses_unbounded_merge_loop_without_max_iterations() {
+        let command =
+            Command::parse(vec!["merge".into(), "loop".into(), "WORKFLOW.md".into()]).unwrap();
+
+        let Command::MergeLoop { options } = command else {
+            panic!("expected merge loop command");
+        };
+
+        assert_eq!(options.iteration_limit(), None);
     }
 
     #[test]
@@ -22926,7 +22973,7 @@ exit 1
     }
 
     #[test]
-    fn no_dispatch_stops_for_dry_run_even_without_limit() {
+    fn no_dispatch_sleeps_without_iteration_limit() {
         let options = RunLoopOptions {
             workflow_path: PathBuf::from("WORKFLOW.md"),
             max_iterations: None,
@@ -22938,10 +22985,8 @@ exit 1
         };
 
         assert_eq!(
-            no_dispatch_action(&options, options.iteration_limit(), 250),
-            NoDispatchAction::Stop {
-                reason: "no_dispatchable_issue"
-            }
+            no_dispatch_action(options.iteration_limit(), 250),
+            NoDispatchAction::SleepAndContinue { delay_ms: 250 }
         );
     }
 
@@ -23024,7 +23069,7 @@ exit 1
         };
 
         assert_eq!(
-            no_dispatch_action(&options, options.iteration_limit(), 250),
+            no_dispatch_action(options.iteration_limit(), 250),
             NoDispatchAction::Stop {
                 reason: "no_dispatchable_issue"
             }
@@ -23044,7 +23089,7 @@ exit 1
         };
 
         assert_eq!(
-            no_dispatch_action(&options, options.iteration_limit(), 250),
+            no_dispatch_action(options.iteration_limit(), 250),
             NoDispatchAction::SleepAndContinue { delay_ms: 250 }
         );
     }

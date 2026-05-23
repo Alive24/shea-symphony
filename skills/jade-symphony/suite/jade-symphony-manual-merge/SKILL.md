@@ -112,7 +112,7 @@ branch was rebased or conflicts were resolved.
 
 When a merge-agent runtime session is explicitly needed after a structured
 `Merging Agent` claim, the default session backend is Codex app-server through
-`merge_lane.agent_backend: codex` and `codex.command: codex app-server`. Use
+`merge_lane.agent_backend: codex` and `codex.command: codex app-server -c 'service_tier="fast"'`. Use
 `merge_lane.agent_backend: tmux` only as an explicit fallback/debug choice.
 
 For automated interrupted merge-loop recovery, prefer:

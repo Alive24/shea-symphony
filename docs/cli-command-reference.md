@@ -243,7 +243,7 @@ readback so GitHub can establish a native issue/PR relationship instead of
 relying only on a timeline comment.
 
 The canonical Main runtime is Codex app-server: `main_lane.backend: codex` plus
-`codex.command: codex app-server` and `codex.approval_policy: never`, matching
+`codex.command: codex app-server -c 'service_tier="fast"'` and `codex.approval_policy: never`, matching
 the current local app-server approval-policy schema. `main loop --write` records prompt,
 protocol, stderr, normalized-event, runtime-state, and session-registry
 evidence for that app-server turn before any `Agent Review` handoff. If
@@ -611,7 +611,7 @@ Doctor lanes.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `merge once` | Inspect one `Merging` issue, verify a single linked PR, and either merge, safely refresh a stale branch, attempt safe conflict repair, or route blockers. | Live merge requires explicit `--write`; fixture workflows synthesize merge or conflict-repair command evidence without touching GitHub. Native subissues expect the parent integration branch as the PR base; parent final PRs expect `main`. `BEHIND` PRs are updated with `gh pr update-branch` and left in `Merging` for retry, transient `UNKNOWN` mergeability stays in `Merging`, `DIRTY` PRs first try direct clean local PR-worktree repair, then use the configured merge-agent backend for content conflicts in a trusted clean PR worktree. Successful repair stays in `Merging`; only unresolved, unsafe, untrusted, backend-failing, push-failing, or verification-failing repairs route to `Need Human Input` with a concrete question instead of defaulting to `Rework`. |
-| `merge loop` | Repeat guarded merge ticks for an explicit bounded iteration count. | Requires `--max-iterations` or `--once`; `--max-concurrent N` processes up to `N` merge slots while respecting `Merging Agent` claim fields; recover-first handling is enabled by default in `--write` mode and can be disabled with `--no-recover`. |
+| `merge loop` | Repeat guarded merge ticks until stopped, or for an explicit bounded iteration count. | Without `--max-iterations` or `--once`, the loop idle-polls until the process is stopped; `--max-concurrent N` processes up to `N` merge slots while respecting `Merging Agent` claim fields; recover-first handling is enabled by default in `--write` mode and can be disabled with `--no-recover`. |
 
 Examples:
 

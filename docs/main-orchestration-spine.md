@@ -243,6 +243,9 @@ runtime owner:
 - `src/lanes/merge/repair.rs`: Merge-agent conflict repair. It owns the
   trusted repair preflight, merge-agent prompt, backend event capture, semantic
   safety markers, verification, push, and repair evidence text for dirty PRs.
+- `src/lanes/merge/selection.rs`: Merge worker selection and recovery
+  candidates. It owns priority-ordered claim recovery, unclaimed merge-worker
+  selection, and the rule that manual merge claims are not adopted by the loop.
 - `src/lanes/review/`: Review lane command execution. `status.rs` owns
   freshness and status reporting, `manual.rs` owns manual Review
   claim/pass/reject routing, and `automatic.rs` owns fake/once/loop runs,

@@ -59,6 +59,10 @@ clear owner:
 Lane execution now lives under `src/lanes/` when a lane boundary has a clear
 runtime owner:
 
+- `src/lanes/claim.rs`: shared lane claim primitives used by Main and Merge
+  workers: worker identity, Project claim field names, claimability checks, and
+  pool selection. It owns selection rules only, not Project mutations or runtime
+  transitions.
 - `src/lanes/merge.rs`: Merge once/loop execution, merge queue selection,
   merge-agent conflict repair, merge-specific evidence, and done-state issue
   closure ordering. It keeps timeline-comment evidence before state mutation

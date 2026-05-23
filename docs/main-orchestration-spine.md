@@ -246,6 +246,9 @@ runtime owner:
 - `src/lanes/merge/selection.rs`: Merge worker selection and recovery
   candidates. It owns priority-ordered claim recovery, unclaimed merge-worker
   selection, and the rule that manual merge claims are not adopted by the loop.
+- `src/lanes/merge/tick.rs`: Single merge-lane tick execution. It owns queue
+  reads, merge claim writes, PR preflight, merge-lane decisions, evidence
+  recording, and state transitions for one selected Merging issue.
 - `src/lanes/review/`: Review lane command execution. `status.rs` owns
   freshness and status reporting, `manual.rs` owns manual Review
   claim/pass/reject routing, and `automatic.rs` owns fake/once/loop runs,

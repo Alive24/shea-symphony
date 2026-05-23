@@ -147,7 +147,7 @@ failure. Gemini absence is a blocker only when `--require-gemini` is used.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `main once` | Execute one selected issue through the configured backend. | Fixture-safe by default when the workflow has `tracker.fixture_path`. |
-| `main loop` | Poll/select/claim/run/reconcile/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; recover-first handling is enabled by default in `--write` mode and can be disabled with `--no-recover`; tmux sessions stay active until a later loop observes terminal evidence; Agent Review handoff requires a verified Project-visible, ready, non-draft PR; native subissue PRs target the parent integration branch when topology evidence is present; parent issues with native subissues are skipped until every native subissue has Project status `Done`. |
+| `main loop` | Poll/select/claim/run/reconcile/handoff in bounded or idle-loop modes. | Live write mode requires `--write` and a real main-agent backend; the canonical workflow uses Codex app-server by default; recover-first handling is enabled by default in `--write` mode and can be disabled with `--no-recover`; Agent Review handoff requires a verified Project-visible, ready, non-draft PR; native subissue PRs target the parent integration branch when topology evidence is present; parent issues with native subissues are skipped until every native subissue has Project status `Done`. |
 
 Examples:
 
@@ -173,9 +173,9 @@ runtime-state file is backward-compatible with the old single active issue
 shape, but can now persist multiple active Main worker entries without
 overwriting another issue's session, workspace, retry, or transition evidence.
 `main loop --write` uses recover-first handling by default for interrupted Main
-tmux runtime slots. It treats stalled runtime entries, missing session-registry
-records, and unavailable tmux panes as recoverable capacity instead of blocking
-the lane, then restarts the same `In Progress` issue as a new attempt while
+runtime slots. It treats stalled runtime entries, missing session-registry
+records, failed/stale app-server records, and unavailable tmux fallback panes as
+recoverable capacity instead of blocking the lane, then restarts the same `In Progress` issue as a new attempt while
 preserving the existing issue state, claim, workspace, dirty local changes, and
 runtime evidence. Use `--no-recover` only for debugging or a deliberately
 conservative operator pass. Recovery does not route through `Rework` and does
@@ -261,39 +261,48 @@ overrides the workflow back to `main_lane.backend: dry-run`, `main loop --write`
 exits non-zero before loading runtime state, creating worktrees, claiming
 Project fields, or writing workpads.
 
-When the tmux agent command is Codex, `main loop --write` captures the pane before
-prompt injection. The default behavior auto-advances the Codex workspace trust
-prompt only inside the configured Jade Symphony issue worktree root, then injects the
-rendered prompt after a ready viewport is observed. Set
-`JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to opt out; a visible trust prompt or missing
-readiness then fails closed and preserves attach/log evidence for inspection.
+The canonical Main runtime is Codex app-server: `main_lane.backend: codex` plus
+`codex.command: codex app-server`. `main loop --write` records prompt,
+protocol, stderr, normalized-event, runtime-state, and session-registry
+evidence for that app-server turn before any `Agent Review` handoff. If
+`main_lane.backend: tmux` is selected as explicit fallback/debug, the tmux path
+captures the pane before prompt injection and may auto-advance the Codex
+workspace trust prompt only inside the configured Jade Symphony issue worktree
+root. Set `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to opt out; a visible trust prompt
+or missing readiness then fails closed and preserves attach/log evidence for
+inspection.
 
 For manual lane recovery, first claim the lane and keep the printed `run=`.
 Then `session start WORKFLOW ISSUE --lane main|review|merge --run RUN --write`
-starts the configured local tmux command with the lane-specific prompt only
-after confirming that the Project claim field already matches the issue, lane,
-and run. Manual claim evidence is truthful non-tmux registry evidence; `session
-start` is the step that creates attach/log evidence for a real tmux session and
-never writes claim fields. Main and Merge default to `tmux.agent_command`;
-Review uses `tmux.review_agent_command` when set and otherwise uses
-`review_lane.gemini_command` for `review_lane.backend: gemini-cli`. The rendered prompt
-includes the assigned `run=` and registry pointer so the spawned agent can
-preserve that value in its handoff evidence.
+starts the configured lane runtime with the lane-specific prompt only after
+confirming that the Project claim field already matches the issue, lane, and
+run. Manual claim evidence is truthful non-tmux registry evidence; `session
+start` never writes claim fields. Main and Merge-agent sessions default to
+Codex app-server in the canonical workflow, while Review session start remains
+the supervised tmux fallback; set `main_lane.backend: tmux` or
+`merge_lane.agent_backend: tmux` only for explicit fallback/debug.
+Clean `merge once` / `merge loop` does not use this agent-session backend and
+remains direct in-process CLI merge behavior. The rendered prompt includes the
+assigned `run=` and registry pointer so the spawned agent can preserve that
+value in its handoff evidence.
 `session list WORKFLOW` shows active tmux sessions with attach commands, and
 `session attach WORKFLOW SESSION` prints the exact attach command without
 joining the terminal unless `--exec` is provided.
-`status` and `status serve` include registered tmux session summaries from the
-durable session registry. `doctor` flags stale, failed, orphaned, usage-limited,
-or runtime/session mismatch cases, while `clean audit` classifies the registry,
-rendered prompts, tmux logs, and individual sessions without deleting them.
+`status` and `status serve` include registered runtime session summaries from
+the durable session registry with a backend label, so app-server, tmux fallback,
+and manual Codex App evidence do not collapse into one tmux-only surface.
+`doctor` flags stale, failed, orphaned, usage-limited, or runtime/session
+mismatch cases with backend-aware recovery wording, while `clean audit`
+classifies the registry, rendered prompts, app-server artifacts, tmux fallback
+logs, and individual sessions without deleting them.
 Unknown persisted registry status values are tolerated on read: they classify
 as `unknown`, keep the raw status value in diagnostics, and are not migrated,
 repaired, or rewritten by normal read-only commands.
 After a successful Main handoff to `Agent Review`, Jade Symphony preserves the
-tmux log and attach command but reconciles matching Main session records to
-`completed` and clears matching active runtime state. This keeps `doctor` from
-treating a completed handoff pane as active work while preserving recovery
-evidence.
+app-server artifacts or tmux fallback log/attach command, reconciles matching
+Main session records to `completed`, and clears matching active runtime state.
+This keeps `doctor` from treating completed handoff evidence as active work
+while preserving recovery evidence.
 
 ## Workspace Discovery
 
@@ -508,7 +517,7 @@ changes.
 | `review session` | Hidden legacy review session alias. | Does not write the `Review Agent` claim; use `review claim` or `review loop` for claim ownership. |
 | `review freshness` | Record/inspect review freshness evidence. | Used around merging/rework conflict repair. |
 | `review-clear-claim` | Clear one issue's `Review Agent` claim through the tracker adapter. | Requires `--write`; use after terminal manual review routing. |
-| `session start` | Start an attachable local tmux session for a selected lane and `run`. | Manual recovery path; validates an existing lane claim, selects the lane-specific command, and does not write Project claim fields. |
+| `session start` | Start the configured local runtime for a selected lane and `run`. | Manual recovery path; validates an existing lane claim, selects the lane-specific command/backend, and does not write Project claim fields. Main and Merge agent sessions default to Codex app-server in the canonical workflow; Review remains the supervised tmux fallback. |
 | `session list` | List active Jade Symphony tmux sessions by configured prefix. | Read-only operator summary. |
 | `session attach` | Print or execute the tmux attach command for one session. | Defaults to printing the command; `--exec` enters tmux. |
 

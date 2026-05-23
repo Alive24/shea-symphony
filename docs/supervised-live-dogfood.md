@@ -93,21 +93,20 @@ cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
 That write tick requires a real main-agent backend. The canonical workflow uses
-`main_lane.backend: tmux`, so a successful tick starts an attachable local session,
-prints the `tmux attach-session` command, records the prompt artifact, session
-registry entry, and log path, and keeps the issue active. A running tmux session
-alone is not completion evidence and must not move the issue to `Agent Review`.
-Run another bounded `main loop --write` tick after the Main Agent session
-finishes. The loop first reconciles the recorded runtime/session registry entry;
-only a terminal completed session proceeds to verification, PR publication,
-linked-PR readback, PR readiness, and the final `Agent Review` state change.
-Active, waiting, unknown, or missing-registry sessions are kept out of duplicate
-launch and out of `Agent Review`.
-Codex tmux startup captures the pane before sending the issue prompt. By
-default, if a Jade Symphony-created issue worktree shows the Codex workspace trust
-prompt, Jade Symphony sends two `C-m` submissions and waits until the pane reaches a
-ready Codex viewport. Set `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to disable this
-auto-trust behavior. If the prompt cannot be cleared, the write tick stops with
+`main_lane.backend: codex` with `codex.command: codex app-server`, so a
+successful tick starts one app-server turn, records the prompt artifact,
+protocol log, stderr log, normalized event artifact, session registry entry,
+and runtime state, then proceeds to verification, PR publication, linked-PR
+readback, PR readiness, and the final `Agent Review` state change only after a
+terminal completed turn. Active, failed, usage-limited, unknown, stale, or
+missing-registry runtime evidence is kept out of duplicate launch and out of
+`Agent Review`.
+`main_lane.backend: tmux` remains an explicit fallback/debug option. In that
+mode, Codex tmux startup captures the pane before sending the issue prompt. By
+default, if a Jade Symphony-created issue worktree shows the Codex workspace
+trust prompt, Jade Symphony sends two `C-m` submissions and waits until the pane
+reaches a ready Codex viewport. Set `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to disable
+this auto-trust behavior. If the prompt cannot be cleared, the write tick stops with
 the tmux attach command and log path preserved for manual inspection.
 Use `cargo run -- status workflows/jade-symphony.md` for compact session
 classification and attach/log evidence, `cargo run -- doctor

@@ -96,12 +96,15 @@ question, but do not edit files under
 13. Return to tracker selection only after this issue has a PR/workpad handoff
     or a documented blocked state.
 
-When this prompt is delivered by `main loop` through a supervised tmux session,
-the loop may later reconcile the recorded session instead of launching a new
-agent. Make your terminal result easy for the CLI and operator to classify:
-leave the Main Workpad, verification summary, PR URL, linked-PR expectation,
-and handoff boundary explicit before you stop. A message that merely says
-"done" is not enough handoff evidence.
+When this prompt is delivered by `main loop`, the default unattended runtime is
+Codex app-server. The loop records prompt/protocol/stderr/normalized-event
+artifacts and may later reconcile recorded runtime evidence instead of launching
+a duplicate agent. If an operator explicitly switches Main back to tmux
+fallback/debug mode, tmux attach/log evidence is treated as the same runtime
+boundary, not a separate workflow. Make your terminal result easy for the CLI
+and operator to classify: leave the Main Workpad, verification summary, PR URL,
+linked-PR expectation, and handoff boundary explicit before you stop. A message
+that merely says "done" is not enough handoff evidence.
 
 ## State And Role Boundaries
 

@@ -365,6 +365,8 @@ pub struct RunningSnapshot {
 pub struct SessionStatusSnapshot {
     pub session_id: String,
     pub lane: String,
+    #[serde(default)]
+    pub backend: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_id: Option<String>,
     pub status: String,

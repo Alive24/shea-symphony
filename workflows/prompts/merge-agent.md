@@ -29,7 +29,10 @@ Project GraphQL or Project UI changes are break-glass only.
 - Claim `Merging Agent` through `merge claim ... --worker <worker> --write`
   before starting manual merge work. Worker display labels with spaces are
   allowed through the CLI claim path. Then start runtime through `session start
-  --lane merge --run <RUN_ID>` only after the matching claim exists.
+  --lane merge --run <RUN_ID>` only after the matching claim exists. This
+  runtime is for explicit merge-agent diagnosis or repair sessions; clean
+  `merge once` / `merge loop` landing remains direct CLI behavior and does not
+  require a Codex, Gemini, tmux, or app-server session.
 - Confirm exactly one reliable PR target exists.
 - Preserve the assigned structured claim `run=` in merge evidence, timeline
   comments, and final summaries.

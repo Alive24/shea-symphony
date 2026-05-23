@@ -93,6 +93,10 @@ have a narrow shared responsibility:
 - `src/orchestration/session_status.rs`: shared read-only session status
   snapshots and probe defaults used by status, debug, Doctor, clean, autopilot,
   and lane runtime modules.
+- `src/orchestration/canonical_checkout.rs`: command-level canonical checkout
+  guard/report glue. It owns write-mode refresh output, dry-run preview output,
+  and Project/Doctor integration-gap reporting while the lower-level checkout
+  scanner stays in the library module.
 
 `src/main.rs` still owns:
 

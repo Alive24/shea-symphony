@@ -11,11 +11,6 @@ use cli::DisplayMode;
 use cli::{CliLaneClaimSource, ForgeStatusArg};
 #[cfg(test)]
 use jade_symphony::agent::UsageLimitPause;
-use jade_symphony::canonical_checkout::{
-    canonical_checkout_refresh_status_line, canonical_checkout_status_line,
-    canonical_checkout_warning_lines, inspect_canonical_checkout,
-    refresh_canonical_checkout_before_write, CanonicalCheckoutRefreshMode,
-};
 use jade_symphony::config::RuntimeConfig;
 #[cfg(test)]
 use jade_symphony::doctor::ProjectAuditViolation;
@@ -215,6 +210,12 @@ use lanes::review::{
     review_manual_pass, review_manual_reject, review_once, review_status,
 };
 pub(crate) use lanes::review::{ReviewLoopOptions, ReviewStatusCliOptions};
+pub(crate) use orchestration::canonical_checkout::{
+    append_canonical_checkout_gap, enforce_canonical_checkout_before_write,
+    preflight_canonical_checkout_for_write_mode, report_canonical_checkout_readonly,
+};
+#[cfg(test)]
+use orchestration::canonical_checkout::{canonical_checkout_report, CanonicalCheckoutReport};
 pub(crate) use orchestration::session_status::{
     session_status_snapshots, DEFAULT_SESSION_STALE_AFTER_MS, DEFAULT_SESSION_STATUS_LINES,
 };
@@ -645,91 +646,6 @@ fn latest_status_for_issue(
 
 fn print_latest_status(status: &LatestStatus) {
     println!("{}", render_latest_status_bar(status));
-}
-
-fn report_canonical_checkout_readonly(config: &RuntimeConfig) -> Vec<String> {
-    let root = match std::env::current_dir() {
-        Ok(root) => root,
-        Err(error) => {
-            return vec![format!("canonical_checkout_error={error}")];
-        }
-    };
-    match inspect_canonical_checkout(&root, config) {
-        Ok(report) => vec![canonical_checkout_status_line(&report)],
-        Err(error) => vec![format!("canonical_checkout_error={error}")],
-    }
-}
-
-fn enforce_canonical_checkout_before_write(
-    config: &RuntimeConfig,
-    command: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let root = std::env::current_dir()?;
-    match refresh_canonical_checkout_before_write(
-        &root,
-        config,
-        CanonicalCheckoutRefreshMode::Apply,
-    ) {
-        Ok(refresh) => {
-            println!("{}", canonical_checkout_refresh_status_line(&refresh));
-            println!("{}", canonical_checkout_status_line(&refresh.checkout));
-            for line in canonical_checkout_warning_lines(&refresh.checkout) {
-                println!("{command}_{line}");
-            }
-            Ok(())
-        }
-        Err(error) => {
-            println!(
-                "canonical_checkout_refresh=blocked command={} reason=\"{}\"",
-                shell_quote_display(command),
-                single_line(&error.to_string())
-            );
-            Err(error.into())
-        }
-    }
-}
-
-fn preview_canonical_checkout_before_dry_run(config: &RuntimeConfig, command: &str) {
-    let Ok(root) = std::env::current_dir() else {
-        println!(
-            "canonical_checkout_refresh=blocked command={} reason=\"current directory unavailable\"",
-            shell_quote_display(command)
-        );
-        return;
-    };
-    match refresh_canonical_checkout_before_write(
-        &root,
-        config,
-        CanonicalCheckoutRefreshMode::DryRun,
-    ) {
-        Ok(refresh) => {
-            println!("{}", canonical_checkout_refresh_status_line(&refresh));
-            println!("{}", canonical_checkout_status_line(&refresh.checkout));
-            for line in canonical_checkout_warning_lines(&refresh.checkout) {
-                println!("{command}_{line}");
-            }
-        }
-        Err(error) => {
-            println!(
-                "canonical_checkout_refresh=blocked command={} reason=\"{}\"",
-                shell_quote_display(command),
-                single_line(&error.to_string())
-            );
-        }
-    }
-}
-
-fn preflight_canonical_checkout_for_write_mode(
-    config: &RuntimeConfig,
-    command: &str,
-    write: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if write {
-        enforce_canonical_checkout_before_write(config, command)
-    } else {
-        preview_canonical_checkout_before_dry_run(config, command);
-        Ok(())
-    }
 }
 
 fn run_loop_dispatch_write_candidate(
@@ -1906,110 +1822,6 @@ fn write_lane_claim_state(
 
 fn live_github_tracker(config: &RuntimeConfig) -> bool {
     config.tracker.kind == "github_project_v2" && config.tracker.fixture_path.is_none()
-}
-
-fn append_canonical_checkout_gap(config: &RuntimeConfig, gaps: &mut Vec<String>) {
-    if !live_github_tracker(config) {
-        return;
-    }
-    let Ok(current_dir) = std::env::current_dir() else {
-        gaps.push("canonical_checkout_blocked: current directory is unavailable".into());
-        return;
-    };
-    if let Some(reason) = canonical_checkout_report(&current_dir).blocker() {
-        gaps.push(format!("canonical_checkout_blocked: {reason}"));
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum CanonicalCheckoutReport {
-    Ready,
-    Blocked { reason: String },
-}
-
-impl CanonicalCheckoutReport {
-    fn blocker(&self) -> Option<&str> {
-        match self {
-            Self::Ready => None,
-            Self::Blocked { reason } => Some(reason.as_str()),
-        }
-    }
-}
-
-fn canonical_checkout_report(path: &Path) -> CanonicalCheckoutReport {
-    let branch = match git_stdout(path, &["branch", "--show-current"]) {
-        Ok(branch) if !branch.trim().is_empty() => branch.trim().to_string(),
-        Ok(_) => {
-            return CanonicalCheckoutReport::Blocked {
-                reason: "HEAD is detached".into(),
-            }
-        }
-        Err(error) => {
-            return CanonicalCheckoutReport::Blocked {
-                reason: format!("git branch check failed: {error}"),
-            }
-        }
-    };
-    if branch != "main" {
-        return CanonicalCheckoutReport::Blocked {
-            reason: format!("current branch is {branch:?}, expected \"main\""),
-        };
-    }
-
-    if let Err(error) = git_status(path, &["fetch", "--quiet", "origin", "main"]) {
-        return CanonicalCheckoutReport::Blocked {
-            reason: format!("git fetch origin main failed: {error}"),
-        };
-    }
-
-    let head = match git_stdout(path, &["rev-parse", "HEAD"]) {
-        Ok(value) => value.trim().to_string(),
-        Err(error) => {
-            return CanonicalCheckoutReport::Blocked {
-                reason: format!("cannot read HEAD: {error}"),
-            }
-        }
-    };
-    let origin_main = match git_stdout(path, &["rev-parse", "origin/main"]) {
-        Ok(value) => value.trim().to_string(),
-        Err(error) => {
-            return CanonicalCheckoutReport::Blocked {
-                reason: format!("cannot read origin/main: {error}"),
-            }
-        }
-    };
-    if head != origin_main {
-        return CanonicalCheckoutReport::Blocked {
-            reason: "local main does not exactly match origin/main".into(),
-        };
-    }
-
-    CanonicalCheckoutReport::Ready
-}
-
-fn git_stdout(path: &Path, args: &[&str]) -> Result<String, String> {
-    let output = ProcessCommand::new("git")
-        .args(args)
-        .current_dir(path)
-        .output()
-        .map_err(|error| error.to_string())?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if stderr.is_empty() {
-            format!(
-                "git {:?} exited with status {:?}",
-                args,
-                output.status.code()
-            )
-        } else {
-            stderr
-        });
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
-}
-
-fn git_status(path: &Path, args: &[&str]) -> Result<(), String> {
-    git_stdout(path, args).map(|_| ())
 }
 
 fn unbounded_loop_sleep_ms(limit: Option<usize>, poll_interval_ms: u64) -> Option<u64> {

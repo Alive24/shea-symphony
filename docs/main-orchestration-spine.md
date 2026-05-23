@@ -130,6 +130,9 @@ entrypoint:
   readiness rendering tests.
 - `src/main/tests/forge.rs`: Issue Forge, promote/rework, Link PR, and Rework
   evidence-ordering behavior tests that exercise binary-private helpers.
+- `src/main/tests/main_loop.rs`: Main-loop selection, runtime recovery,
+  pending-session reconciliation, handoff evidence, live PR linkage,
+  usage-limit pause, and write-mode guard tests.
 - `src/main/tests/parser.rs`: CLI parser/help/flag compatibility tests for the
   grouped command surface produced by `src/cli.rs`.
 

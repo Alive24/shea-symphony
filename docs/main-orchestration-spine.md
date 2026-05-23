@@ -41,6 +41,9 @@ clear owner:
 - `src/commands/forge.rs`: Issue Forge create, validate, promote, and rework
   execution. It preserves quality-gate checks, Project write ordering, readback
   verification, and rework evidence-before-status behavior.
+- `src/commands/forge/create.rs`: `forge create` execution. It owns dry-run
+  rendering, duplicate-title protection, assignee gating, Project add/field
+  writes, create readback, and script-friendly success output.
 - `src/commands/follow_up.rs`: low-level `create-follow-up` execution for
   explicit operator follow-up creation from a body file. It stays separate from
   Issue Forge so quality-gated issue creation remains easy to find.

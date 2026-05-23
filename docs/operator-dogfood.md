@@ -159,6 +159,48 @@ If an operator switches the workflow back to `main_lane.backend: dry-run`, the
 mutating tick exits before runtime-state writes, worktree creation, Project
 claims, or workpad mutation.
 
+## Post-Merge App-Server Smoke Gate
+
+Before using #359 or another broader autopilot dogfood issue for a long-running
+write-mode run, perform one bounded Main-lane app-server smoke after #367 is
+`Done` and visible on canonical `main`. This is an evidence gate, not a
+production-readiness claim.
+
+Start with readback and dry-run preflight:
+
+```bash
+target/debug/jade-symphony project issue workflows/jade-symphony.md '#367' --json
+target/debug/jade-symphony project issue workflows/jade-symphony.md '#388' --json
+target/debug/jade-symphony debug workflows/jade-symphony.md
+target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+```
+
+The preflight must show that #367 is terminal, #388's structured blocker is no
+longer active, the selected Main issue is expected, and the Main backend line
+reports `backend=codex`, `backend_source=codex-app-server`,
+`approval_policy=never`, and `app_server_live_smoke_ready=true`. If the dry-run
+selects an unsafe or surprising issue, stop there and record the mismatch as
+operator-blocked smoke evidence.
+
+Only then run the bounded live tick:
+
+```bash
+target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --write
+```
+
+A passing smoke leaves citeable evidence in the selected issue's Main Workpad,
+the PR handoff/readiness evidence, runtime state or reconciled session registry,
+the prompt/protocol/stderr/normalized-event app-server artifacts, `status`, and
+`doctor` readback. The smoke is sufficient for #359 or the next dogfood plan to
+cite "one bounded Main app-server write path completed with durable evidence";
+it does not prove merge-agent repair behavior, unattended overnight resilience,
+quota resilience, or full app-server production readiness. Merge-agent
+app-server smoke remains deferred until a natural repair candidate exists.
+
+Backend, auth, quota, GitHub API, or schema failures must be classified in the
+workpad or timeline evidence. Treat them as blocked/retry guidance, not as a
+passing app-server smoke.
+
 ## Evidence Timeline
 
 Jade Symphony uses two issue-comment evidence surfaces:

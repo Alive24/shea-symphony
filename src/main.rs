@@ -7629,6 +7629,33 @@ fn debug_report(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>
         "integration_gap_warning_count={}",
         dogfood_gap_report.warnings.len()
     );
+    let smoke_gate = main_app_server_smoke_gate(&config);
+    println!("main_backend={}", smoke_gate.backend);
+    println!("main_backend_source={}", smoke_gate.backend_source);
+    println!(
+        "main_backend_command={}",
+        shell_quote_display(&smoke_gate.command)
+    );
+    println!(
+        "main_backend_approval_policy={}",
+        smoke_gate.approval_policy
+    );
+    println!(
+        "app_server_live_smoke_ready={}",
+        smoke_gate.app_server_live_smoke_ready
+    );
+    println!(
+        "app_server_live_smoke_reason={}",
+        smoke_gate.app_server_live_smoke_reason
+    );
+    println!(
+        "app_server_live_smoke_dry_run_command=\"cargo run -- main loop {} --max-iterations 1 --dry-run\"",
+        workflow_path.display()
+    );
+    println!(
+        "app_server_live_smoke_write_command=\"cargo run -- main loop {} --max-iterations 1 --write\"",
+        workflow_path.display()
+    );
     println!("supervised_ready={supervised_ready}");
     println!("unattended_ready=false");
     println!("unattended_reason=Jade Symphony CLI still requires supervised lane commands for dogfood and repair decisions.");
@@ -8829,6 +8856,79 @@ fn dogfood_integration_gap_severity(gap: &str) -> DogfoodIntegrationGapSeverity 
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MainAppServerSmokeGate {
+    backend: String,
+    backend_source: String,
+    command: String,
+    approval_policy: String,
+    app_server_live_smoke_ready: bool,
+    app_server_live_smoke_reason: String,
+}
+
+fn main_app_server_smoke_gate(config: &RuntimeConfig) -> MainAppServerSmokeGate {
+    match config.backend.kind.as_str() {
+        "codex" if config.codex.command.contains("app-server") => MainAppServerSmokeGate {
+            backend: config.backend.kind.clone(),
+            backend_source: "codex-app-server".into(),
+            command: config.codex.command.clone(),
+            approval_policy: codex_approval_policy_label(config),
+            app_server_live_smoke_ready: true,
+            app_server_live_smoke_reason:
+                "main_lane.backend=codex and codex.command includes app-server".into(),
+        },
+        "codex" => MainAppServerSmokeGate {
+            backend: config.backend.kind.clone(),
+            backend_source: "codex-subprocess".into(),
+            command: config.codex.command.clone(),
+            approval_policy: codex_approval_policy_label(config),
+            app_server_live_smoke_ready: false,
+            app_server_live_smoke_reason: "codex command does not select the app-server transport"
+                .into(),
+        },
+        "tmux" => MainAppServerSmokeGate {
+            backend: config.backend.kind.clone(),
+            backend_source: "tmux-fallback".into(),
+            command: config
+                .tmux
+                .main_agent_command
+                .clone()
+                .unwrap_or_else(|| config.tmux.agent_command.clone()),
+            approval_policy: "n/a".into(),
+            app_server_live_smoke_ready: false,
+            app_server_live_smoke_reason:
+                "tmux is explicit fallback/debug and is not the app-server smoke path".into(),
+        },
+        "dry-run" => MainAppServerSmokeGate {
+            backend: config.backend.kind.clone(),
+            backend_source: "dry-run".into(),
+            command: "dry-run".into(),
+            approval_policy: "n/a".into(),
+            app_server_live_smoke_ready: false,
+            app_server_live_smoke_reason: "dry-run backend cannot perform a live app-server smoke"
+                .into(),
+        },
+        other => MainAppServerSmokeGate {
+            backend: config.backend.kind.clone(),
+            backend_source: other.into(),
+            command: other.into(),
+            approval_policy: "n/a".into(),
+            app_server_live_smoke_ready: false,
+            app_server_live_smoke_reason:
+                "configured Main backend is not the Codex app-server runtime".into(),
+        },
+    }
+}
+
+fn codex_approval_policy_label(config: &RuntimeConfig) -> String {
+    config
+        .codex
+        .approval_policy
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| config.codex.approval_policy.to_string())
+}
+
 fn is_controlled_dogfood_smoke_issue(issue: &TrackerIssue) -> bool {
     issue
         .labels_lowercase()
@@ -9585,6 +9685,17 @@ fn print_run_loop_write_selection(
             slot_index + 1
         );
     }
+    let smoke_gate = main_app_server_smoke_gate(config);
+    println!(
+        "run_loop_action=backend issue={} backend={} backend_source={} command={} approval_policy={} app_server_live_smoke_ready={} session_registry={}",
+        issue.identifier,
+        smoke_gate.backend,
+        smoke_gate.backend_source,
+        shell_quote_display(&smoke_gate.command),
+        smoke_gate.approval_policy,
+        smoke_gate.app_server_live_smoke_ready,
+        session_registry_path(config).display()
+    );
 }
 
 fn run_loop_dispatch_write_candidate(
@@ -13285,6 +13396,7 @@ fn print_run_loop_dry_run_actions(
     config: &RuntimeConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let profile = selected_execution_profile(&config.profiles)?;
+    let smoke_gate = main_app_server_smoke_gate(config);
     if normalize_state(&issue.state) != "in progress" {
         println!(
             "run_loop_dry_run action=claim issue={} target_state=in_progress",
@@ -13309,8 +13421,14 @@ fn print_run_loop_dry_run_actions(
         config.identity.git.author()
     );
     println!(
-        "run_loop_dry_run action=run issue={} backend=configured",
-        issue.identifier
+        "run_loop_dry_run action=run issue={} backend={} backend_source={} command={} approval_policy={} app_server_live_smoke_ready={} session_registry={}",
+        issue.identifier,
+        smoke_gate.backend,
+        smoke_gate.backend_source,
+        shell_quote_display(&smoke_gate.command),
+        smoke_gate.approval_policy,
+        smoke_gate.app_server_live_smoke_ready,
+        session_registry_path(config).display()
     );
     if let Some(profile) = profile {
         println!(
@@ -18058,6 +18176,45 @@ mod tests {
         issue.labels.clear();
         issue.title = "[dogfood-smoke] controlled run".into();
         assert!(is_controlled_dogfood_smoke_issue(&issue));
+    }
+
+    #[test]
+    fn main_app_server_smoke_gate_is_ready_for_codex_app_server() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nmain_lane:\n  backend: codex\ncodex:\n  command: /opt/homebrew/bin/codex app-server\n  approval_policy: never\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        let gate = main_app_server_smoke_gate(&config);
+
+        assert_eq!(gate.backend, "codex");
+        assert_eq!(gate.backend_source, "codex-app-server");
+        assert_eq!(gate.command, "/opt/homebrew/bin/codex app-server");
+        assert_eq!(gate.approval_policy, "never");
+        assert!(gate.app_server_live_smoke_ready);
+    }
+
+    #[test]
+    fn main_app_server_smoke_gate_rejects_non_app_server_codex() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nmain_lane:\n  backend: codex\ncodex:\n  command: codex exec\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        let gate = main_app_server_smoke_gate(&config);
+
+        assert_eq!(gate.backend, "codex");
+        assert_eq!(gate.backend_source, "codex-subprocess");
+        assert!(!gate.app_server_live_smoke_ready);
+        assert!(gate
+            .app_server_live_smoke_reason
+            .contains("does not select the app-server"));
     }
 
     #[test]

@@ -1,3 +1,4 @@
+pub(crate) mod clean;
 pub(crate) mod doctor;
 pub(crate) mod forge;
 pub(crate) mod gate;

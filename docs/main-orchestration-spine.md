@@ -35,6 +35,10 @@ clear owner:
 - `src/commands/forge.rs`: Issue Forge create, validate, promote, and rework
   execution. It preserves quality-gate checks, Project write ordering, readback
   verification, and rework evidence-before-status behavior.
+- `src/commands/project.rs`: Project read and write command execution for
+  state, issue, inspect, set-state, workpad, link-pr, add, and
+  timeline-comment. It keeps write intent checks, recovery-aware mutations, and
+  readback-oriented output close to the Project command family.
 
 `src/main.rs` still owns:
 
@@ -49,12 +53,10 @@ lane routing, runtime recovery, or workpad rendering.
 
 ## Preferred Next Extractions
 
-- Move Project command execution glue to `src/commands/project.rs`, preserving
-  state, issue, inspect, set-state, workpad, link-pr, add, and timeline-comment
-  behavior.
+- Move workspace command execution glue to `src/commands/workspace.rs` while
+  keeping local worktree discovery separate from runtime attempt logic.
 - Move Review and Merge command execution glue only as lane-specific modules,
   preserving their current authority boundaries and transition ordering.
-- Move workspace command execution glue separately from runtime attempt logic.
 - Keep future `LanePolicy` or `WorkerProfile` abstractions as follow-up design
   work; do not introduce them as part of a mechanical extraction.
 

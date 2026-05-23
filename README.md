@@ -1,120 +1,287 @@
 # Jade Symphony
 
-Jade Symphony is a supervised orchestration harness for local coding agents.
-It helps an operator turn tracked engineering work into isolated agent
-workspaces, pull requests, independent review passes, and guarded merge
-decisions without losing the human control points that make the process safe.
+Jade Symphony is a team workflow system for supervised AI-native engineering.
 
-The project is an OpenAI Symphony-style Rust implementation with Jade Symphony-specific
-extensions for tracker-driven team workflows. It is inspired by the official
-OpenAI Symphony specification and reference implementation, and extends that
-lineage with GitHub Project v2 / Linear state machines, issue quality gates,
-agent role lanes, durable evidence, and supervised dogfood workflows.
+It helps a human operator turn rough engineering intent into issue contracts,
+run implementation agents in isolated workspaces, request independent agent
+review, preserve audit evidence, and land approved pull requests through a
+guarded merge lane.
 
-Current maturity: **supervised dogfood, not unattended production
-orchestration**. Jade Symphony can run bounded implementation, review, and merge
-ticks against a live tracker, but it is still intentionally operator-led.
+It is inspired by OpenAI Symphony, but the focus here is not just launching an
+agent. The focus is the whole team loop around the agent:
 
-## Why It Exists
+- what work is safe to start;
+- who or what currently owns it;
+- where the implementation happened;
+- which evidence proves it is ready;
+- when a human must decide;
+- how the merge should be repaired, retried, or stopped.
 
-Local coding agents are powerful, but team work needs more than a prompt and a
-terminal. Real engineering flow needs scoped issues, ownership, branch hygiene,
-review evidence, merge gates, restart behavior, and a clear answer to "what is
-happening right now?"
+Current maturity: **supervised team-workflow dogfood**. Jade Symphony can run
+bounded Main, Review, and Merge lane ticks against a live tracker. It is moving
+toward all-lane autopilot, but write-mode automation is still deliberately
+observable, bounded, and operator-led.
 
-Jade Symphony is built around that gap. It treats the tracker as the source of
-truth, then gives agents a narrow lane:
+## The Short Version
 
-- Main Agent work starts from an executable issue contract and stops at
+Modern coding agents are good at making changes. Teams need more than that.
+
+A real team needs a way to say:
+
+- this issue is clear enough to dispatch;
+- this agent is allowed to work on it;
+- this work happened in the right branch and worktree;
+- this PR was independently reviewed;
+- this human approval was recorded;
+- this merge failure is mechanical, semantic, or blocked;
+- this run can be resumed without guessing.
+
+Jade Symphony turns those questions into a workflow.
+
+```mermaid
+flowchart LR
+    A["Rough idea"] --> B["Issue Forge"]
+    B --> C["Todo issue contract"]
+    C --> D["Main lane"]
+    D --> E["Agent Review"]
+    E --> F["Human Review"]
+    F --> G["Merge lane"]
+    G --> H["Done"]
+
+    E --> I["Rework"]
+    I --> D
+    G --> J["Need Human Input"]
+    J --> F
+```
+
+The tracker stays the shared source of truth. Local artifacts, worktrees, logs,
+and session records exist to make the tracker state explainable and recoverable,
+not to replace it.
+
+## How People Use It
+
+Jade Symphony is designed around a human operator, not a hidden daemon.
+
+The operator can ask:
+
+1. What is ready to work on?
+2. What is blocked or ambiguous?
+3. Which lane should run next?
+4. Did the agent leave enough evidence?
+5. Is this safe to approve, repair, or merge?
+
+The system answers through a few surfaces:
+
+- **Issue Forge** shapes rough work into executable issues.
+- **Main lane** implements one issue in an isolated workspace and stops at
   `Agent Review`.
-- Review Agent work independently inspects the PR and records pass or rework
-  evidence before anything can reach `Human Review`.
-- Merge Agent work handles the guarded `Merging` lane, including dirty PRs,
-  conflicts, failed checks, and durable diagnostics.
+- **Review lane** performs independent agent review and records pass or rework
+  evidence.
+- **Human Review** gives the operator a structured approval checkpoint.
+- **Merge lane** lands approved PRs, repairs safe mechanical drift, and routes
+  real uncertainty to `Need Human Input`.
+- **Workpads and timeline evidence** keep the issue readable after the run.
+- **Doctor and status surfaces** explain stuck states without requiring a
+  low-level log expedition.
+- **Dream and Reflect skills** mine recent work into safe Backlog candidates
+  before they become executable Todo issues.
 
-The goal is not to remove the operator. The goal is to make supervised agent
-work repeatable enough that a human can safely keep several pieces of work
-moving without turning the repo, tracker, or local machine into mystery state.
+The intended feeling is closer to a team cockpit than a prompt runner. You
+should be able to leave work moving, come back later, and understand what
+happened from the issue, PR, workpad, and status output.
+
+## A Human-First Tour
+
+If you are evaluating Jade Symphony, start with these questions.
+
+### 1. Do you have a tracker-backed workflow?
+
+Jade Symphony expects real work to live in a tracker. The current self-dogfood
+workflow uses GitHub Issues plus GitHub Project v2. Linear support exists behind
+the same tracker abstraction, but the strongest dogfood path today is GitHub.
+
+The workflow file describes tracker states, lane prompts, runtime configuration,
+artifact roots, and verification expectations:
+
+```bash
+cargo run -- validate workflows/jade-symphony.md
+cargo run -- project state workflows/jade-symphony.md
+```
+
+### 2. Is the issue ready for an agent?
+
+Agents should not start from vibes alone. Issue Forge checks whether an issue
+has the contract shape needed for safe execution: goal, context, guardrails,
+scope, dependencies, verification, and expected outcome.
+
+In normal use, the conversational part happens through the Jade Symphony Codex
+skills. The CLI stays deterministic and scriptable:
+
+```bash
+cargo run -- forge validate \
+  --workflow workflows/jade-symphony.md \
+  --status Todo \
+  --title "<title>" \
+  --body-file /path/to/issue.md
+```
+
+Backlog seeds can stay intentionally softer. Todo issues are dispatchable and
+must pass the stronger gate.
+
+### 3. What would the system do next?
+
+Before writing anything, ask the system for a read-only plan:
+
+```bash
+cargo run -- autopilot plan workflows/jade-symphony.md
+cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+cargo run -- merge loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+```
+
+`autopilot plan` is the bridge toward all-lane automation. It does not launch
+workers. It shows lane readiness, parked human queues, runtime concerns,
+doctor findings, and the next likely actions.
+
+### 4. When should you allow writes?
+
+Write mode is explicit because tracker mutation is real team state.
+
+For a bounded supervised tick:
+
+```bash
+cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --write
+cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --write
+cargo run -- merge loop workflows/jade-symphony.md --max-iterations 1 --write
+```
+
+The canonical operator launcher wraps the same idea:
+
+```bash
+scripts/jade-dogfood --dry-run
+scripts/jade-dogfood --write --confirm-write --max-iterations 1
+```
+
+The system is intentionally conservative. It should prefer a visible blocked
+state over a silent unsafe advance.
+
+## The Lane Model
+
+Jade Symphony separates work by authority.
+
+### Main Lane
+
+The Main lane is for implementation. It claims a Todo or Rework issue, prepares
+or resumes an isolated worktree, runs the configured agent backend, verifies the
+change, opens or reuses a PR, records the Main Workpad, and stops at
+`Agent Review`.
+
+The Main agent must not approve its own work.
+
+The canonical workflow now defaults Main execution to Codex app-server. tmux
+remains available as an explicit fallback/debug substrate, but it is no longer
+the primary unattended direction.
+
+### Review Lane
+
+The Review lane is independent review. In the current dogfood path, automatic
+review uses headless Gemini CLI and records a durable review job ledger plus a
+human-readable issue comment.
+
+Passing review can route ordinary issues to `Human Review`. Routine native
+subissues can route directly to `Merging` when the parent issue owns final UAT.
+Confirmed findings route to `Rework`.
+
+### Human Review
+
+Human Review is not ceremonial. It is the place where the operator checks the
+issue, PR, review evidence, and UAT expectations before approving the work for
+merge.
+
+Human Review is intentionally skill-guided: the operator should get a briefing,
+understand what changed, run or inspect the right checks, and then make an
+explicit decision.
+
+### Merge Lane
+
+The Merge lane owns landing approved work. Clean merges stay direct CLI
+behavior; they do not need an LLM. Behind PRs can be updated and retried.
+Mechanical conflict repair should stay inside the merge lane when safe.
+
+`Need Human Input` is reserved for semantic uncertainty, unsafe state,
+verification failure, missing evidence, or infrastructure failures that need an
+operator decision.
+
+Merge repair should not erase the fact that the issue already passed Agent
+Review and Human Review. It should preserve reviewed intent, record what
+changed, and land only when the result is still safe.
+
+## Evidence Surfaces
+
+Jade Symphony is opinionated about evidence because agent work without evidence
+turns into archaeology.
+
+- The **issue body** is the contract.
+- The **Main Workpad** is the current implementation surface.
+- **Timeline comments** record Review, Human Review, Merge, Rework, and Doctor
+  events.
+- The **PR** is the code handoff and must be visible through linked-PR readback.
+- **Local artifacts** store prompts, app-server protocol output, stderr,
+  normalized events, review ledgers, and session registry records.
+- **Doctor** connects tracker state, runtime state, and local evidence into a
+  readable diagnosis.
+
+The goal is not to keep every byte forever. The goal is that a human can answer
+"what happened here?" without guessing.
 
 ## Relationship To OpenAI Symphony
 
-Jade Symphony does not compete with OpenAI Symphony. It uses the official
-Symphony specification and reference implementation as the baseline lineage for
-workflow loading, tracker normalization, agent execution, runtime state,
-workspace lifecycle, structured logs, and operator status surfaces.
+Jade Symphony follows the OpenAI Symphony lineage for workflow loading, agent
+execution, app-server direction, tracker-backed operation, runtime state, and
+operator surfaces.
 
-Jade Symphony adds a pragmatic layer for local, tracker-backed engineering
-teams:
+It extends that lineage for a more explicit team workflow:
 
+- Issue Forge and quality gates before dispatch;
 - GitHub Project v2 and Linear tracker state machines;
-- issue contracts and an Issue Quality Gate before dispatch;
-- separate Main Agent, Review Agent, and Merge Agent lanes;
-- isolated per-issue worktrees, branches, pull requests, and workpad evidence;
-- logical actor audit records without requiring separate GitHub accounts;
-- local backend orchestration for Codex, Claude Code, and Gemini review;
-- supervised dogfood commands for bounded live runs.
+- separate Main, Review, Human Review, and Merge authority boundaries;
+- workpad and timeline evidence conventions;
+- parent/subissue branch topology;
+- Doctor diagnostics for stuck states;
+- repo-owned skills for conversational operator workflows;
+- Reflect and Dream loops for safe backlog formation;
+- read-only autopilot planning before write-mode all-lane automation.
 
-The source references and parity expectations live in
-[`docs/bootstrap/`](docs/bootstrap/), including the pinned official reference
-material under
+Pinned upstream references live under
 [`docs/bootstrap/references/openai-symphony`](docs/bootstrap/references/openai-symphony/).
+Do not edit those reference files.
 
-## What You Can Do Today
+## What Works Today
 
-Jade Symphony can already support a supervised local dogfood loop:
+The current self-dogfood workflow can:
 
-- read live GitHub Project v2 or Linear-backed tracker state through normalized
-  issue records;
-- validate workflow files and inspect executable queue state;
-- gate issues for required fields, dependency semantics, referenced paths, and
-  verification commands;
-- create or reuse isolated issue worktrees and branches;
-- run bounded `main loop`, `review loop`, and `merge loop` ticks with explicit
-  write-mode confirmation;
-- write tracker-visible workpad evidence and local JSONL audit records;
-- create or reuse PR handoffs for completed Main Agent work;
-- route review failures, merge conflicts, dirty PRs, and runtime failures to
-  visible follow-up states instead of silently advancing them;
-- show operator status, latest-lane summaries, and doctor/audit diagnostics.
+- load and validate workflow files;
+- read GitHub Project v2 tracker state;
+- validate issue contracts before dispatch;
+- create and promote tracker issues through Forge;
+- run bounded Main, Review, and Merge lane ticks;
+- use Codex app-server for Main execution;
+- use headless Gemini for Review execution;
+- create isolated issue worktrees and PR handoffs;
+- preserve Main workpads and lane timeline evidence;
+- recover interrupted Main and Merge lane work by default;
+- inspect runtime/session status;
+- diagnose tracker, PR, worktree, skill, runtime, and lane-state problems;
+- plan future all-lane autopilot actions without mutating state.
 
-It is still not a hands-off daemon. Long-running worker supervision, full Codex
-app-server transport, richer multi-worker resume reconciliation, automatic
-terminal workspace cleanup, and hosted/remote observability remain active
-follow-up work.
-
-For the current operator workflow, start with
-[`docs/operator-dogfood.md`](docs/operator-dogfood.md). For the command surface,
-see [`docs/cli-command-reference.md`](docs/cli-command-reference.md). The live
-self-dogfood workflow is
-[`workflows/jade-symphony.md`](workflows/jade-symphony.md). For the detailed
-capability inventory and parity status that used to dominate this README, see
-[`docs/dogfood-readiness.md`](docs/dogfood-readiness.md) and
-[`docs/bootstrap-parity-audit.md`](docs/bootstrap-parity-audit.md).
-
-## How The Loop Works
-
-Jade Symphony expects work to move through tracker state, not private terminal
-memory.
-
-1. An issue is drafted or repaired into an executable contract.
-2. The Issue Quality Gate decides whether it is safe to dispatch.
-3. The Main Agent claims the tracker lane, works in an isolated branch/worktree,
-   verifies locally, opens or reuses one PR, records evidence, and stops at
-   `Agent Review`.
-4. The Review Agent runs independently, writes a review ledger, and moves the
-   issue to `Human Review` only on passing evidence. Confirmed findings go to
-   `Rework`.
-5. Human approval moves the issue into `Merging`.
-6. The Merge Agent performs guarded merge handling and either lands the PR,
-   records a blocker, or routes the issue back to the correct state.
-
-This separation is deliberate. A Main Agent cannot approve its own work, and a
-merge repair does not erase the need for fresh review when the repair is
-semantic or uncertain.
+It is still not a hosted production orchestrator. Long-running all-lane
+autopilot, richer app-server observation, broader hosted dashboards, full remote
+worker supervision, and deeper cross-provider policy controls are active
+follow-up areas.
 
 ## Operator Quickstart
 
-Build and run the safe local checks:
+Build and verify locally:
 
 ```bash
 cargo build
@@ -123,91 +290,78 @@ cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-Inspect the canonical dogfood workflow:
+Inspect the canonical self-dogfood workflow:
 
 ```bash
 cargo run -- validate workflows/jade-symphony.md
 cargo run -- project state workflows/jade-symphony.md
-cargo run -- project inspect workflows/jade-symphony.md '#284'
 cargo run -- doctor workflows/jade-symphony.md
+cargo run -- debug workflows/jade-symphony.md
 ```
 
-Run a bounded supervised preview:
+Preview the next lane actions:
 
 ```bash
-scripts/jade-dogfood --dry-run
+cargo run -- autopilot plan workflows/jade-symphony.md
 cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 cargo run -- merge loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 
-Live writes are explicit and should stay bounded:
+Run a bounded write tick only when the preview and Doctor output make sense:
 
 ```bash
-scripts/jade-dogfood --write --confirm-write --max-iterations 1
+cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
-Use the CLI reference for detailed command behavior, write boundaries, and lane
-authority rules:
-[`docs/cli-command-reference.md`](docs/cli-command-reference.md).
+For the full operator runbook, read
+[`docs/operator-dogfood.md`](docs/operator-dogfood.md). For command details,
+read [`docs/cli-command-reference.md`](docs/cli-command-reference.md).
 
-## Issue Forge
-
-Issue Forge turns complete issue bodies into Project-aware tracker mutations.
-Conversation, reflection, and draft repair now live in Codex skills; the Jade Symphony CLI stays deterministic and scriptable.
-
-Doctor triage for `Need Human Input` and operator-selected stuck states lives in
-the repo-owned skill `.codex/skills/jade-symphony-doctor/SKILL.md`, with the
-operator spec in `docs/operator-doctor.md`. It preserves evidence and recommends
-confirmation-gated repairs instead of mutating Project state by default.
-
-Typical dry-run entrypoints:
-
-```bash
-cargo run -- forge validate --status Backlog --title "Backlog seed" --body-file examples/fixtures/repaired-issue.md
-cargo run -- forge validate --status Todo --title "Executable issue" --body-file examples/fixtures/repaired-issue.md
-cargo run -- forge create --status Backlog --title "Backlog: follow-up" --body-file examples/fixtures/repaired-issue.md --dry-run
-```
-
-Tracker creation requires explicit write flags, an assignee, and project
-selection. See the command reference before using live creation:
-[`docs/cli-command-reference.md`](docs/cli-command-reference.md).
-
-## Project Layout
+## Project Map
 
 - [`workflows/jade-symphony.md`](workflows/jade-symphony.md): canonical
-  self-dogfood workflow for Project #9.
-- [`workflows/prompts/`](workflows/prompts/): lane-specific Main, Review, and
-  Merge Agent prompt contracts.
+  self-dogfood workflow.
+- [`workflows/prompts/`](workflows/prompts/): Main, Review, and Merge lane
+  prompt contracts.
+- [`skills/jade-symphony/`](skills/jade-symphony/): installable Jade Symphony
+  skills for Codex and Gemini operator sessions.
 - [`docs/operator-dogfood.md`](docs/operator-dogfood.md): supervised operator
   launcher and live-run guidance.
 - [`docs/cli-command-reference.md`](docs/cli-command-reference.md): command
   behavior, write boundaries, and examples.
-- [`skills/jade-symphony/`](skills/jade-symphony/): repo-owned, dated
-  installable Jade Symphony skills for Codex and Gemini operator sessions.
-- [`docs/dogfood-readiness.md`](docs/dogfood-readiness.md): current readiness
-  and known gaps.
-- [`docs/bootstrap-parity-audit.md`](docs/bootstrap-parity-audit.md): detailed
-  capability inventory and parity status.
+- [`docs/dogfood-readiness.md`](docs/dogfood-readiness.md): detailed capability
+  inventory and known gaps.
+- [`docs/bootstrap-parity-audit.md`](docs/bootstrap-parity-audit.md): OpenAI
+  Symphony parity and extension audit.
+- [`docs/parent-subissue-topology.md`](docs/parent-subissue-topology.md):
+  parent/subissue branch and review semantics.
 - [`docs/artifact-storage-policy.md`](docs/artifact-storage-policy.md):
-  durable, recoverable, and disposable artifact policy.
-- [`docs/bootstrap/`](docs/bootstrap/): Jade Symphony extension spec, workflow notes,
-  parity references, and official Symphony source index.
+  artifact durability and cleanup policy.
+- [`docs/bootstrap/`](docs/bootstrap/): extension notes and pinned upstream
+  references.
 - [`examples/`](examples/): fixture workflows and safe local examples.
 
 ## Design Boundaries
 
 Jade Symphony is orchestration infrastructure. It should not contain downstream
-application business logic. Domain-specific work belongs in tracked issues and
-per-issue workspaces.
+application business logic. Domain work belongs in tracked issues and isolated
+issue workspaces.
 
-The tracker remains the operating source of truth. Local runtime files are used
-for recovery and audit, but live status must be refreshed from the tracker
-before deciding what to claim, review, or merge.
+The tracker is the operating source of truth. Local runtime files make tracker
+state recoverable and auditable, but lane decisions should refresh live tracker
+state before claiming, reviewing, or merging work.
 
-Write-mode commands are intentionally explicit. Jade Symphony should record
-evidence before state transitions, preserve role boundaries, and prefer a
-visible blocked state over an unsafe silent advance.
+Role boundaries matter:
+
+- Main implementation stops at `Agent Review`.
+- Review evidence gates movement toward `Human Review` or `Merging`.
+- Human approval gates ordinary merges.
+- Merge repair stays in the merge lane unless it needs a real human decision.
+- Dream and Reflect output is advisory until promoted into an issue contract.
+
+Write-mode commands should record evidence before state transitions, preserve
+claims and audit records, and fail closed when the safe next action is unclear.
 
 ## Development
 
@@ -231,5 +385,3 @@ cargo run -- clean plan workflows/jade-symphony.md
 
 The implementation is grounded in `docs/bootstrap/` and the pinned official
 reference under `docs/bootstrap/references/openai-symphony/`.
-
-Do not edit files under `docs/bootstrap/references/openai-symphony/`.

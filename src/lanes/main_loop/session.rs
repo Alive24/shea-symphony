@@ -2,17 +2,25 @@ use jade_symphony::agent::UsageLimitPause;
 use jade_symphony::config::RuntimeConfig;
 use jade_symphony::handoff::IssueHandoffPlan;
 use jade_symphony::lane_claim::LaneClaim;
-use jade_symphony::model::TrackerIssue;
+use jade_symphony::model::{normalize_state, TrackerIssue};
 use jade_symphony::profiles::selected_execution_profile;
-use jade_symphony::runtime_state::{RuntimeIssueState, RuntimeState, RuntimeTransition};
+use jade_symphony::runtime_state::{
+    load_runtime_states, remove_runtime_state_for_issue, RuntimeIssueState, RuntimeState,
+    RuntimeTransition,
+};
 use jade_symphony::session_registry::{
     capture_tmux_pane_tail, classify_session_record, load_session_registry, read_log_tail,
-    session_registry_path, unix_timestamp_ms, AgentSessionRecord, SessionStatus,
+    save_session_registry, session_registry_path, unix_timestamp_ms, AgentSessionRecord,
+    SessionStatus,
 };
 use jade_symphony::workspace::{GitIdentityApplyResult, GitIdentityApplyStatus};
 
-use super::{runtime_state_issue_identifier, IssueExecutionResult};
-use crate::{compact_evidence, DEFAULT_SESSION_STALE_AFTER_MS, DEFAULT_SESSION_STATUS_LINES};
+use super::{
+    append_runtime_supervision_event, runtime_state_issue_identifier, IssueExecutionResult,
+};
+use crate::{
+    compact_evidence, current_time_ms, DEFAULT_SESSION_STALE_AFTER_MS, DEFAULT_SESSION_STATUS_LINES,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MainSessionReconciliation {
@@ -246,6 +254,80 @@ pub(crate) fn reconcile_pending_main_session(
             evidence: probe.evidence,
         })),
     }
+}
+
+pub(crate) fn reconcile_main_handoff_runtime_state(
+    config: &RuntimeConfig,
+    issue_ref: &str,
+    target_state: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if normalize_state(target_state) != "agent_review" {
+        return Ok(());
+    }
+
+    let now_ms = current_time_ms();
+    let registry_path = session_registry_path(config);
+    let mut registry = load_session_registry(&registry_path)?;
+    let mut completed_sessions = 0usize;
+
+    for record in &mut registry.sessions {
+        if record.lane == "main"
+            && record
+                .issue_identifier
+                .as_deref()
+                .is_some_and(|identifier| issue_refs_match_local(identifier, issue_ref))
+            && !matches!(
+                record.status,
+                SessionStatus::Completed | SessionStatus::Recorded | SessionStatus::Failed
+            )
+        {
+            record.status = SessionStatus::Completed;
+            record.updated_at_ms = now_ms;
+            completed_sessions += 1;
+        }
+    }
+
+    if completed_sessions > 0 {
+        save_session_registry(&registry_path, &registry)?;
+    }
+
+    let runtime_state = load_runtime_states(config)?.into_iter().find(|state| {
+        state
+            .active_issue
+            .as_ref()
+            .is_some_and(|issue| issue_refs_match_local(&issue.identifier, issue_ref))
+            && state.lane.as_deref().is_none_or(|lane| lane == "main")
+    });
+    let runtime_matches_main_issue = runtime_state.is_some();
+    if runtime_matches_main_issue {
+        remove_runtime_state_for_issue(config, issue_ref)?;
+    }
+
+    if completed_sessions > 0 || runtime_matches_main_issue {
+        append_runtime_supervision_event(
+            config,
+            runtime_state.as_ref(),
+            "MainHandoffRuntimeReconciled",
+            &format!(
+                "issue={} target_state=agent_review sessions_completed={} runtime_cleared={}",
+                issue_ref, completed_sessions, runtime_matches_main_issue
+            ),
+        )?;
+        println!(
+            "main_handoff_runtime_reconcile issue={} sessions_completed={} runtime_cleared={}",
+            issue_ref, completed_sessions, runtime_matches_main_issue
+        );
+    }
+
+    Ok(())
+}
+
+fn issue_refs_match_local(left: &str, right: &str) -> bool {
+    normalize_issue_ref_local(left) == normalize_issue_ref_local(right)
+}
+
+fn normalize_issue_ref_local(value: &str) -> String {
+    value.trim().trim_start_matches('#').to_string()
 }
 
 fn result_from_reconciled_main_session(

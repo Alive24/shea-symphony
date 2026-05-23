@@ -57,9 +57,10 @@ pub(crate) use selection::{
     select_main_run_loop_issues, AssigneeOwnershipDecision, NoDispatchAction, RunLoopClaimAction,
 };
 pub(crate) use session::{
-    main_session_active_recoverable, reconcile_pending_main_session,
-    run_loop_runtime_state_for_issue, run_loop_runtime_state_with_result,
-    run_loop_runtime_state_with_transition, MainSessionReconciliation,
+    main_session_active_recoverable, reconcile_main_handoff_runtime_state,
+    reconcile_pending_main_session, run_loop_runtime_state_for_issue,
+    run_loop_runtime_state_with_result, run_loop_runtime_state_with_transition,
+    MainSessionReconciliation,
 };
 pub(crate) use supervision::append_runtime_supervision_event;
 

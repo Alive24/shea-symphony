@@ -69,8 +69,10 @@ use jade_symphony::session_registry::save_session_record;
 use jade_symphony::session_registry::AgentSessionRecord;
 use jade_symphony::session_registry::{
     capture_tmux_pane_tail, classify_session_record, load_session_registry, read_log_tail,
-    save_session_registry, session_registry_path, unix_timestamp_ms, SessionStatus,
+    session_registry_path, unix_timestamp_ms,
 };
+#[cfg(test)]
+use jade_symphony::session_registry::{save_session_registry, SessionStatus};
 use jade_symphony::skill_status::SkillStatusInput;
 use jade_symphony::status_surface::{render_latest_status_bar, render_snapshot};
 #[cfg(test)]
@@ -170,12 +172,13 @@ pub(crate) use lanes::main_loop::{
     append_runtime_supervision_event, apply_live_handoff_pr_link, compact_evidence,
     execute_issue_once, execute_issue_once_with_workspace_key, handle_run_loop_gate_failure,
     handle_run_loop_handoff_failure, linked_pull_requests_contain, main_app_server_smoke_gate,
-    main_session_active_recoverable, pull_request_number_from_url, reconcile_pending_main_session,
-    run_handoff_verification, run_loop, run_loop_agent_review_handoff_evidence,
-    run_loop_apply_recovery_handoff, run_loop_assignee_ownership_decision,
-    run_loop_assignee_ownership_workpad, run_loop_claim_action, run_loop_handoff_failure_workpad,
-    run_loop_handoff_plan, run_loop_handoff_workpad, run_loop_live_handoff_enabled,
-    run_loop_ownership_workpad, run_loop_runtime_ownership, run_loop_runtime_state_for_issue,
+    main_session_active_recoverable, pull_request_number_from_url,
+    reconcile_main_handoff_runtime_state, reconcile_pending_main_session, run_handoff_verification,
+    run_loop, run_loop_agent_review_handoff_evidence, run_loop_apply_recovery_handoff,
+    run_loop_assignee_ownership_decision, run_loop_assignee_ownership_workpad,
+    run_loop_claim_action, run_loop_handoff_failure_workpad, run_loop_handoff_plan,
+    run_loop_handoff_workpad, run_loop_live_handoff_enabled, run_loop_ownership_workpad,
+    run_loop_runtime_ownership, run_loop_runtime_state_for_issue,
     run_loop_runtime_state_with_result, run_loop_runtime_state_with_transition,
     run_loop_usage_limit_pause_workpad, AssigneeOwnershipDecision, HandoffVerification,
     MainSessionReconciliation, RunLoopClaimAction, RunLoopLiveHandoff, RunLoopOptions,
@@ -546,80 +549,6 @@ fn session_status_snapshots(
     }
 
     Ok(snapshots)
-}
-
-fn reconcile_main_handoff_runtime_state(
-    config: &RuntimeConfig,
-    issue_ref: &str,
-    target_state: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if normalize_state(target_state) != "agent_review" {
-        return Ok(());
-    }
-
-    let now_ms = current_time_ms();
-    let registry_path = session_registry_path(config);
-    let mut registry = load_session_registry(&registry_path)?;
-    let mut completed_sessions = 0usize;
-
-    for record in &mut registry.sessions {
-        if record.lane == "main"
-            && record
-                .issue_identifier
-                .as_deref()
-                .is_some_and(|identifier| issue_refs_match_local(identifier, issue_ref))
-            && !matches!(
-                record.status,
-                SessionStatus::Completed | SessionStatus::Recorded | SessionStatus::Failed
-            )
-        {
-            record.status = SessionStatus::Completed;
-            record.updated_at_ms = now_ms;
-            completed_sessions += 1;
-        }
-    }
-
-    if completed_sessions > 0 {
-        save_session_registry(&registry_path, &registry)?;
-    }
-
-    let runtime_state = load_runtime_states(config)?.into_iter().find(|state| {
-        state
-            .active_issue
-            .as_ref()
-            .is_some_and(|issue| issue_refs_match_local(&issue.identifier, issue_ref))
-            && state.lane.as_deref().is_none_or(|lane| lane == "main")
-    });
-    let runtime_matches_main_issue = runtime_state.is_some();
-    if runtime_matches_main_issue {
-        remove_runtime_state_for_issue(config, issue_ref)?;
-    }
-
-    if completed_sessions > 0 || runtime_matches_main_issue {
-        append_runtime_supervision_event(
-            config,
-            runtime_state.as_ref(),
-            "MainHandoffRuntimeReconciled",
-            &format!(
-                "issue={} target_state=agent_review sessions_completed={} runtime_cleared={}",
-                issue_ref, completed_sessions, runtime_matches_main_issue
-            ),
-        )?;
-        println!(
-            "main_handoff_runtime_reconcile issue={} sessions_completed={} runtime_cleared={}",
-            issue_ref, completed_sessions, runtime_matches_main_issue
-        );
-    }
-
-    Ok(())
-}
-
-fn issue_refs_match_local(left: &str, right: &str) -> bool {
-    normalize_issue_ref_local(left) == normalize_issue_ref_local(right)
-}
-
-fn normalize_issue_ref_local(value: &str) -> String {
-    value.trim().trim_start_matches('#').to_string()
 }
 
 fn single_line(value: &str) -> String {

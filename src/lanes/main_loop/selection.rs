@@ -1,5 +1,8 @@
+use std::process::Command as ProcessCommand;
+
 use jade_symphony::config::RuntimeConfig;
 use jade_symphony::model::TrackerIssue;
+use jade_symphony::profiles::selected_execution_profile;
 use jade_symphony::tracker::{claim_decision, ClaimDecision};
 
 use super::runtime::RuntimeRecoveryCandidate;
@@ -143,6 +146,39 @@ pub(crate) fn run_loop_assignee_ownership_decision(
 
 fn normalized_login(value: &str) -> String {
     value.trim().trim_start_matches('@').to_ascii_lowercase()
+}
+
+pub(crate) fn selected_profile_github_login(
+    config: &RuntimeConfig,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    Ok(
+        selected_execution_profile(&config.profiles)?.and_then(|profile| {
+            profile
+                .env
+                .get("GITHUB_LOGIN")
+                .cloned()
+                .or_else(|| profile.env.get("GH_LOGIN").cloned())
+                .or_else(|| profile.env.get("JADE_GITHUB_LOGIN").cloned())
+        }),
+    )
+}
+
+pub(crate) fn current_gh_login() -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let output = ProcessCommand::new("gh")
+        .args(["api", "user", "--jq", ".login"])
+        .output();
+    let output = match output {
+        Ok(output) => output,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let login = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok((!login.is_empty()).then_some(login))
 }
 
 pub(crate) fn no_dispatch_action(limit: Option<usize>, poll_interval_ms: u64) -> NoDispatchAction {

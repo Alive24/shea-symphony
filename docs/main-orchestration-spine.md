@@ -145,8 +145,9 @@ runtime owner:
   archiving. It does not own Project mutation or Agent Review handoff evidence.
 - `src/lanes/main_loop/selection.rs`: Main-loop issue selection and claim
   decisions. It owns recover-first selection, claim/resume/replan
-  classification, live GitHub assignee ownership checks, and no-dispatch idle
-  behavior. It does not write tracker state or render handoff evidence.
+  classification, live GitHub assignee identity lookup/ownership checks, and
+  no-dispatch idle behavior. It does not write tracker state or render handoff
+  evidence.
 - `src/lanes/main_loop/supervision.rs`: Main-loop runtime supervision event
   logging. It owns JSONL records tied to runtime state, active issues, backend
   sessions, profiles, instances, and actor identity; tracker mutation audit

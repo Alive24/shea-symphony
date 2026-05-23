@@ -53,8 +53,9 @@ pub(crate) use runtime::RuntimeRecoveryCandidate;
 pub(crate) use runtime::{run_loop_resume_preflight, ResumePreflightAction};
 pub(crate) use runtime::{run_loop_resume_preflight_many, runtime_state_issue_identifier};
 pub(crate) use selection::{
-    no_dispatch_action, run_loop_assignee_ownership_decision, run_loop_claim_action,
-    select_main_run_loop_issues, AssigneeOwnershipDecision, NoDispatchAction, RunLoopClaimAction,
+    current_gh_login, no_dispatch_action, run_loop_assignee_ownership_decision,
+    run_loop_claim_action, select_main_run_loop_issues, selected_profile_github_login,
+    AssigneeOwnershipDecision, NoDispatchAction, RunLoopClaimAction,
 };
 pub(crate) use session::{
     main_session_active_recoverable, reconcile_main_handoff_runtime_state,

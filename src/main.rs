@@ -46,7 +46,6 @@ use jade_symphony::orchestrator::Orchestrator;
 #[cfg(test)]
 use jade_symphony::ownership::render_runtime_ownership_marker;
 use jade_symphony::ownership::{runtime_ownership_decision, RuntimeOwnershipDecision};
-use jade_symphony::profiles::selected_execution_profile;
 use jade_symphony::progress::{run_with_progress_heartbeat, ProgressHeartbeatSpec};
 use jade_symphony::prompt::render_prompt;
 use jade_symphony::review::{
@@ -170,9 +169,9 @@ pub(crate) use lanes::claim::{
 use lanes::main_loop::IssueExecutionResult;
 pub(crate) use lanes::main_loop::{
     append_runtime_supervision_event, apply_live_handoff_pr_link, compact_evidence,
-    execute_issue_once, execute_issue_once_with_workspace_key, handle_run_loop_gate_failure,
-    handle_run_loop_handoff_failure, linked_pull_requests_contain, main_app_server_smoke_gate,
-    main_session_active_recoverable, pull_request_number_from_url,
+    current_gh_login, execute_issue_once, execute_issue_once_with_workspace_key,
+    handle_run_loop_gate_failure, handle_run_loop_handoff_failure, linked_pull_requests_contain,
+    main_app_server_smoke_gate, main_session_active_recoverable, pull_request_number_from_url,
     reconcile_main_handoff_runtime_state, reconcile_pending_main_session, run_handoff_verification,
     run_loop, run_loop_agent_review_handoff_evidence, run_loop_apply_recovery_handoff,
     run_loop_assignee_ownership_decision, run_loop_assignee_ownership_workpad,
@@ -180,9 +179,9 @@ pub(crate) use lanes::main_loop::{
     run_loop_handoff_workpad, run_loop_live_handoff_enabled, run_loop_ownership_workpad,
     run_loop_runtime_ownership, run_loop_runtime_state_for_issue,
     run_loop_runtime_state_with_result, run_loop_runtime_state_with_transition,
-    run_loop_usage_limit_pause_workpad, AssigneeOwnershipDecision, HandoffVerification,
-    MainSessionReconciliation, RunLoopClaimAction, RunLoopLiveHandoff, RunLoopOptions,
-    RunLoopWorkerOutcome,
+    run_loop_usage_limit_pause_workpad, selected_profile_github_login, AssigneeOwnershipDecision,
+    HandoffVerification, MainSessionReconciliation, RunLoopClaimAction, RunLoopLiveHandoff,
+    RunLoopOptions, RunLoopWorkerOutcome,
 };
 #[cfg(test)]
 use lanes::main_loop::{
@@ -2054,39 +2053,6 @@ fn git_stdout(path: &Path, args: &[&str]) -> Result<String, String> {
 
 fn git_status(path: &Path, args: &[&str]) -> Result<(), String> {
     git_stdout(path, args).map(|_| ())
-}
-
-fn selected_profile_github_login(
-    config: &RuntimeConfig,
-) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    Ok(
-        selected_execution_profile(&config.profiles)?.and_then(|profile| {
-            profile
-                .env
-                .get("GITHUB_LOGIN")
-                .cloned()
-                .or_else(|| profile.env.get("GH_LOGIN").cloned())
-                .or_else(|| profile.env.get("JADE_GITHUB_LOGIN").cloned())
-        }),
-    )
-}
-
-fn current_gh_login() -> Result<Option<String>, Box<dyn std::error::Error>> {
-    let output = ProcessCommand::new("gh")
-        .args(["api", "user", "--jq", ".login"])
-        .output();
-    let output = match output {
-        Ok(output) => output,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
-    };
-
-    if !output.status.success() {
-        return Ok(None);
-    }
-
-    let login = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    Ok((!login.is_empty()).then_some(login))
 }
 
 fn unbounded_loop_sleep_ms(limit: Option<usize>, poll_interval_ms: u64) -> Option<u64> {

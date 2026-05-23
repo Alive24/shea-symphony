@@ -20,6 +20,8 @@ use crate::{
     CODEX_APP_SERVER_HANDOFF_BOUNDARY,
 };
 
+use super::RunLoopLiveHandoff;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct IssueExecutionResult {
     pub(crate) workspace_path: PathBuf,
@@ -39,7 +41,7 @@ pub(crate) struct IssueExecutionResult {
     pub(crate) actor_label: String,
     pub(crate) git_author: Option<String>,
     pub(crate) git_identity: GitIdentityApplyResult,
-    pub(crate) live_handoff: Option<crate::RunLoopLiveHandoff>,
+    pub(crate) live_handoff: Option<RunLoopLiveHandoff>,
     pub(crate) handoff_verification: Option<String>,
 }
 

@@ -32,7 +32,8 @@ mod runtime;
 mod selection;
 mod session;
 mod supervision;
-pub(crate) use dispatch::{run_loop_dispatch_write_candidates, RunLoopWorkerOutcome};
+mod write_candidate;
+pub(crate) use dispatch::run_loop_dispatch_write_candidates;
 pub(crate) use dry_run::print_run_loop_dry_run_actions;
 pub(crate) use execution::{
     execute_issue_once, execute_issue_once_with_workspace_key, IssueExecutionResult,

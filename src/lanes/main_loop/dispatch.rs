@@ -6,10 +6,11 @@ use jade_symphony::session_registry::session_registry_path;
 use jade_symphony::tracker::adapter_from_config;
 use jade_symphony::workflow::WorkflowDefinition;
 
+use super::write_candidate::run_loop_dispatch_write_candidate;
 use super::RunLoopOptions;
 use crate::{
-    latest_status_for_issue, main_app_server_smoke_gate, print_latest_status,
-    run_loop_dispatch_write_candidate, shell_quote_display, worker_identity, WorkerLane,
+    latest_status_for_issue, main_app_server_smoke_gate, print_latest_status, shell_quote_display,
+    worker_identity, WorkerLane,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

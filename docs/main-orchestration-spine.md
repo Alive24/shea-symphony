@@ -137,6 +137,11 @@ runtime owner:
   selected-worker logging, backend readiness summaries, concurrent worker
   spawning, and per-worker outcome aggregation while delegating the single-issue
   mutation path back to the Main-loop state machine.
+- `src/lanes/main_loop/write_candidate.rs`: single-issue Main-loop write
+  dispatch. It owns the claim/resume, ownership evidence, runtime state,
+  backend/session reconciliation, handoff workpad, PR linkage/readiness, retry,
+  and final Agent Review or Need Human Input state transition path for one
+  selected issue.
 - `src/lanes/main_loop/dry_run.rs`: Main-loop dry-run action rendering. It owns
   the read-only preview lines for claim/resume, handoff plan, backend identity,
   worktree, verification, PR, workpad, and Agent Review handoff actions.

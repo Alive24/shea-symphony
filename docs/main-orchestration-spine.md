@@ -109,6 +109,10 @@ runtime owner:
 - `src/lanes/main_loop.rs`: outer Main loop command execution and
   `RunLoopOptions`. It owns loop iteration, dry-run rendering, concurrency-slot
   selection, and delegation into narrower Main-lane helpers.
+- `src/lanes/main_loop/dispatch.rs`: Main-loop write dispatch shell. It owns
+  selected-worker logging, backend readiness summaries, concurrent worker
+  spawning, and per-worker outcome aggregation while delegating the single-issue
+  mutation path back to the Main-loop state machine.
 - `src/lanes/main_loop/execution.rs`: Main-agent backend execution for a single
   issue workspace. It owns prompt artifact persistence, backend event logging,
   hook execution, usage-limit detection, and the `IssueExecutionResult` shape

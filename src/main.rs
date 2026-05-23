@@ -4,7 +4,6 @@ use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
-use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(test)]
@@ -183,10 +182,12 @@ pub(crate) use lanes::main_loop::{
     run_loop_runtime_state_with_result, run_loop_runtime_state_with_transition,
     run_loop_usage_limit_pause_workpad, AssigneeOwnershipDecision, HandoffVerification,
     MainSessionReconciliation, RunLoopClaimAction, RunLoopLiveHandoff, RunLoopOptions,
+    RunLoopWorkerOutcome,
 };
 #[cfg(test)]
 use lanes::main_loop::{
-    no_dispatch_action, select_main_run_loop_issues, NoDispatchAction, RuntimeRecoveryCandidate,
+    no_dispatch_action, run_loop_dispatch_write_candidates, select_main_run_loop_issues,
+    NoDispatchAction, RuntimeRecoveryCandidate,
 };
 #[cfg(test)]
 use lanes::main_loop::{
@@ -970,120 +971,6 @@ fn preflight_canonical_checkout_for_write_mode(
         preview_canonical_checkout_before_dry_run(config, command);
         Ok(())
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RunLoopWorkerOutcome {
-    Completed,
-    StopIteration,
-}
-
-fn run_loop_dispatch_write_candidates(
-    workflow: &WorkflowDefinition,
-    config: &RuntimeConfig,
-    selected: Vec<TrackerIssue>,
-    options: &RunLoopOptions,
-    recover: bool,
-    iterations: usize,
-    max_concurrent: usize,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    let selected_count = selected.len();
-    let worker_id = worker_identity(config, WorkerLane::Main);
-    let mut handles = Vec::new();
-
-    for (slot_index, issue) in selected.into_iter().enumerate() {
-        print_run_loop_write_selection(
-            config,
-            &issue,
-            iterations,
-            max_concurrent,
-            selected_count,
-            slot_index,
-        );
-        let issue_ref = issue.identifier.clone();
-        let workflow = workflow.clone();
-        let config = config.clone();
-        let options = options.clone();
-        let worker_id = worker_id.clone();
-        handles.push((
-            issue_ref,
-            thread::spawn(move || {
-                let adapter = adapter_from_config(&config);
-                run_loop_dispatch_write_candidate(
-                    &workflow,
-                    &config,
-                    adapter.as_ref(),
-                    issue,
-                    recover,
-                    &worker_id,
-                    &options,
-                )
-                .map_err(|error| error.to_string())
-            }),
-        ));
-    }
-
-    let mut should_stop_iteration = false;
-    let mut errors = Vec::new();
-    for (issue_ref, handle) in handles {
-        match handle.join() {
-            Ok(Ok(RunLoopWorkerOutcome::Completed)) => {}
-            Ok(Ok(RunLoopWorkerOutcome::StopIteration)) => should_stop_iteration = true,
-            Ok(Err(error)) => errors.push(format!("{issue_ref}: {error}")),
-            Err(_) => errors.push(format!("{issue_ref}: worker thread panicked")),
-        }
-    }
-
-    if !errors.is_empty() {
-        return Err(format!("run_loop concurrent dispatch failed: {}", errors.join("; ")).into());
-    }
-
-    Ok(should_stop_iteration)
-}
-
-fn print_run_loop_write_selection(
-    config: &RuntimeConfig,
-    issue: &TrackerIssue,
-    iterations: usize,
-    max_concurrent: usize,
-    selected_count: usize,
-    slot_index: usize,
-) {
-    print_latest_status(&latest_status_for_issue(
-        config,
-        issue,
-        "main",
-        "running",
-        "selected",
-        Some("claim or resume".into()),
-    ));
-    if slot_index == 0 {
-        println!(
-            "run_loop_iteration={} issue={} title={:?} mode=write max_concurrent={} selected_count={}",
-            iterations, issue.identifier, issue.title, max_concurrent, selected_count
-        );
-    } else {
-        println!(
-            "run_loop_iteration={} issue={} title={:?} mode=write max_concurrent={} selected_count={} slot={}",
-            iterations,
-            issue.identifier,
-            issue.title,
-            max_concurrent,
-            selected_count,
-            slot_index + 1
-        );
-    }
-    let smoke_gate = main_app_server_smoke_gate(config);
-    println!(
-        "run_loop_action=backend issue={} backend={} backend_source={} command={} approval_policy={} app_server_live_smoke_ready={} session_registry={}",
-        issue.identifier,
-        smoke_gate.backend,
-        smoke_gate.backend_source,
-        shell_quote_display(&smoke_gate.command),
-        smoke_gate.approval_policy,
-        smoke_gate.app_server_live_smoke_ready,
-        session_registry_path(config).display()
-    );
 }
 
 fn run_loop_dispatch_write_candidate(

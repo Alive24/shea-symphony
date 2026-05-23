@@ -1,0 +1,58 @@
+# Main Orchestration Spine
+
+`src/main.rs` stays the binary entrypoint and top-level dispatcher. It should
+not become the default home for every new command family or lane incident fix.
+New orchestration code should follow this spine:
+
+```text
+Issue Contract -> Lane Decision -> Runtime Attempt -> Evidence -> State Transition -> Recovery/Doctor
+```
+
+## Responsibility Map
+
+- `Issue Contract`: Issue Forge, Issue Quality Gate, dependency and topology
+  checks, and prompt context assembly.
+- `Lane Decision`: Main, Review, Merge, and Human Review authority boundaries,
+  lane claim selection, and write-mode eligibility.
+- `Runtime Attempt`: workspace preparation, backend/session startup, app-server
+  or tmux execution, progress heartbeats, and runtime state.
+- `Evidence`: workpad updates, timeline comments, event-log records, PR handoff
+  summaries, and review ledgers.
+- `State Transition`: Project status and lane-claim mutations, PR link/readiness
+  checks, and evidence-before-transition ordering.
+- `Recovery/Doctor`: interrupted runtime reconciliation, merge repair,
+  canonical-checkout checks, Doctor diagnostics, and safe repair commands.
+
+## Current Boundary
+
+The first extracted boundary is `src/cli.rs`. It owns the raw Clap command
+surface, grouped command aliases, help text, flag normalization, and conversion
+from parsed arguments into the internal `Command` dispatcher model.
+
+`src/main.rs` still owns:
+
+- `main()` and `run()`;
+- the internal `Command` enum and dispatch match;
+- concrete command execution functions;
+- lane orchestration helpers that touch tracker, workspace, runtime, or
+  evidence state.
+
+This keeps command parsing reviewable without mixing it with Project mutation,
+lane routing, runtime recovery, or workpad rendering.
+
+## Preferred Next Extractions
+
+- Move Project command execution glue toward a `project_commands` module after
+  the parser boundary settles.
+- Move Forge command execution glue toward a `forge_commands` module without
+  changing Issue Forge quality gates.
+- Move Review and Merge command execution glue only as lane-specific modules,
+  preserving their current authority boundaries and transition ordering.
+- Move workspace command execution glue separately from runtime attempt logic.
+- Keep future `LanePolicy` or `WorkerProfile` abstractions as follow-up design
+  work; do not introduce them as part of a mechanical extraction.
+
+When adding a new command family, prefer adding parser shape to `src/cli.rs` and
+putting execution behavior in the smallest module that matches the spine stage
+above. Add to `src/main.rs` only when the code is genuinely entrypoint or
+top-level dispatch glue.

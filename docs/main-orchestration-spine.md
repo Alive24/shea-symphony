@@ -126,6 +126,8 @@ entrypoint:
 - `src/main/tests.rs`: shared binary test fixtures and cross-surface behavior
   tests that still need access to private binary shims while extraction
   continues.
+- `src/main/tests/forge.rs`: Issue Forge, promote/rework, Link PR, and Rework
+  evidence-ordering behavior tests that exercise binary-private helpers.
 - `src/main/tests/parser.rs`: CLI parser/help/flag compatibility tests for the
   grouped command surface produced by `src/cli.rs`.
 

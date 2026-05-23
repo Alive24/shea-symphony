@@ -324,8 +324,9 @@ Review findings should be classified as:
 
 Review Agent state transitions:
 
-- passed review with recorded evidence: move from `Agent Review` to
-  `Human Review`.
+- passed review with recorded evidence: ordinary issues and parent final issues
+  move from `Agent Review` to `Human Review`; routine native subissues move to
+  `Merging` because the parent issue owns final Human Review and UAT.
 - confirmed findings: move to `Rework`.
 - failed, timed out, inconclusive, or unavailable review backend: keep in
   `Agent Review` or move to `Need Human Input`.

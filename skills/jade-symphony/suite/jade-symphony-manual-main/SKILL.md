@@ -65,6 +65,9 @@ Parent issues with native GitHub subissues are not claimable just because they
 are `Todo` or Main-lane `Rework`. Treat the native subissue set as dynamic and
 require every native subissue to have Project status `Done` before selecting or
 claiming the parent. A GitHub issue `closed` state is not enough for this gate.
+Native subissues still use normal Main implementation and Agent Review handoff,
+but routine Review PASS routes to `Merging`; the parent owns final Human Review
+and UAT unless a child records `Subissue Human Review Exception: <reason>`.
 
 Do not use this skill for merge-lane `Rework` or `Merging` work. Use
 `$jade-symphony-manual-merge` for those. When `Rework` came from
@@ -92,7 +95,10 @@ record the reason if they are needed.
 
 If `autopilot plan` shows the same Main issue as the next lane action and there
 is no need to isolate Main, run `autopilot loop --write` from clean canonical
-`main` instead of starting a manual Main session.
+`main` instead of starting a manual Main session. Write-mode lane/control
+commands may automatically refresh the canonical checkout when clean local
+`main` is only behind upstream; implementation edits, PR branch freshness, and
+review/merge work still belong in the isolated issue or PR worktree.
 
 ## Selection
 
@@ -134,6 +140,17 @@ For the selected issue:
 10. Move the issue to `Agent Review`.
 
 The Main Agent must stop at `Agent Review`. Draft PRs must not be handed off.
+
+## Runtime Boundary
+
+The canonical loop path is app-server-first: `main_lane.backend: codex` with
+`codex.command: codex app-server`. Manual Main work should preserve the same
+single-issue claim, workspace, workpad, PR, linked-PR, and `Agent Review`
+handoff semantics as `main loop --write`; it is not a looser alternate
+workflow. Use `session start --lane main --run <RUN_ID> --write` only when an
+operator wants the configured Main runtime to run from the existing claim.
+`main_lane.backend: tmux` is an explicit fallback/debug setting, not the default
+unattended substrate.
 
 ## Status Transition Ordering
 

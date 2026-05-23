@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -9,6 +11,8 @@ use thiserror::Error;
 use crate::config::RuntimeConfig;
 
 pub const SESSION_REGISTRY_FILE: &str = "session-registry.json";
+static SESSION_REGISTRY_FILE_LOCK: Mutex<()> = Mutex::new(());
+static SESSION_REGISTRY_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionRegistry {
@@ -178,6 +182,10 @@ pub fn session_registry_path(config: &RuntimeConfig) -> PathBuf {
 }
 
 pub fn load_session_registry(path: &Path) -> Result<SessionRegistry, SessionRegistryError> {
+    load_session_registry_unlocked(path)
+}
+
+fn load_session_registry_unlocked(path: &Path) -> Result<SessionRegistry, SessionRegistryError> {
     match fs::read_to_string(path) {
         Ok(content) => Ok(serde_json::from_str(&content)?),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(SessionRegistry {
@@ -191,7 +199,8 @@ pub fn save_session_record(
     path: &Path,
     record: AgentSessionRecord,
 ) -> Result<(), SessionRegistryError> {
-    let mut registry = load_session_registry(path)?;
+    let _guard = session_registry_file_guard()?;
+    let mut registry = load_session_registry_unlocked(path)?;
     if let Some(existing) = registry
         .sessions
         .iter_mut()
@@ -201,21 +210,65 @@ pub fn save_session_record(
     } else {
         registry.sessions.push(record);
     }
-    save_session_registry(path, &registry)
+    save_session_registry_unlocked(path, &registry)
+}
+
+pub fn update_session_record_status(
+    path: &Path,
+    session_id: &str,
+    status: SessionStatus,
+    updated_at_ms: u64,
+) -> Result<(), SessionRegistryError> {
+    let _guard = session_registry_file_guard()?;
+    let mut registry = load_session_registry_unlocked(path)?;
+    if let Some(record) = registry
+        .sessions
+        .iter_mut()
+        .find(|record| record.session_name == session_id)
+    {
+        record.status = status;
+        record.updated_at_ms = updated_at_ms;
+        save_session_registry_unlocked(path, &registry)?;
+    }
+    Ok(())
 }
 
 pub fn save_session_registry(
     path: &Path,
     registry: &SessionRegistry,
 ) -> Result<(), SessionRegistryError> {
+    let _guard = session_registry_file_guard()?;
+    save_session_registry_unlocked(path, registry)
+}
+
+fn save_session_registry_unlocked(
+    path: &Path,
+    registry: &SessionRegistry,
+) -> Result<(), SessionRegistryError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let temp_path = path.with_extension("json.tmp");
+    let temp_path = unique_session_registry_temp_path(path);
     let content = serde_json::to_string_pretty(registry)?;
     fs::write(&temp_path, content)?;
     fs::rename(temp_path, path)?;
     Ok(())
+}
+
+fn session_registry_file_guard() -> Result<std::sync::MutexGuard<'static, ()>, SessionRegistryError>
+{
+    SESSION_REGISTRY_FILE_LOCK.lock().map_err(|_| {
+        SessionRegistryError::Io(std::io::Error::other("session registry lock poisoned"))
+    })
+}
+
+fn unique_session_registry_temp_path(path: &Path) -> PathBuf {
+    let counter = SESSION_REGISTRY_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(SESSION_REGISTRY_FILE);
+    path.with_file_name(format!("{filename}.{}.{}.tmp", std::process::id(), counter))
 }
 
 pub fn deterministic_session_name(

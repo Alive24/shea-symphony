@@ -97,14 +97,15 @@ question, but do not edit files under
     or a documented blocked state.
 
 When this prompt is delivered by `main loop` or by the Main lane inside
-`autopilot loop`, the wrapper records the configured Main runtime evidence and
-may later reconcile that evidence instead of launching a duplicate agent.
-`autopilot loop` is not the runtime backend; Codex app-server protocol
-artifacts, tmux attach/log evidence, or other backend artifacts all remain the
-same Main-lane boundary. Make your terminal result easy for the CLI and operator
-to classify: leave the Main Workpad, verification summary, PR URL, linked-PR
-expectation, and handoff boundary explicit before you stop. A message that
-merely says "done" is not enough handoff evidence.
+`autopilot loop`, the default unattended runtime is Codex app-server. The loop
+records prompt/protocol/stderr/normalized-event artifacts and may later
+reconcile recorded runtime evidence instead of launching a duplicate agent.
+`autopilot loop` is not the runtime backend; if an operator explicitly switches
+Main back to tmux fallback/debug mode, tmux attach/log evidence is treated as
+the same runtime boundary, not a separate workflow. Make your terminal result
+easy for the CLI and operator to classify: leave the Main Workpad, verification
+summary, PR URL, linked-PR expectation, and handoff boundary explicit before you
+stop. A message that merely says "done" is not enough handoff evidence.
 
 ## State And Role Boundaries
 
@@ -171,6 +172,9 @@ lane logs back into the Main Agent Workpad. Record:
   but open the PR against the parent integration branch recorded in topology
   evidence. For parent issues with native subissues, the parent final PR uses
   the parent integration branch as the head and `main` as the base.
+- Native subissues still stop Main work at `Agent Review`; passing Review Agent
+  evidence routes routine child issues to `Merging`, not direct Human Review,
+  unless the child records `Subissue Human Review Exception: <reason>`.
 - The canonical harness checkout must stay on latest `main`; dogfood branches
   belong in separate issue worktrees.
 - Use a branch name that includes the issue number.

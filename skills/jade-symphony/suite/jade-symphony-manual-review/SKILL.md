@@ -92,7 +92,10 @@ command, stop and ask the operator for the intended workspace.
     evidence-backed, non-UAT satisfied items are checked. Leave unsupported,
     skipped, failed, and all UAT items unchecked.
 11. Save the review evidence to a local evidence file.
-12. Route the result with `review pass` or `review reject`.
+12. Route the result with `review pass` or `review reject`. For routine native
+    subissues, `review pass` routes to `Merging`, not `Human Review`; parent
+    final issues and ordinary issues still route to `Human Review`. Direct
+    subissue Human Review requires `Subissue Human Review Exception: <reason>`.
 
 Status transition ordering: `review pass` or `review reject` must be the final
 mutating step of the manual review session. After the status changes, do only

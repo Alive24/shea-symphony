@@ -19,6 +19,7 @@
 - Workpad evidence:
 - Review Agent evidence:
 - PR state/checks:
+- Parent/subissue or exception evidence:
 - UAT evidence:
 
 ### UAT Result

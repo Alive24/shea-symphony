@@ -94,22 +94,24 @@ cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --writ
 ```
 
 `autopilot loop` is a bounded foreground CLI supervisor, not a daemon,
-background service, or app-server. It composes Main, Review, and Merge lane ticks
-in order and returns control to the operator after the explicit iteration
+background service, or app-server. It composes Main, Review, and Merge lane
+ticks in order and returns control to the operator after the explicit iteration
 budget. Drop to `main loop`, `review loop`, or `merge loop` only for focused
 debugging, break-glass recovery, or deliberately lane-specific dogfood.
 
-That write tick requires the configured lane backends to be usable. If Main
-starts a runtime session, a running session alone is not completion evidence and
-must not move the issue to `Agent Review`. A later bounded autopilot or focused
-Main tick first reconciles the recorded runtime/session registry entry; only a
-terminal completed session proceeds to verification, PR publication, linked-PR
-readback, PR readiness, and the final `Agent Review` state change. Active,
-waiting, unknown, or missing-registry sessions are kept out of duplicate launch
-and out of `Agent Review`.
-Codex tmux startup captures the pane before sending the issue prompt. By
-default, if a Jade Symphony-created issue worktree shows the Codex workspace trust
-prompt, Jade Symphony sends two `C-m` submissions and waits until the pane reaches a
+That write tick requires a real main-agent backend. The canonical workflow uses
+`main_lane.backend: codex` with `codex.command: codex app-server` and
+`codex.approval_policy: never`, so a successful tick starts one app-server turn,
+records the prompt artifact, protocol log, stderr log, normalized event
+artifact, session registry entry, and runtime state, then proceeds to
+verification, PR publication, linked-PR readback, PR readiness, and the final
+`Agent Review` state change only after a terminal completed turn. Active,
+failed, usage-limited, unknown, stale, or missing-registry runtime evidence is
+kept out of duplicate launch and out of `Agent Review`. `main_lane.backend:
+tmux` remains an explicit fallback/debug option. In that mode, Codex tmux
+startup captures the pane before sending the issue prompt. By default, if a
+Jade Symphony-created issue worktree shows the Codex workspace trust prompt,
+Jade Symphony sends two `C-m` submissions and waits until the pane reaches a
 ready Codex viewport. Set `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to disable this
 auto-trust behavior. If the prompt cannot be cleared, the write tick stops with
 the tmux attach command and log path preserved for manual inspection.
@@ -269,9 +271,10 @@ The merge lane should:
 - merge clean approved work;
 - safely update `BEHIND` PR branches and leave the issue in `Merging` for the
   next retry;
-- route dirty or failing work to `Need Human Input` with a standalone merge
-  timeline comment unless a future command can prove safe merge-lane-only
-  repair;
+- route dirty work through direct mechanical repair first, then merge-agent
+  repair for trusted content conflicts, and use `Need Human Input` only for
+  unresolved, unsafe, untrusted, backend-failing, push-failing, or
+  verification-failing repair;
 - retry transient missing or `UNKNOWN` mergeability instead of treating it as a
   human decision;
 - include a `Required Human Input` question whenever a blocker really needs a

@@ -571,6 +571,9 @@ fn issue_markdown_from_interactive_input(
         "### Context Verification\n\n- Confirm the issue still matches canonical sources.",
         "### Context Verification\n\n- [ ] Confirm the issue still matches canonical sources and Project #9 state before dispatch.",
     );
+    if parent_subissue_batch_signal(input) {
+        draft = apply_parent_subissue_contract_defaults(draft);
+    }
     draft
 }
 
@@ -622,6 +625,48 @@ fn format_interactive_dependencies(input: &InteractiveForgeInput) -> String {
         "## Dependencies\n\n- No blocking dependencies identified by Issue Forge from the supplied intent or context."
             .into()
     }
+}
+
+fn parent_subissue_batch_signal(input: &InteractiveForgeInput) -> bool {
+    let text = [Some(input.intent.as_str()), input.context.as_deref()]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    contains_any(
+        &text,
+        &[
+            "parent/subissue",
+            "parent subissue",
+            "parent/sub-issue",
+            "parent sub-issue",
+            "native subissue",
+            "native sub-issue",
+            "subissue batch",
+            "sub-issue batch",
+        ],
+    )
+}
+
+fn apply_parent_subissue_contract_defaults(mut draft: String) -> String {
+    draft = draft.replace(
+        "- UAT Required: No",
+        "- UAT Required: Yes\n- Parent/Subissue UAT Contract: parent issue owns final UAT; routine native subissues default to No direct UAT",
+    );
+    draft = draft.replace(
+        "### Decisions\n\n",
+        "### Decisions\n\n- Parent/subissue batch contract: the parent issue owns final Human Review and UAT; routine native subissues keep independent Agent Review and then route directly to Merging.\n- Routine native subissues should record `UAT Required: No` and no direct Human Review unless they include `Subissue Human Review Exception: <reason>`.\n",
+    );
+    draft = draft.replace(
+        "## Non-Negotiable Guardrails\n\n",
+        "## Non-Negotiable Guardrails\n\n- Do not route routine native subissue Review PASS to Human Review; use parent-owned Human Review/UAT unless an explicit exception is recorded.\n- Do not dispatch parent Main work until every native subissue is Done.\n",
+    );
+    draft = draft.replace(
+        "### Completion Criteria\n\n",
+        "### Completion Criteria\n\n- [ ] Parent/subissue contracts identify the parent-owned UAT/Human Review unit and the routine child no-direct-Human-Review default.\n",
+    );
+    draft
 }
 
 fn focused_interactive_question(
@@ -932,6 +977,29 @@ mod tests {
     }
 
     #[test]
+    fn interactive_forge_records_parent_owned_subissue_review_contract() {
+        let report = interactive_forge(InteractiveForgeInput {
+            title: "Split tracker hardening into native subissue batch".into(),
+            intent: "create a parent/subissue batch for tracker hardening slices".into(),
+            skill: Some("tracker".into()),
+            context: None,
+            assignees: vec!["Alive24".into()],
+        });
+
+        assert!(report.validation.decision.is_dispatchable());
+        assert!(report
+            .issue_markdown
+            .contains("parent issue owns final UAT"));
+        assert!(report
+            .issue_markdown
+            .contains("parent issue owns final Human Review and UAT"));
+        assert!(report.issue_markdown.contains("route directly to Merging"));
+        assert!(report
+            .issue_markdown
+            .contains("Subissue Human Review Exception: <reason>"));
+    }
+
+    #[test]
     fn conversational_title_is_inferred_from_operator_intent() {
         let title = conversational_title_from_intent(
             "make forge interactive accept natural language issue intent",
@@ -986,5 +1054,22 @@ mod tests {
             candidates[0].validation.decision.kind,
             GateDecisionKind::NeedToClarify
         );
+    }
+
+    #[test]
+    fn reflective_candidate_preserves_parent_subissue_contract_defaults() {
+        let candidates = reflective_candidates_from_context(
+            "- Follow-up: create a native subissue batch for review-loop repair.",
+            None,
+            1,
+        );
+
+        assert_eq!(candidates.len(), 1);
+        assert!(candidates[0]
+            .issue_markdown
+            .contains("parent issue owns final Human Review and UAT"));
+        assert!(candidates[0]
+            .issue_markdown
+            .contains("Routine native subissues should record `UAT Required: No`"));
     }
 }

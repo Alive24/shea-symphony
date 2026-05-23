@@ -36,6 +36,40 @@ impl CanonicalCheckoutReport {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CanonicalCheckoutRefreshMode {
+    Apply,
+    DryRun,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CanonicalCheckoutRefreshAction {
+    AlreadyCurrent,
+    FfOnly,
+    WouldFfOnly,
+}
+
+impl CanonicalCheckoutRefreshAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AlreadyCurrent => "already_current",
+            Self::FfOnly => "ff_only",
+            Self::WouldFfOnly => "would_ff_only",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CanonicalCheckoutRefreshReport {
+    pub action: CanonicalCheckoutRefreshAction,
+    pub root: PathBuf,
+    pub upstream: String,
+    pub head_before: String,
+    pub upstream_head: String,
+    pub head_after: String,
+    pub checkout: CanonicalCheckoutReport,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CanonicalUntrackedPath {
     pub path: PathBuf,
@@ -96,6 +130,46 @@ pub enum CanonicalCheckoutError {
         upstream: String,
         upstream_head: String,
     },
+    #[error("canonical checkout refresh is blocked: local `main` in {root} has no upstream. Configure it to track `origin/main` before running a live write lane.")]
+    MissingUpstream { root: PathBuf },
+    #[error("canonical checkout refresh is blocked: {root} is under workflow workspace root {workspace_root}. Run write-mode lane/control commands from the canonical checkout, not an issue worktree.")]
+    IssueWorktree {
+        root: PathBuf,
+        workspace_root: PathBuf,
+    },
+    #[error("canonical checkout refresh failed: git fetch {remote} {branch} failed in {root}: status={status} stdout={stdout} stderr={stderr}")]
+    GitFetchFailed {
+        root: PathBuf,
+        remote: String,
+        branch: String,
+        status: i32,
+        stdout: String,
+        stderr: String,
+    },
+    #[error("canonical checkout refresh failed: git merge-base --is-ancestor {head} {upstream_head} failed in {root}: status={status} stdout={stdout} stderr={stderr}")]
+    GitMergeBaseFailed {
+        root: PathBuf,
+        head: String,
+        upstream_head: String,
+        status: i32,
+        stdout: String,
+        stderr: String,
+    },
+    #[error("canonical checkout refresh is blocked: local `main` at {head} cannot fast-forward to upstream `{upstream}` at {upstream_head}.")]
+    NonFastForward {
+        root: PathBuf,
+        head: String,
+        upstream: String,
+        upstream_head: String,
+    },
+    #[error("canonical checkout refresh failed: git merge --ff-only {upstream} failed in {root}: status={status} stdout={stdout} stderr={stderr}")]
+    GitMergeFailed {
+        root: PathBuf,
+        upstream: String,
+        status: i32,
+        stdout: String,
+        stderr: String,
+    },
     #[error(
         "failed to migrate canonical checkout artifact {artifact_path} to {destination}: {error}"
     )]
@@ -154,18 +228,16 @@ pub fn enforce_clean_canonical_checkout_for_write(
     config: &RuntimeConfig,
 ) -> Result<CanonicalCheckoutReport, CanonicalCheckoutError> {
     let mut report = inspect_canonical_checkout(root, config)?;
-    let head = report.head.as_deref().unwrap_or("unknown").to_string();
-    let Some(branch) = report.branch.as_deref() else {
-        return Err(CanonicalCheckoutError::Detached {
-            root: report.root.clone(),
-            head,
-        });
-    };
-    if branch != "main" {
-        return Err(CanonicalCheckoutError::NonMain {
-            root: report.root.clone(),
-            branch: branch.to_string(),
-        });
+    ensure_not_issue_worktree(&report, config)?;
+    ensure_attached_main(&report)?;
+    ensure_clean_enough_for_write(&report)?;
+    migrate_classified_artifacts(&mut report)?;
+    if !report.migrated.is_empty() {
+        let migrated = report.migrated.clone();
+        report = inspect_canonical_checkout(root, config)?;
+        report.migrated = migrated;
+        ensure_attached_main(&report)?;
+        ensure_clean_enough_for_write(&report)?;
     }
     if let (Some(upstream), Some(upstream_head), Some(head)) = (
         report.upstream.as_deref(),
@@ -181,6 +253,180 @@ pub fn enforce_clean_canonical_checkout_for_write(
             });
         }
     }
+
+    Ok(report)
+}
+
+pub fn refresh_canonical_checkout_before_write(
+    root: &Path,
+    config: &RuntimeConfig,
+    mode: CanonicalCheckoutRefreshMode,
+) -> Result<CanonicalCheckoutRefreshReport, CanonicalCheckoutError> {
+    let mut report = inspect_canonical_checkout(root, config)?;
+    ensure_not_issue_worktree(&report, config)?;
+    ensure_attached_main(&report)?;
+    ensure_clean_enough_for_write(&report)?;
+    let upstream = require_upstream(&report)?;
+
+    if matches!(mode, CanonicalCheckoutRefreshMode::Apply) {
+        migrate_classified_artifacts(&mut report)?;
+        fetch_upstream(&report.root, &upstream)?;
+        let migrated = report.migrated.clone();
+        report = inspect_canonical_checkout(root, config)?;
+        report.migrated = migrated;
+        ensure_attached_main(&report)?;
+        ensure_clean_enough_for_write(&report)?;
+    }
+
+    let head_before = report.head.as_deref().unwrap_or("unknown").to_string();
+    let upstream_head = report
+        .upstream_head
+        .as_deref()
+        .ok_or_else(|| CanonicalCheckoutError::MissingUpstream {
+            root: report.root.clone(),
+        })?
+        .to_string();
+
+    if head_before == upstream_head {
+        return Ok(CanonicalCheckoutRefreshReport {
+            action: CanonicalCheckoutRefreshAction::AlreadyCurrent,
+            root: report.root.clone(),
+            upstream,
+            head_before: head_before.clone(),
+            upstream_head,
+            head_after: head_before,
+            checkout: report,
+        });
+    }
+
+    if !git_can_fast_forward(&report.root, &head_before, &upstream_head)? {
+        return Err(CanonicalCheckoutError::NonFastForward {
+            root: report.root.clone(),
+            head: head_before,
+            upstream,
+            upstream_head,
+        });
+    }
+
+    if matches!(mode, CanonicalCheckoutRefreshMode::DryRun) {
+        return Ok(CanonicalCheckoutRefreshReport {
+            action: CanonicalCheckoutRefreshAction::WouldFfOnly,
+            root: report.root.clone(),
+            upstream,
+            head_before: head_before.clone(),
+            upstream_head,
+            head_after: head_before,
+            checkout: report,
+        });
+    }
+
+    merge_ff_only(&report.root, &upstream)?;
+    let migrated = report.migrated.clone();
+    let mut final_report = enforce_clean_canonical_checkout_for_write(root, config)?;
+    final_report.migrated = migrated;
+    let head_after = final_report
+        .head
+        .as_deref()
+        .unwrap_or("unknown")
+        .to_string();
+
+    Ok(CanonicalCheckoutRefreshReport {
+        action: CanonicalCheckoutRefreshAction::FfOnly,
+        root: final_report.root.clone(),
+        upstream,
+        head_before,
+        upstream_head,
+        head_after,
+        checkout: final_report,
+    })
+}
+
+pub fn canonical_checkout_status_line(report: &CanonicalCheckoutReport) -> String {
+    let unclassified = report.unclassified_untracked().len();
+    format!(
+        "canonical_checkout root={} branch={} upstream={} clean={} tracked_dirty={} untracked={} unclassified={} migrated={} quarantine={}",
+        report.root.display(),
+        report.branch.as_deref().unwrap_or("detached"),
+        report.upstream.as_deref().unwrap_or("none"),
+        report.is_clean(),
+        report.tracked_dirty.len(),
+        report.untracked.len(),
+        unclassified,
+        report.migrated.len(),
+        report.quarantine_root.display()
+    )
+}
+
+pub fn canonical_checkout_refresh_status_line(report: &CanonicalCheckoutRefreshReport) -> String {
+    format!(
+        "canonical_checkout_refresh={} upstream={} head_before={} upstream_head={} head_after={}",
+        report.action.as_str(),
+        report.upstream,
+        report.head_before,
+        report.upstream_head,
+        report.head_after
+    )
+}
+
+pub fn canonical_checkout_warning_lines(report: &CanonicalCheckoutReport) -> Vec<String> {
+    report
+        .migrated
+        .iter()
+        .map(|entry| {
+            format!(
+                "canonical_checkout_migrated kind={} source={} destination={}",
+                entry.kind,
+                entry.source.display(),
+                entry.destination.display()
+            )
+        })
+        .collect()
+}
+
+pub fn canonical_quarantine_root(config: &RuntimeConfig) -> PathBuf {
+    artifact_layout(config)
+        .scratch
+        .join("canonical-checkout-quarantine")
+}
+
+fn ensure_not_issue_worktree(
+    report: &CanonicalCheckoutReport,
+    config: &RuntimeConfig,
+) -> Result<(), CanonicalCheckoutError> {
+    let workspace_root = config
+        .workspace
+        .root
+        .canonicalize()
+        .unwrap_or_else(|_| config.workspace.root.clone());
+    if report.root == workspace_root || report.root.starts_with(&workspace_root) {
+        return Err(CanonicalCheckoutError::IssueWorktree {
+            root: report.root.clone(),
+            workspace_root,
+        });
+    }
+    Ok(())
+}
+
+fn ensure_attached_main(report: &CanonicalCheckoutReport) -> Result<(), CanonicalCheckoutError> {
+    let head = report.head.as_deref().unwrap_or("unknown").to_string();
+    let Some(branch) = report.branch.as_deref() else {
+        return Err(CanonicalCheckoutError::Detached {
+            root: report.root.clone(),
+            head,
+        });
+    };
+    if branch != "main" {
+        return Err(CanonicalCheckoutError::NonMain {
+            root: report.root.clone(),
+            branch: branch.to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn ensure_clean_enough_for_write(
+    report: &CanonicalCheckoutReport,
+) -> Result<(), CanonicalCheckoutError> {
     if !report.tracked_dirty.is_empty() {
         return Err(CanonicalCheckoutError::TrackedDirty {
             root: report.root.clone(),
@@ -199,7 +445,22 @@ pub fn enforce_clean_canonical_checkout_for_write(
             paths: unclassified_paths.join(", "),
         });
     }
+    Ok(())
+}
 
+fn require_upstream(report: &CanonicalCheckoutReport) -> Result<String, CanonicalCheckoutError> {
+    report
+        .upstream
+        .clone()
+        .filter(|upstream| !upstream.trim().is_empty())
+        .ok_or_else(|| CanonicalCheckoutError::MissingUpstream {
+            root: report.root.clone(),
+        })
+}
+
+fn migrate_classified_artifacts(
+    report: &mut CanonicalCheckoutReport,
+) -> Result<(), CanonicalCheckoutError> {
     let run_root = report
         .quarantine_root
         .join(format!("run-{}", unix_timestamp_ms()));
@@ -226,45 +487,73 @@ pub fn enforce_clean_canonical_checkout_for_write(
     if !report.migrated.is_empty() {
         write_manifest(&run_root, &report.migrated)?;
     }
-
-    Ok(report)
+    Ok(())
 }
 
-pub fn canonical_checkout_status_line(report: &CanonicalCheckoutReport) -> String {
-    let unclassified = report.unclassified_untracked().len();
-    format!(
-        "canonical_checkout root={} branch={} upstream={} clean={} tracked_dirty={} untracked={} unclassified={} migrated={} quarantine={}",
-        report.root.display(),
-        report.branch.as_deref().unwrap_or("detached"),
-        report.upstream.as_deref().unwrap_or("none"),
-        report.is_clean(),
-        report.tracked_dirty.len(),
-        report.untracked.len(),
-        unclassified,
-        report.migrated.len(),
-        report.quarantine_root.display()
-    )
+fn fetch_upstream(root: &Path, upstream: &str) -> Result<(), CanonicalCheckoutError> {
+    let (remote, branch) =
+        upstream
+            .split_once('/')
+            .ok_or_else(|| CanonicalCheckoutError::MissingUpstream {
+                root: root.to_path_buf(),
+            })?;
+    let output = Command::new("git")
+        .args(["fetch", remote, branch])
+        .current_dir(root)
+        .output()?;
+    if !output.status.success() {
+        return Err(CanonicalCheckoutError::GitFetchFailed {
+            root: root.to_path_buf(),
+            remote: remote.into(),
+            branch: branch.into(),
+            status: output.status.code().unwrap_or(-1),
+            stdout: single_line(&String::from_utf8_lossy(&output.stdout)),
+            stderr: single_line(&String::from_utf8_lossy(&output.stderr)),
+        });
+    }
+    Ok(())
 }
 
-pub fn canonical_checkout_warning_lines(report: &CanonicalCheckoutReport) -> Vec<String> {
-    report
-        .migrated
-        .iter()
-        .map(|entry| {
-            format!(
-                "canonical_checkout_migrated kind={} source={} destination={}",
-                entry.kind,
-                entry.source.display(),
-                entry.destination.display()
-            )
-        })
-        .collect()
+fn git_can_fast_forward(
+    root: &Path,
+    head: &str,
+    upstream_head: &str,
+) -> Result<bool, CanonicalCheckoutError> {
+    let output = Command::new("git")
+        .args(["merge-base", "--is-ancestor", head, upstream_head])
+        .current_dir(root)
+        .output()?;
+    if output.status.success() {
+        return Ok(true);
+    }
+    if output.status.code() == Some(1) {
+        return Ok(false);
+    }
+    Err(CanonicalCheckoutError::GitMergeBaseFailed {
+        root: root.to_path_buf(),
+        head: head.into(),
+        upstream_head: upstream_head.into(),
+        status: output.status.code().unwrap_or(-1),
+        stdout: single_line(&String::from_utf8_lossy(&output.stdout)),
+        stderr: single_line(&String::from_utf8_lossy(&output.stderr)),
+    })
 }
 
-pub fn canonical_quarantine_root(config: &RuntimeConfig) -> PathBuf {
-    artifact_layout(config)
-        .scratch
-        .join("canonical-checkout-quarantine")
+fn merge_ff_only(root: &Path, upstream: &str) -> Result<(), CanonicalCheckoutError> {
+    let output = Command::new("git")
+        .args(["merge", "--ff-only", upstream])
+        .current_dir(root)
+        .output()?;
+    if !output.status.success() {
+        return Err(CanonicalCheckoutError::GitMergeFailed {
+            root: root.to_path_buf(),
+            upstream: upstream.into(),
+            status: output.status.code().unwrap_or(-1),
+            stdout: single_line(&String::from_utf8_lossy(&output.stdout)),
+            stderr: single_line(&String::from_utf8_lossy(&output.stderr)),
+        });
+    }
+    Ok(())
 }
 
 enum GitStatusEntry {
@@ -451,6 +740,10 @@ fn write_manifest(
     Ok(())
 }
 
+fn single_line(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn unix_timestamp_ms() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -508,6 +801,235 @@ mod tests {
             .current_dir(path)
             .status()
             .unwrap();
+    }
+
+    fn git_ok(path: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(path)
+            .output()
+            .unwrap_or_else(|error| panic!("git {args:?} failed to start: {error}"));
+        assert!(
+            output.status.success(),
+            "git {:?} failed\nstdout={}\nstderr={}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn git_head(path: &Path) -> String {
+        let output = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(path)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    fn init_repo_with_origin(root: &Path) -> (PathBuf, PathBuf) {
+        init_repo_with_origin_at(root, "repo")
+    }
+
+    fn init_repo_with_origin_at(root: &Path, repo_rel: &str) -> (PathBuf, PathBuf) {
+        let remote = root.join("origin.git");
+        let repo = root.join(repo_rel);
+        git_ok(
+            root,
+            &["init", "--bare", "--initial-branch=main", "origin.git"],
+        );
+        if let Some(parent) = repo.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        git_ok(
+            root,
+            &["init", "--initial-branch=main", repo.to_str().unwrap()],
+        );
+        git_ok(&repo, &["config", "user.email", "test@example.com"]);
+        git_ok(&repo, &["config", "user.name", "Test User"]);
+        fs::write(repo.join("tracked.txt"), "clean\n").unwrap();
+        git_ok(&repo, &["add", "tracked.txt"]);
+        git_ok(&repo, &["commit", "-qm", "init"]);
+        git_ok(
+            &repo,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
+        git_ok(&repo, &["push", "-u", "origin", "main"]);
+        (repo, remote)
+    }
+
+    fn advance_remote(root: &Path, remote: &Path, file: &str, text: &str) -> String {
+        let other = root.join(format!("other-{}", safe_identifier(file)));
+        git_ok(
+            root,
+            &["clone", remote.to_str().unwrap(), other.to_str().unwrap()],
+        );
+        git_ok(&other, &["config", "user.email", "test@example.com"]);
+        git_ok(&other, &["config", "user.name", "Test User"]);
+        fs::write(other.join(file), text).unwrap();
+        git_ok(&other, &["add", file]);
+        git_ok(&other, &["commit", "-qm", "advance main"]);
+        git_ok(&other, &["push", "origin", "main"]);
+        git_head(&other)
+    }
+
+    #[test]
+    fn refresh_reports_already_current() {
+        let temp = tempfile::tempdir().unwrap();
+        let (repo, _remote) = init_repo_with_origin(temp.path());
+
+        let report = refresh_canonical_checkout_before_write(
+            &repo,
+            &config(temp.path()),
+            CanonicalCheckoutRefreshMode::Apply,
+        )
+        .unwrap();
+
+        assert_eq!(
+            report.action,
+            CanonicalCheckoutRefreshAction::AlreadyCurrent
+        );
+        assert!(canonical_checkout_refresh_status_line(&report)
+            .contains("canonical_checkout_refresh=already_current"));
+        assert_eq!(report.head_before, report.head_after);
+    }
+
+    #[test]
+    fn refresh_fast_forwards_clean_main_behind_origin() {
+        let temp = tempfile::tempdir().unwrap();
+        let (repo, remote) = init_repo_with_origin(temp.path());
+        let remote_head = advance_remote(temp.path(), &remote, "CHANGELOG.md", "change\n");
+
+        let report = refresh_canonical_checkout_before_write(
+            &repo,
+            &config(temp.path()),
+            CanonicalCheckoutRefreshMode::Apply,
+        )
+        .unwrap();
+
+        assert_eq!(report.action, CanonicalCheckoutRefreshAction::FfOnly);
+        assert_eq!(report.head_after, remote_head);
+        assert_eq!(git_head(&repo), remote_head);
+    }
+
+    #[test]
+    fn refresh_dry_run_reports_would_ff_only_without_changing_head() {
+        let temp = tempfile::tempdir().unwrap();
+        let (repo, remote) = init_repo_with_origin(temp.path());
+        advance_remote(temp.path(), &remote, "CHANGELOG.md", "change\n");
+        git_ok(&repo, &["fetch", "origin", "main"]);
+        let before = git_head(&repo);
+
+        let report = refresh_canonical_checkout_before_write(
+            &repo,
+            &config(temp.path()),
+            CanonicalCheckoutRefreshMode::DryRun,
+        )
+        .unwrap();
+
+        assert_eq!(report.action, CanonicalCheckoutRefreshAction::WouldFfOnly);
+        assert_eq!(git_head(&repo), before);
+        assert_eq!(report.head_after, before);
+    }
+
+    #[test]
+    fn refresh_blocks_dirty_canonical_checkout() {
+        let temp = tempfile::tempdir().unwrap();
+        let (repo, _remote) = init_repo_with_origin(temp.path());
+        fs::write(repo.join("tracked.txt"), "dirty\n").unwrap();
+
+        let error = refresh_canonical_checkout_before_write(
+            &repo,
+            &config(temp.path()),
+            CanonicalCheckoutRefreshMode::Apply,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("tracked dirty files"));
+    }
+
+    #[test]
+    fn refresh_blocks_non_main_canonical_checkout() {
+        let temp = tempfile::tempdir().unwrap();
+        let (repo, _remote) = init_repo_with_origin(temp.path());
+        git_ok(&repo, &["checkout", "-q", "-b", "feature/test"]);
+
+        let error = refresh_canonical_checkout_before_write(
+            &repo,
+            &config(temp.path()),
+            CanonicalCheckoutRefreshMode::Apply,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("instead of `main`"));
+    }
+
+    #[test]
+    fn refresh_blocks_detached_canonical_checkout() {
+        let temp = tempfile::tempdir().unwrap();
+        let (repo, _remote) = init_repo_with_origin(temp.path());
+        let head = git_head(&repo);
+        git_ok(&repo, &["checkout", "-q", "--detach", &head]);
+
+        let error = refresh_canonical_checkout_before_write(
+            &repo,
+            &config(temp.path()),
+            CanonicalCheckoutRefreshMode::Apply,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("detached"));
+    }
+
+    #[test]
+    fn refresh_blocks_missing_upstream() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        init_repo(&repo);
+
+        let error = refresh_canonical_checkout_before_write(
+            &repo,
+            &config(temp.path()),
+            CanonicalCheckoutRefreshMode::Apply,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("has no upstream"));
+    }
+
+    #[test]
+    fn refresh_blocks_issue_worktree_under_workspace_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let (repo, _remote) = init_repo_with_origin_at(temp.path(), "worktrees/issue-344");
+
+        let error = refresh_canonical_checkout_before_write(
+            &repo,
+            &config(temp.path()),
+            CanonicalCheckoutRefreshMode::Apply,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("workflow workspace root"));
+    }
+
+    #[test]
+    fn refresh_blocks_non_fast_forward_update() {
+        let temp = tempfile::tempdir().unwrap();
+        let (repo, remote) = init_repo_with_origin(temp.path());
+        fs::write(repo.join("local.txt"), "local\n").unwrap();
+        git_ok(&repo, &["add", "local.txt"]);
+        git_ok(&repo, &["commit", "-qm", "local change"]);
+        advance_remote(temp.path(), &remote, "remote.txt", "remote\n");
+
+        let error = refresh_canonical_checkout_before_write(
+            &repo,
+            &config(temp.path()),
+            CanonicalCheckoutRefreshMode::Apply,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("cannot fast-forward"));
     }
 
     #[test]

@@ -78,7 +78,7 @@ Record the following execution metadata in durable evidence:
 | Subissue branch | Subissue workpad and PR head branch | Identifies the normal per-issue implementation branch. |
 | Subissue PR target | Subissue PR base branch and subissue workpad | Proves the PR targets the parent integration branch. |
 | Parent final PR target | Parent issue workpad and parent PR base/head | Proves the parent branch is proposed for `main`. |
-| Review evidence | Subissue and parent workpads | Preserves Main, Agent Review, Human Review, and merge decisions. |
+| Review evidence | Subissue and parent workpads | Preserves Main, Agent Review, parent Human Review, exception, and merge decisions. |
 | Merge evidence | Subissue and parent workpads | Shows subissue PRs merged into the parent branch and parent PR status. |
 
 These fields supplement the native hierarchy. They do not define it.
@@ -88,6 +88,8 @@ These fields supplement the native hierarchy. They do not define it.
 A subissue may move to `Done` after all of these are true:
 
 - its implementation PR has passed the normal Main and Review path;
+- routine Review PASS routed the subissue to `Merging`, or the subissue records
+  an explicit `Subissue Human Review Exception: <reason>`;
 - its PR has merged into the parent integration branch;
 - the subissue workpad records the PR, target branch, review evidence, and merge
   evidence;
@@ -128,8 +130,15 @@ The parent must not move to `Human Review` until all of these are true:
   explicit exceptions;
 - independent Review Agent evidence exists for the parent final PR.
 
-The Main Agent still stops at `Agent Review`. The Review Agent and human
-approval boundaries do not change for parent/subissue work.
+The Main Agent still stops at `Agent Review`. The routine subissue Review Agent
+boundary is different: a passing native subissue review routes directly to
+`Merging` because the parent issue owns final Human Review and UAT. Direct
+subissue Human Review is allowed only when the subissue records an explicit
+`Subissue Human Review Exception: <reason>`.
+
+Parent final review still follows the ordinary path: Main hands off to
+`Agent Review`, passing parent Review Agent evidence routes to `Human Review`,
+and the operator owns final UAT before the parent PR can merge to `main`.
 
 ## Unsafe Topologies
 

@@ -123,6 +123,8 @@ pub struct BackendConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CodexConfig {
     pub command: String,
+    pub model: Option<String>,
+    pub reasoning_effort: String,
     pub approval_policy: Value,
     pub thread_sandbox: String,
     pub turn_sandbox_policy: Option<Value>,
@@ -160,6 +162,7 @@ pub struct ReviewConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeLaneConfig {
     pub max_concurrent_workers: usize,
+    pub agent_backend: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -320,6 +323,9 @@ impl RuntimeConfig {
         let codex = CodexConfig {
             command: get_string(root.get("codex"), "command")
                 .unwrap_or_else(|| "codex app-server".to_string()),
+            model: get_string(root.get("codex"), "model"),
+            reasoning_effort: get_string(root.get("codex"), "reasoning_effort")
+                .unwrap_or_else(|| "high".to_string()),
             approval_policy: get_value(root.get("codex"), "approval_policy")
                 .cloned()
                 .unwrap_or_else(default_codex_approval_policy),
@@ -377,6 +383,8 @@ impl RuntimeConfig {
             max_concurrent_workers: get_u64(merge_lane_config, "max_concurrent_workers")
                 .unwrap_or(1)
                 .max(1) as usize,
+            agent_backend: get_string(merge_lane_config, "agent_backend")
+                .unwrap_or_else(|| "codex".to_string()),
         };
         let quality_gate = parse_quality_gate(root.get("quality_gate"));
         let verification = parse_verification(root.get("verification"));
@@ -887,13 +895,7 @@ fn default_artifact_root() -> PathBuf {
 }
 
 fn default_codex_approval_policy() -> Value {
-    serde_json::json!({
-        "reject": {
-            "sandbox_approval": true,
-            "rules": true,
-            "mcp_elicitations": true
-        }
-    })
+    serde_json::Value::String("never".to_string())
 }
 
 fn require_positive(name: &str, value: u64) -> Result<(), ConfigError> {
@@ -939,6 +941,33 @@ mod tests {
         );
         assert_eq!(config.tracker.project_owner_type, None);
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn codex_approval_policy_defaults_to_app_server_supported_never() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nmain_lane:\n  backend: codex\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.codex.approval_policy, serde_json::json!("never"));
+    }
+
+    #[test]
+    fn codex_model_and_reasoning_effort_are_configurable() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\ncodex:\n  model: gpt-5.5\n  reasoning_effort: high\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.codex.model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(config.codex.reasoning_effort, "high");
     }
 
     #[test]
@@ -1013,6 +1042,33 @@ mod tests {
         assert_eq!(config.tmux.merge_agent_command.as_deref(), Some("codex"));
         assert_eq!(config.tmux.session_prefix, "jade-local");
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn merge_lane_agent_backend_defaults_to_codex() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.merge_lane.agent_backend, "codex");
+    }
+
+    #[test]
+    fn parses_merge_lane_agent_backend_override() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nmerge_lane:\n  agent_backend: tmux\n  max_concurrent_workers: 2\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.merge_lane.agent_backend, "tmux");
+        assert_eq!(config.merge_lane.max_concurrent_workers, 2);
     }
 
     #[test]

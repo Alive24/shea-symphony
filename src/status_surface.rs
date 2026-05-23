@@ -121,12 +121,13 @@ fn render_sessions(snapshot: &RuntimeSnapshot, lines: &mut Vec<String>) {
         return;
     }
 
-    lines.push("tmux sessions:".into());
+    lines.push("runtime sessions:".into());
     for entry in &snapshot.sessions {
         lines.push(format!(
-            "- {} lane={} issue={} status={} source={} evidence=\"{}\" attach={} log={}",
+            "- {} lane={} backend={} issue={} status={} source={} evidence=\"{}\" attach={} log={}",
             entry.session_id,
             entry.lane,
+            session_backend(entry),
             entry.issue_identifier.as_deref().unwrap_or("n/a"),
             entry.status,
             entry.evidence_source,
@@ -134,6 +135,15 @@ fn render_sessions(snapshot: &RuntimeSnapshot, lines: &mut Vec<String>) {
             entry.attach_command.as_deref().unwrap_or("n/a"),
             entry.log_path.as_deref().unwrap_or("n/a"),
         ));
+    }
+}
+
+fn session_backend(entry: &crate::model::SessionStatusSnapshot) -> &str {
+    let backend = entry.backend.trim();
+    if backend.is_empty() {
+        "unknown"
+    } else {
+        backend
     }
 }
 
@@ -253,6 +263,7 @@ mod tests {
             sessions: vec![SessionStatusSnapshot {
                 session_id: "jade-main-1-attempt-1".into(),
                 lane: "main".into(),
+                backend: "tmux".into(),
                 run_id: None,
                 status: "waiting_for_approval".into(),
                 evidence_source: "pane".into(),
@@ -293,7 +304,8 @@ mod tests {
         assert!(rendered.contains("Latest: main | #1 | handoff | pr_created"));
         assert!(rendered.contains("planned issues:"));
         assert!(rendered.contains("running issues:"));
-        assert!(rendered.contains("tmux sessions:"));
+        assert!(rendered.contains("runtime sessions:"));
+        assert!(rendered.contains("backend=tmux"));
         assert!(rendered.contains("status=waiting_for_approval"));
         assert!(rendered.contains("profile=codex-alpha"));
         assert!(rendered.contains("retrying issues:"));

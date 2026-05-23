@@ -46,7 +46,7 @@ artifacts:
 workspace:
   root: $JADE_SYMPHONY_ARTIFACT_ROOT/Alive24/jade-symphony/default/worktrees
 main_lane:
-  backend: tmux
+  backend: codex
   max_concurrent_agents: 3
   max_turns: 3
   max_retry_backoff_ms: 300000
@@ -57,6 +57,8 @@ tmux:
   session_prefix: jade
 codex:
   command: codex app-server
+  reasoning_effort: high
+  approval_policy: never
 claude:
   command: claude
 review_lane:
@@ -68,6 +70,7 @@ review_lane:
   timeout_ms: 1200000
   max_concurrent_workers: 2
 merge_lane:
+  agent_backend: codex
   max_concurrent_workers: 3
 verification:
   timeout_ms: 600000

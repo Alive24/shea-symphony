@@ -177,8 +177,10 @@ Minimum behavior:
    `Completion Criteria`, `Functional Verification`, `UAT`, and
    `Context Verification`, then checks only the items supported by PR/workpad
    evidence.
-9. Review Agent moves to `Human Review` only after review passes and evidence
-   is recorded.
+9. Review Agent routes only after review passes and evidence is recorded:
+   ordinary issues and parent final issues move to `Human Review`, while
+   routine native subissues move to `Merging` because the parent issue owns
+   final Human Review and UAT.
 
 ## Evidence Timeline Model
 

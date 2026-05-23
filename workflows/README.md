@@ -28,29 +28,46 @@ ticks in order and returns control to the operator after the explicit iteration
 budget. Use `main loop`, `review loop`, or `merge loop` directly for focused
 debugging, break-glass recovery, or deliberately lane-specific dogfood.
 
-Main Agent execution uses the configured Main backend. A bounded write tick
-creates or resumes the issue runtime, records durable runtime artifacts, and
-leaves the issue active until real implementation evidence is available for the
-normal handoff path. Status commands classify registered sessions from bounded
-runtime evidence while keeping raw backend scrollback/protocol details out of
-routine output.
+Write-mode lane/control commands are safe to run from the canonical checkout on
+`main` even when local `main` is only behind `origin/main`: before tracker
+mutation, Jade Symphony fetches the configured upstream and performs a
+canonical-only `git merge --ff-only`. Dry-runs report `would_ff_only` without
+changing the checkout. Dirty, detached, non-`main`, missing-upstream, and
+non-fast-forward cases still fail closed; issue worktrees and PR branches are
+not refreshed by this path.
+
+Main Agent execution defaults to the Codex app-server backend through
+`main_lane.backend: codex`, `codex.command: codex app-server`, and
+`codex.approval_policy: never`. A bounded write tick creates or resumes the
+issue worktree, runs one app-server turn, records prompt/protocol/stderr/
+normalized-event artifacts, persists a backend session registry record, and
+reconciles the normal Main handoff only after PR readiness and linked-PR
+readback are proven. `main_lane.backend: tmux` remains an explicit
+fallback/debug setting, not the unattended default.
 Gemini-backed `review loop` uses the headless CLI path by default: it writes the
 Review prompt through stdin, requests JSON output, applies configured model and
 interim allowed-tools settings, and records stdout/stderr/job evidence for the
 review handoff.
 Main-lane crash recovery is enabled by default for bounded `main loop --write`
-ticks. It restarts recoverable interrupted `In Progress` tmux runtime slots as
-new attempts while preserving issue state, dirty worktrees, and existing claim
+ticks. It restarts recoverable interrupted `In Progress` runtime slots as new
+attempts while preserving issue state, dirty worktrees, and existing claim
 evidence. Use `--no-recover` only for debugging or a deliberately conservative
-operator pass. Manual tmux recovery remains a two-step break-glass path: use
+operator pass. Manual session recovery remains a two-step break-glass path: use
 `main claim`, `review claim`, or `merge claim` to write the matching Project
 claim field, print the structured `run=`, and record minimum non-tmux registry
 evidence for the manual Codex App claim. Worker labels may be human-readable
 display labels with spaces; claim commands quote and validate those values
 before Project writes. Then use `session start --lane ... --run ...` to render
-the lane prompt and start the tmux runtime when a supervised terminal is needed.
-Session commands validate the existing claim and write attach/log evidence
-without approving reviews, merging PRs, or closing issues.
+the lane prompt and start the configured runtime when a supervised session is
+needed. Main and Merge-agent sessions default to Codex app-server through the
+lane backend config and `codex.command`; Review session start remains the tmux
+supervised fallback while automatic Review uses Gemini headless.
+Clean `merge once` / `merge loop` remains direct CLI merge behavior and does not
+launch a merge-agent runtime. Dirty PRs still try the mechanical direct-CLI
+repair first; only content conflicts in a trusted clean PR worktree launch the
+configured merge-agent backend. Session commands validate the existing claim and
+write runtime evidence without approving reviews, merging PRs, or closing
+issues.
 
 Merge-lane crash recovery is enabled by default for bounded
 `merge loop --write` ticks. It adopts interrupted structured merge-loop/goal

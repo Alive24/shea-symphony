@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{fs, io::Write};
@@ -8,12 +10,13 @@ use std::{fs, io::Write};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::codex_app_server::{normalize_json_rpc_line, CodexAppServerEventKind};
 use crate::config::RuntimeConfig;
 use crate::model::AgentEvent;
 use crate::profiles::{selected_execution_profile, ExecutionProfile};
 use crate::session_registry::{
     deterministic_session_name, save_session_record, session_registry_path, unix_timestamp_ms,
-    AgentSessionRecord, SessionStatus,
+    update_session_record_status, AgentSessionRecord, SessionStatus,
 };
 
 const DEFAULT_TMUX_CAPTURE_LINES: usize = 200;
@@ -27,8 +30,14 @@ pub struct PreparedRun {
     pub prompt_artifact_path: Option<PathBuf>,
     pub command: Option<String>,
     pub timeout_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
     pub approval_policy: Option<String>,
     pub sandbox: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_sandbox_policy: Option<serde_json::Value>,
     pub profile_id: Option<String>,
     pub instance_name: Option<String>,
     #[serde(default)]
@@ -111,8 +120,11 @@ impl AgentBackend for DryRunBackend {
             prompt_artifact_path: None,
             command: None,
             timeout_ms: 0,
+            model: None,
+            reasoning_effort: None,
             approval_policy: None,
             sandbox: None,
+            turn_sandbox_policy: None,
             profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
             instance_name: profile
                 .as_ref()
@@ -193,8 +205,11 @@ impl AgentBackend for CodexBackend {
             prompt_artifact_path: None,
             command: Some(config.codex.command.clone()),
             timeout_ms: config.codex.turn_timeout_ms,
+            model: config.codex.model.clone(),
+            reasoning_effort: Some(config.codex.reasoning_effort.clone()),
             approval_policy: Some(config.codex.approval_policy.to_string()),
             sandbox: Some(config.codex.thread_sandbox.clone()),
+            turn_sandbox_policy: config.codex.turn_sandbox_policy.clone(),
             profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
             instance_name: profile
                 .as_ref()
@@ -210,7 +225,7 @@ impl AgentBackend for CodexBackend {
             run_id: None,
             attempt: 1,
             branch_name: None,
-            session_registry_path: None,
+            session_registry_path: Some(session_registry_path(config)),
         })
     }
 
@@ -220,17 +235,7 @@ impl AgentBackend for CodexBackend {
             .as_deref()
             .is_some_and(is_codex_app_server_command)
         {
-            let session_id = session_id_with_profile("codex-subprocess", &prepared);
-            return Ok(vec![
-                AgentEvent::SessionStarted {
-                    backend: prepared.backend.clone(),
-                    session_id,
-                },
-                AgentEvent::Failed {
-                    backend: prepared.backend,
-                    error: "Codex app-server transport is not implemented for the subprocess backend; configure an explicit subprocess command or use dry-run until app-server support lands.".into(),
-                },
-            ]);
+            return run_codex_app_server_backend(prepared);
         }
 
         run_subprocess_backend(prepared, "codex-subprocess", "Codex subprocess")
@@ -268,8 +273,11 @@ impl AgentBackend for ClaudeCodeBackend {
             prompt_artifact_path: None,
             command: Some(config.claude.command.clone()),
             timeout_ms: config.claude.turn_timeout_ms,
+            model: None,
+            reasoning_effort: None,
             approval_policy: None,
             sandbox: None,
+            turn_sandbox_policy: None,
             profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
             instance_name: profile
                 .as_ref()
@@ -338,8 +346,11 @@ impl AgentBackend for TmuxBackend {
             prompt_artifact_path: None,
             command: Some(config.tmux.agent_command.clone()),
             timeout_ms: 0,
+            model: None,
+            reasoning_effort: None,
             approval_policy: None,
             sandbox: None,
+            turn_sandbox_policy: None,
             profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
             instance_name: profile
                 .as_ref()
@@ -516,6 +527,638 @@ fn run_subprocess_backend(
 
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+fn run_codex_app_server_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError> {
+    let mut events = Vec::new();
+
+    if !prepared.workspace.is_dir() {
+        events.push(AgentEvent::Failed {
+            backend: prepared.backend,
+            error: format!("workspace does not exist: {}", prepared.workspace.display()),
+        });
+        return Ok(events);
+    }
+
+    let Some(command) = prepared.command.as_deref() else {
+        events.push(AgentEvent::Failed {
+            backend: prepared.backend,
+            error: "missing Codex app-server command".into(),
+        });
+        return Ok(events);
+    };
+
+    let prompt_artifact_path = persist_prompt_artifact(&prepared)?;
+    let artifacts = app_server_artifact_paths(&prepared, &prompt_artifact_path);
+    if let Some(parent) = artifacts.protocol_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut protocol_log = String::new();
+    let mut child = Command::new("sh")
+        .arg("-lc")
+        .arg(command)
+        .current_dir(&prepared.workspace)
+        .env("JADE_SYMPHONY_PROMPT_PATH", &prompt_artifact_path)
+        .env(
+            "JADE_SYMPHONY_APPROVAL_POLICY",
+            prepared.approval_policy.as_deref().unwrap_or_default(),
+        )
+        .env(
+            "JADE_SYMPHONY_SANDBOX",
+            prepared.sandbox.as_deref().unwrap_or_default(),
+        )
+        .envs(prepared.env.iter())
+        .env(
+            "JADE_SYMPHONY_ACTOR_ROLE",
+            prepared.actor_role.as_deref().unwrap_or_default(),
+        )
+        .env(
+            "JADE_SYMPHONY_ACTOR_LABEL",
+            prepared.actor_label.as_deref().unwrap_or_default(),
+        )
+        .env(
+            "JADE_SYMPHONY_GIT_AUTHOR",
+            prepared.git_author.as_deref().unwrap_or_default(),
+        )
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let Some(mut stdin) = child.stdin.take() else {
+        events.push(AgentEvent::Failed {
+            backend: prepared.backend,
+            error: "Codex app-server stdin was unavailable".into(),
+        });
+        finish_app_server_run(child, None, None, &artifacts, &protocol_log)?;
+        return Ok(events);
+    };
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| AgentError::Unavailable("Codex app-server stdout was unavailable".into()))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| AgentError::Unavailable("Codex app-server stderr was unavailable".into()))?;
+    let stderr_handle = thread::spawn(move || {
+        let mut stderr_text = String::new();
+        let _ = BufReader::new(stderr).read_to_string(&mut stderr_text);
+        stderr_text
+    });
+    let stdout_rx = spawn_app_server_stdout_reader(stdout);
+
+    let run_result = run_codex_app_server_protocol(
+        &prepared,
+        &mut stdin,
+        &stdout_rx,
+        &mut child,
+        AppServerRegistryContext {
+            artifacts: &artifacts,
+            prompt_artifact_path: &prompt_artifact_path,
+        },
+        &mut protocol_log,
+        &mut events,
+    );
+
+    let terminal_session_id = events.iter().find_map(|event| match event {
+        AgentEvent::SessionStarted { session_id, .. } => Some(session_id.clone()),
+        _ => None,
+    });
+    let exit_status = finish_app_server_run(
+        child,
+        Some(stderr_handle),
+        Some(&mut events),
+        &artifacts,
+        &protocol_log,
+    )?;
+
+    if let Err(error) = run_result {
+        events.push(AgentEvent::Failed {
+            backend: prepared.backend.clone(),
+            error,
+        });
+    }
+    if let Some(session_id) = terminal_session_id.as_deref() {
+        update_app_server_session_status(
+            prepared.session_registry_path.as_deref(),
+            session_id,
+            app_server_final_session_status(&events),
+        )?;
+    }
+
+    events.push(AgentEvent::Message {
+        backend: crate::codex_app_server::BACKEND_NAME.into(),
+        session_id: terminal_session_id,
+        text: format!(
+            "app_server_artifacts prompt_artifact={} protocol_artifact={} stderr_artifact={} normalized_events_artifact={} exit_status={}",
+            prompt_artifact_path.display(),
+            artifacts.protocol_path.display(),
+            artifacts.stderr_path.display(),
+            artifacts.events_path.display(),
+            display_exit_status(exit_status.as_ref())
+        ),
+    });
+    fs::write(
+        &artifacts.events_path,
+        serde_json::to_string_pretty(&events)
+            .map_err(|error| AgentError::Unavailable(error.to_string()))?,
+    )?;
+
+    Ok(events)
+}
+
+fn run_codex_app_server_protocol(
+    prepared: &PreparedRun,
+    stdin: &mut std::process::ChildStdin,
+    stdout_rx: &Receiver<Result<String, String>>,
+    child: &mut Child,
+    registry_context: AppServerRegistryContext<'_>,
+    protocol_log: &mut String,
+    events: &mut Vec<AgentEvent>,
+) -> Result<(), String> {
+    let timeout = Duration::from_millis(prepared.timeout_ms.max(1));
+    send_app_server_message(
+        stdin,
+        &serde_json::json!({
+            "method": "initialize",
+            "id": 1,
+            "params": {
+                "capabilities": {
+                    "experimentalApi": true
+                },
+                "clientInfo": {
+                    "name": "jade-symphony",
+                    "title": "Jade Symphony",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            }
+        }),
+        protocol_log,
+    )?;
+    await_app_server_response(child, stdout_rx, protocol_log, events, 1, None, timeout)?;
+
+    send_app_server_message(
+        stdin,
+        &serde_json::json!({
+            "method": "initialized",
+            "params": {}
+        }),
+        protocol_log,
+    )?;
+
+    let mut thread_params = serde_json::json!({
+        "approvalPolicy": app_server_approval_policy(prepared.approval_policy.as_deref()),
+        "sandbox": prepared.sandbox.as_deref().unwrap_or("workspace-write"),
+        "cwd": prepared.workspace.display().to_string(),
+        "dynamicTools": []
+    });
+    if let Some(model) = prepared
+        .model
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        thread_params["model"] = serde_json::Value::String(model.to_string());
+    }
+    if let Some(reasoning_effort) = prepared
+        .reasoning_effort
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        thread_params["reasoningEffort"] = serde_json::Value::String(reasoning_effort.to_string());
+    }
+
+    let thread_start = serde_json::json!({
+        "method": "thread/start",
+        "id": 2,
+        "params": thread_params
+    });
+    send_app_server_message(stdin, &thread_start, protocol_log)?;
+    let thread_response =
+        await_app_server_response(child, stdout_rx, protocol_log, events, 2, None, timeout)?;
+    let thread_id = thread_response
+        .pointer("/result/thread/id")
+        .or_else(|| thread_response.pointer("/thread/id"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            format!("Codex app-server thread/start response missing thread id: {thread_response}")
+        })?
+        .to_string();
+
+    let mut turn_params = serde_json::json!({
+        "threadId": thread_id.clone(),
+        "input": [
+            {
+                "type": "text",
+                "text": prepared.prompt.clone()
+            }
+        ],
+        "cwd": prepared.workspace.display().to_string(),
+        "title": app_server_turn_title(prepared),
+        "approvalPolicy": app_server_approval_policy(prepared.approval_policy.as_deref())
+    });
+    if let Some(model) = prepared
+        .model
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        turn_params["model"] = serde_json::Value::String(model.to_string());
+    }
+    if let Some(reasoning_effort) = prepared
+        .reasoning_effort
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        turn_params["reasoningEffort"] = serde_json::Value::String(reasoning_effort.to_string());
+    }
+    if let Some(policy) = prepared.turn_sandbox_policy.clone() {
+        turn_params["sandboxPolicy"] = policy;
+    }
+    send_app_server_message(
+        stdin,
+        &serde_json::json!({
+            "method": "turn/start",
+            "id": 3,
+            "params": turn_params
+        }),
+        protocol_log,
+    )?;
+    let turn_response =
+        await_app_server_response(child, stdout_rx, protocol_log, events, 3, None, timeout)?;
+    let turn_id = turn_response
+        .pointer("/result/turn/id")
+        .or_else(|| turn_response.pointer("/turn/id"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            format!("Codex app-server turn/start response missing turn id: {turn_response}")
+        })?
+        .to_string();
+    let session_id = format!("{thread_id}-{turn_id}");
+    events.push(AgentEvent::SessionStarted {
+        backend: prepared.backend.clone(),
+        session_id: session_id.clone(),
+    });
+    save_app_server_session_record(
+        prepared,
+        registry_context.artifacts,
+        registry_context.prompt_artifact_path,
+        &thread_id,
+        &session_id,
+        SessionStatus::Running,
+    )
+    .map_err(|error| error.to_string())?;
+
+    await_app_server_terminal_event(child, stdout_rx, protocol_log, events, &session_id, timeout)
+}
+
+fn send_app_server_message(
+    stdin: &mut std::process::ChildStdin,
+    payload: &serde_json::Value,
+    protocol_log: &mut String,
+) -> Result<(), String> {
+    let line = serde_json::to_string(payload).map_err(|error| error.to_string())?;
+    stdin
+        .write_all(line.as_bytes())
+        .and_then(|_| stdin.write_all(b"\n"))
+        .and_then(|_| stdin.flush())
+        .map_err(|error| format!("Codex app-server stdin write failed: {error}"))?;
+    append_protocol_record(protocol_log, "stdin", &line);
+    Ok(())
+}
+
+fn await_app_server_response(
+    child: &mut Child,
+    stdout_rx: &Receiver<Result<String, String>>,
+    protocol_log: &mut String,
+    events: &mut Vec<AgentEvent>,
+    expected_id: u64,
+    session_id: Option<&str>,
+    timeout: Duration,
+) -> Result<serde_json::Value, String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let Some(line) = next_app_server_stdout_line(child, stdout_rx, deadline)? else {
+            return Err(format!(
+                "Codex app-server exited before response id {expected_id}"
+            ));
+        };
+        append_protocol_record(protocol_log, "stdout", line.trim_end());
+        let parsed = serde_json::from_str::<serde_json::Value>(line.trim());
+        if let Ok(payload) = &parsed {
+            if json_rpc_id_matches(payload.get("id"), expected_id) {
+                if let Some(error) = payload.get("error") {
+                    return Err(format!(
+                        "Codex app-server response id {expected_id} returned error: {error}"
+                    ));
+                }
+                return Ok(payload.clone());
+            }
+        }
+
+        let event = normalize_json_rpc_line(line.trim_end(), session_id);
+        let kind = event.event;
+        let message = event.message.clone();
+        if let Some(agent_event) = event.agent_event {
+            events.push(agent_event);
+        }
+        if is_terminal_or_fail_closed_app_server_event(kind) {
+            return Err(message);
+        }
+    }
+}
+
+fn await_app_server_terminal_event(
+    child: &mut Child,
+    stdout_rx: &Receiver<Result<String, String>>,
+    protocol_log: &mut String,
+    events: &mut Vec<AgentEvent>,
+    session_id: &str,
+    timeout: Duration,
+) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let Some(line) = next_app_server_stdout_line(child, stdout_rx, deadline)? else {
+            return Err("Codex app-server exited before a terminal turn event".into());
+        };
+        append_protocol_record(protocol_log, "stdout", line.trim_end());
+        let event = normalize_json_rpc_line(line.trim_end(), Some(session_id));
+        let kind = event.event;
+        let message = event.message.clone();
+        if let Some(agent_event) = event.agent_event {
+            events.push(agent_event);
+        }
+        match kind {
+            CodexAppServerEventKind::TurnCompleted => return Ok(()),
+            kind if is_terminal_or_fail_closed_app_server_event(kind) => return Err(message),
+            _ => {}
+        }
+    }
+}
+
+fn next_app_server_stdout_line(
+    child: &mut Child,
+    stdout_rx: &Receiver<Result<String, String>>,
+    deadline: Instant,
+) -> Result<Option<String>, String> {
+    loop {
+        let now = Instant::now();
+        if now >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Codex app-server timed out waiting for protocol output".into());
+        }
+        let remaining = deadline.saturating_duration_since(now);
+        match stdout_rx.recv_timeout(remaining.min(Duration::from_millis(50))) {
+            Ok(Ok(line)) => return Ok(Some(line)),
+            Ok(Err(error)) => return Err(format!("Codex app-server stdout read failed: {error}")),
+            Err(RecvTimeoutError::Timeout) => {
+                if child
+                    .try_wait()
+                    .map_err(|error| error.to_string())?
+                    .is_some()
+                {
+                    return Ok(None);
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => return Ok(None),
+        }
+    }
+}
+
+fn spawn_app_server_stdout_reader(
+    stdout: std::process::ChildStdout,
+) -> Receiver<Result<String, String>> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    if tx.send(Ok(line)).is_err() {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    let _ = tx.send(Err(error.to_string()));
+                    break;
+                }
+            }
+        }
+    });
+    rx
+}
+
+fn is_terminal_or_fail_closed_app_server_event(kind: CodexAppServerEventKind) -> bool {
+    matches!(
+        kind,
+        CodexAppServerEventKind::TurnFailed
+            | CodexAppServerEventKind::TurnCancelled
+            | CodexAppServerEventKind::TurnInputRequired
+            | CodexAppServerEventKind::Malformed
+    )
+}
+
+fn app_server_approval_policy(value: Option<&str>) -> serde_json::Value {
+    let parsed = value.and_then(|value| serde_json::from_str(value).ok());
+    match parsed {
+        Some(serde_json::Value::Object(policy))
+            if policy.len() == 1 && policy.contains_key("reject") =>
+        {
+            serde_json::Value::String("never".to_string())
+        }
+        Some(policy) => policy,
+        None => serde_json::Value::String(value.unwrap_or("never").to_string()),
+    }
+}
+
+fn app_server_turn_title(prepared: &PreparedRun) -> String {
+    match (
+        prepared.issue_identifier.as_deref(),
+        prepared.issue_title.as_deref(),
+    ) {
+        (Some(identifier), Some(title)) => format!("{identifier}: {title}"),
+        (Some(identifier), None) => identifier.to_string(),
+        (None, Some(title)) => title.to_string(),
+        (None, None) => prepared
+            .workspace
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("Jade Symphony Codex app-server turn")
+            .to_string(),
+    }
+}
+
+fn json_rpc_id_matches(value: Option<&serde_json::Value>, expected: u64) -> bool {
+    match value {
+        Some(serde_json::Value::Number(number)) => number.as_u64() == Some(expected),
+        Some(serde_json::Value::String(text)) => text == &expected.to_string(),
+        _ => false,
+    }
+}
+
+fn append_protocol_record(protocol_log: &mut String, direction: &str, line: &str) {
+    let escaped_line =
+        serde_json::to_string(line).unwrap_or_else(|_| "\"<unserializable>\"".into());
+    protocol_log.push_str(&format!(
+        "{{\"direction\":\"{direction}\",\"line\":{escaped_line}}}\n"
+    ));
+}
+
+#[derive(Debug, Clone)]
+struct AppServerArtifactPaths {
+    protocol_path: PathBuf,
+    stderr_path: PathBuf,
+    events_path: PathBuf,
+}
+
+#[derive(Clone, Copy)]
+struct AppServerRegistryContext<'a> {
+    artifacts: &'a AppServerArtifactPaths,
+    prompt_artifact_path: &'a Path,
+}
+
+fn app_server_artifact_paths(
+    prepared: &PreparedRun,
+    prompt_artifact_path: &Path,
+) -> AppServerArtifactPaths {
+    let artifact_dir = prompt_artifact_path
+        .parent()
+        .and_then(Path::parent)
+        .unwrap_or_else(|| Path::new("/tmp"))
+        .join("app-server");
+    let base = format!(
+        "{}-{}",
+        safe_path_component(prepared.issue_identifier.as_deref()),
+        current_time_ms()
+    );
+    AppServerArtifactPaths {
+        protocol_path: artifact_dir.join(format!("{base}.protocol.jsonl")),
+        stderr_path: artifact_dir.join(format!("{base}.stderr.log")),
+        events_path: artifact_dir.join(format!("{base}.events.json")),
+    }
+}
+
+fn save_app_server_session_record(
+    prepared: &PreparedRun,
+    artifacts: &AppServerArtifactPaths,
+    prompt_artifact_path: &Path,
+    thread_id: &str,
+    session_id: &str,
+    status: SessionStatus,
+) -> Result<(), AgentError> {
+    let Some(registry_path) = prepared.session_registry_path.as_deref() else {
+        return Ok(());
+    };
+    let now_ms = unix_timestamp_ms();
+    let record = AgentSessionRecord {
+        issue_id: prepared.issue_id.clone(),
+        issue_identifier: prepared.issue_identifier.clone(),
+        issue_title: prepared.issue_title.clone(),
+        lane: prepared.lane.clone().unwrap_or_else(|| "main".into()),
+        run_id: prepared.run_id.clone(),
+        thread: Some(thread_id.to_string()),
+        session_source: Some(crate::codex_app_server::BACKEND_NAME.into()),
+        claim_value: prepared.env.get("JADE_SYMPHONY_CLAIM").cloned(),
+        actor_role: prepared.actor_role.clone(),
+        actor_label: prepared.actor_label.clone(),
+        git_author: prepared.git_author.clone(),
+        profile_id: prepared.profile_id.clone(),
+        instance_name: prepared.instance_name.clone(),
+        worktree: prepared.workspace.clone(),
+        branch: prepared.branch_name.clone(),
+        backend: prepared.backend.clone(),
+        session_name: session_id.to_string(),
+        pane_target: String::new(),
+        prompt_artifact_path: prompt_artifact_path.to_path_buf(),
+        log_path: artifacts.events_path.clone(),
+        attach_command: format!(
+            "not a tmux session; inspect app-server artifacts: protocol={} stderr={} events={}",
+            artifacts.protocol_path.display(),
+            artifacts.stderr_path.display(),
+            artifacts.events_path.display()
+        ),
+        attempt: prepared.attempt.max(1),
+        status,
+        started_at_ms: now_ms,
+        updated_at_ms: now_ms,
+    };
+    save_session_record(registry_path, record).map_err(|error| {
+        AgentError::Unavailable(format!("app-server session registry failed: {error}"))
+    })
+}
+
+fn update_app_server_session_status(
+    registry_path: Option<&Path>,
+    session_id: &str,
+    status: SessionStatus,
+) -> Result<(), AgentError> {
+    let Some(registry_path) = registry_path else {
+        return Ok(());
+    };
+    update_session_record_status(registry_path, session_id, status, unix_timestamp_ms()).map_err(
+        |error| AgentError::Unavailable(format!("app-server session registry failed: {error}")),
+    )
+}
+
+fn app_server_final_session_status(events: &[AgentEvent]) -> SessionStatus {
+    if events
+        .iter()
+        .any(|event| matches!(event, AgentEvent::Completed { .. }))
+    {
+        return SessionStatus::Completed;
+    }
+
+    if usage_limit_pause_from_events(events).is_some() {
+        return SessionStatus::UsageLimited;
+    }
+
+    SessionStatus::Failed
+}
+
+fn finish_app_server_run(
+    mut child: Child,
+    stderr_handle: Option<thread::JoinHandle<String>>,
+    events: Option<&mut Vec<AgentEvent>>,
+    artifacts: &AppServerArtifactPaths,
+    protocol_log: &str,
+) -> Result<Option<ExitStatus>, AgentError> {
+    let status = match child.try_wait()? {
+        Some(status) => Some(status),
+        None => {
+            let _ = child.kill();
+            Some(child.wait()?)
+        }
+    };
+
+    fs::write(&artifacts.protocol_path, protocol_log)?;
+    let stderr = stderr_handle
+        .and_then(|handle| handle.join().ok())
+        .unwrap_or_default();
+    fs::write(&artifacts.stderr_path, &stderr)?;
+    if !stderr.trim().is_empty() {
+        if let Some(events) = events {
+            events.push(AgentEvent::Message {
+                backend: crate::codex_app_server::BACKEND_NAME.into(),
+                session_id: None,
+                text: stderr,
+            });
+        }
+    }
+    Ok(status)
+}
+
+fn display_exit_status(status: Option<&ExitStatus>) -> String {
+    status
+        .map(|status| {
+            status
+                .code()
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "terminated".into())
+        })
+        .unwrap_or_else(|| "unknown".into())
 }
 
 fn run_tmux_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError> {
@@ -1220,16 +1863,16 @@ fn summarize_events(backend: &str, events: &[AgentEvent]) -> AgentSummary {
         message: failure
             .or(completed)
             .unwrap_or_else(|| "no terminal event".into()),
-        log_path: None,
+        log_path: message_field(events, "normalized_events_artifact=")
+            .or_else(|| message_field(events, "log_path="))
+            .map(PathBuf::from),
         attach_command: None,
     }
 }
 
 pub fn usage_limit_pause_from_events(events: &[AgentEvent]) -> Option<UsageLimitPause> {
     events.iter().find_map(|event| match event {
-        AgentEvent::Message { text, .. } | AgentEvent::Failed { error: text, .. } => {
-            classify_usage_limit_text(text)
-        }
+        AgentEvent::Failed { error, .. } => classify_usage_limit_text(error),
         _ => None,
     })
 }
@@ -1243,8 +1886,6 @@ pub fn classify_usage_limit_text(text: &str) -> Option<UsageLimitPause> {
         ("resource_exhausted", "resource exhausted"),
         ("quota_exceeded", "quota exceeded"),
         ("quota_exceeded", "insufficient quota"),
-        ("too_many_requests", "too many requests"),
-        ("http_429", "429"),
     ];
 
     patterns
@@ -1704,8 +2345,11 @@ mod tests {
             prompt_artifact_path: None,
             command: Some("codex".into()),
             timeout_ms: 0,
+            model: None,
+            reasoning_effort: None,
             approval_policy: None,
             sandbox: None,
+            turn_sandbox_policy: None,
             profile_id: None,
             instance_name: None,
             env: BTreeMap::from([(
@@ -1924,8 +2568,10 @@ exit 0
         assert_eq!(pause.classifier, "usage_limit");
         assert!(pause.evidence.contains("usage limit"));
 
-        let pause = classify_usage_limit_text("HTTP 429: too many requests").unwrap();
-        assert_eq!(pause.classifier, "too_many_requests");
+        let pause = classify_usage_limit_text("HTTP 429 quota exceeded").unwrap();
+        assert_eq!(pause.classifier, "quota_exceeded");
+
+        assert!(classify_usage_limit_text("HTTP 429: too many requests").is_none());
 
         assert!(classify_usage_limit_text("syntax error in generated patch").is_none());
     }
@@ -1940,16 +2586,28 @@ exit 0
             AgentEvent::Message {
                 backend: "codex".into(),
                 session_id: Some("s1".into()),
-                text: "Resource exhausted, please retry later.".into(),
+                text: "test review::tests::classifies_quota_rate_limit_as_wait_and_retry ... ok"
+                    .into(),
             },
             AgentEvent::Failed {
                 backend: "codex".into(),
-                error: "Codex subprocess exited with status 1".into(),
+                error: "turn/failed: Resource exhausted, please retry later.".into(),
             },
         ];
 
         let pause = usage_limit_pause_from_events(&events).unwrap();
         assert_eq!(pause.classifier, "resource_exhausted");
+    }
+
+    #[test]
+    fn usage_limit_pause_ignores_non_failure_messages() {
+        let events = vec![AgentEvent::Message {
+            backend: "codex-app-server".into(),
+            session_id: Some("s1".into()),
+            text: "test review::tests::classifies_quota_rate_limit_as_wait_and_retry ... ok".into(),
+        }];
+
+        assert!(usage_limit_pause_from_events(&events).is_none());
     }
 
     fn codex_config(command: &str, timeout_ms: u64) -> RuntimeConfig {
@@ -1986,6 +2644,79 @@ exit 0
         )
         .unwrap();
         RuntimeConfig::from_workflow(&workflow, std::path::Path::new("/tmp/WORKFLOW.md")).unwrap()
+    }
+
+    #[cfg(unix)]
+    fn fake_codex_app_server(root: &Path) -> (PathBuf, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let bin_dir = root.join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let codex = bin_dir.join("codex");
+        let trace_path = root.join("fake-codex.trace");
+        fs::write(
+            &codex,
+            r#"#!/bin/sh
+trace_file="${FAKE_CODEX_TRACE:-/tmp/fake-codex.trace}"
+mode="${FAKE_CODEX_MODE:-completed}"
+count=0
+printf '%s\n' 'fake codex stderr' >&2
+
+while IFS= read -r line; do
+  count=$((count + 1))
+  printf 'JSON:%s\n' "$line" >> "$trace_file"
+
+  case "$count" in
+    1)
+      printf '%s\n' '{"id":1,"result":{}}'
+      ;;
+    2)
+      # initialized notification; no response required
+      ;;
+    3)
+      printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-368"}}}'
+      ;;
+    4)
+      printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-368"}}}'
+      case "$mode" in
+        completed)
+          printf '%s\n' '{"method":"thread/tokenUsage/updated","params":{"inputTokens":4,"outputTokens":5,"totalTokens":9}}'
+          printf '%s\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+          exit 0
+          ;;
+        input_required)
+          printf '%s\n' '{"method":"turn/input_required","params":{"reason":"blocked"}}'
+          exit 0
+          ;;
+        tool_call)
+          printf '%s\n' '{"method":"item/tool/call","id":7,"params":{"name":"linear_graphql","arguments":{}}}'
+          exit 0
+          ;;
+        failed)
+          printf '%s\n' '{"method":"turn/failed","params":{"error":{"message":"boom"}}}'
+          exit 0
+          ;;
+        cancelled)
+          printf '%s\n' '{"method":"turn/cancelled","params":{"message":"operator stopped"}}'
+          exit 0
+          ;;
+        partial_malformed)
+          printf '%s' '{"method":"thread/tokenUsage/updated","params":{"inputTokens":1,'
+          printf '%s\n' '"outputTokens":2,"totalTokens":3}}'
+          printf '%s\n' 'not-json'
+          exit 0
+          ;;
+      esac
+      ;;
+  esac
+done
+"#,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&codex).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&codex, permissions).unwrap();
+        (codex, trace_path)
     }
 
     #[test]
@@ -2044,22 +2775,240 @@ exit 0
             .exists());
     }
 
+    #[cfg(unix)]
     #[test]
-    fn codex_backend_refuses_app_server_command_without_launching() {
+    fn codex_backend_runs_app_server_protocol_and_records_artifacts() {
         let temp = tempfile::tempdir().unwrap();
-        let config = codex_config("codex app-server", 5_000);
+        let (codex, trace_path) = fake_codex_app_server(temp.path());
+        let workspace = temp.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let config = codex_config(&format!("{} app-server", codex.display()), 5_000);
         let backend = CodexBackend;
-        let prepared = backend
-            .prepare(temp.path().to_path_buf(), "hello prompt".into(), &config)
+        let mut prepared = backend
+            .prepare(workspace, "hello app-server".into(), &config)
             .unwrap();
+        prepared.prompt_artifact_path = Some(temp.path().join("logs/prompts/app-server.prompt.md"));
+        prepared.issue_identifier = Some("#368".into());
+        prepared.issue_title = Some("Add Codex app-server transport backend harness".into());
+        prepared
+            .env
+            .insert("FAKE_CODEX_TRACE".into(), trace_path.display().to_string());
+        prepared
+            .env
+            .insert("FAKE_CODEX_MODE".into(), "completed".into());
+        let events = backend.run(prepared).unwrap();
+        let summary = backend.summarize(&events);
+
+        assert!(summary.success);
+        assert_eq!(summary.session_id.as_deref(), Some("thread-368-turn-368"));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AgentEvent::TokenUsage {
+                input_tokens: 4,
+                output_tokens: 5,
+                total_tokens: 9,
+                ..
+            }
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AgentEvent::Completed { summary, .. }
+                if summary.contains("completed with status completed")
+        )));
+
+        let protocol_path = message_field(&events, "protocol_artifact=").unwrap();
+        let stderr_path = message_field(&events, "stderr_artifact=").unwrap();
+        let events_path = message_field(&events, "normalized_events_artifact=").unwrap();
+        assert_eq!(summary.log_path.as_deref(), Some(Path::new(&events_path)));
+        assert!(fs::read_to_string(protocol_path)
+            .unwrap()
+            .contains("turn/completed"));
+        assert!(fs::read_to_string(stderr_path)
+            .unwrap()
+            .contains("fake codex stderr"));
+        assert!(fs::read_to_string(events_path)
+            .unwrap()
+            .contains("SessionStarted"));
+
+        let trace = fs::read_to_string(trace_path).unwrap();
+        assert!(trace.contains("\"method\":\"initialize\""));
+        assert!(trace.contains("\"method\":\"thread/start\""));
+        assert!(trace.contains("\"method\":\"turn/start\""));
+        assert!(trace.contains("\"approvalPolicy\":\"never\""));
+        assert_eq!(trace.matches("\"reasoningEffort\":\"high\"").count(), 2);
+        assert!(trace.contains("hello app-server"));
+    }
+
+    #[test]
+    fn app_server_approval_policy_uses_current_schema_and_legacy_reject_fallback() {
+        assert_eq!(
+            app_server_approval_policy(Some("\"on-request\"")),
+            serde_json::json!("on-request")
+        );
+        assert_eq!(
+            app_server_approval_policy(Some("never")),
+            serde_json::json!("never")
+        );
+        assert_eq!(
+            app_server_approval_policy(Some(
+                r#"{"reject":{"sandbox_approval":true,"rules":true,"mcp_elicitations":true}}"#
+            )),
+            serde_json::json!("never")
+        );
+        assert_eq!(app_server_approval_policy(None), serde_json::json!("never"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_app_server_records_session_registry_evidence() {
+        let temp = tempfile::tempdir().unwrap();
+        let (codex, trace_path) = fake_codex_app_server(temp.path());
+        let workspace = temp.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let config = codex_config(&format!("{} app-server", codex.display()), 5_000);
+        let backend = CodexBackend;
+        let registry_path = temp.path().join("sessions/session-registry.json");
+        let mut prepared = backend
+            .prepare(workspace.clone(), "hello app-server".into(), &config)
+            .unwrap();
+        prepared.prompt_artifact_path = Some(temp.path().join("logs/prompts/app-server.prompt.md"));
+        prepared.issue_id = Some("issue-368".into());
+        prepared.issue_identifier = Some("#368".into());
+        prepared.issue_title = Some("Add Codex app-server transport backend harness".into());
+        prepared.lane = Some("main".into());
+        prepared.run_id = Some("run-368".into());
+        prepared.session_registry_path = Some(registry_path.clone());
+        prepared.branch_name = Some("feature/issue-368".into());
+        prepared.env.insert(
+            "JADE_SYMPHONY_CLAIM".into(),
+            "v=1 lane=main issue=#368".into(),
+        );
+        prepared
+            .env
+            .insert("FAKE_CODEX_TRACE".into(), trace_path.display().to_string());
+        prepared
+            .env
+            .insert("FAKE_CODEX_MODE".into(), "completed".into());
+
+        let events = backend.run(prepared).unwrap();
+        let summary = backend.summarize(&events);
+        let registry = crate::session_registry::load_session_registry(&registry_path).unwrap();
+        let record = registry
+            .sessions
+            .iter()
+            .find(|record| record.session_name == "thread-368-turn-368")
+            .expect("app-server session record");
+
+        assert!(summary.success);
+        assert_eq!(record.backend, "codex");
+        assert_eq!(record.lane, "main");
+        assert_eq!(record.thread.as_deref(), Some("thread-368"));
+        assert_eq!(record.session_source.as_deref(), Some("codex-app-server"));
+        assert_eq!(record.status, SessionStatus::Completed);
+        assert_eq!(record.worktree, workspace);
+        assert!(record.attach_command.contains("not a tmux session"));
+        assert!(record
+            .log_path
+            .display()
+            .to_string()
+            .contains("/logs/app-server/368-"));
+        assert!(record
+            .prompt_artifact_path
+            .ends_with("app-server.prompt.md"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_backend_app_server_fails_closed_for_input_required() {
+        for mode in ["input_required", "tool_call"] {
+            let temp = tempfile::tempdir().unwrap();
+            let (codex, trace_path) = fake_codex_app_server(temp.path());
+            let workspace = temp.path().join("workspace");
+            fs::create_dir_all(&workspace).unwrap();
+            let config = codex_config(&format!("{} app-server", codex.display()), 5_000);
+            let backend = CodexBackend;
+            let mut prepared = backend
+                .prepare(workspace, "needs input".into(), &config)
+                .unwrap();
+            prepared.prompt_artifact_path =
+                Some(temp.path().join("logs/prompts/app-server.prompt.md"));
+            prepared
+                .env
+                .insert("FAKE_CODEX_TRACE".into(), trace_path.display().to_string());
+            prepared.env.insert("FAKE_CODEX_MODE".into(), mode.into());
+            let events = backend.run(prepared).unwrap();
+            let summary = backend.summarize(&events);
+
+            assert!(!summary.success, "{mode}");
+            assert!(
+                summary.message.contains("requires unavailable user input"),
+                "{mode}: {summary:?}"
+            );
+            assert!(message_field(&events, "protocol_artifact=").is_some());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_backend_app_server_handles_failed_and_cancelled_turns() {
+        for (mode, expected) in [("failed", "boom"), ("cancelled", "operator stopped")] {
+            let temp = tempfile::tempdir().unwrap();
+            let (codex, trace_path) = fake_codex_app_server(temp.path());
+            let workspace = temp.path().join("workspace");
+            fs::create_dir_all(&workspace).unwrap();
+            let config = codex_config(&format!("{} app-server", codex.display()), 5_000);
+            let backend = CodexBackend;
+            let mut prepared = backend
+                .prepare(workspace, format!("{mode} turn"), &config)
+                .unwrap();
+            prepared.prompt_artifact_path =
+                Some(temp.path().join("logs/prompts/app-server.prompt.md"));
+            prepared
+                .env
+                .insert("FAKE_CODEX_TRACE".into(), trace_path.display().to_string());
+            prepared.env.insert("FAKE_CODEX_MODE".into(), mode.into());
+            let events = backend.run(prepared).unwrap();
+            let summary = backend.summarize(&events);
+
+            assert!(!summary.success, "{mode}");
+            assert!(summary.message.contains(expected), "{mode}: {summary:?}");
+            assert!(message_field(&events, "exit_status=").is_some());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_backend_app_server_buffers_partial_lines_and_fails_on_malformed_protocol() {
+        let temp = tempfile::tempdir().unwrap();
+        let (codex, trace_path) = fake_codex_app_server(temp.path());
+        let workspace = temp.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let config = codex_config(&format!("{} app-server", codex.display()), 5_000);
+        let backend = CodexBackend;
+        let mut prepared = backend
+            .prepare(workspace, "partial stream".into(), &config)
+            .unwrap();
+        prepared.prompt_artifact_path = Some(temp.path().join("logs/prompts/app-server.prompt.md"));
+        prepared
+            .env
+            .insert("FAKE_CODEX_TRACE".into(), trace_path.display().to_string());
+        prepared
+            .env
+            .insert("FAKE_CODEX_MODE".into(), "partial_malformed".into());
         let events = backend.run(prepared).unwrap();
         let summary = backend.summarize(&events);
 
         assert!(!summary.success);
-        assert!(summary
-            .message
-            .contains("app-server transport is not implemented"));
-        assert!(!temp.path().join("JADE_SYMPHONY_PROMPT.md").exists());
+        assert!(summary.message.contains("malformed"));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AgentEvent::TokenUsage {
+                input_tokens: 1,
+                output_tokens: 2,
+                total_tokens: 3,
+                ..
+            }
+        )));
     }
 
     #[test]

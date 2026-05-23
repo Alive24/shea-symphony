@@ -14,12 +14,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use clap::{error::ErrorKind, Args, Parser, Subcommand, ValueEnum};
 use jade_symphony::agent::{
     backend_from_config, persist_prompt_artifact, usage_limit_pause_from_events, AgentBackend,
-    TmuxBackend, UsageLimitPause,
+    ClaudeCodeBackend, CodexBackend, DryRunBackend, TmuxBackend, UsageLimitPause,
 };
 use jade_symphony::artifacts::{artifact_layout, cleanup_plan, ArtifactClass, CleanupPlan};
 use jade_symphony::canonical_checkout::{
-    canonical_checkout_status_line, canonical_checkout_warning_lines, canonical_quarantine_root,
-    enforce_clean_canonical_checkout_for_write, inspect_canonical_checkout,
+    canonical_checkout_refresh_status_line, canonical_checkout_status_line,
+    canonical_checkout_warning_lines, canonical_quarantine_root, inspect_canonical_checkout,
+    refresh_canonical_checkout_before_write, CanonicalCheckoutRefreshMode,
 };
 use jade_symphony::config::RuntimeConfig;
 use jade_symphony::doctor::{
@@ -34,9 +35,9 @@ use jade_symphony::event_log::{
     EventLog, EventRecord, TrackerMutationAuditInput, TrackerMutationAuditRecord,
 };
 use jade_symphony::git_handoff::{
-    ensure_pull_request_ready, prepare_issue_worktree, publish_issue_pull_request, CommandOutput,
-    HandoffCommandRunner, LiveWorktreeResult, ProcessHandoffCommandRunner, PullRequestPublication,
-    PullRequestReadyStatus,
+    commit_issue_worktree_changes, ensure_pull_request_ready, prepare_issue_worktree,
+    publish_issue_pull_request, CommandOutput, HandoffCommandRunner, LiveWorktreeResult,
+    ProcessHandoffCommandRunner, PullRequestPublication, PullRequestReadyStatus,
 };
 use jade_symphony::handoff::{
     evaluate_agent_review_handoff, expected_merge_base_branch_for_issue,
@@ -55,9 +56,12 @@ use jade_symphony::lane_claim::{
 };
 use jade_symphony::merge_lane::{
     expected_merge_base_branch, fetch_pull_request_status_with_recheck, fixture_merge_output,
-    merge_lane_decision, merge_lane_workpad, merge_pull_request, pull_request_status_from_linked,
-    repair_dirty_pull_request, update_pull_request_branch, MergeLaneDecisionKind,
+    merge_lane_decision, merge_lane_workpad, merge_lane_workpad_with_repair_evidence,
+    merge_pull_request, pull_request_status_from_linked, repair_dirty_pull_request,
+    update_pull_request_branch, MergeConflictRepairOutcome, MergeLaneDecisionKind,
+    MergeRepairEvidence,
 };
+use jade_symphony::model::AgentEvent;
 use jade_symphony::model::{
     native_subissue_gate_blocker, native_subissue_statuses, normalize_state, GateDecision,
     GateDecisionKind, LatestStatus, PollingSnapshot, SessionStatusSnapshot, TrackerIssue,
@@ -72,6 +76,7 @@ use jade_symphony::presentation::{
     render_doctor_panel, render_project_state_panel, render_run_loop_panel, RunLoopPanel,
 };
 use jade_symphony::profiles::{discover_execution_profiles, selected_execution_profile};
+use jade_symphony::progress::{run_with_progress_heartbeat, ProgressHeartbeatSpec};
 use jade_symphony::prompt::render_prompt;
 use jade_symphony::quality_gate::{
     evaluate_issue_with_dependency_preflight, evaluate_issue_with_llm_gate,
@@ -81,12 +86,13 @@ use jade_symphony::review::{
     classify_review_freshness, gemini_cli_headless_args, gemini_prelaunch_health_diagnostic,
     gemini_review_health_diagnostic, poll_review_job_until_terminal,
     render_repeated_review_failure_workpad, render_review_freshness_workpad, render_review_workpad,
-    review_failure_signature, review_gate_decision, review_run_eligibility, review_worker_key,
-    transition_allowed_for_main_agent, transition_allowed_for_review_agent,
-    write_review_job_ledger_record, FakeReviewBackend, FakeReviewOutcome, GeminiCliReviewBackend,
-    GeminiReviewRecoveryPolicy, ReviewBackend, ReviewFreshnessInput, ReviewGateDecision, ReviewJob,
-    ReviewJobState, ReviewOutcome, ReviewRepeatedFailureEvidence, ReviewRequest, ReviewReworkClass,
-    ReviewRunEligibility, ReviewStaleReason,
+    review_failure_signature, review_gate_decision_for_issue, review_pass_target_state,
+    review_run_eligibility, review_worker_key, transition_allowed_for_main_agent,
+    transition_allowed_for_review_agent, write_review_job_ledger_record, FakeReviewBackend,
+    FakeReviewOutcome, GeminiCliReviewBackend, GeminiReviewRecoveryPolicy, ReviewBackend,
+    ReviewFreshnessInput, ReviewGateDecision, ReviewJob, ReviewJobState, ReviewOutcome,
+    ReviewRepeatedFailureEvidence, ReviewRequest, ReviewReworkClass, ReviewRunEligibility,
+    ReviewStaleReason,
 };
 use jade_symphony::review_status::{
     load_review_status, render_project_inspect_review_summary, render_review_status_human,
@@ -126,6 +132,15 @@ use serde::Serialize;
 
 const DEFAULT_RUN_LOOP_BASE_BRANCH: &str = "main";
 const DEFAULT_SESSION_STATUS_LINES: usize = 80;
+const CODEX_APP_SERVER_HANDOFF_BOUNDARY: &str = "\n\n## Codex App-Server Runtime Boundary\n\n\
+This run is executing inside the Codex app-server backend. Treat the app-server \
+turn as the implementation and local-verification worker only. Do not run \
+GitHub Project reads or mutations, do not create or update pull requests, and \
+do not attempt final Project state transitions from inside this child turn. \
+Leave a concise terminal summary of changed files, verification commands, and \
+any blocker. The outer Jade Symphony CLI will commit eligible worktree changes, \
+publish or update the PR, write durable workpad evidence, verify linked PR \
+readback, and perform the final `Agent Review` handoff.\n";
 const DEFAULT_SESSION_STALE_AFTER_MS: u64 = 15 * 60 * 1000;
 
 fn main() {
@@ -2494,6 +2509,7 @@ fn session_status_snapshots(
         snapshots.push(SessionStatusSnapshot {
             session_id: record.session_name.clone(),
             lane: record.lane.clone(),
+            backend: record.backend.clone(),
             run_id: record.run_id.clone(),
             status: probe.status.as_str().into(),
             evidence_source: probe.source.as_str().into(),
@@ -2528,9 +2544,14 @@ fn quality_gate(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config(&workflow_path)?;
     let adapter = adapter_from_config(&config);
-    let issue = adapter
-        .get_issue(&issue_ref)?
-        .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
+    let issue = run_with_progress_heartbeat(
+        progress_spec_for_config(&config, "github_project_read")
+            .issue(issue_ref.clone())
+            .backend(tracker_backend_label(&config))
+            .next("inspect_issue"),
+        || adapter.get_issue(&issue_ref),
+    )?
+    .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
     let decision = evaluate_issue_for_current_source(&config, &issue)?;
 
     println!(
@@ -3414,6 +3435,7 @@ fn forge_rework(options: ForgeReworkOptions) -> Result<(), Box<dyn std::error::E
     }
     let dry_run = !write || dry_run;
     let config = load_config(&workflow_path)?;
+    preflight_canonical_checkout_for_write_mode(&config, "forge rework", write)?;
     let adapter = adapter_from_config(&config);
     forge_rework_with_adapter(
         &config,
@@ -4077,9 +4099,14 @@ fn review_fake(
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
     let adapter = adapter_from_config(&config);
-    let issue = adapter
-        .get_issue(&issue_ref)?
-        .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
+    let issue = run_with_progress_heartbeat(
+        progress_spec_with_event_log(&config, "github_project_read")
+            .issue(issue_ref.clone())
+            .backend(tracker_backend_label(&config))
+            .next("review_issue_read"),
+        || adapter.get_issue(&issue_ref),
+    )?
+    .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
     let request = ReviewRequest {
         issue: issue.clone(),
         prompt: render_automatic_review_prompt(&workflow, &issue)?,
@@ -4098,7 +4125,7 @@ fn review_fake(
         None,
     )?;
 
-    let decision = review_gate_decision(&job);
+    let decision = review_gate_decision_for_issue(&job, &issue);
     println!(
         "review_fake=ok issue_ref={issue_ref} outcome={:?} target_state={:?}",
         decision.outcome, decision.target_state
@@ -4134,12 +4161,17 @@ fn review_once(
                 config.review.gemini_allowed_tools.clone(),
             );
             match backend.start(request) {
-                Ok(job) => poll_review_job_until_terminal(
-                    &backend,
-                    job,
-                    Duration::from_millis(config.review.timeout_ms),
-                    Duration::from_millis(500),
-                )?,
+                Ok(job) => {
+                    let spec = review_backend_progress_spec(&config, &issue, backend.kind(), &job);
+                    run_with_progress_heartbeat(spec, || {
+                        poll_review_job_until_terminal(
+                            &backend,
+                            job,
+                            Duration::from_millis(config.review.timeout_ms),
+                            Duration::from_millis(500),
+                        )
+                    })?
+                }
                 Err(error) => ReviewJob::failed_unavailable(
                     issue.identifier.clone(),
                     "gemini-cli",
@@ -4162,7 +4194,7 @@ fn review_once(
         None,
     )?;
 
-    let decision = review_gate_decision(&job);
+    let decision = review_gate_decision_for_issue(&job, &issue);
     println!(
         "review_once=ok issue_ref={issue_ref} backend={} outcome={:?} target_state={:?}",
         job.backend, decision.outcome, decision.target_state
@@ -4178,9 +4210,7 @@ fn review_claim(
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config(&workflow_path)?;
-    if write {
-        enforce_canonical_checkout_before_write(&config, "review claim")?;
-    }
+    preflight_canonical_checkout_for_write_mode(&config, "review claim", write)?;
     let adapter = adapter_from_config(&config);
     let issue = adapter
         .get_issue(&issue_ref)?
@@ -4266,9 +4296,11 @@ fn lane_claim_command(
     }
 
     let config = load_config(&workflow_path)?;
-    if write {
-        enforce_canonical_checkout_before_write(&config, &format!("{} claim", lane.label()))?;
-    }
+    preflight_canonical_checkout_for_write_mode(
+        &config,
+        &format!("{} claim", lane.label()),
+        write,
+    )?;
 
     let adapter = adapter_from_config(&config);
     let issue = adapter
@@ -4498,9 +4530,14 @@ fn review_clear_claim(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config(&workflow_path)?;
     let adapter = adapter_from_config(&config);
-    let issue = adapter
-        .get_issue(&issue_ref)?
-        .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
+    let issue = run_with_progress_heartbeat(
+        progress_spec_for_config(&config, "github_project_read")
+            .issue(issue_ref.clone())
+            .backend(tracker_backend_label(&config))
+            .next("inspect_issue"),
+        || adapter.get_issue(&issue_ref),
+    )?
+    .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
     if !write {
         println!(
             "review_clear_claim_dry_run action=clear_claim_field issue_ref={} field=\"Review Agent\"",
@@ -4535,9 +4572,7 @@ fn review_manual_pass(
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config(&workflow_path)?;
-    if write {
-        enforce_canonical_checkout_before_write(&config, "review pass")?;
-    }
+    preflight_canonical_checkout_for_write_mode(&config, "review pass", write)?;
     let adapter = adapter_from_config(&config);
     let issue = adapter
         .get_issue(&issue_ref)?
@@ -4554,7 +4589,7 @@ fn review_manual_pass(
         validate_manual_review_pass_claim(&issue, &evidence)?;
     let terminal_claim_value =
         terminal_review_claim_value(&current_claim, LaneClaimState::Done, "passed");
-    let target_state = "human_review";
+    let target_state = review_pass_target_state(&issue);
     let workpad = render_manual_review_workpad(
         &issue,
         "passed",
@@ -4668,9 +4703,7 @@ fn review_manual_reject(
     }
 
     let config = load_config(&workflow_path)?;
-    if write {
-        enforce_canonical_checkout_before_write(&config, "review reject")?;
-    }
+    preflight_canonical_checkout_for_write_mode(&config, "review reject", write)?;
     let adapter = adapter_from_config(&config);
     let issue = adapter
         .get_issue(&issue_ref)?
@@ -4822,7 +4855,11 @@ fn render_manual_review_workpad(
     if pass {
         lines.push(String::new());
         lines.push("- Review pass evidence: `recorded`".into());
-        lines.push("Evidence recorded. Independent Review Agent may move this issue to Human Review; the main implementation agent must not.".into());
+        if normalize_state(target_state) == "merging" {
+            lines.push("Evidence recorded. Independent Review Agent may move this native subissue directly to Merging; final Human Review and UAT remain owned by the parent issue.".into());
+        } else {
+            lines.push("Evidence recorded. Independent Review Agent may move this issue to Human Review; the main implementation agent must not.".into());
+        }
     } else {
         lines.push(String::new());
         lines.push(
@@ -5100,13 +5137,24 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
         let workflow = WorkflowDefinition::load(&options.workflow_path)?;
         let config = RuntimeConfig::from_workflow(&workflow, &options.workflow_path)?;
         config.validate()?;
-        if options.write {
-            enforce_canonical_checkout_before_write(&config, "review_loop")?;
-        }
+        preflight_canonical_checkout_for_write_mode(&config, "review_loop", options.write)?;
         let adapter = adapter_from_config(&config);
-        let issues = adapter
-            .fetch_issues_by_states(std::slice::from_ref(&config.tracker.state_map.agent_review))?;
-        let issues = hydrate_issues_for_review_lane(adapter.as_ref(), issues)?;
+        let issues = run_with_progress_heartbeat(
+            progress_spec_with_event_log(&config, "github_project_read")
+                .backend(tracker_backend_label(&config))
+                .next("review_queue_scan"),
+            || {
+                adapter.fetch_issues_by_states(std::slice::from_ref(
+                    &config.tracker.state_map.agent_review,
+                ))
+            },
+        )?;
+        let issues = run_with_progress_heartbeat(
+            progress_spec_with_event_log(&config, "github_project_read")
+                .backend(tracker_backend_label(&config))
+                .next("review_hydrate_issues"),
+            || hydrate_issues_for_review_lane(adapter.as_ref(), issues),
+        )?;
 
         if issues.is_empty() {
             println!("review_loop=stopped reason=no_agent_review_issue iterations={iterations}");
@@ -5221,15 +5269,19 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                         continue;
                     }
 
-                    let latest =
-                        adapter
-                            .get_issue(&selected_issue.identifier)?
-                            .ok_or_else(|| {
-                                format!(
-                                    "issue disappeared before review: {}",
-                                    selected_issue.identifier
-                                )
-                            })?;
+                    let latest = run_with_progress_heartbeat(
+                        progress_spec_with_event_log(&config, "github_project_read")
+                            .issue(selected_issue.identifier.clone())
+                            .backend(tracker_backend_label(&config))
+                            .next("review_issue_read"),
+                        || adapter.get_issue(&selected_issue.identifier),
+                    )?
+                    .ok_or_else(|| {
+                        format!(
+                            "issue disappeared before review: {}",
+                            selected_issue.identifier
+                        )
+                    })?;
                     match review_run_eligibility(
                         &latest,
                         &config.tracker.state_map.agent_review,
@@ -5349,7 +5401,7 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
                 Some(&claim),
                 repeat_evidence.as_ref(),
             )?;
-            let decision = review_gate_decision(&job);
+            let decision = review_gate_decision_for_issue(&job, &latest);
             println!(
                 "review_loop_action=reconciled issue={} worker_slot={} backend={} outcome={:?} target_state={:?} ledger={}",
                 latest.identifier,
@@ -5533,14 +5585,19 @@ fn merge_once_tick(
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
-    if write && config.tracker.fixture_path.is_none() {
-        enforce_canonical_checkout_before_write(&config, "merge_loop")?;
+    if config.tracker.fixture_path.is_none() {
+        preflight_canonical_checkout_for_write_mode(&config, "merge_loop", write)?;
     }
     let _merge_prompt = workflow.prompt_for_lane(AgentLane::MergeAgent);
 
     let adapter = adapter_from_config(&config);
     let merging_state = config.tracker.state_map.merging.clone();
-    let mut issues = adapter.fetch_issues_by_states(std::slice::from_ref(&merging_state))?;
+    let mut issues = run_with_progress_heartbeat(
+        progress_spec_with_event_log(&config, "github_project_read")
+            .backend(tracker_backend_label(&config))
+            .next("merge_queue_scan"),
+        || adapter.fetch_issues_by_states(std::slice::from_ref(&merging_state)),
+    )?;
     if issues.is_empty() {
         println!("merge_once=stopped reason=no_merging_issue");
         return Ok(MergeOnceOutcome::NoMergingIssue);
@@ -5555,7 +5612,13 @@ fn merge_once_tick(
         println!("merge_once=stopped reason=no_unclaimed_merging_issue");
         return Ok(MergeOnceOutcome::NoMergingIssue);
     };
-    let latest_issue = adapter.get_issue(&selected.issue.identifier)?;
+    let latest_issue = run_with_progress_heartbeat(
+        progress_spec_with_event_log(&config, "github_project_read")
+            .issue(selected.issue.identifier.clone())
+            .backend(tracker_backend_label(&config))
+            .next("merge_issue_read"),
+        || adapter.get_issue(&selected.issue.identifier),
+    )?;
     let (issue, recovery_reason) = match latest_issue {
         Some(issue) => {
             let recovery_reason = recover
@@ -5599,7 +5662,13 @@ fn merge_once_tick(
         &merge_claim,
         write,
     )?;
-    let linked_pull_requests = adapter.list_linked_pull_requests(&issue.identifier)?;
+    let linked_pull_requests = run_with_progress_heartbeat(
+        progress_spec_with_event_log(&config, "github_project_read")
+            .issue(issue.identifier.clone())
+            .backend(tracker_backend_label(&config))
+            .next("linked_pr_read"),
+        || adapter.list_linked_pull_requests(&issue.identifier),
+    )?;
     let runner = ProcessHandoffCommandRunner;
     let default_expected_base = expected_merge_base_branch(&config);
     let expected_base = expected_merge_base_branch_for_issue(&issue, default_expected_base);
@@ -5725,7 +5794,13 @@ fn merge_once_tick(
         if repair.repaired {
             let mut repaired_decision = decision.clone();
             repaired_decision.reason = repair.reason.clone();
-            let workpad = merge_lane_workpad(&issue, &repaired_decision, Some(&repair.output));
+            let evidence = mechanical_merge_repair_evidence(&repair, &expected_base);
+            let workpad = merge_lane_workpad_with_repair_evidence(
+                &issue,
+                &repaired_decision,
+                Some(&repair.output),
+                Some(&evidence),
+            );
             let comment_outcome = record_merge_timeline_comment_with_recovery(
                 &config,
                 adapter.as_ref(),
@@ -5742,10 +5817,79 @@ fn merge_once_tick(
             return Ok(MergeOnceOutcome::Skipped);
         }
 
+        if repair.is_agent_repair_eligible() {
+            let agent_repair = run_merge_agent_conflict_repair(
+                &workflow,
+                &config,
+                &issue,
+                &merge_claim,
+                pr_ref,
+                head_ref_name.unwrap_or_default(),
+                &expected_base,
+                &repair,
+                &runner,
+            )?;
+            let mut agent_decision = decision.clone();
+            agent_decision.reason = agent_repair.reason.clone();
+            agent_decision.target_state = if agent_repair.repaired {
+                None
+            } else {
+                Some("need_human_input")
+            };
+            let workpad = merge_lane_workpad_with_repair_evidence(
+                &issue,
+                &agent_decision,
+                Some(&agent_repair.output),
+                Some(&agent_repair.evidence),
+            );
+            record_merge_timeline_comment_with_recovery(
+                &config,
+                adapter.as_ref(),
+                &issue,
+                &agent_decision,
+                &workpad,
+                if agent_repair.repaired {
+                    "merge lane merge-agent conflict repair evidence"
+                } else {
+                    "merge lane merge-agent conflict repair failure evidence"
+                },
+            )?;
+            if agent_repair.repaired {
+                println!(
+                    "merge_once_action=merge_agent_conflict_repaired issue={} target_state=merging backend={} session={}",
+                    issue.identifier,
+                    agent_repair.backend,
+                    agent_repair.session_id.as_deref().unwrap_or("n/a")
+                );
+                return Ok(MergeOnceOutcome::Skipped);
+            }
+
+            let state_outcome = set_merge_state_with_recovery(
+                &config,
+                adapter.as_ref(),
+                &issue,
+                "need_human_input",
+                agent_decision.pr_url.clone(),
+                "merge-agent conflict repair needs human input",
+            )?;
+            println!(
+                "merge_once_action=routed issue={} target_state=need_human_input outcome={}",
+                issue.identifier,
+                state_outcome.as_str()
+            );
+            return Ok(MergeOnceOutcome::Routed);
+        }
+
         let mut failed_repair = decision.clone();
         failed_repair.target_state = Some("need_human_input");
         failed_repair.reason = repair.reason.clone();
-        let workpad = merge_lane_workpad(&issue, &failed_repair, Some(&repair.output));
+        let evidence = ineligible_merge_agent_repair_evidence(&repair);
+        let workpad = merge_lane_workpad_with_repair_evidence(
+            &issue,
+            &failed_repair,
+            Some(&repair.output),
+            Some(&evidence),
+        );
         record_merge_timeline_comment_with_recovery(
             &config,
             adapter.as_ref(),
@@ -6028,6 +6172,615 @@ fn merge_rehearsal_mode(config: &RuntimeConfig, issue: &TrackerIssue) -> bool {
     config.tracker.fixture_path.is_some() || issue.tracker_kind == "memory"
 }
 
+struct MergeAgentConflictRepairOutcome {
+    repaired: bool,
+    output: CommandOutput,
+    evidence: MergeRepairEvidence,
+    reason: String,
+    backend: String,
+    session_id: Option<String>,
+}
+
+fn mechanical_merge_repair_evidence(
+    repair: &MergeConflictRepairOutcome,
+    expected_base: &str,
+) -> MergeRepairEvidence {
+    MergeRepairEvidence {
+        method: "mechanical_git_merge".into(),
+        conflict_summary: format!(
+            "`git merge --no-edit origin/{expected_base}` completed without content conflicts"
+        ),
+        resolution_summary: repair.reason.clone(),
+        semantic_safety: "No agent-authored changes were needed; Git produced a clean merge commit from the approved PR branch and current base.".into(),
+        verification: "`git status --porcelain` was clean after the merge commit; push was attempted only after that clean check.".into(),
+        push_evidence: format!(
+            "push exit status `{}` stdout=`{}` stderr=`{}`",
+            repair.output.status,
+            single_line(&repair.output.stdout),
+            single_line(&repair.output.stderr)
+        ),
+        next_state_rationale: "Successful repair stays in `Merging` so a later merge tick rereads GitHub mergeability before landing.".into(),
+    }
+}
+
+fn ineligible_merge_agent_repair_evidence(
+    repair: &MergeConflictRepairOutcome,
+) -> MergeRepairEvidence {
+    MergeRepairEvidence {
+        method: "not_started".into(),
+        conflict_summary: repair.reason.clone(),
+        resolution_summary:
+            "Merge-agent repair was not started because trusted repair preconditions were not met."
+                .into(),
+        semantic_safety:
+            "Without a trusted clean PR worktree and content-conflict evidence, the merge lane cannot prove branch safety."
+                .into(),
+        verification: "No agent verification ran.".into(),
+        push_evidence: "No push attempted.".into(),
+        next_state_rationale:
+            "Unsafe or untrusted repair preconditions route to `Need Human Input` with one operator question."
+                .into(),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_merge_agent_conflict_repair(
+    workflow: &WorkflowDefinition,
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    claim: &LaneClaim,
+    pr_ref: &str,
+    head_ref_name: &str,
+    expected_base: &str,
+    mechanical_repair: &MergeConflictRepairOutcome,
+    runner: &dyn HandoffCommandRunner,
+) -> Result<MergeAgentConflictRepairOutcome, Box<dyn std::error::Error>> {
+    let Some(worktree_path) = mechanical_repair.worktree_path.as_ref() else {
+        return Ok(merge_agent_repair_blocked(
+            "missing trusted PR worktree after mechanical content-conflict repair failed",
+            mechanical_repair,
+        ));
+    };
+
+    let clean_after_abort = runner.run(
+        "git",
+        &["status".into(), "--porcelain".into()],
+        worktree_path,
+    )?;
+    if clean_after_abort.status != 0 || !clean_after_abort.stdout.trim().is_empty() {
+        return Ok(merge_agent_repair_blocked(
+            "PR worktree was not clean after aborting the failed mechanical merge",
+            mechanical_repair,
+        ));
+    }
+
+    let fetch_ref = format!("origin/{expected_base}");
+    let fetch = runner.run(
+        "git",
+        &["fetch".into(), "origin".into(), expected_base.into()],
+        worktree_path,
+    )?;
+    if fetch.status != 0 {
+        return Ok(merge_agent_repair_blocked(
+            "merge-agent repair could not refresh the expected base branch",
+            mechanical_repair,
+        ));
+    }
+
+    let conflict_merge = runner.run(
+        "git",
+        &["merge".into(), "--no-edit".into(), fetch_ref.clone()],
+        worktree_path,
+    )?;
+    if conflict_merge.status == 0 {
+        return finish_merge_agent_repaired_branch(
+            config,
+            issue,
+            "mechanical_retry",
+            "The second base merge completed before agent edits were needed.",
+            "`git merge --no-edit` completed cleanly on retry.",
+            "No merge-agent semantic changes were needed.",
+            vec!["git merge --no-edit".into()],
+            pr_ref,
+            head_ref_name,
+            runner,
+            worktree_path,
+            CommandOutput {
+                status: 0,
+                stdout: conflict_merge.stdout,
+                stderr: conflict_merge.stderr,
+            },
+            "direct-cli".into(),
+            None,
+        );
+    }
+
+    let conflict_files = runner.run(
+        "git",
+        &[
+            "diff".into(),
+            "--name-only".into(),
+            "--diff-filter=U".into(),
+        ],
+        worktree_path,
+    )?;
+    let conflict_summary = if conflict_files.stdout.trim().is_empty() {
+        format!(
+            "Git reported conflicts while merging `{fetch_ref}`, but no unmerged files were listed."
+        )
+    } else {
+        format!(
+            "Conflicted files after merging `{fetch_ref}`: `{}`",
+            single_line(&conflict_files.stdout)
+        )
+    };
+
+    let prompt = merge_agent_conflict_repair_prompt(
+        workflow,
+        issue,
+        claim,
+        pr_ref,
+        head_ref_name,
+        expected_base,
+        &conflict_summary,
+        &mechanical_repair.output,
+    )?;
+    let backend_spec = agent_session_backend_spec(config, AgentSessionLaneArg::Merge)?;
+    let backend = agent_session_backend(&backend_spec.backend)?;
+    let prompt_path = rendered_lane_prompt_artifact_path(
+        config,
+        issue,
+        AgentSessionLaneArg::Merge,
+        1,
+        &backend_spec.backend,
+    );
+    let mut prepared = backend.prepare(worktree_path.clone(), prompt, config)?;
+    prepared.command = Some(backend_spec.command.clone());
+    prepared.prompt_artifact_path = Some(prompt_path.clone());
+    prepared.issue_id = Some(issue.id.clone());
+    prepared.issue_identifier = Some(issue.identifier.clone());
+    prepared.issue_title = Some(issue.title.clone());
+    prepared.lane = Some("merge".into());
+    prepared.run_id = Some(claim.run.clone());
+    prepared.branch_name = Some(head_ref_name.into());
+    prepared
+        .env
+        .insert("JADE_SYMPHONY_AGENT_LANE".into(), "merge".into());
+    prepared
+        .env
+        .insert("JADE_SYMPHONY_RUN_ID".into(), claim.run.clone());
+    prepared
+        .env
+        .insert("JADE_SYMPHONY_CLAIM".into(), claim.render());
+
+    let events = match backend.run(prepared) {
+        Ok(events) => events,
+        Err(error) => {
+            let _ = runner.run("git", &["merge".into(), "--abort".into()], worktree_path);
+            return Ok(merge_agent_repair_backend_failed(
+                &backend_spec.backend,
+                format!("merge-agent backend unavailable: {error}"),
+                &conflict_summary,
+            ));
+        }
+    };
+    let summary = backend.summarize(&events);
+    record_agent_session_events(
+        config,
+        issue,
+        AgentSessionLaneArg::Merge,
+        &summary,
+        &events,
+        &prompt_path,
+    )?;
+
+    let agent_text = agent_events_text(&events);
+    if !summary.success {
+        let _ = runner.run("git", &["merge".into(), "--abort".into()], worktree_path);
+        return Ok(merge_agent_repair_backend_failed(
+            &summary.backend,
+            format!("merge-agent backend did not complete: {}", summary.message),
+            &conflict_summary,
+        ));
+    }
+    if merge_agent_requests_human_input(&agent_text) {
+        let _ = runner.run("git", &["merge".into(), "--abort".into()], worktree_path);
+        return Ok(merge_agent_repair_semantic_uncertainty(
+            &summary.backend,
+            summary.session_id.clone(),
+            &conflict_summary,
+            &agent_text,
+        ));
+    }
+    if !merge_agent_reports_repaired(&agent_text) {
+        let _ = runner.run("git", &["merge".into(), "--abort".into()], worktree_path);
+        return Ok(merge_agent_repair_semantic_uncertainty(
+            &summary.backend,
+            summary.session_id.clone(),
+            &conflict_summary,
+            "merge-agent completed without the required MERGE_AGENT_DECISION marker",
+        ));
+    }
+
+    let unresolved = runner.run(
+        "git",
+        &[
+            "diff".into(),
+            "--name-only".into(),
+            "--diff-filter=U".into(),
+        ],
+        worktree_path,
+    )?;
+    if unresolved.status != 0 || !unresolved.stdout.trim().is_empty() {
+        return Ok(merge_agent_repair_verification_failed(
+            &summary.backend,
+            summary.session_id.clone(),
+            &conflict_summary,
+            format!(
+                "unresolved conflict files remain: `{}`",
+                single_line(&unresolved.stdout)
+            ),
+        ));
+    }
+
+    let diff_check = runner.run("git", &["diff".into(), "--check".into()], worktree_path)?;
+    if diff_check.status != 0 {
+        return Ok(merge_agent_repair_verification_failed(
+            &summary.backend,
+            summary.session_id.clone(),
+            &conflict_summary,
+            format!(
+                "`git diff --check` failed: stdout=`{}` stderr=`{}`",
+                single_line(&diff_check.stdout),
+                single_line(&diff_check.stderr)
+            ),
+        ));
+    }
+
+    let pre_commit_status = runner.run(
+        "git",
+        &["status".into(), "--porcelain".into()],
+        worktree_path,
+    )?;
+    if pre_commit_status
+        .stdout
+        .lines()
+        .any(|line| line.starts_with("??"))
+    {
+        return Ok(merge_agent_repair_verification_failed(
+            &summary.backend,
+            summary.session_id.clone(),
+            &conflict_summary,
+            "merge-agent left untracked files in the PR worktree".into(),
+        ));
+    }
+
+    let add = runner.run("git", &["add".into(), "-A".into()], worktree_path)?;
+    if add.status != 0 {
+        return Ok(merge_agent_repair_verification_failed(
+            &summary.backend,
+            summary.session_id.clone(),
+            &conflict_summary,
+            "`git add -A` failed after conflict resolution".into(),
+        ));
+    }
+    let merge_head = runner.run(
+        "git",
+        &[
+            "rev-parse".into(),
+            "-q".into(),
+            "--verify".into(),
+            "MERGE_HEAD".into(),
+        ],
+        worktree_path,
+    )?;
+    if merge_head.status == 0 {
+        let commit = runner.run("git", &["commit".into(), "--no-edit".into()], worktree_path)?;
+        if commit.status != 0 {
+            return Ok(merge_agent_repair_verification_failed(
+                &summary.backend,
+                summary.session_id.clone(),
+                &conflict_summary,
+                format!(
+                    "`git commit --no-edit` failed: stdout=`{}` stderr=`{}`",
+                    single_line(&commit.stdout),
+                    single_line(&commit.stderr)
+                ),
+            ));
+        }
+    }
+
+    finish_merge_agent_repaired_branch(
+        config,
+        issue,
+        "merge_agent",
+        &conflict_summary,
+        &merge_agent_resolution_summary(&agent_text),
+        &merge_agent_semantic_safety(&agent_text),
+        vec![
+            "git diff --name-only --diff-filter=U".into(),
+            "git diff --check".into(),
+            "git status --porcelain".into(),
+        ],
+        pr_ref,
+        head_ref_name,
+        runner,
+        worktree_path,
+        CommandOutput {
+            status: 0,
+            stdout: summary.message.clone(),
+            stderr: String::new(),
+        },
+        summary.backend,
+        summary.session_id,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_merge_agent_repaired_branch(
+    _config: &RuntimeConfig,
+    _issue: &TrackerIssue,
+    method: &str,
+    conflict_summary: &str,
+    resolution_summary: &str,
+    semantic_safety: &str,
+    verification_commands: Vec<String>,
+    _pr_ref: &str,
+    head_ref_name: &str,
+    runner: &dyn HandoffCommandRunner,
+    worktree_path: &Path,
+    initial_output: CommandOutput,
+    backend: String,
+    session_id: Option<String>,
+) -> Result<MergeAgentConflictRepairOutcome, Box<dyn std::error::Error>> {
+    let post_status = runner.run(
+        "git",
+        &["status".into(), "--porcelain".into()],
+        worktree_path,
+    )?;
+    if post_status.status != 0 || !post_status.stdout.trim().is_empty() {
+        return Ok(merge_agent_repair_verification_failed(
+            &backend,
+            session_id,
+            conflict_summary,
+            format!(
+                "repaired branch was not clean before push: `{}`",
+                single_line(&post_status.stdout)
+            ),
+        ));
+    }
+    let push = runner.run(
+        "git",
+        &["push".into(), "origin".into(), head_ref_name.into()],
+        worktree_path,
+    )?;
+    if push.status != 0 {
+        return Ok(merge_agent_repair_verification_failed(
+            &backend,
+            session_id,
+            conflict_summary,
+            format!(
+                "push failed: stdout=`{}` stderr=`{}`",
+                single_line(&push.stdout),
+                single_line(&push.stderr)
+            ),
+        ));
+    }
+    Ok(MergeAgentConflictRepairOutcome {
+        repaired: true,
+        output: CommandOutput {
+            status: 0,
+            stdout: format!(
+                "{}\n{}",
+                single_line(&initial_output.stdout),
+                single_line(&push.stdout)
+            ),
+            stderr: single_line(&push.stderr),
+        },
+        evidence: MergeRepairEvidence {
+            method: method.into(),
+            conflict_summary: conflict_summary.into(),
+            resolution_summary: resolution_summary.into(),
+            semantic_safety: semantic_safety.into(),
+            verification: verification_commands.join("; "),
+            push_evidence: format!(
+                "`git push origin {head_ref_name}` exit status `{}`",
+                push.status
+            ),
+            next_state_rationale: "Successful merge-agent repair stays in `Merging` so the next merge tick rereads GitHub mergeability before landing.".into(),
+        },
+        reason: "merge-agent repaired the conflicted approved PR branch, verification passed, and the existing branch was pushed".into(),
+        backend,
+        session_id,
+    })
+}
+
+fn merge_agent_repair_blocked(
+    reason: &str,
+    mechanical_repair: &MergeConflictRepairOutcome,
+) -> MergeAgentConflictRepairOutcome {
+    MergeAgentConflictRepairOutcome {
+        repaired: false,
+        output: mechanical_repair.output.clone(),
+        evidence: MergeRepairEvidence {
+            method: "merge_agent_not_started".into(),
+            conflict_summary: mechanical_repair.reason.clone(),
+            resolution_summary: reason.into(),
+            semantic_safety: "Trusted repair preconditions failed before the merge-agent could safely edit files.".into(),
+            verification: "No agent verification ran.".into(),
+            push_evidence: "No push attempted.".into(),
+            next_state_rationale: "Route to `Need Human Input` because the merge lane cannot prove safe branch repair.".into(),
+        },
+        reason: reason.into(),
+        backend: "not-started".into(),
+        session_id: None,
+    }
+}
+
+fn merge_agent_repair_backend_failed(
+    backend: &str,
+    reason: String,
+    conflict_summary: &str,
+) -> MergeAgentConflictRepairOutcome {
+    MergeAgentConflictRepairOutcome {
+        repaired: false,
+        output: CommandOutput {
+            status: 1,
+            stdout: String::new(),
+            stderr: reason.clone(),
+        },
+        evidence: MergeRepairEvidence {
+            method: "merge_agent_backend".into(),
+            conflict_summary: conflict_summary.into(),
+            resolution_summary: reason.clone(),
+            semantic_safety: "Backend failure prevents semantic-safety proof.".into(),
+            verification: "No completed repair verification.".into(),
+            push_evidence: "No push attempted.".into(),
+            next_state_rationale:
+                "Route to `Need Human Input` because the repair backend could not complete safely."
+                    .into(),
+        },
+        reason,
+        backend: backend.into(),
+        session_id: None,
+    }
+}
+
+fn merge_agent_repair_semantic_uncertainty(
+    backend: &str,
+    session_id: Option<String>,
+    conflict_summary: &str,
+    reason: &str,
+) -> MergeAgentConflictRepairOutcome {
+    MergeAgentConflictRepairOutcome {
+        repaired: false,
+        output: CommandOutput {
+            status: 1,
+            stdout: reason.into(),
+            stderr: String::new(),
+        },
+        evidence: MergeRepairEvidence {
+            method: "merge_agent_semantic_uncertainty".into(),
+            conflict_summary: conflict_summary.into(),
+            resolution_summary: single_line(reason),
+            semantic_safety: "The merge-agent did not provide a positive semantic-safety proof.".into(),
+            verification: "Repair verification was skipped or incomplete because semantic safety was uncertain.".into(),
+            push_evidence: "No push attempted.".into(),
+            next_state_rationale: "Route to `Need Human Input` with a concrete semantic-safety question.".into(),
+        },
+        reason: "merge-agent repair could not prove semantic safety".into(),
+        backend: backend.into(),
+        session_id,
+    }
+}
+
+fn merge_agent_repair_verification_failed(
+    backend: &str,
+    session_id: Option<String>,
+    conflict_summary: &str,
+    reason: String,
+) -> MergeAgentConflictRepairOutcome {
+    MergeAgentConflictRepairOutcome {
+        repaired: false,
+        output: CommandOutput {
+            status: 1,
+            stdout: String::new(),
+            stderr: reason.clone(),
+        },
+        evidence: MergeRepairEvidence {
+            method: "merge_agent_verification_failed".into(),
+            conflict_summary: conflict_summary.into(),
+            resolution_summary: reason.clone(),
+            semantic_safety: "Verification failure prevents treating the repair as safe.".into(),
+            verification: reason.clone(),
+            push_evidence: "No push attempted.".into(),
+            next_state_rationale: "Route to `Need Human Input` because the repaired branch was not clean and verified.".into(),
+        },
+        reason,
+        backend: backend.into(),
+        session_id,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn merge_agent_conflict_repair_prompt(
+    workflow: &WorkflowDefinition,
+    issue: &TrackerIssue,
+    claim: &LaneClaim,
+    pr_ref: &str,
+    head_ref_name: &str,
+    expected_base: &str,
+    conflict_summary: &str,
+    mechanical_output: &CommandOutput,
+) -> Result<String, jade_symphony::prompt::PromptError> {
+    let mut prompt = render_prompt_with_claim(
+        workflow.prompt_for_lane(AgentLane::MergeAgent),
+        issue,
+        None,
+        Some(claim),
+    )?;
+    prompt.push_str(
+        "\n\n## Merge-Agent Conflict Repair Task\n\n\
+You are repairing the existing approved PR branch in place. Preserve the intent that already passed Agent Review and Human Review. Resolve only conflicts caused by merging the target base into this PR branch. Do not create a replacement PR, do not switch workspaces, and do not route through Rework.\n\n",
+    );
+    prompt.push_str(&format!("- Pull request: `{pr_ref}`\n"));
+    prompt.push_str(&format!("- Head branch: `{head_ref_name}`\n"));
+    prompt.push_str(&format!("- Expected base: `{expected_base}`\n"));
+    prompt.push_str(&format!("- Conflict summary: {conflict_summary}\n"));
+    prompt.push_str(&format!(
+        "- Mechanical merge stderr: `{}`\n",
+        single_line(&mechanical_output.stderr)
+    ));
+    prompt.push_str(
+        "\n### Required Output Marker\n\n\
+End your final response with one of these exact markers:\n\
+- `MERGE_AGENT_DECISION: repaired` only if the resolution preserves reviewed intent and verification can proceed.\n\
+- `MERGE_AGENT_DECISION: needs_human_input` if there is semantic uncertainty, unrelated drift, unsafe branch/worktree state, or missing verification confidence.\n\n\
+Also include `RESOLUTION_SUMMARY:` and `SEMANTIC_SAFETY:` lines. Leave the merge resolution staged or ready for `git add -A`; the merge lane will commit, verify cleanliness, push, and keep the issue in `Merging` for the next tick.\n",
+    );
+    Ok(prompt)
+}
+
+fn agent_events_text(events: &[AgentEvent]) -> String {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::Message { text, .. } => Some(text.as_str()),
+            AgentEvent::Completed { summary, .. } => Some(summary.as_str()),
+            AgentEvent::Failed { error, .. } => Some(error.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn merge_agent_reports_repaired(text: &str) -> bool {
+    text.contains("MERGE_AGENT_DECISION: repaired")
+}
+
+fn merge_agent_requests_human_input(text: &str) -> bool {
+    text.contains("MERGE_AGENT_DECISION: needs_human_input")
+        || text.to_ascii_lowercase().contains("semantic uncertainty")
+}
+
+fn merge_agent_resolution_summary(text: &str) -> String {
+    marker_line(text, "RESOLUTION_SUMMARY:")
+        .unwrap_or_else(|| "Merge-agent reported repaired conflict resolution.".into())
+}
+
+fn merge_agent_semantic_safety(text: &str) -> String {
+    marker_line(text, "SEMANTIC_SAFETY:").unwrap_or_else(|| {
+        "Merge-agent reported that reviewed implementation intent was preserved.".into()
+    })
+}
+
+fn marker_line(text: &str, marker: &str) -> Option<String> {
+    text.lines()
+        .find_map(|line| line.trim().strip_prefix(marker).map(str::trim))
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 fn print_merge_dry_run_actions(decision: &jade_symphony::merge_lane::MergeLaneDecision) {
     match decision.kind {
         MergeLaneDecisionKind::ReadyToMerge => {
@@ -6048,6 +6801,7 @@ fn print_merge_dry_run_actions(decision: &jade_symphony::merge_lane::MergeLaneDe
         }
         MergeLaneDecisionKind::MergeDirty => {
             println!("merge_once_dry_run action=attempt_safe_conflict_repair");
+            println!("merge_once_dry_run fallback=attempt_merge_agent_conflict_repair");
             println!("merge_once_dry_run action=timeline_comment evidence=conflict_repair_result");
             println!("merge_once_dry_run fallback=set_state target_state=need_human_input");
         }
@@ -6217,12 +6971,15 @@ fn run_review_job(
     if let Some(outcome) = fake_outcome {
         let backend = FakeReviewBackend::new(outcome);
         let job = backend.start(request)?;
-        return Ok(poll_review_job_until_terminal(
-            &backend,
-            job,
-            Duration::from_millis(config.review.timeout_ms),
-            Duration::from_millis(250),
-        )?);
+        let spec = review_backend_progress_spec(config, issue, backend.kind(), &job);
+        return Ok(run_with_progress_heartbeat(spec, || {
+            poll_review_job_until_terminal(
+                &backend,
+                job,
+                Duration::from_millis(config.review.timeout_ms),
+                Duration::from_millis(250),
+            )
+        })?);
     }
 
     match config.review.backend.as_str() {
@@ -6244,12 +7001,17 @@ fn run_review_job(
                 config.review.gemini_allowed_tools.clone(),
             );
             match backend.start(request) {
-                Ok(job) => Ok(poll_review_job_until_terminal(
-                    &backend,
-                    job,
-                    Duration::from_millis(config.review.timeout_ms),
-                    Duration::from_millis(500),
-                )?),
+                Ok(job) => {
+                    let spec = review_backend_progress_spec(config, issue, backend.kind(), &job);
+                    Ok(run_with_progress_heartbeat(spec, || {
+                        poll_review_job_until_terminal(
+                            &backend,
+                            job,
+                            Duration::from_millis(config.review.timeout_ms),
+                            Duration::from_millis(500),
+                        )
+                    })?)
+                }
                 Err(error) => Ok(ReviewJob::failed_unavailable(
                     issue.identifier.clone(),
                     "gemini-cli",
@@ -6262,6 +7024,22 @@ fn run_review_job(
             Ok(backend.poll(backend.start(request)?)?)
         }
     }
+}
+
+fn review_backend_progress_spec(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    backend: &str,
+    job: &ReviewJob,
+) -> ProgressHeartbeatSpec {
+    let mut spec = progress_spec_with_event_log(config, "review_backend")
+        .issue(issue.identifier.clone())
+        .backend(backend)
+        .next("waiting_for_child");
+    if let Some(path) = &job.artifact_path {
+        spec = spec.artifact(path.display().to_string());
+    }
+    spec
 }
 
 fn review_workspace_for_issue(config: &RuntimeConfig, issue: &TrackerIssue) -> PathBuf {
@@ -6371,27 +7149,26 @@ fn agent_session_start(
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
-    validate_tmux_session_config(&config)?;
-    if write {
-        enforce_canonical_checkout_before_write(&config, "session start")?;
-    }
+    let backend_spec = agent_session_backend_spec(&config, lane)?;
+    preflight_canonical_checkout_for_write_mode(&config, "session start", write)?;
 
     let adapter = adapter_from_config(&config);
     let issue = adapter
         .get_issue(&issue_ref)?
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
     let workspace_key = agent_session_workspace_key(&config, &issue, lane)?;
-    let prompt_path = rendered_lane_prompt_artifact_path(&config, &issue, lane, 1);
+    let prompt_path =
+        rendered_lane_prompt_artifact_path(&config, &issue, lane, 1, &backend_spec.backend);
     let claim = matching_lane_claim_for_session(&issue, lane, &run_id)?;
-    let agent_command = tmux_agent_command_for_lane(&config, lane)?;
 
     if !write {
         println!(
-            "session_dry_run action=start issue={} lane={} run={} backend=tmux agent_command={} workspace_key={} prompt_artifact={}",
+            "session_dry_run action=start issue={} lane={} run={} backend={} agent_command={} workspace_key={} prompt_artifact={}",
             issue.identifier,
             lane.label(),
             claim.run,
-            shell_quote_display(&agent_command),
+            backend_spec.backend,
+            shell_quote_display(&backend_spec.command),
             workspace_key,
             prompt_path.display()
         );
@@ -6434,6 +7211,12 @@ struct AgentSessionStartResult {
     prompt_path: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AgentSessionBackendSpec {
+    backend: String,
+    command: String,
+}
+
 fn start_agent_session_with_claim(
     workflow: &WorkflowDefinition,
     config: &RuntimeConfig,
@@ -6443,8 +7226,10 @@ fn start_agent_session_with_claim(
     claim: &LaneClaim,
     audit_command: &'static str,
 ) -> Result<AgentSessionStartResult, Box<dyn std::error::Error>> {
+    let backend_spec = agent_session_backend_spec(config, lane)?;
     let workspace_key = agent_session_workspace_key(config, issue, lane)?;
-    let prompt_path = rendered_lane_prompt_artifact_path(config, issue, lane, 1);
+    let prompt_path =
+        rendered_lane_prompt_artifact_path(config, issue, lane, 1, &backend_spec.backend);
     let workspace = prepare_workspace(&config.workspace.root, &workspace_key, &config.hooks)?;
     let git_identity = apply_local_git_identity(&workspace.path, &config.identity.git)?;
     let prompt = render_prompt_with_claim(
@@ -6453,17 +7238,26 @@ fn start_agent_session_with_claim(
         None,
         Some(claim),
     )?;
-    let agent_command = tmux_agent_command_for_lane(config, lane)?;
-    let backend = TmuxBackend;
+    let backend = agent_session_backend(&backend_spec.backend)?;
     let mut prepared = backend.prepare(workspace.path.clone(), prompt, config)?;
-    prepared.command = Some(agent_command.clone());
+    prepared.command = Some(backend_spec.command.clone());
     prepared
         .env
         .insert("JADE_SYMPHONY_AGENT_LANE".into(), lane.label().to_string());
     prepared.env.insert(
-        "JADE_SYMPHONY_TMUX_AGENT_COMMAND".into(),
+        "JADE_SYMPHONY_AGENT_COMMAND".into(),
         prepared.command.clone().unwrap_or_default(),
     );
+    prepared.env.insert(
+        "JADE_SYMPHONY_AGENT_BACKEND".into(),
+        backend_spec.backend.clone(),
+    );
+    if backend_spec.backend == "tmux" {
+        prepared.env.insert(
+            "JADE_SYMPHONY_TMUX_AGENT_COMMAND".into(),
+            prepared.command.clone().unwrap_or_default(),
+        );
+    }
     prepared.prompt_artifact_path = Some(prompt_path.clone());
     prepared.issue_id = Some(issue.id.clone());
     prepared.issue_identifier = Some(issue.identifier.clone());
@@ -6491,7 +7285,7 @@ fn start_agent_session_with_claim(
         summary: &summary,
         prompt_path: &prompt_path,
         claim_value: &claim_value,
-        agent_command: &agent_command,
+        agent_command: &backend_spec.command,
         git_identity: &git_identity,
     });
     let (mutation_type, outcome) = if lane == AgentSessionLaneArg::Main {
@@ -6542,7 +7336,7 @@ fn start_agent_session_with_claim(
                 target: summary.session_id.clone(),
                 from_state: Some(issue.state.clone()),
                 to_state: None,
-                reason: "manual tmux lane session evidence",
+                reason: "manual lane session evidence",
             },
         );
     }
@@ -6699,6 +7493,131 @@ fn validate_tmux_session_config(config: &RuntimeConfig) -> Result<(), Box<dyn st
     Ok(())
 }
 
+fn agent_session_backend_spec(
+    config: &RuntimeConfig,
+    lane: AgentSessionLaneArg,
+) -> Result<AgentSessionBackendSpec, Box<dyn std::error::Error>> {
+    match lane {
+        AgentSessionLaneArg::Main => main_agent_session_backend_spec(config, lane),
+        AgentSessionLaneArg::Review => tmux_agent_session_backend_spec(config, lane),
+        AgentSessionLaneArg::Merge => merge_agent_session_backend_spec(config, lane),
+    }
+}
+
+fn main_agent_session_backend_spec(
+    config: &RuntimeConfig,
+    lane: AgentSessionLaneArg,
+) -> Result<AgentSessionBackendSpec, Box<dyn std::error::Error>> {
+    let backend = match config.backend.kind.as_str() {
+        "codex" => "codex",
+        "tmux" => "tmux",
+        "claude-code" => "claude-code",
+        "dry-run" => "dry-run",
+        other => {
+            return Err(format!(
+                "unsupported main_lane.backend `{other}`; expected codex, tmux, claude-code, or dry-run"
+            )
+            .into())
+        }
+    };
+    let command = match backend {
+        "codex" => non_empty_session_command(
+            &config.codex.command,
+            "codex.command must not be empty for main session start",
+        )?,
+        "tmux" => {
+            validate_tmux_session_config(config)?;
+            tmux_agent_command_for_lane(config, lane)?
+        }
+        "claude-code" => non_empty_session_command(
+            &config.claude.command,
+            "claude.command must not be empty for main session start",
+        )?,
+        "dry-run" => "dry-run".into(),
+        _ => unreachable!("validated main agent backend"),
+    };
+
+    Ok(AgentSessionBackendSpec {
+        backend: backend.into(),
+        command,
+    })
+}
+
+fn tmux_agent_session_backend_spec(
+    config: &RuntimeConfig,
+    lane: AgentSessionLaneArg,
+) -> Result<AgentSessionBackendSpec, Box<dyn std::error::Error>> {
+    validate_tmux_session_config(config)?;
+    Ok(AgentSessionBackendSpec {
+        backend: "tmux".into(),
+        command: tmux_agent_command_for_lane(config, lane)?,
+    })
+}
+
+fn merge_agent_session_backend_spec(
+    config: &RuntimeConfig,
+    lane: AgentSessionLaneArg,
+) -> Result<AgentSessionBackendSpec, Box<dyn std::error::Error>> {
+    let requested = config.merge_lane.agent_backend.trim();
+    let backend = match requested {
+        "" | "codex" | "codex-app-server" | "app-server" => "codex",
+        "tmux" => "tmux",
+        "claude-code" => "claude-code",
+        "dry-run" => "dry-run",
+        other => {
+            return Err(format!(
+                "unsupported merge_lane.agent_backend `{other}`; expected codex, tmux, claude-code, or dry-run"
+            )
+            .into())
+        }
+    };
+    let command = match backend {
+        "codex" => non_empty_session_command(
+            &config.codex.command,
+            "codex.command must not be empty for merge session start",
+        )?,
+        "tmux" => {
+            validate_tmux_session_config(config)?;
+            tmux_agent_command_for_lane(config, lane)?
+        }
+        "claude-code" => non_empty_session_command(
+            &config.claude.command,
+            "claude.command must not be empty for merge session start",
+        )?,
+        "dry-run" => "dry-run".into(),
+        _ => unreachable!("validated merge agent backend"),
+    };
+
+    Ok(AgentSessionBackendSpec {
+        backend: backend.into(),
+        command,
+    })
+}
+
+fn non_empty_session_command(
+    value: &str,
+    message: &'static str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let command = value.trim();
+    if command.is_empty() {
+        Err(message.into())
+    } else {
+        Ok(command.to_string())
+    }
+}
+
+fn agent_session_backend(
+    backend: &str,
+) -> Result<Box<dyn AgentBackend>, Box<dyn std::error::Error>> {
+    match backend {
+        "codex" => Ok(Box::<CodexBackend>::default()),
+        "claude-code" => Ok(Box::<ClaudeCodeBackend>::default()),
+        "tmux" => Ok(Box::<TmuxBackend>::default()),
+        "dry-run" => Ok(Box::<DryRunBackend>::default()),
+        other => Err(format!("unsupported agent session backend `{other}`").into()),
+    }
+}
+
 fn tmux_agent_command_for_lane(
     config: &RuntimeConfig,
     lane: AgentSessionLaneArg,
@@ -6767,12 +7686,14 @@ fn rendered_lane_prompt_artifact_path(
     issue: &TrackerIssue,
     lane: AgentSessionLaneArg,
     attempt: u32,
+    backend: &str,
 ) -> PathBuf {
     config.observability.logs_root.join("prompts").join(format!(
-        "{}-{}-attempt-{}-tmux-{}.prompt.md",
+        "{}-{}-attempt-{}-{}-{}.prompt.md",
         safe_identifier(&issue.identifier),
         lane.label(),
         attempt,
+        safe_identifier(backend),
         current_time_ms()
     ))
 }
@@ -6845,10 +7766,20 @@ fn agent_session_workpad(input: AgentSessionWorkpadInput<'_>) -> String {
         AgentSessionLaneArg::Review => "## Jade Symphony Agent Review Run",
         AgentSessionLaneArg::Merge => "## Jade Symphony Merge Run",
     };
+    let session_heading = if input.summary.backend == "tmux" {
+        "### Local tmux Agent Session"
+    } else {
+        "### Local Agent Session"
+    };
+    let evidence_summary = if input.summary.backend == "tmux" {
+        "tmux session, prompt artifact, log path, workspace, and claim metadata recorded."
+    } else {
+        "backend session, prompt artifact, workspace, and claim metadata recorded."
+    };
     [
         title.to_string(),
         String::new(),
-        "### Local tmux Agent Session".to_string(),
+        session_heading.to_string(),
         format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", input.issue.identifier, input.issue.title),
         format!("- Lane: `{}`", input.lane.label()),
@@ -6880,7 +7811,9 @@ fn agent_session_workpad(input: AgentSessionWorkpadInput<'_>) -> String {
             "- Target state after run: `{}`",
             match input.lane {
                 AgentSessionLaneArg::Main => "Agent Review",
-                AgentSessionLaneArg::Review => "Human Review | Rework | Need Human Input | unchanged",
+                AgentSessionLaneArg::Review => {
+                    "Human Review | Merging | Rework | Need Human Input | unchanged"
+                }
                 AgentSessionLaneArg::Merge => "Done | Need Human Input | unchanged",
             }
         ),
@@ -6910,7 +7843,7 @@ fn agent_session_workpad(input: AgentSessionWorkpadInput<'_>) -> String {
         format!("- Session log: `{log_path}`"),
         format!("- Attach command: `{attach_command}`"),
         format!("- Git identity: `{}`", input.git_identity.summary()),
-        "- Evidence summary: tmux session, prompt artifact, log path, workspace, and claim metadata recorded.".to_string(),
+        format!("- Evidence summary: {evidence_summary}"),
         String::new(),
         input.summary.message.clone(),
     ]
@@ -6926,7 +7859,7 @@ fn apply_review_result(
     claim: Option<&LaneClaim>,
     repeat_evidence: Option<&ReviewRepeatedFailureEvidence>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let decision = review_gate_decision(job);
+    let decision = review_gate_decision_for_issue(job, issue);
     if let Some(value) = terminal_review_loop_claim_value(claim, job, &decision) {
         write_terminal_review_claim(
             config,
@@ -6937,8 +7870,13 @@ fn apply_review_result(
             "review loop terminal claim evidence",
         )?;
     }
-    if decision.outcome == ReviewOutcome::PassedToHumanReview {
-        update_review_checklist_for_pass(config, adapter, issue)?;
+    if decision.outcome.is_passed() {
+        update_review_checklist_for_pass(
+            config,
+            adapter,
+            issue,
+            decision.target_state.unwrap_or("none"),
+        )?;
     }
     if let Some(target_state) = decision.target_state {
         if !transition_allowed_for_review_agent(target_state, &decision) {
@@ -7022,6 +7960,7 @@ fn update_review_checklist_for_pass(
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
     issue: &TrackerIssue,
+    target_state: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let Some(description) = issue.description.as_deref() else {
         return Ok(());
@@ -7041,7 +7980,7 @@ fn update_review_checklist_for_pass(
             issue_ref: Some(&issue.identifier),
             target: Some("non-UAT review checkboxes".into()),
             from_state: Some(issue.state.clone()),
-            to_state: Some("human_review".into()),
+            to_state: Some(target_state.into()),
             reason: "automatic review pass checklist evidence",
         },
     );
@@ -7132,7 +8071,9 @@ fn terminal_review_loop_claim_value(
 ) -> Option<String> {
     let claim = claim?;
     let (state, result) = match decision.outcome {
-        ReviewOutcome::PassedToHumanReview => (LaneClaimState::Done, "passed"),
+        ReviewOutcome::PassedToHumanReview | ReviewOutcome::PassedToMerging => {
+            (LaneClaimState::Done, "passed")
+        }
         ReviewOutcome::NeedsRework => (LaneClaimState::Done, "rejected"),
         ReviewOutcome::InconclusiveNeedsRework => (LaneClaimState::Failed, "inconclusive"),
         ReviewOutcome::NeedsHumanInput => (LaneClaimState::Failed, "blocked"),
@@ -7295,6 +8236,27 @@ fn load_config(workflow_path: &Path) -> Result<RuntimeConfig, Box<dyn std::error
     Ok(config)
 }
 
+fn progress_spec_for_config(config: &RuntimeConfig, wait: &str) -> ProgressHeartbeatSpec {
+    ProgressHeartbeatSpec::new(wait).actor(
+        config.identity.actor_role.clone(),
+        config.identity.actor_label.clone(),
+    )
+}
+
+fn progress_spec_with_event_log(config: &RuntimeConfig, wait: &str) -> ProgressHeartbeatSpec {
+    progress_spec_for_config(config, wait)
+        .event_log_path(config.observability.logs_root.join("jade-symphony.jsonl"))
+}
+
+fn tracker_backend_label(config: &RuntimeConfig) -> &'static str {
+    match config.tracker.kind.as_str() {
+        "github_project_v2" => "gh",
+        "linear" => "linear",
+        "memory" => "memory",
+        _ => "tracker",
+    }
+}
+
 fn validate(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     warn_if_temporary_workflow_path(&workflow_path);
     let workflow = WorkflowDefinition::load(&workflow_path)?;
@@ -7319,7 +8281,13 @@ fn inspect(
     config.validate()?;
 
     let adapter = adapter_from_config(&config);
-    let issues = filter_issues_by_state(adapter.list_project_summary_issues()?, &state_filters);
+    let issues = run_with_progress_heartbeat(
+        progress_spec_for_config(&config, "github_project_read")
+            .backend(tracker_backend_label(&config))
+            .next("load_project_summary"),
+        || adapter.list_project_summary_issues(),
+    )?;
+    let issues = filter_issues_by_state(issues, &state_filters);
 
     if !state_filters.is_empty() {
         println!("state_filter={}", state_filters.join(","));
@@ -7355,7 +8323,13 @@ fn project_state(options: ProjectStateOptions) -> Result<(), Box<dyn std::error:
     config.validate()?;
 
     let adapter = adapter_from_config(&config);
-    match adapter.list_project_summary_issues() {
+    let read_result = run_with_progress_heartbeat(
+        progress_spec_for_config(&config, "github_project_read")
+            .backend(tracker_backend_label(&config))
+            .next("load_project_summary"),
+        || adapter.list_project_summary_issues(),
+    );
+    match read_result {
         Ok(issues) => {
             let mut integration_gaps = adapter.integration_gaps();
             append_canonical_checkout_gap(&config, &mut integration_gaps);
@@ -7398,9 +8372,14 @@ fn project_issue(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config(&workflow_path)?;
     let adapter = adapter_from_config(&config);
-    let issue = adapter
-        .get_issue(&issue_ref)?
-        .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
+    let issue = run_with_progress_heartbeat(
+        progress_spec_for_config(&config, "github_project_read")
+            .issue(issue_ref.clone())
+            .backend(tracker_backend_label(&config))
+            .next("load_issue"),
+        || adapter.get_issue(&issue_ref),
+    )?
+    .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
 
     if json {
         println!("{}", serde_json::to_string_pretty(&issue)?);
@@ -7688,8 +8667,18 @@ fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::Error>> {
     config.validate()?;
 
     let adapter = adapter_from_config(&config);
-    let issues = adapter.fetch_issues_by_states(&all_mapped_tracker_states(&config))?;
-    let issues = hydrate_issues_for_doctor(adapter.as_ref(), issues)?;
+    let issues = run_with_progress_heartbeat(
+        progress_spec_for_config(&config, "github_project_read")
+            .backend(tracker_backend_label(&config))
+            .next("doctor_project_scan"),
+        || adapter.fetch_issues_by_states(&all_mapped_tracker_states(&config)),
+    )?;
+    let issues = run_with_progress_heartbeat(
+        progress_spec_for_config(&config, "github_project_read")
+            .backend(tracker_backend_label(&config))
+            .next("doctor_hydrate_issues"),
+        || hydrate_issues_for_doctor(adapter.as_ref(), issues),
+    )?;
     let mut integration_gaps = adapter.integration_gaps();
     append_canonical_checkout_gap(&config, &mut integration_gaps);
     let runtime_states = match load_runtime_states(&config) {
@@ -8412,6 +9401,33 @@ fn debug_report(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>
         "integration_gap_warning_count={}",
         dogfood_gap_report.warnings.len()
     );
+    let smoke_gate = main_app_server_smoke_gate(&config);
+    println!("main_backend={}", smoke_gate.backend);
+    println!("main_backend_source={}", smoke_gate.backend_source);
+    println!(
+        "main_backend_command={}",
+        shell_quote_display(&smoke_gate.command)
+    );
+    println!(
+        "main_backend_approval_policy={}",
+        smoke_gate.approval_policy
+    );
+    println!(
+        "app_server_live_smoke_ready={}",
+        smoke_gate.app_server_live_smoke_ready
+    );
+    println!(
+        "app_server_live_smoke_reason={}",
+        smoke_gate.app_server_live_smoke_reason
+    );
+    println!(
+        "app_server_live_smoke_dry_run_command=\"cargo run -- main loop {} --max-iterations 1 --dry-run\"",
+        workflow_path.display()
+    );
+    println!(
+        "app_server_live_smoke_write_command=\"cargo run -- main loop {} --max-iterations 1 --write\"",
+        workflow_path.display()
+    );
     println!("supervised_ready={supervised_ready}");
     println!("unattended_ready=false");
     println!("unattended_reason=Jade Symphony CLI still requires supervised lane commands for dogfood and repair decisions.");
@@ -9123,9 +10139,7 @@ fn workspace_ensure(
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config(&workflow_path)?;
-    if write {
-        enforce_canonical_checkout_before_write(&config, "workspace ensure")?;
-    }
+    preflight_canonical_checkout_for_write_mode(&config, "workspace ensure", write)?;
 
     let adapter = adapter_from_config(&config);
     let issue = adapter
@@ -9614,6 +10628,79 @@ fn dogfood_integration_gap_severity(gap: &str) -> DogfoodIntegrationGapSeverity 
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MainAppServerSmokeGate {
+    backend: String,
+    backend_source: String,
+    command: String,
+    approval_policy: String,
+    app_server_live_smoke_ready: bool,
+    app_server_live_smoke_reason: String,
+}
+
+fn main_app_server_smoke_gate(config: &RuntimeConfig) -> MainAppServerSmokeGate {
+    match config.backend.kind.as_str() {
+        "codex" if config.codex.command.contains("app-server") => MainAppServerSmokeGate {
+            backend: config.backend.kind.clone(),
+            backend_source: "codex-app-server".into(),
+            command: config.codex.command.clone(),
+            approval_policy: codex_approval_policy_label(config),
+            app_server_live_smoke_ready: true,
+            app_server_live_smoke_reason:
+                "main_lane.backend=codex and codex.command includes app-server".into(),
+        },
+        "codex" => MainAppServerSmokeGate {
+            backend: config.backend.kind.clone(),
+            backend_source: "codex-subprocess".into(),
+            command: config.codex.command.clone(),
+            approval_policy: codex_approval_policy_label(config),
+            app_server_live_smoke_ready: false,
+            app_server_live_smoke_reason: "codex command does not select the app-server transport"
+                .into(),
+        },
+        "tmux" => MainAppServerSmokeGate {
+            backend: config.backend.kind.clone(),
+            backend_source: "tmux-fallback".into(),
+            command: config
+                .tmux
+                .main_agent_command
+                .clone()
+                .unwrap_or_else(|| config.tmux.agent_command.clone()),
+            approval_policy: "n/a".into(),
+            app_server_live_smoke_ready: false,
+            app_server_live_smoke_reason:
+                "tmux is explicit fallback/debug and is not the app-server smoke path".into(),
+        },
+        "dry-run" => MainAppServerSmokeGate {
+            backend: config.backend.kind.clone(),
+            backend_source: "dry-run".into(),
+            command: "dry-run".into(),
+            approval_policy: "n/a".into(),
+            app_server_live_smoke_ready: false,
+            app_server_live_smoke_reason: "dry-run backend cannot perform a live app-server smoke"
+                .into(),
+        },
+        other => MainAppServerSmokeGate {
+            backend: config.backend.kind.clone(),
+            backend_source: other.into(),
+            command: other.into(),
+            approval_policy: "n/a".into(),
+            app_server_live_smoke_ready: false,
+            app_server_live_smoke_reason:
+                "configured Main backend is not the Codex app-server runtime".into(),
+        },
+    }
+}
+
+fn codex_approval_policy_label(config: &RuntimeConfig) -> String {
+    config
+        .codex
+        .approval_policy
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| config.codex.approval_policy.to_string())
+}
+
 fn is_controlled_dogfood_smoke_issue(issue: &TrackerIssue) -> bool {
     issue
         .labels_lowercase()
@@ -9759,12 +10846,15 @@ fn execute_issue_once_in_workspace(
     let git_identity = apply_local_git_identity(&workspace.path, &config.identity.git)?;
     run_before_run(&workspace.path, &config.hooks)?;
 
-    let prompt = render_prompt_with_claim(
+    let mut prompt = render_prompt_with_claim(
         workflow.prompt_for_lane(AgentLane::MainAgent),
         issue,
         None,
         claim,
     )?;
+    if config.backend.kind == "codex" && config.codex.command.contains("app-server") {
+        prompt.push_str(CODEX_APP_SERVER_HANDOFF_BOUNDARY);
+    }
     let backend = backend_from_config(config);
     let mut prepared = backend.prepare(workspace.path.clone(), prompt, config)?;
     prepared.prompt_artifact_path = Some(rendered_prompt_artifact_path(
@@ -9789,7 +10879,14 @@ fn execute_issue_once_in_workspace(
     prepared.attempt = attempt;
     prepared.branch_name = current_git_branch(&workspace.path).ok().flatten();
     let prompt_artifact_path = persist_prompt_artifact(&prepared)?;
-    let events = backend.run(prepared)?;
+    let mut backend_wait = progress_spec_with_event_log(config, "main_backend")
+        .issue(issue.identifier.clone())
+        .backend(prepared.backend.clone())
+        .next("waiting_for_child");
+    if let Some(path) = &prepared.prompt_artifact_path {
+        backend_wait = backend_wait.artifact(path.display().to_string());
+    }
+    let events = run_with_progress_heartbeat(backend_wait, || backend.run(prepared))?;
     let summary = backend.summarize(&events);
     let usage_limit_pause = usage_limit_pause_from_events(&events);
     run_after_run(&workspace.path, &config.hooks);
@@ -9925,12 +11022,71 @@ fn enforce_canonical_checkout_before_write(
     command: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let root = std::env::current_dir()?;
-    let report = enforce_clean_canonical_checkout_for_write(&root, config)?;
-    println!("{}", canonical_checkout_status_line(&report));
-    for line in canonical_checkout_warning_lines(&report) {
-        println!("{command}_{line}");
+    match refresh_canonical_checkout_before_write(
+        &root,
+        config,
+        CanonicalCheckoutRefreshMode::Apply,
+    ) {
+        Ok(refresh) => {
+            println!("{}", canonical_checkout_refresh_status_line(&refresh));
+            println!("{}", canonical_checkout_status_line(&refresh.checkout));
+            for line in canonical_checkout_warning_lines(&refresh.checkout) {
+                println!("{command}_{line}");
+            }
+            Ok(())
+        }
+        Err(error) => {
+            println!(
+                "canonical_checkout_refresh=blocked command={} reason=\"{}\"",
+                shell_quote_display(command),
+                single_line(&error.to_string())
+            );
+            Err(error.into())
+        }
     }
-    Ok(())
+}
+
+fn preview_canonical_checkout_before_dry_run(config: &RuntimeConfig, command: &str) {
+    let Ok(root) = std::env::current_dir() else {
+        println!(
+            "canonical_checkout_refresh=blocked command={} reason=\"current directory unavailable\"",
+            shell_quote_display(command)
+        );
+        return;
+    };
+    match refresh_canonical_checkout_before_write(
+        &root,
+        config,
+        CanonicalCheckoutRefreshMode::DryRun,
+    ) {
+        Ok(refresh) => {
+            println!("{}", canonical_checkout_refresh_status_line(&refresh));
+            println!("{}", canonical_checkout_status_line(&refresh.checkout));
+            for line in canonical_checkout_warning_lines(&refresh.checkout) {
+                println!("{command}_{line}");
+            }
+        }
+        Err(error) => {
+            println!(
+                "canonical_checkout_refresh=blocked command={} reason=\"{}\"",
+                shell_quote_display(command),
+                single_line(&error.to_string())
+            );
+        }
+    }
+}
+
+fn preflight_canonical_checkout_for_write_mode(
+    config: &RuntimeConfig,
+    command: &str,
+    write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if write {
+        enforce_canonical_checkout_before_write(config, command)
+    } else {
+        preview_canonical_checkout_before_dry_run(config, command);
+        Ok(())
+    }
 }
 
 fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
@@ -9953,8 +11109,8 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
         let max_concurrent = options.worker_limit(&config);
         if options.write {
             ensure_write_mode_main_agent_backend(&options.workflow_path, &config, "main loop")?;
-            enforce_canonical_checkout_before_write(&config, "run_loop")?;
         }
+        preflight_canonical_checkout_for_write_mode(&config, "run_loop", options.write)?;
         let adapter = adapter_from_config(&config);
         let mut active_main_workers = 0usize;
         let mut recoverable_runtime_states = Vec::new();
@@ -9975,13 +11131,12 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 break;
             }
         }
-        let recovery_only =
-            options.write && options.recover && !recoverable_runtime_states.is_empty();
-        let issues = if recovery_only {
-            Vec::new()
-        } else {
-            adapter.list_queue_scan_issues()?
-        };
+        let issues = run_with_progress_heartbeat(
+            progress_spec_with_event_log(&config, "github_project_read")
+                .backend(tracker_backend_label(&config))
+                .next("main_queue_scan"),
+            || adapter.list_queue_scan_issues(),
+        )?;
         let orchestrator = Orchestrator::new(config.clone());
         let mut plan = orchestrator.plan_dispatch(issues.clone());
         plan.integration_gaps.extend(adapter.integration_gaps());
@@ -10008,29 +11163,17 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
         let worker_id = worker_identity(&config, WorkerLane::Main);
-        let recoverable_issues = if options.write && options.recover {
-            recoverable_runtime_states
-                .iter()
-                .map(|candidate| {
-                    println!(
-                        "run_loop_recovery_candidate issue={} attempt={} reason={}",
-                        candidate.issue.identifier, candidate.state.attempt_count, candidate.reason
-                    );
-                    candidate.issue.clone()
-                })
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-        let normal_selected = select_pool_worker_issues(
+        let selected = select_main_run_loop_issues(
+            if options.write && options.recover {
+                &recoverable_runtime_states
+            } else {
+                &[]
+            },
             &plan.selected,
-            WorkerLane::Main,
-            &worker_id,
             available_slots,
+            &worker_id,
             &config,
         );
-        let selected =
-            recover_first_issue_selection(recoverable_issues, normal_selected, available_slots);
 
         let Some(issue) = selected.first().cloned() else {
             plan.snapshot.latest_status = Some(LatestStatus {
@@ -10076,6 +11219,22 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             }
         };
         let dispatch_candidates = selected.clone();
+        if options.write {
+            let should_stop_iteration = run_loop_dispatch_write_candidates(
+                &workflow,
+                &config,
+                dispatch_candidates,
+                &options,
+                options.recover,
+                iterations,
+                max_concurrent,
+            )?;
+            if should_stop_iteration {
+                break;
+            }
+            continue;
+        }
+
         let issue = hydrate_issue_for_evidence(adapter.as_ref(), issue, &issues)?;
 
         let decision = evaluate_issue_for_current_source(&config, &issue)?;
@@ -10192,589 +11351,630 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             }
             continue;
         }
+    }
 
-        for (slot_index, issue) in dispatch_candidates.into_iter().enumerate() {
-            if slot_index > 0 {
-                print_latest_status(&latest_status_for_issue(
-                    &config,
-                    &issue,
-                    "main",
-                    "running",
-                    "selected",
-                    Some("claim or resume".into()),
-                ));
-                println!(
-                    "run_loop_iteration={} issue={} title={:?} mode=write max_concurrent={} selected_count={} slot={}",
-                    iterations,
-                    issue.identifier,
-                    issue.title,
-                    max_concurrent,
-                    selected.len(),
-                    slot_index + 1
-                );
-            }
+    Ok(())
+}
 
-            let latest = if options.recover && normalize_state(&issue.state) == "in progress" {
-                issue.clone()
-            } else {
-                adapter.get_issue(&issue.identifier)?.ok_or_else(|| {
-                    format!("issue disappeared before claim: {}", issue.identifier)
-                })?
-            };
-            let eligibility =
-                pool_claim_eligibility(&latest, WorkerLane::Main, &worker_id, &config);
-            if !eligibility.is_claimable() {
-                println!(
-                    "run_loop_action=skip issue={} reason={}",
-                    latest.identifier,
-                    eligibility.skip_reason()
-                );
-                continue;
-            }
-            let latest_gate = evaluate_issue_for_current_source(&config, &latest)?;
-            if !latest_gate.is_dispatchable() {
-                handle_run_loop_gate_failure(
-                    adapter.as_ref(),
-                    &latest,
-                    &latest_gate,
-                    &options,
-                    &config,
-                )?;
-                continue;
-            }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunLoopWorkerOutcome {
+    Completed,
+    StopIteration,
+}
 
-            let mut handoff = match run_loop_handoff_plan(&config, &latest) {
-                Ok(handoff) => handoff,
-                Err(error) => {
-                    handle_run_loop_handoff_failure(
-                        adapter.as_ref(),
-                        &latest,
-                        &error,
-                        &options,
-                        &config,
-                    )?;
-                    continue;
-                }
-            };
+fn run_loop_dispatch_write_candidates(
+    workflow: &WorkflowDefinition,
+    config: &RuntimeConfig,
+    selected: Vec<TrackerIssue>,
+    options: &RunLoopOptions,
+    recover: bool,
+    iterations: usize,
+    max_concurrent: usize,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let selected_count = selected.len();
+    let worker_id = worker_identity(config, WorkerLane::Main);
+    let mut handles = Vec::new();
 
-            let profile_login = selected_profile_github_login(&config)?;
-            let active_login = if live_github_tracker(&config) && profile_login.is_none() {
-                current_gh_login()?
-            } else {
-                None
-            };
-            match run_loop_assignee_ownership_decision(
-                &latest,
-                &config,
-                active_login.as_deref(),
-                profile_login.as_deref(),
-            ) {
-                AssigneeOwnershipDecision::Allowed => {}
-                AssigneeOwnershipDecision::Block { reason } => {
-                    let workpad = run_loop_assignee_ownership_workpad(&latest, &reason);
-                    let workpad_key = recovery_key(
-                        "main-assignee-ownership-workpad",
-                        &latest.identifier,
-                        &format!("{}|{}", latest.identifier, stable_recovery_hash(&workpad)),
-                    );
-                    upsert_workpad_with_recovery(
-                        adapter.as_ref(),
-                        &latest.identifier,
-                        Some(&latest),
-                        &workpad,
-                        &workpad_key,
-                    )?;
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &latest,
-                        "main",
-                        "blocked",
-                        "assignee_ownership",
-                        Some("operator intervention".into()),
-                    ));
-                    println!(
-                        "run_loop_action=skip issue={} reason=assignee_ownership detail={}",
-                        latest.identifier, reason
-                    );
-                    continue;
-                }
-            }
-
-            let existing_runtime_states = load_runtime_states(&config)?;
-            let existing_runtime_state =
-                runtime_state_for_issue(&existing_runtime_states, &latest.identifier);
-            if let Some(state) = existing_runtime_state {
-                if let Some(active_issue) = &state.active_issue {
-                    println!(
-                        "run_loop_runtime_state action=loaded active_issue={} attempt={}",
-                        active_issue.identifier, state.attempt_count
-                    );
-                }
-                if options.recover {
-                    if let Some(evidence) =
-                        run_loop_apply_recovery_handoff(&config, &latest, &mut handoff, state)?
-                    {
-                        println!(
-                            "run_loop_action=recovery_handoff issue={} evidence={}",
-                            latest.identifier, evidence
-                        );
-                    }
-                }
-            }
-
-            let ownership = run_loop_runtime_ownership(&latest, &config, &handoff)?;
-            let claim_action = run_loop_claim_action(&latest, &config);
-            let main_claim = lane_claim_for_issue(
-                &latest,
-                WorkerLane::Main.claim_lane(),
-                LaneClaimActor::Codex,
-                LaneClaimSource::Loop,
-                project_text_field(&latest, WorkerLane::Main.claim_field()).as_deref(),
-            )
-            .with_worker(&worker_id);
-            if matches!(claim_action, RunLoopClaimAction::Resume) {
-                if let RuntimeOwnershipDecision::Mismatched { reason, .. } =
-                    runtime_ownership_decision(latest.description.as_deref(), &ownership)
-                {
-                    println!(
-                        "run_loop_action=skip issue={} reason=ownership_mismatch detail={reason}",
-                        latest.identifier
-                    );
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &latest,
-                        "main",
-                        "blocked",
-                        "ownership_mismatch",
-                        Some("inspect runtime owner".into()),
-                    ));
-                    continue;
-                }
-            }
-
-            let event = match claim_action {
-                RunLoopClaimAction::Claim => {
-                    write_lane_claim_field(
-                        &config,
-                        adapter.as_ref(),
-                        &latest,
-                        WorkerLane::Main,
-                        &main_claim,
-                        true,
-                    )?;
-                    let state_outcome = set_state_with_recovery(
-                        adapter.as_ref(),
-                        &latest.identifier,
-                        Some(&latest),
-                        "in_progress",
-                        "state_change",
-                    )?;
-                    if state_outcome.should_record_audit() {
-                        append_tracker_mutation_audit(
-                            &config,
-                            TrackerMutationAudit {
-                                command: "main loop",
-                                mutation_type: "state_change",
-                                issue_ref: Some(&latest.identifier),
-                                target: None,
-                                from_state: Some(latest.state.clone()),
-                                to_state: Some("in_progress".into()),
-                                reason: "main worker claim",
-                            },
-                        );
-                    }
-                    println!(
-                        "run_loop_action=claim issue={} target_state=in_progress outcome={}",
-                        latest.identifier,
-                        state_outcome.as_str()
-                    );
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &latest,
-                        "main",
-                        "running",
-                        "claimed",
-                        Some("write runtime ownership".into()),
-                    ));
-                    "Claimed"
-                }
-                RunLoopClaimAction::Resume => {
-                    write_lane_claim_field(
-                        &config,
-                        adapter.as_ref(),
-                        &latest,
-                        WorkerLane::Main,
-                        &main_claim,
-                        true,
-                    )?;
-                    println!("run_loop_action=resume issue={}", latest.identifier);
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &latest,
-                        "main",
-                        "running",
-                        "resumed",
-                        Some("continue backend work".into()),
-                    ));
-                    "Resumed"
-                }
-                RunLoopClaimAction::StopAndReplan { current_state } => {
-                    println!(
-                    "run_loop_action=skip issue={} reason=external_state_change current_state={:?}",
-                    latest.identifier, current_state
-                );
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &latest,
-                        "main",
-                        "waiting",
-                        "external_state_change",
-                        Some("replan".into()),
-                    ));
-                    continue;
-                }
-            };
-            let ownership_workpad =
-                run_loop_ownership_workpad(&latest, &ownership, event, &main_claim);
-            let ownership_key = recovery_key(
-                "main-ownership-workpad",
-                &latest.identifier,
-                &format!(
-                    "{}|{}|{}",
-                    latest.identifier,
-                    main_claim.run,
-                    stable_recovery_hash(&ownership_workpad)
-                ),
-            );
-            let ownership_outcome = upsert_workpad_with_recovery(
-                adapter.as_ref(),
-                &latest.identifier,
-                Some(&latest),
-                &ownership_workpad,
-                &ownership_key,
-            )?;
-            if ownership_outcome.should_record_audit() {
-                append_tracker_mutation_audit(
-                    &config,
-                    TrackerMutationAudit {
-                        command: "main loop",
-                        mutation_type: "workpad_write",
-                        issue_ref: Some(&latest.identifier),
-                        target: ownership.profile_id.clone(),
-                        from_state: Some(latest.state.clone()),
-                        to_state: None,
-                        reason: "runtime ownership evidence",
-                    },
-                );
-            }
-            println!(
-                "run_loop_action=ownership issue={} profile={} branch={} outcome={}",
-                latest.identifier,
-                ownership.profile_id.as_deref().unwrap_or("n/a"),
-                ownership.branch_name,
-                ownership_outcome.as_str()
-            );
-
-            let mut runtime_state = run_loop_runtime_state_for_issue(
-                existing_runtime_state,
-                &latest,
-                &config,
-                event,
-                &main_claim,
-            );
-            runtime_state.branch_name = Some(handoff.branch_name.clone());
-            mark_runtime_state_updated(&mut runtime_state, current_time_ms());
-            upsert_runtime_state(&config, &runtime_state)?;
-            println!(
-                "run_loop_runtime_state action=saved issue={} event={event}",
-                latest.identifier
-            );
-
-            let live_worktree = if run_loop_live_handoff_enabled(&config) {
-                let runner = ProcessHandoffCommandRunner;
-                let repo_root = std::env::current_dir()?;
-                let worktree = prepare_issue_worktree(&repo_root, &handoff, &runner)?;
-                println!(
-                    "run_loop_action=worktree issue={} workspace={} branch={} created={}",
-                    latest.identifier,
-                    worktree.workspace_path.display(),
-                    worktree.branch_name,
-                    worktree.created
-                );
-                print_latest_status(&LatestStatus {
-                    lane: "main".into(),
-                    category: "running".into(),
-                    action: "worktree_ready".into(),
-                    issue_identifier: Some(latest.identifier.clone()),
-                    issue_title: Some(latest.title.clone()),
-                    actor_label: Some(config.identity.actor_label.clone()),
-                    workspace: Some(worktree.workspace_path.display().to_string()),
-                    branch: Some(worktree.branch_name.clone()),
-                    session_id: runtime_state.backend_session_id.clone(),
-                    next: Some("run backend".into()),
-                });
-                Some(worktree)
-            } else {
-                None
-            };
-
-            let mut session_reconciliation =
-                reconcile_pending_main_session(&config, &latest, &handoff, &runtime_state)?;
-            if let Some(MainSessionReconciliation::Active {
-                status,
-                source,
-                evidence,
-            }) = &session_reconciliation
-            {
-                let recover_active =
-                    options.recover && main_session_active_recoverable(status, evidence);
-                append_runtime_supervision_event(
-                    &config,
-                    Some(&runtime_state),
-                    if recover_active {
-                        "MainSessionRecovering"
-                    } else {
-                        "MainSessionStillActive"
-                    },
-                    &format!(
-                        "issue={} status={} source={} evidence={}",
-                        latest.identifier, status, source, evidence
-                    ),
-                )?;
-                println!(
-                    "run_loop_action=session_observed issue={} status={} source={} evidence={:?}",
-                    latest.identifier, status, source, evidence
-                );
-                if recover_active {
-                    println!(
-                        "run_loop_action=recover issue={} status={} source={} evidence={:?}",
-                        latest.identifier, status, source, evidence
-                    );
-                    session_reconciliation = None;
-                } else {
-                    print_latest_status(&LatestStatus {
-                        lane: "main".into(),
-                        category: status.clone(),
-                        action: "session_observed".into(),
-                        issue_identifier: Some(latest.identifier.clone()),
-                        issue_title: Some(latest.title.clone()),
-                        actor_label: Some(config.identity.actor_label.clone()),
-                        workspace: runtime_state
-                            .workspace_path
-                            .as_ref()
-                            .map(|path| path.display().to_string()),
-                        branch: runtime_state.branch_name.clone(),
-                        session_id: runtime_state.backend_session_id.clone(),
-                        next: runtime_state.backend_attach_command.clone(),
-                    });
-                    break;
-                }
-            }
-            if let Some(MainSessionReconciliation::Active {
-                status,
-                source: _,
-                evidence: _,
-            }) = &session_reconciliation
-            {
-                print_latest_status(&LatestStatus {
-                    lane: "main".into(),
-                    category: status.clone(),
-                    action: "session_observed".into(),
-                    issue_identifier: Some(latest.identifier.clone()),
-                    issue_title: Some(latest.title.clone()),
-                    actor_label: Some(config.identity.actor_label.clone()),
-                    workspace: runtime_state
-                        .workspace_path
-                        .as_ref()
-                        .map(|path| path.display().to_string()),
-                    branch: runtime_state.branch_name.clone(),
-                    session_id: runtime_state.backend_session_id.clone(),
-                    next: runtime_state.backend_attach_command.clone(),
-                });
-                break;
-            }
-
-            print_latest_status(&latest_status_for_issue(
-                &config,
-                &latest,
-                "main",
-                if session_reconciliation.is_some() {
-                    "reconciling"
-                } else {
-                    "running"
-                },
-                if session_reconciliation.is_some() {
-                    "session_terminal"
-                } else {
-                    "backend"
-                },
-                Some("save result".into()),
-            ));
-            let mut result = match session_reconciliation {
-                Some(MainSessionReconciliation::Terminal(result)) => *result,
-                Some(MainSessionReconciliation::Active { .. }) => unreachable!(),
-                None => execute_issue_once_with_workspace_key(
+    for (slot_index, issue) in selected.into_iter().enumerate() {
+        print_run_loop_write_selection(
+            config,
+            &issue,
+            iterations,
+            max_concurrent,
+            selected_count,
+            slot_index,
+        );
+        let issue_ref = issue.identifier.clone();
+        let workflow = workflow.clone();
+        let config = config.clone();
+        let options = options.clone();
+        let worker_id = worker_id.clone();
+        handles.push((
+            issue_ref,
+            thread::spawn(move || {
+                let adapter = adapter_from_config(&config);
+                run_loop_dispatch_write_candidate(
                     &workflow,
                     &config,
-                    &latest,
-                    &handoff.workspace_key,
-                    runtime_state.attempt_count,
-                    Some(&main_claim),
-                )?,
-            };
-            if result.success {
-                if let Some(worktree) = live_worktree {
-                    let runner = ProcessHandoffCommandRunner;
-                    let verification = run_handoff_verification(&handoff.workspace_path, &config);
-                    println!(
-                        "run_loop_action=verify issue={} success={} summary={}",
-                        latest.identifier, verification.success, verification.summary
-                    );
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &latest,
-                        "main",
-                        if verification.success {
-                            "handoff"
-                        } else {
-                            "failed"
-                        },
-                        "verify",
-                        Some(if verification.success {
-                            "publish PR".into()
-                        } else {
-                            "record failure".into()
-                        }),
-                    ));
-                    result.handoff_verification = Some(verification.summary.clone());
-                    if verification.success {
-                        match publish_issue_pull_request(&handoff, &runner) {
-                            Ok(publication) => {
-                                println!(
-                                    "run_loop_action=pr issue={} url={} created={}",
-                                    latest.identifier, publication.pr_url, publication.pr_created
-                                );
-                                print_latest_status(&LatestStatus {
-                                    lane: "main".into(),
-                                    category: "handoff".into(),
-                                    action: "pr_ready".into(),
-                                    issue_identifier: Some(latest.identifier.clone()),
-                                    issue_title: Some(latest.title.clone()),
-                                    actor_label: Some(config.identity.actor_label.clone()),
-                                    workspace: Some(worktree.workspace_path.display().to_string()),
-                                    branch: Some(worktree.branch_name.clone()),
-                                    session_id: result.session_id.clone(),
-                                    next: Some("link PR".into()),
-                                });
-                                result.live_handoff = Some(RunLoopLiveHandoff {
-                                    worktree,
-                                    publication,
-                                    verification: verification.summary,
-                                    project_pr_link_verified: None,
-                                    pull_request_ready: None,
-                                });
-                            }
-                            Err(error) => {
-                                result.success = false;
-                                result.message = format!("handoff publication failed: {error}");
-                            }
-                        }
-                    } else {
-                        result.success = false;
-                        result.message =
-                            format!("handoff verification failed: {}", verification.summary);
-                    }
-                }
-                if result.success {
-                    let linked = apply_live_handoff_pr_link(
-                        adapter.as_ref(),
-                        &latest.identifier,
-                        &mut result,
-                    );
-                    if linked {
-                        append_tracker_mutation_audit(
-                            &config,
-                            TrackerMutationAudit {
-                                command: "main loop",
-                                mutation_type: "pr_link",
-                                issue_ref: Some(&latest.identifier),
-                                target: result
-                                    .live_handoff
-                                    .as_ref()
-                                    .map(|handoff| handoff.publication.pr_url.clone()),
-                                from_state: Some(latest.state.clone()),
-                                to_state: None,
-                                reason: "live handoff PR link",
-                            },
-                        );
-                        println!(
-                            "run_loop_action=link_pr issue={} evidence=live_handoff",
-                            latest.identifier
-                        );
-                    }
-                }
-                if result.success {
-                    if let Some(handoff) = result.live_handoff.as_mut() {
-                        match ensure_pull_request_ready(
-                            &handoff.publication.pr_url,
-                            &ProcessHandoffCommandRunner,
-                            &handoff.worktree.workspace_path,
-                        ) {
-                            Ok(ready) => {
-                                println!(
-                                "run_loop_action=pr_ready issue={} url={} was_draft={} marked_ready={}",
-                                latest.identifier,
-                                ready.pr_url,
-                                ready.was_draft,
-                                ready.marked_ready
-                            );
-                                handoff.pull_request_ready = Some(ready);
-                            }
-                            Err(error) => {
-                                result.success = false;
-                                result.message = format!("handoff PR ready check failed: {error}");
-                                println!(
-                                "run_loop_action=blocked issue={} reason=pr_ready_check_failed error={}",
-                                latest.identifier, error
-                            );
-                            }
-                        }
-                    }
-                }
-            }
-            runtime_state = run_loop_runtime_state_with_result(runtime_state, &result);
-            mark_runtime_state_updated(&mut runtime_state, current_time_ms());
-            upsert_runtime_state(&config, &runtime_state)?;
-            println!(
-                "run_loop_runtime_state action=updated issue={} event={}",
-                latest.identifier,
-                runtime_state.last_event.as_deref().unwrap_or("unknown")
-            );
+                    adapter.as_ref(),
+                    issue,
+                    recover,
+                    &worker_id,
+                    &options,
+                )
+                .map_err(|error| error.to_string())
+            }),
+        ));
+    }
 
-            let workpad = run_loop_handoff_workpad(&latest, &result, &handoff, Some(&ownership));
-            let handoff_key = recovery_key(
-                "main-handoff-workpad",
+    let mut should_stop_iteration = false;
+    let mut errors = Vec::new();
+    for (issue_ref, handle) in handles {
+        match handle.join() {
+            Ok(Ok(RunLoopWorkerOutcome::Completed)) => {}
+            Ok(Ok(RunLoopWorkerOutcome::StopIteration)) => should_stop_iteration = true,
+            Ok(Err(error)) => errors.push(format!("{issue_ref}: {error}")),
+            Err(_) => errors.push(format!("{issue_ref}: worker thread panicked")),
+        }
+    }
+
+    if !errors.is_empty() {
+        return Err(format!("run_loop concurrent dispatch failed: {}", errors.join("; ")).into());
+    }
+
+    Ok(should_stop_iteration)
+}
+
+fn print_run_loop_write_selection(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    iterations: usize,
+    max_concurrent: usize,
+    selected_count: usize,
+    slot_index: usize,
+) {
+    print_latest_status(&latest_status_for_issue(
+        config,
+        issue,
+        "main",
+        "running",
+        "selected",
+        Some("claim or resume".into()),
+    ));
+    if slot_index == 0 {
+        println!(
+            "run_loop_iteration={} issue={} title={:?} mode=write max_concurrent={} selected_count={}",
+            iterations, issue.identifier, issue.title, max_concurrent, selected_count
+        );
+    } else {
+        println!(
+            "run_loop_iteration={} issue={} title={:?} mode=write max_concurrent={} selected_count={} slot={}",
+            iterations,
+            issue.identifier,
+            issue.title,
+            max_concurrent,
+            selected_count,
+            slot_index + 1
+        );
+    }
+    let smoke_gate = main_app_server_smoke_gate(config);
+    println!(
+        "run_loop_action=backend issue={} backend={} backend_source={} command={} approval_policy={} app_server_live_smoke_ready={} session_registry={}",
+        issue.identifier,
+        smoke_gate.backend,
+        smoke_gate.backend_source,
+        shell_quote_display(&smoke_gate.command),
+        smoke_gate.approval_policy,
+        smoke_gate.app_server_live_smoke_ready,
+        session_registry_path(config).display()
+    );
+}
+
+fn run_loop_dispatch_write_candidate(
+    workflow: &WorkflowDefinition,
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    issue: TrackerIssue,
+    recover: bool,
+    worker_id: &str,
+    options: &RunLoopOptions,
+) -> Result<RunLoopWorkerOutcome, Box<dyn std::error::Error>> {
+    let latest = if recover && normalize_state(&issue.state) == "in progress" {
+        issue.clone()
+    } else {
+        run_with_progress_heartbeat(
+            progress_spec_with_event_log(config, "github_project_read")
+                .issue(issue.identifier.clone())
+                .backend(tracker_backend_label(config))
+                .next("main_issue_read"),
+            || adapter.get_issue(&issue.identifier),
+        )?
+        .ok_or_else(|| format!("issue disappeared before claim: {}", issue.identifier))?
+    };
+    let eligibility = pool_claim_eligibility(&latest, WorkerLane::Main, worker_id, config);
+    if !eligibility.is_claimable() {
+        println!(
+            "run_loop_action=skip issue={} reason={}",
+            latest.identifier,
+            eligibility.skip_reason()
+        );
+        return Ok(RunLoopWorkerOutcome::Completed);
+    }
+    let latest_gate = evaluate_issue_for_current_source(config, &latest)?;
+    if !latest_gate.is_dispatchable() {
+        handle_run_loop_gate_failure(adapter, &latest, &latest_gate, options, config)?;
+        return Ok(RunLoopWorkerOutcome::Completed);
+    }
+
+    let mut handoff = match run_loop_handoff_plan(config, &latest) {
+        Ok(handoff) => handoff,
+        Err(error) => {
+            handle_run_loop_handoff_failure(adapter, &latest, &error, options, config)?;
+            return Ok(RunLoopWorkerOutcome::Completed);
+        }
+    };
+
+    let profile_login = selected_profile_github_login(config)?;
+    let active_login = if live_github_tracker(config) && profile_login.is_none() {
+        current_gh_login()?
+    } else {
+        None
+    };
+    match run_loop_assignee_ownership_decision(
+        &latest,
+        config,
+        active_login.as_deref(),
+        profile_login.as_deref(),
+    ) {
+        AssigneeOwnershipDecision::Allowed => {}
+        AssigneeOwnershipDecision::Block { reason } => {
+            let workpad = run_loop_assignee_ownership_workpad(&latest, &reason);
+            let workpad_key = recovery_key(
+                "main-assignee-ownership-workpad",
                 &latest.identifier,
-                &format!(
-                    "{}|{}|{}",
-                    latest.identifier,
-                    main_claim.run,
-                    stable_recovery_hash(&workpad)
-                ),
+                &format!("{}|{}", latest.identifier, stable_recovery_hash(&workpad)),
             );
-            let handoff_outcome = upsert_workpad_with_recovery(
-                adapter.as_ref(),
+            upsert_workpad_with_recovery(
+                adapter,
                 &latest.identifier,
                 Some(&latest),
                 &workpad,
-                &handoff_key,
+                &workpad_key,
             )?;
-            if handoff_outcome.should_record_audit() {
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                "blocked",
+                "assignee_ownership",
+                Some("operator intervention".into()),
+            ));
+            println!(
+                "run_loop_action=skip issue={} reason=assignee_ownership detail={}",
+                latest.identifier, reason
+            );
+            return Ok(RunLoopWorkerOutcome::Completed);
+        }
+    }
+
+    let existing_runtime_states = load_runtime_states(config)?;
+    let existing_runtime_state =
+        runtime_state_for_issue(&existing_runtime_states, &latest.identifier);
+    if let Some(state) = existing_runtime_state {
+        if let Some(active_issue) = &state.active_issue {
+            println!(
+                "run_loop_runtime_state action=loaded active_issue={} attempt={}",
+                active_issue.identifier, state.attempt_count
+            );
+        }
+        if recover {
+            if let Some(evidence) =
+                run_loop_apply_recovery_handoff(config, &latest, &mut handoff, state)?
+            {
+                println!(
+                    "run_loop_action=recovery_handoff issue={} evidence={}",
+                    latest.identifier, evidence
+                );
+            }
+        }
+    }
+
+    let ownership = run_loop_runtime_ownership(&latest, config, &handoff)?;
+    let claim_action = run_loop_claim_action(&latest, config);
+    let main_claim = lane_claim_for_issue(
+        &latest,
+        WorkerLane::Main.claim_lane(),
+        LaneClaimActor::Codex,
+        LaneClaimSource::Loop,
+        project_text_field(&latest, WorkerLane::Main.claim_field()).as_deref(),
+    )
+    .with_worker(worker_id);
+    if matches!(claim_action, RunLoopClaimAction::Resume) {
+        if let RuntimeOwnershipDecision::Mismatched { reason, .. } =
+            runtime_ownership_decision(latest.description.as_deref(), &ownership)
+        {
+            println!(
+                "run_loop_action=skip issue={} reason=ownership_mismatch detail={reason}",
+                latest.identifier
+            );
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                "blocked",
+                "ownership_mismatch",
+                Some("inspect runtime owner".into()),
+            ));
+            return Ok(RunLoopWorkerOutcome::Completed);
+        }
+    }
+
+    let event = match claim_action {
+        RunLoopClaimAction::Claim => {
+            write_lane_claim_field(
+                config,
+                adapter,
+                &latest,
+                WorkerLane::Main,
+                &main_claim,
+                true,
+            )?;
+            let state_outcome = set_state_with_recovery(
+                adapter,
+                &latest.identifier,
+                Some(&latest),
+                "in_progress",
+                "state_change",
+            )?;
+            if state_outcome.should_record_audit() {
                 append_tracker_mutation_audit(
-                    &config,
+                    config,
                     TrackerMutationAudit {
                         command: "main loop",
-                        mutation_type: "workpad_write",
+                        mutation_type: "state_change",
+                        issue_ref: Some(&latest.identifier),
+                        target: None,
+                        from_state: Some(latest.state.clone()),
+                        to_state: Some("in_progress".into()),
+                        reason: "main worker claim",
+                    },
+                );
+            }
+            println!(
+                "run_loop_action=claim issue={} target_state=in_progress outcome={}",
+                latest.identifier,
+                state_outcome.as_str()
+            );
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                "running",
+                "claimed",
+                Some("write runtime ownership".into()),
+            ));
+            "Claimed"
+        }
+        RunLoopClaimAction::Resume => {
+            write_lane_claim_field(
+                config,
+                adapter,
+                &latest,
+                WorkerLane::Main,
+                &main_claim,
+                true,
+            )?;
+            println!("run_loop_action=resume issue={}", latest.identifier);
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                "running",
+                "resumed",
+                Some("continue backend work".into()),
+            ));
+            "Resumed"
+        }
+        RunLoopClaimAction::StopAndReplan { current_state } => {
+            println!(
+                "run_loop_action=skip issue={} reason=external_state_change current_state={:?}",
+                latest.identifier, current_state
+            );
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                "waiting",
+                "external_state_change",
+                Some("replan".into()),
+            ));
+            return Ok(RunLoopWorkerOutcome::Completed);
+        }
+    };
+    let ownership_workpad = run_loop_ownership_workpad(&latest, &ownership, event, &main_claim);
+    let ownership_key = recovery_key(
+        "main-ownership-workpad",
+        &latest.identifier,
+        &format!(
+            "{}|{}|{}",
+            latest.identifier,
+            main_claim.run,
+            stable_recovery_hash(&ownership_workpad)
+        ),
+    );
+    let ownership_outcome = upsert_workpad_with_recovery(
+        adapter,
+        &latest.identifier,
+        Some(&latest),
+        &ownership_workpad,
+        &ownership_key,
+    )?;
+    if ownership_outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            config,
+            TrackerMutationAudit {
+                command: "main loop",
+                mutation_type: "workpad_write",
+                issue_ref: Some(&latest.identifier),
+                target: ownership.profile_id.clone(),
+                from_state: Some(latest.state.clone()),
+                to_state: None,
+                reason: "runtime ownership evidence",
+            },
+        );
+    }
+    println!(
+        "run_loop_action=ownership issue={} profile={} branch={} outcome={}",
+        latest.identifier,
+        ownership.profile_id.as_deref().unwrap_or("n/a"),
+        ownership.branch_name,
+        ownership_outcome.as_str()
+    );
+
+    let mut runtime_state = run_loop_runtime_state_for_issue(
+        existing_runtime_state,
+        &latest,
+        config,
+        event,
+        &main_claim,
+    );
+    runtime_state.branch_name = Some(handoff.branch_name.clone());
+    mark_runtime_state_updated(&mut runtime_state, current_time_ms());
+    upsert_runtime_state(config, &runtime_state)?;
+    println!(
+        "run_loop_runtime_state action=saved issue={} event={event}",
+        latest.identifier
+    );
+
+    let live_worktree = if run_loop_live_handoff_enabled(config) {
+        let runner = ProcessHandoffCommandRunner;
+        let repo_root = std::env::current_dir()?;
+        let worktree = prepare_issue_worktree(&repo_root, &handoff, &runner)?;
+        println!(
+            "run_loop_action=worktree issue={} workspace={} branch={} created={}",
+            latest.identifier,
+            worktree.workspace_path.display(),
+            worktree.branch_name,
+            worktree.created
+        );
+        print_latest_status(&LatestStatus {
+            lane: "main".into(),
+            category: "running".into(),
+            action: "worktree_ready".into(),
+            issue_identifier: Some(latest.identifier.clone()),
+            issue_title: Some(latest.title.clone()),
+            actor_label: Some(config.identity.actor_label.clone()),
+            workspace: Some(worktree.workspace_path.display().to_string()),
+            branch: Some(worktree.branch_name.clone()),
+            session_id: runtime_state.backend_session_id.clone(),
+            next: Some("run backend".into()),
+        });
+        Some(worktree)
+    } else {
+        None
+    };
+
+    let mut session_reconciliation =
+        reconcile_pending_main_session(config, &latest, &handoff, &runtime_state)?;
+    if let Some(MainSessionReconciliation::Active {
+        status,
+        source,
+        evidence,
+    }) = &session_reconciliation
+    {
+        let recover_active = recover && main_session_active_recoverable(status, evidence);
+        append_runtime_supervision_event(
+            config,
+            Some(&runtime_state),
+            if recover_active {
+                "MainSessionRecovering"
+            } else {
+                "MainSessionStillActive"
+            },
+            &format!(
+                "issue={} status={} source={} evidence={}",
+                latest.identifier, status, source, evidence
+            ),
+        )?;
+        println!(
+            "run_loop_action=session_observed issue={} status={} source={} evidence={:?}",
+            latest.identifier, status, source, evidence
+        );
+        if recover_active {
+            println!(
+                "run_loop_action=recover issue={} status={} source={} evidence={:?}",
+                latest.identifier, status, source, evidence
+            );
+            session_reconciliation = None;
+        } else {
+            print_latest_status(&LatestStatus {
+                lane: "main".into(),
+                category: status.clone(),
+                action: "session_observed".into(),
+                issue_identifier: Some(latest.identifier.clone()),
+                issue_title: Some(latest.title.clone()),
+                actor_label: Some(config.identity.actor_label.clone()),
+                workspace: runtime_state
+                    .workspace_path
+                    .as_ref()
+                    .map(|path| path.display().to_string()),
+                branch: runtime_state.branch_name.clone(),
+                session_id: runtime_state.backend_session_id.clone(),
+                next: runtime_state.backend_attach_command.clone(),
+            });
+            return Ok(RunLoopWorkerOutcome::StopIteration);
+        }
+    }
+    if let Some(MainSessionReconciliation::Active {
+        status,
+        source: _,
+        evidence: _,
+    }) = &session_reconciliation
+    {
+        print_latest_status(&LatestStatus {
+            lane: "main".into(),
+            category: status.clone(),
+            action: "session_observed".into(),
+            issue_identifier: Some(latest.identifier.clone()),
+            issue_title: Some(latest.title.clone()),
+            actor_label: Some(config.identity.actor_label.clone()),
+            workspace: runtime_state
+                .workspace_path
+                .as_ref()
+                .map(|path| path.display().to_string()),
+            branch: runtime_state.branch_name.clone(),
+            session_id: runtime_state.backend_session_id.clone(),
+            next: runtime_state.backend_attach_command.clone(),
+        });
+        return Ok(RunLoopWorkerOutcome::StopIteration);
+    }
+
+    print_latest_status(&latest_status_for_issue(
+        config,
+        &latest,
+        "main",
+        if session_reconciliation.is_some() {
+            "reconciling"
+        } else {
+            "running"
+        },
+        if session_reconciliation.is_some() {
+            "session_terminal"
+        } else {
+            "backend"
+        },
+        Some("save result".into()),
+    ));
+    let mut result = match session_reconciliation {
+        Some(MainSessionReconciliation::Terminal(result)) => *result,
+        Some(MainSessionReconciliation::Active { .. }) => unreachable!(),
+        None => execute_issue_once_with_workspace_key(
+            workflow,
+            config,
+            &latest,
+            &handoff.workspace_key,
+            runtime_state.attempt_count,
+            Some(&main_claim),
+        )?,
+    };
+    if result.success {
+        if let Some(worktree) = live_worktree {
+            let runner = ProcessHandoffCommandRunner;
+            if result.backend == "codex" {
+                let commit_message = format!(
+                    "Implement {}: {}",
+                    latest.identifier,
+                    latest.title.replace(['\n', '\r'], " ")
+                );
+                match commit_issue_worktree_changes(&handoff, &runner, &commit_message) {
+                    Ok(commit) => {
+                        println!(
+                            "run_loop_action=commit issue={} committed={} hash={}",
+                            latest.identifier,
+                            commit.committed,
+                            commit.commit_hash.as_deref().unwrap_or("n/a")
+                        );
+                    }
+                    Err(error) => {
+                        result.success = false;
+                        result.message = format!("handoff commit failed: {error}");
+                    }
+                }
+            }
+            let verification = if result.success {
+                run_handoff_verification(&handoff.workspace_path, config)
+            } else {
+                HandoffVerification {
+                    success: false,
+                    summary: result.message.clone(),
+                }
+            };
+            println!(
+                "run_loop_action=verify issue={} success={} summary={}",
+                latest.identifier, verification.success, verification.summary
+            );
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                if verification.success {
+                    "handoff"
+                } else {
+                    "failed"
+                },
+                "verify",
+                Some(if verification.success {
+                    "publish PR".into()
+                } else {
+                    "record failure".into()
+                }),
+            ));
+            result.handoff_verification = Some(verification.summary.clone());
+            if verification.success {
+                match publish_issue_pull_request(&handoff, &runner) {
+                    Ok(publication) => {
+                        println!(
+                            "run_loop_action=pr issue={} url={} created={}",
+                            latest.identifier, publication.pr_url, publication.pr_created
+                        );
+                        print_latest_status(&LatestStatus {
+                            lane: "main".into(),
+                            category: "handoff".into(),
+                            action: "pr_ready".into(),
+                            issue_identifier: Some(latest.identifier.clone()),
+                            issue_title: Some(latest.title.clone()),
+                            actor_label: Some(config.identity.actor_label.clone()),
+                            workspace: Some(worktree.workspace_path.display().to_string()),
+                            branch: Some(worktree.branch_name.clone()),
+                            session_id: result.session_id.clone(),
+                            next: Some("link PR".into()),
+                        });
+                        result.live_handoff = Some(RunLoopLiveHandoff {
+                            worktree,
+                            publication,
+                            verification: verification.summary,
+                            project_pr_link_verified: None,
+                            pull_request_ready: None,
+                        });
+                    }
+                    Err(error) => {
+                        result.success = false;
+                        result.message = format!("handoff publication failed: {error}");
+                    }
+                }
+            } else {
+                result.success = false;
+                result.message = format!("handoff verification failed: {}", verification.summary);
+            }
+        }
+        if result.success {
+            let linked = apply_live_handoff_pr_link(adapter, &latest.identifier, &mut result);
+            if linked {
+                append_tracker_mutation_audit(
+                    config,
+                    TrackerMutationAudit {
+                        command: "main loop",
+                        mutation_type: "pr_link",
                         issue_ref: Some(&latest.identifier),
                         target: result
                             .live_handoff
@@ -10782,418 +11982,482 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                             .map(|handoff| handoff.publication.pr_url.clone()),
                         from_state: Some(latest.state.clone()),
                         to_state: None,
-                        reason: "main worker handoff evidence",
+                        reason: "live handoff PR link",
                     },
                 );
-            }
-
-            if result.pending_session {
-                append_runtime_supervision_event(
-                    &config,
-                    Some(&runtime_state),
-                    "TmuxSessionRunning",
-                    &format!(
-                        "issue={} session={} attach_command={} log_path={}",
-                        latest.identifier,
-                        result.session_id.as_deref().unwrap_or("n/a"),
-                        result.backend_attach_command.as_deref().unwrap_or("n/a"),
-                        result
-                            .backend_log_path
-                            .as_ref()
-                            .map(|path| path.display().to_string())
-                            .unwrap_or_else(|| "n/a".into())
-                    ),
-                )?;
                 println!(
-                "run_loop_action=session_started issue={} backend={} session={} attach_command=\"{}\" log_path={}",
+                    "run_loop_action=link_pr issue={} evidence=live_handoff",
+                    latest.identifier
+                );
+            }
+        }
+        if result.success {
+            if let Some(handoff) = result.live_handoff.as_mut() {
+                match ensure_pull_request_ready(
+                    &handoff.publication.pr_url,
+                    &ProcessHandoffCommandRunner,
+                    &handoff.worktree.workspace_path,
+                ) {
+                    Ok(ready) => {
+                        println!(
+                            "run_loop_action=pr_ready issue={} url={} was_draft={} marked_ready={}",
+                            latest.identifier, ready.pr_url, ready.was_draft, ready.marked_ready
+                        );
+                        handoff.pull_request_ready = Some(ready);
+                    }
+                    Err(error) => {
+                        result.success = false;
+                        result.message = format!("handoff PR ready check failed: {error}");
+                        println!(
+                        "run_loop_action=blocked issue={} reason=pr_ready_check_failed error={}",
+                        latest.identifier, error
+                    );
+                    }
+                }
+            }
+        }
+    }
+    runtime_state = run_loop_runtime_state_with_result(runtime_state, &result);
+    mark_runtime_state_updated(&mut runtime_state, current_time_ms());
+    upsert_runtime_state(config, &runtime_state)?;
+    println!(
+        "run_loop_runtime_state action=updated issue={} event={}",
+        latest.identifier,
+        runtime_state.last_event.as_deref().unwrap_or("unknown")
+    );
+
+    let workpad = run_loop_handoff_workpad(&latest, &result, &handoff, Some(&ownership));
+    let handoff_key = recovery_key(
+        "main-handoff-workpad",
+        &latest.identifier,
+        &format!(
+            "{}|{}|{}",
+            latest.identifier,
+            main_claim.run,
+            stable_recovery_hash(&workpad)
+        ),
+    );
+    let handoff_outcome = upsert_workpad_with_recovery(
+        adapter,
+        &latest.identifier,
+        Some(&latest),
+        &workpad,
+        &handoff_key,
+    )?;
+    if handoff_outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            config,
+            TrackerMutationAudit {
+                command: "main loop",
+                mutation_type: "workpad_write",
+                issue_ref: Some(&latest.identifier),
+                target: result
+                    .live_handoff
+                    .as_ref()
+                    .map(|handoff| handoff.publication.pr_url.clone()),
+                from_state: Some(latest.state.clone()),
+                to_state: None,
+                reason: "main worker handoff evidence",
+            },
+        );
+    }
+
+    if result.pending_session {
+        append_runtime_supervision_event(
+            config,
+            Some(&runtime_state),
+            "TmuxSessionRunning",
+            &format!(
+                "issue={} session={} attach_command={} log_path={}",
                 latest.identifier,
-                result.backend,
                 result.session_id.as_deref().unwrap_or("n/a"),
-                result
-                    .backend_attach_command
-                    .as_deref()
-                    .unwrap_or("n/a"),
+                result.backend_attach_command.as_deref().unwrap_or("n/a"),
                 result
                     .backend_log_path
                     .as_ref()
                     .map(|path| path.display().to_string())
                     .unwrap_or_else(|| "n/a".into())
-            );
-                print_latest_status(&LatestStatus {
-                    lane: "main".into(),
-                    category: "running".into(),
-                    action: "session_started".into(),
-                    issue_identifier: Some(latest.identifier.clone()),
-                    issue_title: Some(latest.title.clone()),
-                    actor_label: Some(config.identity.actor_label.clone()),
-                    workspace: Some(result.workspace_path.display().to_string()),
-                    branch: runtime_state.branch_name.clone(),
-                    session_id: result.session_id.clone(),
-                    next: result.backend_attach_command.clone(),
-                });
-                continue;
-            }
+            ),
+        )?;
+        println!(
+        "run_loop_action=session_started issue={} backend={} session={} attach_command=\"{}\" log_path={}",
+        latest.identifier,
+        result.backend,
+        result.session_id.as_deref().unwrap_or("n/a"),
+        result
+            .backend_attach_command
+            .as_deref()
+            .unwrap_or("n/a"),
+        result
+            .backend_log_path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "n/a".into())
+    );
+        print_latest_status(&LatestStatus {
+            lane: "main".into(),
+            category: "running".into(),
+            action: "session_started".into(),
+            issue_identifier: Some(latest.identifier.clone()),
+            issue_title: Some(latest.title.clone()),
+            actor_label: Some(config.identity.actor_label.clone()),
+            workspace: Some(result.workspace_path.display().to_string()),
+            branch: runtime_state.branch_name.clone(),
+            session_id: result.session_id.clone(),
+            next: result.backend_attach_command.clone(),
+        });
+        return Ok(RunLoopWorkerOutcome::Completed);
+    }
 
-            if result.success {
-                if !transition_allowed_for_main_agent("agent_review") {
-                    return Err(
-                        "main implementation agent cannot set requested review state".into(),
-                    );
-                }
-                let evidence = run_loop_agent_review_handoff_evidence(
-                    &latest,
-                    &result,
-                    &handoff,
-                    Some(&workpad),
+    if result.success {
+        if !transition_allowed_for_main_agent("agent_review") {
+            return Err("main implementation agent cannot set requested review state".into());
+        }
+        let evidence =
+            run_loop_agent_review_handoff_evidence(&latest, &result, &handoff, Some(&workpad));
+        let handoff_report = evaluate_agent_review_handoff(&evidence);
+        let handoff_workpad =
+            render_agent_review_handoff_workpad(&latest, &evidence, &handoff_report);
+        let review_handoff_key = recovery_key(
+            "agent-review-handoff-workpad",
+            &latest.identifier,
+            &format!(
+                "{}|{}|{}",
+                latest.identifier,
+                main_claim.run,
+                stable_recovery_hash(&handoff_workpad)
+            ),
+        );
+        let review_handoff_outcome = upsert_workpad_with_recovery(
+            adapter,
+            &latest.identifier,
+            Some(&latest),
+            &handoff_workpad,
+            &review_handoff_key,
+        )?;
+        if review_handoff_outcome.should_record_audit() {
+            append_tracker_mutation_audit(
+                config,
+                TrackerMutationAudit {
+                    command: "main loop",
+                    mutation_type: "workpad_write",
+                    issue_ref: Some(&latest.identifier),
+                    target: result
+                        .live_handoff
+                        .as_ref()
+                        .map(|handoff| handoff.publication.pr_url.clone()),
+                    from_state: Some(latest.state.clone()),
+                    to_state: Some("agent_review".into()),
+                    reason: "agent review handoff evidence",
+                },
+            );
+        }
+        if !handoff_report.is_ready() {
+            runtime_state = run_loop_runtime_state_with_transition(
+                runtime_state,
+                Some(latest.state.clone()),
+                "need_human_input",
+                "agent review handoff invariant failed",
+            );
+            upsert_runtime_state(config, &runtime_state)?;
+            write_lane_claim_state(
+                config,
+                adapter,
+                &latest,
+                WorkerLane::Main,
+                &main_claim,
+                LaneClaimState::Failed,
+            )?;
+            let state_outcome = set_state_with_recovery(
+                adapter,
+                &latest.identifier,
+                Some(&latest),
+                "need_human_input",
+                "state_change",
+            )?;
+            if state_outcome.should_record_audit() {
+                append_tracker_mutation_audit(
+                    config,
+                    TrackerMutationAudit {
+                        command: "main loop",
+                        mutation_type: "state_change",
+                        issue_ref: Some(&latest.identifier),
+                        target: None,
+                        from_state: Some(latest.state.clone()),
+                        to_state: Some("need_human_input".into()),
+                        reason: "agent review handoff invariant failed",
+                    },
                 );
-                let handoff_report = evaluate_agent_review_handoff(&evidence);
-                let handoff_workpad =
-                    render_agent_review_handoff_workpad(&latest, &evidence, &handoff_report);
-                let review_handoff_key = recovery_key(
-                    "agent-review-handoff-workpad",
-                    &latest.identifier,
-                    &format!(
-                        "{}|{}|{}",
-                        latest.identifier,
-                        main_claim.run,
-                        stable_recovery_hash(&handoff_workpad)
-                    ),
-                );
-                let review_handoff_outcome = upsert_workpad_with_recovery(
-                    adapter.as_ref(),
-                    &latest.identifier,
-                    Some(&latest),
-                    &handoff_workpad,
-                    &review_handoff_key,
-                )?;
-                if review_handoff_outcome.should_record_audit() {
-                    append_tracker_mutation_audit(
-                        &config,
-                        TrackerMutationAudit {
-                            command: "main loop",
-                            mutation_type: "workpad_write",
-                            issue_ref: Some(&latest.identifier),
-                            target: result
-                                .live_handoff
-                                .as_ref()
-                                .map(|handoff| handoff.publication.pr_url.clone()),
-                            from_state: Some(latest.state.clone()),
-                            to_state: Some("agent_review".into()),
-                            reason: "agent review handoff evidence",
-                        },
-                    );
-                }
-                if !handoff_report.is_ready() {
-                    runtime_state = run_loop_runtime_state_with_transition(
-                        runtime_state,
-                        Some(latest.state.clone()),
-                        "need_human_input",
-                        "agent review handoff invariant failed",
-                    );
-                    upsert_runtime_state(&config, &runtime_state)?;
-                    write_lane_claim_state(
-                        &config,
-                        adapter.as_ref(),
-                        &latest,
-                        WorkerLane::Main,
-                        &main_claim,
-                        LaneClaimState::Failed,
-                    )?;
-                    let state_outcome = set_state_with_recovery(
-                        adapter.as_ref(),
-                        &latest.identifier,
-                        Some(&latest),
-                        "need_human_input",
-                        "state_change",
-                    )?;
-                    if state_outcome.should_record_audit() {
-                        append_tracker_mutation_audit(
-                            &config,
-                            TrackerMutationAudit {
-                                command: "main loop",
-                                mutation_type: "state_change",
-                                issue_ref: Some(&latest.identifier),
-                                target: None,
-                                from_state: Some(latest.state.clone()),
-                                to_state: Some("need_human_input".into()),
-                                reason: "agent review handoff invariant failed",
-                            },
-                        );
-                    }
-                    remove_runtime_state_for_issue(&config, &latest.identifier)?;
-                    println!(
-                    "run_loop_action=blocked issue={} target_state=need_human_input reason=handoff_invariant_failed",
-                    latest.identifier
-                );
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &latest,
-                        "main",
-                        "blocked",
-                        "handoff_invariant_failed",
-                        Some("Need Human Input".into()),
-                    ));
-                    continue;
-                }
-                runtime_state = run_loop_runtime_state_with_transition(
-                    runtime_state,
-                    Some(latest.state.clone()),
-                    "agent_review",
-                    "main agent completed",
-                );
-                mark_runtime_state_updated(&mut runtime_state, current_time_ms());
-                upsert_runtime_state(&config, &runtime_state)?;
-                write_lane_claim_state(
-                    &config,
-                    adapter.as_ref(),
-                    &latest,
-                    WorkerLane::Main,
-                    &main_claim,
-                    LaneClaimState::Done,
-                )?;
-                let state_outcome = set_state_with_recovery(
-                    adapter.as_ref(),
-                    &latest.identifier,
-                    Some(&latest),
-                    "agent_review",
-                    "state_change",
-                )?;
-                reconcile_main_handoff_runtime_state(&config, &latest.identifier, "agent_review")?;
-                if state_outcome.should_record_audit() {
-                    append_tracker_mutation_audit(
-                        &config,
-                        TrackerMutationAudit {
-                            command: "main loop",
-                            mutation_type: "state_change",
-                            issue_ref: Some(&latest.identifier),
-                            target: result
-                                .live_handoff
-                                .as_ref()
-                                .map(|handoff| handoff.publication.pr_url.clone()),
-                            from_state: Some(latest.state.clone()),
-                            to_state: Some("agent_review".into()),
-                            reason: "main agent completed",
-                        },
-                    );
-                }
-                remove_runtime_state_for_issue(&config, &latest.identifier)?;
-                println!(
-                    "run_loop_action=handoff issue={} target_state=agent_review",
-                    latest.identifier
-                );
-                print_latest_status(&latest_status_for_issue(
-                    &config,
-                    &latest,
-                    "main",
-                    "handoff",
-                    "agent_review",
-                    Some("Review Agent".into()),
-                ));
-            } else {
-                let retry_delay_ms = Orchestrator::new(config.clone())
-                    .retry_delay_ms(runtime_state.attempt_count, false);
-                if let Some(pause) = &result.usage_limit_pause {
-                    record_runtime_retry(
-                        &mut runtime_state,
-                        current_time_ms(),
-                        retry_delay_ms,
-                        format!("usage-limit pause: {}", pause.evidence),
-                    );
-                    upsert_runtime_state(&config, &runtime_state)?;
-                    let pause_workpad =
-                        run_loop_usage_limit_pause_workpad(&latest, &result, pause, retry_delay_ms);
-                    let pause_key = recovery_key(
-                        "main-usage-limit-workpad",
-                        &latest.identifier,
-                        &format!(
-                            "{}|{}|{}",
-                            latest.identifier,
-                            main_claim.run,
-                            stable_recovery_hash(&pause_workpad)
-                        ),
-                    );
-                    let pause_outcome = upsert_workpad_with_recovery(
-                        adapter.as_ref(),
-                        &latest.identifier,
-                        Some(&latest),
-                        &pause_workpad,
-                        &pause_key,
-                    )?;
-                    if pause_outcome.should_record_audit() {
-                        append_tracker_mutation_audit(
-                            &config,
-                            TrackerMutationAudit {
-                                command: "main loop",
-                                mutation_type: "workpad_write",
-                                issue_ref: Some(&latest.identifier),
-                                target: Some(pause.classifier.clone()),
-                                from_state: Some(latest.state.clone()),
-                                to_state: None,
-                                reason: "usage-limit pause evidence",
-                            },
-                        );
-                    }
-                    append_runtime_supervision_event(
-                        &config,
-                        Some(&runtime_state),
-                        "UsageLimitPaused",
-                        &format!(
-                            "issue={} classifier={} due_in_ms={} evidence={}",
-                            latest.identifier, pause.classifier, retry_delay_ms, pause.evidence
-                        ),
-                    )?;
-                    println!(
-                        "run_loop_action=usage_limit_paused issue={} classifier={} due_in_ms={}",
-                        latest.identifier, pause.classifier, retry_delay_ms
-                    );
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &latest,
-                        "main",
-                        "retrying",
-                        "usage_limit_paused",
-                        Some(format!("retry in {retry_delay_ms}ms")),
-                    ));
-                    break;
-                }
-                if result.message.contains("handoff PR link") {
-                    runtime_state = run_loop_runtime_state_with_transition(
-                        runtime_state,
-                        Some(latest.state.clone()),
-                        "need_human_input",
-                        "handoff PR linkage invariant failed",
-                    );
-                    mark_runtime_state_updated(&mut runtime_state, current_time_ms());
-                    upsert_runtime_state(&config, &runtime_state)?;
-                    write_lane_claim_state(
-                        &config,
-                        adapter.as_ref(),
-                        &latest,
-                        WorkerLane::Main,
-                        &main_claim,
-                        LaneClaimState::Failed,
-                    )?;
-                    let state_outcome = set_state_with_recovery(
-                        adapter.as_ref(),
-                        &latest.identifier,
-                        Some(&latest),
-                        "need_human_input",
-                        "state_change",
-                    )?;
-                    if state_outcome.should_record_audit() {
-                        append_tracker_mutation_audit(
-                            &config,
-                            TrackerMutationAudit {
-                                command: "main loop",
-                                mutation_type: "state_change",
-                                issue_ref: Some(&latest.identifier),
-                                target: result
-                                    .live_handoff
-                                    .as_ref()
-                                    .map(|handoff| handoff.publication.pr_url.clone()),
-                                from_state: Some(latest.state.clone()),
-                                to_state: Some("need_human_input".into()),
-                                reason: "handoff PR linkage invariant failed",
-                            },
-                        );
-                    }
-                    remove_runtime_state_for_issue(&config, &latest.identifier)?;
-                    println!(
-                    "run_loop_action=blocked issue={} target_state=need_human_input reason=handoff_pr_linkage_invariant_failed",
-                    latest.identifier
-                );
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &latest,
-                        "main",
-                        "blocked",
-                        "handoff_pr_linkage",
-                        Some("Need Human Input".into()),
-                    ));
-                    continue;
-                }
-                if runtime_state.attempt_count < config.agent.max_turns {
-                    record_runtime_retry(
-                        &mut runtime_state,
-                        current_time_ms(),
-                        retry_delay_ms,
-                        result.message.clone(),
-                    );
-                    upsert_runtime_state(&config, &runtime_state)?;
-                    append_runtime_supervision_event(
-                        &config,
-                        Some(&runtime_state),
-                        "RetryScheduled",
-                        &format!(
-                            "issue={} attempt={} due_in_ms={} error={}",
-                            latest.identifier,
-                            runtime_state.attempt_count,
-                            retry_delay_ms,
-                            result.message
-                        ),
-                    )?;
-                    println!(
-                        "run_loop_action=retry_scheduled issue={} attempt={} due_in_ms={}",
-                        latest.identifier, runtime_state.attempt_count, retry_delay_ms
-                    );
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &latest,
-                        "main",
-                        "retrying",
-                        "retry_scheduled",
-                        Some(format!("retry in {retry_delay_ms}ms")),
-                    ));
-                    break;
-                } else {
-                    runtime_state = run_loop_runtime_state_with_transition(
-                        runtime_state,
-                        Some(latest.state.clone()),
-                        "need_human_input",
-                        "backend run failed after retry limit",
-                    );
-                    mark_runtime_state_updated(&mut runtime_state, current_time_ms());
-                    upsert_runtime_state(&config, &runtime_state)?;
-                    let state_outcome = set_state_with_recovery(
-                        adapter.as_ref(),
-                        &latest.identifier,
-                        Some(&latest),
-                        "need_human_input",
-                        "state_change",
-                    )?;
-                    if state_outcome.should_record_audit() {
-                        append_tracker_mutation_audit(
-                            &config,
-                            TrackerMutationAudit {
-                                command: "main loop",
-                                mutation_type: "state_change",
-                                issue_ref: Some(&latest.identifier),
-                                target: None,
-                                from_state: Some(latest.state.clone()),
-                                to_state: Some("need_human_input".into()),
-                                reason: "backend run failed after retry limit",
-                            },
-                        );
-                    }
-                    remove_runtime_state_for_issue(&config, &latest.identifier)?;
-                    println!(
-                        "run_loop_action=blocked issue={} target_state=need_human_input",
-                        latest.identifier
-                    );
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &latest,
-                        "main",
-                        "failed",
-                        "need_human_input",
-                        Some("operator repair".into()),
-                    ));
-                }
             }
+            remove_runtime_state_for_issue(config, &latest.identifier)?;
+            println!(
+            "run_loop_action=blocked issue={} target_state=need_human_input reason=handoff_invariant_failed",
+            latest.identifier
+        );
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                "blocked",
+                "handoff_invariant_failed",
+                Some("Need Human Input".into()),
+            ));
+            return Ok(RunLoopWorkerOutcome::Completed);
+        }
+        runtime_state = run_loop_runtime_state_with_transition(
+            runtime_state,
+            Some(latest.state.clone()),
+            "agent_review",
+            "main agent completed",
+        );
+        mark_runtime_state_updated(&mut runtime_state, current_time_ms());
+        upsert_runtime_state(config, &runtime_state)?;
+        write_lane_claim_state(
+            config,
+            adapter,
+            &latest,
+            WorkerLane::Main,
+            &main_claim,
+            LaneClaimState::Done,
+        )?;
+        let state_outcome = set_state_with_recovery(
+            adapter,
+            &latest.identifier,
+            Some(&latest),
+            "agent_review",
+            "state_change",
+        )?;
+        reconcile_main_handoff_runtime_state(config, &latest.identifier, "agent_review")?;
+        if state_outcome.should_record_audit() {
+            append_tracker_mutation_audit(
+                config,
+                TrackerMutationAudit {
+                    command: "main loop",
+                    mutation_type: "state_change",
+                    issue_ref: Some(&latest.identifier),
+                    target: result
+                        .live_handoff
+                        .as_ref()
+                        .map(|handoff| handoff.publication.pr_url.clone()),
+                    from_state: Some(latest.state.clone()),
+                    to_state: Some("agent_review".into()),
+                    reason: "main agent completed",
+                },
+            );
+        }
+        remove_runtime_state_for_issue(config, &latest.identifier)?;
+        println!(
+            "run_loop_action=handoff issue={} target_state=agent_review",
+            latest.identifier
+        );
+        print_latest_status(&latest_status_for_issue(
+            config,
+            &latest,
+            "main",
+            "handoff",
+            "agent_review",
+            Some("Review Agent".into()),
+        ));
+    } else {
+        let retry_delay_ms =
+            Orchestrator::new(config.clone()).retry_delay_ms(runtime_state.attempt_count, false);
+        if let Some(pause) = &result.usage_limit_pause {
+            record_runtime_retry(
+                &mut runtime_state,
+                current_time_ms(),
+                retry_delay_ms,
+                format!("usage-limit pause: {}", pause.evidence),
+            );
+            upsert_runtime_state(config, &runtime_state)?;
+            let pause_workpad =
+                run_loop_usage_limit_pause_workpad(&latest, &result, pause, retry_delay_ms);
+            let pause_key = recovery_key(
+                "main-usage-limit-workpad",
+                &latest.identifier,
+                &format!(
+                    "{}|{}|{}",
+                    latest.identifier,
+                    main_claim.run,
+                    stable_recovery_hash(&pause_workpad)
+                ),
+            );
+            let pause_outcome = upsert_workpad_with_recovery(
+                adapter,
+                &latest.identifier,
+                Some(&latest),
+                &pause_workpad,
+                &pause_key,
+            )?;
+            if pause_outcome.should_record_audit() {
+                append_tracker_mutation_audit(
+                    config,
+                    TrackerMutationAudit {
+                        command: "main loop",
+                        mutation_type: "workpad_write",
+                        issue_ref: Some(&latest.identifier),
+                        target: Some(pause.classifier.clone()),
+                        from_state: Some(latest.state.clone()),
+                        to_state: None,
+                        reason: "usage-limit pause evidence",
+                    },
+                );
+            }
+            append_runtime_supervision_event(
+                config,
+                Some(&runtime_state),
+                "UsageLimitPaused",
+                &format!(
+                    "issue={} classifier={} due_in_ms={} evidence={}",
+                    latest.identifier, pause.classifier, retry_delay_ms, pause.evidence
+                ),
+            )?;
+            println!(
+                "run_loop_action=usage_limit_paused issue={} classifier={} due_in_ms={}",
+                latest.identifier, pause.classifier, retry_delay_ms
+            );
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                "retrying",
+                "usage_limit_paused",
+                Some(format!("retry in {retry_delay_ms}ms")),
+            ));
+            return Ok(RunLoopWorkerOutcome::StopIteration);
+        }
+        if result.message.contains("handoff PR link") {
+            runtime_state = run_loop_runtime_state_with_transition(
+                runtime_state,
+                Some(latest.state.clone()),
+                "need_human_input",
+                "handoff PR linkage invariant failed",
+            );
+            mark_runtime_state_updated(&mut runtime_state, current_time_ms());
+            upsert_runtime_state(config, &runtime_state)?;
+            write_lane_claim_state(
+                config,
+                adapter,
+                &latest,
+                WorkerLane::Main,
+                &main_claim,
+                LaneClaimState::Failed,
+            )?;
+            let state_outcome = set_state_with_recovery(
+                adapter,
+                &latest.identifier,
+                Some(&latest),
+                "need_human_input",
+                "state_change",
+            )?;
+            if state_outcome.should_record_audit() {
+                append_tracker_mutation_audit(
+                    config,
+                    TrackerMutationAudit {
+                        command: "main loop",
+                        mutation_type: "state_change",
+                        issue_ref: Some(&latest.identifier),
+                        target: result
+                            .live_handoff
+                            .as_ref()
+                            .map(|handoff| handoff.publication.pr_url.clone()),
+                        from_state: Some(latest.state.clone()),
+                        to_state: Some("need_human_input".into()),
+                        reason: "handoff PR linkage invariant failed",
+                    },
+                );
+            }
+            remove_runtime_state_for_issue(config, &latest.identifier)?;
+            println!(
+            "run_loop_action=blocked issue={} target_state=need_human_input reason=handoff_pr_linkage_invariant_failed",
+            latest.identifier
+        );
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                "blocked",
+                "handoff_pr_linkage",
+                Some("Need Human Input".into()),
+            ));
+            return Ok(RunLoopWorkerOutcome::Completed);
+        }
+        if runtime_state.attempt_count < config.agent.max_turns {
+            record_runtime_retry(
+                &mut runtime_state,
+                current_time_ms(),
+                retry_delay_ms,
+                result.message.clone(),
+            );
+            upsert_runtime_state(config, &runtime_state)?;
+            append_runtime_supervision_event(
+                config,
+                Some(&runtime_state),
+                "RetryScheduled",
+                &format!(
+                    "issue={} attempt={} due_in_ms={} error={}",
+                    latest.identifier, runtime_state.attempt_count, retry_delay_ms, result.message
+                ),
+            )?;
+            println!(
+                "run_loop_action=retry_scheduled issue={} attempt={} due_in_ms={}",
+                latest.identifier, runtime_state.attempt_count, retry_delay_ms
+            );
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                "retrying",
+                "retry_scheduled",
+                Some(format!("retry in {retry_delay_ms}ms")),
+            ));
+            return Ok(RunLoopWorkerOutcome::StopIteration);
+        } else {
+            runtime_state = run_loop_runtime_state_with_transition(
+                runtime_state,
+                Some(latest.state.clone()),
+                "need_human_input",
+                "backend run failed after retry limit",
+            );
+            mark_runtime_state_updated(&mut runtime_state, current_time_ms());
+            upsert_runtime_state(config, &runtime_state)?;
+            let state_outcome = set_state_with_recovery(
+                adapter,
+                &latest.identifier,
+                Some(&latest),
+                "need_human_input",
+                "state_change",
+            )?;
+            if state_outcome.should_record_audit() {
+                append_tracker_mutation_audit(
+                    config,
+                    TrackerMutationAudit {
+                        command: "main loop",
+                        mutation_type: "state_change",
+                        issue_ref: Some(&latest.identifier),
+                        target: None,
+                        from_state: Some(latest.state.clone()),
+                        to_state: Some("need_human_input".into()),
+                        reason: "backend run failed after retry limit",
+                    },
+                );
+            }
+            remove_runtime_state_for_issue(config, &latest.identifier)?;
+            println!(
+                "run_loop_action=blocked issue={} target_state=need_human_input",
+                latest.identifier
+            );
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                "failed",
+                "need_human_input",
+                Some("operator repair".into()),
+            ));
         }
     }
 
-    Ok(())
+    Ok(RunLoopWorkerOutcome::Completed)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -11341,16 +12605,71 @@ fn select_pool_worker_issues(
     pool: usize,
     config: &RuntimeConfig,
 ) -> Vec<TrackerIssue> {
+    if pool == 0 {
+        return Vec::new();
+    }
+
     let mut selected = issues
         .iter()
         .filter(|issue| pool_claim_eligibility(issue, lane, worker_id, config).is_claimable())
         .cloned()
         .collect::<Vec<_>>();
     selected.sort_by_key(|issue| issue.priority.unwrap_or(i64::MAX));
-    selected.truncate(pool.max(1));
+    selected.truncate(pool);
     selected
 }
 
+fn select_main_run_loop_issues(
+    recoverable_runtime_states: &[RuntimeRecoveryCandidate],
+    plan_selected: &[TrackerIssue],
+    available_slots: usize,
+    worker_id: &str,
+    config: &RuntimeConfig,
+) -> Vec<TrackerIssue> {
+    if available_slots == 0 {
+        return Vec::new();
+    }
+
+    let mut selected = Vec::new();
+    for candidate in recoverable_runtime_states {
+        if selected.len() >= available_slots {
+            break;
+        }
+        let issue = candidate.issue.clone();
+        println!(
+            "run_loop_recovery_candidate issue={} attempt={} reason={}",
+            issue.identifier, candidate.state.attempt_count, candidate.reason
+        );
+        if selected
+            .iter()
+            .any(|selected_issue: &TrackerIssue| selected_issue.identifier == issue.identifier)
+        {
+            continue;
+        }
+        selected.push(issue);
+    }
+
+    let remaining_slots = available_slots.saturating_sub(selected.len());
+    let normal_selected = select_pool_worker_issues(
+        plan_selected,
+        WorkerLane::Main,
+        worker_id,
+        remaining_slots,
+        config,
+    );
+    for issue in normal_selected {
+        if !selected
+            .iter()
+            .any(|selected_issue: &TrackerIssue| selected_issue.identifier == issue.identifier)
+        {
+            selected.push(issue);
+        }
+    }
+
+    selected
+}
+
+#[cfg(test)]
 fn recover_first_issue_selection(
     recoverable: Vec<TrackerIssue>,
     fresh: Vec<TrackerIssue>,
@@ -11966,6 +13285,42 @@ fn run_loop_resume_preflight_many(
                         continue;
                     }
                 }
+                if let Some(terminal_session) =
+                    terminal_runtime_session_for_issue(config, state, now_ms)?
+                {
+                    let issue_identifier = state
+                        .active_issue
+                        .as_ref()
+                        .map(|issue| issue.identifier.as_str())
+                        .unwrap_or("unknown");
+                    let reason = format!(
+                        "registry_session_terminal session={} status={} source={} evidence={}",
+                        terminal_session.session_name,
+                        terminal_session.probe.status.as_str(),
+                        terminal_session.probe.source.as_str(),
+                        compact_evidence(&terminal_session.probe.evidence)
+                    );
+                    append_runtime_supervision_event(
+                        config,
+                        Some(&terminal_session.state),
+                        "RuntimeRecoverableTerminalSession",
+                        &format!("issue={issue_identifier} reason={reason}"),
+                    )?;
+                    println!(
+                        "run_loop_resume_preflight action=recoverable_terminal_session issue={} session={} status={} source={}",
+                        issue_identifier,
+                        terminal_session.session_name,
+                        terminal_session.probe.status.as_str(),
+                        terminal_session.probe.source.as_str()
+                    );
+                    recoverable_states.push(RuntimeRecoveryCandidate {
+                        state: terminal_session.state.clone(),
+                        issue,
+                        reason,
+                    });
+                    retained_states.push(terminal_session.state);
+                    continue;
+                }
                 if let Some(reason) = runtime_recovery_reason(config, state, now_ms)? {
                     let issue_identifier = state
                         .active_issue
@@ -12131,7 +13486,7 @@ fn recover_registered_main_sessions(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let registry = load_session_registry(&session_registry_path(config))?;
     for record in registry.sessions.iter().rev() {
-        if !registered_main_tmux_session(record) {
+        if !registered_main_runtime_session(record) {
             continue;
         }
         let Some(issue_identifier) = record.issue_identifier.as_deref() else {
@@ -12354,7 +13709,7 @@ fn active_runtime_session_for_issue(
     let registry = load_session_registry(&session_registry_path(config))?;
     let mut best: Option<(u8, ActiveRuntimeSessionProbe)> = None;
     for record in registry.sessions.iter().rev() {
-        if !registered_main_tmux_session(record)
+        if !registered_main_runtime_session(record)
             || record.issue_identifier.as_deref() != Some(issue_identifier)
         {
             continue;
@@ -12401,8 +13756,43 @@ fn active_runtime_session_for_issue(
     }))
 }
 
-fn registered_main_tmux_session(record: &AgentSessionRecord) -> bool {
-    record.lane.eq_ignore_ascii_case("main") && record.backend == "tmux"
+fn terminal_runtime_session_for_issue(
+    config: &RuntimeConfig,
+    state: &RuntimeState,
+    now_ms: u64,
+) -> Result<Option<ActiveRuntimeSessionProbe>, Box<dyn std::error::Error>> {
+    let Some(issue_identifier) = runtime_state_issue_identifier(state) else {
+        return Ok(None);
+    };
+    let registry = load_session_registry(&session_registry_path(config))?;
+    for record in registry.sessions.iter().rev() {
+        if !registered_main_runtime_session(record)
+            || record.issue_identifier.as_deref() != Some(issue_identifier)
+        {
+            continue;
+        }
+        let Ok(probe) = runtime_session_probe_from_record(config, record, now_ms) else {
+            continue;
+        };
+        if matches!(probe.status, SessionStatus::Completed) {
+            let mut state = runtime_state_from_session_record(record);
+            state.last_event = Some("SessionTerminal".into());
+            return Ok(Some(ActiveRuntimeSessionProbe {
+                state,
+                session_name: record.session_name.clone(),
+                probe,
+            }));
+        }
+        if session_status_counts_as_active_worker(&probe.status) {
+            return Ok(None);
+        }
+    }
+
+    Ok(None)
+}
+
+fn registered_main_runtime_session(record: &AgentSessionRecord) -> bool {
+    record.lane.eq_ignore_ascii_case("main") && record.backend != "codex-app-manual"
 }
 
 fn runtime_state_issue_identifier(state: &RuntimeState) -> Option<&str> {
@@ -12450,7 +13840,10 @@ fn runtime_session_probe_for_state(
     state: &RuntimeState,
     now_ms: u64,
 ) -> Result<Option<SessionStatusProbe>, Box<dyn std::error::Error>> {
-    if state.last_event.as_deref() != Some("SessionRunning") {
+    if !matches!(
+        state.last_event.as_deref(),
+        Some("SessionRunning" | "SessionTerminal")
+    ) {
         return Ok(None);
     }
     let Some(session_id) = state.backend_session_id.as_deref() else {
@@ -12547,6 +13940,11 @@ fn runtime_recovery_reason(
         if retry.due_in_ms(now_ms) > 0 {
             return Ok(None);
         }
+        return Ok(Some(format!(
+            "retry_due attempt={} error={}",
+            retry.attempt,
+            compact_evidence(&retry.error)
+        )));
     }
 
     if let Some(stall) = detect_runtime_stall(state, now_ms, config.codex.stall_timeout_ms) {
@@ -12556,7 +13954,10 @@ fn runtime_recovery_reason(
         )));
     }
 
-    if state.last_event.as_deref() != Some("SessionRunning") {
+    if !matches!(
+        state.last_event.as_deref(),
+        Some("SessionRunning" | "SessionTerminal")
+    ) {
         return Ok(None);
     }
 
@@ -12576,19 +13977,18 @@ fn runtime_recovery_reason(
         )));
     };
 
-    if record.backend == "tmux" {
-        match runtime_session_probe_from_record(config, record, now_ms) {
-            Ok(probe) if matches!(probe.status, SessionStatus::Stale) => {
-                return Ok(Some(format!(
-                    "session_stale source={} evidence={}",
-                    probe.source.as_str(),
-                    compact_evidence(&probe.evidence)
-                )));
-            }
-            Ok(_) => {}
-            Err(error) => {
-                return Ok(Some(compact_evidence(&error.to_string())));
-            }
+    match runtime_session_probe_from_record(config, record, now_ms) {
+        Ok(probe) if matches!(probe.status, SessionStatus::Stale | SessionStatus::Failed) => {
+            return Ok(Some(format!(
+                "session_{} source={} evidence={}",
+                probe.status.as_str(),
+                probe.source.as_str(),
+                compact_evidence(&probe.evidence)
+            )));
+        }
+        Ok(_) => {}
+        Err(error) => {
+            return Ok(Some(compact_evidence(&error.to_string())));
         }
     }
 
@@ -13333,6 +14733,19 @@ fn run_loop_runtime_state_for_issue(
     event: &str,
     claim: &LaneClaim,
 ) -> RuntimeState {
+    if event == "Resumed" {
+        if let Some(existing) = existing
+            .filter(|state| {
+                runtime_state_issue_identifier(state) == Some(issue.identifier.as_str())
+            })
+            .filter(|state| state.last_event.as_deref() == Some("SessionTerminal"))
+        {
+            let mut state = existing.clone();
+            state.run_id.get_or_insert_with(|| claim.run.clone());
+            return state;
+        }
+    }
+
     let profile = selected_execution_profile(&config.profiles).ok().flatten();
     let mut state = RuntimeState::active(
         RuntimeIssueState {
@@ -13419,7 +14832,10 @@ fn reconcile_pending_main_session(
     if active_issue.identifier != issue.identifier {
         return Ok(None);
     }
-    if state.last_event.as_deref() != Some("SessionRunning") {
+    if !matches!(
+        state.last_event.as_deref(),
+        Some("SessionRunning" | "SessionTerminal")
+    ) {
         return Ok(None);
     }
 
@@ -13621,7 +15037,10 @@ fn run_loop_apply_recovery_handoff(
     handoff: &mut IssueHandoffPlan,
     state: &RuntimeState,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    if state.last_event.as_deref() != Some("SessionRunning") {
+    if !matches!(
+        state.last_event.as_deref(),
+        Some("SessionRunning" | "SessionTerminal")
+    ) {
         return Ok(None);
     }
 
@@ -13883,6 +15302,7 @@ fn print_run_loop_dry_run_actions(
     config: &RuntimeConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let profile = selected_execution_profile(&config.profiles)?;
+    let smoke_gate = main_app_server_smoke_gate(config);
     if normalize_state(&issue.state) != "in progress" {
         println!(
             "run_loop_dry_run action=claim issue={} target_state=in_progress",
@@ -13907,8 +15327,14 @@ fn print_run_loop_dry_run_actions(
         config.identity.git.author()
     );
     println!(
-        "run_loop_dry_run action=run issue={} backend=configured",
-        issue.identifier
+        "run_loop_dry_run action=run issue={} backend={} backend_source={} command={} approval_policy={} app_server_live_smoke_ready={} session_registry={}",
+        issue.identifier,
+        smoke_gate.backend,
+        smoke_gate.backend_source,
+        shell_quote_display(&smoke_gate.command),
+        smoke_gate.approval_policy,
+        smoke_gate.app_server_live_smoke_ready,
+        session_registry_path(config).display()
     );
     if let Some(profile) = profile {
         println!(
@@ -15143,7 +16569,7 @@ struct RunLoopArgs {
     #[arg(
         long,
         conflicts_with = "no_recover",
-        help = "Enable recover-first handling for interrupted Main tmux sessions (default in --write mode)"
+        help = "Enable recover-first handling for interrupted Main runtime sessions (default in --write mode)"
     )]
     recover: bool,
     #[arg(
@@ -16722,6 +18148,7 @@ mod tests {
     fn tracker_mutation_audit_records_logical_actor_identity() {
         let temp = tempfile::tempdir().unwrap();
         let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
         config.observability.logs_root = temp.path().join("logs");
         config.identity.actor_role = "merge_agent".into();
         config.identity.actor_label = "Jade Symphony Merge Worker".into();
@@ -18534,6 +19961,7 @@ mod tests {
             SessionStatusSnapshot {
                 session_id: "one".into(),
                 lane: "main".into(),
+                backend: "tmux".into(),
                 run_id: None,
                 status: "running".into(),
                 evidence_source: "pane".into(),
@@ -18547,6 +19975,7 @@ mod tests {
             SessionStatusSnapshot {
                 session_id: "two".into(),
                 lane: "review".into(),
+                backend: "tmux".into(),
                 run_id: None,
                 status: "running".into(),
                 evidence_source: "pane".into(),
@@ -18934,6 +20363,141 @@ mod tests {
     }
 
     #[test]
+    fn main_session_defaults_to_codex_app_server_command() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nmain_lane:\n  backend: codex\ncodex:\n  command: /opt/homebrew/bin/codex app-server\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        let spec = agent_session_backend_spec(&config, AgentSessionLaneArg::Main).unwrap();
+
+        assert_eq!(spec.backend, "codex");
+        assert_eq!(spec.command, "/opt/homebrew/bin/codex app-server");
+    }
+
+    #[test]
+    fn main_session_keeps_tmux_as_explicit_fallback() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nmain_lane:\n  backend: tmux\ntmux:\n  agent_command: codex\n  main_agent_command: codex --profile main\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        let spec = agent_session_backend_spec(&config, AgentSessionLaneArg::Main).unwrap();
+
+        assert_eq!(spec.backend, "tmux");
+        assert_eq!(spec.command, "codex --profile main");
+    }
+
+    #[test]
+    fn merge_session_defaults_to_codex_app_server_command() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\ncodex:\n  command: /opt/homebrew/bin/codex app-server\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        let spec = agent_session_backend_spec(&config, AgentSessionLaneArg::Merge).unwrap();
+
+        assert_eq!(spec.backend, "codex");
+        assert_eq!(spec.command, "/opt/homebrew/bin/codex app-server");
+    }
+
+    #[test]
+    fn merge_session_keeps_tmux_as_explicit_fallback() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nmerge_lane:\n  agent_backend: tmux\ntmux:\n  agent_command: codex\n  merge_agent_command: codex --profile merge\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        let spec = agent_session_backend_spec(&config, AgentSessionLaneArg::Merge).unwrap();
+
+        assert_eq!(spec.backend, "tmux");
+        assert_eq!(spec.command, "codex --profile merge");
+    }
+
+    #[test]
+    fn clean_merge_tick_does_not_require_merge_agent_backend() {
+        let temp = tempfile::tempdir().unwrap();
+        let workflow_path = temp.path().join("WORKFLOW.md");
+        std::fs::write(
+            &workflow_path,
+            "---\ntracker:\n  kind: memory\nmerge_lane:\n  agent_backend: definitely-not-a-session-backend\n---\nPrompt",
+        )
+        .unwrap();
+
+        let outcome = merge_once_tick(workflow_path, false, false).unwrap();
+
+        assert_eq!(outcome, MergeOnceOutcome::NoMergingIssue);
+    }
+
+    #[test]
+    fn successful_merge_agent_repair_records_merging_retry_rationale() {
+        let config = test_config();
+        let issue = tracker_issue_with_ref("#390", "Route DIRTY repair", "Merging");
+        let runner = MergeRecoveryRunner::new();
+
+        let outcome = finish_merge_agent_repaired_branch(
+            &config,
+            &issue,
+            "merge_agent",
+            "src/main.rs conflicted",
+            "resolved conflict by preserving approved behavior",
+            "approved implementation intent preserved",
+            vec![
+                "git diff --name-only --diff-filter=U".into(),
+                "git diff --check".into(),
+                "git status --porcelain".into(),
+            ],
+            "https://github.com/Alive24/jade-symphony/pull/390",
+            "feature/issue-390",
+            &runner,
+            Path::new("."),
+            CommandOutput {
+                status: 0,
+                stdout: "MERGE_AGENT_DECISION: repaired".into(),
+                stderr: String::new(),
+            },
+            "codex".into(),
+            Some("session-390".into()),
+        )
+        .unwrap();
+
+        assert!(outcome.repaired);
+        assert_eq!(outcome.evidence.method, "merge_agent");
+        assert!(outcome
+            .evidence
+            .next_state_rationale
+            .contains("stays in `Merging`"));
+        assert!(runner
+            .calls
+            .borrow()
+            .iter()
+            .any(|call| call == "git push origin feature/issue-390"));
+    }
+
+    #[test]
+    fn merge_agent_semantic_uncertainty_marker_requires_human_input() {
+        let text = "\
+RESOLUTION_SUMMARY: conflict needs product choice
+SEMANTIC_SAFETY: cannot prove reviewed intent
+MERGE_AGENT_DECISION: needs_human_input";
+
+        assert!(merge_agent_requests_human_input(text));
+        assert!(!merge_agent_reports_repaired(text));
+    }
+
+    #[test]
     fn dogfood_smoke_is_not_a_cli_entrypoint() {
         let help = help_text(&["--help"]);
         assert!(!help.contains("dogfood-smoke"));
@@ -19154,6 +20718,45 @@ mod tests {
         issue.labels.clear();
         issue.title = "[dogfood-smoke] controlled run".into();
         assert!(is_controlled_dogfood_smoke_issue(&issue));
+    }
+
+    #[test]
+    fn main_app_server_smoke_gate_is_ready_for_codex_app_server() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nmain_lane:\n  backend: codex\ncodex:\n  command: /opt/homebrew/bin/codex app-server\n  approval_policy: never\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        let gate = main_app_server_smoke_gate(&config);
+
+        assert_eq!(gate.backend, "codex");
+        assert_eq!(gate.backend_source, "codex-app-server");
+        assert_eq!(gate.command, "/opt/homebrew/bin/codex app-server");
+        assert_eq!(gate.approval_policy, "never");
+        assert!(gate.app_server_live_smoke_ready);
+    }
+
+    #[test]
+    fn main_app_server_smoke_gate_rejects_non_app_server_codex() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nmain_lane:\n  backend: codex\ncodex:\n  command: codex exec\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        let gate = main_app_server_smoke_gate(&config);
+
+        assert_eq!(gate.backend, "codex");
+        assert_eq!(gate.backend_source, "codex-subprocess");
+        assert!(!gate.app_server_live_smoke_ready);
+        assert!(gate
+            .app_server_live_smoke_reason
+            .contains("does not select the app-server"));
     }
 
     #[test]
@@ -20215,6 +21818,142 @@ mod tests {
     }
 
     #[test]
+    fn pool_worker_selection_returns_empty_when_no_slots_remain() {
+        let config = test_config();
+        let issue = tracker_issue_with_ref("#1", "Ready", "Todo");
+
+        let selected = select_pool_worker_issues(&[issue], WorkerLane::Main, "worker", 0, &config);
+
+        assert!(selected.is_empty());
+    }
+
+    #[test]
+    fn main_run_loop_selection_prioritizes_recovery_and_fills_remaining_slots() {
+        let config = test_config();
+        let worker = "Jade Symphony Main";
+        let recovery_issue = tracker_issue_with_ref("#362", "Recover me", "In Progress");
+        let mut next_todo = tracker_issue_with_ref("#363", "Start next", "Todo");
+        next_todo.priority = Some(1);
+        let recovery = RuntimeRecoveryCandidate {
+            state: active_runtime_state("#362"),
+            issue: recovery_issue,
+            reason: "retry_due attempt=2 error=HTTP 429".into(),
+        };
+
+        let selected = select_main_run_loop_issues(&[recovery], &[next_todo], 2, worker, &config);
+
+        assert_eq!(
+            selected
+                .iter()
+                .map(|issue| issue.identifier.as_str())
+                .collect::<Vec<_>>(),
+            vec!["#362", "#363"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn main_run_loop_write_dispatch_starts_selected_candidates_concurrently() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let bin_dir = temp.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let codex = bin_dir.join("codex");
+        let start_log = temp.path().join("codex-starts.log");
+        std::fs::write(
+            &codex,
+            format!(
+                r#"#!/bin/sh
+set -eu
+start_log={}
+count=0
+while IFS= read -r line; do
+  count=$((count + 1))
+  case "$count" in
+    1)
+      printf '%s\n' '{{"id":1,"result":{{}}}}'
+      ;;
+    2)
+      ;;
+    3)
+      printf '{{"id":2,"result":{{"thread":{{"id":"thread-%s"}}}}}}\n' "$$"
+      ;;
+    4)
+      printf '{{"id":3,"result":{{"turn":{{"id":"turn-%s"}}}}}}\n' "$$"
+      printf '%s\n' "$$" >> "$start_log"
+      remaining=40
+      while [ "$remaining" -gt 0 ]; do
+        starts="$(wc -l < "$start_log" 2>/dev/null || echo 0)"
+        [ "$starts" -ge 2 ] && break
+        remaining=$((remaining - 1))
+        sleep 0.05
+      done
+      starts="$(wc -l < "$start_log" 2>/dev/null || echo 0)"
+      if [ "$starts" -lt 2 ]; then
+        printf '%s\n' '{{"method":"turn/failed","params":{{"error":{{"message":"second worker did not start before timeout"}}}}}}'
+        exit 0
+      fi
+      printf '%s\n' '{{"method":"thread/tokenUsage/updated","params":{{"inputTokens":1,"outputTokens":1,"totalTokens":2}}}}'
+      printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"status":"completed"}}}}}}'
+      exit 0
+      ;;
+  esac
+done
+"#,
+                shell_quote_display(&start_log.display().to_string())
+            ),
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&codex).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&codex, permissions).unwrap();
+
+        let workflow_path = temp.path().join("WORKFLOW.md");
+        let workflow = WorkflowDefinition::parse(
+            &workflow_path,
+            &format!(
+                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {}\nartifacts:\n  root: {}\nobservability:\n  logs_root: {}\nmain_lane:\n  backend: codex\ncodex:\n  command: {} app-server\n  read_timeout_ms: 1000\n  turn_timeout_ms: 5000\n---\nPrompt for {{{{ issue.identifier }}}}",
+                temp.path().join("worktrees").display(),
+                temp.path().join("artifacts").display(),
+                temp.path().join("logs").display(),
+                shell_quote_display(&codex.display().to_string())
+            ),
+        )
+        .unwrap();
+        let config = RuntimeConfig::from_workflow(&workflow, &workflow_path).unwrap();
+        let mut first = tracker_issue_with_ref("#362", "Recover first", "In Progress");
+        first.id = "ISSUE_362".into();
+        first.description = Some(forge_contract());
+        let mut second = tracker_issue_with_ref("#363", "Start second", "In Progress");
+        second.id = "ISSUE_363".into();
+        second.description = Some(forge_contract());
+        let options = RunLoopOptions {
+            workflow_path,
+            max_iterations: Some(1),
+            once: false,
+            write: true,
+            recover: true,
+            max_concurrent: Some(2),
+            display: DisplayMode::Plain,
+        };
+
+        run_loop_dispatch_write_candidates(
+            &workflow,
+            &config,
+            vec![first, second],
+            &options,
+            true,
+            1,
+            2,
+        )
+        .unwrap();
+
+        let starts = std::fs::read_to_string(start_log).unwrap();
+        assert_eq!(starts.lines().count(), 2);
+    }
+
+    #[test]
     fn merge_pool_selection_only_accepts_merging_lane() {
         let config = test_config();
         let mut claimed = tracker_issue_with_ref("#6", "Claimed merge", "Merging");
@@ -20590,7 +22329,9 @@ mod tests {
 
     #[test]
     fn resume_preflight_many_counts_active_main_worker_slots() {
-        let config = test_config();
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
         let tracker = MemoryTracker::new(vec![
             tracker_issue_with_ref("#29", "Runtime one", "In Progress"),
             tracker_issue_with_ref("#30", "Runtime two", "In Progress"),
@@ -20609,6 +22350,7 @@ mod tests {
     fn resume_preflight_many_archives_only_stale_slot() {
         let temp = tempfile::tempdir().unwrap();
         let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
         config.observability.logs_root = temp.path().join("logs");
         let tracker = MemoryTracker::new(vec![
             tracker_issue_with_ref("#29", "Handed off", "Agent Review"),
@@ -20634,6 +22376,7 @@ mod tests {
     fn resume_preflight_many_marks_stalled_state_recoverable_when_requested() {
         let temp = tempfile::tempdir().unwrap();
         let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
         config.observability.logs_root = temp.path().join("logs");
         let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
         let mut state = active_runtime_state("#29");
@@ -20652,6 +22395,85 @@ mod tests {
         assert_eq!(summary.blocked, None);
         assert_eq!(summary.retained_states.len(), 1);
         assert_eq!(summary.recoverable_states.len(), 1);
+    }
+
+    #[test]
+    fn resume_preflight_many_prefers_completed_app_server_session_over_stale_runtime_clock() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
+        config.observability.logs_root = temp.path().join("logs");
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let mut state = active_runtime_state("#29");
+        state.backend = "codex".into();
+        state.last_event = Some("Resumed".into());
+        state.backend_session_id = None;
+        state.updated_at_ms = Some(1_000);
+
+        let mut record = main_tmux_session_record("#29", SessionStatus::Completed);
+        record.backend = "codex".into();
+        record.session_source = Some("codex-app-server".into());
+        record.session_name = "thread-29-turn-1".into();
+        record.pane_target = String::new();
+        record.log_path = temp.path().join("logs/app-server/29.events.json");
+        record.updated_at_ms = 2_000;
+        save_session_registry(
+            &session_registry_path(&config),
+            &jade_symphony::session_registry::SessionRegistry {
+                sessions: vec![record],
+            },
+        )
+        .unwrap();
+
+        let summary = run_loop_resume_preflight_many(
+            &tracker,
+            &config,
+            &[state],
+            config.codex.stall_timeout_ms + 2_000,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(summary.active_main_workers, 0);
+        assert_eq!(summary.blocked, None);
+        assert_eq!(summary.recoverable_states.len(), 1);
+        assert!(summary.recoverable_states[0]
+            .reason
+            .contains("status=completed"));
+        assert_eq!(
+            summary.recoverable_states[0].state.last_event.as_deref(),
+            Some("SessionTerminal")
+        );
+        assert_eq!(
+            summary.recoverable_states[0]
+                .state
+                .backend_session_id
+                .as_deref(),
+            Some("thread-29-turn-1")
+        );
+    }
+
+    #[test]
+    fn resumed_pending_session_state_preserves_backend_session_for_reconciliation() {
+        let config = test_config();
+        let issue = tracker_issue("In Progress");
+        let claim = test_claim(&issue);
+        let mut existing = active_runtime_state(&issue.identifier);
+        existing.backend = "codex".into();
+        existing.last_event = Some("SessionTerminal".into());
+        existing.backend_session_id = Some("thread-29-turn-1".into());
+        existing.backend_log_path = Some(PathBuf::from("/tmp/29.events.json"));
+        existing.workspace_path = Some(PathBuf::from("/tmp/issue-29"));
+
+        let state =
+            run_loop_runtime_state_for_issue(Some(&existing), &issue, &config, "Resumed", &claim);
+
+        assert_eq!(state.last_event.as_deref(), Some("SessionTerminal"));
+        assert_eq!(
+            state.backend_session_id.as_deref(),
+            Some("thread-29-turn-1")
+        );
+        assert_eq!(state.attempt_count, existing.attempt_count);
     }
 
     #[test]
@@ -20758,6 +22580,44 @@ mod tests {
         assert_eq!(summary.blocked, None);
         assert_eq!(summary.retained_states.len(), 1);
         assert_eq!(summary.recoverable_states.len(), 0);
+        assert_eq!(
+            runtime_state_issue_identifier(&summary.retained_states[0]),
+            Some("#29")
+        );
+    }
+
+    #[test]
+    fn resume_preflight_many_recovers_registry_only_failed_app_server_session() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
+        config.observability.logs_root = temp.path().join("logs");
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let mut record = main_tmux_session_record("#29", SessionStatus::Failed);
+        record.backend = "codex".into();
+        record.session_source = Some("codex-app-server".into());
+        record.session_name = "thread-29-turn-1".into();
+        record.pane_target = String::new();
+        record.attach_command =
+            "not a tmux session; inspect app-server artifacts for recovery evidence".into();
+        record.log_path = temp.path().join("logs/app-server/29.events.json");
+        save_session_registry(
+            &session_registry_path(&config),
+            &jade_symphony::session_registry::SessionRegistry {
+                sessions: vec![record],
+            },
+        )
+        .unwrap();
+
+        let summary = run_loop_resume_preflight_many(&tracker, &config, &[], 2_000, true).unwrap();
+
+        assert_eq!(summary.active_main_workers, 0);
+        assert_eq!(summary.blocked, None);
+        assert_eq!(summary.retained_states.len(), 1);
+        assert_eq!(summary.recoverable_states.len(), 1);
+        assert!(summary.recoverable_states[0]
+            .reason
+            .contains("status=failed"));
         assert_eq!(
             runtime_state_issue_identifier(&summary.retained_states[0]),
             Some("#29")
@@ -21092,6 +22952,26 @@ exit 1
         .unwrap();
 
         assert_eq!(action, ResumePreflightAction::Continue);
+    }
+
+    #[test]
+    fn resume_preflight_many_marks_due_retry_recoverable_when_requested() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.artifacts.root = temp.path().join("artifacts");
+        config.observability.logs_root = temp.path().join("logs");
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let mut state = active_runtime_state("#29");
+        record_runtime_retry(&mut state, 1_000, 5_000, "HTTP 429 too many requests");
+
+        let summary =
+            run_loop_resume_preflight_many(&tracker, &config, &[state], 7_000, true).unwrap();
+
+        assert_eq!(summary.active_main_workers, 0);
+        assert_eq!(summary.recoverable_states.len(), 1);
+        assert!(summary.recoverable_states[0]
+            .reason
+            .contains("retry_due attempt="));
     }
 
     #[test]

@@ -29,7 +29,10 @@ Project GraphQL or Project UI changes are break-glass only.
 - Claim `Merging Agent` through `merge claim ... --worker <worker> --write`
   before starting manual merge work. Worker display labels with spaces are
   allowed through the CLI claim path. Then start runtime through `session start
-  --lane merge --run <RUN_ID>` only after the matching claim exists.
+  --lane merge --run <RUN_ID>` only after the matching claim exists. This
+  runtime is for explicit merge-agent diagnosis or repair sessions; clean
+  `merge once` / `merge loop` landing remains direct CLI behavior and does not
+  require a Codex, Gemini, tmux, or app-server session.
 - Confirm exactly one reliable PR target exists.
 - Preserve the assigned structured claim `run=` in merge evidence, timeline
   comments, and final summaries.
@@ -55,10 +58,19 @@ Project GraphQL or Project UI changes are break-glass only.
 
 - `BEHIND` or stale PR branches should be safely updated by the merge lane when
   possible, with diagnostic evidence, then left in `Merging` for a later retry.
-- Dirty or conflicted PRs do not default to `Rework`; first attempt repair only
-  when a clean local PR worktree is available and the base can be merged without
-  rewriting history or leaving uncommitted changes. If that proof is missing,
-  route to `Need Human Input` with diagnostic evidence.
+- Dirty or conflicted PRs do not default to `Rework`; first preserve the direct
+  CLI mechanical repair path. If a clean local PR worktree exists and the raw
+  base merge hits content conflicts, treat that as merge-agent landing repair:
+  resolve only the reviewed PR intent against the current base, verify, push
+  the existing branch, record conflict/resolution/semantic-safety evidence, and
+  keep the issue in `Merging` for a later mergeability reread. If trusted branch
+  evidence, semantic safety, verification, or backend availability is missing,
+  route to `Need Human Input` with diagnostic evidence and one concrete
+  question.
+- For native subissue PRs, treat dirty or conflicted mergeability as
+  merge-lane repair work first. Keep safe stale-base or conflict repair in
+  `Merging`; route only unresolved, semantic, dirty-worktree, or
+  verification-failing conflicts to `Need Human Input`.
 - Failing checks route to `Need Human Input` unless a later issue adds a
   similarly bounded, verified merge-lane-only repair path.
 - Missing or ambiguous verified PR targets and missing approvals go to

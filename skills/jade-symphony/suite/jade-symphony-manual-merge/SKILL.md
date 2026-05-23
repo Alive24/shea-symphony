@@ -103,6 +103,10 @@ Pick the issue only when all are true:
 
 ## Merge-Lane Recovery
 
+Clean merge is CLI-owned and non-LLM. Do not start Codex, Gemini, tmux, or
+app-server just to land a clean approved PR; use `merge loop` / `merge once`
+and preserve its direct `gh pr merge` behavior.
+
 For historical or operator-selected merge-lane recovery:
 
 1. Claim through the `Merging Agent` field.
@@ -118,6 +122,11 @@ For historical or operator-selected merge-lane recovery:
 Do not send merge-lane-only repair back to `Agent Review` just because the
 branch was rebased or conflicts were resolved.
 
+When a merge-agent runtime session is explicitly needed after a structured
+`Merging Agent` claim, the default session backend is Codex app-server through
+`merge_lane.agent_backend: codex` and `codex.command: codex app-server`. Use
+`merge_lane.agent_backend: tmux` only as an explicit fallback/debug choice.
+
 For automated interrupted merge-loop recovery, prefer:
 
 ```bash
@@ -126,10 +135,21 @@ cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --writ
 
 `autopilot loop --write` adopts interrupted structured Main and Merge loop/goal
 claims first by default, then continues normal lane selection. If the operator
-is intentionally isolating merge work, run `merge loop --write` with a bounded
-`--max-iterations` value. Merge recovery must not adopt manual claims, and it
+is intentionally isolating merge work, run a bounded focused merge loop:
+
+```bash
+cargo run -- merge loop workflows/jade-symphony.md --max-iterations 1 --write
+```
+
+Use a bounded `--max-iterations` value. Merge recovery must not adopt manual claims, and it
 must not route merge repair through `Rework`. Use `--no-recover` only for
 debugging or a deliberately conservative operator pass.
+
+Write-mode merge commands may automatically refresh the canonical checkout with
+a canonical-only `git merge --ff-only` when clean local `main` is behind its
+configured upstream. Treat that as control-surface synchronization only. It does
+not refresh PR branches or issue worktrees; those remain merge-lane freshness or
+conflict-repair work.
 
 ## Merging
 
@@ -155,11 +175,20 @@ query before making a routing decision. Only merge after the status returns
 If `mergeStateStatus` is `BEHIND`, prefer the same safe branch-update behavior
 as automated `merge once`: update the PR branch without rewriting history,
 record evidence, and leave the issue in `Merging` for a later retry. If
-`mergeStateStatus` is `DIRTY` or checks are failing, do not default to `Rework`;
-attempt repair only when the existing PR worktree is clean and the base can be
-merged without rewriting history or leaving uncommitted changes. Otherwise,
-record one concrete `Need Human Input` question unless the operator confirms a
-different merge-lane-only repair path.
+`mergeStateStatus` is `DIRTY` or checks are failing, do not default to `Rework`.
+Keep clean mechanical base merges direct-CLI-owned. When the mechanical base
+merge hits content conflicts in a trusted clean PR worktree, use the configured
+merge-agent backend for landing repair before asking the operator. Record one
+concrete `Need Human Input` question only when branch/worktree evidence is
+untrusted, semantic safety is uncertain, verification fails, push fails, or the
+backend cannot complete.
+
+For native subissue PRs, treat dirty or conflicted mergeability as merge-lane
+repair work first. Attempt the safe existing-worktree repair before asking for
+human input, and keep successful mechanical or merge-agent repair in `Merging`
+for retry. Escalate only unresolved conflicts, semantic choices, dirty starting
+worktrees, missing worktree evidence, backend failures, push failures, or
+verification-failing repairs to `Need Human Input`. Do not route native subissue merge repair to `Rework`.
 
 ## Status Transition Ordering
 

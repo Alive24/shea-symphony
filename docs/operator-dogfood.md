@@ -121,25 +121,26 @@ tracker work.
 `autopilot loop --write` composes one bounded Main, Review, and Merge pass in
 that order. Each lane keeps its own status authority: Main stops at
 `Agent Review`, Review records independent evidence before Human Review routing,
-and Merge consumes only `Merging` work. The loop reports lane outcomes and parked
-operator queues, then returns control to the operator; it does not detach as a
-service.
+and Merge consumes only `Merging` work. The loop reports lane outcomes and
+parked operator queues, then returns control to the operator; it does not detach
+as a service.
 
-The canonical workflow's Main runtime follows `workflows/jade-symphony.md`.
-When Main uses tmux, a write tick starts an attachable session, records its
-attach command and log path, persists a session registry record under the
-configured artifact root, and leaves the issue active until real
-implementation/handoff evidence exists. When Main uses Codex app-server, the
-same lane boundary records app-server artifacts instead of tmux scrollback.
-Non-terminal, waiting, unknown, or missing-registry runtime evidence is treated
-as incomplete work and does not launch a duplicate Main Agent.
-For Codex-backed tmux sessions, Jade Symphony captures the pane before prompt injection.
-If the Codex workspace trust prompt is visible in a Jade Symphony-created issue worktree,
-the backend sends two `C-m` submissions, waits for a ready Codex viewport, and
-only then pastes the rendered issue prompt. Set
+The canonical workflow now uses the Codex app-server Main backend with
+`codex.approval_policy: never`, matching the local app-server schema. A write
+tick starts one app-server turn in the prepared issue worktree, records
+prompt/protocol/stderr/normalized-event artifacts, persists a session registry
+record under the configured artifact root, and reconciles through verification,
+PR publication, linked-PR readback, PR readiness, Main Workpad evidence, and
+final `Agent Review` handoff only after the turn completes successfully.
+Non-terminal, failed, usage-limited, unknown, stale, or missing-registry runtime
+evidence is treated conservatively and does not launch duplicate Main Agents or
+hand off incomplete work. `main_lane.backend: tmux` remains available as an
+explicit fallback/debug setting. In that mode, Codex-backed tmux sessions still
+capture the pane before prompt injection and can auto-advance the Codex
+workspace trust prompt inside a Jade Symphony-created issue worktree. Set
 `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to opt out; when disabled, or when readiness
-cannot be confirmed, the tick fails closed with attach/log evidence and does not
-hand off to `Agent Review`.
+cannot be confirmed, the tick fails closed with attach/log evidence and does
+not hand off to `Agent Review`.
 Main handoff also requires the PR relationship to be visible through Jade
 Symphony's Project/issue linked-PR read surface, and the linked PR must be
 ready, not draft. Workpad or comment URLs can identify the intended PR, but
@@ -148,17 +149,27 @@ other handoff evidence is valid, `main loop --write` may run `gh pr ready`
 before moving the issue to `Agent Review`; if relationship verification or
 readiness mutation fails, keep the issue out of `Agent Review`, route to
 `Need Human Input`, and preserve the blocker in the workpad.
-When Main handoff reaches `Agent Review`, Jade Symphony keeps runtime artifacts
+When Main handoff reaches `Agent Review`, Jade Symphony keeps backend artifacts
 as audit evidence while marking matching Main session registry entries completed
 and clearing matching active runtime state. A still-open tmux pane is not by
 itself active work after that reconciliation; attach only when the registry or
-doctor evidence says the run is still blocked or failed.
-Routine status output reads the durable session registry, probes bounded pane
-and log tails, and reports a conservative session classification such as
+doctor evidence says the run is still blocked or failed. Routine status output
+reads the durable session registry, probes bounded tmux pane/log tails only for
+tmux fallback sessions, and reports a conservative session classification such
+as
 `running`, `waiting_for_trust`, `waiting_for_approval`, `usage_limited`,
 `failed`, `completed`, `stale`, or `unknown`. The status surface includes only
-compact evidence snippets plus attach/log locations; attach manually when raw
-scrollback is needed.
+compact evidence snippets plus artifact, attach, or log locations; inspect the
+recorded app-server artifacts or attach manually only when raw evidence is
+needed.
+Long-running live waits also print compact `progress ...` heartbeats to stderr
+after the configured threshold, defaulting to 30 seconds. These lines identify
+the wait reason, issue or PR when known, backend or child process, elapsed time,
+and next expected action. They are liveness and diagnosis hints only; they do
+not alter timeout, retry, routing, review, or merge behavior, and they are kept
+out of JSON stdout. For local UAT, set
+`JADE_SYMPHONY_PROGRESS_HEARTBEAT_MS=1000` or another small value; set it to `0`
+to suppress heartbeat output for that process.
 Persisted session registry statuses that are not recognized by the current
 binary are read as `unknown` without rewriting or dropping the record. Status
 and doctor diagnostics preserve the raw drifted value so operators can inspect
@@ -171,6 +182,48 @@ candidates.
 If an operator switches the workflow back to `main_lane.backend: dry-run`, the
 mutating tick exits before runtime-state writes, worktree creation, Project
 claims, or workpad mutation.
+
+## Post-Merge App-Server Smoke Gate
+
+Before using #359 or another broader autopilot dogfood issue for a long-running
+write-mode run, perform one bounded Main-lane app-server smoke after #367 is
+`Done` and visible on canonical `main`. This is an evidence gate, not a
+production-readiness claim.
+
+Start with readback and dry-run preflight:
+
+```bash
+target/debug/jade-symphony project issue workflows/jade-symphony.md '#367' --json
+target/debug/jade-symphony project issue workflows/jade-symphony.md '#388' --json
+target/debug/jade-symphony debug workflows/jade-symphony.md
+target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+```
+
+The preflight must show that #367 is terminal, #388's structured blocker is no
+longer active, the selected Main issue is expected, and the Main backend line
+reports `backend=codex`, `backend_source=codex-app-server`,
+`approval_policy=never`, and `app_server_live_smoke_ready=true`. If the dry-run
+selects an unsafe or surprising issue, stop there and record the mismatch as
+operator-blocked smoke evidence.
+
+Only then run the bounded live tick:
+
+```bash
+target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --write
+```
+
+A passing smoke leaves citeable evidence in the selected issue's Main Workpad,
+the PR handoff/readiness evidence, runtime state or reconciled session registry,
+the prompt/protocol/stderr/normalized-event app-server artifacts, `status`, and
+`doctor` readback. The smoke is sufficient for #359 or the next dogfood plan to
+cite "one bounded Main app-server write path completed with durable evidence";
+it does not prove merge-agent repair behavior, unattended overnight resilience,
+quota resilience, or full app-server production readiness. Merge-agent
+app-server smoke remains deferred until a natural repair candidate exists.
+
+Backend, auth, quota, GitHub API, or schema failures must be classified in the
+workpad or timeline evidence. Treat them as blocked/retry guidance, not as a
+passing app-server smoke.
 
 ## Evidence Timeline
 
@@ -382,11 +435,16 @@ comment/workpad streams, and rich linked-PR hydration.
 The canonical checkout is only the harness launch directory. Do not use it as a
 Main, Review, or Merge issue worktree, and do not leave runtime state, logs,
 prompts, drafts, or evidence there. `autopilot loop --write`,
-`main loop --write`, `review loop --write`, and `merge loop --write` check the
-launch checkout before tracker mutation:
-tracked dirty files block the lane, recognized local artifacts are moved to the
-artifact quarantine with a warning, and unclassified untracked files block until
-the operator moves them to an issue worktree or artifact location.
+`main loop --write`, `review loop --write`, and `merge loop --write` refresh and
+check the launch checkout before tracker mutation. From a clean attached
+`main`, Jade Symphony fetches the configured upstream and performs a
+canonical-only `git merge --ff-only` when local `main` is only behind. The
+terminal output reports `canonical_checkout_refresh=already_current`,
+`ff_only`, `would_ff_only`, or `blocked`, then prints the canonical safety line.
+Tracked dirty files, detached HEAD, non-`main`, missing upstream, unclassified
+untracked files, and non-fast-forward updates block until the operator repairs
+the canonical checkout. Recognized local artifacts are moved to artifact
+quarantine with a warning.
 
 Use `project issue` for per-issue Project status, Project fields, blocker
 relationships, claim locks, rich issue body, workpad/timeline comments, native
@@ -403,11 +461,14 @@ paths. The current inventory and classification live in
 For parent tracking issues with native GitHub subissues, use
 `docs/parent-subissue-topology.md` as the design source. Native sub-issue links
 define hierarchy, subissue PRs target the parent integration branch by default,
-and the parent issue remains the final Human Review unit. `doctor` now reports
-read-only topology blockers for native subissue PRs targeting `main`, missing or
-ambiguous parent integration branch evidence, `Done` subissues without merge
-evidence into the parent branch, and parent `Human Review` before all native
-subissues are `Done` and merged.
+routine subissue Review PASS routes directly to `Merging`, and the parent issue
+remains the final Human Review and UAT unit. Direct subissue Human Review
+requires an explicit `Subissue Human Review Exception: <reason>` in the issue
+contract or Project evidence. `doctor` now reports read-only topology blockers
+for native subissue PRs targeting `main`, missing or ambiguous parent
+integration branch evidence, `Done` subissues without merge evidence into the
+parent branch, and parent `Human Review` before all native subissues are `Done`
+and merged.
 
 Lane handoff and merge flows must make branch target evidence explicit. A
 subissue keeps its normal `feature/issue-*` head branch but uses the parent
@@ -519,7 +580,8 @@ target/debug/jade-symphony review reject workflows/jade-symphony.md '#226' --evi
 The evidence file for `review pass` or `review reject` must include the exact
 structured `Review Agent` claim from `review claim`. `review pass` writes an
 append-only Agent Review timeline comment with the review pass marker before
-moving to `Human Review`; `review reject` refuses
+moving ordinary and parent final issues to `Human Review`, or routine native
+subissues to `Merging`; `review reject` refuses
 `Human Review` and may route only to `Agent Review`, `Rework`, or
 `Need Human Input`. Both commands preserve the `Review Agent` field as terminal
 audit evidence instead of clearing it.
@@ -556,7 +618,8 @@ workflow states.
 Interrupted runtime recovery flow:
 
 1. Run `target/debug/jade-symphony status workflows/jade-symphony.md` and read
-   the `tmux sessions` section for the session status, attach command, and log.
+   the `runtime sessions` section for backend, session status, artifact path,
+   attach command when available, and log.
 2. Run `target/debug/jade-symphony doctor workflows/jade-symphony.md` before
    retrying or clearing runtime state; stale, failed, usage-limited, or
    unattributed sessions require operator inspection.

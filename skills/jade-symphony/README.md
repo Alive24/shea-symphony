@@ -75,6 +75,9 @@ operator confirmation before writing.
 Human Review briefs the operator after Review Agent pass evidence, guides
 operator-owned UAT, records a structured decision note, and routes only after
 explicit confirmation. Accepted Human Review goes to `Merging`, not `Done`.
+Routine native subissues should not invoke Human Review directly; passing
+subissue Agent Review routes to `Merging` unless the child records
+`Subissue Human Review Exception: <reason>`.
 
 Dream is the slow, deep backlog mining skill. It writes bounded advisory Dream
 Logs under `docs/dream-log/`, updates the compact Dream index, and creates

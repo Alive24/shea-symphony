@@ -78,10 +78,8 @@ non-interactive and owns the guarded body/evidence/status writes.
 - If the operator chooses a parent/subissue batch, draft the parent as the final
   Human Review and UAT owner. Draft subissues as implementation slices that
   still require independent Agent Review but do not require routine direct UAT
-  or direct Human Review unless an explicit exception is recorded.
-- When using a parent/subissue batch before subissue automation is fully fixed,
-  capture any required workflow dependency or guardrail, such as depending on
-  the issue that enforces parent-owned Human Review routing.
+  or direct Human Review. Use `Subissue Human Review Exception: <reason>` only
+  when a child truly needs direct Human Review.
 - Do not create a dispatchable `Todo` issue that relies only on body text for a
   blocking dependency. If the workflow cannot create a structured blocked-by
   relationship in the same creation flow, recommend `Backlog` until the blocker
@@ -93,7 +91,7 @@ Resolve these before creation:
 - Why now.
 - Parent/subissue shape: single issue or native parent/subissue batch; if
   batched, identify the parent contract, child slices, parent-owned UAT, and any
-  dependency needed to avoid routine child Human Review.
+  direct child Human Review exceptions.
 - Target Repository / Package, usually `Alive24/jade-symphony`.
 - Scope and out-of-scope boundaries.
 - Non-negotiable guardrails.

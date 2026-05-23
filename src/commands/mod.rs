@@ -2,6 +2,7 @@ pub(crate) mod autopilot;
 pub(crate) mod clean;
 pub(crate) mod debug;
 pub(crate) mod doctor;
+pub(crate) mod follow_up;
 pub(crate) mod forge;
 pub(crate) mod gate;
 pub(crate) mod profiles;

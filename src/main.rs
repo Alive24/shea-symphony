@@ -79,10 +79,12 @@ use jade_symphony::session_registry::{
 };
 use jade_symphony::skill_status::SkillStatusInput;
 use jade_symphony::status_surface::{render_latest_status_bar, render_snapshot};
+#[cfg(test)]
+use jade_symphony::tracker::FollowUpIssueInput;
 use jade_symphony::tracker::{
     adapter_from_config, claim_decision, classify_project_state_error,
-    classify_project_state_failure_message, ClaimDecision, FollowUpIssueInput,
-    ProjectFieldAssignment, ProjectStateFailureKind, TrackerAdapter, TrackerError,
+    classify_project_state_failure_message, ClaimDecision, ProjectFieldAssignment,
+    ProjectStateFailureKind, TrackerAdapter, TrackerError,
 };
 use jade_symphony::workflow::{AgentLane, WorkflowDefinition};
 use jade_symphony::workspace::{
@@ -110,6 +112,7 @@ use commands::doctor::{doctor, doctor_repair_human_review};
 #[cfg(test)]
 use commands::doctor::{doctor_health_label, hydrate_issues_for_doctor};
 pub(crate) use commands::doctor::{DoctorAction, DoctorOptions, DoctorRepairIssueOptions};
+use commands::follow_up::create_follow_up;
 #[cfg(test)]
 use commands::forge::{
     find_duplicate_issue_title, forge_create_requires_assignee, forge_missing_categories,
@@ -586,40 +589,6 @@ fn issue_refs_match_local(left: &str, right: &str) -> bool {
 
 fn normalize_issue_ref_local(value: &str) -> String {
     value.trim().trim_start_matches('#').to_string()
-}
-
-fn create_follow_up(
-    workflow_path: PathBuf,
-    title: String,
-    body_path: PathBuf,
-    write: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    require_write_intent(write)?;
-    let config = load_config(&workflow_path)?;
-    let adapter = adapter_from_config(&config);
-    let body = std::fs::read_to_string(&body_path)?;
-    let issue_id = adapter.create_follow_up_issue(FollowUpIssueInput {
-        title,
-        body,
-        assignees: Vec::new(),
-        project_id: None,
-        related_issue_ref: None,
-        blocked_by_issue_ref: None,
-    })?;
-    append_tracker_mutation_audit(
-        &config,
-        TrackerMutationAudit {
-            command: "create-follow-up",
-            mutation_type: "issue_create",
-            issue_ref: None,
-            target: Some(issue_id.clone()),
-            from_state: None,
-            to_state: None,
-            reason: "explicit CLI follow-up creation",
-        },
-    );
-    println!("create_follow_up=ok issue_id={issue_id}");
-    Ok(())
 }
 
 fn lane_claim_command(

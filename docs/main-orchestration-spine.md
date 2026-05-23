@@ -64,22 +64,22 @@ runtime owner:
   closure ordering. It keeps timeline-comment evidence before state mutation
   and keeps repaired dirty PRs in `Merging` for a later readback tick.
 - `src/lanes/review.rs`: Review command execution for freshness
-  classification, review status reporting, and manual Review claim/pass/reject
-  routing. It owns review-facing output assembly and manual review evidence
-  ordering while the automatic Review loop remains in `src/main.rs` until that
-  larger state-transition extraction is ready.
+  classification, review status reporting, manual Review claim/pass/reject
+  routing, and automatic Review fake/once/loop runs. It owns review-facing
+  output assembly, review-ledger writes, terminal claim evidence, checklist
+  updates, and evidence-before-transition ordering.
 
 This keeps command parsing reviewable without mixing it with Project mutation,
 lane routing, runtime recovery, or workpad rendering.
 
 ## Preferred Next Extractions
 
-- Move the mutating Review loop and claim/reconcile helpers as the next
-  lane-specific module slice, preserving review-ledger writes and transition
-  ordering.
-- Move Main loop command execution only after the smaller command families are
-  stable; keep runtime/session recovery helpers grouped with the lane that owns
-  the state transition.
+- Split large lane modules only when the submodule boundary is obvious
+  (`review` status/manual/loop, `merge` repair/evidence), not as loose helper
+  piles.
+- Move Main loop command execution after the lane modules settle; keep
+  runtime/session recovery helpers grouped with the lane that owns the state
+  transition.
 - Keep future `LanePolicy` or `WorkerProfile` abstractions as follow-up design
   work; do not introduce them as part of a mechanical extraction.
 

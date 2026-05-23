@@ -214,9 +214,13 @@ runtime owner:
   post-handoff session/runtime cleanup, and runtime-state transitions derived
   from backend results.
 - `src/lanes/main_loop/runtime.rs`: Main-loop runtime preflight and recovery:
-  persisted runtime-state retention, active session detection, recoverable
-  terminal/stale session selection, retry backoff, and stale runtime-state
-  archiving. It does not own Project mutation or Agent Review handoff evidence.
+  persisted runtime-state retention, retry backoff, stalled-state routing, and
+  stale runtime-state archiving. It does not own Project mutation or Agent
+  Review handoff evidence.
+- `src/lanes/main_loop/runtime/recovery.rs`: Main-loop runtime/session recovery
+  helpers. It owns registered-session reconstruction, active/terminal session
+  probe selection, session status classification for worker-slot accounting,
+  and recoverable session reason text.
 - `src/lanes/main_loop/selection.rs`: Main-loop issue selection and claim
   decisions. It owns recover-first selection, claim/resume/replan
   classification, live GitHub assignee identity lookup/ownership checks, and

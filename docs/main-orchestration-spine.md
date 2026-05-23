@@ -90,6 +90,9 @@ have a narrow shared responsibility:
   readback recovery. It is shared by command execution and lane modules because
   evidence-before-transition ordering depends on the same idempotent write
   contract in each surface.
+- `src/orchestration/session_status.rs`: shared read-only session status
+  snapshots and probe defaults used by status, debug, Doctor, clean, autopilot,
+  and lane runtime modules.
 
 `src/main.rs` still owns:
 

@@ -39,7 +39,9 @@ use jade_symphony::handoff::{plan_issue_handoff_for_profile, HandoffError, Issue
 use jade_symphony::lane_claim::{
     LaneClaim, LaneClaimActor, LaneClaimLane, LaneClaimSource, LaneClaimState,
 };
-use jade_symphony::model::{normalize_state, LatestStatus, SessionStatusSnapshot, TrackerIssue};
+#[cfg(test)]
+use jade_symphony::model::SessionStatusSnapshot;
+use jade_symphony::model::{normalize_state, LatestStatus, TrackerIssue};
 use jade_symphony::orchestrator::Orchestrator;
 #[cfg(test)]
 use jade_symphony::ownership::render_runtime_ownership_marker;
@@ -64,15 +66,13 @@ use jade_symphony::runtime_state::{
 #[cfg(test)]
 use jade_symphony::runtime_state::{RuntimeIssueState, RuntimeState, RuntimeTransition};
 #[cfg(test)]
-use jade_symphony::session_registry::save_session_record;
-#[cfg(test)]
 use jade_symphony::session_registry::AgentSessionRecord;
-use jade_symphony::session_registry::{
-    capture_tmux_pane_tail, classify_session_record, load_session_registry, read_log_tail,
-    session_registry_path, unix_timestamp_ms,
-};
 #[cfg(test)]
-use jade_symphony::session_registry::{save_session_registry, SessionStatus};
+use jade_symphony::session_registry::{load_session_registry, save_session_record};
+#[cfg(test)]
+use jade_symphony::session_registry::{
+    save_session_registry, session_registry_path, SessionStatus,
+};
 use jade_symphony::skill_status::SkillStatusInput;
 use jade_symphony::status_surface::{render_latest_status_bar, render_snapshot};
 #[cfg(test)]
@@ -218,6 +218,9 @@ use lanes::review::{
     review_manual_pass, review_manual_reject, review_once, review_status,
 };
 pub(crate) use lanes::review::{ReviewLoopOptions, ReviewStatusCliOptions};
+pub(crate) use orchestration::session_status::{
+    session_status_snapshots, DEFAULT_SESSION_STALE_AFTER_MS, DEFAULT_SESSION_STATUS_LINES,
+};
 pub(crate) use orchestration::tracker_recovery::{
     add_timeline_comment_with_recovery, append_tracker_mutation_audit, close_issue_with_recovery,
     merge_completion_recovery_key, merge_decision_recovery_key, merge_pull_request_with_recovery,
@@ -228,7 +231,6 @@ pub(crate) use orchestration::tracker_recovery::{
 use orchestration::tracker_recovery::{issue_is_closed, tracker_recovery_marker};
 
 const DEFAULT_RUN_LOOP_BASE_BRANCH: &str = "main";
-const DEFAULT_SESSION_STATUS_LINES: usize = 80;
 const CODEX_APP_SERVER_HANDOFF_BOUNDARY: &str = "\n\n## Codex App-Server Runtime Boundary\n\n\
 This run is executing inside the Codex app-server backend. Treat the app-server \
 turn as the implementation and local-verification worker only. Do not run \
@@ -238,8 +240,6 @@ Leave a concise terminal summary of changed files, verification commands, and \
 any blocker. The outer Jade Symphony CLI will commit eligible worktree changes, \
 publish or update the PR, write durable workpad evidence, verify linked PR \
 readback, and perform the final `Agent Review` handoff.\n";
-const DEFAULT_SESSION_STALE_AFTER_MS: u64 = 15 * 60 * 1000;
-
 fn main() {
     if let Err(error) = run() {
         eprintln!("{error}");
@@ -499,56 +499,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
     }
-}
-
-fn session_status_snapshots(
-    config: &RuntimeConfig,
-) -> Result<Vec<SessionStatusSnapshot>, Box<dyn std::error::Error>> {
-    let registry = load_session_registry(&session_registry_path(config))?;
-    let now_ms = unix_timestamp_ms();
-    let mut snapshots = Vec::new();
-
-    for record in registry.sessions.iter().rev().take(20).rev() {
-        let is_tmux_session = record.backend == "tmux";
-        let pane_tail = if is_tmux_session {
-            capture_tmux_pane_tail(
-                &config.tmux.command,
-                &record.pane_target,
-                DEFAULT_SESSION_STATUS_LINES,
-            )
-            .ok()
-        } else {
-            None
-        };
-        let log_tail = if is_tmux_session {
-            read_log_tail(&record.log_path, DEFAULT_SESSION_STATUS_LINES)?
-        } else {
-            None
-        };
-        let probe = classify_session_record(
-            record,
-            pane_tail.as_deref(),
-            log_tail.as_deref(),
-            now_ms,
-            DEFAULT_SESSION_STALE_AFTER_MS,
-        );
-        snapshots.push(SessionStatusSnapshot {
-            session_id: record.session_name.clone(),
-            lane: record.lane.clone(),
-            backend: record.backend.clone(),
-            run_id: record.run_id.clone(),
-            status: probe.status.as_str().into(),
-            evidence_source: probe.source.as_str().into(),
-            evidence: probe.evidence,
-            issue_identifier: record.issue_identifier.clone(),
-            issue_title: record.issue_title.clone(),
-            attach_command: is_tmux_session.then(|| record.attach_command.clone()),
-            log_path: is_tmux_session.then(|| record.log_path.display().to_string()),
-            updated_at_ms: record.updated_at_ms,
-        });
-    }
-
-    Ok(snapshots)
 }
 
 fn single_line(value: &str) -> String {

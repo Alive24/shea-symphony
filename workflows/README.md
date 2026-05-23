@@ -71,3 +71,9 @@ Lane prompt files:
 Older examples may keep inline prompt bodies for compatibility. Do not add a
 second normal dogfood workflow for a specific lane; lane selection belongs in
 the command controller and this workflow config.
+
+`autopilot loop` reads `polling.interval_ms`,
+`main_lane.max_concurrent_agents`, `review_lane.max_concurrent_workers`, and
+`merge_lane.max_concurrent_workers` from this workflow unless explicit CLI
+overrides are provided. It remains bounded and foreground-only; mutating lane
+ticks require `--write`.

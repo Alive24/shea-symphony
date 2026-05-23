@@ -71,6 +71,14 @@ for interrupted Main and Merge lane work; use `--no-recover` only for focused
 debugging. Per-lane capacity uses `--main-max-concurrent`,
 `--review-max-concurrent`, and `--merge-max-concurrent`.
 
+Default resolution comes from workflow front matter unless a CLI override is
+provided:
+
+- `polling.interval_ms` -> `--poll-interval-ms`
+- `main_lane.max_concurrent_agents` -> `--main-max-concurrent`
+- `review_lane.max_concurrent_workers` -> `--review-max-concurrent`
+- `merge_lane.max_concurrent_workers` -> `--merge-max-concurrent`
+
 ```bash
 cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --write

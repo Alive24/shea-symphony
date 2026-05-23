@@ -250,7 +250,7 @@ pub fn render_agent_review_handoff_workpad(
     report: &AgentReviewHandoffReport,
 ) -> String {
     let mut lines = vec![
-        "## Jade Symphony Workpad".to_string(),
+        "## Agent Review Handoff".to_string(),
         String::new(),
         "### Agent Review Handoff Invariant".to_string(),
         format!("- Issue: {} {}", issue.identifier, issue.title),
@@ -1224,7 +1224,8 @@ mod tests {
 
         let workpad = render_agent_review_handoff_workpad(&issue, &evidence, &report);
 
-        assert!(workpad.contains("## Jade Symphony Workpad"));
+        assert!(workpad.contains("## Agent Review Handoff"));
+        assert!(!workpad.contains("## Jade Symphony Workpad"));
         assert!(workpad.contains("Agent Review Handoff Invariant"));
         assert!(workpad.contains("Pull request: `missing`"));
         assert!(workpad.contains("pull request url or explicit no-PR blocker"));

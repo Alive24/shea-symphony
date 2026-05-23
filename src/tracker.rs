@@ -6893,6 +6893,26 @@ Prompt
     }
 
     #[test]
+    fn merge_workpad_body_appends_agent_review_handoff_without_replacing_main_workpad() {
+        let marker = "<!-- jade-symphony-workpad -->";
+        let existing = format!(
+            "{marker}\n## Jade Symphony Workpad\n\n### Plan\n- [x] inspect issue\n\n### Work Log\n- implemented main work"
+        );
+        let incoming =
+            "## Agent Review Handoff\n\n### Agent Review Handoff Invariant\n- Status: `Ready`";
+
+        let body = merge_workpad_body(&existing, incoming, marker);
+
+        assert_eq!(body.matches(marker).count(), 1);
+        assert_eq!(body.matches("## Jade Symphony Workpad").count(), 1);
+        assert!(body.contains("### Plan"));
+        assert!(body.contains("### Work Log"));
+        assert!(body.contains("- implemented main work"));
+        assert!(body.contains("## Agent Review Handoff"));
+        assert!(body.contains("### Agent Review Handoff Invariant"));
+    }
+
+    #[test]
     fn merge_workpad_body_appends_distinct_review_attempts() {
         let marker = "<!-- jade-symphony-workpad -->";
         let existing = format!(

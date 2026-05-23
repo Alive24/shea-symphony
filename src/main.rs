@@ -10,9 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(test)]
 use cli::DisplayMode;
 use cli::{CliLaneClaimSource, ForgeStatusArg};
-use jade_symphony::agent::{
-    backend_from_config, persist_prompt_artifact, usage_limit_pause_from_events, UsageLimitPause,
-};
+use jade_symphony::agent::UsageLimitPause;
 use jade_symphony::canonical_checkout::{
     canonical_checkout_refresh_status_line, canonical_checkout_status_line,
     canonical_checkout_warning_lines, inspect_canonical_checkout,
@@ -83,11 +81,8 @@ use jade_symphony::tracker::{
     adapter_from_config, claim_decision, ClaimDecision, ProjectFieldAssignment, TrackerAdapter,
     TrackerError,
 };
-use jade_symphony::workflow::{AgentLane, WorkflowDefinition};
-use jade_symphony::workspace::{
-    apply_local_git_identity, prepare_workspace, profile_scoped_identifier, run_after_run,
-    run_before_run, run_workspace_command, safe_identifier, GitIdentityApplyResult, Workspace,
-};
+use jade_symphony::workflow::WorkflowDefinition;
+use jade_symphony::workspace::{run_workspace_command, GitIdentityApplyResult};
 
 mod cli;
 mod commands;
@@ -172,7 +167,8 @@ pub(crate) use lanes::claim::{
     WorkerLane,
 };
 pub(crate) use lanes::main_loop::{
-    run_loop, runtime_state_issue_identifier, RunLoopOptions, RuntimeRecoveryCandidate,
+    execute_issue_once, execute_issue_once_with_workspace_key, run_loop,
+    runtime_state_issue_identifier, IssueExecutionResult, RunLoopOptions, RuntimeRecoveryCandidate,
 };
 #[cfg(test)]
 use lanes::main_loop::{
@@ -834,35 +830,12 @@ fn run_once(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct IssueExecutionResult {
-    workspace_path: PathBuf,
-    backend: String,
-    profile_id: Option<String>,
-    instance_name: Option<String>,
-    success: bool,
-    pending_session: bool,
-    session_id: Option<String>,
-    run_id: Option<String>,
-    backend_log_path: Option<PathBuf>,
-    backend_attach_command: Option<String>,
-    message: String,
-    usage_limit_pause: Option<UsageLimitPause>,
-    prompt_artifact_path: Option<PathBuf>,
-    actor_role: String,
-    actor_label: String,
-    git_author: Option<String>,
-    git_identity: GitIdentityApplyResult,
-    live_handoff: Option<RunLoopLiveHandoff>,
-    handoff_verification: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RunLoopLiveHandoff {
-    worktree: LiveWorktreeResult,
-    publication: PullRequestPublication,
-    verification: String,
-    project_pr_link_verified: Option<bool>,
-    pull_request_ready: Option<PullRequestReadyStatus>,
+pub(crate) struct RunLoopLiveHandoff {
+    pub(crate) worktree: LiveWorktreeResult,
+    pub(crate) publication: PullRequestPublication,
+    pub(crate) verification: String,
+    pub(crate) project_pr_link_verified: Option<bool>,
+    pub(crate) pull_request_ready: Option<PullRequestReadyStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -888,164 +861,6 @@ fn main_session_active_recoverable(status: &str, evidence: &str) -> bool {
                 || evidence.contains("without backend session id")
                 || evidence.contains("tmux")
                 || evidence.contains("unavailable")))
-}
-
-fn execute_issue_once(
-    workflow: &WorkflowDefinition,
-    config: &RuntimeConfig,
-    issue: &TrackerIssue,
-) -> Result<IssueExecutionResult, Box<dyn std::error::Error>> {
-    let profile = selected_execution_profile(&config.profiles)?;
-    let workspace_identifier = profile_scoped_identifier(
-        profile
-            .as_ref()
-            .map(|profile| profile.workspace_namespace.as_str()),
-        &issue.identifier,
-    );
-    execute_issue_once_with_workspace_key(workflow, config, issue, &workspace_identifier, 1, None)
-}
-
-fn execute_issue_once_with_workspace_key(
-    workflow: &WorkflowDefinition,
-    config: &RuntimeConfig,
-    issue: &TrackerIssue,
-    workspace_key: &str,
-    attempt: u32,
-    claim: Option<&LaneClaim>,
-) -> Result<IssueExecutionResult, Box<dyn std::error::Error>> {
-    let workspace = prepare_workspace(&config.workspace.root, workspace_key, &config.hooks)?;
-    execute_issue_once_in_workspace(workflow, config, issue, workspace, attempt, claim)
-}
-
-fn execute_issue_once_in_workspace(
-    workflow: &WorkflowDefinition,
-    config: &RuntimeConfig,
-    issue: &TrackerIssue,
-    workspace: Workspace,
-    attempt: u32,
-    claim: Option<&LaneClaim>,
-) -> Result<IssueExecutionResult, Box<dyn std::error::Error>> {
-    let profile = selected_execution_profile(&config.profiles)?;
-    let git_identity = apply_local_git_identity(&workspace.path, &config.identity.git)?;
-    run_before_run(&workspace.path, &config.hooks)?;
-
-    let mut prompt = render_prompt_with_claim(
-        workflow.prompt_for_lane(AgentLane::MainAgent),
-        issue,
-        None,
-        claim,
-    )?;
-    if config.backend.kind == "codex" && config.codex.command.contains("app-server") {
-        prompt.push_str(CODEX_APP_SERVER_HANDOFF_BOUNDARY);
-    }
-    let backend = backend_from_config(config);
-    let mut prepared = backend.prepare(workspace.path.clone(), prompt, config)?;
-    prepared.prompt_artifact_path = Some(rendered_prompt_artifact_path(
-        config,
-        issue,
-        prepared.backend.as_str(),
-        attempt,
-    ));
-    prepared.issue_id = Some(issue.id.clone());
-    prepared.issue_identifier = Some(issue.identifier.clone());
-    prepared.issue_title = Some(issue.title.clone());
-    prepared.lane = Some("main".into());
-    if let Some(claim) = claim {
-        prepared.run_id = Some(claim.run.clone());
-        prepared
-            .env
-            .insert("JADE_SYMPHONY_RUN_ID".into(), claim.run.clone());
-        prepared
-            .env
-            .insert("JADE_SYMPHONY_CLAIM".into(), claim.render());
-    }
-    prepared.attempt = attempt;
-    prepared.branch_name = current_git_branch(&workspace.path).ok().flatten();
-    let prompt_artifact_path = persist_prompt_artifact(&prepared)?;
-    let mut backend_wait = progress_spec_with_event_log(config, "main_backend")
-        .issue(issue.identifier.clone())
-        .backend(prepared.backend.clone())
-        .next("waiting_for_child");
-    if let Some(path) = &prepared.prompt_artifact_path {
-        backend_wait = backend_wait.artifact(path.display().to_string());
-    }
-    let events = run_with_progress_heartbeat(backend_wait, || backend.run(prepared))?;
-    let summary = backend.summarize(&events);
-    let usage_limit_pause = usage_limit_pause_from_events(&events);
-    run_after_run(&workspace.path, &config.hooks);
-
-    let log = EventLog::new(config.observability.logs_root.join("jade-symphony.jsonl"));
-    log.append(&EventRecord {
-        event: "prompt_artifact".into(),
-        issue_id: Some(issue.id.clone()),
-        issue_identifier: Some(issue.identifier.clone()),
-        session_id: summary.session_id.clone(),
-        profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
-        instance_name: profile
-            .as_ref()
-            .map(|profile| profile.instance_name.clone()),
-        actor_role: Some(config.identity.actor_role.clone()),
-        actor_label: Some(config.identity.actor_label.clone()),
-        git_author: config.identity.git.author(),
-        tracker_mutation: None,
-        message: format!("prompt_artifact={}", prompt_artifact_path.display()),
-    })?;
-    for event in &events {
-        log.append(&EventRecord {
-            event: format!("{event:?}"),
-            issue_id: Some(issue.id.clone()),
-            issue_identifier: Some(issue.identifier.clone()),
-            session_id: summary.session_id.clone(),
-            profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
-            instance_name: profile
-                .as_ref()
-                .map(|profile| profile.instance_name.clone()),
-            actor_role: Some(config.identity.actor_role.clone()),
-            actor_label: Some(config.identity.actor_label.clone()),
-            git_author: config.identity.git.author(),
-            tracker_mutation: None,
-            message: summary.message.clone(),
-        })?;
-    }
-
-    Ok(IssueExecutionResult {
-        workspace_path: workspace.path,
-        backend: summary.backend,
-        profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
-        instance_name: profile
-            .as_ref()
-            .map(|profile| profile.instance_name.clone()),
-        success: summary.success,
-        pending_session: summary.pending_session,
-        session_id: summary.session_id,
-        run_id: claim.map(|claim| claim.run.clone()),
-        backend_log_path: summary.log_path,
-        backend_attach_command: summary.attach_command,
-        message: summary.message,
-        usage_limit_pause,
-        prompt_artifact_path: Some(prompt_artifact_path),
-        actor_role: config.identity.actor_role.clone(),
-        actor_label: config.identity.actor_label.clone(),
-        git_author: config.identity.git.author(),
-        git_identity,
-        live_handoff: None,
-        handoff_verification: None,
-    })
-}
-
-fn rendered_prompt_artifact_path(
-    config: &RuntimeConfig,
-    issue: &TrackerIssue,
-    backend: &str,
-    attempt: u32,
-) -> PathBuf {
-    config.observability.logs_root.join("prompts").join(format!(
-        "{}-attempt-{}-{}-{}.prompt.md",
-        safe_identifier(&issue.identifier),
-        attempt,
-        safe_identifier(backend),
-        current_time_ms()
-    ))
 }
 
 fn current_git_branch(workspace_path: &Path) -> Result<Option<String>, io::Error> {

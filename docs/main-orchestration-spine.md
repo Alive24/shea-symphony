@@ -109,6 +109,10 @@ runtime owner:
 - `src/lanes/main_loop.rs`: outer Main loop command execution and
   `RunLoopOptions`. It owns loop iteration, dry-run rendering, concurrency-slot
   selection, and delegation into narrower Main-lane helpers.
+- `src/lanes/main_loop/execution.rs`: Main-agent backend execution for a single
+  issue workspace. It owns prompt artifact persistence, backend event logging,
+  hook execution, usage-limit detection, and the `IssueExecutionResult` shape
+  consumed by Main-loop handoff logic.
 - `src/lanes/main_loop/runtime.rs`: Main-loop runtime preflight and recovery:
   persisted runtime-state retention, active session detection, recoverable
   terminal/stale session selection, retry backoff, and stale runtime-state

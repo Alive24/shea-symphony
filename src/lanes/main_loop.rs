@@ -25,7 +25,11 @@ use crate::{
     worker_identity, write_lane_claim_field, NoDispatchAction, WorkerLane,
 };
 
+mod execution;
 mod runtime;
+pub(crate) use execution::{
+    execute_issue_once, execute_issue_once_with_workspace_key, IssueExecutionResult,
+};
 #[cfg(test)]
 pub(crate) use runtime::{run_loop_resume_preflight, ResumePreflightAction};
 pub(crate) use runtime::{

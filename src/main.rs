@@ -52,9 +52,12 @@ use jade_symphony::lane_claim::{
 };
 use jade_symphony::merge_lane::{
     expected_merge_base_branch, fetch_pull_request_status_with_recheck, fixture_merge_output,
-    merge_lane_decision, merge_lane_workpad, merge_pull_request, pull_request_status_from_linked,
-    repair_dirty_pull_request, update_pull_request_branch, MergeLaneDecisionKind,
+    merge_lane_decision, merge_lane_workpad, merge_lane_workpad_with_repair_evidence,
+    merge_pull_request, pull_request_status_from_linked, repair_dirty_pull_request,
+    update_pull_request_branch, MergeConflictRepairOutcome, MergeLaneDecisionKind,
+    MergeRepairEvidence,
 };
+use jade_symphony::model::AgentEvent;
 use jade_symphony::model::{
     native_subissue_gate_blocker, native_subissue_statuses, normalize_state, GateDecision,
     GateDecisionKind, LatestStatus, SessionStatusSnapshot, TrackerIssue,
@@ -4707,7 +4710,13 @@ fn merge_once_tick(
         if repair.repaired {
             let mut repaired_decision = decision.clone();
             repaired_decision.reason = repair.reason.clone();
-            let workpad = merge_lane_workpad(&issue, &repaired_decision, Some(&repair.output));
+            let evidence = mechanical_merge_repair_evidence(&repair, &expected_base);
+            let workpad = merge_lane_workpad_with_repair_evidence(
+                &issue,
+                &repaired_decision,
+                Some(&repair.output),
+                Some(&evidence),
+            );
             let comment_outcome = record_merge_timeline_comment_with_recovery(
                 &config,
                 adapter.as_ref(),
@@ -4724,10 +4733,79 @@ fn merge_once_tick(
             return Ok(MergeOnceOutcome::Skipped);
         }
 
+        if repair.is_agent_repair_eligible() {
+            let agent_repair = run_merge_agent_conflict_repair(
+                &workflow,
+                &config,
+                &issue,
+                &merge_claim,
+                pr_ref,
+                head_ref_name.unwrap_or_default(),
+                &expected_base,
+                &repair,
+                &runner,
+            )?;
+            let mut agent_decision = decision.clone();
+            agent_decision.reason = agent_repair.reason.clone();
+            agent_decision.target_state = if agent_repair.repaired {
+                None
+            } else {
+                Some("need_human_input")
+            };
+            let workpad = merge_lane_workpad_with_repair_evidence(
+                &issue,
+                &agent_decision,
+                Some(&agent_repair.output),
+                Some(&agent_repair.evidence),
+            );
+            record_merge_timeline_comment_with_recovery(
+                &config,
+                adapter.as_ref(),
+                &issue,
+                &agent_decision,
+                &workpad,
+                if agent_repair.repaired {
+                    "merge lane merge-agent conflict repair evidence"
+                } else {
+                    "merge lane merge-agent conflict repair failure evidence"
+                },
+            )?;
+            if agent_repair.repaired {
+                println!(
+                    "merge_once_action=merge_agent_conflict_repaired issue={} target_state=merging backend={} session={}",
+                    issue.identifier,
+                    agent_repair.backend,
+                    agent_repair.session_id.as_deref().unwrap_or("n/a")
+                );
+                return Ok(MergeOnceOutcome::Skipped);
+            }
+
+            let state_outcome = set_merge_state_with_recovery(
+                &config,
+                adapter.as_ref(),
+                &issue,
+                "need_human_input",
+                agent_decision.pr_url.clone(),
+                "merge-agent conflict repair needs human input",
+            )?;
+            println!(
+                "merge_once_action=routed issue={} target_state=need_human_input outcome={}",
+                issue.identifier,
+                state_outcome.as_str()
+            );
+            return Ok(MergeOnceOutcome::Routed);
+        }
+
         let mut failed_repair = decision.clone();
         failed_repair.target_state = Some("need_human_input");
         failed_repair.reason = repair.reason.clone();
-        let workpad = merge_lane_workpad(&issue, &failed_repair, Some(&repair.output));
+        let evidence = ineligible_merge_agent_repair_evidence(&repair);
+        let workpad = merge_lane_workpad_with_repair_evidence(
+            &issue,
+            &failed_repair,
+            Some(&repair.output),
+            Some(&evidence),
+        );
         record_merge_timeline_comment_with_recovery(
             &config,
             adapter.as_ref(),
@@ -5010,6 +5088,615 @@ fn merge_rehearsal_mode(config: &RuntimeConfig, issue: &TrackerIssue) -> bool {
     config.tracker.fixture_path.is_some() || issue.tracker_kind == "memory"
 }
 
+struct MergeAgentConflictRepairOutcome {
+    repaired: bool,
+    output: CommandOutput,
+    evidence: MergeRepairEvidence,
+    reason: String,
+    backend: String,
+    session_id: Option<String>,
+}
+
+fn mechanical_merge_repair_evidence(
+    repair: &MergeConflictRepairOutcome,
+    expected_base: &str,
+) -> MergeRepairEvidence {
+    MergeRepairEvidence {
+        method: "mechanical_git_merge".into(),
+        conflict_summary: format!(
+            "`git merge --no-edit origin/{expected_base}` completed without content conflicts"
+        ),
+        resolution_summary: repair.reason.clone(),
+        semantic_safety: "No agent-authored changes were needed; Git produced a clean merge commit from the approved PR branch and current base.".into(),
+        verification: "`git status --porcelain` was clean after the merge commit; push was attempted only after that clean check.".into(),
+        push_evidence: format!(
+            "push exit status `{}` stdout=`{}` stderr=`{}`",
+            repair.output.status,
+            single_line(&repair.output.stdout),
+            single_line(&repair.output.stderr)
+        ),
+        next_state_rationale: "Successful repair stays in `Merging` so a later merge tick rereads GitHub mergeability before landing.".into(),
+    }
+}
+
+fn ineligible_merge_agent_repair_evidence(
+    repair: &MergeConflictRepairOutcome,
+) -> MergeRepairEvidence {
+    MergeRepairEvidence {
+        method: "not_started".into(),
+        conflict_summary: repair.reason.clone(),
+        resolution_summary:
+            "Merge-agent repair was not started because trusted repair preconditions were not met."
+                .into(),
+        semantic_safety:
+            "Without a trusted clean PR worktree and content-conflict evidence, the merge lane cannot prove branch safety."
+                .into(),
+        verification: "No agent verification ran.".into(),
+        push_evidence: "No push attempted.".into(),
+        next_state_rationale:
+            "Unsafe or untrusted repair preconditions route to `Need Human Input` with one operator question."
+                .into(),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_merge_agent_conflict_repair(
+    workflow: &WorkflowDefinition,
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    claim: &LaneClaim,
+    pr_ref: &str,
+    head_ref_name: &str,
+    expected_base: &str,
+    mechanical_repair: &MergeConflictRepairOutcome,
+    runner: &dyn HandoffCommandRunner,
+) -> Result<MergeAgentConflictRepairOutcome, Box<dyn std::error::Error>> {
+    let Some(worktree_path) = mechanical_repair.worktree_path.as_ref() else {
+        return Ok(merge_agent_repair_blocked(
+            "missing trusted PR worktree after mechanical content-conflict repair failed",
+            mechanical_repair,
+        ));
+    };
+
+    let clean_after_abort = runner.run(
+        "git",
+        &["status".into(), "--porcelain".into()],
+        worktree_path,
+    )?;
+    if clean_after_abort.status != 0 || !clean_after_abort.stdout.trim().is_empty() {
+        return Ok(merge_agent_repair_blocked(
+            "PR worktree was not clean after aborting the failed mechanical merge",
+            mechanical_repair,
+        ));
+    }
+
+    let fetch_ref = format!("origin/{expected_base}");
+    let fetch = runner.run(
+        "git",
+        &["fetch".into(), "origin".into(), expected_base.into()],
+        worktree_path,
+    )?;
+    if fetch.status != 0 {
+        return Ok(merge_agent_repair_blocked(
+            "merge-agent repair could not refresh the expected base branch",
+            mechanical_repair,
+        ));
+    }
+
+    let conflict_merge = runner.run(
+        "git",
+        &["merge".into(), "--no-edit".into(), fetch_ref.clone()],
+        worktree_path,
+    )?;
+    if conflict_merge.status == 0 {
+        return finish_merge_agent_repaired_branch(
+            config,
+            issue,
+            "mechanical_retry",
+            "The second base merge completed before agent edits were needed.",
+            "`git merge --no-edit` completed cleanly on retry.",
+            "No merge-agent semantic changes were needed.",
+            vec!["git merge --no-edit".into()],
+            pr_ref,
+            head_ref_name,
+            runner,
+            worktree_path,
+            CommandOutput {
+                status: 0,
+                stdout: conflict_merge.stdout,
+                stderr: conflict_merge.stderr,
+            },
+            "direct-cli".into(),
+            None,
+        );
+    }
+
+    let conflict_files = runner.run(
+        "git",
+        &[
+            "diff".into(),
+            "--name-only".into(),
+            "--diff-filter=U".into(),
+        ],
+        worktree_path,
+    )?;
+    let conflict_summary = if conflict_files.stdout.trim().is_empty() {
+        format!(
+            "Git reported conflicts while merging `{fetch_ref}`, but no unmerged files were listed."
+        )
+    } else {
+        format!(
+            "Conflicted files after merging `{fetch_ref}`: `{}`",
+            single_line(&conflict_files.stdout)
+        )
+    };
+
+    let prompt = merge_agent_conflict_repair_prompt(
+        workflow,
+        issue,
+        claim,
+        pr_ref,
+        head_ref_name,
+        expected_base,
+        &conflict_summary,
+        &mechanical_repair.output,
+    )?;
+    let backend_spec = agent_session_backend_spec(config, AgentSessionLaneArg::Merge)?;
+    let backend = agent_session_backend(&backend_spec.backend)?;
+    let prompt_path = rendered_lane_prompt_artifact_path(
+        config,
+        issue,
+        AgentSessionLaneArg::Merge,
+        1,
+        &backend_spec.backend,
+    );
+    let mut prepared = backend.prepare(worktree_path.clone(), prompt, config)?;
+    prepared.command = Some(backend_spec.command.clone());
+    prepared.prompt_artifact_path = Some(prompt_path.clone());
+    prepared.issue_id = Some(issue.id.clone());
+    prepared.issue_identifier = Some(issue.identifier.clone());
+    prepared.issue_title = Some(issue.title.clone());
+    prepared.lane = Some("merge".into());
+    prepared.run_id = Some(claim.run.clone());
+    prepared.branch_name = Some(head_ref_name.into());
+    prepared
+        .env
+        .insert("JADE_SYMPHONY_AGENT_LANE".into(), "merge".into());
+    prepared
+        .env
+        .insert("JADE_SYMPHONY_RUN_ID".into(), claim.run.clone());
+    prepared
+        .env
+        .insert("JADE_SYMPHONY_CLAIM".into(), claim.render());
+
+    let events = match backend.run(prepared) {
+        Ok(events) => events,
+        Err(error) => {
+            let _ = runner.run("git", &["merge".into(), "--abort".into()], worktree_path);
+            return Ok(merge_agent_repair_backend_failed(
+                &backend_spec.backend,
+                format!("merge-agent backend unavailable: {error}"),
+                &conflict_summary,
+            ));
+        }
+    };
+    let summary = backend.summarize(&events);
+    record_agent_session_events(
+        config,
+        issue,
+        AgentSessionLaneArg::Merge,
+        &summary,
+        &events,
+        &prompt_path,
+    )?;
+
+    let agent_text = agent_events_text(&events);
+    if !summary.success {
+        let _ = runner.run("git", &["merge".into(), "--abort".into()], worktree_path);
+        return Ok(merge_agent_repair_backend_failed(
+            &summary.backend,
+            format!("merge-agent backend did not complete: {}", summary.message),
+            &conflict_summary,
+        ));
+    }
+    if merge_agent_requests_human_input(&agent_text) {
+        let _ = runner.run("git", &["merge".into(), "--abort".into()], worktree_path);
+        return Ok(merge_agent_repair_semantic_uncertainty(
+            &summary.backend,
+            summary.session_id.clone(),
+            &conflict_summary,
+            &agent_text,
+        ));
+    }
+    if !merge_agent_reports_repaired(&agent_text) {
+        let _ = runner.run("git", &["merge".into(), "--abort".into()], worktree_path);
+        return Ok(merge_agent_repair_semantic_uncertainty(
+            &summary.backend,
+            summary.session_id.clone(),
+            &conflict_summary,
+            "merge-agent completed without the required MERGE_AGENT_DECISION marker",
+        ));
+    }
+
+    let unresolved = runner.run(
+        "git",
+        &[
+            "diff".into(),
+            "--name-only".into(),
+            "--diff-filter=U".into(),
+        ],
+        worktree_path,
+    )?;
+    if unresolved.status != 0 || !unresolved.stdout.trim().is_empty() {
+        return Ok(merge_agent_repair_verification_failed(
+            &summary.backend,
+            summary.session_id.clone(),
+            &conflict_summary,
+            format!(
+                "unresolved conflict files remain: `{}`",
+                single_line(&unresolved.stdout)
+            ),
+        ));
+    }
+
+    let diff_check = runner.run("git", &["diff".into(), "--check".into()], worktree_path)?;
+    if diff_check.status != 0 {
+        return Ok(merge_agent_repair_verification_failed(
+            &summary.backend,
+            summary.session_id.clone(),
+            &conflict_summary,
+            format!(
+                "`git diff --check` failed: stdout=`{}` stderr=`{}`",
+                single_line(&diff_check.stdout),
+                single_line(&diff_check.stderr)
+            ),
+        ));
+    }
+
+    let pre_commit_status = runner.run(
+        "git",
+        &["status".into(), "--porcelain".into()],
+        worktree_path,
+    )?;
+    if pre_commit_status
+        .stdout
+        .lines()
+        .any(|line| line.starts_with("??"))
+    {
+        return Ok(merge_agent_repair_verification_failed(
+            &summary.backend,
+            summary.session_id.clone(),
+            &conflict_summary,
+            "merge-agent left untracked files in the PR worktree".into(),
+        ));
+    }
+
+    let add = runner.run("git", &["add".into(), "-A".into()], worktree_path)?;
+    if add.status != 0 {
+        return Ok(merge_agent_repair_verification_failed(
+            &summary.backend,
+            summary.session_id.clone(),
+            &conflict_summary,
+            "`git add -A` failed after conflict resolution".into(),
+        ));
+    }
+    let merge_head = runner.run(
+        "git",
+        &[
+            "rev-parse".into(),
+            "-q".into(),
+            "--verify".into(),
+            "MERGE_HEAD".into(),
+        ],
+        worktree_path,
+    )?;
+    if merge_head.status == 0 {
+        let commit = runner.run("git", &["commit".into(), "--no-edit".into()], worktree_path)?;
+        if commit.status != 0 {
+            return Ok(merge_agent_repair_verification_failed(
+                &summary.backend,
+                summary.session_id.clone(),
+                &conflict_summary,
+                format!(
+                    "`git commit --no-edit` failed: stdout=`{}` stderr=`{}`",
+                    single_line(&commit.stdout),
+                    single_line(&commit.stderr)
+                ),
+            ));
+        }
+    }
+
+    finish_merge_agent_repaired_branch(
+        config,
+        issue,
+        "merge_agent",
+        &conflict_summary,
+        &merge_agent_resolution_summary(&agent_text),
+        &merge_agent_semantic_safety(&agent_text),
+        vec![
+            "git diff --name-only --diff-filter=U".into(),
+            "git diff --check".into(),
+            "git status --porcelain".into(),
+        ],
+        pr_ref,
+        head_ref_name,
+        runner,
+        worktree_path,
+        CommandOutput {
+            status: 0,
+            stdout: summary.message.clone(),
+            stderr: String::new(),
+        },
+        summary.backend,
+        summary.session_id,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_merge_agent_repaired_branch(
+    _config: &RuntimeConfig,
+    _issue: &TrackerIssue,
+    method: &str,
+    conflict_summary: &str,
+    resolution_summary: &str,
+    semantic_safety: &str,
+    verification_commands: Vec<String>,
+    _pr_ref: &str,
+    head_ref_name: &str,
+    runner: &dyn HandoffCommandRunner,
+    worktree_path: &Path,
+    initial_output: CommandOutput,
+    backend: String,
+    session_id: Option<String>,
+) -> Result<MergeAgentConflictRepairOutcome, Box<dyn std::error::Error>> {
+    let post_status = runner.run(
+        "git",
+        &["status".into(), "--porcelain".into()],
+        worktree_path,
+    )?;
+    if post_status.status != 0 || !post_status.stdout.trim().is_empty() {
+        return Ok(merge_agent_repair_verification_failed(
+            &backend,
+            session_id,
+            conflict_summary,
+            format!(
+                "repaired branch was not clean before push: `{}`",
+                single_line(&post_status.stdout)
+            ),
+        ));
+    }
+    let push = runner.run(
+        "git",
+        &["push".into(), "origin".into(), head_ref_name.into()],
+        worktree_path,
+    )?;
+    if push.status != 0 {
+        return Ok(merge_agent_repair_verification_failed(
+            &backend,
+            session_id,
+            conflict_summary,
+            format!(
+                "push failed: stdout=`{}` stderr=`{}`",
+                single_line(&push.stdout),
+                single_line(&push.stderr)
+            ),
+        ));
+    }
+    Ok(MergeAgentConflictRepairOutcome {
+        repaired: true,
+        output: CommandOutput {
+            status: 0,
+            stdout: format!(
+                "{}\n{}",
+                single_line(&initial_output.stdout),
+                single_line(&push.stdout)
+            ),
+            stderr: single_line(&push.stderr),
+        },
+        evidence: MergeRepairEvidence {
+            method: method.into(),
+            conflict_summary: conflict_summary.into(),
+            resolution_summary: resolution_summary.into(),
+            semantic_safety: semantic_safety.into(),
+            verification: verification_commands.join("; "),
+            push_evidence: format!(
+                "`git push origin {head_ref_name}` exit status `{}`",
+                push.status
+            ),
+            next_state_rationale: "Successful merge-agent repair stays in `Merging` so the next merge tick rereads GitHub mergeability before landing.".into(),
+        },
+        reason: "merge-agent repaired the conflicted approved PR branch, verification passed, and the existing branch was pushed".into(),
+        backend,
+        session_id,
+    })
+}
+
+fn merge_agent_repair_blocked(
+    reason: &str,
+    mechanical_repair: &MergeConflictRepairOutcome,
+) -> MergeAgentConflictRepairOutcome {
+    MergeAgentConflictRepairOutcome {
+        repaired: false,
+        output: mechanical_repair.output.clone(),
+        evidence: MergeRepairEvidence {
+            method: "merge_agent_not_started".into(),
+            conflict_summary: mechanical_repair.reason.clone(),
+            resolution_summary: reason.into(),
+            semantic_safety: "Trusted repair preconditions failed before the merge-agent could safely edit files.".into(),
+            verification: "No agent verification ran.".into(),
+            push_evidence: "No push attempted.".into(),
+            next_state_rationale: "Route to `Need Human Input` because the merge lane cannot prove safe branch repair.".into(),
+        },
+        reason: reason.into(),
+        backend: "not-started".into(),
+        session_id: None,
+    }
+}
+
+fn merge_agent_repair_backend_failed(
+    backend: &str,
+    reason: String,
+    conflict_summary: &str,
+) -> MergeAgentConflictRepairOutcome {
+    MergeAgentConflictRepairOutcome {
+        repaired: false,
+        output: CommandOutput {
+            status: 1,
+            stdout: String::new(),
+            stderr: reason.clone(),
+        },
+        evidence: MergeRepairEvidence {
+            method: "merge_agent_backend".into(),
+            conflict_summary: conflict_summary.into(),
+            resolution_summary: reason.clone(),
+            semantic_safety: "Backend failure prevents semantic-safety proof.".into(),
+            verification: "No completed repair verification.".into(),
+            push_evidence: "No push attempted.".into(),
+            next_state_rationale:
+                "Route to `Need Human Input` because the repair backend could not complete safely."
+                    .into(),
+        },
+        reason,
+        backend: backend.into(),
+        session_id: None,
+    }
+}
+
+fn merge_agent_repair_semantic_uncertainty(
+    backend: &str,
+    session_id: Option<String>,
+    conflict_summary: &str,
+    reason: &str,
+) -> MergeAgentConflictRepairOutcome {
+    MergeAgentConflictRepairOutcome {
+        repaired: false,
+        output: CommandOutput {
+            status: 1,
+            stdout: reason.into(),
+            stderr: String::new(),
+        },
+        evidence: MergeRepairEvidence {
+            method: "merge_agent_semantic_uncertainty".into(),
+            conflict_summary: conflict_summary.into(),
+            resolution_summary: single_line(reason),
+            semantic_safety: "The merge-agent did not provide a positive semantic-safety proof.".into(),
+            verification: "Repair verification was skipped or incomplete because semantic safety was uncertain.".into(),
+            push_evidence: "No push attempted.".into(),
+            next_state_rationale: "Route to `Need Human Input` with a concrete semantic-safety question.".into(),
+        },
+        reason: "merge-agent repair could not prove semantic safety".into(),
+        backend: backend.into(),
+        session_id,
+    }
+}
+
+fn merge_agent_repair_verification_failed(
+    backend: &str,
+    session_id: Option<String>,
+    conflict_summary: &str,
+    reason: String,
+) -> MergeAgentConflictRepairOutcome {
+    MergeAgentConflictRepairOutcome {
+        repaired: false,
+        output: CommandOutput {
+            status: 1,
+            stdout: String::new(),
+            stderr: reason.clone(),
+        },
+        evidence: MergeRepairEvidence {
+            method: "merge_agent_verification_failed".into(),
+            conflict_summary: conflict_summary.into(),
+            resolution_summary: reason.clone(),
+            semantic_safety: "Verification failure prevents treating the repair as safe.".into(),
+            verification: reason.clone(),
+            push_evidence: "No push attempted.".into(),
+            next_state_rationale: "Route to `Need Human Input` because the repaired branch was not clean and verified.".into(),
+        },
+        reason,
+        backend: backend.into(),
+        session_id,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn merge_agent_conflict_repair_prompt(
+    workflow: &WorkflowDefinition,
+    issue: &TrackerIssue,
+    claim: &LaneClaim,
+    pr_ref: &str,
+    head_ref_name: &str,
+    expected_base: &str,
+    conflict_summary: &str,
+    mechanical_output: &CommandOutput,
+) -> Result<String, jade_symphony::prompt::PromptError> {
+    let mut prompt = render_prompt_with_claim(
+        workflow.prompt_for_lane(AgentLane::MergeAgent),
+        issue,
+        None,
+        Some(claim),
+    )?;
+    prompt.push_str(
+        "\n\n## Merge-Agent Conflict Repair Task\n\n\
+You are repairing the existing approved PR branch in place. Preserve the intent that already passed Agent Review and Human Review. Resolve only conflicts caused by merging the target base into this PR branch. Do not create a replacement PR, do not switch workspaces, and do not route through Rework.\n\n",
+    );
+    prompt.push_str(&format!("- Pull request: `{pr_ref}`\n"));
+    prompt.push_str(&format!("- Head branch: `{head_ref_name}`\n"));
+    prompt.push_str(&format!("- Expected base: `{expected_base}`\n"));
+    prompt.push_str(&format!("- Conflict summary: {conflict_summary}\n"));
+    prompt.push_str(&format!(
+        "- Mechanical merge stderr: `{}`\n",
+        single_line(&mechanical_output.stderr)
+    ));
+    prompt.push_str(
+        "\n### Required Output Marker\n\n\
+End your final response with one of these exact markers:\n\
+- `MERGE_AGENT_DECISION: repaired` only if the resolution preserves reviewed intent and verification can proceed.\n\
+- `MERGE_AGENT_DECISION: needs_human_input` if there is semantic uncertainty, unrelated drift, unsafe branch/worktree state, or missing verification confidence.\n\n\
+Also include `RESOLUTION_SUMMARY:` and `SEMANTIC_SAFETY:` lines. Leave the merge resolution staged or ready for `git add -A`; the merge lane will commit, verify cleanliness, push, and keep the issue in `Merging` for the next tick.\n",
+    );
+    Ok(prompt)
+}
+
+fn agent_events_text(events: &[AgentEvent]) -> String {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::Message { text, .. } => Some(text.as_str()),
+            AgentEvent::Completed { summary, .. } => Some(summary.as_str()),
+            AgentEvent::Failed { error, .. } => Some(error.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn merge_agent_reports_repaired(text: &str) -> bool {
+    text.contains("MERGE_AGENT_DECISION: repaired")
+}
+
+fn merge_agent_requests_human_input(text: &str) -> bool {
+    text.contains("MERGE_AGENT_DECISION: needs_human_input")
+        || text.to_ascii_lowercase().contains("semantic uncertainty")
+}
+
+fn merge_agent_resolution_summary(text: &str) -> String {
+    marker_line(text, "RESOLUTION_SUMMARY:")
+        .unwrap_or_else(|| "Merge-agent reported repaired conflict resolution.".into())
+}
+
+fn merge_agent_semantic_safety(text: &str) -> String {
+    marker_line(text, "SEMANTIC_SAFETY:").unwrap_or_else(|| {
+        "Merge-agent reported that reviewed implementation intent was preserved.".into()
+    })
+}
+
+fn marker_line(text: &str, marker: &str) -> Option<String> {
+    text.lines()
+        .find_map(|line| line.trim().strip_prefix(marker).map(str::trim))
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 fn print_merge_dry_run_actions(decision: &jade_symphony::merge_lane::MergeLaneDecision) {
     match decision.kind {
         MergeLaneDecisionKind::ReadyToMerge => {
@@ -5030,6 +5717,7 @@ fn print_merge_dry_run_actions(decision: &jade_symphony::merge_lane::MergeLaneDe
         }
         MergeLaneDecisionKind::MergeDirty => {
             println!("merge_once_dry_run action=attempt_safe_conflict_repair");
+            println!("merge_once_dry_run fallback=attempt_merge_agent_conflict_repair");
             println!("merge_once_dry_run action=timeline_comment evidence=conflict_repair_result");
             println!("merge_once_dry_run fallback=set_state target_state=need_human_input");
         }
@@ -18049,6 +18737,62 @@ mod tests {
         let outcome = merge_once_tick(workflow_path, false, false).unwrap();
 
         assert_eq!(outcome, MergeOnceOutcome::NoMergingIssue);
+    }
+
+    #[test]
+    fn successful_merge_agent_repair_records_merging_retry_rationale() {
+        let config = test_config();
+        let issue = tracker_issue_with_ref("#390", "Route DIRTY repair", "Merging");
+        let runner = MergeRecoveryRunner::new();
+
+        let outcome = finish_merge_agent_repaired_branch(
+            &config,
+            &issue,
+            "merge_agent",
+            "src/main.rs conflicted",
+            "resolved conflict by preserving approved behavior",
+            "approved implementation intent preserved",
+            vec![
+                "git diff --name-only --diff-filter=U".into(),
+                "git diff --check".into(),
+                "git status --porcelain".into(),
+            ],
+            "https://github.com/Alive24/jade-symphony/pull/390",
+            "feature/issue-390",
+            &runner,
+            Path::new("."),
+            CommandOutput {
+                status: 0,
+                stdout: "MERGE_AGENT_DECISION: repaired".into(),
+                stderr: String::new(),
+            },
+            "codex".into(),
+            Some("session-390".into()),
+        )
+        .unwrap();
+
+        assert!(outcome.repaired);
+        assert_eq!(outcome.evidence.method, "merge_agent");
+        assert!(outcome
+            .evidence
+            .next_state_rationale
+            .contains("stays in `Merging`"));
+        assert!(runner
+            .calls
+            .borrow()
+            .iter()
+            .any(|call| call == "git push origin feature/issue-390"));
+    }
+
+    #[test]
+    fn merge_agent_semantic_uncertainty_marker_requires_human_input() {
+        let text = "\
+RESOLUTION_SUMMARY: conflict needs product choice
+SEMANTIC_SAFETY: cannot prove reviewed intent
+MERGE_AGENT_DECISION: needs_human_input";
+
+        assert!(merge_agent_requests_human_input(text));
+        assert!(!merge_agent_reports_repaired(text));
     }
 
     #[test]

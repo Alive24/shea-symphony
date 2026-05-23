@@ -1863,8 +1863,6 @@ pub fn classify_usage_limit_text(text: &str) -> Option<UsageLimitPause> {
         ("resource_exhausted", "resource exhausted"),
         ("quota_exceeded", "quota exceeded"),
         ("quota_exceeded", "insufficient quota"),
-        ("too_many_requests", "too many requests"),
-        ("http_429", "429"),
     ];
 
     patterns
@@ -2545,8 +2543,10 @@ exit 0
         assert_eq!(pause.classifier, "usage_limit");
         assert!(pause.evidence.contains("usage limit"));
 
-        let pause = classify_usage_limit_text("HTTP 429: too many requests").unwrap();
-        assert_eq!(pause.classifier, "too_many_requests");
+        let pause = classify_usage_limit_text("HTTP 429 quota exceeded").unwrap();
+        assert_eq!(pause.classifier, "quota_exceeded");
+
+        assert!(classify_usage_limit_text("HTTP 429: too many requests").is_none());
 
         assert!(classify_usage_limit_text("syntax error in generated patch").is_none());
     }

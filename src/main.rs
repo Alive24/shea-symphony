@@ -9247,18 +9247,12 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
                 break;
             }
         }
-        let recovery_only =
-            options.write && options.recover && !recoverable_runtime_states.is_empty();
-        let issues = if recovery_only {
-            Vec::new()
-        } else {
-            run_with_progress_heartbeat(
-                progress_spec_with_event_log(&config, "github_project_read")
-                    .backend(tracker_backend_label(&config))
-                    .next("main_queue_scan"),
-                || adapter.list_queue_scan_issues(),
-            )?
-        };
+        let issues = run_with_progress_heartbeat(
+            progress_spec_with_event_log(&config, "github_project_read")
+                .backend(tracker_backend_label(&config))
+                .next("main_queue_scan"),
+            || adapter.list_queue_scan_issues(),
+        )?;
         let orchestrator = Orchestrator::new(config.clone());
         let mut plan = orchestrator.plan_dispatch(issues.clone());
         plan.integration_gaps.extend(adapter.integration_gaps());
@@ -9285,41 +9279,17 @@ fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
         let worker_id = worker_identity(&config, WorkerLane::Main);
-        let mut selected = Vec::new();
-        if options.write && options.recover {
-            for candidate in &recoverable_runtime_states {
-                if selected.len() >= available_slots {
-                    break;
-                }
-                let issue = candidate.issue.clone();
-                println!(
-                    "run_loop_recovery_candidate issue={} attempt={} reason={}",
-                    issue.identifier, candidate.state.attempt_count, candidate.reason
-                );
-                if selected.iter().any(|selected_issue: &TrackerIssue| {
-                    selected_issue.identifier == issue.identifier
-                }) {
-                    continue;
-                }
-                selected.push(issue);
-            }
-        }
-        let remaining_slots = available_slots.saturating_sub(selected.len());
-        let normal_selected = select_pool_worker_issues(
+        let selected = select_main_run_loop_issues(
+            if options.write && options.recover {
+                &recoverable_runtime_states
+            } else {
+                &[]
+            },
             &plan.selected,
-            WorkerLane::Main,
+            available_slots,
             &worker_id,
-            remaining_slots,
             &config,
         );
-        for issue in normal_selected {
-            if !selected
-                .iter()
-                .any(|selected_issue: &TrackerIssue| selected_issue.identifier == issue.identifier)
-            {
-                selected.push(issue);
-            }
-        }
 
         let Some(issue) = selected.first().cloned() else {
             plan.snapshot.latest_status = Some(LatestStatus {
@@ -10635,13 +10605,67 @@ fn select_pool_worker_issues(
     pool: usize,
     config: &RuntimeConfig,
 ) -> Vec<TrackerIssue> {
+    if pool == 0 {
+        return Vec::new();
+    }
+
     let mut selected = issues
         .iter()
         .filter(|issue| pool_claim_eligibility(issue, lane, worker_id, config).is_claimable())
         .cloned()
         .collect::<Vec<_>>();
     selected.sort_by_key(|issue| issue.priority.unwrap_or(i64::MAX));
-    selected.truncate(pool.max(1));
+    selected.truncate(pool);
+    selected
+}
+
+fn select_main_run_loop_issues(
+    recoverable_runtime_states: &[RuntimeRecoveryCandidate],
+    plan_selected: &[TrackerIssue],
+    available_slots: usize,
+    worker_id: &str,
+    config: &RuntimeConfig,
+) -> Vec<TrackerIssue> {
+    if available_slots == 0 {
+        return Vec::new();
+    }
+
+    let mut selected = Vec::new();
+    for candidate in recoverable_runtime_states {
+        if selected.len() >= available_slots {
+            break;
+        }
+        let issue = candidate.issue.clone();
+        println!(
+            "run_loop_recovery_candidate issue={} attempt={} reason={}",
+            issue.identifier, candidate.state.attempt_count, candidate.reason
+        );
+        if selected
+            .iter()
+            .any(|selected_issue: &TrackerIssue| selected_issue.identifier == issue.identifier)
+        {
+            continue;
+        }
+        selected.push(issue);
+    }
+
+    let remaining_slots = available_slots.saturating_sub(selected.len());
+    let normal_selected = select_pool_worker_issues(
+        plan_selected,
+        WorkerLane::Main,
+        worker_id,
+        remaining_slots,
+        config,
+    );
+    for issue in normal_selected {
+        if !selected
+            .iter()
+            .any(|selected_issue: &TrackerIssue| selected_issue.identifier == issue.identifier)
+        {
+            selected.push(issue);
+        }
+    }
+
     selected
 }
 
@@ -11804,6 +11828,11 @@ fn runtime_recovery_reason(
         if retry.due_in_ms(now_ms) > 0 {
             return Ok(None);
         }
+        return Ok(Some(format!(
+            "retry_due attempt={} error={}",
+            retry.attempt,
+            compact_evidence(&retry.error)
+        )));
     }
 
     if let Some(stall) = detect_runtime_stall(state, now_ms, config.codex.stall_timeout_ms) {
@@ -18972,6 +19001,40 @@ mod tests {
     }
 
     #[test]
+    fn pool_worker_selection_returns_empty_when_no_slots_remain() {
+        let config = test_config();
+        let issue = tracker_issue_with_ref("#1", "Ready", "Todo");
+
+        let selected = select_pool_worker_issues(&[issue], WorkerLane::Main, "worker", 0, &config);
+
+        assert!(selected.is_empty());
+    }
+
+    #[test]
+    fn main_run_loop_selection_prioritizes_recovery_and_fills_remaining_slots() {
+        let config = test_config();
+        let worker = "Jade Symphony Main";
+        let recovery_issue = tracker_issue_with_ref("#362", "Recover me", "In Progress");
+        let mut next_todo = tracker_issue_with_ref("#363", "Start next", "Todo");
+        next_todo.priority = Some(1);
+        let recovery = RuntimeRecoveryCandidate {
+            state: active_runtime_state("#362"),
+            issue: recovery_issue,
+            reason: "retry_due attempt=2 error=HTTP 429".into(),
+        };
+
+        let selected = select_main_run_loop_issues(&[recovery], &[next_todo], 2, worker, &config);
+
+        assert_eq!(
+            selected
+                .iter()
+                .map(|issue| issue.identifier.as_str())
+                .collect::<Vec<_>>(),
+            vec!["#362", "#363"]
+        );
+    }
+
+    #[test]
     fn merge_pool_selection_only_accepts_merging_lane() {
         let config = test_config();
         let mut claimed = tracker_issue_with_ref("#6", "Claimed merge", "Merging");
@@ -19887,6 +19950,25 @@ exit 1
         .unwrap();
 
         assert_eq!(action, ResumePreflightAction::Continue);
+    }
+
+    #[test]
+    fn resume_preflight_many_marks_due_retry_recoverable_when_requested() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.observability.logs_root = temp.path().join("logs");
+        let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+        let mut state = active_runtime_state("#29");
+        record_runtime_retry(&mut state, 1_000, 5_000, "HTTP 429 too many requests");
+
+        let summary =
+            run_loop_resume_preflight_many(&tracker, &config, &[state], 7_000, true).unwrap();
+
+        assert_eq!(summary.active_main_workers, 0);
+        assert_eq!(summary.recoverable_states.len(), 1);
+        assert!(summary.recoverable_states[0]
+            .reason
+            .contains("retry_due attempt="));
     }
 
     #[test]

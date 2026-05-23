@@ -11,10 +11,275 @@ use jade_symphony::skill_status::SkillStatusInput;
 use jade_symphony::tracker::ProjectFieldAssignment;
 
 use super::{
-    AgentSessionLaneArg, Command, DoctorAction, DoctorOptions, DoctorRepairIssueOptions,
-    ForgeReworkOptions, MergeLoopOptions, ProjectStateOptions, PromotionNoteInput,
-    ReviewLoopOptions, ReviewStatusCliOptions, RunLoopOptions,
+    AgentSessionLaneArg, DoctorAction, DoctorOptions, DoctorRepairIssueOptions, ForgeReworkOptions,
+    MergeLoopOptions, ProjectStateOptions, PromotionNoteInput, ReviewLoopOptions,
+    ReviewStatusCliOptions, RunLoopOptions,
 };
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Command {
+    Plan {
+        workflow_path: PathBuf,
+        json: bool,
+    },
+    AutopilotPlan {
+        workflow_path: PathBuf,
+        json: bool,
+    },
+    StatusApi {
+        workflow_path: PathBuf,
+        bind: SocketAddr,
+        once: bool,
+    },
+    Validate {
+        workflow_path: PathBuf,
+    },
+    Inspect {
+        workflow_path: PathBuf,
+        states: Vec<String>,
+    },
+    ProjectState {
+        options: ProjectStateOptions,
+    },
+    ProjectIssue {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        json: bool,
+    },
+    ProjectInspect {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        lane: Option<AgentSessionLaneArg>,
+    },
+    Doctor {
+        options: DoctorOptions,
+    },
+    DoctorRepairHumanReview {
+        workflow_path: PathBuf,
+        write: bool,
+    },
+    SkillsStatus {
+        input: SkillStatusInput,
+        json: bool,
+    },
+    Profiles {
+        workflow_path: PathBuf,
+    },
+    Debug {
+        workflow_path: PathBuf,
+    },
+    CleanupPlan {
+        workflow_path: PathBuf,
+    },
+    CleanPlan {
+        workflow_path: PathBuf,
+    },
+    CleanAudit {
+        workflow_path: PathBuf,
+    },
+    RunOnce {
+        workflow_path: PathBuf,
+    },
+    RunLoop {
+        options: RunLoopOptions,
+    },
+    CleanupWorkspaces {
+        workflow_path: PathBuf,
+        write: bool,
+    },
+    WorkspaceList {
+        workflow_path: PathBuf,
+    },
+    WorkspaceShow {
+        workflow_path: PathBuf,
+        issue_ref: String,
+    },
+    WorkspaceAdopt {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        path: PathBuf,
+        write: bool,
+    },
+    WorkspaceEnsure {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        pr_ref: Option<String>,
+        branch: Option<String>,
+        write: bool,
+    },
+    MergeOnce {
+        workflow_path: PathBuf,
+        write: bool,
+    },
+    SetState {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        state: String,
+        write: bool,
+    },
+    Workpad {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        markdown_path: PathBuf,
+        write: bool,
+    },
+    TimelineComment {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        markdown_path: PathBuf,
+        write: bool,
+    },
+    LinkPr {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        pr_ref: String,
+        write: bool,
+    },
+    CreateFollowUp {
+        workflow_path: PathBuf,
+        title: String,
+        body_path: PathBuf,
+        write: bool,
+    },
+    AddToProject {
+        workflow_path: PathBuf,
+        issue_id: String,
+        write: bool,
+    },
+    ReviewFake {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        outcome: FakeReviewOutcome,
+        write: bool,
+    },
+    ReviewOnce {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        write: bool,
+    },
+    ReviewClaim {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        worker: String,
+        write: bool,
+    },
+    LaneClaim {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        lane: AgentSessionLaneArg,
+        worker: String,
+        source: CliLaneClaimSource,
+        write: bool,
+    },
+    ReviewClearClaim {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        write: bool,
+    },
+    ReviewPass {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        evidence: String,
+        write: bool,
+    },
+    ReviewReject {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        evidence: String,
+        target_state: String,
+        write: bool,
+    },
+    ReviewSession {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        write: bool,
+    },
+    ReviewFreshness {
+        input: ReviewFreshnessInput,
+    },
+    ReviewLoop {
+        options: ReviewLoopOptions,
+    },
+    ReviewStatus {
+        options: ReviewStatusCliOptions,
+    },
+    MergeSession {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        write: bool,
+    },
+    AgentSessionStart {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        lane: AgentSessionLaneArg,
+        run_id: Option<String>,
+        write: bool,
+    },
+    SessionStart {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        lane: AgentSessionLaneArg,
+        run_id: String,
+        write: bool,
+    },
+    SessionList {
+        workflow_path: PathBuf,
+    },
+    SessionAttach {
+        workflow_path: PathBuf,
+        session: String,
+        exec: bool,
+    },
+    AgentSessionList {
+        workflow_path: PathBuf,
+    },
+    AgentSessionAttach {
+        workflow_path: PathBuf,
+        session: String,
+        exec: bool,
+    },
+    MergeLoop {
+        options: MergeLoopOptions,
+    },
+    Gate {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        apply: bool,
+        write: bool,
+    },
+    ForgeValidate {
+        workflow_path: PathBuf,
+        status: Option<ForgeStatusArg>,
+        title: String,
+        markdown: String,
+        issue_ref: Option<String>,
+    },
+    ForgeCreate {
+        workflow_path: PathBuf,
+        title: String,
+        markdown: String,
+        status: ForgeStatusArg,
+        project: Option<String>,
+        project_fields: Vec<ProjectFieldAssignment>,
+        assignees: Vec<String>,
+        write: bool,
+        dry_run: bool,
+    },
+    ForgePromote {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        title: String,
+        markdown: String,
+        promotion_note: PromotionNoteInput,
+        write: bool,
+        dry_run: bool,
+    },
+    ForgeRework {
+        options: ForgeReworkOptions,
+    },
+    Help(String),
+}
 
 impl Command {
     pub(crate) fn parse(args: Vec<String>) -> Result<Self, String> {

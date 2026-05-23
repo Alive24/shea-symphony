@@ -26,8 +26,8 @@ Issue Contract -> Lane Decision -> Runtime Attempt -> Evidence -> State Transiti
 ## Current Boundaries
 
 The first extracted boundary is `src/cli.rs`. It owns the raw Clap command
-surface, grouped command aliases, help text, flag normalization, and conversion
-from parsed arguments into the internal `Command` dispatcher model.
+surface, grouped command aliases, help text, flag normalization, and the
+internal `Command` dispatcher model produced from parsed arguments.
 
 Command execution now lives under `src/commands/` when a command family has a
 clear owner:
@@ -116,10 +116,9 @@ have a narrow shared responsibility:
 `src/main.rs` still owns:
 
 - `main()` and `run()`;
-- the internal `Command` enum and dispatch match;
-- concrete command execution functions that have not yet been extracted;
-- lane orchestration helpers that touch tracker, workspace, runtime, or
-  evidence state.
+- the top-level dispatch match over `cli::Command`;
+- small binary-scoped helper shims and re-exports that have not yet moved to
+  library or orchestration modules.
 
 Lane execution now lives under `src/lanes/` when a lane boundary has a clear
 runtime owner:

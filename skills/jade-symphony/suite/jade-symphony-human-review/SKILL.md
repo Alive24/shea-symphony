@@ -168,14 +168,45 @@ unknown.
 
 ## Brief The Operator
 
+Before any UAT command, freshness repair, decision-note drafting, or state
+mutation, start with a plain-language orientation brief. The operator should be
+able to understand what they are reviewing without opening GitHub first.
+
 Give a concise Human Review brief with:
 
+- issue and PR identity, including title, PR number, branch, base branch, and
+  current Project state;
+- one-sentence purpose: what problem this issue/PR was meant to solve;
 - what the issue was supposed to deliver;
-- what changed and where the PR is;
+- what changed and where the PR is, summarized from the Main workpad, PR
+  metadata, and review evidence rather than raw diffs;
+- why this item is in Human Review now;
 - what the Review Agent already checked;
 - what remains human-owned, especially UAT;
 - any missing evidence, stale assumption, or risk;
 - available decisions and their target states.
+
+Recommended opening shape:
+
+```text
+## Human Review Brief
+
+Issue: #<issue> <title>
+PR: #<pr> <title or URL>
+State: Human Review
+
+What this is about: <one-sentence issue purpose>
+What changed: <2-4 bullets summarizing the PR in operator language>
+Why you are reviewing it now: <Review passed / parent owns UAT / approval gate>
+Review Agent already checked: <short evidence summary>
+Human-owned part: <UAT or acceptance decision still needed>
+Risks / things to watch: <none / concise list>
+Available decisions: Approve for Merging / Request Rework / Need Human Input / Defer
+```
+
+For parent issues with native subissues, explicitly summarize the parent/child
+shape: which child issues are Done, which child PRs landed, which parent PR is
+being accepted, and what combined behavior the parent UAT is meant to validate.
 
 If the issue is not in `Human Review`, or if Review Agent pass evidence or a
 reliable linked PR is missing, stop before UAT and recommend the smallest safe
@@ -342,6 +373,7 @@ Do not continue reviewing, implementing, or merging after the state change.
 A good Human Review response leaves the operator with:
 
 - the issue and PR identity;
+- a plain-language explanation of what the issue/PR is about before UAT starts;
 - a short evidence summary;
 - a clear UAT result or UAT blocker;
 - the Review Agent evidence boundary;

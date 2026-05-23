@@ -74,6 +74,9 @@ clear owner:
   claim-to-session validation. It owns accepted claim states, active-claim
   blockers, worker labels, manual registry evidence, and structured claim
   parsing without changing session startup.
+- `src/commands/session/start.rs`: `session start` execution. It owns explicit
+  run validation, workspace preparation, prompt artifact paths, backend launch,
+  event-log capture, and session-start workpad/timeline evidence.
 - `src/commands/skills.rs`: skill readiness status rendering for the grouped
   `skills status` surface.
 - `src/commands/status.rs`: read-only runtime status surfaces for `plan` and
@@ -248,10 +251,9 @@ lane routing, runtime recovery, or workpad rendering.
 - Move Main loop command execution after the lane modules settle; keep
   runtime/session recovery helpers grouped with the lane that owns the state
   transition.
-- Split remaining session helpers only when the child module has a clear owner,
-  such as session-start evidence rendering; keep parser/help conversion in
-  `src/cli.rs` and top-level session command dispatch in
-  `src/commands/session.rs`.
+- Keep `src/commands/session.rs` as the session facade and only split more
+  session helpers when a command surface or evidence owner is obvious; keep
+  parser/help conversion in `src/cli.rs`.
 - Keep future `LanePolicy` or `WorkerProfile` abstractions as follow-up design
   work; do not introduce them as part of a mechanical extraction.
 

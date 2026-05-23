@@ -15,10 +15,9 @@ use jade_symphony::workflow::WorkflowDefinition;
 
 use crate::cli::DisplayMode;
 use crate::{
-    current_time_ms, evaluate_issue_for_current_source, handle_run_loop_gate_failure,
-    handle_run_loop_handoff_failure, hydrate_issue_for_evidence, lane_claim_for_issue,
-    latest_status_for_issue, preflight_canonical_checkout_for_write_mode, print_latest_status,
-    progress_spec_with_event_log, project_text_field, tracker_backend_label,
+    current_time_ms, evaluate_issue_for_current_source, hydrate_issue_for_evidence,
+    lane_claim_for_issue, latest_status_for_issue, preflight_canonical_checkout_for_write_mode,
+    print_latest_status, progress_spec_with_event_log, project_text_field, tracker_backend_label,
     unbounded_loop_sleep_ms, warn_if_temporary_workflow_path, worker_identity,
     write_lane_claim_field, WorkerLane,
 };
@@ -26,6 +25,7 @@ use crate::{
 mod dispatch;
 mod dry_run;
 mod execution;
+mod failure;
 mod handoff;
 mod preflight;
 mod runtime;
@@ -36,6 +36,7 @@ pub(crate) use dry_run::print_run_loop_dry_run_actions;
 pub(crate) use execution::{
     execute_issue_once, execute_issue_once_with_workspace_key, IssueExecutionResult,
 };
+pub(crate) use failure::{handle_run_loop_gate_failure, handle_run_loop_handoff_failure};
 pub(crate) use handoff::{
     apply_live_handoff_pr_link, compact_evidence, linked_pull_requests_contain,
     pull_request_number_from_url, run_handoff_verification, run_loop_agent_review_handoff_evidence,

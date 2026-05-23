@@ -32,17 +32,13 @@ use jade_symphony::git_handoff::{CommandOutput, HandoffCommandRunner};
 use jade_symphony::git_handoff::{
     LiveWorktreeResult, PullRequestPublication, PullRequestReadyStatus,
 };
-use jade_symphony::handoff::{
-    evaluate_agent_review_handoff, render_agent_review_handoff_workpad, HandoffError,
-};
+use jade_symphony::handoff::{evaluate_agent_review_handoff, render_agent_review_handoff_workpad};
 #[cfg(test)]
-use jade_symphony::handoff::{plan_issue_handoff_for_profile, IssueHandoffPlan};
+use jade_symphony::handoff::{plan_issue_handoff_for_profile, HandoffError, IssueHandoffPlan};
 use jade_symphony::lane_claim::{
     LaneClaim, LaneClaimActor, LaneClaimLane, LaneClaimSource, LaneClaimState,
 };
-use jade_symphony::model::{
-    normalize_state, GateDecision, LatestStatus, SessionStatusSnapshot, TrackerIssue,
-};
+use jade_symphony::model::{normalize_state, LatestStatus, SessionStatusSnapshot, TrackerIssue};
 use jade_symphony::orchestrator::Orchestrator;
 #[cfg(test)]
 use jade_symphony::ownership::render_runtime_ownership_marker;
@@ -171,14 +167,14 @@ pub(crate) use lanes::claim::{
 use lanes::main_loop::IssueExecutionResult;
 pub(crate) use lanes::main_loop::{
     apply_live_handoff_pr_link, compact_evidence, execute_issue_once,
-    execute_issue_once_with_workspace_key, linked_pull_requests_contain,
-    main_app_server_smoke_gate, main_session_active_recoverable, pull_request_number_from_url,
-    reconcile_pending_main_session, run_handoff_verification, run_loop,
-    run_loop_agent_review_handoff_evidence, run_loop_apply_recovery_handoff,
-    run_loop_assignee_ownership_decision, run_loop_assignee_ownership_workpad,
-    run_loop_claim_action, run_loop_handoff_failure_workpad, run_loop_handoff_plan,
-    run_loop_handoff_workpad, run_loop_live_handoff_enabled, run_loop_ownership_workpad,
-    run_loop_runtime_ownership, run_loop_runtime_state_for_issue,
+    execute_issue_once_with_workspace_key, handle_run_loop_gate_failure,
+    handle_run_loop_handoff_failure, linked_pull_requests_contain, main_app_server_smoke_gate,
+    main_session_active_recoverable, pull_request_number_from_url, reconcile_pending_main_session,
+    run_handoff_verification, run_loop, run_loop_agent_review_handoff_evidence,
+    run_loop_apply_recovery_handoff, run_loop_assignee_ownership_decision,
+    run_loop_assignee_ownership_workpad, run_loop_claim_action, run_loop_handoff_failure_workpad,
+    run_loop_handoff_plan, run_loop_handoff_workpad, run_loop_live_handoff_enabled,
+    run_loop_ownership_workpad, run_loop_runtime_ownership, run_loop_runtime_state_for_issue,
     run_loop_runtime_state_with_result, run_loop_runtime_state_with_transition,
     run_loop_usage_limit_pause_workpad, AssigneeOwnershipDecision, HandoffVerification,
     MainSessionReconciliation, RunLoopClaimAction, RunLoopLiveHandoff, RunLoopOptions,
@@ -2314,78 +2310,6 @@ fn append_runtime_supervision_event(
         tracker_mutation: None,
         message: message.into(),
     })?;
-    Ok(())
-}
-
-fn handle_run_loop_gate_failure(
-    adapter: &dyn jade_symphony::tracker::TrackerAdapter,
-    issue: &TrackerIssue,
-    decision: &GateDecision,
-    options: &RunLoopOptions,
-    config: &RuntimeConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
-    print_latest_status(&latest_status_for_issue(
-        config,
-        issue,
-        "main",
-        "blocked",
-        "quality_gate_failed",
-        Some(gate_target_state(decision).into()),
-    ));
-    println!(
-        "run_loop_gate=failed issue={} decision={:?}",
-        issue.identifier, decision.kind
-    );
-    if options.write {
-        adapter.upsert_workpad(&issue.identifier, &gate_workpad(issue, decision))?;
-        adapter.set_state(&issue.identifier, gate_target_state(decision))?;
-    } else {
-        println!(
-            "run_loop_dry_run action=workpad issue={} reason=quality_gate_failed",
-            issue.identifier
-        );
-        println!(
-            "run_loop_dry_run action=set_state issue={} target_state={}",
-            issue.identifier,
-            gate_target_state(decision)
-        );
-    }
-    Ok(())
-}
-
-fn handle_run_loop_handoff_failure(
-    adapter: &dyn jade_symphony::tracker::TrackerAdapter,
-    issue: &TrackerIssue,
-    error: &HandoffError,
-    options: &RunLoopOptions,
-    config: &RuntimeConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
-    print_latest_status(&latest_status_for_issue(
-        config,
-        issue,
-        "main",
-        "blocked",
-        "handoff_plan_failed",
-        Some("Need Human Input".into()),
-    ));
-    println!(
-        "run_loop_handoff=failed issue={} error={}",
-        issue.identifier, error
-    );
-    let workpad = run_loop_handoff_failure_workpad(issue, error);
-    if options.write {
-        adapter.upsert_workpad(&issue.identifier, &workpad)?;
-        adapter.set_state(&issue.identifier, "need_human_input")?;
-    } else {
-        println!(
-            "run_loop_dry_run action=workpad issue={} reason=handoff_plan_failed",
-            issue.identifier
-        );
-        println!(
-            "run_loop_dry_run action=set_state issue={} target_state=need_human_input",
-            issue.identifier
-        );
-    }
     Ok(())
 }
 

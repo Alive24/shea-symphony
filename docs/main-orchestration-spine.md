@@ -120,6 +120,9 @@ runtime owner:
   issue workspace. It owns prompt artifact persistence, backend event logging,
   hook execution, usage-limit detection, and the `IssueExecutionResult` shape
   consumed by Main-loop handoff logic.
+- `src/lanes/main_loop/failure.rs`: Main-loop dispatch blocker handling. It
+  owns quality-gate and handoff-plan failure output, including the existing
+  workpad-before-state ordering for those blocked paths.
 - `src/lanes/main_loop/handoff.rs`: Main-loop handoff planning and evidence. It
   owns issue workspace/branch handoff plans, recovery handoff repair, runtime
   ownership workpad text, configured handoff verification, live PR link

@@ -15,9 +15,10 @@ use jade_symphony::session_registry::{
 use jade_symphony::tracker::TrackerAdapter;
 
 use crate::{
-    append_runtime_supervision_event, compact_evidence, current_time_ms,
-    DEFAULT_SESSION_STALE_AFTER_MS, DEFAULT_SESSION_STATUS_LINES,
+    compact_evidence, current_time_ms, DEFAULT_SESSION_STALE_AFTER_MS, DEFAULT_SESSION_STATUS_LINES,
 };
+
+use super::append_runtime_supervision_event;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ResumePreflightAction {

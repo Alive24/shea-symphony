@@ -21,7 +21,8 @@ use jade_symphony::config::RuntimeConfig;
 use jade_symphony::doctor::ProjectAuditViolation;
 #[cfg(test)]
 use jade_symphony::doctor::{AuditSeverity, ProjectAuditReport};
-use jade_symphony::event_log::{EventLog, EventRecord};
+#[cfg(test)]
+use jade_symphony::event_log::EventLog;
 use jade_symphony::git_handoff::{
     commit_issue_worktree_changes, ensure_pull_request_ready, prepare_issue_worktree,
     publish_issue_pull_request, ProcessHandoffCommandRunner,
@@ -58,10 +59,10 @@ use jade_symphony::review::{
 use jade_symphony::rework::ReworkDiagnostic;
 use jade_symphony::runtime_state::{
     load_runtime_states, mark_runtime_state_updated, record_runtime_retry,
-    remove_runtime_state_for_issue, runtime_state_for_issue, upsert_runtime_state, RuntimeState,
+    remove_runtime_state_for_issue, runtime_state_for_issue, upsert_runtime_state,
 };
 #[cfg(test)]
-use jade_symphony::runtime_state::{RuntimeIssueState, RuntimeTransition};
+use jade_symphony::runtime_state::{RuntimeIssueState, RuntimeState, RuntimeTransition};
 #[cfg(test)]
 use jade_symphony::session_registry::save_session_record;
 #[cfg(test)]
@@ -166,8 +167,8 @@ pub(crate) use lanes::claim::{
 #[cfg(test)]
 use lanes::main_loop::IssueExecutionResult;
 pub(crate) use lanes::main_loop::{
-    apply_live_handoff_pr_link, compact_evidence, execute_issue_once,
-    execute_issue_once_with_workspace_key, handle_run_loop_gate_failure,
+    append_runtime_supervision_event, apply_live_handoff_pr_link, compact_evidence,
+    execute_issue_once, execute_issue_once_with_workspace_key, handle_run_loop_gate_failure,
     handle_run_loop_handoff_failure, linked_pull_requests_contain, main_app_server_smoke_gate,
     main_session_active_recoverable, pull_request_number_from_url, reconcile_pending_main_session,
     run_handoff_verification, run_loop, run_loop_agent_review_handoff_evidence,
@@ -2287,30 +2288,6 @@ fn render_prompt_with_claim(
         prompt.push_str(&format!("- Registry pointer: `{}`\n", claim.registry));
     }
     Ok(prompt)
-}
-
-fn append_runtime_supervision_event(
-    config: &RuntimeConfig,
-    state: Option<&RuntimeState>,
-    event: &str,
-    message: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let log = EventLog::new(config.observability.logs_root.join("jade-symphony.jsonl"));
-    let active_issue = state.and_then(|state| state.active_issue.as_ref());
-    log.append(&EventRecord {
-        event: event.into(),
-        issue_id: active_issue.map(|issue| issue.id.clone()),
-        issue_identifier: active_issue.map(|issue| issue.identifier.clone()),
-        session_id: state.and_then(|state| state.backend_session_id.clone()),
-        profile_id: state.and_then(|state| state.profile_id.clone()),
-        instance_name: state.and_then(|state| state.instance_name.clone()),
-        actor_role: Some(config.identity.actor_role.clone()),
-        actor_label: Some(config.identity.actor_label.clone()),
-        git_author: config.identity.git.author(),
-        tracker_mutation: None,
-        message: message.into(),
-    })?;
-    Ok(())
 }
 
 #[allow(dead_code)]

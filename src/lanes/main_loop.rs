@@ -31,6 +31,7 @@ mod preflight;
 mod runtime;
 mod selection;
 mod session;
+mod supervision;
 pub(crate) use dispatch::{run_loop_dispatch_write_candidates, RunLoopWorkerOutcome};
 pub(crate) use dry_run::print_run_loop_dry_run_actions;
 pub(crate) use execution::{
@@ -60,6 +61,7 @@ pub(crate) use session::{
     run_loop_runtime_state_for_issue, run_loop_runtime_state_with_result,
     run_loop_runtime_state_with_transition, MainSessionReconciliation,
 };
+pub(crate) use supervision::append_runtime_supervision_event;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RunLoopOptions {

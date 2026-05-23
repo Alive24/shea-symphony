@@ -143,6 +143,10 @@ runtime owner:
   decisions. It owns recover-first selection, claim/resume/replan
   classification, live GitHub assignee ownership checks, and no-dispatch idle
   behavior. It does not write tracker state or render handoff evidence.
+- `src/lanes/main_loop/supervision.rs`: Main-loop runtime supervision event
+  logging. It owns JSONL records tied to runtime state, active issues, backend
+  sessions, profiles, instances, and actor identity; tracker mutation audit
+  remains under `src/orchestration/tracker_recovery.rs`.
 - `src/lanes/merge.rs`: Merge once/loop execution, merge queue selection,
   merge-agent conflict repair, merge-specific evidence, and done-state issue
   closure ordering. It keeps timeline-comment evidence before state mutation

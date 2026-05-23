@@ -68,9 +68,8 @@ use jade_symphony::quality_gate::{
     evaluate_issue_with_source_alignment, LlmGateMode, LlmGateOptions,
 };
 use jade_symphony::review::{
-    classify_review_freshness, gemini_cli_headless_args, gemini_prelaunch_health_diagnostic,
-    gemini_review_health_diagnostic, poll_review_job_until_terminal,
-    render_repeated_review_failure_workpad, render_review_freshness_workpad, render_review_workpad,
+    gemini_cli_headless_args, gemini_prelaunch_health_diagnostic, gemini_review_health_diagnostic,
+    poll_review_job_until_terminal, render_repeated_review_failure_workpad, render_review_workpad,
     review_failure_signature, review_gate_decision_for_issue, review_pass_target_state,
     review_run_eligibility, review_worker_key, transition_allowed_for_main_agent,
     transition_allowed_for_review_agent, write_review_job_ledger_record, FakeReviewBackend,
@@ -80,9 +79,6 @@ use jade_symphony::review::{
 };
 #[cfg(test)]
 use jade_symphony::review::{ReviewReworkClass, ReviewStaleReason};
-use jade_symphony::review_status::{
-    load_review_status, render_review_status_human, ReviewStatusOptions,
-};
 use jade_symphony::rework::rework_transition_expected;
 #[cfg(test)]
 use jade_symphony::rework::{render_rework_diagnostic_workpad, ReworkDiagnostic};
@@ -159,6 +155,8 @@ use lanes::merge::{
     MergeOnceOutcome,
 };
 use lanes::merge::{merge_loop, merge_once, merge_preflight_status};
+pub(crate) use lanes::review::ReviewStatusCliOptions;
+use lanes::review::{review_freshness, review_status};
 
 const DEFAULT_RUN_LOOP_BASE_BRANCH: &str = "main";
 const DEFAULT_SESSION_STATUS_LINES: usize = 80;
@@ -2652,35 +2650,6 @@ fn write_terminal_review_claim(
     Ok(())
 }
 
-fn review_freshness(input: ReviewFreshnessInput) -> Result<(), Box<dyn std::error::Error>> {
-    let report = classify_review_freshness(input);
-    println!("review_freshness={:?}", report.decision.kind);
-    println!(
-        "prior_human_review_valid={}",
-        report.decision.prior_human_review_valid
-    );
-    println!(
-        "human_rereview_required={}",
-        report.decision.human_rereview_required
-    );
-    println!(
-        "main_agent_target_state={}",
-        report.decision.main_agent_target_state
-    );
-    println!(
-        "authorized_next_state={}",
-        report
-            .decision
-            .authorized_next_state
-            .as_deref()
-            .unwrap_or("none")
-    );
-    println!("rationale={}", report.decision.rationale);
-    println!("\n--- review freshness evidence ---\n");
-    println!("{}", render_review_freshness_workpad(&report));
-    Ok(())
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ReviewLoopFailureMemory {
     signature: String,
@@ -3104,44 +3073,6 @@ fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Err
         }
     }
 
-    Ok(())
-}
-
-fn review_status(options: ReviewStatusCliOptions) -> Result<(), Box<dyn std::error::Error>> {
-    let workflow = WorkflowDefinition::load(&options.workflow_path)?;
-    let config = RuntimeConfig::from_workflow(&workflow, &options.workflow_path)?;
-    config.validate()?;
-    let adapter = adapter_from_config(&config);
-    let issues = if let Some(issue_ref) = &options.issue_filter {
-        adapter
-            .get_issue(issue_ref)?
-            .map(|issue| vec![issue])
-            .ok_or_else(|| format!("issue not found: {issue_ref}"))?
-    } else {
-        let mut states = config.tracker.active_states.clone();
-        if !states.iter().any(|state| {
-            normalize_state(state) == normalize_state(&config.tracker.state_map.agent_review)
-        }) {
-            states.push(config.tracker.state_map.agent_review.clone());
-        }
-        hydrate_issues_for_review_lane(adapter.as_ref(), adapter.fetch_issues_by_states(&states)?)?
-    };
-    let payload = load_review_status(
-        &config,
-        &issues,
-        &ReviewStatusOptions {
-            issue_filter: options.issue_filter.clone(),
-            recent_limit: options.recent_limit,
-            verbose: options.verbose,
-        },
-        unix_timestamp_ms(),
-    )?;
-
-    if options.json {
-        println!("{}", serde_json::to_string_pretty(&payload)?);
-    } else {
-        println!("{}", render_review_status_human(&payload, options.verbose));
-    }
     Ok(())
 }
 
@@ -10791,15 +10722,6 @@ struct ReviewLoopOptions {
     write: bool,
     fake_outcome: Option<FakeReviewOutcome>,
     max_concurrent: Option<usize>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ReviewStatusCliOptions {
-    workflow_path: PathBuf,
-    issue_filter: Option<String>,
-    recent_limit: usize,
-    verbose: bool,
-    json: bool,
 }
 
 impl ReviewLoopOptions {

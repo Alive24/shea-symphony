@@ -144,6 +144,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             workflow_path,
             json,
         } => autopilot_plan(workflow_path, json),
+        Command::AutopilotLoop { options } => autopilot_loop(options),
         Command::StatusApi {
             workflow_path,
             bind,
@@ -400,6 +401,188 @@ fn autopilot_plan(workflow_path: PathBuf, json: bool) -> Result<(), Box<dyn std:
         println!("{}", render_autopilot_plan_human(&snapshot));
     }
     Ok(())
+}
+
+fn autopilot_loop(options: AutopilotLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
+    let json = options.json;
+    let snapshot = build_autopilot_loop_snapshot(&options)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&snapshot)?);
+    } else {
+        println!("{}", render_autopilot_loop_human(&snapshot));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct AutopilotLoopSnapshot {
+    schema_version: u8,
+    workflow_path: String,
+    write: bool,
+    dry_run: bool,
+    max_iterations: Option<usize>,
+    settings: AutopilotLoopSettings,
+    dispatch_enabled: bool,
+    mutation_allowed: bool,
+    mutation_performed: bool,
+    status: String,
+    reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct AutopilotLoopSettings {
+    poll_interval_ms: u64,
+    main_max_concurrent: usize,
+    review_max_concurrent: usize,
+    merge_max_concurrent: usize,
+    sources: BTreeMap<String, String>,
+}
+
+fn build_autopilot_loop_snapshot(
+    options: &AutopilotLoopOptions,
+) -> Result<AutopilotLoopSnapshot, Box<dyn std::error::Error>> {
+    warn_if_temporary_workflow_path(&options.workflow_path);
+    let workflow = WorkflowDefinition::load(&options.workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &options.workflow_path)?;
+    config.validate()?;
+    let settings = resolve_autopilot_loop_settings(&config, options);
+
+    Ok(AutopilotLoopSnapshot {
+        schema_version: 1,
+        workflow_path: options.workflow_path.display().to_string(),
+        write: options.write,
+        dry_run: !options.write,
+        max_iterations: options.iteration_limit(),
+        settings,
+        dispatch_enabled: false,
+        mutation_allowed: options.write,
+        mutation_performed: false,
+        status: "ready".into(),
+        reason: "bounded foreground skeleton only; lane dispatch is reserved for future slices"
+            .into(),
+    })
+}
+
+fn resolve_autopilot_loop_settings(
+    config: &RuntimeConfig,
+    options: &AutopilotLoopOptions,
+) -> AutopilotLoopSettings {
+    let mut sources = BTreeMap::new();
+    let poll_interval_ms = match options.poll_interval_ms {
+        Some(value) => {
+            sources.insert("poll_interval_ms".into(), "cli:--poll-interval-ms".into());
+            value
+        }
+        None => {
+            sources.insert(
+                "poll_interval_ms".into(),
+                "workflow:polling.interval_ms".into(),
+            );
+            config.polling.interval_ms
+        }
+    };
+    let main_max_concurrent = match options.main_max_concurrent {
+        Some(value) => {
+            sources.insert(
+                "main_max_concurrent".into(),
+                "cli:--main-max-concurrent".into(),
+            );
+            value
+        }
+        None => {
+            sources.insert(
+                "main_max_concurrent".into(),
+                "workflow:main_lane.max_concurrent_agents".into(),
+            );
+            config.agent.max_concurrent_agents
+        }
+    };
+    let review_max_concurrent = match options.review_max_concurrent {
+        Some(value) => {
+            sources.insert(
+                "review_max_concurrent".into(),
+                "cli:--review-max-concurrent".into(),
+            );
+            value
+        }
+        None => {
+            sources.insert(
+                "review_max_concurrent".into(),
+                "workflow:review_lane.max_concurrent_workers".into(),
+            );
+            config.review.max_concurrent_workers
+        }
+    };
+    let merge_max_concurrent = match options.merge_max_concurrent {
+        Some(value) => {
+            sources.insert(
+                "merge_max_concurrent".into(),
+                "cli:--merge-max-concurrent".into(),
+            );
+            value
+        }
+        None => {
+            sources.insert(
+                "merge_max_concurrent".into(),
+                "workflow:merge_lane.max_concurrent_workers".into(),
+            );
+            config.merge_lane.max_concurrent_workers
+        }
+    };
+
+    AutopilotLoopSettings {
+        poll_interval_ms,
+        main_max_concurrent,
+        review_max_concurrent,
+        merge_max_concurrent,
+        sources,
+    }
+}
+
+fn render_autopilot_loop_human(snapshot: &AutopilotLoopSnapshot) -> String {
+    let source = |key: &str| {
+        snapshot
+            .settings
+            .sources
+            .get(key)
+            .map(String::as_str)
+            .unwrap_or("unknown")
+    };
+    let iterations = snapshot
+        .max_iterations
+        .map(|limit| limit.to_string())
+        .unwrap_or_else(|| "unbounded".into());
+    [
+        "Autopilot Loop".to_string(),
+        format!("workflow={}", snapshot.workflow_path),
+        format!("mode={}", if snapshot.write { "write" } else { "dry-run" }),
+        format!("max_iterations={iterations}"),
+        format!(
+            "poll_interval_ms={} source={}",
+            snapshot.settings.poll_interval_ms,
+            source("poll_interval_ms")
+        ),
+        format!(
+            "main_max_concurrent={} source={}",
+            snapshot.settings.main_max_concurrent,
+            source("main_max_concurrent")
+        ),
+        format!(
+            "review_max_concurrent={} source={}",
+            snapshot.settings.review_max_concurrent,
+            source("review_max_concurrent")
+        ),
+        format!(
+            "merge_max_concurrent={} source={}",
+            snapshot.settings.merge_max_concurrent,
+            source("merge_max_concurrent")
+        ),
+        format!("dispatch_enabled={}", snapshot.dispatch_enabled),
+        format!("mutation_allowed={}", snapshot.mutation_allowed),
+        format!("mutation_performed={}", snapshot.mutation_performed),
+        format!("status={} reason={}", snapshot.status, snapshot.reason),
+    ]
+    .join("\n")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -13247,6 +13430,9 @@ enum Command {
         workflow_path: PathBuf,
         json: bool,
     },
+    AutopilotLoop {
+        options: AutopilotLoopOptions,
+    },
     StatusApi {
         workflow_path: PathBuf,
         bind: SocketAddr,
@@ -13513,6 +13699,19 @@ struct RunLoopOptions {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct AutopilotLoopOptions {
+    workflow_path: PathBuf,
+    max_iterations: Option<usize>,
+    once: bool,
+    write: bool,
+    poll_interval_ms: Option<u64>,
+    main_max_concurrent: Option<usize>,
+    review_max_concurrent: Option<usize>,
+    merge_max_concurrent: Option<usize>,
+    json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ProjectStateOptions {
     workflow_path: PathBuf,
     display: DisplayMode,
@@ -13622,6 +13821,16 @@ impl RunLoopOptions {
     }
 }
 
+impl AutopilotLoopOptions {
+    fn iteration_limit(&self) -> Option<usize> {
+        if self.once {
+            Some(1)
+        } else {
+            self.max_iterations
+        }
+    }
+}
+
 impl Command {
     fn parse(args: Vec<String>) -> Result<Self, String> {
         if matches!(
@@ -13699,7 +13908,7 @@ enum CliCommand {
     #[command(
         next_help_heading = "Lane orchestration",
         name = "autopilot",
-        about = "Read-only all-lane planning preflight"
+        about = "All-lane autopilot planning and bounded loop skeleton"
     )]
     Autopilot(AutopilotArgs),
     Status(StatusArgs),
@@ -13755,6 +13964,11 @@ enum AutopilotCommandArgs {
         about = "Plan Main, Review, and Merge lanes without mutating tracker or runtime state"
     )]
     Plan(AutopilotPlanArgs),
+    #[command(
+        about = "Resolve all-lane loop defaults and run a bounded foreground skeleton",
+        long_about = "`autopilot loop` is the future write-mode all-lane supervisor entrypoint. In this skeleton it resolves workflow defaults and explicit CLI overrides, requires a bounded iteration flag, and does not dispatch Main, Review, or Merge work. Dry-run mode performs no mutation; future mutating behavior must be unlocked with explicit `--write`."
+    )]
+    Loop(AutopilotLoopArgs),
 }
 
 #[derive(Debug, Args)]
@@ -13762,6 +13976,49 @@ struct AutopilotPlanArgs {
     #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
     workflow_path: PathBuf,
     #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct AutopilotLoopArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(long, help = "Maximum foreground skeleton ticks to run")]
+    max_iterations: Option<usize>,
+    #[arg(long, help = "Shortcut for --max-iterations 1")]
+    once: bool,
+    #[arg(
+        long,
+        help = "Allow future mutating loop behavior; this skeleton still dispatches no lane work"
+    )]
+    write: bool,
+    #[arg(
+        long = "dry-run",
+        conflicts_with = "write",
+        help = "Resolve settings without allowing mutation; this is the default mode"
+    )]
+    _dry_run: bool,
+    #[arg(
+        long = "poll-interval-ms",
+        help = "Override polling.interval_ms from workflow front matter"
+    )]
+    poll_interval_ms: Option<u64>,
+    #[arg(
+        long = "main-max-concurrent",
+        help = "Override main_lane.max_concurrent_agents from workflow front matter"
+    )]
+    main_max_concurrent: Option<usize>,
+    #[arg(
+        long = "review-max-concurrent",
+        help = "Override review_lane.max_concurrent_workers from workflow front matter"
+    )]
+    review_max_concurrent: Option<usize>,
+    #[arg(
+        long = "merge-max-concurrent",
+        help = "Override merge_lane.max_concurrent_workers from workflow front matter"
+    )]
+    merge_max_concurrent: Option<usize>,
+    #[arg(long, help = "Render the resolved skeleton snapshot as JSON")]
     json: bool,
 }
 
@@ -14756,6 +15013,31 @@ fn run_loop_command(args: RunLoopArgs) -> Result<Command, String> {
     })
 }
 
+fn autopilot_loop_command(args: AutopilotLoopArgs) -> Result<Command, String> {
+    if args.max_iterations == Some(0)
+        || args.poll_interval_ms == Some(0)
+        || args.main_max_concurrent == Some(0)
+        || args.review_max_concurrent == Some(0)
+        || args.merge_max_concurrent == Some(0)
+        || (!args.once && args.max_iterations.is_none())
+    {
+        return Err(usage());
+    }
+    Ok(Command::AutopilotLoop {
+        options: AutopilotLoopOptions {
+            workflow_path: args.workflow_path,
+            max_iterations: args.max_iterations,
+            once: args.once,
+            write: args.write,
+            poll_interval_ms: args.poll_interval_ms,
+            main_max_concurrent: args.main_max_concurrent,
+            review_max_concurrent: args.review_max_concurrent,
+            merge_max_concurrent: args.merge_max_concurrent,
+            json: args.json,
+        },
+    })
+}
+
 fn merge_loop_command(args: MergeLoopArgs) -> Result<Command, String> {
     if args.max_iterations == Some(0)
         || args.max_concurrent == Some(0)
@@ -14924,6 +15206,7 @@ impl TryFrom<Cli> for Command {
                             workflow_path: args.workflow_path,
                             json: args.json,
                         }),
+                        AutopilotCommandArgs::Loop(args) => autopilot_loop_command(args),
                     },
                     CliCommand::Status(args) => match args.command {
                         StatusCommandArgs::Show(show) => Ok(Self::Plan {
@@ -15793,6 +16076,225 @@ mod tests {
 
         assert_eq!(workflow_path, PathBuf::from("workflows/jade-symphony.md"));
         assert!(json);
+    }
+
+    fn autopilot_loop_options(workflow_path: PathBuf) -> AutopilotLoopOptions {
+        AutopilotLoopOptions {
+            workflow_path,
+            max_iterations: Some(1),
+            once: false,
+            write: false,
+            poll_interval_ms: None,
+            main_max_concurrent: None,
+            review_max_concurrent: None,
+            merge_max_concurrent: None,
+            json: false,
+        }
+    }
+
+    fn autopilot_loop_config() -> RuntimeConfig {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\npolling:\n  interval_ms: 1234\nmain_lane:\n  max_concurrent_agents: 5\nreview_lane:\n  max_concurrent_workers: 6\nmerge_lane:\n  max_concurrent_workers: 7\n---\nPrompt",
+        )
+        .unwrap();
+        RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap()
+    }
+
+    #[test]
+    fn parses_grouped_autopilot_loop_command() {
+        let Command::AutopilotLoop { options } = parse(&[
+            "autopilot",
+            "loop",
+            "workflows/jade-symphony.md",
+            "--max-iterations",
+            "1",
+            "--poll-interval-ms",
+            "2500",
+            "--main-max-concurrent",
+            "4",
+            "--review-max-concurrent",
+            "2",
+            "--merge-max-concurrent",
+            "1",
+            "--write",
+            "--json",
+        ]) else {
+            panic!("expected autopilot loop command");
+        };
+
+        assert_eq!(
+            options.workflow_path,
+            PathBuf::from("workflows/jade-symphony.md")
+        );
+        assert_eq!(options.max_iterations, Some(1));
+        assert_eq!(options.poll_interval_ms, Some(2500));
+        assert_eq!(options.main_max_concurrent, Some(4));
+        assert_eq!(options.review_max_concurrent, Some(2));
+        assert_eq!(options.merge_max_concurrent, Some(1));
+        assert!(options.write);
+        assert!(options.json);
+    }
+
+    #[test]
+    fn autopilot_loop_defaults_come_from_workflow_front_matter() {
+        let config = autopilot_loop_config();
+        let options = autopilot_loop_options(PathBuf::from("/tmp/WORKFLOW.md"));
+
+        let settings = resolve_autopilot_loop_settings(&config, &options);
+
+        assert_eq!(settings.poll_interval_ms, 1234);
+        assert_eq!(settings.main_max_concurrent, 5);
+        assert_eq!(settings.review_max_concurrent, 6);
+        assert_eq!(settings.merge_max_concurrent, 7);
+        assert_eq!(
+            settings.sources.get("poll_interval_ms").map(String::as_str),
+            Some("workflow:polling.interval_ms")
+        );
+        assert_eq!(
+            settings
+                .sources
+                .get("main_max_concurrent")
+                .map(String::as_str),
+            Some("workflow:main_lane.max_concurrent_agents")
+        );
+        assert_eq!(
+            settings
+                .sources
+                .get("review_max_concurrent")
+                .map(String::as_str),
+            Some("workflow:review_lane.max_concurrent_workers")
+        );
+        assert_eq!(
+            settings
+                .sources
+                .get("merge_max_concurrent")
+                .map(String::as_str),
+            Some("workflow:merge_lane.max_concurrent_workers")
+        );
+    }
+
+    #[test]
+    fn autopilot_loop_cli_overrides_win_over_workflow_defaults() {
+        let config = autopilot_loop_config();
+        let mut options = autopilot_loop_options(PathBuf::from("/tmp/WORKFLOW.md"));
+        options.poll_interval_ms = Some(900);
+        options.main_max_concurrent = Some(8);
+        options.review_max_concurrent = Some(9);
+        options.merge_max_concurrent = Some(10);
+
+        let settings = resolve_autopilot_loop_settings(&config, &options);
+
+        assert_eq!(settings.poll_interval_ms, 900);
+        assert_eq!(settings.main_max_concurrent, 8);
+        assert_eq!(settings.review_max_concurrent, 9);
+        assert_eq!(settings.merge_max_concurrent, 10);
+        assert_eq!(
+            settings.sources.get("poll_interval_ms").map(String::as_str),
+            Some("cli:--poll-interval-ms")
+        );
+        assert_eq!(
+            settings
+                .sources
+                .get("main_max_concurrent")
+                .map(String::as_str),
+            Some("cli:--main-max-concurrent")
+        );
+        assert_eq!(
+            settings
+                .sources
+                .get("review_max_concurrent")
+                .map(String::as_str),
+            Some("cli:--review-max-concurrent")
+        );
+        assert_eq!(
+            settings
+                .sources
+                .get("merge_max_concurrent")
+                .map(String::as_str),
+            Some("cli:--merge-max-concurrent")
+        );
+    }
+
+    #[test]
+    fn autopilot_loop_dry_run_keeps_mutation_gate_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let workflow_path = temp.path().join("WORKFLOW.md");
+        std::fs::write(
+            &workflow_path,
+            "---\ntracker:\n  kind: memory\npolling:\n  interval_ms: 321\n---\nPrompt",
+        )
+        .unwrap();
+        let options = autopilot_loop_options(workflow_path);
+
+        let snapshot = build_autopilot_loop_snapshot(&options).unwrap();
+
+        assert!(!snapshot.write);
+        assert!(snapshot.dry_run);
+        assert!(!snapshot.dispatch_enabled);
+        assert!(!snapshot.mutation_allowed);
+        assert!(!snapshot.mutation_performed);
+    }
+
+    #[test]
+    fn rejects_unbounded_autopilot_loop_for_now() {
+        assert!(Command::parse(vec![
+            "autopilot".into(),
+            "loop".into(),
+            "WORKFLOW.md".into()
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn rejects_zero_autopilot_loop_overrides() {
+        assert!(Command::parse(vec![
+            "autopilot".into(),
+            "loop".into(),
+            "WORKFLOW.md".into(),
+            "--max-iterations".into(),
+            "0".into(),
+        ])
+        .is_err());
+        assert!(Command::parse(vec![
+            "autopilot".into(),
+            "loop".into(),
+            "WORKFLOW.md".into(),
+            "--max-iterations".into(),
+            "1".into(),
+            "--poll-interval-ms".into(),
+            "0".into(),
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn rejects_conflicting_autopilot_loop_modes() {
+        assert!(Command::parse(vec![
+            "autopilot".into(),
+            "loop".into(),
+            "WORKFLOW.md".into(),
+            "--max-iterations".into(),
+            "1".into(),
+            "--dry-run".into(),
+            "--write".into(),
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn autopilot_help_distinguishes_plan_from_loop() {
+        let autopilot = help_text(&["autopilot", "--help"]);
+        assert!(autopilot.contains("Plan Main, Review, and Merge lanes without mutating"));
+        assert!(autopilot.contains("Resolve all-lane loop defaults"));
+
+        let plan = help_text(&["autopilot", "plan", "--help"]);
+        assert!(plan.contains("without mutating tracker or runtime state"));
+
+        let loop_help = help_text(&["autopilot", "loop", "--help"]);
+        assert!(loop_help.contains("future write-mode all-lane supervisor"));
+        assert!(loop_help.contains("--write"));
+        assert!(loop_help.contains("--poll-interval-ms"));
     }
 
     #[test]

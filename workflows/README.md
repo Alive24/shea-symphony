@@ -9,6 +9,7 @@ Use it for live Project #9 operations:
 
 ```bash
 cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --write
+cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 cargo run -- forge validate --workflow workflows/jade-symphony.md --status Todo --title "<title>" --body-file /private/tmp/issue.md
 cargo run -- forge validate --workflow workflows/jade-symphony.md --issue '#123' --status Todo --title "<candidate title>" --body-file /private/tmp/candidate.md
 cargo run -- forge create --workflow workflows/jade-symphony.md --status Todo --title "<title>" --body-file /private/tmp/issue.md --assignee Alive24 --write
@@ -62,3 +63,10 @@ Lane prompt files:
 Older examples may keep inline prompt bodies for compatibility. Do not add a
 second normal dogfood workflow for a specific lane; lane selection belongs in
 the command controller and this workflow config.
+
+`autopilot loop` is the bounded foreground skeleton for the future all-lane
+supervisor. It reads `polling.interval_ms`, `main_lane.max_concurrent_agents`,
+`review_lane.max_concurrent_workers`, and `merge_lane.max_concurrent_workers`
+from this workflow unless explicit CLI overrides are provided. The current
+skeleton does not dispatch lane work; future mutating behavior must require
+`--write`.

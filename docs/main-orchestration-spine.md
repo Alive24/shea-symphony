@@ -261,8 +261,15 @@ single catch-all file:
 
 - `main()` and `run()`;
 - the top-level dispatch match over `cli::Command`;
-- small binary-scoped helper shims and re-exports that have not yet moved to
-  library or orchestration modules.
+
+Library Review code should be grouped by review-domain responsibility:
+
+- `src/review.rs`: Review report/job/backend core, Gemini backend health,
+  review gate decisions, workpad rendering, ledger records, and transition
+  authority checks that are still shared across Review command/lane surfaces.
+- `src/review/freshness.rs`: Review freshness inputs, decisions, and workpad
+  rendering for preserving or invalidating prior Human Review evidence after
+  Rework.
 
 Binary integration-style tests live under `src/main/` instead of inline in the
 entrypoint:

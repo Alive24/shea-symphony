@@ -147,6 +147,8 @@ single catch-all file:
 - `src/tracker/linear.rs`: Linear tracker backend, including fixture/live
   dispatch, Linear GraphQL query and mutation documents, Linear issue parsing,
   state-name mapping, and Linear-specific integration-gap reporting.
+- `src/tracker/workpad.rs`: shared tracker workpad marker and merge logic for
+  evidence blocks that may be written by GitHub or Linear backends.
 
 `src/main.rs` still owns:
 

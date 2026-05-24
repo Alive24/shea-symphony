@@ -172,10 +172,11 @@ single catch-all file:
   dependency refs, rich issue evidence merging, Project field extraction, and
   linked PR discovery.
 - `src/tracker/github/project_v2.rs`: GitHub Project v2 Project item and
-  targeted issue response parsing, REST overlay merging, REST field update
-  payloads, and REST project path construction.
+  targeted issue response parsing plus Project add-mutation response parsing.
 - `src/tracker/github/project_v2/metadata.rs`: Project owner typing,
   metadata/cache types, GraphQL metadata parsing, and refreshed field lookup.
+- `src/tracker/github/project_v2/rest.rs`: REST Project v2 metadata parsing,
+  item overlays, REST field update payloads, and REST project path construction.
 - `src/tracker/github/queries.rs`: GitHub Project v2 GraphQL query and mutation
   documents, page-size constants, and read-mode shaping for queue scans versus
   rich issue evidence.

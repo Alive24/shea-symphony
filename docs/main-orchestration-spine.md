@@ -144,6 +144,8 @@ single catch-all file:
 - `src/tracker.rs`: shared tracker trait, tracker factory, GitHub Project v2
   adapter methods, shared normalization/parsing helpers, and fixture loading
   used by tracker backends.
+- `src/tracker/error.rs`: shared tracker error type plus Project-state failure
+  classification used by CLI readback, retry handling, doctor output, and tests.
 - `src/tracker/memory.rs`: in-memory fixture tracker backend for dry-run and
   test surfaces.
 - `src/tracker/github/cli.rs`: GitHub CLI invocation, auth-mode detection,

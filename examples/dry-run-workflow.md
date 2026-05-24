@@ -47,7 +47,7 @@ main_lane:
     Todo: 2
     Rework: 1
 codex:
-  command: codex app-server
+  command: codex app-server -c 'service_tier="fast"'
 claude:
   command: claude
 review_lane:

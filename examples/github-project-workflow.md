@@ -45,7 +45,7 @@ main_lane:
   max_turns: 3
   max_retry_backoff_ms: 300000
 codex:
-  command: codex app-server
+  command: codex app-server -c 'service_tier="fast"'
 claude:
   command: claude
 review_lane:

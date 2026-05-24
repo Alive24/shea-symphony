@@ -37,7 +37,7 @@ non-fast-forward cases still fail closed; issue worktrees and PR branches are
 not refreshed by this path.
 
 Main Agent execution defaults to the Codex app-server backend through
-`main_lane.backend: codex`, `codex.command: codex app-server`, and
+`main_lane.backend: codex`, `codex.command: codex app-server -c 'service_tier="fast"'`, and
 `codex.approval_policy: never`. A bounded write tick creates or resumes the
 issue worktree, runs one app-server turn, records prompt/protocol/stderr/
 normalized-event artifacts, persists a backend session registry record, and

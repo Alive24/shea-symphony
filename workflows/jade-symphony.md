@@ -56,7 +56,7 @@ tmux:
   review_agent_command: /opt/homebrew/bin/gemini
   session_prefix: jade
 codex:
-  command: codex app-server
+  command: codex app-server -c 'service_tier="fast"'
   reasoning_effort: high
   approval_policy: never
 claude:

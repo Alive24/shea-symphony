@@ -52,7 +52,7 @@ fn skill_suite_documents_app_server_first_manual_boundaries() {
     assert!(human_review.contains("Do not force English"));
     assert!(manual_main.contains("cargo run -- project state workflows/jade-symphony.md"));
     assert!(manual_main.contains("main_lane.backend: codex"));
-    assert!(manual_main.contains("codex.command: codex app-server"));
+    assert!(manual_main.contains("codex.command: codex app-server -c 'service_tier=\"fast\"'"));
     assert!(manual_merge.contains("cargo run -- merge loop workflows/jade-symphony.md"));
     assert!(manual_merge.contains("app-server"));
     assert!(!manual_merge.contains("merge-once"));

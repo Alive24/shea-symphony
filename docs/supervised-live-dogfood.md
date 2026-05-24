@@ -100,7 +100,7 @@ budget. Drop to `main loop`, `review loop`, or `merge loop` only for focused
 debugging, break-glass recovery, or deliberately lane-specific dogfood.
 
 That write tick requires a real main-agent backend. The canonical workflow uses
-`main_lane.backend: codex` with `codex.command: codex app-server` and
+`main_lane.backend: codex` with `codex.command: codex app-server -c 'service_tier="fast"'` and
 `codex.approval_policy: never`, so a successful tick starts one app-server turn,
 records the prompt artifact, protocol log, stderr log, normalized event
 artifact, session registry entry, and runtime state, then proceeds to

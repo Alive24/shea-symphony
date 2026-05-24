@@ -144,7 +144,7 @@ The Main Agent must stop at `Agent Review`. Draft PRs must not be handed off.
 ## Runtime Boundary
 
 The canonical loop path is app-server-first: `main_lane.backend: codex` with
-`codex.command: codex app-server`. Manual Main work should preserve the same
+`codex.command: codex app-server -c 'service_tier="fast"'`. Manual Main work should preserve the same
 single-issue claim, workspace, workpad, PR, linked-PR, and `Agent Review`
 handoff semantics as `main loop --write`; it is not a looser alternate
 workflow. Use `session start --lane main --run <RUN_ID> --write` only when an

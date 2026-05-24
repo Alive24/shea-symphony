@@ -276,7 +276,7 @@ readback so GitHub can establish a native issue/PR relationship instead of
 relying only on a timeline comment.
 
 The canonical Main runtime is Codex app-server: `main_lane.backend: codex` plus
-`codex.command: codex app-server` and `codex.approval_policy: never`, matching
+`codex.command: codex app-server -c 'service_tier="fast"'` and `codex.approval_policy: never`, matching
 the current local app-server approval-policy schema. `autopilot loop` itself is
 neither backend; it is the foreground CLI supervisor that invokes Main, Review,
 and Merge lane commands. `main loop --write` records prompt, protocol, stderr,

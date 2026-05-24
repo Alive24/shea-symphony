@@ -138,6 +138,16 @@ have a narrow shared responsibility:
   workflow path operator warnings, and explicit write-intent gating shared by
   commands and lanes.
 
+Tracker adapter code should stay backend-oriented instead of accumulating in a
+single catch-all file:
+
+- `src/tracker.rs`: shared tracker trait, tracker factory, memory tracker,
+  GitHub Project v2 adapter, shared normalization/parsing helpers, and fixture
+  loading used by tracker backends.
+- `src/tracker/linear.rs`: Linear tracker backend, including fixture/live
+  dispatch, Linear GraphQL query and mutation documents, Linear issue parsing,
+  state-name mapping, and Linear-specific integration-gap reporting.
+
 `src/main.rs` still owns:
 
 - `main()` and `run()`;

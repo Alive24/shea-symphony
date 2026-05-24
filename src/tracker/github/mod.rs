@@ -1,7 +1,16 @@
+mod cli;
 mod queries;
 
 pub use queries::GithubProjectReadMode;
 
+pub(in crate::tracker) use cli::{
+    gh_available, github_auth_gap, github_auth_mode, github_graphql_auth_smoke, run_gh_api_json,
+    run_gh_graphql, GithubCliAccess,
+};
+#[cfg(test)]
+pub(in crate::tracker) use cli::{
+    project_state_error_is_retryable, run_command_with_timeout, GithubAuthMode,
+};
 pub(super) use queries::{
     github_issue_comments_query, github_issue_evidence_query, github_issue_project_item_query,
     github_project_metadata_query, github_project_query, GITHUB_ADD_COMMENT_MUTATION,

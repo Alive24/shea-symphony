@@ -144,6 +144,9 @@ single catch-all file:
 - `src/tracker.rs`: shared tracker trait, tracker factory, memory tracker,
   GitHub Project v2 adapter, shared normalization/parsing helpers, and fixture
   loading used by tracker backends.
+- `src/tracker/github/cli.rs`: GitHub CLI invocation, auth-mode detection,
+  retry/timeout handling, and JSON/status response validation used by the
+  Project v2 adapter.
 - `src/tracker/github/queries.rs`: GitHub Project v2 GraphQL query and mutation
   documents, page-size constants, and read-mode shaping for queue scans versus
   rich issue evidence.

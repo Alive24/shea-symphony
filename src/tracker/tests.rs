@@ -2,6 +2,7 @@ use super::*;
 use crate::workflow::WorkflowDefinition;
 use std::cell::Cell;
 use std::path::Path;
+use std::time::Duration;
 
 fn issue(state: &str) -> TrackerIssue {
     TrackerIssue {

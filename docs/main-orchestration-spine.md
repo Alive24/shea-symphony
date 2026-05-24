@@ -119,11 +119,14 @@ clear owner:
 Library Doctor checks should be grouped by the invariant they audit:
 
 - `src/doctor.rs`: Project Doctor report types, Project issue state checks,
-  shared Doctor helpers, and repair workpad rendering.
+  and shared Doctor helpers.
 - `src/doctor/lane_claims.rs`: Doctor lane-claim field diagnostics. It owns
   structured `Main Agent`, `Review Agent`, and `Merging Agent` Project-field
   checks, legacy claim warnings, and run-id evidence matching against runtime
   state and session registry snapshots.
+- `src/doctor/report.rs`: Doctor output and repair evidence rendering. It owns
+  human/JSON audit report output, repair candidate filters, Doctor repair
+  workpad text, and the local timestamp formatter used by those evidence notes.
 - `src/doctor/runtime.rs`: Doctor runtime/session diagnostics. It owns
   runtime-state tracker consistency checks, stale runtime warnings, session
   registry issue attribution, session attention warnings, and runtime/session

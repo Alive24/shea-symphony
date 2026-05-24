@@ -3,8 +3,8 @@ use std::process::Command as ProcessCommand;
 use std::thread;
 use std::time::Duration;
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::workflow::WorkflowDefinition;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::workflow::WorkflowDefinition;
 
 use crate::orchestration::{enforce_canonical_checkout_before_write, single_line};
 

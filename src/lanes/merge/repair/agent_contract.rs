@@ -1,7 +1,7 @@
-use jade_symphony::git_handoff::CommandOutput;
-use jade_symphony::lane_claim::LaneClaim;
-use jade_symphony::model::{AgentEvent, TrackerIssue};
-use jade_symphony::workflow::{AgentLane, WorkflowDefinition};
+use shea_symphony::git_handoff::CommandOutput;
+use shea_symphony::lane_claim::LaneClaim;
+use shea_symphony::model::{AgentEvent, TrackerIssue};
+use shea_symphony::workflow::{AgentLane, WorkflowDefinition};
 
 use crate::lanes::claim::render_prompt_with_claim;
 use crate::orchestration::single_line;
@@ -16,7 +16,7 @@ pub(super) fn merge_agent_conflict_repair_prompt(
     expected_base: &str,
     conflict_summary: &str,
     mechanical_output: &CommandOutput,
-) -> Result<String, jade_symphony::prompt::PromptError> {
+) -> Result<String, shea_symphony::prompt::PromptError> {
     let mut prompt = render_prompt_with_claim(
         workflow.prompt_for_lane(AgentLane::MergeAgent),
         issue,

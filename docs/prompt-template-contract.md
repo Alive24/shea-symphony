@@ -2,9 +2,9 @@
 
 Status: strict subset, not full Liquid compatibility.
 
-Jade Symphony renders the workflow prompt before launching an agent backend. The
+Shea Symphony renders the workflow prompt before launching an agent backend. The
 official reference requires strict template rendering for `issue` and `attempt`
-context and records Liquid-compatible semantics as sufficient. Jade Symphony currently
+context and records Liquid-compatible semantics as sufficient. Shea Symphony currently
 implements a deliberate subset so prompt failures are easy to diagnose during
 dogfood.
 
@@ -26,7 +26,7 @@ numbers, objects, and booleans, render as JSON text.
 
 ## Supported Tags
 
-Jade Symphony supports one level of basic conditionals:
+Shea Symphony supports one level of basic conditionals:
 
 ```liquid
 {% if issue.description %}

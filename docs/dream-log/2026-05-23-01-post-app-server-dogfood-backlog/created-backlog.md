@@ -5,7 +5,7 @@ Dream run: `2026-05-23-01-post-app-server-dogfood-backlog`
 All seeds were created through:
 
 ```bash
-cargo run -- forge create --workflow workflows/jade-symphony.md --status backlog --assignee Alive24 --write
+cargo run -- forge create --workflow workflows/shea-symphony.md --status backlog --assignee Alive24 --write
 ```
 
 ## Created Issues
@@ -29,7 +29,7 @@ cargo run -- forge create --workflow workflows/jade-symphony.md --status backlog
   - Theme: parent-owned UAT evidence after child issues skip direct Human Review.
   - Confidence: Medium.
 - #386 `Backlog: define scoped cross-repo Dream source inventory`
-  - Theme: safe Issac/Jade conversation-log source window.
+  - Theme: safe Issac/Shea conversation-log source window.
   - Confidence: High.
 - #387 `Backlog: consolidate stale Issac tmux ADR into app-server runtime history`
   - Theme: historical ADR consolidation after app-server supersedes tmux default.
@@ -44,5 +44,5 @@ cargo run -- forge create --workflow workflows/jade-symphony.md --status backlog
 ## Verification
 
 - Forge output for each seed reported `forge_create=ok` and `project_status=Backlog`.
-- `gh issue list --repo Alive24/jade-symphony --state open --limit 20 --json number,title,url,updatedAt` showed #380-#389 as the ten most recently updated open issues.
-- `cargo run -- project state workflows/jade-symphony.md` after creation reported `Backlog:27`, up from the pre-run `Backlog:17`.
+- `gh issue list --repo Alive24/shea-symphony --state open --limit 20 --json number,title,url,updatedAt` showed #380-#389 as the ten most recently updated open issues.
+- `cargo run -- project state workflows/shea-symphony.md` after creation reported `Backlog:27`, up from the pre-run `Backlog:17`.

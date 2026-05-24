@@ -2,7 +2,7 @@
 tracker:
   kind: github_project_v2
   owner: Alive24
-  repo: jade-symphony
+  repo: shea-symphony
   project_owner: Alive24
   project_number: 1
   status_field: Status
@@ -33,11 +33,11 @@ tracker:
     assignees: []
   workpad:
     source: issue_comment
-    marker: "<!-- jade-symphony-workpad -->"
+    marker: "<!-- shea-symphony-workpad -->"
 polling:
   interval_ms: 5000
 workspace:
-  root: /tmp/jade-symphony-dry-run-workspaces
+  root: /tmp/shea-symphony-dry-run-workspaces
 main_lane:
   backend: dry-run
   max_concurrent_agents: 2
@@ -60,7 +60,7 @@ observability:
   render_interval_ms: 16
 ---
 
-You are working on Jade Symphony issue {{ issue.identifier }}.
+You are working on Shea Symphony issue {{ issue.identifier }}.
 
 Title: {{ issue.title }}
 State: {{ issue.state }}

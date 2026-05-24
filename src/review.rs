@@ -414,7 +414,7 @@ pub fn render_repeated_review_failure_workpad(
     let decision = review_gate_decision_for_actor(job, ReviewActor::IndependentReviewAgent);
     let diagnostic = gemini_review_health_diagnostic(job);
     let mut lines = vec![
-        "## Jade Symphony Agent Review Run".to_string(),
+        "## Shea Symphony Agent Review Run".to_string(),
         String::new(),
         "### Repeated Backend Failure".into(),
         format!("- Generated at: `{}`", current_gmt_timestamp()),
@@ -1056,7 +1056,7 @@ mod tests {
             priority: None,
             branch_name: None,
             linked_pull_requests: vec![crate::model::LinkedPullRequest {
-                url: Some("https://github.com/Alive24/jade-symphony/pull/1".into()),
+                url: Some("https://github.com/Alive24/shea-symphony/pull/1".into()),
                 state: Some("OPEN".into()),
                 is_draft: Some(false),
                 ..Default::default()
@@ -1255,7 +1255,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let workspace = temp.path().join("workspace");
         fs::create_dir_all(&workspace).unwrap();
-        let backend = GeminiCliReviewBackend::new("jade-missing-gemini-command");
+        let backend = GeminiCliReviewBackend::new("shea-missing-gemini-command");
         let request = ReviewRequest {
             issue: issue(),
             prompt: "Review this".into(),
@@ -1266,7 +1266,7 @@ mod tests {
         let error = backend.start(request).unwrap_err().to_string();
 
         assert!(error.contains("review backend startup failed"));
-        assert!(error.contains("configured command: `jade-missing-gemini-command`"));
+        assert!(error.contains("configured command: `shea-missing-gemini-command`"));
         assert!(error.contains("resolved executable: not found in worker PATH"));
         assert!(error.contains("absolute Gemini path"));
         assert!(error.contains("retry: rerun `review loop`"));
@@ -1490,7 +1490,7 @@ mod tests {
     #[test]
     fn prelaunch_health_detects_missing_absolute_gemini_command() {
         let diagnostic = gemini_prelaunch_health_diagnostic(
-            "/definitely/missing/jade-symphony-gemini",
+            "/definitely/missing/shea-symphony-gemini",
             Some("gemini-3.1-pro-preview"),
             &["run_shell_command".into()],
         )
@@ -1903,11 +1903,11 @@ mod tests {
 
         assert!(body.contains("Generated at: `"));
         assert!(body.contains("GMT`"));
-        assert!(body.contains("## Jade Symphony Agent Review Run"));
+        assert!(body.contains("## Shea Symphony Agent Review Run"));
         assert!(body.contains("- Lane: `review`"));
         assert!(body.contains("- Actor role: `review_agent`"));
         assert!(body.contains("- Run ID: `gemini-1`"));
-        assert!(body.contains("- PR: `https://github.com/Alive24/jade-symphony/pull/1`"));
+        assert!(body.contains("- PR: `https://github.com/Alive24/shea-symphony/pull/1`"));
         assert!(body.contains("Target state after review routing: `human_review`"));
         assert!(body.contains("- Result: `PassedToHumanReview`"));
         assert!(body.contains(
@@ -2236,7 +2236,7 @@ mod tests {
         issue
             .linked_pull_requests
             .push(crate::model::LinkedPullRequest {
-                url: Some("https://github.com/Alive24/jade-symphony/pull/1".into()),
+                url: Some("https://github.com/Alive24/shea-symphony/pull/1".into()),
                 state: Some("OPEN".into()),
                 is_draft: Some(false),
                 ..Default::default()
@@ -2280,7 +2280,7 @@ mod tests {
         issue
             .linked_pull_requests
             .push(crate::model::LinkedPullRequest {
-                url: Some("https://github.com/Alive24/jade-symphony/pull/1".into()),
+                url: Some("https://github.com/Alive24/shea-symphony/pull/1".into()),
                 state: Some("OPEN".into()),
                 is_draft: Some(true),
                 ..Default::default()

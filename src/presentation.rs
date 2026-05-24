@@ -81,7 +81,7 @@ pub fn render_run_loop_panel(panel: RunLoopPanel<'_>) -> String {
         });
     }
 
-    render_panel("JADE SYMPHONY OPERATOR PANEL", sections)
+    render_panel("SHEA SYMPHONY OPERATOR PANEL", sections)
 }
 
 pub fn render_project_state_panel(issues: &[TrackerIssue], integration_gaps: &[String]) -> String {
@@ -119,7 +119,7 @@ pub fn render_project_state_panel(issues: &[TrackerIssue], integration_gaps: &[S
         });
     }
 
-    render_panel("JADE SYMPHONY PROJECT PANEL", sections)
+    render_panel("SHEA SYMPHONY PROJECT PANEL", sections)
 }
 
 pub fn render_doctor_panel(report: &ProjectAuditReport) -> String {
@@ -175,7 +175,7 @@ pub fn render_doctor_panel(report: &ProjectAuditReport) -> String {
         });
     }
 
-    render_panel("JADE SYMPHONY DOCTOR PANEL", sections)
+    render_panel("SHEA SYMPHONY DOCTOR PANEL", sections)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -329,7 +329,7 @@ mod tests {
             selected_count: 1,
         });
 
-        assert!(rendered.contains("JADE SYMPHONY OPERATOR PANEL"));
+        assert!(rendered.contains("SHEA SYMPHONY OPERATOR PANEL"));
         assert!(rendered.contains("selected: #196 Add TUI foundation"));
         assert!(rendered.contains("branch: feature/issue-196-tui"));
         assert!(rendered.contains("integration_gap"));
@@ -343,7 +343,7 @@ mod tests {
 
         let rendered = render_project_state_panel(&[issue, other], &[]);
 
-        assert!(rendered.contains("JADE SYMPHONY PROJECT PANEL"));
+        assert!(rendered.contains("SHEA SYMPHONY PROJECT PANEL"));
         assert!(rendered.contains("Todo: 1"));
         assert!(rendered.contains("Agent Review: 1"));
     }
@@ -367,7 +367,7 @@ mod tests {
 
         let rendered = render_doctor_panel(&report);
 
-        assert!(rendered.contains("JADE SYMPHONY DOCTOR PANEL"));
+        assert!(rendered.contains("SHEA SYMPHONY DOCTOR PANEL"));
         assert!(rendered.contains("#57 blocker"));
         assert!(rendered.contains("agent_review_missing_pr_handoff"));
     }

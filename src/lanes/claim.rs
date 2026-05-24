@@ -1,10 +1,10 @@
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::lane_claim::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::lane_claim::{
     LaneClaim, LaneClaimActor, LaneClaimLane, LaneClaimSource, LaneClaimState,
 };
-use jade_symphony::model::{native_subissue_gate_blocker, normalize_state, TrackerIssue};
-use jade_symphony::prompt::{render_prompt, PromptError};
-use jade_symphony::tracker::{ProjectFieldAssignment, TrackerAdapter};
+use shea_symphony::model::{native_subissue_gate_blocker, normalize_state, TrackerIssue};
+use shea_symphony::prompt::{render_prompt, PromptError};
+use shea_symphony::tracker::{ProjectFieldAssignment, TrackerAdapter};
 
 use crate::orchestration::{
     append_tracker_mutation_audit, current_time_ms, set_project_field_with_recovery,
@@ -67,7 +67,7 @@ impl PoolClaimEligibility {
 pub(crate) fn worker_identity(config: &RuntimeConfig, lane: WorkerLane) -> String {
     let label = config.identity.actor_label.trim();
     if label.is_empty() {
-        format!("jade-symphony-{}", lane.label())
+        format!("shea-symphony-{}", lane.label())
     } else {
         label.to_string()
     }

@@ -2,7 +2,7 @@
 
 ## Theme
 
-Recent dogfood moved Jade Symphony from tmux-first Main and merge-agent runtime toward app-server-first execution, while parent/subissue and Review/Merge lanes continued to mature. This topic captures second-order backlog candidates surfaced by that transition rather than duplicating the primary implementation issues.
+Recent dogfood moved Shea Symphony from tmux-first Main and merge-agent runtime toward app-server-first execution, while parent/subissue and Review/Merge lanes continued to mature. This topic captures second-order backlog candidates surfaced by that transition rather than duplicating the primary implementation issues.
 
 ## Evidence Anchors
 

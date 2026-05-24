@@ -1,22 +1,22 @@
-# Jade Symphony Implementation Notes
+# Shea Symphony Implementation Notes
 
 Status: initial implementation notes and parity roadmap.
 
 ## Source Order
 
-Jade Symphony is implemented from these local sources, in priority order:
+Shea Symphony is implemented from these local sources, in priority order:
 
 1. `docs/bootstrap/references/openai-symphony/SPEC.md`
 2. `docs/bootstrap/references/openai-symphony/elixir/README.md`
 3. `docs/bootstrap/references/openai-symphony/elixir/WORKFLOW.md`
 4. `docs/bootstrap/references/openai-symphony/elixir/lib/`
-5. `docs/bootstrap/JADE_SYMPHONY_SPEC.md`
+5. `docs/bootstrap/SHEA_SYMPHONY_SPEC.md`
 6. `docs/bootstrap/TRACKER_GITHUB_PROJECT_V2.md`
-7. `docs/bootstrap/JADE_WORKFLOW.md`
+7. `docs/bootstrap/SHEA_WORKFLOW.md`
 8. `docs/bootstrap/ISSUE_QUALITY_GATE_TEMPLATE.md`
 
 Files under `docs/bootstrap/references/openai-symphony` are official reference
-inputs and must not be edited by Jade Symphony implementation work.
+inputs and must not be edited by Shea Symphony implementation work.
 
 ## Official Feature Inventory
 
@@ -64,9 +64,9 @@ Feature-parity baseline from the Elixir implementation:
 - `LogFile`, logging docs, token-accounting docs, CLI guardrail acknowledgement,
   optional `--logs-root` and `--port`, and test-only memory tracker.
 
-## Jade Symphony Extensions To Preserve
+## Shea Symphony Extensions To Preserve
 
-Jade Symphony-specific bootstrap docs require:
+Shea Symphony-specific bootstrap docs require:
 
 - GitHub Project v2 as the first concrete tracker adapter.
 - Future Linear adapter preserved behind the same normalized tracker abstraction.
@@ -100,7 +100,7 @@ Initial crate layout:
   decisions, snapshots, retries, and agent events.
 - `tracker`: trait plus dry-run memory, GitHub Project v2, and Linear adapters.
   GitHub/Linear API calls stay inside adapters.
-- `quality_gate`: executable-issue classifier based on the Jade Symphony issue contract.
+- `quality_gate`: executable-issue classifier based on the Shea Symphony issue contract.
 - `issue_forge`: candidate/draft/validation structures and clarification loop
   primitives.
 - `workspace`: safe workspace keys, root containment, lifecycle hooks, and future
@@ -127,7 +127,7 @@ GitHub Project v2 adapter:
   and normalizes GitHub Issues into `TrackerIssue`.
 - supports ProjectV2 status option lookup and update by option ID.
 - supports workpad upsert through issue comments with
-  `<!-- jade-symphony-workpad -->`.
+  `<!-- shea-symphony-workpad -->`.
 - treats same-state status updates as adapter-local no-ops and exposes
   tracker-level claim decisions for `Todo`/`Rework`, active `In Progress`, and
   externally changed states.
@@ -189,7 +189,7 @@ eligibility. Orchestrator must not dispatch a `Todo` issue until the gate return
 `Ready` or `Ready With Assumptions`; critical missing context routes to
 `Need to Clarify`.
 
-The initial gate checks for the Jade Symphony template's required sections and classifies
+The initial gate checks for the Shea Symphony template's required sections and classifies
 missing execution-critical fields. Later iterations can add source-alignment,
 duplication, and tracker-write repair flows without changing orchestrator shape.
 
@@ -226,7 +226,7 @@ duplication, and tracker-write repair flows without changing orchestrator shape.
 | Full Liquid-compatible prompt engine | `SPEC.md`, `elixir/lib/symphony_elixir/prompt_builder.ex` | Partial | Initial slice uses a documented strict subset for `issue.*`, `attempt`, and basic `if` / `else` blocks; unsupported tags and unknown variables fail. | Replace with a vetted Liquid crate or complete parser behind `agent::PromptRenderer`. |
 | GitHub Project v2 live GraphQL adapter | `TRACKER_GITHUB_PROJECT_V2.md` | Partial | Initial adapter is dry-run/fixture capable to proceed without credentials. | Add GraphQL client, field/option cache, mutations, and credential-gated integration tests. |
 | Linear live adapter | `SPEC.md`, `elixir/lib/symphony_elixir/linear/*` | Partial | Linear now has a live GraphQL adapter and fixture mode, but credential-gated smoke tests have not run in this environment and schema-sensitive mutations still need live confirmation. | Add skipped-by-default live smoke tests for reads, state update, workpad upsert, follow-up creation, and project assignment. |
-| Workspace lifecycle hooks with timeout/remote SSH parity | `SPEC.md`, `elixir/lib/symphony_elixir/workspace.ex`, `SPEC.md Appendix A` | Partial | Local hooks now support timeout handling, stdout/stderr capture, `before_remove`, and safe cleanup. Jade Symphony also parses optional `worker.ssh_hosts` and `worker.max_concurrent_agents_per_host` config for future scheduling, but live SSH execution is deferred. | Add SSH worker trait, host scheduling, remote workspace handling, and runtime reconciliation cleanup wiring. |
+| Workspace lifecycle hooks with timeout/remote SSH parity | `SPEC.md`, `elixir/lib/symphony_elixir/workspace.ex`, `SPEC.md Appendix A` | Partial | Local hooks now support timeout handling, stdout/stderr capture, `before_remove`, and safe cleanup. Shea Symphony also parses optional `worker.ssh_hosts` and `worker.max_concurrent_agents_per_host` config for future scheduling, but live SSH execution is deferred. | Add SSH worker trait, host scheduling, remote workspace handling, and runtime reconciliation cleanup wiring. |
 | Runtime workflow reload with last-known-good config | `SPEC.md`, `elixir/lib/symphony_elixir/workflow_store.ex` | Partial | `WorkflowStore` can reload an explicit workflow path and preserve the last known good workflow after parse/load failures, but CLI/runtime commands still perform one-shot loads. | Wire the store into long-running polling runtimes, then add watcher/polling reload policy and status diagnostics. |
 | Retry timers, stall detection, and worker supervision | `SPEC.md`, `elixir/lib/symphony_elixir/orchestrator.ex` | Partial | Initial orchestrator creates deterministic dispatch plans and retry metadata only. | Add async runtime worker lifecycle, timers, continuation retry, and stall restart tests. |
 | Runtime state persistence and resume wiring | `SPEC.md`, `elixir/lib/symphony_elixir/orchestrator.ex` | Partial | Tracker-neutral state model and file helpers exist, but the run loop does not yet write each transition or resume from it. | Wire runtime state into claim, workspace preparation, backend session start, event logging, handoff, and interruption recovery. |

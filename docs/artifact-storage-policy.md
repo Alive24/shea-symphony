@@ -1,6 +1,6 @@
 # Runtime Artifact Storage Policy
 
-Jade Symphony keeps GitHub Project and issue workpads as the shared source of
+Shea Symphony keeps GitHub Project and issue workpads as the shared source of
 truth. Local files are execution artifacts: useful for resume, debugging, and
 operator inspection, but not a substitute for tracker evidence.
 
@@ -19,26 +19,26 @@ operator inspection, but not a substitute for tracker evidence.
 | Disposable scratch file | Disposable | `artifacts/<namespace>/<profile>/scratch/` |
 | Canonical checkout quarantine | Operator decision required | `artifacts/<namespace>/<profile>/scratch/canonical-checkout-quarantine/` |
 
-The default artifact root is `~/.jade-symphony/artifacts`. Workflows may set:
+The default artifact root is `~/.shea-symphony/artifacts`. Workflows may set:
 
 ```yaml
 artifacts:
-  root: $JADE_SYMPHONY_ARTIFACT_ROOT
-  namespace: Alive24/jade-symphony
+  root: $SHEA_SYMPHONY_ARTIFACT_ROOT
+  namespace: Alive24/shea-symphony
 ```
 
-When `JADE_SYMPHONY_ARTIFACT_ROOT` is unset, Jade Symphony resolves that token
+When `SHEA_SYMPHONY_ARTIFACT_ROOT` is unset, Shea Symphony resolves that token
 to the default artifact root. Path suffixes are supported, so workflow roots can
 derive related locations from one operator override:
 
 ```yaml
 workspace:
-  root: $JADE_SYMPHONY_ARTIFACT_ROOT/Alive24/jade-symphony/default/worktrees
+  root: $SHEA_SYMPHONY_ARTIFACT_ROOT/Alive24/shea-symphony/default/worktrees
 observability:
-  logs_root: $JADE_SYMPHONY_ARTIFACT_ROOT/Alive24/jade-symphony/default/logs
+  logs_root: $SHEA_SYMPHONY_ARTIFACT_ROOT/Alive24/shea-symphony/default/logs
 ```
 
-If `namespace` is omitted, Jade Symphony derives one from `tracker.owner` and
+If `namespace` is omitted, Shea Symphony derives one from `tracker.owner` and
 `tracker.repo`, or from `tracker.project_slug`, or falls back to `local`.
 Profiles add the final namespace segment so multiple worker identities do not
 share worktrees, logs, or runtime state by accident.
@@ -65,7 +65,7 @@ worktree, artifact location, or `.gitignore` rule.
 - Rendered agent prompts are runtime artifacts. They must not be written into
   issue worktrees by default, because prompt scratch files make PR handoff look
   dirty before source changes are ready. Backends receive the rendered prompt on
-  stdin and, when a path is needed, through `JADE_SYMPHONY_PROMPT_PATH` pointing
+  stdin and, when a path is needed, through `SHEA_SYMPHONY_PROMPT_PATH` pointing
   at the logs prompt artifact.
 - Secrets must not be promoted into repo docs or logged artifacts.
 
@@ -84,8 +84,8 @@ true:
 The command never deletes files:
 
 ```bash
-cargo run -- clean plan workflows/jade-symphony.md
-cargo run -- clean plan workflows/jade-symphony.md
+cargo run -- clean plan workflows/shea-symphony.md
+cargo run -- clean plan workflows/shea-symphony.md
 ```
 
 `clean audit` is also read-only. It classifies configured local artifacts and
@@ -103,7 +103,7 @@ workspaces by persistence action:
   not be deleted automatically.
 
 ```bash
-cargo run -- clean audit workflows/jade-symphony.md
+cargo run -- clean audit workflows/shea-symphony.md
 ```
 
 Use the report to decide what to remove manually or in a future explicit

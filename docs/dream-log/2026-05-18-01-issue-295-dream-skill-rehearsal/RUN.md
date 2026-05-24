@@ -7,15 +7,15 @@ Operator context: Issue #295 Main Agent implementation
 
 ## Source Inventory
 
-- `cargo run -- project-state workflows/jade-symphony.md`
-- `cargo run -- project-issue workflows/jade-symphony.md '#295' --json`
-- `cargo run -- doctor workflows/jade-symphony.md`
-- `cargo run -- inspect workflows/jade-symphony.md`
-- `cargo run -- gate workflows/jade-symphony.md '#295'`
-- `cargo run -- workspace show workflows/jade-symphony.md '#295'`
-- `cargo run -- main claim workflows/jade-symphony.md '#295' --worker "Codex Manual Main" --write`
-- `cargo run -- session start workflows/jade-symphony.md '#295' --lane main --run 20260518T0455Z-issue295-main-5de7 --write`
-- `skills/jade-symphony/suite/jade-symphony-issue-forge-reflect/SKILL.md`
+- `cargo run -- project-state workflows/shea-symphony.md`
+- `cargo run -- project-issue workflows/shea-symphony.md '#295' --json`
+- `cargo run -- doctor workflows/shea-symphony.md`
+- `cargo run -- inspect workflows/shea-symphony.md`
+- `cargo run -- gate workflows/shea-symphony.md '#295'`
+- `cargo run -- workspace show workflows/shea-symphony.md '#295'`
+- `cargo run -- main claim workflows/shea-symphony.md '#295' --worker "Codex Manual Main" --write`
+- `cargo run -- session start workflows/shea-symphony.md '#295' --lane main --run 20260518T0455Z-issue295-main-5de7 --write`
+- `skills/shea-symphony/suite/shea-symphony-issue-forge-reflect/SKILL.md`
 - `docs/operator-dogfood.md`
 - `docs/dogfood-readiness.md`
 - `docs/cli-command-reference.md`
@@ -57,7 +57,7 @@ evidence links/excerpts, which this run log and topic log now provide.
 Slept enough: no.
 
 Reason: this was a small issue-scoped rehearsal, not a full broad Dream over
-recent Jade Symphony history. The next useful Dream theme is review and handoff
+recent Shea Symphony history. The next useful Dream theme is review and handoff
 evidence drift across Agent Review issues, especially where doctor reports
 missing PR handoff evidence despite prior workpad or PR context.
 

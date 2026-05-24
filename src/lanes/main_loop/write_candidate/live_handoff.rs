@@ -1,11 +1,11 @@
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::git_handoff::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::git_handoff::{
     commit_issue_worktree_changes, ensure_pull_request_ready, publish_issue_pull_request,
     LiveWorktreeResult, ProcessHandoffCommandRunner,
 };
-use jade_symphony::handoff::IssueHandoffPlan;
-use jade_symphony::model::{LatestStatus, TrackerIssue};
-use jade_symphony::tracker::TrackerAdapter;
+use shea_symphony::handoff::IssueHandoffPlan;
+use shea_symphony::model::{LatestStatus, TrackerIssue};
+use shea_symphony::tracker::TrackerAdapter;
 
 use crate::orchestration::{
     append_tracker_mutation_audit, latest_status_for_issue, print_latest_status,

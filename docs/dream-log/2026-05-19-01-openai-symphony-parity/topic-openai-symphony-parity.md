@@ -3,7 +3,7 @@
 ## Theme
 
 The OpenAI Symphony specification and Elixir reference implementation expose a
-set of runtime behaviors that Jade Symphony has partially prepared for but has
+set of runtime behaviors that Shea Symphony has partially prepared for but has
 not yet made durable in the polling runtime.
 
 ## Evidence Anchors
@@ -36,7 +36,7 @@ not yet made durable in the polling runtime.
 - Backlog seed: #321
 - Dream confidence: Medium
 - Why kept: the reference treats app-server continuation, token/rate-limit
-  accounting, and max-turn behavior as orchestration fundamentals, while Jade
+  accounting, and max-turn behavior as orchestration fundamentals, while Shea
   currently has a subprocess backend plus a first-slice event normalizer.
 - Promotion path: Issue Forge should choose the first bounded slice, likely a
   protocol/fixture/runtime-snapshot slice before any unattended execution
@@ -46,9 +46,9 @@ not yet made durable in the polling runtime.
 
 - Backlog seed: #322
 - Dream confidence: Medium
-- Why kept: Jade has a registry descriptor for dynamic tools, but the reference
+- Why kept: Shea has a registry descriptor for dynamic tools, but the reference
   has executable `linear_graphql` behavior. The scope needs tracker authority
-  boundaries because Jade's tracker is GitHub Project v2, not Linear.
+  boundaries because Shea's tracker is GitHub Project v2, not Linear.
 - Promotion path: Issue Forge should decide whether the first slice is a
   descriptor-to-executor seam, a GitHub-project equivalent, or an explicit
   unsupported-tool diagnostic.
@@ -57,7 +57,7 @@ not yet made durable in the polling runtime.
 
 - Backlog seed: #323
 - Dream confidence: High
-- Why kept: both the spec and current Jade notes already point to this exact
+- Why kept: both the spec and current Shea notes already point to this exact
   runtime gap. The missing behavior is narrow enough to seed cleanly without
   promoting.
 - Promotion path: Issue Forge should resolve the runtime surfaces that own
@@ -67,7 +67,7 @@ not yet made durable in the polling runtime.
 
 - Backlog seed: none
 - Dream confidence: Watchlist
-- Why deferred: the reference has a Phoenix API/dashboard, but Jade explicitly
+- Why deferred: the reference has a Phoenix API/dashboard, but Shea explicitly
   says terminal/status and JSONL come first. `status serve --once` exists as a
   local inspection bridge, so a persistent service should wait until runtime
   snapshots are live-fed by worker orchestration.

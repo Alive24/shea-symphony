@@ -1,16 +1,16 @@
 use std::path::Path;
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::event_log::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::event_log::{
     EventLog, EventRecord, TrackerMutationAuditInput, TrackerMutationAuditRecord,
 };
-use jade_symphony::git_handoff::{CommandOutput, HandoffCommandRunner};
-use jade_symphony::lane_claim::LaneClaim;
-use jade_symphony::merge_lane::{
+use shea_symphony::git_handoff::{CommandOutput, HandoffCommandRunner};
+use shea_symphony::lane_claim::LaneClaim;
+use shea_symphony::merge_lane::{
     fetch_pull_request_status_with_recheck, merge_pull_request, MergeLaneDecision,
 };
-use jade_symphony::model::{normalize_state, TrackerIssue};
-use jade_symphony::tracker::{
+use shea_symphony::model::{normalize_state, TrackerIssue};
+use shea_symphony::tracker::{
     classify_project_state_error, classify_project_state_failure_message, ProjectFieldAssignment,
     ProjectStateFailureKind, TrackerAdapter, TrackerError,
 };
@@ -43,7 +43,7 @@ pub(crate) fn append_tracker_mutation_audit(
         reason: audit.reason.into(),
         timestamp_ms: current_time_ms(),
     });
-    let log = EventLog::new(config.observability.logs_root.join("jade-symphony.jsonl"));
+    let log = EventLog::new(config.observability.logs_root.join("shea-symphony.jsonl"));
     if let Err(error) = log.append(&EventRecord {
         event: "tracker_mutation".into(),
         issue_id: None,
@@ -84,7 +84,7 @@ impl TrackerMutationOutcome {
 
 pub(crate) fn tracker_recovery_marker(key: &str) -> String {
     format!(
-        "<!-- jade-symphony-tracker-recovery key={} -->",
+        "<!-- shea-symphony-tracker-recovery key={} -->",
         recovery_key_component(key)
     )
 }

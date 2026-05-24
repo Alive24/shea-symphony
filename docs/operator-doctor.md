@@ -1,8 +1,8 @@
-# Jade Symphony Doctor Operator Spec
+# Shea Symphony Doctor Operator Spec
 
 Status: Doctor v1
 
-The Jade Symphony Doctor skill is a repo-owned Codex operator workflow for
+The Shea Symphony Doctor skill is a repo-owned Codex operator workflow for
 diagnosing stuck tracker, PR, claim, worktree, runtime, and skill-install
 symptoms. It is intentionally read-first and confirmation-gated.
 
@@ -20,7 +20,7 @@ Use Doctor v1 when:
 - a lane handoff cannot proceed because linked PR, draft PR, claim, session, or
   runtime evidence is incomplete.
 - cleanup could discard useful worktree or runtime evidence.
-- local Jade Symphony skill install symptoms are blocking an operator, while
+- local Shea Symphony skill install symptoms are blocking an operator, while
   `doctor` owns read-only integrity warnings and #242 owns install/update
   writes.
 - installable skill suite packaging questions appear, while dated suite
@@ -46,7 +46,7 @@ claim repair, worktree cleanup, runtime cleanup, local skill writes, or PR ready
 transitions. Those actions require an explicit operator request, an explicit
 operator confirmation, or a documented command with a `--write` flag.
 
-Jade Symphony CLI remains the normal authority for Project status, claim locks,
+Shea Symphony CLI remains the normal authority for Project status, claim locks,
 relationships, workpads, and workflow status. Raw `gh project` or GraphQL writes
 are break-glass repairs only when the CLI lacks a surface for the exact repair;
 the triage note must record why the break-glass path was used.
@@ -56,37 +56,37 @@ the triage note must record why the break-glass path was used.
 For all Doctor sessions:
 
 ```bash
-cargo run -- project state workflows/jade-symphony.md
-cargo run -- doctor workflows/jade-symphony.md
-cargo run -- debug workflows/jade-symphony.md
+cargo run -- project state workflows/shea-symphony.md
+cargo run -- doctor workflows/shea-symphony.md
+cargo run -- debug workflows/shea-symphony.md
 ```
 
 For a selected issue:
 
 ```bash
-cargo run -- project issue workflows/jade-symphony.md '#258' --json
-cargo run -- doctor workflows/jade-symphony.md repair '#258'
+cargo run -- project issue workflows/shea-symphony.md '#258' --json
+cargo run -- doctor workflows/shea-symphony.md repair '#258'
 ```
 
 For an issue that might still be dispatchable:
 
 ```bash
-cargo run -- project inspect workflows/jade-symphony.md '#258'
+cargo run -- project inspect workflows/shea-symphony.md '#258'
 ```
 
 For worktree or session ambiguity:
 
 ```bash
-cargo run -- workspace show workflows/jade-symphony.md '#258'
-cargo run -- session list workflows/jade-symphony.md
+cargo run -- workspace show workflows/shea-symphony.md '#258'
+cargo run -- session list workflows/shea-symphony.md
 git worktree list --porcelain
 ```
 
 For ordinary PR or issue text:
 
 ```bash
-gh issue view 258 --repo Alive24/jade-symphony
-gh pr view 123 --repo Alive24/jade-symphony --json number,isDraft,url,state
+gh issue view 258 --repo Alive24/shea-symphony
+gh pr view 123 --repo Alive24/shea-symphony --json number,isDraft,url,state
 ```
 
 Use those raw reads only as diagnostic content fallbacks when the CLI lacks the
@@ -122,7 +122,7 @@ operator-authored notes with `project timeline-comment`; do not use
 `project workpad`, which is reserved for the persistent Main Agent Workpad.
 
 ```markdown
-## Jade Symphony Doctor Triage
+## Shea Symphony Doctor Triage
 
 - Issue: `#258`
 - Lane: `doctor`
@@ -138,9 +138,9 @@ operator-authored notes with `project timeline-comment`; do not use
 - Secondary classifications: `stale_lane_claim`
 - Diagnosis: The issue is blocked because ...
 - Evidence read:
-  - `cargo run -- project state workflows/jade-symphony.md`: `trusted=true`
-  - `cargo run -- project issue workflows/jade-symphony.md '#258' --json`: ...
-  - `cargo run -- doctor workflows/jade-symphony.md repair '#258'`: ...
+  - `cargo run -- project state workflows/shea-symphony.md`: `trusted=true`
+  - `cargo run -- project issue workflows/shea-symphony.md '#258' --json`: ...
+  - `cargo run -- doctor workflows/shea-symphony.md repair '#258'`: ...
 - Recommended next step: ...
 - Explicit repair recommendation: ...
 - Can execute in this session: `yes` | `no`
@@ -192,7 +192,7 @@ diagnosis-only step into hidden implementation or merge authority.
 
 ## Relationship To #256 And #242
 
-`doctor` verifies local Jade Symphony skill install health by reporting
+`doctor` verifies local Shea Symphony skill install health by reporting
 warning-level Codex and Gemini root findings for aliases, symlinks, missing
 files, stale metadata, and stale naming. Doctor triage may classify a symptom as
 `skill_install_symptom`, collect evidence, show target paths, and recommend a

@@ -7,8 +7,8 @@ workflow. They are read-only / dry-run only in this slice, and ordinary
 ## Prerequisites
 
 - `gh` is installed.
-- `gh auth status` succeeds for the `Alive24/jade-symphony` repository.
-- The workflow at `workflows/jade-symphony.md` points at the intended
+- `gh auth status` succeeds for the `Alive24/shea-symphony` repository.
+- The workflow at `workflows/shea-symphony.md` points at the intended
   GitHub Project v2 tracker.
 
 No tokens or secrets are printed by the tests.
@@ -16,18 +16,18 @@ No tokens or secrets are printed by the tests.
 ## Run
 
 ```bash
-JADE_LIVE_GITHUB_SMOKE=1 cargo test --test live_github_smoke
+SHEA_LIVE_GITHUB_SMOKE=1 cargo test --test live_github_smoke
 ```
 
 The smoke runs:
 
-- `jade-symphony project inspect workflows/jade-symphony.md '#<issue>'`
-- `jade-symphony project state workflows/jade-symphony.md`
-- `jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --dry-run`
+- `shea-symphony project inspect workflows/shea-symphony.md '#<issue>'`
+- `shea-symphony project state workflows/shea-symphony.md`
+- `shea-symphony main loop workflows/shea-symphony.md --max-iterations 1 --dry-run`
 
 ## Expected Behavior
 
-- Without `JADE_LIVE_GITHUB_SMOKE=1`, the tests print a skip message and pass.
+- Without `SHEA_LIVE_GITHUB_SMOKE=1`, the tests print a skip message and pass.
 - With the flag set, missing or unusable `gh` authentication is a test failure.
 - The smoke must not mutate GitHub Project state, workpad comments, issues, or
   PRs.

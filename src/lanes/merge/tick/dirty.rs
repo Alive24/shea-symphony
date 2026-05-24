@@ -1,13 +1,13 @@
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::git_handoff::ProcessHandoffCommandRunner;
-use jade_symphony::lane_claim::LaneClaim;
-use jade_symphony::merge_lane::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::git_handoff::ProcessHandoffCommandRunner;
+use shea_symphony::lane_claim::LaneClaim;
+use shea_symphony::merge_lane::{
     merge_lane_workpad_with_repair_evidence, repair_dirty_pull_request, MergeLaneDecision,
     PullRequestMergeStatus,
 };
-use jade_symphony::model::{LinkedPullRequest, TrackerIssue};
-use jade_symphony::tracker::TrackerAdapter;
-use jade_symphony::workflow::WorkflowDefinition;
+use shea_symphony::model::{LinkedPullRequest, TrackerIssue};
+use shea_symphony::tracker::TrackerAdapter;
+use shea_symphony::workflow::WorkflowDefinition;
 
 use super::super::evidence::{
     record_merge_timeline_comment_with_recovery, set_merge_state_with_recovery,

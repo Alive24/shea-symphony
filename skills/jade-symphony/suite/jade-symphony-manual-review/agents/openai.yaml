@@ -1,3 +1,0 @@
-display_name: Jade Symphony Manual Review
-short_description: Run an evidence-backed manual Review Agent pass for Jade Symphony.
-default_prompt: Review one Jade Symphony issue or PR as an independent Review Agent, preserve Main evidence, evaluate issue checklists from evidence, and route only through review commands.

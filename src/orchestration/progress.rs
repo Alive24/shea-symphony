@@ -1,5 +1,5 @@
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::progress::ProgressHeartbeatSpec;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::progress::ProgressHeartbeatSpec;
 
 pub(crate) fn progress_spec_for_config(
     config: &RuntimeConfig,
@@ -16,5 +16,5 @@ pub(crate) fn progress_spec_with_event_log(
     wait: &str,
 ) -> ProgressHeartbeatSpec {
     progress_spec_for_config(config, wait)
-        .event_log_path(config.observability.logs_root.join("jade-symphony.jsonl"))
+        .event_log_path(config.observability.logs_root.join("shea-symphony.jsonl"))
 }

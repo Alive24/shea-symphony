@@ -1,6 +1,6 @@
 # Codex App-Server Transport
 
-Jade Symphony supports a minimal local Codex app-server transport for Codex-backed agent runs. This transport is a stdio JSON-RPC harness, not a persistent daemon, remote worker, or full Symphony dynamic-tool implementation.
+Shea Symphony supports a minimal local Codex app-server transport for Codex-backed agent runs. This transport is a stdio JSON-RPC harness, not a persistent daemon, remote worker, or full Symphony dynamic-tool implementation.
 
 ## Supported Protocol Subset
 

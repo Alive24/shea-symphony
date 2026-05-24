@@ -22,7 +22,7 @@ pub use report::{
     render_project_audit_report_json,
 };
 pub use skills::{
-    append_local_skill_install_doctor_violations, default_jade_symphony_skill_targets,
+    append_local_skill_install_doctor_violations, default_shea_symphony_skill_targets,
     SkillInstallTarget,
 };
 

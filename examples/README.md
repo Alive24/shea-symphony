@@ -1,11 +1,11 @@
-# Jade Symphony Example Workflows
+# Shea Symphony Example Workflows
 
 This directory contains fixture, demo, and compatibility workflows for
-rehearsing Jade Symphony behavior. Most examples are fixture-backed and
+rehearsing Shea Symphony behavior. Most examples are fixture-backed and
 credential-free.
 
 The normal repo dogfood workflow is not in this directory. Use
-`workflows/jade-symphony.md` for live Project #9 operator runs. The live GitHub
+`workflows/shea-symphony.md` for live Project #9 operator runs. The live GitHub
 Project examples remain as compatibility/reference material for debugging older
 commands and testing specific lanes.
 
@@ -26,8 +26,8 @@ memory-backed. They do not mutate live GitHub Project v2 state.
 | Workflow | Purpose | Notes |
 | --- | --- | --- |
 | `linear-fixture-workflow.md` | Linear adapter fixture backed by `fixtures/linear-issues.json`. | Credential-free; does not prove live Linear readiness. |
-| `github-project-workflow.md` | Legacy live GitHub Project v2 template for Project #9. | Compatibility/reference workflow; prefer `workflows/jade-symphony.md` for normal operator runs. |
-| `github-project-gemini-review-workflow.md` | Legacy live GitHub Project v2 Review Agent template for Project #9. | Compatibility/reference workflow; `workflows/jade-symphony.md` carries the normal review config. |
+| `github-project-workflow.md` | Legacy live GitHub Project v2 template for Project #9. | Compatibility/reference workflow; prefer `workflows/shea-symphony.md` for normal operator runs. |
+| `github-project-gemini-review-workflow.md` | Legacy live GitHub Project v2 Review Agent template for Project #9. | Compatibility/reference workflow; `workflows/shea-symphony.md` carries the normal review config. |
 
 ## Agent Backend Fixtures
 
@@ -72,10 +72,10 @@ Issue Forge examples:
 
 ## Live Boundary
 
-Use `../workflows/jade-symphony.md` for normal live Project #9 implementation,
+Use `../workflows/shea-symphony.md` for normal live Project #9 implementation,
 review, merge, smoke, inspect, and Issue Forge commands. The legacy live
-examples default to `~/.jade-symphony/artifacts` when
-`JADE_SYMPHONY_ARTIFACT_ROOT` is unset, and support setting that environment
+examples default to `~/.shea-symphony/artifacts` when
+`SHEA_SYMPHONY_ARTIFACT_ROOT` is unset, and support setting that environment
 variable to move durable worktrees, logs, and review artifacts together.
 
 Do not treat fixture success as live readiness. Before any live write, inspect

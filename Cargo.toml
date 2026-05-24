@@ -1,8 +1,8 @@
 [package]
-name = "jade-symphony"
+name = "shea-symphony"
 version = "0.1.0"
 edition = "2021"
-description = "Rust implementation of an OpenAI Symphony-style orchestration harness with Jade Symphony extensions"
+description = "Rust implementation of an OpenAI Symphony-style orchestration harness with Shea Symphony extensions"
 license = "Apache-2.0"
 
 [dependencies]

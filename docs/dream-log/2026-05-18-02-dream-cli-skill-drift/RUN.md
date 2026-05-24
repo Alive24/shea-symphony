@@ -10,21 +10,21 @@ Operator context: sustained Dream run over recent Project state, Doctor warnings
 - `git status --short --branch`
 - `git fetch origin`
 - `git merge --ff-only origin/main`
-- `cargo run -- project state workflows/jade-symphony.md`
-- `cargo run -- doctor workflows/jade-symphony.md`
-- `cargo run -- debug workflows/jade-symphony.md`
-- `cargo run -- project inspect workflows/jade-symphony.md '#243'`
-- `cargo run -- project issue workflows/jade-symphony.md '#319' --json`
-- `cargo run -- project issue workflows/jade-symphony.md '#320' --json`
+- `cargo run -- project state workflows/shea-symphony.md`
+- `cargo run -- doctor workflows/shea-symphony.md`
+- `cargo run -- debug workflows/shea-symphony.md`
+- `cargo run -- project inspect workflows/shea-symphony.md '#243'`
+- `cargo run -- project issue workflows/shea-symphony.md '#319' --json`
+- `cargo run -- project issue workflows/shea-symphony.md '#320' --json`
 - Open Backlog readback for #305, #306, #307, #308, #316, #317, #318, #319, and #320.
 - Todo/readiness readback for #314 and #315.
-- `gh issue list --repo Alive24/jade-symphony --state open --json number,title,url --limit 80`
+- `gh issue list --repo Alive24/shea-symphony --state open --json number,title,url --limit 80`
 - `docs/dream-log/INDEX.md`
 - `docs/dream-log/2026-05-18-01-issue-295-dream-skill-rehearsal/RUN.md`
 - `docs/dream-log/2026-05-18-01-issue-295-dream-skill-rehearsal/topic-runtime-recovery.md`
-- `skills/jade-symphony/suite/jade-symphony-issue-forge-dream/SKILL.md`
-- `skills/jade-symphony/suite/`
-- Recent event log and tmux evidence under `~/.jade-symphony/artifacts/Alive24/jade-symphony/default/logs/`.
+- `skills/shea-symphony/suite/shea-symphony-issue-forge-dream/SKILL.md`
+- `skills/shea-symphony/suite/`
+- Recent event log and tmux evidence under `~/.shea-symphony/artifacts/Alive24/shea-symphony/default/logs/`.
 
 ## Round Summary
 
@@ -84,7 +84,7 @@ Two concrete gaps remained worth seeding:
   and drift from repo-owned suite copies.
 - Integration gaps remain: Project v2 PR linking is still comment/autolink
   based, and live Project writes still go through `gh api graphql` under
-  Jade Symphony CLI `--write` commands.
+  Shea Symphony CLI `--write` commands.
 
 ## Gemini Review Status
 
@@ -105,5 +105,5 @@ warnings and reduce duplicate Backlog pressure.
 
 Dream-created issues stayed in `Backlog`. None were promoted to Todo, claimed by
 Main/Review/Merge, or treated as lane authority. Project reads and issue
-creation went through the Jade Symphony CLI where Project state or mutation was
+creation went through the Shea Symphony CLI where Project state or mutation was
 involved.

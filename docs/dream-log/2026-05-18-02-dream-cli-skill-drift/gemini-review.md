@@ -3,7 +3,7 @@
 Command:
 
 ```bash
-gemini --skip-trust --approval-mode plan -p "Review the Jade Symphony Dream run in docs/dream-log/2026-05-18-02-dream-cli-skill-drift. Check duplicate risk, evidence quality, whether #319 and #320 are safely non-dispatchable Backlog seeds, whether scope is too broad, and whether the Dream Log risks becoming lane authority. Return a concise review with PASS or concerns; do not edit files or create issues."
+gemini --skip-trust --approval-mode plan -p "Review the Shea Symphony Dream run in docs/dream-log/2026-05-18-02-dream-cli-skill-drift. Check duplicate risk, evidence quality, whether #319 and #320 are safely non-dispatchable Backlog seeds, whether scope is too broad, and whether the Dream Log risks becoming lane authority. Return a concise review with PASS or concerns; do not edit files or create issues."
 ```
 
 Result: PASS.

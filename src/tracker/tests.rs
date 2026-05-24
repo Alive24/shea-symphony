@@ -193,7 +193,7 @@ fn github_queue_scan_query_omits_rich_issue_evidence() {
 #[test]
 fn queue_scan_project_response_does_not_require_body_comments_or_prs() {
     let config = github_config(
-            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
         );
     let response = serde_json::json!({
         "data": {
@@ -208,7 +208,7 @@ fn queue_scan_project_response_does_not_require_body_comments_or_prs() {
                                     "id": "I_7",
                                     "number": 7,
                                     "title": "Queue scan",
-                                    "url": "https://github.com/Alive24/jade-symphony/issues/7",
+                                    "url": "https://github.com/Alive24/shea-symphony/issues/7",
                                     "state": "OPEN",
                                     "createdAt": "2026-05-21T00:00:00Z",
                                     "updatedAt": "2026-05-21T00:00:00Z",
@@ -253,7 +253,7 @@ fn queue_scan_project_response_does_not_require_body_comments_or_prs() {
 #[test]
 fn rich_issue_evidence_hydration_merges_body_comments_prs_and_topology() {
     let config = github_config(
-            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
         );
     let mut issue = issue("Todo");
     issue.identifier = "#350".into();
@@ -264,7 +264,7 @@ fn rich_issue_evidence_hydration_merges_body_comments_prs_and_topology() {
         "id": "I_350",
         "number": 350,
         "title": "Rich targeted read",
-        "url": "https://github.com/Alive24/jade-symphony/issues/350",
+        "url": "https://github.com/Alive24/shea-symphony/issues/350",
         "state": "OPEN",
         "createdAt": "2026-05-21T00:00:00Z",
         "updatedAt": "2026-05-21T00:10:00Z",
@@ -275,7 +275,7 @@ fn rich_issue_evidence_hydration_merges_body_comments_prs_and_topology() {
             "number": 347,
             "title": "Parent tracker hardening",
             "state": "OPEN",
-            "url": "https://github.com/Alive24/jade-symphony/issues/347"
+            "url": "https://github.com/Alive24/shea-symphony/issues/347"
         },
         "subIssues": {
             "nodes": [
@@ -284,7 +284,7 @@ fn rich_issue_evidence_hydration_merges_body_comments_prs_and_topology() {
                     "number": 351,
                     "title": "Sibling",
                     "state": "OPEN",
-                    "url": "https://github.com/Alive24/jade-symphony/issues/351"
+                    "url": "https://github.com/Alive24/shea-symphony/issues/351"
                 }
             ]
         },
@@ -294,7 +294,7 @@ fn rich_issue_evidence_hydration_merges_body_comments_prs_and_topology() {
                 {
                     "id": "PR_9",
                     "number": 9,
-                    "url": "https://github.com/Alive24/jade-symphony/pull/9",
+                    "url": "https://github.com/Alive24/shea-symphony/pull/9",
                     "state": "OPEN",
                     "isDraft": false,
                     "baseRefName": "integration/issue-347-github-projectv2-rest-first-tracker",
@@ -304,12 +304,12 @@ fn rich_issue_evidence_hydration_merges_body_comments_prs_and_topology() {
         },
         "comments": {
             "nodes": [
-                {"body": "<!-- jade-symphony-workpad -->\n## Jade Symphony Workpad\n\nWorkpad evidence."}
+                {"body": "<!-- shea-symphony-workpad -->\n## Shea Symphony Workpad\n\nWorkpad evidence."}
             ]
         },
         "recentComments": {
             "nodes": [
-                {"body": "## Jade Symphony Agent Review Run\n\nReview pass evidence: `recorded`"}
+                {"body": "## Shea Symphony Agent Review Run\n\nReview pass evidence: `recorded`"}
             ]
         }
     });
@@ -318,8 +318,8 @@ fn rich_issue_evidence_hydration_merges_body_comments_prs_and_topology() {
 
     let description = issue.description.as_deref().unwrap();
     assert!(description.contains("Issue body evidence."));
-    assert!(description.contains("## Jade Symphony Workpad"));
-    assert!(description.contains("## Jade Symphony Agent Review Run"));
+    assert!(description.contains("## Shea Symphony Workpad"));
+    assert!(description.contains("## Shea Symphony Agent Review Run"));
     assert_eq!(issue.linked_pull_requests.len(), 1);
     assert_eq!(issue.linked_pull_requests[0].number, Some(9));
     assert_eq!(
@@ -338,7 +338,7 @@ fn rich_issue_evidence_hydration_merges_body_comments_prs_and_topology() {
 #[test]
 fn github_auth_mode_distinguishes_fixture_env_token_and_gh_cli() {
     let mut config = github_config(
-            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
         );
 
     config.tracker.fixture_path = Some(Path::new("issues.json").to_path_buf());
@@ -382,7 +382,7 @@ fn github_auth_gap_only_reports_missing_or_invalid_live_auth() {
 #[test]
 fn project_owner_query_order_uses_explicit_user_without_org_probe() {
     let config = github_config(
-            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_owner_type: user\n  project_number: 1\n---\nPrompt",
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_owner_type: user\n  project_number: 1\n---\nPrompt",
         );
 
     let order = project_owner_query_order(&config).unwrap();
@@ -396,7 +396,7 @@ fn project_owner_query_order_uses_explicit_user_without_org_probe() {
 #[test]
 fn project_owner_query_order_supports_explicit_org_and_legacy_fallback() {
     let org_config = github_config(
-            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_owner_type: organization\n  project_number: 1\n---\nPrompt",
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_owner_type: organization\n  project_number: 1\n---\nPrompt",
         );
     assert_eq!(
         project_owner_query_order(&org_config).unwrap(),
@@ -404,7 +404,7 @@ fn project_owner_query_order_supports_explicit_org_and_legacy_fallback() {
     );
 
     let fallback_config = github_config(
-            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
         );
     assert_eq!(
         project_owner_query_order(&fallback_config).unwrap(),
@@ -445,7 +445,7 @@ fn project_owner_query_error_hides_expected_owner_miss_before_real_failure() {
 #[test]
 fn parses_github_project_v2_issue_items() {
     let config = github_config(
-            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
         );
     let response = serde_json::json!({
         "data": {
@@ -477,7 +477,7 @@ fn parses_github_project_v2_issue_items() {
                                     "number": 42,
                                     "title": "Implement adapter",
                                     "body": "body",
-                                    "url": "https://github.com/Alive24/jade-symphony/issues/42",
+                                    "url": "https://github.com/Alive24/shea-symphony/issues/42",
                                     "state": "OPEN",
                                     "createdAt": "2026-05-10T00:00:00Z",
                                     "updatedAt": "2026-05-10T01:00:00Z",
@@ -487,7 +487,7 @@ fn parses_github_project_v2_issue_items() {
                                         "number": 243,
                                         "title": "Complete parent/subissue orchestration umbrella gating",
                                         "state": "OPEN",
-                                        "url": "https://github.com/Alive24/jade-symphony/issues/243"
+                                        "url": "https://github.com/Alive24/shea-symphony/issues/243"
                                     },
                                     "subIssues": {
                                         "nodes": [
@@ -495,7 +495,7 @@ fn parses_github_project_v2_issue_items() {
                                                 "number": 274,
                                                 "title": "Teach lane flows about parent integration branches",
                                                 "state": "OPEN",
-                                                "url": "https://github.com/Alive24/jade-symphony/issues/274"
+                                                "url": "https://github.com/Alive24/shea-symphony/issues/274"
                                             }
                                         ]
                                     },
@@ -504,7 +504,7 @@ fn parses_github_project_v2_issue_items() {
                                             {
                                                 "id": "PR_1",
                                                 "number": 7,
-                                                "url": "https://github.com/Alive24/jade-symphony/pull/7",
+                                                "url": "https://github.com/Alive24/shea-symphony/pull/7",
                                                 "state": "OPEN",
                                                 "baseRefName": "integration/issue-41-parent",
                                                 "headRefName": "feature/issue-42-implement-adapter"
@@ -514,7 +514,7 @@ fn parses_github_project_v2_issue_items() {
                                     "comments": {
                                         "nodes": [
                                             {
-                                                "body": "Jade Symphony linked pull request: https://github.com/Alive24/jade-symphony/pull/289"
+                                                "body": "Shea Symphony linked pull request: https://github.com/Alive24/shea-symphony/pull/289"
                                             }
                                         ]
                                     }
@@ -596,27 +596,27 @@ fn parses_github_project_v2_issue_items() {
 #[test]
 fn discovers_pull_request_urls_from_workpad_text() {
     let bodies = vec![format!(
-            "{}\n- Live PR: `https://github.com/Alive24/jade-symphony/pull/98` (created: `true`)\n- Also see https://github.com/Alive24/jade-symphony/pull/100.\nJade Symphony linked pull request: 101",
-            "<!-- jade-symphony-workpad -->"
+            "{}\n- Live PR: `https://github.com/Alive24/shea-symphony/pull/98` (created: `true`)\n- Also see https://github.com/Alive24/shea-symphony/pull/100.\nShea Symphony linked pull request: 101",
+            "<!-- shea-symphony-workpad -->"
         )];
 
-    let prs = linked_pull_requests_from_workpads(&bodies, Some("Alive24"), Some("jade-symphony"));
+    let prs = linked_pull_requests_from_workpads(&bodies, Some("Alive24"), Some("shea-symphony"));
 
     assert_eq!(prs.len(), 3);
     assert_eq!(
         prs[0].url.as_deref(),
-        Some("https://github.com/Alive24/jade-symphony/pull/98")
+        Some("https://github.com/Alive24/shea-symphony/pull/98")
     );
     assert_eq!(prs[0].number, Some(98));
     assert_eq!(prs[0].state, None);
     assert_eq!(
         prs[1].url.as_deref(),
-        Some("https://github.com/Alive24/jade-symphony/pull/100")
+        Some("https://github.com/Alive24/shea-symphony/pull/100")
     );
     assert_eq!(prs[2].number, Some(101));
     assert_eq!(
         prs[2].url.as_deref(),
-        Some("https://github.com/Alive24/jade-symphony/pull/101")
+        Some("https://github.com/Alive24/shea-symphony/pull/101")
     );
 }
 
@@ -625,7 +625,7 @@ fn merge_linked_pull_requests_deduplicates_by_url() {
     let closing_ref = LinkedPullRequest {
         id: Some("PR_98".into()),
         number: Some(98),
-        url: Some("https://github.com/Alive24/jade-symphony/pull/98".into()),
+        url: Some("https://github.com/Alive24/shea-symphony/pull/98".into()),
         state: Some("OPEN".into()),
         is_draft: None,
         merge_state_status: None,
@@ -634,9 +634,9 @@ fn merge_linked_pull_requests_deduplicates_by_url() {
         head_ref_name: None,
     };
     let discovered_duplicate =
-        linked_pull_request_from_url("https://github.com/Alive24/jade-symphony/pull/98");
+        linked_pull_request_from_url("https://github.com/Alive24/shea-symphony/pull/98");
     let discovered_new =
-        linked_pull_request_from_url("https://github.com/Alive24/jade-symphony/pull/100");
+        linked_pull_request_from_url("https://github.com/Alive24/shea-symphony/pull/100");
 
     let merged = merge_linked_pull_requests(
         vec![closing_ref],
@@ -648,7 +648,7 @@ fn merge_linked_pull_requests_deduplicates_by_url() {
     assert_eq!(merged[0].state.as_deref(), Some("OPEN"));
     assert_eq!(
         merged[1].url.as_deref(),
-        Some("https://github.com/Alive24/jade-symphony/pull/100")
+        Some("https://github.com/Alive24/shea-symphony/pull/100")
     );
 }
 
@@ -659,16 +659,16 @@ fn github_issue_description_includes_canonical_workpad_comment() {
         "comments": {
             "nodes": [
                 {"body": "ordinary comment"},
-                {"body": "<!-- jade-symphony-workpad -->\n## Workpad\n\n<!-- jade-symphony-runtime-ownership -->\n### Runtime Ownership\n<!-- /jade-symphony-runtime-ownership -->"}
+                {"body": "<!-- shea-symphony-workpad -->\n## Workpad\n\n<!-- shea-symphony-runtime-ownership -->\n### Runtime Ownership\n<!-- /shea-symphony-runtime-ownership -->"}
             ]
         }
     });
 
     let description =
-        github_issue_description_with_workpad(&content, "<!-- jade-symphony-workpad -->").unwrap();
+        github_issue_description_with_workpad(&content, "<!-- shea-symphony-workpad -->").unwrap();
 
     assert!(description.contains("issue body"));
-    assert!(description.contains("jade-symphony-runtime-ownership"));
+    assert!(description.contains("shea-symphony-runtime-ownership"));
 }
 
 #[test]
@@ -677,23 +677,23 @@ fn github_issue_description_includes_timeline_comments_for_review_evidence() {
         "body": "issue body",
         "comments": {
             "nodes": [
-                {"body": "<!-- jade-symphony-workpad -->\n## Jade Symphony Workpad"},
+                {"body": "<!-- shea-symphony-workpad -->\n## Shea Symphony Workpad"},
                 {"body": "ordinary comment"}
             ]
         },
         "recentComments": {
             "nodes": [
                 {"body": "ordinary recent comment"},
-                {"body": "## Jade Symphony Agent Review Run\n\nReview pass evidence: `recorded`"}
+                {"body": "## Shea Symphony Agent Review Run\n\nReview pass evidence: `recorded`"}
             ]
         }
     });
 
     let description =
-        github_issue_description_with_workpad(&content, "<!-- jade-symphony-workpad -->").unwrap();
+        github_issue_description_with_workpad(&content, "<!-- shea-symphony-workpad -->").unwrap();
 
-    assert!(description.contains("## Jade Symphony Workpad"));
-    assert!(description.contains("## Jade Symphony Agent Review Run"));
+    assert!(description.contains("## Shea Symphony Workpad"));
+    assert!(description.contains("## Shea Symphony Agent Review Run"));
     assert!(description.contains("Review pass evidence: `recorded`"));
 }
 
@@ -704,7 +704,7 @@ fn filters_github_read_issues_by_status_map_and_assignees() {
 tracker:
   kind: github_project_v2
   owner: Alive24
-  repo: jade-symphony
+  repo: shea-symphony
   project_owner: Alive24
   project_number: 1
   assignee_filter:
@@ -742,7 +742,7 @@ fn github_state_reads_can_bypass_main_assignee_filter_for_merge_lane() {
 tracker:
   kind: github_project_v2
   owner: Alive24
-  repo: jade-symphony
+  repo: shea-symphony
   project_owner: Alive24
   project_number: 1
   assignee_filter:
@@ -1158,7 +1158,7 @@ fn builds_rest_project_item_field_update_payloads() {
 #[test]
 fn rest_update_reports_graphql_fallback_reasons_for_missing_rest_ids() {
     let client = GithubProjectV2GhClient::new(&github_config(
-            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 9\n---\nPrompt",
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_number: 9\n---\nPrompt",
         ));
     let metadata = test_metadata(vec![
         test_status_field(),
@@ -1250,7 +1250,7 @@ fn claim_decision_identifies_claimable_active_and_external_states() {
 tracker:
   kind: github_project_v2
   owner: Alive24
-  repo: jade-symphony
+  repo: shea-symphony
   project_owner: Alive24
   project_number: 9
 ---
@@ -1363,7 +1363,7 @@ fn maps_normalized_state_to_linear_state_name() {
         r#"---
 tracker:
   kind: linear
-  project_slug: jade-symphony
+  project_slug: shea-symphony
   fixture_path: issues.json
   state_map:
     in_progress: Started
@@ -1401,7 +1401,7 @@ fn detects_linear_graphql_error_payloads() {
 
 #[test]
 fn duplicate_workpad_body_removes_marker_text() {
-    let marker = "<!-- jade-symphony-workpad -->";
+    let marker = "<!-- shea-symphony-workpad -->";
     let body = duplicate_workpad_body(marker);
 
     assert!(!body.contains(marker));
@@ -1442,7 +1442,7 @@ fn detects_graphql_error_payloads() {
 #[test]
 fn targeted_github_issue_response_parses_project_item_status() {
     let config = github_config(
-            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 9\n---\nPrompt",
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_number: 9\n---\nPrompt",
         );
     let response = serde_json::json!({
         "data": {
@@ -1453,7 +1453,7 @@ fn targeted_github_issue_response_parses_project_item_status() {
                     "number": 349,
                     "title": "Add ProjectV2 metadata cache",
                     "body": "Issue body",
-                    "url": "https://github.com/Alive24/jade-symphony/issues/349",
+                    "url": "https://github.com/Alive24/shea-symphony/issues/349",
                     "state": "OPEN",
                     "createdAt": "2026-05-21T00:00:00Z",
                     "updatedAt": "2026-05-21T00:10:00Z",
@@ -1466,7 +1466,7 @@ fn targeted_github_issue_response_parses_project_item_status() {
                     "recentComments": {
                         "nodes": [
                             {
-                                "body": "Jade Symphony linked pull request: https://github.com/Alive24/jade-symphony/pull/355"
+                                "body": "Shea Symphony linked pull request: https://github.com/Alive24/shea-symphony/pull/355"
                             }
                         ]
                     },
@@ -1633,7 +1633,7 @@ fn command_timeout_returns_transient_tracker_error() {
 #[test]
 fn project_issue_missing_status_is_partial_response_error() {
     let config = github_config(
-            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
         );
     let response = serde_json::json!({
         "data": {

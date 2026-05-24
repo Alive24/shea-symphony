@@ -16,13 +16,13 @@ pub fn render_doctor_repair_workpad(
 ) -> String {
     let related = related_violations(report, &issue.identifier);
     let mut lines = vec![
-        "## Jade Symphony Doctor Triage".to_string(),
+        "## Shea Symphony Doctor Triage".to_string(),
         String::new(),
         format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", issue.identifier, issue.title),
         "- Lane: `doctor`".to_string(),
         "- Actor role: `doctor`".to_string(),
-        "- Actor: `jade-symphony doctor`".to_string(),
+        "- Actor: `shea-symphony doctor`".to_string(),
         "- Run ID: `doctor-repair`".to_string(),
         format!("- Input state: `{}`", issue.state),
         format!(
@@ -130,13 +130,13 @@ pub fn draft_pr_repair_candidates(report: &ProjectAuditReport) -> Vec<&ProjectAu
 
 pub fn render_human_review_repair_workpad(violation: &ProjectAuditViolation) -> String {
     [
-        "## Jade Symphony Doctor Triage".to_string(),
+        "## Shea Symphony Doctor Triage".to_string(),
         String::new(),
         format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", violation.issue_ref, violation.title),
         "- Lane: `doctor`".into(),
         "- Actor role: `doctor`".into(),
-        "- Actor: `jade-symphony doctor`".into(),
+        "- Actor: `shea-symphony doctor`".into(),
         "- Run ID: `doctor-human-review-repair`".into(),
         format!("- Input state: `{}`", violation.state),
         "- Target state after repair: `Agent Review`".into(),

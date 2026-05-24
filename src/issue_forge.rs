@@ -111,8 +111,8 @@ pub fn issue_skill_registry() -> Vec<IssueForgeSkill> {
             description: "Run-loop, runtime state, polling, resume, and orchestration control."
                 .into(),
             knowledge_sources: vec![
-                "docs/bootstrap/JADE_SYMPHONY_SPEC.md".into(),
-                "docs/bootstrap/JADE_WORKFLOW.md".into(),
+                "docs/bootstrap/SHEA_SYMPHONY_SPEC.md".into(),
+                "docs/bootstrap/SHEA_WORKFLOW.md".into(),
             ],
             code_paths: vec![
                 "src/main.rs".into(),
@@ -132,7 +132,7 @@ pub fn issue_skill_registry() -> Vec<IssueForgeSkill> {
                     .into(),
             knowledge_sources: vec![
                 "docs/bootstrap/TRACKER_GITHUB_PROJECT_V2.md".into(),
-                "docs/bootstrap/JADE_WORKFLOW.md".into(),
+                "docs/bootstrap/SHEA_WORKFLOW.md".into(),
             ],
             code_paths: vec!["src/tracker.rs".into(), "src/config.rs".into()],
             guardrails: vec![
@@ -145,7 +145,7 @@ pub fn issue_skill_registry() -> Vec<IssueForgeSkill> {
             label: "Agent backend".into(),
             description: "Codex, Claude Code, dry-run, and subprocess execution backends.".into(),
             knowledge_sources: vec![
-                "docs/bootstrap/JADE_SYMPHONY_SPEC.md".into(),
+                "docs/bootstrap/SHEA_SYMPHONY_SPEC.md".into(),
                 "docs/bootstrap/references/openai-symphony/SPEC.md".into(),
             ],
             code_paths: vec!["src/agent.rs".into(), "src/prompt.rs".into()],
@@ -160,8 +160,8 @@ pub fn issue_skill_registry() -> Vec<IssueForgeSkill> {
             description:
                 "Review agent lifecycle, finding classification, and review-state ownership.".into(),
             knowledge_sources: vec![
-                "docs/bootstrap/JADE_WORKFLOW.md".into(),
-                "docs/bootstrap/JADE_SYMPHONY_SPEC.md".into(),
+                "docs/bootstrap/SHEA_WORKFLOW.md".into(),
+                "docs/bootstrap/SHEA_SYMPHONY_SPEC.md".into(),
             ],
             code_paths: vec!["src/review.rs".into(), "src/main.rs".into()],
             guardrails: vec![
@@ -192,7 +192,7 @@ pub fn issue_skill_registry() -> Vec<IssueForgeSkill> {
             description: "Credential-gated smoke tests, fixtures, and dry-run/live verification."
                 .into(),
             knowledge_sources: vec![
-                "docs/bootstrap/JADE_SYMPHONY_SPEC.md".into(),
+                "docs/bootstrap/SHEA_SYMPHONY_SPEC.md".into(),
                 "docs/dogfood-readiness.md".into(),
             ],
             code_paths: vec!["examples/".into(), "tests/".into(), "src/tracker.rs".into()],
@@ -320,7 +320,7 @@ pub fn next_clarification_question(decision: &GateDecision) -> Option<Clarificat
 
     decision.missing.first().map(|missing| ClarificationQuestion {
         question: format!("What is the smallest concrete detail that resolves `{missing}` for this issue?"),
-        why_it_matters: "Jade Symphony needs this before dispatch so the agent does not invent execution intent.".into(),
+        why_it_matters: "Shea Symphony needs this before dispatch so the agent does not invent execution intent.".into(),
     })
 }
 
@@ -384,7 +384,7 @@ TBD
 
 ## Non-Negotiable Guardrails
 
-- Keep Jade Symphony orchestration infrastructure separate from downstream product business logic.
+- Keep Shea Symphony orchestration infrastructure separate from downstream product business logic.
 
 ## Scope
 
@@ -475,7 +475,7 @@ fn issue_markdown_from_interactive_input(
     );
     draft = draft.replace(
         "## Why Now\n\nTBD",
-        "## Why Now\n\nThis follow-up is needed to continue turning Jade Symphony from a dry-run skeleton into a usable orchestration binary.",
+        "## Why Now\n\nThis follow-up is needed to continue turning Shea Symphony from a dry-run skeleton into a usable orchestration binary.",
     );
     draft = draft.replace(
         "## Issue Context\n\nTBD",
@@ -497,9 +497,9 @@ fn issue_markdown_from_interactive_input(
         &format_interactive_dependencies(input),
     );
     draft = draft.replace(
-        "## Non-Negotiable Guardrails\n\n- Keep Jade Symphony orchestration infrastructure separate from downstream product business logic.",
+        "## Non-Negotiable Guardrails\n\n- Keep Shea Symphony orchestration infrastructure separate from downstream product business logic.",
         &format!(
-            "## Non-Negotiable Guardrails\n\n- Keep Jade Symphony orchestration infrastructure separate from downstream product business logic.\n{}",
+            "## Non-Negotiable Guardrails\n\n- Keep Shea Symphony orchestration infrastructure separate from downstream product business logic.\n{}",
             skill
                 .guardrails
                 .iter()
@@ -517,7 +517,7 @@ fn issue_markdown_from_interactive_input(
     );
     draft = draft.replace(
         "### Target Repository / Package\n\n- TBD",
-        "### Target Repository / Package\n\n- Alive24/jade-symphony",
+        "### Target Repository / Package\n\n- Alive24/shea-symphony",
     );
     draft = draft.replace(
         "### Relevant Knowledge Sources\n\n- TBD",
@@ -561,7 +561,7 @@ fn issue_markdown_from_interactive_input(
     );
     draft = draft.replace(
         "### Completion Criteria\n\n- TBD",
-        "### Completion Criteria\n\n- [ ] The issue contract passes `jade-symphony forge validate`.\n- [ ] Implementation and documentation are limited to the issue scope.",
+        "### Completion Criteria\n\n- [ ] The issue contract passes `shea-symphony forge validate`.\n- [ ] Implementation and documentation are limited to the issue scope.",
     );
     draft = draft.replace(
         "### Functional Verification\n\n- TBD",
@@ -774,7 +774,7 @@ fn reflective_table_title(line: &str) -> Option<String> {
 
 fn reflective_intent(line: &str) -> String {
     format!(
-        "Turn this reflective readiness signal into an executable Jade Symphony issue: {}",
+        "Turn this reflective readiness signal into an executable Shea Symphony issue: {}",
         line.trim()
     )
 }
@@ -833,7 +833,7 @@ fn repaired_draft(title: &str, markdown: &str, decision: &GateDecision) -> Strin
     );
     draft = draft.replace(
         "### Decisions\n\n- TBD",
-        "### Decisions\n\n- Use Issue Forge repair to convert rough input into the Jade Symphony quality template.",
+        "### Decisions\n\n- Use Issue Forge repair to convert rough input into the Shea Symphony quality template.",
     );
     let assumptions = if decision.missing.is_empty() {
         "- Existing source input is sufficient for an initial executable draft.".to_string()
@@ -849,11 +849,11 @@ fn repaired_draft(title: &str, markdown: &str, decision: &GateDecision) -> Strin
     );
     draft = draft.replace(
         "### Target Repository / Package\n\n- TBD",
-        "### Target Repository / Package\n\n- Alive24/jade-symphony",
+        "### Target Repository / Package\n\n- Alive24/shea-symphony",
     );
     draft = draft.replace(
         "### Relevant Knowledge Sources\n\n- TBD",
-        "### Relevant Knowledge Sources\n\n- docs/bootstrap/JADE_SYMPHONY_SPEC.md\n- docs/bootstrap/JADE_WORKFLOW.md\n- docs/bootstrap/ISSUE_QUALITY_GATE_TEMPLATE.md",
+        "### Relevant Knowledge Sources\n\n- docs/bootstrap/SHEA_SYMPHONY_SPEC.md\n- docs/bootstrap/SHEA_WORKFLOW.md\n- docs/bootstrap/ISSUE_QUALITY_GATE_TEMPLATE.md",
     );
     draft = draft.replace(
         "### Relevant Code Paths\n\n- TBD",
@@ -861,7 +861,7 @@ fn repaired_draft(title: &str, markdown: &str, decision: &GateDecision) -> Strin
     );
     draft = draft.replace(
         "## Current State\n\nTBD",
-        "## Current State\n\nRough issue input exists and has been repaired into the Jade Symphony issue contract shape.",
+        "## Current State\n\nRough issue input exists and has been repaired into the Shea Symphony issue contract shape.",
     );
     draft = draft.replace(
         "## Deliverable Shape\n\nTBD",
@@ -881,7 +881,7 @@ fn repaired_draft(title: &str, markdown: &str, decision: &GateDecision) -> Strin
     );
     draft = draft.replace(
         "### Functional Verification\n\n- TBD",
-        "### Functional Verification\n\n- [ ] Run `jade-symphony forge validate` on the repaired draft.",
+        "### Functional Verification\n\n- [ ] Run `shea-symphony forge validate` on the repaired draft.",
     );
     draft
 }

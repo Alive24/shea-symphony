@@ -831,7 +831,7 @@ mod tests {
             id: Some(format!("PR_{number}")),
             number: Some(number),
             url: Some(format!(
-                "https://github.com/Alive24/jade-symphony/pull/{number}"
+                "https://github.com/Alive24/shea-symphony/pull/{number}"
             )),
             state: Some(state.into()),
             ..Default::default()
@@ -847,7 +847,7 @@ mod tests {
 
     #[test]
     fn creates_deterministic_workspace_and_branch_plan() {
-        let plan = plan_issue_handoff(Path::new("/tmp/jade-workspaces"), &issue(), "main").unwrap();
+        let plan = plan_issue_handoff(Path::new("/tmp/shea-workspaces"), &issue(), "main").unwrap();
 
         assert_eq!(
             plan.workspace_key,
@@ -856,7 +856,7 @@ mod tests {
         assert_eq!(
             plan.workspace_path,
             PathBuf::from(
-                "/tmp/jade-workspaces/issue-21-add-workspace-branch-and-pr-handoff-planning-foundation"
+                "/tmp/shea-workspaces/issue-21-add-workspace-branch-and-pr-handoff-planning-foundation"
             )
         );
         assert_eq!(
@@ -885,7 +885,7 @@ mod tests {
             serde_json::json!("integration/issue-243-parent-subissue-orchestration"),
         );
 
-        let plan = plan_issue_handoff(Path::new("/tmp/jade-workspaces"), &issue, "main").unwrap();
+        let plan = plan_issue_handoff(Path::new("/tmp/shea-workspaces"), &issue, "main").unwrap();
 
         assert_eq!(plan.branch_target.role, BranchTargetRole::Subissue);
         assert_eq!(
@@ -915,7 +915,7 @@ mod tests {
             serde_json::json!("integration/issue-243-parent-subissue-orchestration"),
         );
 
-        let plan = plan_issue_handoff(Path::new("/tmp/jade-workspaces"), &issue, "main").unwrap();
+        let plan = plan_issue_handoff(Path::new("/tmp/shea-workspaces"), &issue, "main").unwrap();
 
         assert_eq!(plan.branch_target.role, BranchTargetRole::ParentIssue);
         assert_eq!(
@@ -938,7 +938,7 @@ mod tests {
         );
 
         let plan = plan_issue_handoff_for_profile(
-            Path::new("/tmp/jade-workspaces"),
+            Path::new("/tmp/shea-workspaces"),
             &issue(),
             "main",
             Some("codex-alpha"),
@@ -1009,7 +1009,7 @@ mod tests {
             plan.continuation
                 .as_ref()
                 .map(|continuation| continuation.pull_request_url.as_str()),
-            Some("https://github.com/Alive24/jade-symphony/pull/45")
+            Some("https://github.com/Alive24/shea-symphony/pull/45")
         );
     }
 
@@ -1090,7 +1090,7 @@ mod tests {
             err,
             HandoffError::StaleReworkContinuation {
                 issue_ref: "#21".into(),
-                pull_request_url: "https://github.com/Alive24/jade-symphony/pull/45".into(),
+                pull_request_url: "https://github.com/Alive24/shea-symphony/pull/45".into(),
                 state: "MERGED".into(),
             }
         );
@@ -1108,7 +1108,7 @@ mod tests {
             err,
             HandoffError::MissingReworkContinuationBranch {
                 issue_ref: "#21".into(),
-                pull_request_url: "https://github.com/Alive24/jade-symphony/pull/45".into(),
+                pull_request_url: "https://github.com/Alive24/shea-symphony/pull/45".into(),
             }
         );
     }
@@ -1129,7 +1129,7 @@ mod tests {
 
     #[test]
     fn agent_review_handoff_requires_pr_url() {
-        let plan = plan_issue_handoff(Path::new("/tmp/jade-workspaces"), &issue(), "main").unwrap();
+        let plan = plan_issue_handoff(Path::new("/tmp/shea-workspaces"), &issue(), "main").unwrap();
         let evidence =
             AgentReviewHandoffEvidence::from_plan(&plan, "cargo test passed", "completed");
 
@@ -1144,14 +1144,14 @@ mod tests {
 
     #[test]
     fn agent_review_handoff_passes_with_pr_url() {
-        let plan = plan_issue_handoff(Path::new("/tmp/jade-workspaces"), &issue(), "main").unwrap();
+        let plan = plan_issue_handoff(Path::new("/tmp/shea-workspaces"), &issue(), "main").unwrap();
         let mut evidence =
             AgentReviewHandoffEvidence::from_plan(&plan, "cargo test passed", "completed");
-        evidence.pull_request_url = Some("https://github.com/Alive24/jade-symphony/pull/21".into());
+        evidence.pull_request_url = Some("https://github.com/Alive24/shea-symphony/pull/21".into());
         evidence.project_pr_link_verified = Some(true);
         evidence.pull_request_is_draft = Some(false);
         evidence.record_main_workpad_markdown(Some(
-            "## Jade Symphony Workpad\n\n### Plan\n\n### Work Log",
+            "## Shea Symphony Workpad\n\n### Plan\n\n### Work Log",
         ));
 
         let report = evaluate_agent_review_handoff(&evidence);
@@ -1162,13 +1162,13 @@ mod tests {
 
     #[test]
     fn agent_review_handoff_blocks_unverified_project_pr_linkage() {
-        let plan = plan_issue_handoff(Path::new("/tmp/jade-workspaces"), &issue(), "main").unwrap();
+        let plan = plan_issue_handoff(Path::new("/tmp/shea-workspaces"), &issue(), "main").unwrap();
         let mut evidence =
             AgentReviewHandoffEvidence::from_plan(&plan, "cargo test passed", "completed");
-        evidence.pull_request_url = Some("https://github.com/Alive24/jade-symphony/pull/21".into());
+        evidence.pull_request_url = Some("https://github.com/Alive24/shea-symphony/pull/21".into());
         evidence.pull_request_is_draft = Some(false);
         evidence.record_main_workpad_markdown(Some(
-            "## Jade Symphony Workpad\n\n### Plan\n\n### Work Log",
+            "## Shea Symphony Workpad\n\n### Plan\n\n### Work Log",
         ));
 
         let report = evaluate_agent_review_handoff(&evidence);
@@ -1181,14 +1181,14 @@ mod tests {
 
     #[test]
     fn agent_review_handoff_blocks_draft_pr() {
-        let plan = plan_issue_handoff(Path::new("/tmp/jade-workspaces"), &issue(), "main").unwrap();
+        let plan = plan_issue_handoff(Path::new("/tmp/shea-workspaces"), &issue(), "main").unwrap();
         let mut evidence =
             AgentReviewHandoffEvidence::from_plan(&plan, "cargo test passed", "completed");
-        evidence.pull_request_url = Some("https://github.com/Alive24/jade-symphony/pull/21".into());
+        evidence.pull_request_url = Some("https://github.com/Alive24/shea-symphony/pull/21".into());
         evidence.project_pr_link_verified = Some(true);
         evidence.pull_request_is_draft = Some(true);
         evidence.record_main_workpad_markdown(Some(
-            "## Jade Symphony Workpad\n\n### Plan\n\n### Work Log",
+            "## Shea Symphony Workpad\n\n### Plan\n\n### Work Log",
         ));
 
         let report = evaluate_agent_review_handoff(&evidence);
@@ -1199,13 +1199,13 @@ mod tests {
 
     #[test]
     fn agent_review_handoff_blocks_unknown_draft_status() {
-        let plan = plan_issue_handoff(Path::new("/tmp/jade-workspaces"), &issue(), "main").unwrap();
+        let plan = plan_issue_handoff(Path::new("/tmp/shea-workspaces"), &issue(), "main").unwrap();
         let mut evidence =
             AgentReviewHandoffEvidence::from_plan(&plan, "cargo test passed", "completed");
-        evidence.pull_request_url = Some("https://github.com/Alive24/jade-symphony/pull/21".into());
+        evidence.pull_request_url = Some("https://github.com/Alive24/shea-symphony/pull/21".into());
         evidence.project_pr_link_verified = Some(true);
         evidence.record_main_workpad_markdown(Some(
-            "## Jade Symphony Workpad\n\n### Plan\n\n### Work Log",
+            "## Shea Symphony Workpad\n\n### Plan\n\n### Work Log",
         ));
 
         let report = evaluate_agent_review_handoff(&evidence);
@@ -1217,7 +1217,7 @@ mod tests {
     #[test]
     fn agent_review_handoff_workpad_names_missing_pr_evidence() {
         let issue = issue();
-        let plan = plan_issue_handoff(Path::new("/tmp/jade-workspaces"), &issue, "main").unwrap();
+        let plan = plan_issue_handoff(Path::new("/tmp/shea-workspaces"), &issue, "main").unwrap();
         let evidence =
             AgentReviewHandoffEvidence::from_plan(&plan, "cargo test passed", "completed");
         let report = evaluate_agent_review_handoff(&evidence);
@@ -1225,7 +1225,7 @@ mod tests {
         let workpad = render_agent_review_handoff_workpad(&issue, &evidence, &report);
 
         assert!(workpad.contains("## Agent Review Handoff"));
-        assert!(!workpad.contains("## Jade Symphony Workpad"));
+        assert!(!workpad.contains("## Shea Symphony Workpad"));
         assert!(workpad.contains("Agent Review Handoff Invariant"));
         assert!(workpad.contains("Pull request: `missing`"));
         assert!(workpad.contains("pull request url or explicit no-PR blocker"));

@@ -1,9 +1,9 @@
 use std::process::Command as ProcessCommand;
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::model::TrackerIssue;
-use jade_symphony::profiles::selected_execution_profile;
-use jade_symphony::tracker::{claim_decision, ClaimDecision};
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::model::TrackerIssue;
+use shea_symphony::profiles::selected_execution_profile;
+use shea_symphony::tracker::{claim_decision, ClaimDecision};
 
 use super::runtime::RuntimeRecoveryCandidate;
 use crate::lanes::claim::{select_pool_worker_issues, WorkerLane};
@@ -159,7 +159,7 @@ pub(crate) fn selected_profile_github_login(
                 .get("GITHUB_LOGIN")
                 .cloned()
                 .or_else(|| profile.env.get("GH_LOGIN").cloned())
-                .or_else(|| profile.env.get("JADE_GITHUB_LOGIN").cloned())
+                .or_else(|| profile.env.get("SHEA_GITHUB_LOGIN").cloned())
         }),
     )
 }

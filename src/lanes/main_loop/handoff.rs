@@ -1,23 +1,23 @@
 use std::path::{Path, PathBuf};
 
-use jade_symphony::agent::UsageLimitPause;
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::git_handoff::{
+use shea_symphony::agent::UsageLimitPause;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::git_handoff::{
     LiveWorktreeResult, PullRequestPublication, PullRequestReadyStatus,
 };
-use jade_symphony::handoff::{
+use shea_symphony::handoff::{
     plan_issue_handoff_for_profile, AgentReviewHandoffEvidence, HandoffError, IssueHandoffPlan,
 };
-use jade_symphony::issue_workspace::{
+use shea_symphony::issue_workspace::{
     discover_issue_workspaces, infer_issue_ref_from_branch_or_path,
 };
-use jade_symphony::lane_claim::LaneClaim;
-use jade_symphony::model::{LinkedPullRequest, TrackerIssue};
-use jade_symphony::ownership::{render_runtime_ownership_marker, RuntimeOwnershipMarker};
-use jade_symphony::profiles::selected_execution_profile;
-use jade_symphony::runtime_state::RuntimeState;
-use jade_symphony::tracker::TrackerAdapter;
-use jade_symphony::workspace::run_workspace_command;
+use shea_symphony::lane_claim::LaneClaim;
+use shea_symphony::model::{LinkedPullRequest, TrackerIssue};
+use shea_symphony::ownership::{render_runtime_ownership_marker, RuntimeOwnershipMarker};
+use shea_symphony::profiles::selected_execution_profile;
+use shea_symphony::runtime_state::RuntimeState;
+use shea_symphony::tracker::TrackerAdapter;
+use shea_symphony::workspace::run_workspace_command;
 
 use super::IssueExecutionResult;
 use crate::orchestration::{current_git_branch, DEFAULT_RUN_LOOP_BASE_BRANCH};
@@ -194,7 +194,7 @@ pub(crate) fn run_loop_ownership_workpad(
     claim: &LaneClaim,
 ) -> String {
     [
-        "## Jade Symphony Workpad".to_string(),
+        "## Shea Symphony Workpad".to_string(),
         String::new(),
         "### Runtime Ownership".to_string(),
         format!("- Issue: {} {}", issue.identifier, issue.title),
@@ -273,11 +273,11 @@ pub(crate) fn run_loop_handoff_workpad(
     ownership: Option<&RuntimeOwnershipMarker>,
 ) -> String {
     let mut lines = vec![
-        "## Jade Symphony Workpad".to_string(),
+        "## Shea Symphony Workpad".to_string(),
         String::new(),
         "### Context".to_string(),
         format!("- Issue: {} {}", issue.identifier, issue.title),
-        "- Source: `jade-symphony main loop`".to_string(),
+        "- Source: `shea-symphony main loop`".to_string(),
         String::new(),
         "### Plan".to_string(),
         "- [x] Read the issue contract, Project state, Main Workpad, and timeline evidence."
@@ -603,11 +603,11 @@ pub(crate) fn run_loop_handoff_failure_workpad(
     error: &HandoffError,
 ) -> String {
     [
-        "## Jade Symphony Workpad".to_string(),
+        "## Shea Symphony Workpad".to_string(),
         String::new(),
         "### Context".to_string(),
         format!("- Issue: {} {}", issue.identifier, issue.title),
-        "- Source: `jade-symphony main loop`".to_string(),
+        "- Source: `shea-symphony main loop`".to_string(),
         String::new(),
         "### Handoff Planning Blocker".to_string(),
         format!("- Error: `{}`", error),
@@ -621,7 +621,7 @@ pub(crate) fn run_loop_handoff_failure_workpad(
 
 pub(crate) fn run_loop_assignee_ownership_workpad(issue: &TrackerIssue, reason: &str) -> String {
     [
-        "## Jade Symphony Workpad".to_string(),
+        "## Shea Symphony Workpad".to_string(),
         String::new(),
         "### Assignee Ownership Blocker".to_string(),
         format!("- Issue: {} {}", issue.identifier, issue.title),
@@ -629,7 +629,7 @@ pub(crate) fn run_loop_assignee_ownership_workpad(issue: &TrackerIssue, reason: 
         format!("- Issue assignees: `{}`", issue.assignees.join(", ")),
         String::new(),
         "### Boundary".to_string(),
-        "- Jade Symphony did not claim this issue or move it to `In Progress`.".to_string(),
+        "- Shea Symphony did not claim this issue or move it to `In Progress`.".to_string(),
         "- Assign the issue to the active GitHub identity or selected execution profile before retrying.".to_string(),
     ]
     .join("\n")
@@ -642,11 +642,11 @@ pub(crate) fn run_loop_usage_limit_pause_workpad(
     retry_delay_ms: u64,
 ) -> String {
     [
-        "## Jade Symphony Workpad".to_string(),
+        "## Shea Symphony Workpad".to_string(),
         String::new(),
         "### Usage-Limit Pause".to_string(),
         format!("- Issue: {} {}", issue.identifier, issue.title),
-        "- Source: `jade-symphony main loop`".to_string(),
+        "- Source: `shea-symphony main loop`".to_string(),
         format!("- Backend: `{}`", result.backend),
         format!("- Classifier: `{}`", pause.classifier),
         format!("- Evidence: {}", pause.evidence),

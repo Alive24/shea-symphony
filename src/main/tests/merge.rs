@@ -63,7 +63,7 @@ fn successful_merge_agent_repair_records_merging_retry_rationale() {
             "git diff --check".into(),
             "git status --porcelain".into(),
         ],
-        "https://github.com/Alive24/jade-symphony/pull/390",
+        "https://github.com/Alive24/shea-symphony/pull/390",
         "feature/issue-390",
         &runner,
         Path::new("."),
@@ -128,7 +128,7 @@ fn merge_pool_selection_only_accepts_merging_lane() {
 #[test]
 fn merge_pool_selection_reuses_structured_active_claim_for_same_worker() {
     let config = test_config();
-    let worker = "Jade Symphony Agent";
+    let worker = "Shea Symphony Agent";
     let claim = LaneClaim::active(
         "#6",
         LaneClaimLane::Merge,
@@ -153,7 +153,7 @@ fn merge_pool_selection_reuses_structured_active_claim_for_same_worker() {
 #[test]
 fn merge_recover_selection_prioritizes_interrupted_loop_claims() {
     let config = test_config();
-    let worker = "Jade Symphony Agent";
+    let worker = "Shea Symphony Agent";
     let interrupted_claim = LaneClaim::active(
         "#6",
         LaneClaimLane::Merge,
@@ -185,7 +185,7 @@ fn merge_recover_selection_prioritizes_interrupted_loop_claims() {
 #[test]
 fn merge_recover_selection_does_not_adopt_manual_claims() {
     let config = test_config();
-    let worker = "Jade Symphony Agent";
+    let worker = "Shea Symphony Agent";
     let manual_claim = LaneClaim::active(
         "#6",
         LaneClaimLane::Merge,
@@ -212,7 +212,7 @@ fn merge_recover_selection_does_not_adopt_manual_claims() {
 fn merge_completion_closes_issue_after_workpad_and_done_state() {
     let adapter = RecordingAdapter::default();
     let issue = tracker_issue("Merging");
-    let workpad = "## Jade Symphony Merge Run\n\n### Merge Action\n";
+    let workpad = "## Shea Symphony Merge Run\n\n### Merge Action\n";
 
     let config = test_config();
     record_done_merge_lane_completion(&config, &adapter, &issue, workpad).unwrap();

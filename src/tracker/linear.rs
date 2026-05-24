@@ -153,7 +153,7 @@ impl TrackerAdapter for LinearAdapter {
         let issue = self.resolve_issue(issue_ref)?;
         LinearGraphqlClient::new(&self.config).create_comment(
             &issue.id,
-            &format!("Jade Symphony linked pull request: {pr_ref}"),
+            &format!("Shea Symphony linked pull request: {pr_ref}"),
         )
     }
 
@@ -496,7 +496,7 @@ fn run_linear_graphql(
 }
 
 const LINEAR_ISSUES_QUERY: &str = r#"
-query JadeSymphonyLinearIssues($projectSlug: String!, $stateNames: [String!]!, $first: Int!, $relationFirst: Int!, $after: String) {
+query SheaSymphonyLinearIssues($projectSlug: String!, $stateNames: [String!]!, $first: Int!, $relationFirst: Int!, $after: String) {
   issues(filter: {project: {slugId: {eq: $projectSlug}}, state: {name: {in: $stateNames}}}, first: $first, after: $after) {
     nodes {
       id
@@ -541,7 +541,7 @@ query JadeSymphonyLinearIssues($projectSlug: String!, $stateNames: [String!]!, $
 "#;
 
 const LINEAR_ISSUE_QUERY: &str = r#"
-query JadeSymphonyLinearIssue($issueId: String!, $relationFirst: Int!) {
+query SheaSymphonyLinearIssue($issueId: String!, $relationFirst: Int!) {
   issue(id: $issueId) {
     id
     identifier
@@ -580,7 +580,7 @@ query JadeSymphonyLinearIssue($issueId: String!, $relationFirst: Int!) {
 "#;
 
 const LINEAR_STATE_LOOKUP_QUERY: &str = r#"
-query JadeSymphonyLinearResolveStateId($issueId: String!, $stateName: String!) {
+query SheaSymphonyLinearResolveStateId($issueId: String!, $stateName: String!) {
   issue(id: $issueId) {
     team {
       states(filter: {name: {eq: $stateName}}, first: 1) {
@@ -594,7 +594,7 @@ query JadeSymphonyLinearResolveStateId($issueId: String!, $stateName: String!) {
 "#;
 
 const LINEAR_ISSUE_COMMENTS_QUERY: &str = r#"
-query JadeSymphonyLinearIssueComments($issueId: String!) {
+query SheaSymphonyLinearIssueComments($issueId: String!) {
   issue(id: $issueId) {
     comments(first: 100) {
       nodes {
@@ -607,7 +607,7 @@ query JadeSymphonyLinearIssueComments($issueId: String!) {
 "#;
 
 const LINEAR_PROJECT_LOOKUP_QUERY: &str = r#"
-query JadeSymphonyLinearProject($projectSlug: String!) {
+query SheaSymphonyLinearProject($projectSlug: String!) {
   projects(filter: {slugId: {eq: $projectSlug}}, first: 1) {
     nodes {
       id
@@ -620,7 +620,7 @@ query JadeSymphonyLinearProject($projectSlug: String!) {
 "#;
 
 const LINEAR_CREATE_COMMENT_MUTATION: &str = r#"
-mutation JadeSymphonyLinearCreateComment($issueId: String!, $body: String!) {
+mutation SheaSymphonyLinearCreateComment($issueId: String!, $body: String!) {
   commentCreate(input: {issueId: $issueId, body: $body}) {
     success
   }
@@ -628,7 +628,7 @@ mutation JadeSymphonyLinearCreateComment($issueId: String!, $body: String!) {
 "#;
 
 const LINEAR_UPDATE_COMMENT_MUTATION: &str = r#"
-mutation JadeSymphonyLinearUpdateComment($commentId: String!, $body: String!) {
+mutation SheaSymphonyLinearUpdateComment($commentId: String!, $body: String!) {
   commentUpdate(id: $commentId, input: {body: $body}) {
     success
   }
@@ -636,7 +636,7 @@ mutation JadeSymphonyLinearUpdateComment($commentId: String!, $body: String!) {
 "#;
 
 const LINEAR_UPDATE_ISSUE_STATE_MUTATION: &str = r#"
-mutation JadeSymphonyLinearUpdateIssueState($issueId: String!, $stateId: String!) {
+mutation SheaSymphonyLinearUpdateIssueState($issueId: String!, $stateId: String!) {
   issueUpdate(id: $issueId, input: {stateId: $stateId}) {
     success
   }
@@ -644,7 +644,7 @@ mutation JadeSymphonyLinearUpdateIssueState($issueId: String!, $stateId: String!
 "#;
 
 const LINEAR_ADD_ISSUE_TO_PROJECT_MUTATION: &str = r#"
-mutation JadeSymphonyLinearAddIssueToProject($issueId: String!, $projectId: String!) {
+mutation SheaSymphonyLinearAddIssueToProject($issueId: String!, $projectId: String!) {
   issueUpdate(id: $issueId, input: {projectId: $projectId}) {
     success
   }
@@ -652,7 +652,7 @@ mutation JadeSymphonyLinearAddIssueToProject($issueId: String!, $projectId: Stri
 "#;
 
 const LINEAR_CREATE_ISSUE_MUTATION: &str = r#"
-mutation JadeSymphonyLinearCreateIssue($teamId: String!, $projectId: String!, $title: String!, $description: String!) {
+mutation SheaSymphonyLinearCreateIssue($teamId: String!, $projectId: String!, $title: String!, $description: String!) {
   issueCreate(input: {teamId: $teamId, projectId: $projectId, title: $title, description: $description}) {
     success
     issue {

@@ -8,14 +8,14 @@ thing only after the operator noticed the mismatch manually.
 
 ## Evidence Anchors
 
-- `skills/jade-symphony/suite/jade-symphony-issue-forge-dream/SKILL.md` lists
+- `skills/shea-symphony/suite/shea-symphony-issue-forge-dream/SKILL.md` lists
   source-window examples using `cargo run -- project-state`,
   `cargo run -- inspect`, and older nearby command shapes.
-- A live Dream run attempted `cargo run -- inspect workflows/jade-symphony.md`
-  and received `unexpected argument 'workflows/jade-symphony.md'`; the current
-  usable command is `cargo run -- project inspect workflows/jade-symphony.md
+- A live Dream run attempted `cargo run -- inspect workflows/shea-symphony.md`
+  and received `unexpected argument 'workflows/shea-symphony.md'`; the current
+  usable command is `cargo run -- project inspect workflows/shea-symphony.md
   '#<issue>'`, while the broad status surface is `cargo run -- debug
-  workflows/jade-symphony.md`.
+  workflows/shea-symphony.md`.
 - `docs/dream-log/2026-05-18-01-issue-295-dream-skill-rehearsal/RUN.md`
   recorded older command names in the source inventory, proving the stale
   examples can propagate into Dream Logs.

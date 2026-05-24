@@ -2,7 +2,7 @@
 tracker:
   kind: github_project_v2
   owner: Alive24
-  repo: jade-symphony
+  repo: shea-symphony
   project_owner: Alive24
   project_number: 9
   status_field: Status
@@ -32,13 +32,13 @@ tracker:
     assignees: []
   workpad:
     source: issue_comment
-    marker: "<!-- jade-symphony-workpad -->"
+    marker: "<!-- shea-symphony-workpad -->"
 polling:
   interval_ms: 5000
 artifacts:
-  root: $JADE_SYMPHONY_ARTIFACT_ROOT
+  root: $SHEA_SYMPHONY_ARTIFACT_ROOT
 workspace:
-  root: $JADE_SYMPHONY_ARTIFACT_ROOT/Alive24/jade-symphony/default/worktrees
+  root: $SHEA_SYMPHONY_ARTIFACT_ROOT/Alive24/shea-symphony/default/worktrees
 main_lane:
   backend: dry-run
   max_concurrent_agents: 1
@@ -50,16 +50,16 @@ claude:
   command: claude
 review_lane:
   backend: gemini-cli
-  gemini_command: $JADE_GEMINI_COMMAND
+  gemini_command: $SHEA_GEMINI_COMMAND
   timeout_ms: 600000
 verification:
   timeout_ms: 600000
   commands: []
 observability:
-  logs_root: $JADE_SYMPHONY_ARTIFACT_ROOT/Alive24/jade-symphony/default/logs
+  logs_root: $SHEA_SYMPHONY_ARTIFACT_ROOT/Alive24/shea-symphony/default/logs
 ---
 
-You are working on Jade Symphony issue {{ issue.identifier }}.
+You are working on Shea Symphony issue {{ issue.identifier }}.
 
 Title: {{ issue.title }}
 State: {{ issue.state }}
@@ -74,18 +74,18 @@ preserve prior evidence unless it is stale or incorrect.
 
 ## Mission
 
-You are the main implementation agent for Jade Symphony. Use GitHub Project v2
+You are the main implementation agent for Shea Symphony. Use GitHub Project v2
 project #9 as the tracker state machine and implement the current issue exactly
-as contracted. Jade Symphony is orchestration infrastructure, not downstream
+as contracted. Shea Symphony is orchestration infrastructure, not downstream
 product business logic.
 
 Read these canonical sources before changing code:
 
-- `docs/bootstrap/JADE_WORKFLOW.md`
-- `docs/bootstrap/JADE_SYMPHONY_SPEC.md`
+- `docs/bootstrap/SHEA_WORKFLOW.md`
+- `docs/bootstrap/SHEA_SYMPHONY_SPEC.md`
 - `docs/bootstrap/TRACKER_GITHUB_PROJECT_V2.md`
 - `docs/bootstrap/ISSUE_QUALITY_GATE_TEMPLATE.md`
-- the current issue body and its Jade Symphony workpad
+- the current issue body and its Shea Symphony workpad
 
 Also consult the official reference tree when a protocol capability is in
 question, but do not edit files under

@@ -1,9 +1,9 @@
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::git_handoff::{CommandOutput, HandoffCommandRunner};
-use jade_symphony::lane_claim::LaneClaim;
-use jade_symphony::merge_lane::{MergeConflictRepairOutcome, MergeRepairEvidence};
-use jade_symphony::model::TrackerIssue;
-use jade_symphony::workflow::WorkflowDefinition;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::git_handoff::{CommandOutput, HandoffCommandRunner};
+use shea_symphony::lane_claim::LaneClaim;
+use shea_symphony::merge_lane::{MergeConflictRepairOutcome, MergeRepairEvidence};
+use shea_symphony::model::TrackerIssue;
+use shea_symphony::workflow::WorkflowDefinition;
 
 use crate::commands::session::{
     agent_session_backend, agent_session_backend_spec, record_agent_session_events,
@@ -198,13 +198,13 @@ pub(super) fn run_merge_agent_conflict_repair(
     prepared.branch_name = Some(head_ref_name.into());
     prepared
         .env
-        .insert("JADE_SYMPHONY_AGENT_LANE".into(), "merge".into());
+        .insert("SHEA_SYMPHONY_AGENT_LANE".into(), "merge".into());
     prepared
         .env
-        .insert("JADE_SYMPHONY_RUN_ID".into(), claim.run.clone());
+        .insert("SHEA_SYMPHONY_RUN_ID".into(), claim.run.clone());
     prepared
         .env
-        .insert("JADE_SYMPHONY_CLAIM".into(), claim.render());
+        .insert("SHEA_SYMPHONY_CLAIM".into(), claim.render());
 
     let events = match backend.run(prepared) {
         Ok(events) => events,

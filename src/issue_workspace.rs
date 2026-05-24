@@ -192,8 +192,8 @@ pub fn discover_issue_workspaces_from_parts(
     if let Some(description) = issue.description.as_deref() {
         for hint in workpad_workspace_hints(description, workpad_marker) {
             let git = worktree_by_path.get(&hint);
-            let strong = description.contains("jade-symphony-workspace-adoption")
-                || description.contains("jade-symphony-workspace-ensure")
+            let strong = description.contains("shea-symphony-workspace-adoption")
+                || description.contains("shea-symphony-workspace-ensure")
                 || description.contains("Workspace adoption");
             upsert_candidate(
                 &mut candidates,
@@ -345,7 +345,7 @@ pub fn render_workspace_adoption_workpad(
     candidate: &IssueWorkspaceCandidate,
 ) -> String {
     let block = format!(
-        "<!-- jade-symphony-workspace-adoption -->\n### Workspace Adoption\n- Issue: `{}`\n- Path: `{}`\n- Branch: `{}`\n- Head: `{}`\n- Source: operator-selected canonical worktree\n<!-- /jade-symphony-workspace-adoption -->",
+        "<!-- shea-symphony-workspace-adoption -->\n### Workspace Adoption\n- Issue: `{}`\n- Path: `{}`\n- Branch: `{}`\n- Head: `{}`\n- Source: operator-selected canonical worktree\n<!-- /shea-symphony-workspace-adoption -->",
         issue.identifier,
         candidate.path.display(),
         candidate.branch.as_deref().unwrap_or("unknown"),
@@ -371,10 +371,10 @@ pub fn render_workspace_ensure_workpad(
                 .map(|index| description[index..].trim())
         })
         .map(str::to_string)
-        .unwrap_or_else(|| format!("{marker}\n## Jade Symphony Workpad"));
+        .unwrap_or_else(|| format!("{marker}\n## Shea Symphony Workpad"));
 
     let block = format!(
-        "<!-- jade-symphony-workspace-ensure -->\n### Workspace Evidence\n- Issue: `{}`\n- Pull request: `{}`\n- Branch/ref: `{}`\n- Workspace path: `{}`\n- Action: `{}`\n- Source command: `workspace ensure`\n- Validation result: `clean local git worktree for Review/Merge inspection`\n<!-- /jade-symphony-workspace-ensure -->",
+        "<!-- shea-symphony-workspace-ensure -->\n### Workspace Evidence\n- Issue: `{}`\n- Pull request: `{}`\n- Branch/ref: `{}`\n- Workspace path: `{}`\n- Action: `{}`\n- Source command: `workspace ensure`\n- Validation result: `clean local git worktree for Review/Merge inspection`\n<!-- /shea-symphony-workspace-ensure -->",
         issue.identifier,
         pr_ref.unwrap_or("none"),
         candidate.branch.as_deref().unwrap_or("unknown"),
@@ -384,8 +384,8 @@ pub fn render_workspace_ensure_workpad(
 
     workpad = replace_or_append_block(
         &workpad,
-        "<!-- jade-symphony-workspace-ensure -->",
-        "<!-- /jade-symphony-workspace-ensure -->",
+        "<!-- shea-symphony-workspace-ensure -->",
+        "<!-- /shea-symphony-workspace-ensure -->",
         &block,
     );
     workpad
@@ -564,7 +564,7 @@ mod tests {
             identifier: "#253".into(),
             title: "Share issue worktree discovery across Main Review and Merge lanes".into(),
             description: Some(
-                "<!-- jade-symphony-workpad -->\n- Workspace: `/tmp/manual-issue-253`".into(),
+                "<!-- shea-symphony-workpad -->\n- Workspace: `/tmp/manual-issue-253`".into(),
             ),
             url: None,
             state: "In Progress".into(),
@@ -601,11 +601,11 @@ mod tests {
             worktree: PathBuf::from(path),
             branch: Some("feature/issue-253-worktree-discovery".into()),
             backend: "tmux".into(),
-            session_name: "jade-main-253".into(),
-            pane_target: "jade:0.0".into(),
+            session_name: "shea-main-253".into(),
+            pane_target: "shea:0.0".into(),
             prompt_artifact_path: PathBuf::from("/tmp/prompt"),
             log_path: PathBuf::from("/tmp/log"),
-            attach_command: "tmux attach -t jade".into(),
+            attach_command: "tmux attach -t shea".into(),
             attempt: 1,
             status: SessionStatus::Running,
             started_at_ms: 1,
@@ -645,7 +645,7 @@ mod tests {
             &issue(),
             &[session("/tmp/issue-253")],
             &worktrees,
-            "<!-- jade-symphony-workpad -->",
+            "<!-- shea-symphony-workpad -->",
         );
 
         assert_eq!(report.candidates.len(), 2);
@@ -674,7 +674,7 @@ mod tests {
                 branch: Some("main".into()),
                 prunable: None,
             }],
-            "<!-- jade-symphony-workpad -->",
+            "<!-- shea-symphony-workpad -->",
         );
 
         assert!(report.candidates.is_empty());
@@ -696,7 +696,7 @@ mod tests {
                 branch: Some("feature/issue-253-worktree-discovery".into()),
                 prunable: None,
             }],
-            "<!-- jade-symphony-workpad -->",
+            "<!-- shea-symphony-workpad -->",
         );
 
         assert!(report
@@ -733,7 +733,7 @@ mod tests {
     fn renders_adoption_block_without_losing_workpad_marker() {
         let body = render_workspace_adoption_workpad(
             &issue(),
-            "<!-- jade-symphony-workpad -->",
+            "<!-- shea-symphony-workpad -->",
             &IssueWorkspaceCandidate {
                 path: PathBuf::from("/tmp/issue-253"),
                 branch: Some("feature/issue-253-worktree-discovery".into()),
@@ -743,7 +743,7 @@ mod tests {
             },
         );
 
-        assert!(body.starts_with("<!-- jade-symphony-workpad -->"));
+        assert!(body.starts_with("<!-- shea-symphony-workpad -->"));
         assert!(body.contains("Workspace Adoption"));
         assert!(body.contains("/tmp/issue-253"));
         assert!(!body.contains("/tmp/manual-issue-253"));
@@ -753,7 +753,7 @@ mod tests {
     fn renders_ensure_block_as_workspace_evidence() {
         let body = render_workspace_ensure_workpad(
             &issue(),
-            "<!-- jade-symphony-workpad -->",
+            "<!-- shea-symphony-workpad -->",
             &IssueWorkspaceCandidate {
                 path: PathBuf::from("/tmp/issue-253"),
                 branch: Some("feature/issue-253-worktree-discovery".into()),
@@ -765,7 +765,7 @@ mod tests {
             Some("#254"),
         );
 
-        assert!(body.starts_with("<!-- jade-symphony-workpad -->"));
+        assert!(body.starts_with("<!-- shea-symphony-workpad -->"));
         assert!(body.contains("Workspace Evidence"));
         assert!(body.contains("workspace ensure"));
         assert!(body.contains("Pull request: `#254`"));
@@ -774,8 +774,8 @@ mod tests {
     #[test]
     fn workpad_hints_ignore_html_marker_lines() {
         let paths = workpad_workspace_hints(
-            "<!-- jade-symphony-workpad -->\n<!-- jade-symphony-workspace-adoption -->\n- Path: `/tmp/issue-253`\n<!-- /jade-symphony-workspace-adoption -->",
-            "<!-- jade-symphony-workpad -->",
+            "<!-- shea-symphony-workpad -->\n<!-- shea-symphony-workspace-adoption -->\n- Path: `/tmp/issue-253`\n<!-- /shea-symphony-workspace-adoption -->",
+            "<!-- shea-symphony-workpad -->",
         );
 
         assert_eq!(paths, vec![PathBuf::from("/tmp/issue-253")]);

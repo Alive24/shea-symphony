@@ -5,7 +5,7 @@
 
 ## Issue Goal
 
-Make Issue Forge validate rough ideas and repair them into executable Jade Symphony issue contracts.
+Make Issue Forge validate rough ideas and repair them into executable Shea Symphony issue contracts.
 
 ## Why Now
 
@@ -16,14 +16,14 @@ Operators need a local way to turn rough issue text into a dispatchable contract
 Source input captured by Issue Forge:
 
 ```md
-Make Issue Forge validate rough ideas and repair them into executable Jade Symphony issue contracts.
+Make Issue Forge validate rough ideas and repair them into executable Shea Symphony issue contracts.
 ```
 
 ## Decisions / Assumptions
 
 ### Decisions
 
-- Use Issue Forge repair to convert rough input into the Jade Symphony quality template.
+- Use Issue Forge repair to convert rough input into the Shea Symphony quality template.
 
 ### Assumptions
 
@@ -31,7 +31,7 @@ Make Issue Forge validate rough ideas and repair them into executable Jade Symph
 
 ## Non-Negotiable Guardrails
 
-- Keep Jade Symphony orchestration infrastructure separate from downstream product business logic.
+- Keep Shea Symphony orchestration infrastructure separate from downstream product business logic.
 - Do not introduce GSD runtime naming.
 
 ## Scope
@@ -48,12 +48,12 @@ Make Issue Forge validate rough ideas and repair them into executable Jade Symph
 
 ### Target Repository / Package
 
-- Alive24/jade-symphony
+- Alive24/shea-symphony
 
 ### Relevant Knowledge Sources
 
-- docs/bootstrap/JADE_SYMPHONY_SPEC.md
-- docs/bootstrap/JADE_WORKFLOW.md
+- docs/bootstrap/SHEA_SYMPHONY_SPEC.md
+- docs/bootstrap/SHEA_WORKFLOW.md
 - docs/bootstrap/ISSUE_QUALITY_GATE_TEMPLATE.md
 
 ### Relevant Code Paths
@@ -63,7 +63,7 @@ Make Issue Forge validate rough ideas and repair them into executable Jade Symph
 
 ## Current State
 
-Rough issue input exists and has been repaired into the Jade Symphony issue contract shape.
+Rough issue input exists and has been repaired into the Shea Symphony issue contract shape.
 
 ## Deliverable Shape
 
@@ -85,7 +85,7 @@ An executable issue contract that can pass the Issue Quality Gate before dispatc
 
 ### Functional Verification
 
-- Run `jade-symphony forge validate` on the repaired draft.
+- Run `shea-symphony forge validate` on the repaired draft.
 
 ### UAT
 

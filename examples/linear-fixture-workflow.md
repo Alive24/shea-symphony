@@ -2,7 +2,7 @@
 tracker:
   kind: linear
   endpoint: https://api.linear.app/graphql
-  project_slug: jade-symphony
+  project_slug: shea-symphony
   fixture_path: fixtures/linear-issues.json
   state_map:
     backlog: Backlog
@@ -27,11 +27,11 @@ tracker:
     assignees: []
   workpad:
     source: issue_comment
-    marker: "<!-- jade-symphony-workpad -->"
+    marker: "<!-- shea-symphony-workpad -->"
 polling:
   interval_ms: 5000
 workspace:
-  root: /tmp/jade-symphony-linear-fixture-workspaces
+  root: /tmp/shea-symphony-linear-fixture-workspaces
 main_lane:
   backend: dry-run
   max_concurrent_agents: 1
@@ -45,7 +45,7 @@ observability:
   logs_root: log
 ---
 
-You are working on Jade Symphony Linear issue {{ issue.identifier }}.
+You are working on Shea Symphony Linear issue {{ issue.identifier }}.
 
 Title: {{ issue.title }}
 State: {{ issue.state }}

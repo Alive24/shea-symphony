@@ -1,10 +1,10 @@
 use std::thread;
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::model::TrackerIssue;
-use jade_symphony::session_registry::session_registry_path;
-use jade_symphony::tracker::adapter_from_config;
-use jade_symphony::workflow::WorkflowDefinition;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::model::TrackerIssue;
+use shea_symphony::session_registry::session_registry_path;
+use shea_symphony::tracker::adapter_from_config;
+use shea_symphony::workflow::WorkflowDefinition;
 
 use super::write_candidate::run_loop_dispatch_write_candidate;
 use super::RunLoopOptions;

@@ -1,9 +1,9 @@
 use serde_json::Value;
 
-use jade_symphony::handoff::{
+use shea_symphony::handoff::{
     expected_merge_base_branch_for_issue, plan_issue_handoff, BranchTargetRole,
 };
-use jade_symphony::model::TrackerIssue;
+use shea_symphony::model::TrackerIssue;
 
 fn fixture() -> Value {
     let raw = include_str!("../examples/fixtures/parent-subissue-topology.json");
@@ -155,7 +155,7 @@ fn lane_handoff_uses_fixture_parent_branch_for_subissue_and_parent() {
         Some(parent_branch),
     );
     let subissue_plan = plan_issue_handoff(
-        std::path::Path::new("/tmp/jade-workspaces"),
+        std::path::Path::new("/tmp/shea-workspaces"),
         &subissue,
         "main",
     )
@@ -176,7 +176,7 @@ fn lane_handoff_uses_fixture_parent_branch_for_subissue_and_parent() {
         Some(parent_branch),
     );
     let parent_plan = plan_issue_handoff(
-        std::path::Path::new("/tmp/jade-workspaces"),
+        std::path::Path::new("/tmp/shea-workspaces"),
         &parent,
         "main",
     )

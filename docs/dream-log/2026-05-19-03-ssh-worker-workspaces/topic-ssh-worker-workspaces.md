@@ -2,7 +2,7 @@
 
 ## Theme
 
-OpenAI Symphony has a concrete remote worker path. Jade has local workspace
+OpenAI Symphony has a concrete remote worker path. Shea has local workspace
 safety and parsed remote config, but not live SSH execution or remote workspace
 evidence.
 
@@ -20,7 +20,7 @@ evidence.
   includes `worker.ssh_hosts` and `worker.max_concurrent_agents_per_host`.
 - `docs/implementation_notes.md`: marks workspace lifecycle hooks with
   timeout/remote SSH parity as Partial.
-- `docs/dogfood-readiness.md`: says Jade parses but does not use SSH worker host
+- `docs/dogfood-readiness.md`: says Shea parses but does not use SSH worker host
   config and has no live SSH execution.
 
 ## Candidate Triage

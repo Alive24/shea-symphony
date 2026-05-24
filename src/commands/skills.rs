@@ -1,4 +1,4 @@
-use jade_symphony::skill_status::{
+use shea_symphony::skill_status::{
     build_skill_readiness_report, render_skill_readiness_report,
     render_skill_readiness_report_json, SkillStatusInput,
 };

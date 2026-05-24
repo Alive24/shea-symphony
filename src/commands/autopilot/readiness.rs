@@ -1,17 +1,17 @@
 use std::path::Path;
 
-use jade_symphony::canonical_checkout::{
+use serde::Serialize;
+use shea_symphony::canonical_checkout::{
     canonical_checkout_status_line, inspect_canonical_checkout, CanonicalCheckoutReport,
 };
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::doctor::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::doctor::{
     append_local_skill_install_doctor_violations, audit_project_issues_with_context,
-    default_jade_symphony_skill_targets, AuditSeverity, ProjectAuditReport, ProjectDoctorContext,
+    default_shea_symphony_skill_targets, AuditSeverity, ProjectAuditReport, ProjectDoctorContext,
 };
-use jade_symphony::model::{SessionStatusSnapshot, TrackerIssue};
-use jade_symphony::runtime_state::RuntimeState;
-use jade_symphony::skill_status::{doctor_skill_readiness_summary, SkillStatusInput};
-use serde::Serialize;
+use shea_symphony::model::{SessionStatusSnapshot, TrackerIssue};
+use shea_symphony::runtime_state::RuntimeState;
+use shea_symphony::skill_status::{doctor_skill_readiness_summary, SkillStatusInput};
 
 use crate::commands::doctor::{
     append_canonical_checkout_doctor_violations, append_workspace_doctor_violations,
@@ -99,7 +99,7 @@ pub(crate) fn autopilot_doctor_report(
     append_canonical_checkout_doctor_violations(&mut report, config);
     append_workspace_doctor_violations(&mut report, config, issues);
     if let Ok(skill_repo_root) = discover_skill_suite_repo_root(workflow_path) {
-        let skill_targets = default_jade_symphony_skill_targets();
+        let skill_targets = default_shea_symphony_skill_targets();
         append_local_skill_install_doctor_violations(&mut report, &skill_repo_root, &skill_targets);
         report.skill_readiness_summary = Some(doctor_skill_readiness_summary(SkillStatusInput {
             workflow_path: workflow_path.to_path_buf(),

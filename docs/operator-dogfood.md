@@ -1,7 +1,7 @@
 # Operator Dogfood Launcher
 
-Use `scripts/jade-dogfood` for supervised local dogfood runs. It is a thin
-operator entrypoint around the built `jade-symphony` binary and the GitHub
+Use `scripts/shea-dogfood` for supervised local dogfood runs. It is a thin
+operator entrypoint around the built `shea-symphony` binary and the GitHub
 Project workflow.
 
 It is intentionally not a daemon and does not hide write mode.
@@ -15,13 +15,13 @@ cargo build
 ## Preview
 
 ```bash
-scripts/jade-dogfood --dry-run
+scripts/shea-dogfood --dry-run
 ```
 
 The launcher checks:
 
 - workflow file exists;
-- `target/debug/jade-symphony` exists and is executable;
+- `target/debug/shea-symphony` exists and is executable;
 - current directory is inside a git repository;
 - `gh` exists;
 - `gh auth status` succeeds;
@@ -30,10 +30,10 @@ The launcher checks:
 - in write mode, `autopilot plan` and the bounded `autopilot loop --dry-run`
   preflight pass.
 
-The canonical supervised operator workflow is `workflows/jade-symphony.md`. It
+The canonical supervised operator workflow is `workflows/shea-symphony.md`. It
 defaults durable worktrees, logs, and runtime artifacts under
-`~/.jade-symphony/artifacts`; set
-`JADE_SYMPHONY_ARTIFACT_ROOT` before running commands to move the whole local
+`~/.shea-symphony/artifacts`; set
+`SHEA_SYMPHONY_ARTIFACT_ROOT` before running commands to move the whole local
 artifact tree.
 
 The workflow file is an index/config, not a single prompt for every role. It
@@ -50,14 +50,14 @@ initialization continues.
 After preflight, dry-run mode executes the all-lane foreground preview:
 
 ```bash
-target/debug/jade-symphony autopilot loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-iterations 1 --dry-run
 ```
 
 Use the unified read-only preflight before any write-mode dogfood:
 
 ```bash
-target/debug/jade-symphony autopilot plan workflows/jade-symphony.md
-target/debug/jade-symphony autopilot plan workflows/jade-symphony.md --json
+target/debug/shea-symphony autopilot plan workflows/shea-symphony.md
+target/debug/shea-symphony autopilot plan workflows/shea-symphony.md --json
 ```
 
 `autopilot plan` is not write-mode automation. It reuses the current Main,
@@ -85,8 +85,8 @@ For a more scannable operator view, keep the same dry-run boundary and opt into
 the terminal panel:
 
 ```bash
-target/debug/jade-symphony autopilot loop workflows/jade-symphony.md --max-iterations 1 --dry-run --display tui
-target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --dry-run --display tui
+target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-iterations 1 --dry-run --display tui
+target/debug/shea-symphony main loop workflows/shea-symphony.md --max-iterations 1 --dry-run --display tui
 ```
 
 The autopilot TUI is still a foreground command, not a daemon. It renders Main,
@@ -101,13 +101,13 @@ is available on focused `main loop`, `project state`, and `doctor`.
 The first slice follows the current OpenAI Codex CLI terminal direction checked
 against `openai/codex` on 2026-05-15: the Codex TUI crate depends on `ratatui`
 and `crossterm`, with workspace versions `ratatui 0.29.0` and `crossterm
-0.28.1`. Jade Symphony uses that stack for the presentation foundation while
+0.28.1`. Shea Symphony uses that stack for the presentation foundation while
 deliberately avoiding full-screen interaction in this issue.
 
 ## Supervised Write Tick
 
 ```bash
-scripts/jade-dogfood --write --confirm-write --max-iterations 1
+scripts/shea-dogfood --write --confirm-write --max-iterations 1
 ```
 
 Write mode is intentionally bounded. It runs `autopilot loop` only after the
@@ -115,10 +115,10 @@ explicit confirmation flag is present. Before that mutating foreground run, the
 launcher runs:
 
 ```bash
-target/debug/jade-symphony project state workflows/jade-symphony.md
-target/debug/jade-symphony autopilot plan workflows/jade-symphony.md
-target/debug/jade-symphony doctor workflows/jade-symphony.md
-target/debug/jade-symphony autopilot loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+target/debug/shea-symphony project state workflows/shea-symphony.md
+target/debug/shea-symphony autopilot plan workflows/shea-symphony.md
+target/debug/shea-symphony doctor workflows/shea-symphony.md
+target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-iterations 1 --dry-run
 ```
 
 If the normal preflight surfaces fail, the launcher exits before claiming
@@ -142,11 +142,11 @@ evidence is treated conservatively and does not launch duplicate Main Agents or
 hand off incomplete work. `main_lane.backend: tmux` remains available as an
 explicit fallback/debug setting. In that mode, Codex-backed tmux sessions still
 capture the pane before prompt injection and can auto-advance the Codex
-workspace trust prompt inside a Jade Symphony-created issue worktree. Set
-`JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to opt out; when disabled, or when readiness
+workspace trust prompt inside a Shea Symphony-created issue worktree. Set
+`SHEA_SYMPHONY_TMUX_AUTO_TRUST=0` to opt out; when disabled, or when readiness
 cannot be confirmed, the tick fails closed with attach/log evidence and does
 not hand off to `Agent Review`.
-Main handoff also requires the PR relationship to be visible through Jade
+Main handoff also requires the PR relationship to be visible through Shea
 Symphony's Project/issue linked-PR read surface, and the linked PR must be
 ready, not draft. Workpad or comment URLs can identify the intended PR, but
 they are not a permanent substitute for the verified relationship. When all
@@ -154,7 +154,7 @@ other handoff evidence is valid, `main loop --write` may run `gh pr ready`
 before moving the issue to `Agent Review`; if relationship verification or
 readiness mutation fails, keep the issue out of `Agent Review`, route to
 `Need Human Input`, and preserve the blocker in the workpad.
-When Main handoff reaches `Agent Review`, Jade Symphony keeps backend artifacts
+When Main handoff reaches `Agent Review`, Shea Symphony keeps backend artifacts
 as audit evidence while marking matching Main session registry entries completed
 and clearing matching active runtime state. A still-open tmux pane is not by
 itself active work after that reconciliation; attach only when the registry or
@@ -173,7 +173,7 @@ the wait reason, issue or PR when known, backend or child process, elapsed time,
 and next expected action. They are liveness and diagnosis hints only; they do
 not alter timeout, retry, routing, review, or merge behavior, and they are kept
 out of JSON stdout. For local UAT, set
-`JADE_SYMPHONY_PROGRESS_HEARTBEAT_MS=1000` or another small value; set it to `0`
+`SHEA_SYMPHONY_PROGRESS_HEARTBEAT_MS=1000` or another small value; set it to `0`
 to suppress heartbeat output for that process.
 Persisted session registry statuses that are not recognized by the current
 binary are read as `unknown` without rewriting or dropping the record. Status
@@ -198,10 +198,10 @@ production-readiness claim.
 Start with readback and dry-run preflight:
 
 ```bash
-target/debug/jade-symphony project issue workflows/jade-symphony.md '#367' --json
-target/debug/jade-symphony project issue workflows/jade-symphony.md '#388' --json
-target/debug/jade-symphony debug workflows/jade-symphony.md
-target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+target/debug/shea-symphony project issue workflows/shea-symphony.md '#367' --json
+target/debug/shea-symphony project issue workflows/shea-symphony.md '#388' --json
+target/debug/shea-symphony debug workflows/shea-symphony.md
+target/debug/shea-symphony main loop workflows/shea-symphony.md --max-iterations 1 --dry-run
 ```
 
 The preflight must show that #367 is terminal, #388's structured blocker is no
@@ -214,7 +214,7 @@ operator-blocked smoke evidence.
 Only then run the bounded live tick:
 
 ```bash
-target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --write
+target/debug/shea-symphony main loop workflows/shea-symphony.md --max-iterations 1 --write
 ```
 
 A passing smoke leaves citeable evidence in the selected issue's Main Workpad,
@@ -232,7 +232,7 @@ passing app-server smoke.
 
 ## Evidence Timeline
 
-Jade Symphony uses two issue-comment evidence surfaces:
+Shea Symphony uses two issue-comment evidence surfaces:
 
 - `Main Agent Workpad`: one persistent marker comment owned by the Main Agent.
   It is updated in place for implementation plan, work log, verification, PR,
@@ -244,7 +244,7 @@ Jade Symphony uses two issue-comment evidence surfaces:
 - Append-only timeline comments: every Review, Rework, Merge, Human Review, and
   Doctor run writes a standalone comment with a human-readable GMT timestamp,
   run id, lane, actor, input state, target state, result, PR when relevant, and
-  evidence summary. `Jade Symphony Rework Run` comments explain why the issue
+  evidence summary. `Shea Symphony Rework Run` comments explain why the issue
   entered `Rework`; they do not replace the Main Agent Workpad for
   implementation evidence.
 
@@ -254,10 +254,10 @@ GitHub Project v2 cannot otherwise expose the PR, not routine timeline noise.
 
 Review, Merge, Human Review, and Doctor flows must not overwrite or restructure
 the Main Agent Workpad. Rework-trigger diagnostics should reference Main
-evidence, then write their own `Jade Symphony Agent Review Run`,
-`Jade Symphony Rework Run`,
-`Jade Symphony Merge Run`, `Jade Symphony Human Review Decision`, or
-`Jade Symphony Doctor Triage` timeline comment. Historical issues may still
+evidence, then write their own `Shea Symphony Agent Review Run`,
+`Shea Symphony Rework Run`,
+`Shea Symphony Merge Run`, `Shea Symphony Human Review Decision`, or
+`Shea Symphony Doctor Triage` timeline comment. Historical issues may still
 contain older mixed Workpad evidence; do not migrate or delete it during normal
 dogfood.
 
@@ -288,16 +288,16 @@ review_lane:
 ```
 
 ```bash
-target/debug/jade-symphony review loop workflows/jade-symphony.md --max-iterations 1 --write
+target/debug/shea-symphony review loop workflows/shea-symphony.md --max-iterations 1 --write
 ```
 
 During supervised review-loop dogfood, use the read-only status surface before
 dropping to raw logs or process inspection:
 
 ```bash
-target/debug/jade-symphony review status workflows/jade-symphony.md
-target/debug/jade-symphony review status workflows/jade-symphony.md --issue '#<issue>' --recent 3 --verbose
-target/debug/jade-symphony review status workflows/jade-symphony.md --json
+target/debug/shea-symphony review status workflows/shea-symphony.md
+target/debug/shea-symphony review status workflows/shea-symphony.md --issue '#<issue>' --recent 3 --verbose
+target/debug/shea-symphony review status workflows/shea-symphony.md --json
 ```
 
 Default output is a compact table of running review slots and recent terminal
@@ -324,7 +324,7 @@ Session startup validates the existing Review Agent claim and writes attach/log
 evidence without moving the issue to `Human Review`; this tmux path is an
 explicit manual fallback, not the automatic review-loop default. The worker
 value may be a display label such as `Manual Gemini Review`; use the claim
-command so Jade Symphony can quote, escape, and validate the stored pointer
+command so Shea Symphony can quote, escape, and validate the stored pointer
 before Project mutation.
 
 If Gemini cannot start, the Agent Review timeline comment should name the
@@ -351,26 +351,26 @@ review pass.
 
 Manual Gemini or operator-supplied review notes must be routed through
 `review pass` or `review reject`, which wraps the note in a
-`## Jade Symphony Agent Review Run` timeline comment. Mark the inner note as
+`## Shea Symphony Agent Review Run` timeline comment. Mark the inner note as
 manual evidence so operators can distinguish it from automatic `review loop`
 pass evidence.
 
-Use `workflows/jade-symphony.md` for supervised review workers. Do not keep the
+Use `workflows/shea-symphony.md` for supervised review workers. Do not keep the
 active review workflow only under `/tmp` or `/private/tmp`; the CLI prints
 `workflow_warning=temporary_path` for those workflow files so operators can
 promote reusable config into the repo.
 
 ## Local Skill Suite
 
-Jade Symphony's local operator skills are repo-owned under
-`skills/jade-symphony/` and versioned by `skills/jade-symphony/manifest.toml`.
+Shea Symphony's local operator skills are repo-owned under
+`skills/shea-symphony/` and versioned by `skills/shea-symphony/manifest.toml`.
 Use the installer to preview, install, update, or validate the Codex and Gemini
 copies instead of hand-copying skill files:
 
 ```bash
-node scripts/install-jade-symphony-skills.js --dry-run
-node scripts/install-jade-symphony-skills.js
-node scripts/install-jade-symphony-skills.js --validate
+node scripts/install-shea-symphony-skills.js --dry-run
+node scripts/install-shea-symphony-skills.js
+node scripts/install-shea-symphony-skills.js --validate
 ```
 
 The install path is interactive by default. It shows the detected Codex and
@@ -383,13 +383,13 @@ Skills are per-repo rendered installs, not one global generic skill set. Before
 starting a lane that depends on local skills, inspect readiness without writing:
 
 ```bash
-cargo run -- skills status workflows/jade-symphony.md
-cargo run -- skills status workflows/jade-symphony.md --json
-cargo run -- skills status workflows/jade-symphony.md --session-skills-file /path/to/session-skills.txt
+cargo run -- skills status workflows/shea-symphony.md
+cargo run -- skills status workflows/shea-symphony.md --json
+cargo run -- skills status workflows/shea-symphony.md --session-skills-file /path/to/session-skills.txt
 ```
 
 `skills status` discovers the source suite from `--suite-path`,
-`JADE_SYMPHONY_SKILL_SUITE`, the current repo's `skills/jade-symphony/suite`,
+`SHEA_SYMPHONY_SKILL_SUITE`, the current repo's `skills/shea-symphony/suite`,
 then installed-only mode when no source suite exists. It reports expected/source
 skills, Codex installs, Gemini installs when configured or discoverable,
 rendered metadata freshness, broken links, alias/file-shaped installs, missing
@@ -398,7 +398,7 @@ is provided, session visibility is `unknown`; that is diagnostic context, not a
 failure. Gemini absence is not a failure unless the operator explicitly requires
 Gemini for the current environment.
 
-The packaged skills preserve the same lane boundaries as the Jade Symphony CLI:
+The packaged skills preserve the same lane boundaries as the Shea Symphony CLI:
 Issue Forge, Reflect, and Dream handle conversation, draft shaping, backlog
 mining, and promotion discussion, including Human Review -> Rework revision
 discussion; the CLI owns `forge create`, `forge promote`, `forge rework`, and
@@ -412,14 +412,14 @@ path rather than repairing skill files itself.
 ## Inspect And Resume
 
 ```bash
-target/debug/jade-symphony project inspect workflows/jade-symphony.md '#<issue>'
-target/debug/jade-symphony project state workflows/jade-symphony.md
-target/debug/jade-symphony project issue workflows/jade-symphony.md '#235' --json
-target/debug/jade-symphony autopilot plan workflows/jade-symphony.md
-target/debug/jade-symphony debug workflows/jade-symphony.md
-target/debug/jade-symphony project state workflows/jade-symphony.md --display tui
-target/debug/jade-symphony doctor workflows/jade-symphony.md --display tui
-target/debug/jade-symphony autopilot loop workflows/jade-symphony.md --max-iterations 1 --write
+target/debug/shea-symphony project inspect workflows/shea-symphony.md '#<issue>'
+target/debug/shea-symphony project state workflows/shea-symphony.md
+target/debug/shea-symphony project issue workflows/shea-symphony.md '#235' --json
+target/debug/shea-symphony autopilot plan workflows/shea-symphony.md
+target/debug/shea-symphony debug workflows/shea-symphony.md
+target/debug/shea-symphony project state workflows/shea-symphony.md --display tui
+target/debug/shea-symphony doctor workflows/shea-symphony.md --display tui
+target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-iterations 1 --write
 ```
 
 Use `project state` before claiming work when multiple operators are active. A
@@ -442,7 +442,7 @@ Main, Review, or Merge issue worktree, and do not leave runtime state, logs,
 prompts, drafts, or evidence there. `autopilot loop --write`,
 `main loop --write`, `review loop --write`, and `merge loop --write` refresh and
 check the launch checkout before tracker mutation. From a clean attached
-`main`, Jade Symphony fetches the configured upstream and performs a
+`main`, Shea Symphony fetches the configured upstream and performs a
 canonical-only `git merge --ff-only` when local `main` is only behind. The
 terminal output reports `canonical_checkout_refresh=already_current`,
 `ff_only`, `would_ff_only`, or `blocked`, then prints the canonical safety line.
@@ -485,7 +485,7 @@ topology evidence.
 
 ## Issue Forge Reflect
 
-Issue Forge Reflect is a Codex skill workflow, not a Jade Symphony CLI
+Issue Forge Reflect is a Codex skill workflow, not a Shea Symphony CLI
 subcommand. Use it to turn recent dogfood conversations, operator notes, or
 Project observations into non-dispatchable `Backlog` seeds, then use the
 conversation-led promote flow when an operator selects one seed for execution.
@@ -512,7 +512,7 @@ operator confirmation, then run `forge rework`. The command is non-interactive:
 it validates the source issue is `Human Review`, rejects active lane claims,
 records a diagnostic workpad if they are present, preserves terminal lane claims
 as audit pointers, replaces the issue content, writes Rework revision evidence
-as an append-only `Jade Symphony Rework Run` timeline comment, and sets
+as an append-only `Shea Symphony Rework Run` timeline comment, and sets
 `Rework` as the final mutation. Do not use raw Project
 mutation, `project set-state`, or `forge promote` for this normal path. Missing
 linked PRs or missing local worktrees are downstream Main Agent recovery work
@@ -534,7 +534,7 @@ repairing state, cleaning artifacts, or implying unattended readiness.
 ## Issue Forge Dream
 
 Issue Forge Dream is the slow backlog-mining companion to Reflect. Use Dream
-when the operator wants to sleep on broader Jade Symphony history: recent
+when the operator wants to sleep on broader Shea Symphony history: recent
 Project state, run logs, workpads, Doctor findings, repo-owned skills, memory
 summaries, bootstrap docs, and recent docs/code drift.
 
@@ -553,7 +553,7 @@ usually ignores them; Doctor may use them only as advisory context, not
 workflow invariants.
 
 Use the repo-owned Doctor skill at
-`.codex/skills/jade-symphony-doctor/SKILL.md` when an operator-selected issue or
+`.codex/skills/shea-symphony-doctor/SKILL.md` when an operator-selected issue or
 `Need Human Input` item needs triage before normal lane work can resume. The
 skill is read-first: it gathers `project state`, `doctor`, `debug`, and
 `project issue` evidence, classifies the stuck state, and produces a structured
@@ -577,9 +577,9 @@ is not pass evidence.
 For a manual Gemini/operator review, claim and route through the CLI:
 
 ```bash
-target/debug/jade-symphony review claim workflows/jade-symphony.md '#226' --worker "Manual Gemini Review" --write
-target/debug/jade-symphony review pass workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
-target/debug/jade-symphony review reject workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --target-state rework --write
+target/debug/shea-symphony review claim workflows/shea-symphony.md '#226' --worker "Manual Gemini Review" --write
+target/debug/shea-symphony review pass workflows/shea-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
+target/debug/shea-symphony review reject workflows/shea-symphony.md '#226' --evidence-file /tmp/review-evidence.md --target-state rework --write
 ```
 
 The evidence file for `review pass` or `review reject` must include the exact
@@ -597,7 +597,7 @@ To move local runtime artifacts without changing repo-owned workflow files, set
 one environment variable before launching dogfood commands:
 
 ```bash
-export JADE_SYMPHONY_ARTIFACT_ROOT="$HOME/.jade-symphony/artifacts"
+export SHEA_SYMPHONY_ARTIFACT_ROOT="$HOME/.shea-symphony/artifacts"
 ```
 
 The live operator workflow derives implementation and review worktree/log paths
@@ -610,8 +610,8 @@ disposable scratch can be removed only through a separate cleanup decision.
 Use the grouped `clean` surface for local cleanup and persistence questions:
 
 ```bash
-target/debug/jade-symphony clean plan workflows/jade-symphony.md
-target/debug/jade-symphony clean audit workflows/jade-symphony.md
+target/debug/shea-symphony clean plan workflows/shea-symphony.md
+target/debug/shea-symphony clean audit workflows/shea-symphony.md
 ```
 
 `clean plan` is the grouped form of the existing read-only cleanup plan, while
@@ -622,17 +622,17 @@ workflow states.
 
 Interrupted runtime recovery flow:
 
-1. Run `target/debug/jade-symphony status workflows/jade-symphony.md` and read
+1. Run `target/debug/shea-symphony status workflows/shea-symphony.md` and read
    the `runtime sessions` section for backend, session status, artifact path,
    attach command when available, and log.
-2. Run `target/debug/jade-symphony doctor workflows/jade-symphony.md` before
+2. Run `target/debug/shea-symphony doctor workflows/shea-symphony.md` before
    retrying or clearing runtime state; stale, failed, usage-limited, or
    unattributed sessions require operator inspection.
 3. For normal all-lane recovery, start with the same foreground autopilot path:
 
 ```bash
-target/debug/jade-symphony autopilot plan workflows/jade-symphony.md
-target/debug/jade-symphony autopilot loop workflows/jade-symphony.md --max-iterations 1 --write
+target/debug/shea-symphony autopilot plan workflows/shea-symphony.md
+target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-iterations 1 --write
 ```
 
 `autopilot loop --write` uses recover-first handling for Main and Merge lanes by
@@ -644,7 +644,7 @@ one lane.
    run a bounded lane recovery tick:
 
 ```bash
-target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 3 --write
+target/debug/shea-symphony main loop workflows/shea-symphony.md --max-iterations 1 --max-concurrent 3 --write
 ```
 
 `main loop --write` restarts recoverable Main runtime slots as new attempts by
@@ -657,7 +657,7 @@ deliberately conservative operator pass.
    a bounded recovery tick:
 
 ```bash
-target/debug/jade-symphony merge loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 2 --write
+target/debug/shea-symphony merge loop workflows/shea-symphony.md --max-iterations 1 --max-concurrent 2 --write
 ```
 
 `merge loop --write` adopts interrupted structured merge-loop/goal claims first
@@ -666,7 +666,7 @@ alone, keeps safe stale-base refreshes or merge-lane repairs in `Merging`, and
 routes serious blockers to `Need Human Input` rather than `Rework`. Use
 `--no-recover` only for debugging or a deliberately conservative operator pass.
 
-6. Run `target/debug/jade-symphony clean audit workflows/jade-symphony.md` only
+6. Run `target/debug/shea-symphony clean audit workflows/shea-symphony.md` only
    after evidence is preserved. Active or uncertain sessions stay
    `needs_human_decision`; completed sessions and terminal clean worktrees may
    become cleanup candidates.
@@ -713,15 +713,15 @@ step. Treat these as the glanceable status bar; detailed line logs and JSONL
 events remain the durable audit trail.
 
 ```bash
-target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
-target/debug/jade-symphony autopilot loop workflows/jade-symphony.md --max-iterations 1 --dry-run
-target/debug/jade-symphony merge loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
+target/debug/shea-symphony main loop workflows/shea-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
+target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-iterations 1 --dry-run
+target/debug/shea-symphony merge loop workflows/shea-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
 ```
 
 ## Logical Actor Audit
 
 Dogfood can run many local workers through the same GitHub account. GitHub will
-show the configured account for API mutations, so Jade Symphony also writes a
+show the configured account for API mutations, so Shea Symphony also writes a
 local `tracker_mutation` audit record to the configured event log. The record
 captures the logical actor role and label, git author when configured, command,
 mutation type, issue, target, from/to state when known, reason, and timestamp.
@@ -736,9 +736,9 @@ or authorization-shaped text is redacted before serialization.
 Cleanup planning is read-only:
 
 ```bash
-target/debug/jade-symphony clean plan workflows/jade-symphony.md
-target/debug/jade-symphony clean audit workflows/jade-symphony.md
-target/debug/jade-symphony clean plan workflows/jade-symphony.md
+target/debug/shea-symphony clean plan workflows/shea-symphony.md
+target/debug/shea-symphony clean audit workflows/shea-symphony.md
+target/debug/shea-symphony clean plan workflows/shea-symphony.md
 ```
 
 `clean plan` reports terminal worktrees that appear removable only when tracker

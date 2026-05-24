@@ -21,12 +21,12 @@ struct SkillSuiteEntry {
     path: PathBuf,
 }
 
-pub fn default_jade_symphony_skill_targets() -> Vec<SkillInstallTarget> {
+pub fn default_shea_symphony_skill_targets() -> Vec<SkillInstallTarget> {
     vec![
         SkillInstallTarget {
             label: "Codex".into(),
             root: env_skill_root(
-                "JADE_SYMPHONY_CODEX_SKILLS_DIR",
+                "SHEA_SYMPHONY_CODEX_SKILLS_DIR",
                 "CODEX_HOME",
                 ".codex",
                 "skills",
@@ -35,7 +35,7 @@ pub fn default_jade_symphony_skill_targets() -> Vec<SkillInstallTarget> {
         SkillInstallTarget {
             label: "Gemini".into(),
             root: env_skill_root(
-                "JADE_SYMPHONY_GEMINI_SKILLS_DIR",
+                "SHEA_SYMPHONY_GEMINI_SKILLS_DIR",
                 "GEMINI_HOME",
                 ".gemini",
                 "local-skills",
@@ -49,7 +49,7 @@ pub fn append_local_skill_install_doctor_violations(
     repo_root: &Path,
     targets: &[SkillInstallTarget],
 ) {
-    let suite_root = repo_root.join("skills").join("jade-symphony");
+    let suite_root = repo_root.join("skills").join("shea-symphony");
     let manifest = match read_skill_suite_manifest(&suite_root) {
         Ok(manifest) => manifest,
         Err(error) => {
@@ -57,8 +57,8 @@ pub fn append_local_skill_install_doctor_violations(
                 "Repo",
                 &suite_root,
                 "local_skill_suite_manifest_unavailable",
-                format!("Jade Symphony skill suite metadata could not be read: {error}."),
-                "Run from a checkout that contains `skills/jade-symphony/manifest.toml`, then rerun `doctor`.",
+                format!("Shea Symphony skill suite metadata could not be read: {error}."),
+                "Run from a checkout that contains `skills/shea-symphony/manifest.toml`, then rerun `doctor`.",
             ));
             return;
         }
@@ -160,11 +160,11 @@ fn audit_skill_target(
             &target.root,
             "local_skill_root_missing",
             format!(
-                "{} Jade Symphony skill root is missing or undiscovered: `{}`.",
+                "{} Shea Symphony skill root is missing or undiscovered: `{}`.",
                 target.label,
                 target.root.display()
             ),
-            "Run `node scripts/install-jade-symphony-skills.js --dry-run` to inspect targets, or configure JADE_SYMPHONY_CODEX_SKILLS_DIR / JADE_SYMPHONY_GEMINI_SKILLS_DIR before rerunning `doctor`.",
+            "Run `node scripts/install-shea-symphony-skills.js --dry-run` to inspect targets, or configure SHEA_SYMPHONY_CODEX_SKILLS_DIR / SHEA_SYMPHONY_GEMINI_SKILLS_DIR before rerunning `doctor`.",
         ));
         return;
     }
@@ -204,7 +204,7 @@ fn audit_skill_install(
                     skill.name,
                     destination.display()
                 ),
-                "Run `node scripts/install-jade-symphony-skills.js --dry-run` to preview the #242 install/update path, then install or validate intentionally.",
+                "Run `node scripts/install-shea-symphony-skills.js --dry-run` to preview the #242 install/update path, then install or validate intentionally.",
             ));
             return;
         }
@@ -320,7 +320,7 @@ fn audit_skill_symlink(
                 "{label} skill `{}` symlink points at a file instead of the skill directory.",
                 skill.name
             ),
-            "Point the symlink at the skill directory or reinstall through `node scripts/install-jade-symphony-skills.js`; doctor will not rewrite it.",
+            "Point the symlink at the skill directory or reinstall through `node scripts/install-shea-symphony-skills.js`; doctor will not rewrite it.",
         ));
         return;
     }
@@ -377,7 +377,7 @@ fn audit_skill_directory(
                 "{label} skill `{}` has stale or mismatched `name:` metadata.",
                 skill.name
             ),
-            "Run `node scripts/install-jade-symphony-skills.js --validate` to compare against the repo-owned suite.",
+            "Run `node scripts/install-shea-symphony-skills.js --validate` to compare against the repo-owned suite.",
         ));
     }
 
@@ -394,13 +394,13 @@ fn audit_skill_directory(
         ));
     }
 
-    if text.contains("Jade CLI") {
+    if text.contains("Shea CLI") {
         report.violations.push(local_skill_violation(
             label,
             &skill_file,
             "local_skill_stale_cli_naming",
             format!(
-                "{label} skill `{}` still says `Jade CLI` instead of `Jade Symphony CLI`.",
+                "{label} skill `{}` still says `Shea CLI` instead of `Shea Symphony CLI`.",
                 skill.name
             ),
             "Refresh the local skill from the repo-owned suite; doctor will not rewrite skill prose.",
@@ -417,7 +417,7 @@ fn audit_skill_directory(
                     "{label} skill `{}` differs from the repo-owned suite copy.",
                     skill.name
                 ),
-                "Run `node scripts/install-jade-symphony-skills.js --validate` for the full file diff, then use the #242 install/update path intentionally.",
+                "Run `node scripts/install-shea-symphony-skills.js --validate` for the full file diff, then use the #242 install/update path intentionally.",
             ));
         }
     }
@@ -433,7 +433,7 @@ fn local_skill_violation(
     ProjectAuditViolation {
         issue_ref: format!("local-skill:{label}"),
         title: format!(
-            "Local Jade Symphony skill install health: {}",
+            "Local Shea Symphony skill install health: {}",
             path.display()
         ),
         state: "local".into(),

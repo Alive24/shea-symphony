@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use jade_symphony::model::normalize_state;
-use jade_symphony::review::transition_allowed_for_main_agent;
-use jade_symphony::tracker::{adapter_from_config, TrackerAdapter, TrackerError};
+use shea_symphony::model::normalize_state;
+use shea_symphony::review::transition_allowed_for_main_agent;
+use shea_symphony::tracker::{adapter_from_config, TrackerAdapter, TrackerError};
 
 use crate::lanes::main_loop::{linked_pull_requests_contain, reconcile_main_handoff_runtime_state};
 use crate::orchestration::{

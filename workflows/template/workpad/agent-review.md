@@ -1,4 +1,4 @@
-## Jade Symphony Agent Review Run
+## Shea Symphony Agent Review Run
 
 - Generated at: `{{generated_at}}`
 - Issue: {{issue_ref}} {{issue_title}}

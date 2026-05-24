@@ -3,17 +3,17 @@
 Date: 2026-05-19
 Run: `2026-05-19-01-openai-symphony-parity`
 Mode: write-mode Dream continuation
-Operator context: continue sleeping on Jade Symphony against the OpenAI Symphony specification and Elixir reference implementation
+Operator context: continue sleeping on Shea Symphony against the OpenAI Symphony specification and Elixir reference implementation
 
 ## Source Inventory
 
 - `git status --short --branch`
 - `git fetch origin`
 - `git merge --ff-only origin/main`
-- `cargo run -- project state workflows/jade-symphony.md`
-- `cargo run -- doctor workflows/jade-symphony.md`
-- `cargo run -- debug workflows/jade-symphony.md`
-- `gh issue list --repo Alive24/jade-symphony --state open --search "Backlog: in:title" --json number,title,url --limit 80`
+- `cargo run -- project state workflows/shea-symphony.md`
+- `cargo run -- doctor workflows/shea-symphony.md`
+- `cargo run -- debug workflows/shea-symphony.md`
+- `gh issue list --repo Alive24/shea-symphony --state open --search "Backlog: in:title" --json number,title,url --limit 80`
 - `docs/dream-log/INDEX.md`
 - `docs/dream-log/2026-05-18-02-dream-cli-skill-drift/RUN.md`
 - `docs/dream-log/2026-05-18-02-dream-cli-skill-drift/topic-cli-skill-drift.md`
@@ -32,7 +32,7 @@ Operator context: continue sleeping on Jade Symphony against the OpenAI Symphony
 
 ## Round Summary
 
-This round compared the current Jade Symphony implementation notes and dogfood
+This round compared the current Shea Symphony implementation notes and dogfood
 readiness surface against the OpenAI Symphony spec plus the Elixir reference.
 The strongest gaps were not small doc drift; they were runtime parity boundaries
 that appear in the reference as first-class orchestration behavior:
@@ -40,12 +40,12 @@ that appear in the reference as first-class orchestration behavior:
 - Codex app-server continuation, max-turn accounting, token/rate-limit handling,
   and live runtime snapshot wiring.
 - Tracker-scoped dynamic tool execution, especially the `linear_graphql` shape
-  in the reference implementation, while Jade currently has descriptor-only
+  in the reference implementation, while Shea currently has descriptor-only
   dynamic-tool planning.
 - Last-known-good workflow reload semantics wired into long-running runtimes
   instead of only one-shot load/reload helpers.
 
-The optional observability API/web dashboard stayed on the Watchlist. Jade has a
+The optional observability API/web dashboard stayed on the Watchlist. Shea has a
 deliberate terminal-first status path, `status serve --once`, JSONL events, and
 runtime snapshots; `docs/implementation_notes.md` marks the persistent API layer
 as delayed rather than merely forgotten.
@@ -82,7 +82,7 @@ as delayed rather than merely forgotten.
 - Local Codex and Gemini skill install warnings remain present; they should
   probably route through the #242/#256/#315 family instead of a new Dream seed.
 - Integration gaps remain: Project v2 PR linking is still comment/autolink
-  based, and live Project writes still go through `gh api graphql` under Jade
+  based, and live Project writes still go through `gh api graphql` under Shea
   Symphony CLI `--write` commands.
 
 ## Gemini Review Status
@@ -103,5 +103,5 @@ new seed is created.
 
 Dream-created issues stayed in `Backlog`. None were promoted to Todo, claimed by
 Main/Review/Merge, or treated as lane authority. Project reads and issue
-creation went through the Jade Symphony CLI where Project state or mutation was
+creation went through the Shea Symphony CLI where Project state or mutation was
 involved.

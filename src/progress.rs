@@ -7,7 +7,7 @@ use crate::event_log::{EventLog, EventRecord};
 
 pub const DEFAULT_PROGRESS_HEARTBEAT_THRESHOLD: Duration = Duration::from_secs(30);
 pub const DEFAULT_PROGRESS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
-pub const PROGRESS_HEARTBEAT_MS_ENV: &str = "JADE_SYMPHONY_PROGRESS_HEARTBEAT_MS";
+pub const PROGRESS_HEARTBEAT_MS_ENV: &str = "SHEA_SYMPHONY_PROGRESS_HEARTBEAT_MS";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProgressHeartbeatConfig {
@@ -377,7 +377,7 @@ mod tests {
     fn mocked_lane_backend_wait_emits_heartbeat_and_event_log() {
         let sink = MemoryProgressSink::default();
         let temp = tempfile::tempdir().unwrap();
-        let event_log = temp.path().join("jade-symphony.jsonl");
+        let event_log = temp.path().join("shea-symphony.jsonl");
         run_with_progress_heartbeat_config(
             ProgressHeartbeatSpec::new("review_backend")
                 .issue("#243")

@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::model::{GateDecision, GateDecisionKind, TrackerIssue};
-use jade_symphony::progress::run_with_progress_heartbeat;
-use jade_symphony::quality_gate::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::model::{GateDecision, GateDecisionKind, TrackerIssue};
+use shea_symphony::progress::run_with_progress_heartbeat;
+use shea_symphony::quality_gate::{
     evaluate_issue_with_dependency_preflight, evaluate_issue_with_llm_gate,
     evaluate_issue_with_source_alignment, LlmGateMode, LlmGateOptions,
 };
-use jade_symphony::tracker::adapter_from_config;
+use shea_symphony::tracker::adapter_from_config;
 
 use crate::orchestration::{
     append_tracker_mutation_audit, live_github_tracker, load_config, progress_spec_for_config,
@@ -142,7 +142,7 @@ fn expected_target_repository(config: &RuntimeConfig) -> Option<String> {
 
 pub(crate) fn gate_workpad(issue: &TrackerIssue, decision: &GateDecision) -> String {
     let mut lines = vec![
-        "## Jade Symphony Workpad".to_string(),
+        "## Shea Symphony Workpad".to_string(),
         String::new(),
         "### Context".to_string(),
         format!("- Issue: {} {}", issue.identifier, issue.title),
@@ -176,7 +176,7 @@ pub(crate) fn gate_workpad(issue: &TrackerIssue, decision: &GateDecision) -> Str
         "- [ ] Resolve quality-gate findings before dispatch.".to_string(),
         String::new(),
         "### Validation".to_string(),
-        "- [ ] Re-run `jade-symphony forge validate --issue` after issue updates.".to_string(),
+        "- [ ] Re-run `shea-symphony forge validate --issue` after issue updates.".to_string(),
     ]);
 
     lines.join("\n")

@@ -971,7 +971,7 @@ mod tests {
     fn config() -> RuntimeConfig {
         let workflow = crate::workflow::WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\ntracker:\n  kind: memory\nreview_lane:\n  timeout_ms: 1000\nobservability:\n  logs_root: /tmp/jade-review-status-test/logs\ntmux:\n  command: /bin/false\n---\nPrompt",
+            "---\ntracker:\n  kind: memory\nreview_lane:\n  timeout_ms: 1000\nobservability:\n  logs_root: /tmp/shea-review-status-test/logs\ntmux:\n  command: /bin/false\n---\nPrompt",
         )
         .unwrap();
         RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap()

@@ -2,10 +2,10 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::issue_forge::next_clarification_question;
-use jade_symphony::model::{normalize_state, TrackerIssue};
-use jade_symphony::tracker::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::issue_forge::next_clarification_question;
+use shea_symphony::model::{normalize_state, TrackerIssue};
+use shea_symphony::tracker::{
     adapter_from_config, FollowUpIssueInput, ProjectFieldAssignment, TrackerAdapter,
 };
 
@@ -345,7 +345,7 @@ pub(crate) fn validate_forge_create_contract(
     markdown: &str,
     config: &RuntimeConfig,
     intended_assignees: &[String],
-) -> Result<jade_symphony::issue_forge::ForgeValidationReport, String> {
+) -> Result<shea_symphony::issue_forge::ForgeValidationReport, String> {
     let report =
         validate_forge_create_report_with_assignees(title, markdown, config, intended_assignees)
             .map_err(|error| format!("source alignment failed: {error}"))?;
@@ -361,7 +361,7 @@ pub(crate) fn validate_forge_create_report_with_assignees(
     markdown: &str,
     config: &RuntimeConfig,
     intended_assignees: &[String],
-) -> Result<jade_symphony::issue_forge::ForgeValidationReport, Box<dyn std::error::Error>> {
+) -> Result<shea_symphony::issue_forge::ForgeValidationReport, Box<dyn std::error::Error>> {
     let issue = TrackerIssue {
         tracker_kind: config.tracker.kind.clone(),
         id: "forge-issue-draft".into(),
@@ -382,7 +382,7 @@ pub(crate) fn validate_forge_create_report_with_assignees(
         updated_at: None,
     };
     let decision = evaluate_issue_for_current_source(config, &issue)?;
-    Ok(jade_symphony::issue_forge::ForgeValidationReport {
+    Ok(shea_symphony::issue_forge::ForgeValidationReport {
         title: title.to_string(),
         question: next_clarification_question(&decision),
         decision,

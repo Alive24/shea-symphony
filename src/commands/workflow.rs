@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::progress::run_with_progress_heartbeat;
-use jade_symphony::tracker::adapter_from_config;
-use jade_symphony::workflow::WorkflowDefinition;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::progress::run_with_progress_heartbeat;
+use shea_symphony::tracker::adapter_from_config;
+use shea_symphony::workflow::WorkflowDefinition;
 
 use crate::commands::gate::evaluate_issue_for_current_source;
 use crate::commands::project::{filter_issues_by_state, render_state_summary};

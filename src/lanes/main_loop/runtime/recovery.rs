@@ -1,10 +1,10 @@
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::model::{normalize_state, TrackerIssue};
-use jade_symphony::runtime_state::{detect_runtime_stall, RuntimeState};
-use jade_symphony::session_registry::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::model::{normalize_state, TrackerIssue};
+use shea_symphony::runtime_state::{detect_runtime_stall, RuntimeState};
+use shea_symphony::session_registry::{
     load_session_registry, session_registry_path, SessionStatus, SessionStatusProbe,
 };
-use jade_symphony::tracker::TrackerAdapter;
+use shea_symphony::tracker::TrackerAdapter;
 
 use crate::lanes::main_loop::compact_evidence;
 

@@ -3,15 +3,15 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::issue_workspace::{discover_issue_workspaces, WorkspaceMatchStrength};
-use jade_symphony::lane_claim::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::issue_workspace::{discover_issue_workspaces, WorkspaceMatchStrength};
+use shea_symphony::lane_claim::{
     LaneClaim, LaneClaimActor, LaneClaimLane, LaneClaimSource, LaneClaimState,
 };
-use jade_symphony::model::TrackerIssue;
-use jade_symphony::progress::{run_with_progress_heartbeat, ProgressHeartbeatSpec};
-use jade_symphony::prompt::render_prompt;
-use jade_symphony::review::{
+use shea_symphony::model::TrackerIssue;
+use shea_symphony::progress::{run_with_progress_heartbeat, ProgressHeartbeatSpec};
+use shea_symphony::prompt::render_prompt;
+use shea_symphony::review::{
     gemini_cli_headless_args, gemini_prelaunch_health_diagnostic, gemini_review_health_diagnostic,
     poll_review_job_until_terminal, render_repeated_review_failure_workpad, render_review_workpad,
     review_failure_signature, review_gate_decision_for_issue, review_run_eligibility,
@@ -20,11 +20,11 @@ use jade_symphony::review::{
     ReviewBackend, ReviewGateDecision, ReviewJob, ReviewJobState, ReviewOutcome,
     ReviewRepeatedFailureEvidence, ReviewRequest, ReviewRunEligibility,
 };
-use jade_symphony::rework::rework_transition_expected;
+use shea_symphony::rework::rework_transition_expected;
 #[cfg(test)]
-use jade_symphony::rework::{render_rework_diagnostic_workpad, ReworkDiagnostic};
-use jade_symphony::tracker::{adapter_from_config, ProjectFieldAssignment, TrackerAdapter};
-use jade_symphony::workflow::{AgentLane, WorkflowDefinition};
+use shea_symphony::rework::{render_rework_diagnostic_workpad, ReworkDiagnostic};
+use shea_symphony::tracker::{adapter_from_config, ProjectFieldAssignment, TrackerAdapter};
+use shea_symphony::workflow::{AgentLane, WorkflowDefinition};
 
 use super::manual::{terminal_review_claim_value, write_terminal_review_claim};
 use crate::lanes::claim::{lane_claim_for_issue, project_text_field, render_parseable_lane_claim};
@@ -600,7 +600,7 @@ fn record_review_invalid_handoff(
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let workpad = [
-        "## Jade Symphony Agent Review Run".to_string(),
+        "## Shea Symphony Agent Review Run".to_string(),
         String::new(),
         "### Agent Review Invalid Handoff".to_string(),
         format!("- Issue: {} {}", issue.identifier, issue.title),
@@ -833,7 +833,7 @@ pub(crate) fn review_workspace_for_issue(config: &RuntimeConfig, issue: &Tracker
 pub(crate) fn render_automatic_review_prompt(
     workflow: &WorkflowDefinition,
     issue: &TrackerIssue,
-) -> Result<String, jade_symphony::prompt::PromptError> {
+) -> Result<String, shea_symphony::prompt::PromptError> {
     let mut prompt = render_prompt(
         workflow.prompt_for_lane(AgentLane::ReviewAgent),
         issue,
@@ -841,10 +841,10 @@ pub(crate) fn render_automatic_review_prompt(
     )?;
     prompt.push_str(
         "\n\n## Automatic Headless Review Boundary\n\n\
-This Gemini process is running under Jade Symphony automatic `review loop` or `review once`.\n\
-Jade Symphony CLI has already claimed or will own any Review Agent claim, timeline comment write,\n\
+This Gemini process is running under Shea Symphony automatic `review loop` or `review once`.\n\
+Shea Symphony CLI has already claimed or will own any Review Agent claim, timeline comment write,\n\
 issue body update, and Project state transition outside this process.\n\n\
-Do not run mutating Jade Symphony or GitHub commands, including `review claim`, `review pass`,\n\
+Do not run mutating Shea Symphony or GitHub commands, including `review claim`, `review pass`,\n\
 `review reject`, `project set-state`, `project workpad`, `forge`, `gh issue edit`, `gh issue comment`, raw\n\
 Project GraphQL mutations, or Project UI changes. Do not activate or follow any manual review\n\
 skill that tells you to mutate Project state.\n\n\
@@ -859,7 +859,7 @@ Report UAT readiness or Human Review follow-up separately under `Evidence`.\n\n\
 Only use `[Confirmed]`, `[Plausible]`, `[Rejected]`, or `[Needs Context]` for actual review\n\
 findings. Do not use those bracketed finding tags for positive verification evidence, checklist\n\
 items, or things that were implemented correctly; put positive observations under an `Evidence`\n\
-heading with plain bullets instead. Leave routing and evidence persistence to the Jade Symphony\n\
+heading with plain bullets instead. Leave routing and evidence persistence to the Shea Symphony\n\
 wrapper after this process exits.\n",
     );
     Ok(prompt)
@@ -896,7 +896,7 @@ pub(crate) fn apply_review_result(
     adapter: &dyn TrackerAdapter,
     issue_ref: &str,
     issue: &TrackerIssue,
-    job: &jade_symphony::review::ReviewJob,
+    job: &shea_symphony::review::ReviewJob,
     claim: Option<&LaneClaim>,
     repeat_evidence: Option<&ReviewRepeatedFailureEvidence>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1030,7 +1030,7 @@ pub(crate) fn update_review_checklist_for_pass(
 
 pub(crate) fn canonical_issue_body_without_workpad(description: &str) -> String {
     description
-        .split("<!-- jade-symphony-workpad -->")
+        .split("<!-- shea-symphony-workpad -->")
         .next()
         .unwrap_or(description)
         .trim_end()
@@ -1107,7 +1107,7 @@ fn check_markdown_checkbox_line(line: &str) -> String {
 
 pub(crate) fn terminal_review_loop_claim_value(
     claim: Option<&LaneClaim>,
-    job: &jade_symphony::review::ReviewJob,
+    job: &shea_symphony::review::ReviewJob,
     decision: &ReviewGateDecision,
 ) -> Option<String> {
     let claim = claim?;

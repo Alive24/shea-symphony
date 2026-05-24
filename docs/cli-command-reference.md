@@ -1,15 +1,15 @@
 # CLI Command Reference
 
-This reference describes the current `jade-symphony` command surface on `main`.
+This reference describes the current `shea-symphony` command surface on `main`.
 It is organized by operator task and safety boundary rather than by parser
 order.
 
 All live tracker mutations require explicit `--write`. Fixture-backed workflows
 remain the preferred rehearsal path for local development. `doctor` can omit the
-workflow path when `JADE_SYMPHONY_WORKFLOW` is set, or when
-`workflows/jade-symphony.md` exists in the current repo checkout.
+workflow path when `SHEA_SYMPHONY_WORKFLOW` is set, or when
+`workflows/shea-symphony.md` exists in the current repo checkout.
 
-For normal dogfood, Jade Symphony CLI is the authority for GitHub Project v2
+For normal dogfood, Shea Symphony CLI is the authority for GitHub Project v2
 workflow reads and mutations. Direct `gh issue view` / `gh pr view` is still
 acceptable for raw issue or PR content when the CLI lacks the needed content
 read, but Project status, Project fields, relationships, claim locks, workpads,
@@ -19,7 +19,7 @@ break-glass recovery actions, not the standard path. See
 `docs/github-access-policy.md` for the current raw GitHub inventory and
 REST-first / GraphQL-required boundaries.
 
-The canonical `workflows/jade-symphony.md` file is a workflow index/config. It
+The canonical `workflows/shea-symphony.md` file is a workflow index/config. It
 references lane-specific prompts in `workflows/prompts/` so Main, Review, and
 Merge commands initialize with their own authority contracts. Older fixture
 workflows may still use an inline prompt body.
@@ -34,16 +34,16 @@ workflows may still use an inline prompt body.
 | `status show` | Operator status view for planning output. | `cargo run -- status show examples/dry-run-workflow.md` |
 | `validate` | Validate workflow loading/configuration. | `cargo run -- validate examples/dry-run-workflow.md` |
 | `validate-workflow` | Compatibility alias for `validate`. | `cargo run -- validate-workflow examples/dry-run-workflow.md` |
-| `project state` | Diagnose whether the canonical Project read path is trustworthy. | `cargo run -- project state workflows/jade-symphony.md` |
-| `project issue` | Read one issue's normalized Project state, fields, blockers, and linked PRs through Jade Symphony. | `cargo run -- project issue workflows/jade-symphony.md '#235' --json` |
-| `project inspect` | Inspect one live issue's readiness facts without tracker mutation. | `cargo run -- project inspect workflows/jade-symphony.md '#235'` |
+| `project state` | Diagnose whether the canonical Project read path is trustworthy. | `cargo run -- project state workflows/shea-symphony.md` |
+| `project issue` | Read one issue's normalized Project state, fields, blockers, and linked PRs through Shea Symphony. | `cargo run -- project issue workflows/shea-symphony.md '#235' --json` |
+| `project inspect` | Inspect one live issue's readiness facts without tracker mutation. | `cargo run -- project inspect workflows/shea-symphony.md '#235'` |
 | `doctor` | Audit Project/workflow/runtime invariants. | `cargo run -- doctor` |
-| `audit-project` | Compatibility alias for `doctor`. | `cargo run -- audit-project workflows/jade-symphony.md` |
-| `skills status` | Read-only per-repo skill readiness matrix across source suite, Codex, Gemini, metadata, links, and optional session input. | `cargo run -- skills status workflows/jade-symphony.md` |
+| `audit-project` | Compatibility alias for `doctor`. | `cargo run -- audit-project workflows/shea-symphony.md` |
+| `skills status` | Read-only per-repo skill readiness matrix across source suite, Codex, Gemini, metadata, links, and optional session input. | `cargo run -- skills status workflows/shea-symphony.md` |
 | `profiles` | List configured/discovered execution profiles. | `cargo run -- profiles examples/cockpit-profiles-workflow.md` |
-| `debug` | Read-only human report combining Project, doctor, smoke readiness, runtime/session, cleanup, and lane next-action signals. | `cargo run -- debug workflows/jade-symphony.md` |
-| `autopilot plan` | Read-only Main/Review/Merge lane preflight with parked operator queues and foreground autopilot readiness. | `cargo run -- autopilot plan workflows/jade-symphony.md` |
-| `autopilot loop` | Bounded foreground all-lane supervisor tick that runs Main, Review, and Merge lane loops in order. | `cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --write` |
+| `debug` | Read-only human report combining Project, doctor, smoke readiness, runtime/session, cleanup, and lane next-action signals. | `cargo run -- debug workflows/shea-symphony.md` |
+| `autopilot plan` | Read-only Main/Review/Merge lane preflight with parked operator queues and foreground autopilot readiness. | `cargo run -- autopilot plan workflows/shea-symphony.md` |
+| `autopilot loop` | Bounded foreground all-lane supervisor tick that runs Main, Review, and Merge lane loops in order. | `cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --write` |
 
 `autopilot plan` is the mandatory planning bridge before `autopilot loop`. It
 does not claim Project issues, launch Main/Review/Merge workers, start sessions,
@@ -53,8 +53,8 @@ compact row for Main, Review, and Merge, plus parked `Human Review`,
 stable preflight shape foreground automation should consume:
 
 ```bash
-cargo run -- autopilot plan workflows/jade-symphony.md
-cargo run -- autopilot plan workflows/jade-symphony.md --json
+cargo run -- autopilot plan workflows/shea-symphony.md
+cargo run -- autopilot plan workflows/shea-symphony.md --json
 ```
 
 Readiness is explicit: `ready`, `idle_but_healthy`,
@@ -87,11 +87,11 @@ provided:
 - `merge_lane.max_concurrent_workers` -> `--merge-max-concurrent`
 
 ```bash
-cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --dry-run
-cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --write
-cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --dry-run --display tui
-cargo run -- autopilot loop workflows/jade-symphony.md --once --dry-run --json
-cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 3 --write --poll-interval-ms 30000
+cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --dry-run
+cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --write
+cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --dry-run --display tui
+cargo run -- autopilot loop workflows/shea-symphony.md --once --dry-run --json
+cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 3 --write --poll-interval-ms 30000
 ```
 
 Normal dogfood should run `autopilot plan` first, then `autopilot loop --write`
@@ -125,11 +125,11 @@ semantics. Timeout and backend failures still print their normal errors.
 Heartbeat output is deliberately kept away from stdout, so JSON commands such as
 `project issue --json`, `review status --json`, and `autopilot plan --json`
 remain machine-readable. Lane loop heartbeats also append local
-`progress_heartbeat` records to the configured `jade-symphony.jsonl` event log
+`progress_heartbeat` records to the configured `shea-symphony.jsonl` event log
 when that command path already uses local runtime evidence.
 
 The default threshold and repeat interval are 30 seconds. For UAT or local
-simulation, set `JADE_SYMPHONY_PROGRESS_HEARTBEAT_MS` to a smaller value; set it
+simulation, set `SHEA_SYMPHONY_PROGRESS_HEARTBEAT_MS` to a smaller value; set it
 to `0` to disable heartbeat output for that process. If a progress line keeps
 repeating, use the `wait=`, `issue=`, `backend=`, `artifact=`, and `next=`
 fields to choose the next diagnostic surface: `status show`, `review status`,
@@ -147,7 +147,7 @@ cargo run -- doctor repair 194 --mark-pr-ready --confirm-handoff-ready --write
 ```
 
 For operator-selected stuck states and `Need Human Input` triage, use the
-repo-owned Doctor skill at `.codex/skills/jade-symphony-doctor/SKILL.md` with
+repo-owned Doctor skill at `.codex/skills/shea-symphony-doctor/SKILL.md` with
 the supporting spec in `docs/operator-doctor.md`. The skill is a read-first
 diagnostic workflow that produces a structured `Doctor Triage Note`; it does
 not replace the CLI repair commands or authorize automatic Project mutation.
@@ -164,15 +164,15 @@ evidence and runs `gh pr ready`; `doctor --auto-fix` never marks PRs ready.
 Skill readiness is diagnostic-first and read-only:
 
 ```bash
-cargo run -- skills status workflows/jade-symphony.md
-cargo run -- skills status workflows/jade-symphony.md --json
-cargo run -- skills status workflows/jade-symphony.md --suite-path skills/jade-symphony/suite
-cargo run -- skills status workflows/jade-symphony.md --session-skills-file /path/to/session-skills.txt
-cargo run -- skills status workflows/jade-symphony.md --require-gemini
+cargo run -- skills status workflows/shea-symphony.md
+cargo run -- skills status workflows/shea-symphony.md --json
+cargo run -- skills status workflows/shea-symphony.md --suite-path skills/shea-symphony/suite
+cargo run -- skills status workflows/shea-symphony.md --session-skills-file /path/to/session-skills.txt
+cargo run -- skills status workflows/shea-symphony.md --require-gemini
 ```
 
 The command discovers expected skills from `--suite-path`,
-`JADE_SYMPHONY_SKILL_SUITE`, the current repo `skills/jade-symphony/suite`, or
+`SHEA_SYMPHONY_SKILL_SUITE`, the current repo `skills/shea-symphony/suite`, or
 installed-only mode if no source suite exists. It inspects Codex local skills,
 Gemini local skills when configured or discoverable, rendered metadata drift,
 broken symlinks, file-shaped aliases, missing `SKILL.md`, and optional
@@ -191,14 +191,14 @@ Examples:
 
 ```bash
 cargo run -- main once examples/dry-run-workflow.md
-cargo run -- autopilot plan workflows/jade-symphony.md
-cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --write
+cargo run -- autopilot plan workflows/shea-symphony.md
+cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --write
 cargo run -- main loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
 cargo run -- main loop examples/dry-run-workflow.md --max-iterations 1 --dry-run --display tui
-cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
-cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 3 --write
-cargo run -- clean plan workflows/jade-symphony.md
-cargo run -- clean audit workflows/jade-symphony.md
+cargo run -- main loop workflows/shea-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
+cargo run -- main loop workflows/shea-symphony.md --max-iterations 1 --max-concurrent 3 --write
+cargo run -- clean plan workflows/shea-symphony.md
+cargo run -- clean audit workflows/shea-symphony.md
 ```
 
 Use `--display tui` for an opt-in operator panel on focused `main loop`,
@@ -253,9 +253,9 @@ the lane claim Project field, create a matching `codex-app-manual` registry
 record with status `recorded`, and do not change Project Status:
 
 ```bash
-cargo run -- main claim workflows/jade-symphony.md '#265' --worker codex-manual-main --write
-cargo run -- review claim workflows/jade-symphony.md '#265' --worker "Manual Gemini Review" --write
-cargo run -- merge claim workflows/jade-symphony.md '#265' --worker codex-manual-merge --write
+cargo run -- main claim workflows/shea-symphony.md '#265' --worker codex-manual-main --write
+cargo run -- review claim workflows/shea-symphony.md '#265' --worker "Manual Gemini Review" --write
+cargo run -- merge claim workflows/shea-symphony.md '#265' --worker codex-manual-merge --write
 ```
 
 For parent tracking issues with native GitHub subissues, `main claim` uses the
@@ -276,7 +276,7 @@ PR relationship verification is a lane invariant, not just evidence text. A PR
 URL found in a workpad, issue comment, or local branch can help operators
 identify the intended PR, but the issue must expose that PR through the
 Project/issue linked-PR read surface before Main handoff, Review routing, or
-Merge landing. If Jade Symphony cannot verify the relationship after a repair
+Merge landing. If Shea Symphony cannot verify the relationship after a repair
 attempt, it routes the issue to `Need Human Input` with the blocker preserved.
 When Main handoff reuses an existing PR for the issue branch, the CLI preserves
 the current PR body but appends a missing `Closes #<issue>` reference before
@@ -294,8 +294,8 @@ is selected as explicit fallback/debug, the tmux path records its session name,
 log path, workspace, branch, attach command, prompt artifact, actor, lane,
 attempt, and running status in the durable session registry under the configured
 artifact root. It still captures the pane before prompt injection and may
-auto-advance the Codex workspace trust prompt only inside the configured Jade
-Symphony issue worktree root. Set `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to opt out;
+auto-advance the Codex workspace trust prompt only inside the configured Shea
+Symphony issue worktree root. Set `SHEA_SYMPHONY_TMUX_AUTO_TRUST=0` to opt out;
 a visible trust prompt or missing readiness then fails closed and preserves
 attach/log evidence for inspection. The registry is runtime evidence only;
 tracker state remains the issue lifecycle source of truth. On later ticks,
@@ -339,7 +339,7 @@ tmux fallback logs, and individual sessions without deleting them. Unknown
 persisted registry status values are tolerated on read: they classify as
 `unknown`, keep the raw status value in diagnostics, and are not migrated,
 repaired, or rewritten by normal read-only commands. After a successful Main
-handoff to `Agent Review`, Jade Symphony preserves the app-server artifacts or
+handoff to `Agent Review`, Shea Symphony preserves the app-server artifacts or
 tmux fallback log/attach command, reconciles matching Main session records to
 `completed`, and clears matching active runtime state. This keeps `doctor` from
 treating completed handoff evidence as active work while preserving recovery
@@ -363,11 +363,11 @@ Main Workpad evidence, timeline comments, and local `git worktree list --porcela
 Examples:
 
 ```bash
-cargo run -- workspace list workflows/jade-symphony.md
-cargo run -- workspace show workflows/jade-symphony.md '#253'
-cargo run -- workspace adopt workflows/jade-symphony.md '#253' /tmp/jade-symphony-issue-253 --write
-cargo run -- workspace ensure workflows/jade-symphony.md '#253' --dry-run
-cargo run -- workspace ensure workflows/jade-symphony.md '#253' --pr 254 --write
+cargo run -- workspace list workflows/shea-symphony.md
+cargo run -- workspace show workflows/shea-symphony.md '#253'
+cargo run -- workspace adopt workflows/shea-symphony.md '#253' /tmp/shea-symphony-issue-253 --write
+cargo run -- workspace ensure workflows/shea-symphony.md '#253' --dry-run
+cargo run -- workspace ensure workflows/shea-symphony.md '#253' --pr 254 --write
 ```
 
 Review lane uses discovered worktrees for read-only inspection by default.
@@ -381,7 +381,7 @@ for `gh pr checkout` in the canonical checkout. `doctor` warns when multiple
 strong candidates exist for one active issue.
 
 For native parent/subissue flows, `doctor` also checks the read-only integration
-branch topology from GitHub native parent/subissue links plus Jade-owned branch
+branch topology from GitHub native parent/subissue links plus Shea-owned branch
 and merge evidence. It reports blockers for subissue PRs targeting `main`,
 missing or ambiguous parent integration branch evidence, `Done` subissues
 without parent-branch merge evidence, and parent `Human Review` before native
@@ -401,7 +401,7 @@ a lookup appears stale.
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `project set-state` | Move one issue to a normalized workflow state. | Refuses `Human Review` from the main implementation role. |
-| `project workpad` | Upsert the canonical Main Agent Workpad marker comment. | Use for Main implementation evidence, including Main-lane `Rework` implementation rounds. Repeated canonical workpad writes replace the prior canonical workpad entry instead of creating multiple top-level `Jade Symphony Workpad` blocks. Append-only `Jade Symphony Rework Run` comments explain why Rework was triggered; Review, Merge, Human Review, and Doctor evidence should remain append-only timeline comments created by their lane commands. |
+| `project workpad` | Upsert the canonical Main Agent Workpad marker comment. | Use for Main implementation evidence, including Main-lane `Rework` implementation rounds. Repeated canonical workpad writes replace the prior canonical workpad entry instead of creating multiple top-level `Shea Symphony Workpad` blocks. Append-only `Shea Symphony Rework Run` comments explain why Rework was triggered; Review, Merge, Human Review, and Doctor evidence should remain append-only timeline comments created by their lane commands. |
 | `project timeline-comment` | Append one standalone issue timeline comment from a Markdown file. | Use for lane evidence that must not overwrite the Main Agent Workpad, especially Human Review decision notes or operator-authored Doctor/repair evidence. |
 | `project link-pr` | Repair PR linkage when Project readback cannot already see the PR. | First checks linked-PR readback and skips the fallback comment when linkage is already visible; if GitHub Project v2 still cannot expose the PR, it may post a linkage repair comment as a fallback. |
 | `create-follow-up` | Create a follow-up issue from a body file. | Lower-level creation path; prefer `forge create` for quality-gated issues. |
@@ -421,9 +421,9 @@ large comment.
 Examples:
 
 ```bash
-cargo run -- project set-state workflows/jade-symphony.md '#123' need_to_clarify --write
-cargo run -- project workpad workflows/jade-symphony.md '#123' /tmp/workpad.md --write
-cargo run -- project timeline-comment workflows/jade-symphony.md '#123' /tmp/human-review-note.md --write
+cargo run -- project set-state workflows/shea-symphony.md '#123' need_to_clarify --write
+cargo run -- project workpad workflows/shea-symphony.md '#123' /tmp/workpad.md --write
+cargo run -- project timeline-comment workflows/shea-symphony.md '#123' /tmp/human-review-note.md --write
 ```
 
 ## Clean Lane
@@ -440,8 +440,8 @@ invariants, and repair evidence.
 Examples:
 
 ```bash
-cargo run -- clean plan workflows/jade-symphony.md
-cargo run -- clean audit workflows/jade-symphony.md
+cargo run -- clean plan workflows/shea-symphony.md
+cargo run -- clean audit workflows/shea-symphony.md
 ```
 
 ## Issue Readiness And Contract Validation
@@ -454,8 +454,8 @@ cargo run -- clean audit workflows/jade-symphony.md
 Examples:
 
 ```bash
-cargo run -- forge validate --workflow workflows/jade-symphony.md --issue '#123'
-cargo run -- project inspect workflows/jade-symphony.md '#123'
+cargo run -- forge validate --workflow workflows/shea-symphony.md --issue '#123'
+cargo run -- project inspect workflows/shea-symphony.md '#123'
 ```
 
 ## Issue Forge
@@ -470,14 +470,14 @@ cargo run -- project inspect workflows/jade-symphony.md '#123'
 Examples:
 
 ```bash
-cargo run -- forge validate --workflow workflows/jade-symphony.md --status Backlog --title "Backlog seed" --body-file /tmp/issue.md
-cargo run -- forge validate --workflow workflows/jade-symphony.md --status Todo --title "Executable issue" --body-file /tmp/issue.md
-cargo run -- forge validate --workflow workflows/jade-symphony.md --issue '#293' --status Todo --title "Candidate promoted title" --body-file /tmp/candidate.md
-cargo run -- forge create --workflow workflows/jade-symphony.md --status Backlog --title "Backlog: follow-up title" --body-file /tmp/issue.md --dry-run
-cargo run -- forge create --workflow workflows/jade-symphony.md --status Todo --title "Follow-up title" --body-file /tmp/issue.md --assignee Alive24 --write
-cargo run -- forge promote '#241' --workflow workflows/jade-symphony.md --title "Executable title" --body-file /tmp/issue.md --operator-confirmation "promote it" --decision "Use the CLI-owned promotion note template." --scope-change "Backlog seed is now an executable Todo issue." --dependency-context "Dependencies: none; related context is non-blocking." --readback-summary "Operator confirmed the dry-run preview before write." --dry-run
+cargo run -- forge validate --workflow workflows/shea-symphony.md --status Backlog --title "Backlog seed" --body-file /tmp/issue.md
+cargo run -- forge validate --workflow workflows/shea-symphony.md --status Todo --title "Executable issue" --body-file /tmp/issue.md
+cargo run -- forge validate --workflow workflows/shea-symphony.md --issue '#293' --status Todo --title "Candidate promoted title" --body-file /tmp/candidate.md
+cargo run -- forge create --workflow workflows/shea-symphony.md --status Backlog --title "Backlog: follow-up title" --body-file /tmp/issue.md --dry-run
+cargo run -- forge create --workflow workflows/shea-symphony.md --status Todo --title "Follow-up title" --body-file /tmp/issue.md --assignee Alive24 --write
+cargo run -- forge promote '#241' --workflow workflows/shea-symphony.md --title "Executable title" --body-file /tmp/issue.md --operator-confirmation "promote it" --decision "Use the CLI-owned promotion note template." --scope-change "Backlog seed is now an executable Todo issue." --dependency-context "Dependencies: none; related context is non-blocking." --readback-summary "Operator confirmed the dry-run preview before write." --dry-run
 cargo run -- forge promote '#241' --workflow examples/promote-fixture-workflow.md --title "Harden Issue Forge Reflect promotion fixture" --body-file examples/fixtures/promoted-issue.md --operator-confirmation "promote it" --decision "Keep the promotion in place." --scope-change "Backlog seed becomes an executable Todo issue." --dependency-context "Dependencies: none." --readback-summary "Dry-run preview verified before write." --dry-run
-cargo run -- forge rework '#282' --workflow workflows/jade-symphony.md --title "Rework: revised execution contract" --body-file /tmp/rework-body.md --evidence-file /tmp/rework-evidence.md --operator-confirmation "route Human Review back to Rework" --dry-run
+cargo run -- forge rework '#282' --workflow workflows/shea-symphony.md --title "Rework: revised execution contract" --body-file /tmp/rework-body.md --evidence-file /tmp/rework-evidence.md --operator-confirmation "route Human Review back to Rework" --dry-run
 ```
 
 Successful `forge create --write` output is a single parseable line. It keeps
@@ -485,7 +485,7 @@ the machine-facing tracker node id while exposing live tracker readback metadata
 for operator lookup:
 
 ```text
-forge_create=ok issue_id=I_kw... issue=#305 url=https://github.com/Alive24/jade-symphony/issues/305 status=Backlog project_status=Backlog project_fields=0
+forge_create=ok issue_id=I_kw... issue=#305 url=https://github.com/Alive24/shea-symphony/issues/305 status=Backlog project_status=Backlog project_fields=0
 ```
 
 Dry-run output does not invent issue numbers or URLs.
@@ -559,22 +559,22 @@ changes.
 | `review freshness` | Record/inspect review freshness evidence. | Used around merging/rework conflict repair. |
 | `review-clear-claim` | Clear one issue's `Review Agent` claim through the tracker adapter. | Requires `--write`; use after terminal manual review routing. |
 | `session start` | Start the configured local runtime for a selected lane and `run`. | Manual recovery path; validates an existing lane claim, selects the lane-specific command/backend, and does not write Project claim fields. Main and Merge agent sessions default to Codex app-server in the canonical workflow; Review remains the supervised tmux fallback. |
-| `session list` | List active Jade Symphony tmux sessions by configured prefix. | Read-only operator summary. |
+| `session list` | List active Shea Symphony tmux sessions by configured prefix. | Read-only operator summary. |
 | `session attach` | Print or execute the tmux attach command for one session. | Defaults to printing the command; `--exec` enters tmux. |
 
 Example:
 
 ```bash
 cargo run -- review loop examples/review-fixture-workflow.md --max-iterations 1 --dry-run
-cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --write
-cargo run -- review status workflows/jade-symphony.md
-cargo run -- review status workflows/jade-symphony.md --issue '#226' --recent 3 --verbose
-cargo run -- review status workflows/jade-symphony.md --json
-cargo run -- review claim workflows/jade-symphony.md '#226' --worker "Manual Gemini Review" --write
-cargo run -- session start workflows/jade-symphony.md '#226' --lane review --run <RUN_ID> --write
-cargo run -- session list workflows/jade-symphony.md
-cargo run -- review pass workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
-cargo run -- review reject workflows/jade-symphony.md '#226' --evidence-file /tmp/review-evidence.md --target-state rework --write
+cargo run -- review loop workflows/shea-symphony.md --max-iterations 1 --write
+cargo run -- review status workflows/shea-symphony.md
+cargo run -- review status workflows/shea-symphony.md --issue '#226' --recent 3 --verbose
+cargo run -- review status workflows/shea-symphony.md --json
+cargo run -- review claim workflows/shea-symphony.md '#226' --worker "Manual Gemini Review" --write
+cargo run -- session start workflows/shea-symphony.md '#226' --lane review --run <RUN_ID> --write
+cargo run -- session list workflows/shea-symphony.md
+cargo run -- review pass workflows/shea-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
+cargo run -- review reject workflows/shea-symphony.md '#226' --evidence-file /tmp/review-evidence.md --target-state rework --write
 ```
 
 Manual review evidence files must include the exact structured `Review Agent`
@@ -593,15 +593,15 @@ failures append compact repeat evidence instead of duplicating full logs.
 
 ## Local Skill Suite
 
-Repo-packaged Jade Symphony skills live under `skills/jade-symphony/` with
-release metadata in `skills/jade-symphony/manifest.toml`. The installer previews
+Repo-packaged Shea Symphony skills live under `skills/shea-symphony/` with
+release metadata in `skills/shea-symphony/manifest.toml`. The installer previews
 and updates local Codex and Gemini skill directories:
 
 ```bash
-node scripts/install-jade-symphony-skills.js --dry-run
-node scripts/install-jade-symphony-skills.js
-node scripts/install-jade-symphony-skills.js --validate
-node scripts/install-jade-symphony-skills.js --codex-dir "$HOME/.codex/skills" --gemini-dir "$HOME/.gemini/local-skills" --yes
+node scripts/install-shea-symphony-skills.js --dry-run
+node scripts/install-shea-symphony-skills.js
+node scripts/install-shea-symphony-skills.js --validate
+node scripts/install-shea-symphony-skills.js --codex-dir "$HOME/.codex/skills" --gemini-dir "$HOME/.gemini/local-skills" --yes
 ```
 
 Normal install mode is interactive: it prints detected target paths and requires
@@ -610,7 +610,7 @@ operator confirmation before writing. Use `--skip-codex`, `--skip-gemini`,
 the active local skill files with the repo-owned dated suite.
 `doctor` also reports read-only install-health warnings for the detected Codex
 and Gemini skill roots, including missing roots, broken links, file-shaped
-aliases, missing `SKILL.md`, stale metadata, and stale Jade Symphony CLI naming.
+aliases, missing `SKILL.md`, stale metadata, and stale Shea Symphony CLI naming.
 It points back to this installer path for repair instead of mutating local
 skills directly.
 
@@ -619,14 +619,14 @@ Main, Manual Review, Human Review, Manual Merge, and a Doctor/Fix stub. Human
 Review is an operator-owned briefing and UAT decision skill: it records a
 structured decision note and routes to `Merging`, `Rework`, or
 `Need Human Input` only after explicit operator confirmation. `forge reflect`
-and `forge dream` remain skill behaviors, not Jade Symphony CLI subcommands.
+and `forge dream` remain skill behaviors, not Shea Symphony CLI subcommands.
 `forge create`, `forge promote`, `forge rework`, and `forge validate` remain
 deterministic CLI executor surfaces.
 
 ## Issue Forge Dream
 
 Issue Forge Dream is a Codex/Gemini skill workflow for slow, deep backlog
-mining. It reads broader Jade Symphony context, writes bounded advisory logs,
+mining. It reads broader Shea Symphony context, writes bounded advisory logs,
 runs a lightweight Gemini review by default when available, and creates
 evidence-backed `Backlog` seeds unless the operator asks for report-only mode.
 
@@ -658,10 +658,10 @@ Doctor lanes.
 Examples:
 
 ```bash
-cargo run -- merge once workflows/jade-symphony.md --dry-run
+cargo run -- merge once workflows/shea-symphony.md --dry-run
 cargo run -- merge loop examples/merge-fixture-workflow.md --max-iterations 1 --write
 cargo run -- merge loop examples/merge-conflict-repair-fixture-workflow.md --max-iterations 1 --write
-cargo run -- merge loop workflows/jade-symphony.md --max-iterations 2 --max-concurrent 2 --write
+cargo run -- merge loop workflows/shea-symphony.md --max-iterations 2 --max-concurrent 2 --write
 ```
 
 `merge once` is separate from main implementation and review work. It should
@@ -679,7 +679,7 @@ pass.
 
 ## Live Dogfood Boundary
 
-Use `workflows/jade-symphony.md` for Project #9 live reads and explicit
+Use `workflows/shea-symphony.md` for Project #9 live reads and explicit
 writes. Before running live write commands, confirm:
 
 - the issue contract passes the Issue Quality Gate;

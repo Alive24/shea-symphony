@@ -8,13 +8,13 @@ fn repo_file(path: &str) -> String {
 
 #[test]
 fn skill_suite_lists_human_review_skill() {
-    let manifest = repo_file("skills/jade-symphony/manifest.toml");
-    let readme = repo_file("skills/jade-symphony/README.md");
-    let skill = repo_file("skills/jade-symphony/suite/jade-symphony-human-review/SKILL.md");
+    let manifest = repo_file("skills/shea-symphony/manifest.toml");
+    let readme = repo_file("skills/shea-symphony/README.md");
+    let skill = repo_file("skills/shea-symphony/suite/shea-symphony-human-review/SKILL.md");
 
-    assert!(manifest.contains("name = \"jade-symphony-human-review\""));
-    assert!(manifest.contains("path = \"suite/jade-symphony-human-review\""));
-    assert!(readme.contains("`jade-symphony-human-review`"));
+    assert!(manifest.contains("name = \"shea-symphony-human-review\""));
+    assert!(manifest.contains("path = \"suite/shea-symphony-human-review\""));
+    assert!(readme.contains("`shea-symphony-human-review`"));
     assert!(skill.contains("Accepted Human Review routes to `Merging`"));
     assert!(skill.contains("Native GitHub subissues are not routine Human Review surfaces"));
     assert!(skill.contains("Subissue Human Review Exception: <reason>"));
@@ -23,12 +23,12 @@ fn skill_suite_lists_human_review_skill() {
 
 #[test]
 fn skill_suite_records_parent_owned_subissue_contract() {
-    let forge = repo_file("skills/jade-symphony/suite/jade-symphony-issue-forge/SKILL.md");
+    let forge = repo_file("skills/shea-symphony/suite/shea-symphony-issue-forge/SKILL.md");
     let reflect =
-        repo_file("skills/jade-symphony/suite/jade-symphony-issue-forge-reflect/SKILL.md");
+        repo_file("skills/shea-symphony/suite/shea-symphony-issue-forge-reflect/SKILL.md");
     let manual_review =
-        repo_file("skills/jade-symphony/suite/jade-symphony-manual-review/SKILL.md");
-    let manual_merge = repo_file("skills/jade-symphony/suite/jade-symphony-manual-merge/SKILL.md");
+        repo_file("skills/shea-symphony/suite/shea-symphony-manual-review/SKILL.md");
+    let manual_merge = repo_file("skills/shea-symphony/suite/shea-symphony-manual-merge/SKILL.md");
 
     assert!(forge.contains("draft the parent as the final"));
     assert!(forge.contains("Subissue Human Review Exception: <reason>"));
@@ -44,16 +44,16 @@ fn skill_suite_records_parent_owned_subissue_contract() {
 
 #[test]
 fn skill_suite_documents_app_server_first_manual_boundaries() {
-    let human_review = repo_file("skills/jade-symphony/suite/jade-symphony-human-review/SKILL.md");
-    let manual_merge = repo_file("skills/jade-symphony/suite/jade-symphony-manual-merge/SKILL.md");
-    let manual_main = repo_file("skills/jade-symphony/suite/jade-symphony-manual-main/SKILL.md");
+    let human_review = repo_file("skills/shea-symphony/suite/shea-symphony-human-review/SKILL.md");
+    let manual_merge = repo_file("skills/shea-symphony/suite/shea-symphony-manual-merge/SKILL.md");
+    let manual_main = repo_file("skills/shea-symphony/suite/shea-symphony-manual-main/SKILL.md");
 
     assert!(human_review.contains("Match the operator-facing language"));
     assert!(human_review.contains("Do not force English"));
-    assert!(manual_main.contains("cargo run -- project state workflows/jade-symphony.md"));
+    assert!(manual_main.contains("cargo run -- project state workflows/shea-symphony.md"));
     assert!(manual_main.contains("main_lane.backend: codex"));
     assert!(manual_main.contains("codex.command: codex app-server -c 'service_tier=\"fast\"'"));
-    assert!(manual_merge.contains("cargo run -- merge loop workflows/jade-symphony.md"));
+    assert!(manual_merge.contains("cargo run -- merge loop workflows/shea-symphony.md"));
     assert!(manual_merge.contains("app-server"));
     assert!(!manual_merge.contains("merge-once"));
 }
@@ -62,8 +62,8 @@ fn skill_suite_documents_app_server_first_manual_boundaries() {
 fn human_review_template_supports_all_decisions() {
     let template = repo_file("workflows/template/workpad/human-review.md");
 
-    assert!(!template.contains("<!-- jade-symphony-workpad -->"));
-    assert!(template.contains("## Jade Symphony Human Review Decision"));
+    assert!(!template.contains("<!-- shea-symphony-workpad -->"));
+    assert!(template.contains("## Shea Symphony Human Review Decision"));
     assert!(template.contains("Approve for Merging"));
     assert!(template.contains("Decision timestamp: <YYYY-MM-DD HH:MM timezone>"));
     assert!(template.contains("Request Rework"));
@@ -77,12 +77,12 @@ fn autopilot_dogfood_docs_prefer_foreground_loop() {
     let command_reference = repo_file("docs/cli-command-reference.md");
     let operator_dogfood = repo_file("docs/operator-dogfood.md");
     let supervised_runbook = repo_file("docs/supervised-live-dogfood.md");
-    let launcher = repo_file("scripts/jade-dogfood");
-    let suite_readme = repo_file("skills/jade-symphony/README.md");
-    let manual_main = repo_file("skills/jade-symphony/suite/jade-symphony-manual-main/SKILL.md");
+    let launcher = repo_file("scripts/shea-dogfood");
+    let suite_readme = repo_file("skills/shea-symphony/README.md");
+    let manual_main = repo_file("skills/shea-symphony/suite/shea-symphony-manual-main/SKILL.md");
     let manual_review =
-        repo_file("skills/jade-symphony/suite/jade-symphony-manual-review/SKILL.md");
-    let manual_merge = repo_file("skills/jade-symphony/suite/jade-symphony-manual-merge/SKILL.md");
+        repo_file("skills/shea-symphony/suite/shea-symphony-manual-review/SKILL.md");
+    let manual_merge = repo_file("skills/shea-symphony/suite/shea-symphony-manual-merge/SKILL.md");
 
     for document in [
         &command_reference,

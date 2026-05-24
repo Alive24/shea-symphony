@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::lane_claim::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::lane_claim::{
     LaneClaim, LaneClaimActor, LaneClaimLane, LaneClaimSource, LaneClaimState,
 };
-use jade_symphony::model::{normalize_state, TrackerIssue};
-use jade_symphony::progress::run_with_progress_heartbeat;
-use jade_symphony::review::review_pass_target_state;
-use jade_symphony::tracker::{adapter_from_config, ProjectFieldAssignment, TrackerAdapter};
+use shea_symphony::model::{normalize_state, TrackerIssue};
+use shea_symphony::progress::run_with_progress_heartbeat;
+use shea_symphony::review::review_pass_target_state;
+use shea_symphony::tracker::{adapter_from_config, ProjectFieldAssignment, TrackerAdapter};
 
 use crate::commands::session::{
     record_manual_lane_claim_evidence, timeline_claim_actor, timeline_claim_run,
@@ -401,7 +401,7 @@ pub(crate) fn render_manual_review_workpad(
     terminal_claim_value: &str,
 ) -> String {
     let mut lines = vec![
-        "## Jade Symphony Agent Review Run".to_string(),
+        "## Shea Symphony Agent Review Run".to_string(),
         String::new(),
         format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", issue.identifier, issue.title),

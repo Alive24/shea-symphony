@@ -497,8 +497,8 @@ mod tests {
     fn skips_git_identity_outside_git_repository() {
         let temp = tempfile::tempdir().unwrap();
         let identity = GitIdentityConfig {
-            name: Some("Jade Symphony Agent".into()),
-            email: Some("jade@example.invalid".into()),
+            name: Some("Shea Symphony Agent".into()),
+            email: Some("shea@example.invalid".into()),
             signing_key: None,
             extra: Default::default(),
         };
@@ -508,7 +508,7 @@ mod tests {
         assert_eq!(result.status, GitIdentityApplyStatus::NotGitRepository);
         assert_eq!(
             result.author.as_deref(),
-            Some("Jade Symphony Agent <jade@example.invalid>")
+            Some("Shea Symphony Agent <shea@example.invalid>")
         );
     }
 
@@ -521,10 +521,10 @@ mod tests {
             .output()
             .unwrap();
         let mut extra = std::collections::BTreeMap::new();
-        extra.insert("jade.actorRole".into(), "implementation_agent".into());
+        extra.insert("shea.actorRole".into(), "implementation_agent".into());
         let identity = GitIdentityConfig {
-            name: Some("Jade Symphony Agent".into()),
-            email: Some("jade@example.invalid".into()),
+            name: Some("Shea Symphony Agent".into()),
+            email: Some("shea@example.invalid".into()),
             signing_key: None,
             extra,
         };
@@ -535,14 +535,14 @@ mod tests {
         assert!(result.applied_keys.contains(&"user.name".to_string()));
         assert_eq!(
             git_local_config(temp.path(), "user.name"),
-            "Jade Symphony Agent"
+            "Shea Symphony Agent"
         );
         assert_eq!(
             git_local_config(temp.path(), "user.email"),
-            "jade@example.invalid"
+            "shea@example.invalid"
         );
         assert_eq!(
-            git_local_config(temp.path(), "jade.actorRole"),
+            git_local_config(temp.path(), "shea.actorRole"),
             "implementation_agent"
         );
     }

@@ -2,16 +2,16 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::lane_claim::{LaneClaimActor, LaneClaimSource};
-use jade_symphony::model::LatestStatus;
-use jade_symphony::orchestrator::Orchestrator;
-use jade_symphony::presentation::{render_run_loop_panel, RunLoopPanel};
-use jade_symphony::progress::run_with_progress_heartbeat;
-use jade_symphony::runtime_state::{load_runtime_states, save_runtime_states};
-use jade_symphony::status_surface::render_snapshot;
-use jade_symphony::tracker::adapter_from_config;
-use jade_symphony::workflow::WorkflowDefinition;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::lane_claim::{LaneClaimActor, LaneClaimSource};
+use shea_symphony::model::LatestStatus;
+use shea_symphony::orchestrator::Orchestrator;
+use shea_symphony::presentation::{render_run_loop_panel, RunLoopPanel};
+use shea_symphony::progress::run_with_progress_heartbeat;
+use shea_symphony::runtime_state::{load_runtime_states, save_runtime_states};
+use shea_symphony::status_surface::render_snapshot;
+use shea_symphony::tracker::adapter_from_config;
+use shea_symphony::workflow::WorkflowDefinition;
 
 use crate::cli::DisplayMode;
 use crate::commands::gate::evaluate_issue_for_current_source;
@@ -130,7 +130,7 @@ pub(crate) fn run_once(workflow_path: PathBuf) -> Result<(), Box<dyn std::error:
         config
             .observability
             .logs_root
-            .join("jade-symphony.jsonl")
+            .join("shea-symphony.jsonl")
             .display()
     );
     Ok(())
@@ -192,7 +192,7 @@ pub(crate) fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error
             config
                 .observability
                 .logs_root
-                .join("jade-symphony.jsonl")
+                .join("shea-symphony.jsonl")
                 .display()
                 .to_string(),
         );

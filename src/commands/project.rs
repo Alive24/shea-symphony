@@ -1,16 +1,16 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::model::{native_subissue_gate_blocker, normalize_state, TrackerIssue};
-use jade_symphony::presentation::render_project_state_panel;
-use jade_symphony::progress::run_with_progress_heartbeat;
-use jade_symphony::review_status::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::model::{native_subissue_gate_blocker, normalize_state, TrackerIssue};
+use shea_symphony::presentation::render_project_state_panel;
+use shea_symphony::progress::run_with_progress_heartbeat;
+use shea_symphony::review_status::{
     load_review_status, render_project_inspect_review_summary, ReviewStatusOptions,
 };
-use jade_symphony::session_registry::unix_timestamp_ms;
-use jade_symphony::tracker::{adapter_from_config, classify_project_state_error};
-use jade_symphony::workflow::WorkflowDefinition;
+use shea_symphony::session_registry::unix_timestamp_ms;
+use shea_symphony::tracker::{adapter_from_config, classify_project_state_error};
+use shea_symphony::workflow::WorkflowDefinition;
 
 use crate::cli::DisplayMode;
 use crate::commands::gate::evaluate_issue_for_current_source;

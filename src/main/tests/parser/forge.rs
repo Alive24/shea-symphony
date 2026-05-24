@@ -161,7 +161,7 @@ fn parses_link_pr_flags() {
         "link-pr".into(),
         "examples/github-project-workflow.md".into(),
         "#127".into(),
-        "https://github.com/Alive24/jade-symphony/pull/128".into(),
+        "https://github.com/Alive24/shea-symphony/pull/128".into(),
         "--write".into(),
     ])
     .unwrap();
@@ -181,7 +181,7 @@ fn parses_link_pr_flags() {
         PathBuf::from("examples/github-project-workflow.md")
     );
     assert_eq!(issue_ref, "#127");
-    assert_eq!(pr_ref, "https://github.com/Alive24/jade-symphony/pull/128");
+    assert_eq!(pr_ref, "https://github.com/Alive24/shea-symphony/pull/128");
     assert!(write);
 }
 
@@ -264,7 +264,7 @@ fn rejects_removed_flat_forge_commands() {
     let error = Command::parse(vec![
         "forge-create".into(),
         "--workflow".into(),
-        "workflows/jade-symphony.md".into(),
+        "workflows/shea-symphony.md".into(),
     ])
     .unwrap_err();
 

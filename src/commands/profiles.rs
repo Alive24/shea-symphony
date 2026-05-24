@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use jade_symphony::profiles::{discover_execution_profiles, selected_execution_profile};
+use shea_symphony::profiles::{discover_execution_profiles, selected_execution_profile};
 
 use crate::orchestration::load_config;
 

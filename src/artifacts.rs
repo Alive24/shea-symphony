@@ -278,7 +278,7 @@ mod tests {
                 .map(|state| LinkedPullRequest {
                     id: None,
                     number: Some(158),
-                    url: Some("https://github.com/Alive24/jade-symphony/pull/158".into()),
+                    url: Some("https://github.com/Alive24/shea-symphony/pull/158".into()),
                     state: Some(state.into()),
                     is_draft: None,
                     merge_state_status: None,
@@ -298,15 +298,15 @@ mod tests {
     #[test]
     fn builds_namespaced_layout_from_repo_and_profile() {
         let config = config(
-            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 9\nartifacts:\n  root: /tmp/artifacts\nprofiles:\n  default: codex-alpha\n---\nPrompt",
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_number: 9\nartifacts:\n  root: /tmp/artifacts\nprofiles:\n  default: codex-alpha\n---\nPrompt",
         );
 
         let layout = artifact_layout(&config);
 
-        assert_eq!(layout.namespace, "Alive24/jade-symphony");
+        assert_eq!(layout.namespace, "Alive24/shea-symphony");
         assert!(layout
             .worktrees
-            .ends_with("Alive24/jade-symphony/codex-alpha/worktrees"));
+            .ends_with("Alive24/shea-symphony/codex-alpha/worktrees"));
         assert!(layout.runtime.ends_with("runtime"));
         assert_eq!(
             layout.class_path(ArtifactClass::PullRequestBodyDraft),

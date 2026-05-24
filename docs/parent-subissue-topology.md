@@ -1,6 +1,6 @@
 # Parent/Subissue Integration Branch Topology
 
-This document defines how Jade Symphony models a parent issue with native
+This document defines how Shea Symphony models a parent issue with native
 GitHub subissues when the work is too large for the normal one issue, one
 branch, one pull request flow.
 
@@ -108,11 +108,11 @@ skip or reject the parent until every native subissue has Project status `Done`.
 GitHub native sub-issue links define the subissue set dynamically. If a new
 native subissue is added, the parent becomes blocked again until that new
 subissue is also `Done`. GitHub issue `closed` state is useful context but is
-not enough for this gate; Jade Symphony checks Project status so the operator
+not enough for this gate; Shea Symphony checks Project status so the operator
 lane evidence and merge semantics stay aligned.
 
 When a parent issue read exposes native subissues without their Project status,
-Jade Symphony may perform bounded targeted reads of those child issues to fill
+Shea Symphony may perform bounded targeted reads of those child issues to fill
 the missing statuses. The gate still blocks if any child status remains missing
 or is not `Done`.
 
@@ -182,7 +182,7 @@ PRs, edit native GitHub relationships, move Project statuses, or replace the
 
 ## Lane Flow Evidence
 
-Jade Symphony resolves branch targets from GitHub native parent/subissue
+Shea Symphony resolves branch targets from GitHub native parent/subissue
 metadata plus durable supplemental evidence. Normal single-issue work still
 targets `main`. A native subissue keeps its per-issue feature branch as the PR
 head and uses the recorded parent integration branch as the PR base. A parent

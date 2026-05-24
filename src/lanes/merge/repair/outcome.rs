@@ -1,9 +1,9 @@
 use std::path::Path;
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::git_handoff::{CommandOutput, HandoffCommandRunner};
-use jade_symphony::merge_lane::{MergeConflictRepairOutcome, MergeRepairEvidence};
-use jade_symphony::model::TrackerIssue;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::git_handoff::{CommandOutput, HandoffCommandRunner};
+use shea_symphony::merge_lane::{MergeConflictRepairOutcome, MergeRepairEvidence};
+use shea_symphony::model::TrackerIssue;
 
 use crate::orchestration::single_line;
 

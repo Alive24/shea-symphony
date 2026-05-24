@@ -5,7 +5,7 @@ Status: unavailable.
 ## Command Tried
 
 ```bash
-gemini --model gemini-3.1-pro-preview --approval-mode plan -p 'Review this Jade Symphony Dream run for duplicate risk, evidence quality, scope breadth, Backlog safety, and lane-authority risk. Do not mutate files or tracker state. Read docs/dream-log/2026-05-23-01-post-app-server-dogfood-backlog/RUN.md, created-backlog.md, topic-post-app-server-dogfood.md, topic-cross-repo-dream-sources.md, and docs/dream-log/INDEX.md. Return a concise PASS/CONCERNS result with bullets.'
+gemini --model gemini-3.1-pro-preview --approval-mode plan -p 'Review this Shea Symphony Dream run for duplicate risk, evidence quality, scope breadth, Backlog safety, and lane-authority risk. Do not mutate files or tracker state. Read docs/dream-log/2026-05-23-01-post-app-server-dogfood-backlog/RUN.md, created-backlog.md, topic-post-app-server-dogfood.md, topic-cross-repo-dream-sources.md, and docs/dream-log/INDEX.md. Return a concise PASS/CONCERNS result with bullets.'
 ```
 
 ## Failure Reason

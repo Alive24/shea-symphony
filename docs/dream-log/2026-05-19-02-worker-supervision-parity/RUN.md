@@ -3,20 +3,20 @@
 Date: 2026-05-19
 Run: `2026-05-19-02-worker-supervision-parity`
 Mode: write-mode Dream continuation
-Operator context: continue comparing Jade Symphony with OpenAI Symphony SPEC and Elixir reference implementation
+Operator context: continue comparing Shea Symphony with OpenAI Symphony SPEC and Elixir reference implementation
 
 ## Source Inventory
 
 - `git status --short --branch`
-- `cargo run -- project state workflows/jade-symphony.md`
-- `cargo run -- project issue workflows/jade-symphony.md '#324' --json`
-- `gh issue list --repo Alive24/jade-symphony --state open --search "retry OR stall OR supervision OR continuation OR worker in:title,body" --json number,title,url,state --limit 80`
-- `gh issue list --repo Alive24/jade-symphony --state open --search "worker supervision OR persistent worker OR multi-worker OR runtime resume OR stall restart" --json number,title,url,state --limit 80`
-- `gh issue list --repo Alive24/jade-symphony --state open --search "runtime resume OR session registry OR retry backoff OR stall detection OR worker lifecycle" --json number,title,url,state --limit 80`
-- `gh issue view 305 --repo Alive24/jade-symphony --json number,title,state,body,url`
-- `gh issue view 312 --repo Alive24/jade-symphony --json number,title,state,body,url`
-- `gh issue view 318 --repo Alive24/jade-symphony --json number,title,state,body,url`
-- `gh issue view 321 --repo Alive24/jade-symphony --json number,title,state,body,url`
+- `cargo run -- project state workflows/shea-symphony.md`
+- `cargo run -- project issue workflows/shea-symphony.md '#324' --json`
+- `gh issue list --repo Alive24/shea-symphony --state open --search "retry OR stall OR supervision OR continuation OR worker in:title,body" --json number,title,url,state --limit 80`
+- `gh issue list --repo Alive24/shea-symphony --state open --search "worker supervision OR persistent worker OR multi-worker OR runtime resume OR stall restart" --json number,title,url,state --limit 80`
+- `gh issue list --repo Alive24/shea-symphony --state open --search "runtime resume OR session registry OR retry backoff OR stall detection OR worker lifecycle" --json number,title,url,state --limit 80`
+- `gh issue view 305 --repo Alive24/shea-symphony --json number,title,state,body,url`
+- `gh issue view 312 --repo Alive24/shea-symphony --json number,title,state,body,url`
+- `gh issue view 318 --repo Alive24/shea-symphony --json number,title,state,body,url`
+- `gh issue view 321 --repo Alive24/shea-symphony --json number,title,state,body,url`
 - `docs/bootstrap/references/openai-symphony/SPEC.md`
 - `docs/bootstrap/references/openai-symphony/elixir/lib/symphony_elixir/orchestrator.ex`
 - `docs/bootstrap/references/openai-symphony/elixir/test/symphony_elixir/orchestrator_status_test.exs`
@@ -32,7 +32,7 @@ tracker reconciliation, and stall timeout handling. The Elixir orchestrator
 implements this as monitored worker processes that schedule continuation checks,
 failure backoff, and stalled-worker restart.
 
-Jade already has important first slices: bounded loops, retry metadata, runtime
+Shea already has important first slices: bounded loops, retry metadata, runtime
 state persistence, stall/status reporting, and operator-facing debug output. The
 missing piece is the broader supervision boundary for a long-running runtime:
 which component owns active-run reconciliation, process-exit classification,
@@ -80,11 +80,11 @@ Slept enough: no.
 Reason: the runtime-supervision parity theme produced one strong seed and
 resolved obvious duplicate risks, but the OpenAI Symphony reference still has a
 separate theme worth checking: worker host / SSH execution and workspace
-lifecycle boundaries. That should be compared against Jade's current local
+lifecycle boundaries. That should be compared against Shea's current local
 worktree/session model before deciding whether another seed is needed.
 
 ## Safety Notes
 
 Dream-created issue #324 stayed in `Backlog`. It was not promoted, claimed, or
 treated as executable lane work. Project state and issue creation were verified
-through the Jade Symphony CLI.
+through the Shea Symphony CLI.

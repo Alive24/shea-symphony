@@ -1,7 +1,7 @@
-use jade_symphony::agent::{
+use shea_symphony::agent::{
     AgentBackend, ClaudeCodeBackend, CodexBackend, DryRunBackend, TmuxBackend,
 };
-use jade_symphony::config::RuntimeConfig;
+use shea_symphony::config::RuntimeConfig;
 
 use super::AgentSessionLaneArg;
 

@@ -225,9 +225,9 @@ fn link_pr_helper_skips_repair_when_project_readback_already_has_pr() {
     adapter
         .linked_pull_requests
         .borrow_mut()
-        .push(jade_symphony::model::LinkedPullRequest {
+        .push(shea_symphony::model::LinkedPullRequest {
             number: Some(128),
-            url: Some("https://github.com/Alive24/jade-symphony/pull/128".into()),
+            url: Some("https://github.com/Alive24/shea-symphony/pull/128".into()),
             state: Some("OPEN".into()),
             is_draft: Some(false),
             ..Default::default()
@@ -346,7 +346,7 @@ fn forge_create_entrypoint_rejects_live_github_without_assignee() {
     let workflow_path = temp.path().join("WORKFLOW.md");
     std::fs::write(
             &workflow_path,
-            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 9\n  assignee_filter:\n    allow_unassigned: false\nobservability:\n  logs_root: log\n---\nPrompt",
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_number: 9\n  assignee_filter:\n    allow_unassigned: false\nobservability:\n  logs_root: log\n---\nPrompt",
         )
         .unwrap();
 
@@ -394,7 +394,7 @@ fn forge_create_blocks_duplicate_tracker_title_before_mutation() {
     let mut existing = tracker_issue("Todo");
     existing.identifier = "#143".into();
     existing.title = "Create issue".into();
-    existing.url = Some("https://github.com/Alive24/jade-symphony/issues/143".into());
+    existing.url = Some("https://github.com/Alive24/shea-symphony/issues/143".into());
     std::fs::write(
         &fixture_path,
         serde_json::to_string(&vec![existing]).unwrap(),
@@ -425,7 +425,7 @@ fn forge_create_blocks_duplicate_tracker_title_before_mutation() {
 
     assert!(error.contains("duplicate tracker issue title detected"));
     assert!(error.contains("#143"));
-    assert!(error.contains("https://github.com/Alive24/jade-symphony/issues/143"));
+    assert!(error.contains("https://github.com/Alive24/shea-symphony/issues/143"));
 }
 
 #[test]
@@ -495,7 +495,7 @@ fn forge_create_write_initializes_backlog_without_status_transition() {
 fn forge_create_success_reports_readback_metadata_when_available() {
     let mut issue = tracker_issue_with_ref("#305", "Created issue", "Backlog");
     issue.id = "I_kwDOSZP6c88AAAABC".into();
-    issue.url = Some("https://github.com/Alive24/jade-symphony/issues/305".into());
+    issue.url = Some("https://github.com/Alive24/shea-symphony/issues/305".into());
     issue
         .project_fields
         .insert("Status".into(), "Backlog".into());
@@ -511,7 +511,7 @@ fn forge_create_success_reports_readback_metadata_when_available() {
 
     assert_eq!(
             output,
-            "forge_create=ok issue_id=I_kwDOSZP6c88AAAABC issue=#305 url=https://github.com/Alive24/jade-symphony/issues/305 status=Backlog project_status=Backlog project_fields=0"
+            "forge_create=ok issue_id=I_kwDOSZP6c88AAAABC issue=#305 url=https://github.com/Alive24/shea-symphony/issues/305 status=Backlog project_status=Backlog project_fields=0"
         );
 }
 
@@ -537,7 +537,7 @@ fn forge_create_readback_failure_reports_known_issue_location() {
     let adapter = RecordingAdapter::default();
     let mut issue = tracker_issue_with_ref("#305", "Created issue", "Need to Clarify");
     issue.id = "I_kwDOSZP6c88AAAABC".into();
-    issue.url = Some("https://github.com/Alive24/jade-symphony/issues/305".into());
+    issue.url = Some("https://github.com/Alive24/shea-symphony/issues/305".into());
     adapter
         .issues
         .borrow_mut()
@@ -549,5 +549,5 @@ fn forge_create_readback_failure_reports_known_issue_location() {
 
     assert!(error.contains("issue_id=I_kwDOSZP6c88AAAABC"));
     assert!(error.contains("issue=#305"));
-    assert!(error.contains("url=https://github.com/Alive24/jade-symphony/issues/305"));
+    assert!(error.contains("url=https://github.com/Alive24/shea-symphony/issues/305"));
 }

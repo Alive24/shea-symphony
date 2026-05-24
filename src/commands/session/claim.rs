@@ -1,14 +1,14 @@
 use std::path::PathBuf;
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::lane_claim::{LaneClaim, LaneClaimActor, LaneClaimSource, LaneClaimState};
-use jade_symphony::model::{native_subissue_gate_blocker, TrackerIssue};
-use jade_symphony::session_registry::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::lane_claim::{LaneClaim, LaneClaimActor, LaneClaimSource, LaneClaimState};
+use shea_symphony::model::{native_subissue_gate_blocker, TrackerIssue};
+use shea_symphony::session_registry::{
     save_session_record, session_registry_path, unix_timestamp_ms, AgentSessionRecord,
     SessionStatus,
 };
-use jade_symphony::tracker::{adapter_from_config, ProjectFieldAssignment};
-use jade_symphony::workspace::safe_identifier;
+use shea_symphony::tracker::{adapter_from_config, ProjectFieldAssignment};
+use shea_symphony::workspace::safe_identifier;
 
 use crate::cli::CliLaneClaimSource;
 use crate::lanes::claim::{project_text_field, render_parseable_lane_claim};

@@ -25,7 +25,7 @@ pub(in crate::tracker) fn github_project_query(
     };
     format!(
         r#"
-query JadeSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
+query SheaSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
   {owner_field}(login: $owner) {{
     projectV2(number: $number) {{
       items(first: {GITHUB_PROJECT_ITEM_PAGE_SIZE}, after: $cursor) {{
@@ -142,7 +142,7 @@ fn rich_issue_evidence_fields() -> String {
 pub(in crate::tracker) fn github_issue_evidence_query() -> String {
     format!(
         r#"
-query JadeSymphonyIssueEvidence($owner: String!, $repo: String!, $number: Int!) {{
+query SheaSymphonyIssueEvidence($owner: String!, $repo: String!, $number: Int!) {{
   repository(owner: $owner, name: $repo) {{
     issue(number: $number) {{
       id
@@ -190,7 +190,7 @@ query JadeSymphonyIssueEvidence($owner: String!, $repo: String!, $number: Int!) 
 pub(in crate::tracker) fn github_issue_project_item_query() -> String {
     format!(
         r#"
-query JadeSymphonyIssueProjectItem($owner: String!, $repo: String!, $number: Int!) {{
+query SheaSymphonyIssueProjectItem($owner: String!, $repo: String!, $number: Int!) {{
   repository(owner: $owner, name: $repo) {{
     issue(number: $number) {{
       __typename
@@ -295,7 +295,7 @@ query JadeSymphonyIssueProjectItem($owner: String!, $repo: String!, $number: Int
 pub(in crate::tracker) fn github_project_metadata_query(owner_field: &str) -> String {
     format!(
         r#"
-query JadeSymphonyProjectMetadata($owner: String!, $number: Int!) {{
+query SheaSymphonyProjectMetadata($owner: String!, $number: Int!) {{
   {owner_field}(login: $owner) {{
     projectV2(number: $number) {{
       id
@@ -324,7 +324,7 @@ query JadeSymphonyProjectMetadata($owner: String!, $number: Int!) {{
 }
 
 pub(in crate::tracker) const GITHUB_UPDATE_PROJECT_ITEM_FIELD_MUTATION: &str = r#"
-mutation JadeSymphonyUpdateProjectStatus($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+mutation SheaSymphonyUpdateProjectStatus($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
   updateProjectV2ItemFieldValue(input: {
     projectId: $projectId,
     itemId: $itemId,
@@ -339,7 +339,7 @@ mutation JadeSymphonyUpdateProjectStatus($projectId: ID!, $itemId: ID!, $fieldId
 "#;
 
 pub(in crate::tracker) const GITHUB_UPDATE_PROJECT_ITEM_TEXT_FIELD_MUTATION: &str = r#"
-mutation JadeSymphonyUpdateProjectTextField($projectId: ID!, $itemId: ID!, $fieldId: ID!, $text: String!) {
+mutation SheaSymphonyUpdateProjectTextField($projectId: ID!, $itemId: ID!, $fieldId: ID!, $text: String!) {
   updateProjectV2ItemFieldValue(input: {
     projectId: $projectId,
     itemId: $itemId,
@@ -354,7 +354,7 @@ mutation JadeSymphonyUpdateProjectTextField($projectId: ID!, $itemId: ID!, $fiel
 "#;
 
 pub(in crate::tracker) const GITHUB_CLEAR_PROJECT_ITEM_FIELD_MUTATION: &str = r#"
-mutation JadeSymphonyClearProjectField($projectId: ID!, $itemId: ID!, $fieldId: ID!) {
+mutation SheaSymphonyClearProjectField($projectId: ID!, $itemId: ID!, $fieldId: ID!) {
   clearProjectV2ItemFieldValue(input: {
     projectId: $projectId,
     itemId: $itemId,
@@ -370,7 +370,7 @@ mutation JadeSymphonyClearProjectField($projectId: ID!, $itemId: ID!, $fieldId: 
 pub(in crate::tracker) fn github_issue_comments_query() -> String {
     format!(
         r#"
-query JadeSymphonyIssueComments($issueId: ID!) {{
+query SheaSymphonyIssueComments($issueId: ID!) {{
   node(id: $issueId) {{
     ... on Issue {{
       comments(first: {GITHUB_WORKPAD_COMMENT_PAGE_SIZE}) {{
@@ -387,7 +387,7 @@ query JadeSymphonyIssueComments($issueId: ID!) {{
 }
 
 pub(in crate::tracker) const GITHUB_UPDATE_ISSUE_COMMENT_MUTATION: &str = r#"
-mutation JadeSymphonyUpdateIssueComment($commentId: ID!, $body: String!) {
+mutation SheaSymphonyUpdateIssueComment($commentId: ID!, $body: String!) {
   updateIssueComment(input: { id: $commentId, body: $body }) {
     issueComment {
       id
@@ -397,7 +397,7 @@ mutation JadeSymphonyUpdateIssueComment($commentId: ID!, $body: String!) {
 "#;
 
 pub(in crate::tracker) const GITHUB_ADD_COMMENT_MUTATION: &str = r#"
-mutation JadeSymphonyAddComment($subjectId: ID!, $body: String!) {
+mutation SheaSymphonyAddComment($subjectId: ID!, $body: String!) {
   addComment(input: { subjectId: $subjectId, body: $body }) {
     commentEdge {
       node {
@@ -409,7 +409,7 @@ mutation JadeSymphonyAddComment($subjectId: ID!, $body: String!) {
 "#;
 
 pub(in crate::tracker) const GITHUB_CLOSE_ISSUE_MUTATION: &str = r#"
-mutation JadeSymphonyCloseIssue($issueId: ID!) {
+mutation SheaSymphonyCloseIssue($issueId: ID!) {
   closeIssue(input: { issueId: $issueId, stateReason: COMPLETED }) {
     issue {
       id
@@ -420,7 +420,7 @@ mutation JadeSymphonyCloseIssue($issueId: ID!) {
 "#;
 
 pub(in crate::tracker) const GITHUB_REPOSITORY_ID_QUERY: &str = r#"
-query JadeSymphonyRepositoryId($owner: String!, $repo: String!) {
+query SheaSymphonyRepositoryId($owner: String!, $repo: String!) {
   repository(owner: $owner, name: $repo) {
     id
   }
@@ -428,7 +428,7 @@ query JadeSymphonyRepositoryId($owner: String!, $repo: String!) {
 "#;
 
 pub(in crate::tracker) const GITHUB_CREATE_ISSUE_MUTATION: &str = r#"
-mutation JadeSymphonyCreateIssue($repositoryId: ID!, $title: String!, $body: String!) {
+mutation SheaSymphonyCreateIssue($repositoryId: ID!, $title: String!, $body: String!) {
   createIssue(input: { repositoryId: $repositoryId, title: $title, body: $body }) {
     issue {
       id
@@ -440,7 +440,7 @@ mutation JadeSymphonyCreateIssue($repositoryId: ID!, $title: String!, $body: Str
 "#;
 
 pub(in crate::tracker) const GITHUB_ADD_PROJECT_ITEM_MUTATION: &str = r#"
-mutation JadeSymphonyAddProjectItem($projectId: ID!, $contentId: ID!) {
+mutation SheaSymphonyAddProjectItem($projectId: ID!, $contentId: ID!) {
   addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) {
     item {
       id

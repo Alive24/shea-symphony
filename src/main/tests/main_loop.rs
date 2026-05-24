@@ -22,7 +22,7 @@ fn runtime_reconcile_test_config(root: &Path) -> RuntimeConfig {
     let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
             &format!(
-                "---\ntracker:\n  kind: memory\nartifacts:\n  root: {:?}\n  namespace: Alive24/jade-symphony\nobservability:\n  logs_root: {:?}\n---\nPrompt",
+                "---\ntracker:\n  kind: memory\nartifacts:\n  root: {:?}\n  namespace: Alive24/shea-symphony\nobservability:\n  logs_root: {:?}\n---\nPrompt",
                 root.display().to_string(),
                 root.join("logs").display().to_string()
             ),
@@ -49,11 +49,11 @@ fn main_tmux_session_record(issue_identifier: &str, status: SessionStatus) -> Ag
         worktree: PathBuf::from("/tmp/issue-338"),
         branch: Some("feature/issue-338".into()),
         backend: "tmux".into(),
-        session_name: "jade-main-338-attempt-1-reconcile".into(),
-        pane_target: "jade-main-338-attempt-1-reconcile".into(),
+        session_name: "shea-main-338-attempt-1-reconcile".into(),
+        pane_target: "shea-main-338-attempt-1-reconcile".into(),
         prompt_artifact_path: PathBuf::from("/tmp/prompt.md"),
         log_path: PathBuf::from("/tmp/session.log"),
-        attach_command: "tmux attach-session -t jade-main-338-attempt-1-reconcile".into(),
+        attach_command: "tmux attach-session -t shea-main-338-attempt-1-reconcile".into(),
         attempt: 1,
         status,
         started_at_ms: 1_000,
@@ -114,7 +114,7 @@ fn main_app_server_smoke_gate_rejects_non_app_server_codex() {
 #[test]
 fn pool_worker_selection_respects_lane_priority_and_claim_owner() {
     let config = test_config();
-    let worker = "Jade Symphony Main";
+    let worker = "Shea Symphony Main";
     let mut first = tracker_issue_with_ref("#1", "First", "Todo");
     first.priority = Some(20);
     let mut second = tracker_issue_with_ref("#2", "Second", "Rework");
@@ -162,7 +162,7 @@ fn pool_worker_selection_returns_empty_when_no_slots_remain() {
 #[test]
 fn main_run_loop_selection_prioritizes_recovery_and_fills_remaining_slots() {
     let config = test_config();
-    let worker = "Jade Symphony Main";
+    let worker = "Shea Symphony Main";
     let recovery_issue = tracker_issue_with_ref("#362", "Recover me", "In Progress");
     let mut next_todo = tracker_issue_with_ref("#363", "Start next", "Todo");
     next_todo.priority = Some(1);
@@ -415,7 +415,7 @@ fn run_loop_runtime_ownership_workpad_records_matching_marker() {
 
     let workpad = run_loop_ownership_workpad(&issue, &ownership, "Resumed", &claim);
 
-    assert!(workpad.contains("jade-symphony-runtime-ownership"));
+    assert!(workpad.contains("shea-symphony-runtime-ownership"));
     assert_eq!(
         runtime_ownership_decision(Some(&workpad), &ownership),
         RuntimeOwnershipDecision::Matches
@@ -595,12 +595,12 @@ fn main_handoff_reconcile_completes_session_and_clears_matching_runtime_state() 
     let config = runtime_reconcile_test_config(temp.path());
     let mut state = active_runtime_state("#338");
     state.backend = "tmux".into();
-    state.backend_session_id = Some("jade-main-338-attempt-1-reconcile".into());
+    state.backend_session_id = Some("shea-main-338-attempt-1-reconcile".into());
     state.lane = Some("main".into());
     upsert_runtime_state(&config, &state).unwrap();
     save_session_registry(
         &session_registry_path(&config),
-        &jade_symphony::session_registry::SessionRegistry {
+        &shea_symphony::session_registry::SessionRegistry {
             sessions: vec![main_tmux_session_record("#338", SessionStatus::Running)],
         },
     )
@@ -621,7 +621,7 @@ fn main_handoff_reconcile_does_not_clear_non_main_runtime_state() {
     let config = runtime_reconcile_test_config(temp.path());
     let mut state = active_runtime_state("#338");
     state.backend = "tmux".into();
-    state.backend_session_id = Some("jade-review-338-attempt-1-review".into());
+    state.backend_session_id = Some("shea-review-338-attempt-1-review".into());
     state.lane = Some("review".into());
     upsert_runtime_state(&config, &state).unwrap();
 
@@ -654,7 +654,7 @@ fn run_loop_runtime_state_increments_same_issue_attempts() {
     );
     assert_eq!(state.branch_name, issue.branch_name);
     assert_eq!(state.actor_role.as_deref(), Some("implementation_agent"));
-    assert_eq!(state.actor_label.as_deref(), Some("Jade Symphony Agent"));
+    assert_eq!(state.actor_label.as_deref(), Some("Shea Symphony Agent"));
     assert_eq!(state.last_event.as_deref(), Some("Resumed"));
 }
 
@@ -665,7 +665,7 @@ fn run_loop_runtime_state_records_result_and_transition() {
     let claim = test_claim(&issue);
     let state = run_loop_runtime_state_for_issue(None, &issue, &config, "Claimed", &claim);
     let result = IssueExecutionResult {
-        workspace_path: PathBuf::from("/tmp/jade/issue-29"),
+        workspace_path: PathBuf::from("/tmp/shea/issue-29"),
         backend: "dry-run".into(),
         profile_id: Some("codex-alpha".into()),
         instance_name: Some("Codex Alpha".into()),
@@ -679,11 +679,11 @@ fn run_loop_runtime_state_records_result_and_transition() {
         usage_limit_pause: None,
         prompt_artifact_path: None,
         actor_role: "implementation_agent".into(),
-        actor_label: "Jade Symphony Agent".into(),
-        git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+        actor_label: "Shea Symphony Agent".into(),
+        git_author: Some("Shea Symphony Agent <shea@example.invalid>".into()),
         git_identity: GitIdentityApplyResult {
-            status: jade_symphony::workspace::GitIdentityApplyStatus::Applied,
-            author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+            status: shea_symphony::workspace::GitIdentityApplyStatus::Applied,
+            author: Some("Shea Symphony Agent <shea@example.invalid>".into()),
             applied_keys: vec!["user.name".into(), "user.email".into()],
         },
         live_handoff: None,
@@ -697,7 +697,7 @@ fn run_loop_runtime_state_records_result_and_transition() {
     assert_eq!(state.actor_role.as_deref(), Some("implementation_agent"));
     assert_eq!(
         state.git_author.as_deref(),
-        Some("Jade Symphony Agent <jade@example.invalid>")
+        Some("Shea Symphony Agent <shea@example.invalid>")
     );
     assert_eq!(state.last_event.as_deref(), Some("Completed"));
 
@@ -724,24 +724,24 @@ fn run_loop_runtime_state_records_pending_tmux_session_metadata() {
     let claim = test_claim(&issue);
     let state = run_loop_runtime_state_for_issue(None, &issue, &config, "Claimed", &claim);
     let result = IssueExecutionResult {
-        workspace_path: PathBuf::from("/tmp/jade/issue-220"),
+        workspace_path: PathBuf::from("/tmp/shea/issue-220"),
         backend: "tmux".into(),
         profile_id: None,
         instance_name: None,
         success: false,
         pending_session: true,
-        session_id: Some("jade-main-220".into()),
+        session_id: Some("shea-main-220".into()),
         run_id: Some(claim.run.clone()),
-        backend_log_path: Some(PathBuf::from("/tmp/jade/logs/tmux/jade-main-220.log")),
-        backend_attach_command: Some("tmux attach-session -t jade-main-220".into()),
+        backend_log_path: Some(PathBuf::from("/tmp/shea/logs/tmux/shea-main-220.log")),
+        backend_attach_command: Some("tmux attach-session -t shea-main-220".into()),
         message: "tmux session running".into(),
         usage_limit_pause: None,
         prompt_artifact_path: None,
         actor_role: "implementation_agent".into(),
-        actor_label: "Jade Symphony Agent".into(),
+        actor_label: "Shea Symphony Agent".into(),
         git_author: None,
         git_identity: GitIdentityApplyResult {
-            status: jade_symphony::workspace::GitIdentityApplyStatus::NotGitRepository,
+            status: shea_symphony::workspace::GitIdentityApplyStatus::NotGitRepository,
             author: None,
             applied_keys: Vec::new(),
         },
@@ -758,14 +758,14 @@ fn run_loop_runtime_state_records_pending_tmux_session_metadata() {
     );
 
     assert_eq!(state.last_event.as_deref(), Some("SessionRunning"));
-    assert_eq!(state.backend_session_id.as_deref(), Some("jade-main-220"));
+    assert_eq!(state.backend_session_id.as_deref(), Some("shea-main-220"));
     assert_eq!(
         state.backend_attach_command.as_deref(),
-        Some("tmux attach-session -t jade-main-220")
+        Some("tmux attach-session -t shea-main-220")
     );
     assert!(workpad.contains("Session status: `running`"));
-    assert!(workpad.contains("Attach command: `tmux attach-session -t jade-main-220`"));
-    assert!(workpad.contains("Session log: `/tmp/jade/logs/tmux/jade-main-220.log`"));
+    assert!(workpad.contains("Attach command: `tmux attach-session -t shea-main-220`"));
+    assert!(workpad.contains("Session log: `/tmp/shea/logs/tmux/shea-main-220.log`"));
 }
 
 #[test]
@@ -781,9 +781,9 @@ fn main_loop_reconciles_completed_pending_session_without_relaunching_backend() 
     state.last_event = Some("SessionRunning".into());
     state.workspace_path = Some(handoff.workspace_path.clone());
     state.backend = "tmux".into();
-    state.backend_session_id = Some("jade-main-29".into());
-    state.backend_attach_command = Some("tmux attach-session -t jade-main-29".into());
-    state.backend_log_path = Some(temp.path().join("jade-main-29.log"));
+    state.backend_session_id = Some("shea-main-29".into());
+    state.backend_attach_command = Some("tmux attach-session -t shea-main-29".into());
+    state.backend_log_path = Some(temp.path().join("shea-main-29.log"));
 
     save_session_record(
         &session_registry_path(&config),
@@ -804,11 +804,11 @@ fn main_loop_reconciles_completed_pending_session_without_relaunching_backend() 
             worktree: handoff.workspace_path.clone(),
             branch: Some(handoff.branch_name.clone()),
             backend: "codex".into(),
-            session_name: "jade-main-29".into(),
+            session_name: "shea-main-29".into(),
             pane_target: String::new(),
             prompt_artifact_path: temp.path().join("prompt.md"),
-            log_path: temp.path().join("jade-main-29.log"),
-            attach_command: "tmux attach-session -t jade-main-29".into(),
+            log_path: temp.path().join("shea-main-29.log"),
+            attach_command: "tmux attach-session -t shea-main-29".into(),
             attempt: 1,
             status: SessionStatus::Completed,
             started_at_ms: 1,
@@ -826,7 +826,7 @@ fn main_loop_reconciles_completed_pending_session_without_relaunching_backend() 
     };
     assert!(result.success);
     assert!(!result.pending_session);
-    assert_eq!(result.session_id.as_deref(), Some("jade-main-29"));
+    assert_eq!(result.session_id.as_deref(), Some("shea-main-29"));
     assert!(result.message.contains("registry status completed"));
 }
 
@@ -840,7 +840,7 @@ fn main_loop_keeps_missing_pending_session_registry_active_instead_of_relaunchin
     let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
     let mut state = run_loop_runtime_state_for_issue(None, &issue, &config, "Claimed", &claim);
     state.last_event = Some("SessionRunning".into());
-    state.backend_session_id = Some("jade-main-missing".into());
+    state.backend_session_id = Some("shea-main-missing".into());
 
     let reconciliation = reconcile_pending_main_session(&config, &issue, &handoff, &state)
         .unwrap()

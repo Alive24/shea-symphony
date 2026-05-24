@@ -1,6 +1,6 @@
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::lane_claim::{LaneClaim, LaneClaimLane, LaneClaimSource, LaneClaimState};
-use jade_symphony::model::{normalize_state, TrackerIssue};
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::lane_claim::{LaneClaim, LaneClaimLane, LaneClaimSource, LaneClaimState};
+use shea_symphony::model::{normalize_state, TrackerIssue};
 
 use crate::lanes::claim::{project_text_field, select_pool_worker_issues, WorkerLane};
 

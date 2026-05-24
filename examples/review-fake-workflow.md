@@ -11,7 +11,7 @@ tracker:
 polling:
   interval_ms: 5000
 workspace:
-  root: /tmp/jade-symphony-review-workspaces
+  root: /tmp/shea-symphony-review-workspaces
 main_lane:
   backend: dry-run
   max_concurrent_agents: 1
@@ -25,4 +25,4 @@ observability:
   logs_root: examples/log
 ---
 
-Review Jade Symphony issue {{ issue.identifier }}.
+Review Shea Symphony issue {{ issue.identifier }}.

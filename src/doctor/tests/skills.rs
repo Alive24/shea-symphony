@@ -11,7 +11,7 @@ fn reports_missing_local_skill_root_as_warning() {
     let temp = tempfile::tempdir().unwrap();
     write_skill_suite(
         temp.path(),
-        &[("jade-symphony-doctor", "suite/jade-symphony-doctor")],
+        &[("shea-symphony-doctor", "suite/shea-symphony-doctor")],
     );
     let target = SkillInstallTarget {
         label: "Codex".into(),
@@ -31,44 +31,44 @@ fn reports_missing_local_skill_root_as_warning() {
     assert_eq!(report.violations[0].code, "local_skill_root_missing");
     assert!(report.violations[0]
         .suggestion
-        .contains("install-jade-symphony-skills.js --dry-run"));
+        .contains("install-shea-symphony-skills.js --dry-run"));
 }
 
 #[test]
 fn reports_unhealthy_local_skill_shapes_and_stale_metadata() {
     let temp = tempfile::tempdir().unwrap();
     let skills = [
-        ("jade-symphony-alias-file", "suite/jade-symphony-alias-file"),
-        ("jade-symphony-missing-md", "suite/jade-symphony-missing-md"),
-        ("jade-symphony-stale", "suite/jade-symphony-stale"),
-        ("jade-symphony-file-link", "suite/jade-symphony-file-link"),
+        ("shea-symphony-alias-file", "suite/shea-symphony-alias-file"),
+        ("shea-symphony-missing-md", "suite/shea-symphony-missing-md"),
+        ("shea-symphony-stale", "suite/shea-symphony-stale"),
+        ("shea-symphony-file-link", "suite/shea-symphony-file-link"),
         (
-            "jade-symphony-broken-link",
-            "suite/jade-symphony-broken-link",
+            "shea-symphony-broken-link",
+            "suite/shea-symphony-broken-link",
         ),
     ];
     write_skill_suite(temp.path(), &skills);
     let target_root = temp.path().join("codex-skills");
     fs::create_dir_all(&target_root).unwrap();
 
-    fs::write(target_root.join("jade-symphony-alias-file"), "alias").unwrap();
-    fs::create_dir_all(target_root.join("jade-symphony-missing-md")).unwrap();
-    fs::create_dir_all(target_root.join("jade-symphony-stale")).unwrap();
+    fs::write(target_root.join("shea-symphony-alias-file"), "alias").unwrap();
+    fs::create_dir_all(target_root.join("shea-symphony-missing-md")).unwrap();
+    fs::create_dir_all(target_root.join("shea-symphony-stale")).unwrap();
     fs::write(
-        target_root.join("jade-symphony-stale").join("SKILL.md"),
-        "---\nname: stale-jade-skill\nmetadata:\n  suite-version: 2026.01.01\n---\nUse Jade CLI here.\n",
+        target_root.join("shea-symphony-stale").join("SKILL.md"),
+        "---\nname: stale-shea-skill\nmetadata:\n  suite-version: 2026.01.01\n---\nUse Shea CLI here.\n",
     )
     .unwrap();
     let file_target = temp.path().join("target-SKILL.md");
     fs::write(
         &file_target,
-        skill_text("jade-symphony-file-link", "2026.05.17"),
+        skill_text("shea-symphony-file-link", "2026.05.17"),
     )
     .unwrap();
-    symlink_file(&file_target, &target_root.join("jade-symphony-file-link"));
+    symlink_file(&file_target, &target_root.join("shea-symphony-file-link"));
     symlink_file(
         &temp.path().join("does-not-exist"),
-        &target_root.join("jade-symphony-broken-link"),
+        &target_root.join("shea-symphony-broken-link"),
     );
 
     let target = SkillInstallTarget {
@@ -103,14 +103,14 @@ fn accepts_healthy_local_skill_directory() {
     let temp = tempfile::tempdir().unwrap();
     write_skill_suite(
         temp.path(),
-        &[("jade-symphony-doctor", "suite/jade-symphony-doctor")],
+        &[("shea-symphony-doctor", "suite/shea-symphony-doctor")],
     );
     let target_root = temp.path().join("gemini-skills");
-    let destination = target_root.join("jade-symphony-doctor");
+    let destination = target_root.join("shea-symphony-doctor");
     fs::create_dir_all(&destination).unwrap();
     fs::write(
         destination.join("SKILL.md"),
-        skill_text("jade-symphony-doctor", "2026.05.17"),
+        skill_text("shea-symphony-doctor", "2026.05.17"),
     )
     .unwrap();
     let target = SkillInstallTarget {
@@ -130,10 +130,10 @@ fn accepts_healthy_local_skill_directory() {
 }
 
 fn write_skill_suite(repo_root: &Path, skills: &[(&str, &str)]) {
-    let suite_root = repo_root.join("skills").join("jade-symphony");
+    let suite_root = repo_root.join("skills").join("shea-symphony");
     fs::create_dir_all(&suite_root).unwrap();
     let mut manifest =
-        "suite_name = \"Jade Symphony skill suite\"\nversion = \"2026.05.17\"\n".to_string();
+        "suite_name = \"Shea Symphony skill suite\"\nversion = \"2026.05.17\"\n".to_string();
     for (name, path) in skills {
         manifest.push_str(&format!(
             "\n[[skills]]\nname = \"{name}\"\npath = \"{path}\"\n"
@@ -147,7 +147,7 @@ fn write_skill_suite(repo_root: &Path, skills: &[(&str, &str)]) {
 
 fn skill_text(name: &str, version: &str) -> String {
     format!(
-        "---\nname: {name}\nmetadata:\n  suite-version: {version}\n---\nUse the Jade Symphony CLI.\n"
+        "---\nname: {name}\nmetadata:\n  suite-version: {version}\n---\nUse the Shea Symphony CLI.\n"
     )
 }
 

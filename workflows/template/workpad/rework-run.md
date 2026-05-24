@@ -1,4 +1,4 @@
-## Jade Symphony Rework Run
+## Shea Symphony Rework Run
 
 - Generated at: `<YYYY-MM-DD HH:MM:SS GMT>`
 - Issue: #<issue> <title>

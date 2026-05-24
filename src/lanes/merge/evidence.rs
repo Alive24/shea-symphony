@@ -1,7 +1,7 @@
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::merge_lane::{MergeLaneDecision, MergeLaneDecisionKind};
-use jade_symphony::model::TrackerIssue;
-use jade_symphony::tracker::TrackerAdapter;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::merge_lane::{MergeLaneDecision, MergeLaneDecisionKind};
+use shea_symphony::model::TrackerIssue;
+use shea_symphony::tracker::TrackerAdapter;
 
 use crate::orchestration::{
     add_timeline_comment_with_recovery, append_tracker_mutation_audit, close_issue_with_recovery,

@@ -25,15 +25,15 @@ pub struct ExecutionProfile {
 impl ExecutionProfile {
     pub fn environment_for_backend(&self, backend: &str) -> BTreeMap<String, String> {
         let mut env = self.env.clone();
-        env.insert("JADE_SYMPHONY_PROFILE_ID".into(), self.profile_id.clone());
+        env.insert("SHEA_SYMPHONY_PROFILE_ID".into(), self.profile_id.clone());
         env.insert(
-            "JADE_SYMPHONY_INSTANCE_NAME".into(),
+            "SHEA_SYMPHONY_INSTANCE_NAME".into(),
             self.instance_name.clone(),
         );
-        env.insert("JADE_SYMPHONY_PROFILE_SOURCE".into(), self.source.clone());
+        env.insert("SHEA_SYMPHONY_PROFILE_SOURCE".into(), self.source.clone());
         if let Some(path) = &self.user_data_dir {
             env.insert(
-                "JADE_SYMPHONY_PROFILE_HOME".into(),
+                "SHEA_SYMPHONY_PROFILE_HOME".into(),
                 path.display().to_string(),
             );
             if backend == "codex" {
@@ -42,7 +42,7 @@ impl ExecutionProfile {
         }
         if let Some(args) = &self.extra_args {
             if !args.trim().is_empty() {
-                env.insert("JADE_SYMPHONY_COCKPIT_EXTRA_ARGS".into(), args.clone());
+                env.insert("SHEA_SYMPHONY_COCKPIT_EXTRA_ARGS".into(), args.clone());
             }
         }
         env
@@ -239,11 +239,11 @@ mod tests {
         let env = profile.environment_for_backend("codex");
 
         assert_eq!(
-            env.get("JADE_SYMPHONY_PROFILE_ID"),
+            env.get("SHEA_SYMPHONY_PROFILE_ID"),
             Some(&"codex-alpha".into())
         );
         assert_eq!(
-            env.get("JADE_SYMPHONY_INSTANCE_NAME"),
+            env.get("SHEA_SYMPHONY_INSTANCE_NAME"),
             Some(&"codex-alpha".into())
         );
         assert_eq!(

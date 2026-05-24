@@ -69,7 +69,7 @@ pub(super) fn with_parent_branch(mut issue: TrackerIssue, branch: &str) -> Track
 
 pub(super) fn session(identifier: Option<&str>, status: &str) -> SessionStatusSnapshot {
     SessionStatusSnapshot {
-        session_id: "jade-main-202-attempt-1-runtime".into(),
+        session_id: "shea-main-202-attempt-1-runtime".into(),
         lane: "main".into(),
         backend: "tmux".into(),
         run_id: None,
@@ -78,8 +78,8 @@ pub(super) fn session(identifier: Option<&str>, status: &str) -> SessionStatusSn
         evidence: "registry record has not updated for 19000ms".into(),
         issue_identifier: identifier.map(str::to_string),
         issue_title: Some("Runtime session".into()),
-        attach_command: Some("tmux attach-session -t jade-main-202-attempt-1-runtime".into()),
-        log_path: Some("/tmp/jade/logs/tmux/jade-main-202-attempt-1-runtime.log".into()),
+        attach_command: Some("tmux attach-session -t shea-main-202-attempt-1-runtime".into()),
+        log_path: Some("/tmp/shea/logs/tmux/shea-main-202-attempt-1-runtime.log".into()),
         updated_at_ms: 1_000,
     }
 }

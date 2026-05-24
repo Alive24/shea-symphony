@@ -142,7 +142,7 @@ pub(in crate::tracker) fn run_command_with_timeout(
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let base = format!("jade-symphony-command-{}-{suffix}", std::process::id());
+    let base = format!("shea-symphony-command-{}-{suffix}", std::process::id());
     let stdout_path = std::env::temp_dir().join(format!("{base}.stdout"));
     let stderr_path = std::env::temp_dir().join(format!("{base}.stderr"));
     let stdout_file = fs::File::create(&stdout_path).map_err(|error| {

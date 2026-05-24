@@ -18,7 +18,7 @@ pub(crate) fn forge_contract() -> String {
         "Scope.",
         "## Canonical References",
         "### Target Repository / Package",
-        "- Alive24/jade-symphony",
+        "- Alive24/shea-symphony",
         "## Verification",
         "### Completion Criteria",
         "- Pass.",
@@ -56,8 +56,8 @@ pub(crate) fn canonical_git_repo() -> (tempfile::TempDir, PathBuf, PathBuf) {
         &["init", "--bare", "--initial-branch=main", "origin.git"],
     );
     git_ok(temp.path(), &["init", "--initial-branch=main", "repo"]);
-    git_ok(&repo, &["config", "user.email", "jade@example.invalid"]);
-    git_ok(&repo, &["config", "user.name", "Jade Symphony"]);
+    git_ok(&repo, &["config", "user.email", "shea@example.invalid"]);
+    git_ok(&repo, &["config", "user.name", "Shea Symphony"]);
     std::fs::write(repo.join("README.md"), "main\n").unwrap();
     git_ok(&repo, &["add", "README.md"]);
     git_ok(&repo, &["commit", "-m", "initial"]);
@@ -98,7 +98,7 @@ pub(crate) fn live_github_config(allow_unassigned: bool) -> RuntimeConfig {
     let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
             &format!(
-                "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 9\n  assignee_filter:\n    allow_unassigned: {}\n---\nPrompt",
+                "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_number: 9\n  assignee_filter:\n    allow_unassigned: {}\n---\nPrompt",
                 allow_unassigned
             ),
         )
@@ -109,7 +109,7 @@ pub(crate) fn live_github_config(allow_unassigned: bool) -> RuntimeConfig {
 pub(crate) fn fixture_github_config() -> RuntimeConfig {
     let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 9\n  fixture_path: fixtures/dry-run-issues.json\n---\nPrompt",
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_number: 9\n  fixture_path: fixtures/dry-run-issues.json\n---\nPrompt",
         )
         .unwrap();
     RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap()
@@ -159,7 +159,7 @@ pub(crate) struct RecordingAdapter {
     pub(crate) operations: RefCell<Vec<String>>,
     pub(crate) issues: RefCell<BTreeMap<String, TrackerIssue>>,
     pub(crate) hydrated_issues: RefCell<Vec<String>>,
-    pub(crate) linked_pull_requests: RefCell<Vec<jade_symphony::model::LinkedPullRequest>>,
+    pub(crate) linked_pull_requests: RefCell<Vec<shea_symphony::model::LinkedPullRequest>>,
     pub(crate) fail_workpad: bool,
     pub(crate) fail_comment: bool,
     pub(crate) fail_link_pr: bool,
@@ -206,17 +206,17 @@ impl TrackerAdapter for RecordingAdapter {
 
     fn list_dispatchable_issues(
         &self,
-    ) -> Result<Vec<TrackerIssue>, jade_symphony::tracker::TrackerError> {
+    ) -> Result<Vec<TrackerIssue>, shea_symphony::tracker::TrackerError> {
         Ok(Vec::new())
     }
 
     fn get_issue(
         &self,
         issue_ref: &str,
-    ) -> Result<Option<TrackerIssue>, jade_symphony::tracker::TrackerError> {
+    ) -> Result<Option<TrackerIssue>, shea_symphony::tracker::TrackerError> {
         if self.fail_get_issue {
             return Err(
-                jade_symphony::tracker::TrackerError::IntegrationUnavailable(
+                shea_symphony::tracker::TrackerError::IntegrationUnavailable(
                     "simulated get_issue failure".into(),
                 ),
             );
@@ -228,7 +228,7 @@ impl TrackerAdapter for RecordingAdapter {
         &self,
         mut issue: TrackerIssue,
         _project_context: &[TrackerIssue],
-    ) -> Result<TrackerIssue, jade_symphony::tracker::TrackerError> {
+    ) -> Result<TrackerIssue, shea_symphony::tracker::TrackerError> {
         self.hydrated_issues
             .borrow_mut()
             .push(issue.identifier.clone());
@@ -239,7 +239,7 @@ impl TrackerAdapter for RecordingAdapter {
     fn fetch_issues_by_states(
         &self,
         _states: &[String],
-    ) -> Result<Vec<TrackerIssue>, jade_symphony::tracker::TrackerError> {
+    ) -> Result<Vec<TrackerIssue>, shea_symphony::tracker::TrackerError> {
         Ok(Vec::new())
     }
 
@@ -247,7 +247,7 @@ impl TrackerAdapter for RecordingAdapter {
         &self,
         issue_ref: &str,
         normalized_state: &str,
-    ) -> Result<(), jade_symphony::tracker::TrackerError> {
+    ) -> Result<(), shea_symphony::tracker::TrackerError> {
         if let Some(issue) = self.issues.borrow_mut().get_mut(issue_ref) {
             issue.state = normalize_state(normalized_state);
         }
@@ -256,7 +256,7 @@ impl TrackerAdapter for RecordingAdapter {
             .push(format!("set_state:{issue_ref}:{normalized_state}"));
         if self.fail_state_after_apply {
             return Err(
-                jade_symphony::tracker::TrackerError::IntegrationUnavailable(
+                shea_symphony::tracker::TrackerError::IntegrationUnavailable(
                     "GitHub GraphQL operation failed: HTTP 502 Bad Gateway".into(),
                 ),
             );
@@ -268,16 +268,16 @@ impl TrackerAdapter for RecordingAdapter {
         &self,
         issue_ref: &str,
         markdown: &str,
-    ) -> Result<(), jade_symphony::tracker::TrackerError> {
+    ) -> Result<(), shea_symphony::tracker::TrackerError> {
         if self.fail_workpad {
             return Err(
-                jade_symphony::tracker::TrackerError::IntegrationUnavailable(
+                shea_symphony::tracker::TrackerError::IntegrationUnavailable(
                     "workpad failed".into(),
                 ),
             );
         }
         assert!(
-            markdown.contains("## Jade Symphony Workpad")
+            markdown.contains("## Shea Symphony Workpad")
                 || markdown.contains("### Workspace Evidence")
         );
         self.operations
@@ -288,7 +288,7 @@ impl TrackerAdapter for RecordingAdapter {
         }
         if self.fail_workpad_after_apply {
             return Err(
-                jade_symphony::tracker::TrackerError::IntegrationUnavailable(
+                shea_symphony::tracker::TrackerError::IntegrationUnavailable(
                     "GitHub GraphQL operation failed: HTTP 502 Bad Gateway".into(),
                 ),
             );
@@ -301,7 +301,7 @@ impl TrackerAdapter for RecordingAdapter {
         issue_ref: &str,
         title: &str,
         body: &str,
-    ) -> Result<(), jade_symphony::tracker::TrackerError> {
+    ) -> Result<(), shea_symphony::tracker::TrackerError> {
         if let Some(issue) = self.issues.borrow_mut().get_mut(issue_ref) {
             issue.title = title.to_string();
             issue.description = Some(body.to_string());
@@ -316,20 +316,20 @@ impl TrackerAdapter for RecordingAdapter {
         &self,
         issue_ref: &str,
         markdown: &str,
-    ) -> Result<(), jade_symphony::tracker::TrackerError> {
+    ) -> Result<(), shea_symphony::tracker::TrackerError> {
         if self.fail_comment {
             return Err(
-                jade_symphony::tracker::TrackerError::IntegrationUnavailable(
+                shea_symphony::tracker::TrackerError::IntegrationUnavailable(
                     "comment failed".into(),
                 ),
             );
         }
         assert!(
             markdown.contains("## Promotion Note")
-                || markdown.contains("## Jade Symphony Agent Review Run")
-                || markdown.contains("## Jade Symphony Rework Run")
-                || markdown.contains("## Jade Symphony Merge Run")
-                || markdown.contains("## Jade Symphony Doctor Triage")
+                || markdown.contains("## Shea Symphony Agent Review Run")
+                || markdown.contains("## Shea Symphony Rework Run")
+                || markdown.contains("## Shea Symphony Merge Run")
+                || markdown.contains("## Shea Symphony Doctor Triage")
         );
         self.operations
             .borrow_mut()
@@ -344,7 +344,7 @@ impl TrackerAdapter for RecordingAdapter {
         }
         if self.fail_comment_after_apply {
             return Err(
-                jade_symphony::tracker::TrackerError::IntegrationUnavailable(
+                shea_symphony::tracker::TrackerError::IntegrationUnavailable(
                     "GitHub GraphQL operation failed: HTTP 502 Bad Gateway".into(),
                 ),
             );
@@ -355,7 +355,7 @@ impl TrackerAdapter for RecordingAdapter {
     fn create_follow_up_issue(
         &self,
         input: FollowUpIssueInput,
-    ) -> Result<String, jade_symphony::tracker::TrackerError> {
+    ) -> Result<String, shea_symphony::tracker::TrackerError> {
         let issue_id = format!("dry-run:{}", input.title);
         let mut issue = tracker_issue_with_ref(&issue_id, &input.title, "untriaged");
         issue.id = issue_id.clone();
@@ -371,7 +371,7 @@ impl TrackerAdapter for RecordingAdapter {
     fn add_issue_to_project(
         &self,
         issue_id: &str,
-    ) -> Result<(), jade_symphony::tracker::TrackerError> {
+    ) -> Result<(), shea_symphony::tracker::TrackerError> {
         self.add_issue_to_project_with_state(issue_id, "todo")
     }
 
@@ -379,7 +379,7 @@ impl TrackerAdapter for RecordingAdapter {
         &self,
         issue_id: &str,
         normalized_state: &str,
-    ) -> Result<(), jade_symphony::tracker::TrackerError> {
+    ) -> Result<(), shea_symphony::tracker::TrackerError> {
         let normalized_state = normalize_state(normalized_state);
         if let Some(issue) = self.issues.borrow_mut().get_mut(issue_id) {
             issue.state = normalized_state.clone();
@@ -394,7 +394,7 @@ impl TrackerAdapter for RecordingAdapter {
         &self,
         issue_ref: &str,
         assignment: &ProjectFieldAssignment,
-    ) -> Result<(), jade_symphony::tracker::TrackerError> {
+    ) -> Result<(), shea_symphony::tracker::TrackerError> {
         if let Some(issue) = self.issues.borrow_mut().get_mut(issue_ref) {
             issue.project_fields.insert(
                 assignment.name.clone(),
@@ -407,7 +407,7 @@ impl TrackerAdapter for RecordingAdapter {
         ));
         if self.fail_project_field_after_apply {
             return Err(
-                jade_symphony::tracker::TrackerError::IntegrationUnavailable(
+                shea_symphony::tracker::TrackerError::IntegrationUnavailable(
                     "GitHub GraphQL operation failed: HTTP 502 Bad Gateway".into(),
                 ),
             );
@@ -419,10 +419,10 @@ impl TrackerAdapter for RecordingAdapter {
         &self,
         issue_ref: &str,
         pr_ref: &str,
-    ) -> Result<(), jade_symphony::tracker::TrackerError> {
+    ) -> Result<(), shea_symphony::tracker::TrackerError> {
         if self.fail_link_pr {
             return Err(
-                jade_symphony::tracker::TrackerError::IntegrationUnavailable("link failed".into()),
+                shea_symphony::tracker::TrackerError::IntegrationUnavailable("link failed".into()),
             );
         }
         self.operations
@@ -431,7 +431,7 @@ impl TrackerAdapter for RecordingAdapter {
         if self.confirm_link_pr {
             self.linked_pull_requests
                 .borrow_mut()
-                .push(jade_symphony::model::LinkedPullRequest {
+                .push(shea_symphony::model::LinkedPullRequest {
                     number: pull_request_number_from_url(pr_ref),
                     url: Some(pr_ref.to_string()),
                     state: Some("OPEN".into()),
@@ -445,12 +445,12 @@ impl TrackerAdapter for RecordingAdapter {
     fn list_linked_pull_requests(
         &self,
         _issue_ref: &str,
-    ) -> Result<Vec<jade_symphony::model::LinkedPullRequest>, jade_symphony::tracker::TrackerError>
+    ) -> Result<Vec<shea_symphony::model::LinkedPullRequest>, shea_symphony::tracker::TrackerError>
     {
         Ok(self.linked_pull_requests.borrow().clone())
     }
 
-    fn close_issue(&self, issue_ref: &str) -> Result<(), jade_symphony::tracker::TrackerError> {
+    fn close_issue(&self, issue_ref: &str) -> Result<(), shea_symphony::tracker::TrackerError> {
         self.operations
             .borrow_mut()
             .push(format!("close_issue:{issue_ref}"));
@@ -462,7 +462,7 @@ impl TrackerAdapter for RecordingAdapter {
         }
         if self.fail_close_after_apply {
             return Err(
-                jade_symphony::tracker::TrackerError::IntegrationUnavailable(
+                shea_symphony::tracker::TrackerError::IntegrationUnavailable(
                     "GitHub GraphQL operation failed: HTTP 502 Bad Gateway".into(),
                 ),
             );
@@ -489,7 +489,7 @@ impl HandoffCommandRunner for MergeRecoveryRunner {
         program: &str,
         args: &[String],
         _cwd: &Path,
-    ) -> Result<CommandOutput, jade_symphony::git_handoff::GitHandoffError> {
+    ) -> Result<CommandOutput, shea_symphony::git_handoff::GitHandoffError> {
         self.calls
             .borrow_mut()
             .push(format!("{program} {}", args.join(" ")));
@@ -505,7 +505,7 @@ impl HandoffCommandRunner for MergeRecoveryRunner {
                 status: 0,
                 stdout: serde_json::json!({
                     "number": 351,
-                    "url": "https://github.com/Alive24/jade-symphony/pull/351",
+                    "url": "https://github.com/Alive24/shea-symphony/pull/351",
                     "state": "MERGED",
                     "isDraft": false,
                     "mergeStateStatus": "CLEAN",

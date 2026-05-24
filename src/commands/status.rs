@@ -1,12 +1,12 @@
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::observability_api::serve_once;
-use jade_symphony::orchestrator::Orchestrator;
-use jade_symphony::status_surface::render_snapshot;
-use jade_symphony::tracker::adapter_from_config;
-use jade_symphony::workflow::WorkflowDefinition;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::observability_api::serve_once;
+use shea_symphony::orchestrator::Orchestrator;
+use shea_symphony::status_surface::render_snapshot;
+use shea_symphony::tracker::adapter_from_config;
+use shea_symphony::workflow::WorkflowDefinition;
 
 use crate::orchestration::{session_status_snapshots, warn_if_temporary_workflow_path};
 
@@ -38,7 +38,7 @@ pub(crate) fn status_api(
 
 fn build_plan_snapshot(
     workflow_path: &Path,
-) -> Result<jade_symphony::model::RuntimeSnapshot, Box<dyn std::error::Error>> {
+) -> Result<shea_symphony::model::RuntimeSnapshot, Box<dyn std::error::Error>> {
     warn_if_temporary_workflow_path(workflow_path);
     let workflow = WorkflowDefinition::load(workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, workflow_path)?;
@@ -51,7 +51,7 @@ fn build_plan_snapshot(
     let event_log_path = config
         .observability
         .logs_root
-        .join("jade-symphony.jsonl")
+        .join("shea-symphony.jsonl")
         .display()
         .to_string();
     let orchestrator = Orchestrator::new(config);
@@ -69,7 +69,7 @@ fn build_plan_snapshot(
 }
 
 pub(crate) fn render_plan_snapshot(
-    snapshot: &jade_symphony::model::RuntimeSnapshot,
+    snapshot: &shea_symphony::model::RuntimeSnapshot,
     json: bool,
 ) -> Result<String, Box<dyn std::error::Error>> {
     if json {

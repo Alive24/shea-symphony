@@ -609,14 +609,14 @@ mod tests {
     #[test]
     fn session_name_includes_lane_issue_attempt_and_slug() {
         let name = deterministic_session_name(
-            "jade",
+            "shea",
             "main",
             Some("#225"),
             3,
             Some("Add durable tmux session registry and naming contract"),
         );
 
-        assert!(name.starts_with("jade-main-225-attempt-3-add-durable-tmux"));
+        assert!(name.starts_with("shea-main-225-attempt-3-add-durable-tmux"));
         assert!(name.chars().all(|character| {
             character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
         }));
@@ -651,18 +651,18 @@ mod tests {
             session_source: None,
             claim_value: None,
             actor_role: Some("implementation_agent".into()),
-            actor_label: Some("Jade Symphony Agent".into()),
+            actor_label: Some("Shea Symphony Agent".into()),
             git_author: None,
             profile_id: None,
             instance_name: None,
             worktree: PathBuf::from("/tmp/worktree"),
             branch: Some("feature/issue-225".into()),
             backend: "tmux".into(),
-            session_name: "jade-main-225-attempt-1-add-registry".into(),
-            pane_target: "jade-main-225-attempt-1-add-registry".into(),
+            session_name: "shea-main-225-attempt-1-add-registry".into(),
+            pane_target: "shea-main-225-attempt-1-add-registry".into(),
             prompt_artifact_path: PathBuf::from("/tmp/prompt.md"),
             log_path: PathBuf::from("/tmp/session.log"),
-            attach_command: "tmux attach-session -t jade-main-225-attempt-1-add-registry".into(),
+            attach_command: "tmux attach-session -t shea-main-225-attempt-1-add-registry".into(),
             attempt: 1,
             status: SessionStatus::Running,
             started_at_ms: 10,
@@ -716,7 +716,7 @@ mod tests {
         value["sessions"][0]["status"] = serde_json::Value::String("recorded_legacy".into());
         fs::write(&path, serde_json::to_string_pretty(&value).unwrap()).unwrap();
         let mut second = fixture_record();
-        second.session_name = "jade-main-299-attempt-1-second".into();
+        second.session_name = "shea-main-299-attempt-1-second".into();
         second.issue_identifier = Some("#299".into());
 
         save_session_record(&path, second).unwrap();
@@ -806,11 +806,11 @@ mod tests {
             worktree: PathBuf::from("/tmp/worktree"),
             branch: None,
             backend: "tmux".into(),
-            session_name: "jade-main-226-attempt-1-classify".into(),
-            pane_target: "jade-main-226-attempt-1-classify".into(),
+            session_name: "shea-main-226-attempt-1-classify".into(),
+            pane_target: "shea-main-226-attempt-1-classify".into(),
             prompt_artifact_path: PathBuf::from("/tmp/prompt.md"),
             log_path: PathBuf::from("/tmp/session.log"),
-            attach_command: "tmux attach-session -t jade-main-226-attempt-1-classify".into(),
+            attach_command: "tmux attach-session -t shea-main-226-attempt-1-classify".into(),
             attempt: 1,
             status: SessionStatus::Running,
             started_at_ms: 1_000,

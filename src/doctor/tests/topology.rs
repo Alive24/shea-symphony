@@ -15,13 +15,13 @@ fn accepts_happy_parent_subissue_topology() {
     ));
     let mut subissue_one = with_native_parent(issue("#272", "Done"), "#243");
     subissue_one.linked_pull_requests.push(linked_pr_to(
-        "https://github.com/Alive24/jade-symphony/pull/272",
+        "https://github.com/Alive24/shea-symphony/pull/272",
         "MERGED",
         parent_branch,
     ));
     let mut subissue_two = with_native_parent(issue("#273", "Done"), "#243");
     subissue_two.linked_pull_requests.push(linked_pr_to(
-        "https://github.com/Alive24/jade-symphony/pull/273",
+        "https://github.com/Alive24/shea-symphony/pull/273",
         "MERGED",
         parent_branch,
     ));
@@ -40,7 +40,7 @@ fn reports_subissue_pr_targeting_main() {
     );
     let mut subissue = with_native_parent(issue("#273", "Agent Review"), "#243");
     subissue.linked_pull_requests.push(linked_pr_to(
-        "https://github.com/Alive24/jade-symphony/pull/273",
+        "https://github.com/Alive24/shea-symphony/pull/273",
         "OPEN",
         "main",
     ));
@@ -74,7 +74,7 @@ fn reports_done_subissue_without_parent_merge_evidence() {
     );
     let mut subissue = with_native_parent(issue("#272", "Done"), "#243");
     subissue.linked_pull_requests.push(linked_pr_to(
-        "https://github.com/Alive24/jade-symphony/pull/272",
+        "https://github.com/Alive24/shea-symphony/pull/272",
         "OPEN",
         parent_branch,
     ));
@@ -99,13 +99,13 @@ fn reports_parent_human_review_before_subissues_done() {
     ));
     let mut done_subissue = with_native_parent(issue("#272", "Done"), "#243");
     done_subissue.linked_pull_requests.push(linked_pr_to(
-        "https://github.com/Alive24/jade-symphony/pull/272",
+        "https://github.com/Alive24/shea-symphony/pull/272",
         "MERGED",
         parent_branch,
     ));
     let mut active_subissue = with_native_parent(issue("#273", "Agent Review"), "#243");
     active_subissue.linked_pull_requests.push(linked_pr_to(
-        "https://github.com/Alive24/jade-symphony/pull/273",
+        "https://github.com/Alive24/shea-symphony/pull/273",
         "MERGED",
         parent_branch,
     ));

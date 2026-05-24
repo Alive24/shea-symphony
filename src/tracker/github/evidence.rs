@@ -17,7 +17,7 @@ pub(in crate::tracker) fn github_issue_description_with_workpad(
         .to_string();
     let comment_bodies = github_issue_comment_bodies(content);
     let workpad = canonical_workpad_comment_body(&comment_bodies, marker);
-    let timeline_comments = jade_symphony_timeline_comment_bodies(&comment_bodies, marker);
+    let timeline_comments = shea_symphony_timeline_comment_bodies(&comment_bodies, marker);
 
     let mut sections = Vec::new();
     if !body.trim().is_empty() {
@@ -122,26 +122,26 @@ pub(in crate::tracker) fn github_issue_comment_bodies(content: &serde_json::Valu
 fn canonical_workpad_comment_body(comment_bodies: &[&str], marker: &str) -> Option<String> {
     comment_bodies
         .iter()
-        .find(|body| body.contains(marker) && !body.contains("Superseded Jade Symphony workpad"))
+        .find(|body| body.contains(marker) && !body.contains("Superseded Shea Symphony workpad"))
         .map(|body| (*body).to_string())
 }
 
-fn jade_symphony_timeline_comment_bodies(comment_bodies: &[&str], marker: &str) -> Vec<String> {
+fn shea_symphony_timeline_comment_bodies(comment_bodies: &[&str], marker: &str) -> Vec<String> {
     comment_bodies
         .iter()
         .filter(|body| !body.contains(marker))
-        .filter(|body| is_jade_symphony_timeline_comment(body))
+        .filter(|body| is_shea_symphony_timeline_comment(body))
         .map(|body| (*body).to_string())
         .collect()
 }
 
-fn is_jade_symphony_timeline_comment(body: &str) -> bool {
+fn is_shea_symphony_timeline_comment(body: &str) -> bool {
     [
-        "## Jade Symphony Agent Review Run",
-        "## Jade Symphony Rework Run",
-        "## Jade Symphony Merge Run",
-        "## Jade Symphony Human Review Decision",
-        "## Jade Symphony Doctor Triage",
+        "## Shea Symphony Agent Review Run",
+        "## Shea Symphony Rework Run",
+        "## Shea Symphony Merge Run",
+        "## Shea Symphony Human Review Decision",
+        "## Shea Symphony Doctor Triage",
         "## Manual Agent Review Evidence",
     ]
     .iter()
@@ -476,7 +476,7 @@ fn linked_pull_request_comment_refs(
 ) -> Vec<LinkedPullRequest> {
     text.lines()
         .filter_map(|line| {
-            let (_, raw_ref) = line.split_once("Jade Symphony linked pull request:")?;
+            let (_, raw_ref) = line.split_once("Shea Symphony linked pull request:")?;
             let raw_ref = raw_ref.trim();
             if raw_ref.starts_with("http://github.com/")
                 || raw_ref.starts_with("https://github.com/")

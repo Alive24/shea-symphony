@@ -1,6 +1,6 @@
-# Jade Symphony
+# Shea Symphony
 
-Jade Symphony is a team workflow system for supervised AI-native engineering.
+Shea Symphony is a team workflow system for supervised AI-native engineering.
 
 It helps a human operator turn rough engineering intent into issue contracts,
 run implementation agents in isolated workspaces, request independent agent
@@ -17,7 +17,7 @@ agent. The focus is the whole team loop around the agent:
 - when a human must decide;
 - how the merge should be repaired, retried, or stopped.
 
-Current maturity: **supervised team-workflow dogfood**. Jade Symphony can run
+Current maturity: **supervised team-workflow dogfood**. Shea Symphony can run
 bounded Main, Review, and Merge lane ticks against a live tracker. It is moving
 toward all-lane autopilot, but write-mode automation is still deliberately
 observable, bounded, and operator-led.
@@ -36,7 +36,7 @@ A real team needs a way to say:
 - this merge failure is mechanical, semantic, or blocked;
 - this run can be resumed without guessing.
 
-Jade Symphony turns those questions into a workflow.
+Shea Symphony turns those questions into a workflow.
 
 ```mermaid
 flowchart LR
@@ -60,7 +60,7 @@ not to replace it.
 
 ## How People Use It
 
-Jade Symphony is designed around a human operator, not a hidden daemon.
+Shea Symphony is designed around a human operator, not a hidden daemon.
 
 The operator can ask:
 
@@ -92,11 +92,11 @@ happened from the issue, PR, workpad, and status output.
 
 ## A Human-First Tour
 
-If you are evaluating Jade Symphony, start with these questions.
+If you are evaluating Shea Symphony, start with these questions.
 
 ### 1. Do you have a tracker-backed workflow?
 
-Jade Symphony expects real work to live in a tracker. The current self-dogfood
+Shea Symphony expects real work to live in a tracker. The current self-dogfood
 workflow uses GitHub Issues plus GitHub Project v2. Linear support exists behind
 the same tracker abstraction, but the strongest dogfood path today is GitHub.
 
@@ -104,8 +104,8 @@ The workflow file describes tracker states, lane prompts, runtime configuration,
 artifact roots, and verification expectations:
 
 ```bash
-cargo run -- validate workflows/jade-symphony.md
-cargo run -- project state workflows/jade-symphony.md
+cargo run -- validate workflows/shea-symphony.md
+cargo run -- project state workflows/shea-symphony.md
 ```
 
 ### 2. Is the issue ready for an agent?
@@ -114,12 +114,12 @@ Agents should not start from vibes alone. Issue Forge checks whether an issue
 has the contract shape needed for safe execution: goal, context, guardrails,
 scope, dependencies, verification, and expected outcome.
 
-In normal use, the conversational part happens through the Jade Symphony Codex
+In normal use, the conversational part happens through the Shea Symphony Codex
 skills. The CLI stays deterministic and scriptable:
 
 ```bash
 cargo run -- forge validate \
-  --workflow workflows/jade-symphony.md \
+  --workflow workflows/shea-symphony.md \
   --status Todo \
   --title "<title>" \
   --body-file /path/to/issue.md
@@ -133,10 +133,10 @@ must pass the stronger gate.
 Before writing anything, ask the system for a read-only plan:
 
 ```bash
-cargo run -- autopilot plan workflows/jade-symphony.md
-cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --dry-run
-cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --dry-run
-cargo run -- merge loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+cargo run -- autopilot plan workflows/shea-symphony.md
+cargo run -- main loop workflows/shea-symphony.md --max-iterations 1 --dry-run
+cargo run -- review loop workflows/shea-symphony.md --max-iterations 1 --dry-run
+cargo run -- merge loop workflows/shea-symphony.md --max-iterations 1 --dry-run
 ```
 
 `autopilot plan` is the bridge toward all-lane automation. It does not launch
@@ -150,16 +150,16 @@ Write mode is explicit because tracker mutation is real team state.
 For a bounded supervised tick:
 
 ```bash
-cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --write
-cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --write
-cargo run -- merge loop workflows/jade-symphony.md --max-iterations 1 --write
+cargo run -- main loop workflows/shea-symphony.md --max-iterations 1 --write
+cargo run -- review loop workflows/shea-symphony.md --max-iterations 1 --write
+cargo run -- merge loop workflows/shea-symphony.md --max-iterations 1 --write
 ```
 
 The canonical operator launcher wraps the same idea:
 
 ```bash
-scripts/jade-dogfood --dry-run
-scripts/jade-dogfood --write --confirm-write --max-iterations 1
+scripts/shea-dogfood --dry-run
+scripts/shea-dogfood --write --confirm-write --max-iterations 1
 ```
 
 The system is intentionally conservative. It should prefer a visible blocked
@@ -167,7 +167,7 @@ state over a silent unsafe advance.
 
 ## The Lane Model
 
-Jade Symphony separates work by authority.
+Shea Symphony separates work by authority.
 
 ### Main Lane
 
@@ -218,7 +218,7 @@ changed, and land only when the result is still safe.
 
 ## Evidence Surfaces
 
-Jade Symphony is opinionated about evidence because agent work without evidence
+Shea Symphony is opinionated about evidence because agent work without evidence
 turns into archaeology.
 
 - The **issue body** is the contract.
@@ -236,7 +236,7 @@ The goal is not to keep every byte forever. The goal is that a human can answer
 
 ## Relationship To OpenAI Symphony
 
-Jade Symphony follows the OpenAI Symphony lineage for workflow loading, agent
+Shea Symphony follows the OpenAI Symphony lineage for workflow loading, agent
 execution, app-server direction, tracker-backed operation, runtime state, and
 operator surfaces.
 
@@ -293,25 +293,25 @@ cargo clippy --all-targets --all-features -- -D warnings
 Inspect the canonical self-dogfood workflow:
 
 ```bash
-cargo run -- validate workflows/jade-symphony.md
-cargo run -- project state workflows/jade-symphony.md
-cargo run -- doctor workflows/jade-symphony.md
-cargo run -- debug workflows/jade-symphony.md
+cargo run -- validate workflows/shea-symphony.md
+cargo run -- project state workflows/shea-symphony.md
+cargo run -- doctor workflows/shea-symphony.md
+cargo run -- debug workflows/shea-symphony.md
 ```
 
 Preview the next lane actions:
 
 ```bash
-cargo run -- autopilot plan workflows/jade-symphony.md
-cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --dry-run
-cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --dry-run
-cargo run -- merge loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+cargo run -- autopilot plan workflows/shea-symphony.md
+cargo run -- main loop workflows/shea-symphony.md --max-iterations 1 --dry-run
+cargo run -- review loop workflows/shea-symphony.md --max-iterations 1 --dry-run
+cargo run -- merge loop workflows/shea-symphony.md --max-iterations 1 --dry-run
 ```
 
 Run a bounded write tick only when the preview and Doctor output make sense:
 
 ```bash
-cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --write
+cargo run -- main loop workflows/shea-symphony.md --max-iterations 1 --write
 ```
 
 For the full operator runbook, read
@@ -320,11 +320,11 @@ read [`docs/cli-command-reference.md`](docs/cli-command-reference.md).
 
 ## Project Map
 
-- [`workflows/jade-symphony.md`](workflows/jade-symphony.md): canonical
+- [`workflows/shea-symphony.md`](workflows/shea-symphony.md): canonical
   self-dogfood workflow.
 - [`workflows/prompts/`](workflows/prompts/): Main, Review, and Merge lane
   prompt contracts.
-- [`skills/jade-symphony/`](skills/jade-symphony/): installable Jade Symphony
+- [`skills/shea-symphony/`](skills/shea-symphony/): installable Shea Symphony
   skills for Codex and Gemini operator sessions.
 - [`docs/operator-dogfood.md`](docs/operator-dogfood.md): supervised operator
   launcher and live-run guidance.
@@ -344,7 +344,7 @@ read [`docs/cli-command-reference.md`](docs/cli-command-reference.md).
 
 ## Design Boundaries
 
-Jade Symphony is orchestration infrastructure. It should not contain downstream
+Shea Symphony is orchestration infrastructure. It should not contain downstream
 application business logic. Domain work belongs in tracked issues and isolated
 issue workspaces.
 
@@ -380,7 +380,7 @@ cargo run -- validate examples/dry-run-workflow.md
 cargo run -- project inspect examples/dry-run-workflow.md '#1'
 cargo run -- plan examples/dry-run-workflow.md
 cargo run -- status show examples/dry-run-workflow.md --json
-cargo run -- clean plan workflows/jade-symphony.md
+cargo run -- clean plan workflows/shea-symphony.md
 ```
 
 The implementation is grounded in `docs/bootstrap/` and the pinned official

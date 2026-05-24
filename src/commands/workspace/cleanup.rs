@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::handoff::plan_issue_handoff_for_profile;
-use jade_symphony::model::TrackerIssue;
-use jade_symphony::profiles::selected_execution_profile;
-use jade_symphony::tracker::adapter_from_config;
-use jade_symphony::workspace::remove_issue_workspace;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::handoff::plan_issue_handoff_for_profile;
+use shea_symphony::model::TrackerIssue;
+use shea_symphony::profiles::selected_execution_profile;
+use shea_symphony::tracker::adapter_from_config;
+use shea_symphony::workspace::remove_issue_workspace;
 
 use crate::orchestration::{load_config, DEFAULT_RUN_LOOP_BASE_BRANCH};
 

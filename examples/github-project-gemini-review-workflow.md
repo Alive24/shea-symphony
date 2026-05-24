@@ -2,7 +2,7 @@
 tracker:
   kind: github_project_v2
   owner: Alive24
-  repo: jade-symphony
+  repo: shea-symphony
   project_owner: Alive24
   project_number: 9
   status_field: Status
@@ -31,13 +31,13 @@ tracker:
     assignees: []
   workpad:
     source: issue_comment
-    marker: "<!-- jade-symphony-workpad -->"
+    marker: "<!-- shea-symphony-workpad -->"
 polling:
   interval_ms: 5000
 artifacts:
-  root: $JADE_SYMPHONY_ARTIFACT_ROOT
+  root: $SHEA_SYMPHONY_ARTIFACT_ROOT
 workspace:
-  root: $JADE_SYMPHONY_ARTIFACT_ROOT/Alive24/jade-symphony/review/worktrees
+  root: $SHEA_SYMPHONY_ARTIFACT_ROOT/Alive24/shea-symphony/review/worktrees
 main_lane:
   backend: dry-run
   max_concurrent_agents: 1
@@ -45,17 +45,17 @@ main_lane:
   max_retry_backoff_ms: 300000
 review_lane:
   backend: gemini-cli
-  gemini_command: $JADE_GEMINI_COMMAND
+  gemini_command: $SHEA_GEMINI_COMMAND
   timeout_ms: 600000
   max_concurrent_workers: 2
 identity:
   actor_role: review_agent
   actor_label: Gemini Review Agent
 observability:
-  logs_root: $JADE_SYMPHONY_ARTIFACT_ROOT/Alive24/jade-symphony/review/logs
+  logs_root: $SHEA_SYMPHONY_ARTIFACT_ROOT/Alive24/shea-symphony/review/logs
 ---
 
-You are the independent Review Agent for Jade Symphony issue
+You are the independent Review Agent for Shea Symphony issue
 {{ issue.identifier }}.
 
 Review the linked implementation evidence and issue contract without performing

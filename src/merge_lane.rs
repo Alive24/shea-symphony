@@ -579,7 +579,7 @@ pub fn merge_lane_workpad_with_repair_evidence(
     repair_evidence: Option<&MergeRepairEvidence>,
 ) -> String {
     let mut lines = vec![
-        "## Jade Symphony Merge Run".to_string(),
+        "## Shea Symphony Merge Run".to_string(),
         String::new(),
         format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", issue.identifier, issue.title),
@@ -587,7 +587,7 @@ pub fn merge_lane_workpad_with_repair_evidence(
         "- Actor role: `merge_agent`".to_string(),
         format!("- Actor: `{}`", merge_actor(issue)),
         format!("- Run ID: `{}`", merge_run_id(issue)),
-        "- Source: `jade-symphony merge once`".to_string(),
+        "- Source: `shea-symphony merge once`".to_string(),
         "- Input state: `Merging`".to_string(),
         format!("- Decision: `{:?}`", decision.kind),
         format!("- Result: `{}`", merge_result(decision)),
@@ -906,7 +906,7 @@ fn required_human_input_section(decision: &MergeLaneDecision) -> Vec<String> {
         "### Required Human Input".to_string(),
         format!("- Question: {question}"),
         "- Options: update PR metadata, choose the canonical PR, move the issue out of Merging, or document the required repair.".to_string(),
-        "- After answer: rerun `jade-symphony merge once` so the merge lane can re-evaluate with concrete evidence.".to_string(),
+        "- After answer: rerun `shea-symphony merge once` so the merge lane can re-evaluate with concrete evidence.".to_string(),
     ]
 }
 
@@ -959,7 +959,7 @@ mod tests {
         LinkedPullRequest {
             id: Some("PR_60".into()),
             number: Some(60),
-            url: Some("https://github.com/Alive24/jade-symphony/pull/60".into()),
+            url: Some("https://github.com/Alive24/shea-symphony/pull/60".into()),
             state: Some("OPEN".into()),
             ..Default::default()
         }
@@ -969,7 +969,7 @@ mod tests {
         LinkedPullRequest {
             id: Some("PR_60".into()),
             number: Some(60),
-            url: Some("https://github.com/Alive24/jade-symphony/pull/60".into()),
+            url: Some("https://github.com/Alive24/shea-symphony/pull/60".into()),
             state: Some("OPEN".into()),
             is_draft: Some(false),
             merge_state_status: Some("CLEAN".into()),
@@ -982,7 +982,7 @@ mod tests {
     fn clean_status() -> PullRequestMergeStatus {
         PullRequestMergeStatus {
             number: Some(60),
-            url: "https://github.com/Alive24/jade-symphony/pull/60".into(),
+            url: "https://github.com/Alive24/shea-symphony/pull/60".into(),
             state: "OPEN".into(),
             is_draft: false,
             merge_state_status: Some("CLEAN".into()),
@@ -1015,7 +1015,7 @@ mod tests {
         format!(
             r#"{{
                 "number": 60,
-                "url": "https://github.com/Alive24/jade-symphony/pull/60",
+                "url": "https://github.com/Alive24/shea-symphony/pull/60",
                 "state": "OPEN",
                 "isDraft": false,
                 "mergeStateStatus": "{merge_state_status}",
@@ -1379,7 +1379,7 @@ branch refs/heads/feature/issue-60
         let decision = MergeLaneDecision {
             kind: MergeLaneDecisionKind::MergeDirty,
             issue_ref: issue.identifier.clone(),
-            pr_url: Some("https://github.com/Alive24/jade-symphony/pull/60".into()),
+            pr_url: Some("https://github.com/Alive24/shea-symphony/pull/60".into()),
             target_state: None,
             reason: "merge-agent repaired the conflicted branch".into(),
         };

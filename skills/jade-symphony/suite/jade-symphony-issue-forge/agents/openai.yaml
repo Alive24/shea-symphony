@@ -1,3 +1,0 @@
-display_name: Jade Symphony Issue Forge
-short_description: Shape and create Jade Symphony issues through a conversational quality-gated flow.
-default_prompt: Create a Jade Symphony issue from my rough intent. Discuss the execution-critical details with me first, then draft, validate, and create it through forge create after confirmation.

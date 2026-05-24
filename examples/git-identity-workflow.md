@@ -14,7 +14,7 @@ tracker:
     source: issue_assignees
     allow_unassigned: true
 workspace:
-  root: /tmp/jade-symphony-git-identity-workspaces
+  root: /tmp/shea-symphony-git-identity-workspaces
 hooks:
   after_create: git init
 main_lane:
@@ -24,17 +24,17 @@ main_lane:
   max_retry_backoff_ms: 300000
 identity:
   actor_role: implementation_agent
-  actor_label: Jade Symphony Dry Run Agent
+  actor_label: Shea Symphony Dry Run Agent
   git:
-    name: Jade Symphony Agent
-    email: jade-symphony-agent@example.invalid
+    name: Shea Symphony Agent
+    email: shea-symphony-agent@example.invalid
     extra:
-      jade.actorRole: implementation_agent
+      shea.actorRole: implementation_agent
 observability:
-  logs_root: /tmp/jade-symphony-git-identity-logs
+  logs_root: /tmp/shea-symphony-git-identity-logs
 ---
 
-You are working on Jade Symphony issue {{ issue.identifier }}.
+You are working on Shea Symphony issue {{ issue.identifier }}.
 
 Title: {{ issue.title }}
 State: {{ issue.state }}

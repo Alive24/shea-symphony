@@ -1,0 +1,53 @@
+suite_name = "Shea Symphony skill suite"
+version = "2026.05.23"
+release_date = "2026-05-23"
+repository = "Alive24/shea-symphony"
+minimum_shea_symphony_cli = "repo main as of 2026-05-23"
+
+[[skills]]
+name = "shea-symphony-issue-forge"
+path = "suite/shea-symphony-issue-forge"
+targets = ["codex", "gemini"]
+summary = "Conversational Issue Forge flow that validates and creates issues through Shea Symphony CLI."
+
+[[skills]]
+name = "shea-symphony-issue-forge-reflect"
+path = "suite/shea-symphony-issue-forge-reflect"
+targets = ["codex", "gemini"]
+summary = "Reflect recent work into Backlog seeds and promote them through Issue Forge discussion."
+
+[[skills]]
+name = "shea-symphony-issue-forge-dream"
+path = "suite/shea-symphony-issue-forge-dream"
+targets = ["codex", "gemini"]
+summary = "Slowly mine broader Shea Symphony history into evidence-backed Backlog seeds and Dream Logs."
+
+[[skills]]
+name = "shea-symphony-manual-main"
+path = "suite/shea-symphony-manual-main"
+targets = ["codex", "gemini"]
+summary = "Manual Main Agent lane for implementation work that stops at Agent Review."
+
+[[skills]]
+name = "shea-symphony-manual-review"
+path = "suite/shea-symphony-manual-review"
+targets = ["codex", "gemini"]
+summary = "Manual Review Agent lane for evidence-backed review and Human Review routing."
+
+[[skills]]
+name = "shea-symphony-human-review"
+path = "suite/shea-symphony-human-review"
+targets = ["codex", "gemini"]
+summary = "Human Review briefing flow for operator-owned UAT, decision notes, and confirmed routing."
+
+[[skills]]
+name = "shea-symphony-manual-merge"
+path = "suite/shea-symphony-manual-merge"
+targets = ["codex", "gemini"]
+summary = "Manual Merging Agent lane for approved merge and merge-lane repair work."
+
+[[skills]]
+name = "shea-symphony-doctor"
+path = "suite/shea-symphony-doctor"
+targets = ["codex", "gemini"]
+summary = "Doctor triage for Need Human Input, issue or PR blockers, install-health gaps, and confirmed same-session repairs."

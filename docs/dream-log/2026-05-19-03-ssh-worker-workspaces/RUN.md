@@ -8,11 +8,11 @@ Operator context: continue OpenAI Symphony reference comparison after worker-sup
 ## Source Inventory
 
 - `git status --short --branch`
-- `cargo run -- project state workflows/jade-symphony.md`
-- `cargo run -- project issue workflows/jade-symphony.md '#325' --json`
-- `gh issue list --repo Alive24/jade-symphony --state open --search "SSH OR remote OR worker host OR workspace lifecycle OR workspace cleanup OR worktree cleanup OR hooks" --json number,title,url,state --limit 100`
-- `gh issue view 253 --repo Alive24/jade-symphony --json number,title,state,body,url`
-- `gh issue view 271 --repo Alive24/jade-symphony --json number,title,state,body,url`
+- `cargo run -- project state workflows/shea-symphony.md`
+- `cargo run -- project issue workflows/shea-symphony.md '#325' --json`
+- `gh issue list --repo Alive24/shea-symphony --state open --search "SSH OR remote OR worker host OR workspace lifecycle OR workspace cleanup OR worktree cleanup OR hooks" --json number,title,url,state --limit 100`
+- `gh issue view 253 --repo Alive24/shea-symphony --json number,title,state,body,url`
+- `gh issue view 271 --repo Alive24/shea-symphony --json number,title,state,body,url`
 - `docs/bootstrap/references/openai-symphony/elixir/README.md`
 - `docs/bootstrap/references/openai-symphony/elixir/WORKFLOW.md`
 - `docs/bootstrap/references/openai-symphony/elixir/lib/symphony_elixir/ssh.ex`
@@ -23,13 +23,13 @@ Operator context: continue OpenAI Symphony reference comparison after worker-sup
 
 ## Round Summary
 
-This round compared OpenAI Symphony's remote worker path against Jade's current
+This round compared OpenAI Symphony's remote worker path against Shea's current
 local workspace model. The reference has a concrete SSH transport helper, remote
 app-server launch support, remote workspace validation, worker host config, and
 live E2E coverage that can run against disposable localhost SSH workers or real
 `SYMPHONY_LIVE_SSH_WORKER_HOSTS`.
 
-Jade has strong local workspace pieces: path safety, hooks, cleanup planning,
+Shea has strong local workspace pieces: path safety, hooks, cleanup planning,
 `workspace show/adopt/ensure`, canonical checkout guards, and parsed worker SSH
 host config. The missing boundary is live remote execution: host scheduling,
 remote workspace preparation/evidence, remote sandbox expectations, and how
@@ -77,4 +77,4 @@ wiring, and operator status snapshots before declaring the source window quiet.
 
 Dream-created issue #325 stayed in `Backlog`. It was not promoted, claimed, or
 treated as executable lane work. Project state and issue creation were verified
-through the Jade Symphony CLI.
+through the Shea Symphony CLI.

@@ -4,7 +4,7 @@ Status: Bootstrap v0
 
 ## Tracker Choice
 
-The first Jade Symphony implementation uses GitHub Project v2 as the concrete
+The first Shea Symphony implementation uses GitHub Project v2 as the concrete
 tracker. Linear remains a required future adapter, so all GitHub-specific logic
 must stay inside the tracker adapter.
 
@@ -24,7 +24,7 @@ Do not treat the GitHub Issue itself as the workflow state object.
 tracker:
   kind: github_project_v2
   owner: Alive24
-  repo: jade-symphony
+  repo: shea-symphony
   project_owner: Alive24
   project_owner_type: user # optional: user or organization
   project_number: 1
@@ -46,7 +46,7 @@ tracker:
     assignees: []
   workpad:
     source: issue_comment
-    marker: "<!-- jade-symphony-workpad -->"
+    marker: "<!-- shea-symphony-workpad -->"
 ```
 
 `project_owner_type` is optional for compatibility with older workflows. When
@@ -151,7 +151,7 @@ Do not dispatch:
 The workpad is a GitHub Issue comment with a stable marker:
 
 ```html
-<!-- jade-symphony-workpad -->
+<!-- shea-symphony-workpad -->
 ```
 
 Rules:

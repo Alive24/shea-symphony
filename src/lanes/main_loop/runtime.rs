@@ -1,9 +1,9 @@
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::model::{normalize_state, TrackerIssue};
-use jade_symphony::runtime_state::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::model::{normalize_state, TrackerIssue};
+use shea_symphony::runtime_state::{
     detect_runtime_stall, RuntimeRetryState, RuntimeStallState, RuntimeState,
 };
-use jade_symphony::tracker::TrackerAdapter;
+use shea_symphony::tracker::TrackerAdapter;
 
 use crate::lanes::main_loop::compact_evidence;
 

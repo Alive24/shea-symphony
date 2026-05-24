@@ -1,19 +1,19 @@
-use jade_symphony::agent::UsageLimitPause;
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::handoff::IssueHandoffPlan;
-use jade_symphony::lane_claim::LaneClaim;
-use jade_symphony::model::{normalize_state, TrackerIssue};
-use jade_symphony::profiles::selected_execution_profile;
-use jade_symphony::runtime_state::{
+use shea_symphony::agent::UsageLimitPause;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::handoff::IssueHandoffPlan;
+use shea_symphony::lane_claim::LaneClaim;
+use shea_symphony::model::{normalize_state, TrackerIssue};
+use shea_symphony::profiles::selected_execution_profile;
+use shea_symphony::runtime_state::{
     load_runtime_states, remove_runtime_state_for_issue, RuntimeIssueState, RuntimeState,
     RuntimeTransition,
 };
-use jade_symphony::session_registry::{
+use shea_symphony::session_registry::{
     capture_tmux_pane_tail, classify_session_record, load_session_registry, read_log_tail,
     save_session_registry, session_registry_path, unix_timestamp_ms, AgentSessionRecord,
     SessionStatus,
 };
-use jade_symphony::workspace::{GitIdentityApplyResult, GitIdentityApplyStatus};
+use shea_symphony::workspace::{GitIdentityApplyResult, GitIdentityApplyStatus};
 
 use super::{
     append_runtime_supervision_event, runtime_state_issue_identifier, IssueExecutionResult,

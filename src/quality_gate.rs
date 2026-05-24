@@ -56,7 +56,7 @@ pub fn evaluate_issue(issue: &TrackerIssue) -> GateDecision {
             missing,
             assumptions: Vec::new(),
             notes: vec![
-                "Issue contract does not yet match the Jade Symphony quality template.".into(),
+                "Issue contract does not yet match the Shea Symphony quality template.".into(),
             ],
         };
     }
@@ -764,7 +764,7 @@ mod tests {
             "- Code.",
             "## Canonical References",
             "### Target Repository / Package",
-            "- Alive24/jade-symphony",
+            "- Alive24/shea-symphony",
             "## Verification",
             "### Completion Criteria",
             "- Tests pass.",
@@ -788,7 +788,7 @@ mod tests {
     #[test]
     fn source_alignment_accepts_checkbox_verification_commands() {
         let body = aligned_body(
-            "Alive24/jade-symphony",
+            "Alive24/shea-symphony",
             &["README.md"],
             &["src/main.rs"],
             &[
@@ -807,7 +807,7 @@ mod tests {
         let decision = evaluate_issue_with_source_alignment(
             &issue(Some(body)),
             Path::new(env!("CARGO_MANIFEST_DIR")),
-            Some("Alive24/jade-symphony"),
+            Some("Alive24/shea-symphony"),
         );
 
         assert!(decision.is_dispatchable(), "{decision:?}");
@@ -850,7 +850,7 @@ mod tests {
             "- Code.",
             "## Canonical References",
             "### Target Repository / Package",
-            "- Alive24/jade-symphony",
+            "- Alive24/shea-symphony",
             "## Verification",
             "### Completion Criteria",
             "- Tests pass.",
@@ -880,7 +880,7 @@ mod tests {
             "- Code.",
             "## Canonical References",
             "### Target Repository / Package",
-            "- Alive24/jade-symphony",
+            "- Alive24/shea-symphony",
             "## Verification",
             "### Completion Criteria",
             "- Tests pass.",
@@ -910,7 +910,7 @@ mod tests {
             "- Code.",
             "## Canonical References",
             "### Target Repository / Package",
-            "- Alive24/jade-symphony",
+            "- Alive24/shea-symphony",
             "## Verification",
             "### Completion Criteria",
             "- Tests pass.",
@@ -1001,7 +1001,7 @@ mod tests {
         std::fs::create_dir_all(temp.path().join("docs")).unwrap();
         std::fs::write(temp.path().join("docs/dogfood-readiness.md"), "").unwrap();
         let body = aligned_body(
-            "Alive24/jade-symphony",
+            "Alive24/shea-symphony",
             &["docs/dogfood-readiness.md"],
             &["src/main.rs"],
             &["cargo test", "cargo fmt --check"],
@@ -1010,7 +1010,7 @@ mod tests {
         let decision = evaluate_issue_with_source_alignment(
             &issue(Some(body)),
             temp.path(),
-            Some("Alive24/jade-symphony"),
+            Some("Alive24/shea-symphony"),
         );
 
         assert!(decision.is_dispatchable());
@@ -1025,7 +1025,7 @@ mod tests {
         std::fs::create_dir_all(temp.path().join("src")).unwrap();
         std::fs::write(temp.path().join("src/quality_gate.rs"), "").unwrap();
         let body = aligned_body_with_target_line(
-            "- Repository: `Alive24/jade-symphony`",
+            "- Repository: `Alive24/shea-symphony`",
             &[],
             &["src/quality_gate.rs"],
             &["cargo test"],
@@ -1034,7 +1034,7 @@ mod tests {
         let decision = evaluate_issue_with_source_alignment(
             &issue(Some(body)),
             temp.path(),
-            Some("Alive24/jade-symphony"),
+            Some("Alive24/shea-symphony"),
         );
 
         assert!(decision.is_dispatchable(), "{decision:?}");
@@ -1046,7 +1046,7 @@ mod tests {
         std::fs::create_dir_all(temp.path().join("src")).unwrap();
         std::fs::write(temp.path().join("src/quality_gate.rs"), "").unwrap();
         let body = aligned_body_with_target_line(
-            "- Repository: `Alive24/jade-symphony`",
+            "- Repository: `Alive24/shea-symphony`",
             &[],
             &["src/quality_gate.rs"],
             &["Run the standard Rust verification suite."],
@@ -1055,7 +1055,7 @@ mod tests {
         let decision = evaluate_issue_with_source_alignment(
             &issue(Some(body)),
             temp.path(),
-            Some("Alive24/jade-symphony"),
+            Some("Alive24/shea-symphony"),
         );
 
         assert!(decision.is_dispatchable(), "{decision:?}");
@@ -1067,7 +1067,7 @@ mod tests {
         std::fs::create_dir_all(temp.path().join("src")).unwrap();
         std::fs::write(temp.path().join("src/quality_gate.rs"), "").unwrap();
         let body = aligned_body(
-            "Alive24/jade-symphony",
+            "Alive24/shea-symphony",
             &[],
             &["src/quality_gate.rs"],
             &["cargo test"],
@@ -1077,7 +1077,7 @@ mod tests {
         let decision = evaluate_issue_with_source_alignment(
             &issue(Some(body)),
             temp.path(),
-            Some("Alive24/jade-symphony"),
+            Some("Alive24/shea-symphony"),
         );
 
         assert!(decision.is_dispatchable(), "{decision:?}");
@@ -1087,7 +1087,7 @@ mod tests {
     fn source_alignment_reports_missing_paths() {
         let temp = tempfile::tempdir().unwrap();
         let body = aligned_body(
-            "Alive24/jade-symphony",
+            "Alive24/shea-symphony",
             &["docs/missing.md"],
             &["src/main.rs"],
             &["cargo test"],
@@ -1096,7 +1096,7 @@ mod tests {
         let decision = evaluate_issue_with_source_alignment(
             &issue(Some(body)),
             temp.path(),
-            Some("Alive24/jade-symphony"),
+            Some("Alive24/shea-symphony"),
         );
 
         assert_eq!(decision.kind, GateDecisionKind::NeedToClarify);
@@ -1114,7 +1114,7 @@ mod tests {
         let decision = evaluate_issue_with_source_alignment(
             &issue(Some(body)),
             temp.path(),
-            Some("Alive24/jade-symphony"),
+            Some("Alive24/shea-symphony"),
         );
 
         assert_eq!(decision.kind, GateDecisionKind::NeedToClarify);
@@ -1127,12 +1127,12 @@ mod tests {
     #[test]
     fn source_alignment_reports_weak_verification() {
         let temp = tempfile::tempdir().unwrap();
-        let body = aligned_body("Alive24/jade-symphony", &[], &[], &["manually inspect"]);
+        let body = aligned_body("Alive24/shea-symphony", &[], &[], &["manually inspect"]);
 
         let decision = evaluate_issue_with_source_alignment(
             &issue(Some(body)),
             temp.path(),
-            Some("Alive24/jade-symphony"),
+            Some("Alive24/shea-symphony"),
         );
 
         assert_eq!(decision.kind, GateDecisionKind::NeedToClarify);
@@ -1147,7 +1147,7 @@ mod tests {
         let deterministic = GateDecision::ready();
         let decision = evaluate_issue_with_llm_gate(
             &issue(Some(aligned_body(
-                "Alive24/jade-symphony",
+                "Alive24/shea-symphony",
                 &[],
                 &[],
                 &["cargo test"],
@@ -1170,7 +1170,7 @@ mod tests {
     fn required_llm_gate_blocks_on_malformed_output() {
         let decision = evaluate_issue_with_llm_gate(
             &issue(Some(aligned_body(
-                "Alive24/jade-symphony",
+                "Alive24/shea-symphony",
                 &[],
                 &[],
                 &["cargo test"],
@@ -1194,7 +1194,7 @@ mod tests {
     fn advisory_llm_gate_records_finding_without_blocking() {
         let decision = evaluate_issue_with_llm_gate(
             &issue(Some(aligned_body(
-                "Alive24/jade-symphony",
+                "Alive24/shea-symphony",
                 &[],
                 &[],
                 &["cargo test"],
@@ -1253,7 +1253,7 @@ mod tests {
 
     fn aligned_body_with_uat(uat: &str) -> String {
         aligned_body_with_target_line_and_uat(
-            "- `Alive24/jade-symphony`",
+            "- `Alive24/shea-symphony`",
             Some(uat),
             &[],
             &[],
@@ -1263,7 +1263,7 @@ mod tests {
 
     fn aligned_body_without_uat() -> String {
         aligned_body_with_target_line_and_uat(
-            "- `Alive24/jade-symphony`",
+            "- `Alive24/shea-symphony`",
             None,
             &[],
             &[],

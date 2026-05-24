@@ -2,7 +2,7 @@
 tracker:
   kind: memory
   owner: Alive24
-  repo: jade-symphony
+  repo: shea-symphony
   project_owner: Alive24
   project_number: 1
   status_field: Status
@@ -24,11 +24,11 @@ tracker:
     assignees: []
   workpad:
     source: issue_comment
-    marker: "<!-- jade-symphony-workpad -->"
+    marker: "<!-- shea-symphony-workpad -->"
 polling:
   interval_ms: 5000
 workspace:
-  root: /tmp/jade-symphony-review-workspaces
+  root: /tmp/shea-symphony-review-workspaces
 main_lane:
   backend: dry-run
   max_concurrent_agents: 1
@@ -40,7 +40,7 @@ review_lane:
   timeout_ms: 600000
   max_concurrent_workers: 2
 observability:
-  logs_root: /tmp/jade-symphony-review-log
+  logs_root: /tmp/shea-symphony-review-log
 ---
 
-Review fixture workflow for Jade Symphony.
+Review fixture workflow for Shea Symphony.

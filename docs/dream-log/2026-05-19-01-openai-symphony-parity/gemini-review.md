@@ -3,7 +3,7 @@
 Command:
 
 ```bash
-gemini --skip-trust --approval-mode plan -p "Review the Jade Symphony Dream run in docs/dream-log/2026-05-19-01-openai-symphony-parity. Check duplicate risk, evidence quality, whether #321/#322/#323 are safely non-dispatchable Backlog seeds, whether persistent observability API should remain Watchlist, and whether Dream Log content risks becoming accidental lane authority. Keep the answer concise."
+gemini --skip-trust --approval-mode plan -p "Review the Shea Symphony Dream run in docs/dream-log/2026-05-19-01-openai-symphony-parity. Check duplicate risk, evidence quality, whether #321/#322/#323 are safely non-dispatchable Backlog seeds, whether persistent observability API should remain Watchlist, and whether Dream Log content risks becoming accidental lane authority. Keep the answer concise."
 ```
 
 ## Result

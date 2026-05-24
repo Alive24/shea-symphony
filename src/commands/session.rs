@@ -2,11 +2,11 @@ use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 
 use clap::ValueEnum;
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::lane_claim::LaneClaimLane;
-use jade_symphony::model::TrackerIssue;
-use jade_symphony::workflow::{AgentLane, WorkflowDefinition};
-use jade_symphony::workspace::safe_identifier;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::lane_claim::LaneClaimLane;
+use shea_symphony::model::TrackerIssue;
+use shea_symphony::workflow::{AgentLane, WorkflowDefinition};
+use shea_symphony::workspace::safe_identifier;
 
 mod backend;
 mod claim;

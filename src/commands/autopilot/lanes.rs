@@ -1,13 +1,13 @@
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::git_handoff::ProcessHandoffCommandRunner;
-use jade_symphony::handoff::expected_merge_base_branch_for_issue;
-use jade_symphony::merge_lane::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::git_handoff::ProcessHandoffCommandRunner;
+use shea_symphony::handoff::expected_merge_base_branch_for_issue;
+use shea_symphony::merge_lane::{
     expected_merge_base_branch, merge_lane_decision, MergeLaneDecisionKind,
 };
-use jade_symphony::model::{normalize_state, TrackerIssue};
-use jade_symphony::orchestrator::Orchestrator;
-use jade_symphony::review::{review_run_eligibility, review_worker_key, ReviewRunEligibility};
-use jade_symphony::tracker::TrackerAdapter;
+use shea_symphony::model::{normalize_state, TrackerIssue};
+use shea_symphony::orchestrator::Orchestrator;
+use shea_symphony::review::{review_run_eligibility, review_worker_key, ReviewRunEligibility};
+use shea_symphony::tracker::TrackerAdapter;
 
 use crate::commands::gate::{evaluate_issue_for_current_source, gate_target_state};
 use crate::lanes::claim::{

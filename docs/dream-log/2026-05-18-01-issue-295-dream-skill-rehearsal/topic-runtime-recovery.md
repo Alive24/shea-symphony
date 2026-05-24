@@ -13,9 +13,9 @@ smoothly.
   worker value contained spaces.
 - A second `main claim --worker CodexManualMain` refused to supersede the
   malformed active claim, forcing break-glass `gh project item-edit` repair.
-- `workspace show workflows/jade-symphony.md '#295'` failed with
+- `workspace show workflows/shea-symphony.md '#295'` failed with
   `session registry serialization error: unknown variant recorded`.
-- `doctor workflows/jade-symphony.md` surfaced the same registry status drift as
+- `doctor workflows/shea-symphony.md` surfaced the same registry status drift as
   an integration gap while still producing other tracker findings.
 
 ## Existing Coverage Checked

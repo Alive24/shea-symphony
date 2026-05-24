@@ -1,7 +1,7 @@
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::issue_forge::{next_clarification_question, ForgeValidationReport};
-use jade_symphony::model::{normalize_state, GateDecision, GateDecisionKind, TrackerIssue};
-use jade_symphony::tracker::adapter_from_config;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::issue_forge::{next_clarification_question, ForgeValidationReport};
+use shea_symphony::model::{normalize_state, GateDecision, GateDecisionKind, TrackerIssue};
+use shea_symphony::tracker::adapter_from_config;
 use std::path::PathBuf;
 
 use crate::cli::ForgeStatusArg;

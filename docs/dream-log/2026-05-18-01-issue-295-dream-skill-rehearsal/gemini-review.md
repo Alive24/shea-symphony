@@ -3,7 +3,7 @@
 Command:
 
 ```bash
-/opt/homebrew/bin/gemini --skip-trust --approval-mode plan -p "Review this Jade Symphony Dream rehearsal summary for duplicate risk, evidence quality, scope, and lane-authority safety. Summary: Issue #295 adds a separate jade-symphony-issue-forge-dream skill, docs/dream-log/INDEX.md, docs updates, and creates Backlog seeds #297 lane claim worker token parsing, #298 session registry status drift, #299 malformed Main Agent claim repair. Respond with concise pass/follow-up notes only."
+/opt/homebrew/bin/gemini --skip-trust --approval-mode plan -p "Review this Shea Symphony Dream rehearsal summary for duplicate risk, evidence quality, scope, and lane-authority safety. Summary: Issue #295 adds a separate shea-symphony-issue-forge-dream skill, docs/dream-log/INDEX.md, docs updates, and creates Backlog seeds #297 lane claim worker token parsing, #298 session registry status drift, #299 malformed Main Agent claim repair. Respond with concise pass/follow-up notes only."
 ```
 
 Result:

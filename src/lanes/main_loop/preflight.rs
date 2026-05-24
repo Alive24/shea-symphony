@@ -1,7 +1,7 @@
 use std::io;
 use std::path::Path;
 
-use jade_symphony::config::RuntimeConfig;
+use shea_symphony::config::RuntimeConfig;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MainAppServerSmokeGate {

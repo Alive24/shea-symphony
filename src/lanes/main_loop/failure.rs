@@ -1,7 +1,7 @@
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::handoff::HandoffError;
-use jade_symphony::model::{GateDecision, TrackerIssue};
-use jade_symphony::tracker::TrackerAdapter;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::handoff::HandoffError;
+use shea_symphony::model::{GateDecision, TrackerIssue};
+use shea_symphony::tracker::TrackerAdapter;
 
 use super::RunLoopOptions;
 use crate::commands::gate::{gate_target_state, gate_workpad};

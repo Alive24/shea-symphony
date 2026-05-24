@@ -653,7 +653,7 @@ fn classify_untracked_artifact(path: &Path) -> Option<CanonicalArtifactKind> {
     if text.contains("runtime") || file.ends_with(".runtime.json") {
         return Some(CanonicalArtifactKind::Runtime);
     }
-    if text.contains("prompt") || file.ends_with(".prompt.md") || file == "jade_symphony_prompt_md"
+    if text.contains("prompt") || file.ends_with(".prompt.md") || file == "shea_symphony_prompt_md"
     {
         return Some(CanonicalArtifactKind::Prompt);
     }
@@ -666,7 +666,7 @@ fn classify_untracked_artifact(path: &Path) -> Option<CanonicalArtifactKind> {
     if file.ends_with(".log") || file.ends_with(".jsonl") || text.contains("logs") {
         return Some(CanonicalArtifactKind::Log);
     }
-    if text.contains("jade_symphony") || text.contains("scratch") || text.contains("tmp") {
+    if text.contains("shea_symphony") || text.contains("scratch") || text.contains("tmp") {
         return Some(CanonicalArtifactKind::Scratch);
     }
 

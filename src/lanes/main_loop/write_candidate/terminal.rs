@@ -1,15 +1,15 @@
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::handoff::IssueHandoffPlan;
-use jade_symphony::handoff::{evaluate_agent_review_handoff, render_agent_review_handoff_workpad};
-use jade_symphony::lane_claim::{LaneClaim, LaneClaimState};
-use jade_symphony::model::TrackerIssue;
-use jade_symphony::orchestrator::Orchestrator;
-use jade_symphony::review::transition_allowed_for_main_agent;
-use jade_symphony::runtime_state::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::handoff::IssueHandoffPlan;
+use shea_symphony::handoff::{evaluate_agent_review_handoff, render_agent_review_handoff_workpad};
+use shea_symphony::lane_claim::{LaneClaim, LaneClaimState};
+use shea_symphony::model::TrackerIssue;
+use shea_symphony::orchestrator::Orchestrator;
+use shea_symphony::review::transition_allowed_for_main_agent;
+use shea_symphony::runtime_state::{
     mark_runtime_state_updated, record_runtime_retry, remove_runtime_state_for_issue,
     upsert_runtime_state, RuntimeState,
 };
-use jade_symphony::tracker::TrackerAdapter;
+use shea_symphony::tracker::TrackerAdapter;
 
 use super::super::dispatch::RunLoopWorkerOutcome;
 use super::super::{

@@ -1,12 +1,12 @@
 use std::path::{Path, PathBuf};
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::doctor::ProjectAuditReport;
-use jade_symphony::model::{normalize_state, TrackerIssue};
-use jade_symphony::runtime_state::load_runtime_states;
-use jade_symphony::tracker::{adapter_from_config, TrackerAdapter};
-use jade_symphony::workflow::WorkflowDefinition;
 use serde::Serialize;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::doctor::ProjectAuditReport;
+use shea_symphony::model::{normalize_state, TrackerIssue};
+use shea_symphony::runtime_state::load_runtime_states;
+use shea_symphony::tracker::{adapter_from_config, TrackerAdapter};
+use shea_symphony::workflow::WorkflowDefinition;
 
 use crate::commands::project::render_state_summary;
 use crate::orchestration::{

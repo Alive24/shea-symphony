@@ -328,15 +328,15 @@ impl AgentBackend for TmuxBackend {
             .map_err(|error| AgentError::Unavailable(error.to_string()))?;
         let mut env = profile_environment(profile.as_ref(), self.name());
         env.insert(
-            "JADE_SYMPHONY_TMUX_COMMAND".into(),
+            "SHEA_SYMPHONY_TMUX_COMMAND".into(),
             config.tmux.command.clone(),
         );
         env.insert(
-            "JADE_SYMPHONY_TMUX_SESSION_PREFIX".into(),
+            "SHEA_SYMPHONY_TMUX_SESSION_PREFIX".into(),
             config.tmux.session_prefix.clone(),
         );
         env.insert(
-            "JADE_SYMPHONY_WORKSPACE_ROOT".into(),
+            "SHEA_SYMPHONY_WORKSPACE_ROOT".into(),
             config.workspace.root.display().to_string(),
         );
         Ok(PreparedRun {
@@ -442,26 +442,26 @@ fn run_subprocess_backend(
         .arg("-lc")
         .arg(command)
         .current_dir(&prepared.workspace)
-        .env("JADE_SYMPHONY_PROMPT_PATH", &prompt_artifact_path)
+        .env("SHEA_SYMPHONY_PROMPT_PATH", &prompt_artifact_path)
         .env(
-            "JADE_SYMPHONY_APPROVAL_POLICY",
+            "SHEA_SYMPHONY_APPROVAL_POLICY",
             prepared.approval_policy.as_deref().unwrap_or_default(),
         )
         .env(
-            "JADE_SYMPHONY_SANDBOX",
+            "SHEA_SYMPHONY_SANDBOX",
             prepared.sandbox.as_deref().unwrap_or_default(),
         )
         .envs(prepared.env.iter())
         .env(
-            "JADE_SYMPHONY_ACTOR_ROLE",
+            "SHEA_SYMPHONY_ACTOR_ROLE",
             prepared.actor_role.as_deref().unwrap_or_default(),
         )
         .env(
-            "JADE_SYMPHONY_ACTOR_LABEL",
+            "SHEA_SYMPHONY_ACTOR_LABEL",
             prepared.actor_label.as_deref().unwrap_or_default(),
         )
         .env(
-            "JADE_SYMPHONY_GIT_AUTHOR",
+            "SHEA_SYMPHONY_GIT_AUTHOR",
             prepared.git_author.as_deref().unwrap_or_default(),
         )
         .stdin(Stdio::piped())
@@ -559,26 +559,26 @@ fn run_codex_app_server_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>
         .arg("-lc")
         .arg(command)
         .current_dir(&prepared.workspace)
-        .env("JADE_SYMPHONY_PROMPT_PATH", &prompt_artifact_path)
+        .env("SHEA_SYMPHONY_PROMPT_PATH", &prompt_artifact_path)
         .env(
-            "JADE_SYMPHONY_APPROVAL_POLICY",
+            "SHEA_SYMPHONY_APPROVAL_POLICY",
             prepared.approval_policy.as_deref().unwrap_or_default(),
         )
         .env(
-            "JADE_SYMPHONY_SANDBOX",
+            "SHEA_SYMPHONY_SANDBOX",
             prepared.sandbox.as_deref().unwrap_or_default(),
         )
         .envs(prepared.env.iter())
         .env(
-            "JADE_SYMPHONY_ACTOR_ROLE",
+            "SHEA_SYMPHONY_ACTOR_ROLE",
             prepared.actor_role.as_deref().unwrap_or_default(),
         )
         .env(
-            "JADE_SYMPHONY_ACTOR_LABEL",
+            "SHEA_SYMPHONY_ACTOR_LABEL",
             prepared.actor_label.as_deref().unwrap_or_default(),
         )
         .env(
-            "JADE_SYMPHONY_GIT_AUTHOR",
+            "SHEA_SYMPHONY_GIT_AUTHOR",
             prepared.git_author.as_deref().unwrap_or_default(),
         )
         .stdin(Stdio::piped())
@@ -689,8 +689,8 @@ fn run_codex_app_server_protocol(
                     "experimentalApi": true
                 },
                 "clientInfo": {
-                    "name": "jade-symphony",
-                    "title": "Jade Symphony",
+                    "name": "shea-symphony",
+                    "title": "Shea Symphony",
                     "version": env!("CARGO_PKG_VERSION")
                 }
             }
@@ -986,7 +986,7 @@ fn app_server_turn_title(prepared: &PreparedRun) -> String {
             .workspace
             .file_name()
             .and_then(|name| name.to_str())
-            .unwrap_or("Jade Symphony Codex app-server turn")
+            .unwrap_or("Shea Symphony Codex app-server turn")
             .to_string(),
     }
 }
@@ -1061,7 +1061,7 @@ fn save_app_server_session_record(
         run_id: prepared.run_id.clone(),
         thread: Some(thread_id.to_string()),
         session_source: Some(crate::codex_app_server::BACKEND_NAME.into()),
-        claim_value: prepared.env.get("JADE_SYMPHONY_CLAIM").cloned(),
+        claim_value: prepared.env.get("SHEA_SYMPHONY_CLAIM").cloned(),
         actor_role: prepared.actor_role.clone(),
         actor_label: prepared.actor_label.clone(),
         git_author: prepared.git_author.clone(),
@@ -1189,9 +1189,9 @@ fn run_tmux_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError
 
     let tmux = prepared
         .env
-        .get("JADE_SYMPHONY_TMUX_COMMAND")
+        .get("SHEA_SYMPHONY_TMUX_COMMAND")
         .cloned()
-        .or_else(|| std::env::var("JADE_SYMPHONY_TMUX_COMMAND").ok())
+        .or_else(|| std::env::var("SHEA_SYMPHONY_TMUX_COMMAND").ok())
         .unwrap_or_else(|| "tmux".into());
     let target = session_id.as_str();
     let shell_command = tmux_agent_shell_command(&prepared, agent_command, &prompt_artifact_path);
@@ -1401,7 +1401,7 @@ fn tmux_command_output(command: &mut Command, action: &str) -> Result<String, St
 fn tmux_prompt_submit_delay_ms(prepared: &PreparedRun) -> u64 {
     prepared
         .env
-        .get("JADE_SYMPHONY_TMUX_PROMPT_SUBMIT_DELAY_MS")
+        .get("SHEA_SYMPHONY_TMUX_PROMPT_SUBMIT_DELAY_MS")
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(200)
 }
@@ -1436,12 +1436,12 @@ fn wait_for_codex_tmux_readiness(
     let mut last_capture = String::new();
     let attempts = prepared
         .env
-        .get("JADE_SYMPHONY_CODEX_TMUX_READINESS_ATTEMPTS")
+        .get("SHEA_SYMPHONY_CODEX_TMUX_READINESS_ATTEMPTS")
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(80);
     let interval_ms = prepared
         .env
-        .get("JADE_SYMPHONY_CODEX_TMUX_READINESS_INTERVAL_MS")
+        .get("SHEA_SYMPHONY_CODEX_TMUX_READINESS_INTERVAL_MS")
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(250);
 
@@ -1466,12 +1466,12 @@ fn wait_for_codex_tmux_readiness(
     }
 
     if !tmux_auto_trust_enabled(prepared) {
-        return Err("Codex workspace trust prompt is visible and JADE_SYMPHONY_TMUX_AUTO_TRUST=0 disabled auto-trust; prompt injection stopped".into());
+        return Err("Codex workspace trust prompt is visible and SHEA_SYMPHONY_TMUX_AUTO_TRUST=0 disabled auto-trust; prompt injection stopped".into());
     }
 
-    if !workspace_is_jade_created_issue_worktree(prepared) {
+    if !workspace_is_shea_created_issue_worktree(prepared) {
         return Err(format!(
-            "Codex workspace trust prompt is visible for a workspace outside the configured Jade Symphony worktree root: {}",
+            "Codex workspace trust prompt is visible for a workspace outside the configured Shea Symphony worktree root: {}",
             prepared.workspace.display()
         ));
     }
@@ -1509,12 +1509,12 @@ fn wait_for_gemini_tmux_readiness(
     let mut last_capture = String::new();
     let attempts = prepared
         .env
-        .get("JADE_SYMPHONY_GEMINI_TMUX_READINESS_ATTEMPTS")
+        .get("SHEA_SYMPHONY_GEMINI_TMUX_READINESS_ATTEMPTS")
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(80);
     let interval_ms = prepared
         .env
-        .get("JADE_SYMPHONY_GEMINI_TMUX_READINESS_INTERVAL_MS")
+        .get("SHEA_SYMPHONY_GEMINI_TMUX_READINESS_INTERVAL_MS")
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(250);
 
@@ -1570,16 +1570,16 @@ fn is_gemini_tmux_agent_command(agent_command: &str) -> bool {
 fn tmux_auto_trust_enabled(prepared: &PreparedRun) -> bool {
     let value = prepared
         .env
-        .get("JADE_SYMPHONY_TMUX_AUTO_TRUST")
+        .get("SHEA_SYMPHONY_TMUX_AUTO_TRUST")
         .cloned()
-        .or_else(|| std::env::var("JADE_SYMPHONY_TMUX_AUTO_TRUST").ok());
+        .or_else(|| std::env::var("SHEA_SYMPHONY_TMUX_AUTO_TRUST").ok());
     !matches!(value.as_deref(), Some("0"))
 }
 
-fn workspace_is_jade_created_issue_worktree(prepared: &PreparedRun) -> bool {
+fn workspace_is_shea_created_issue_worktree(prepared: &PreparedRun) -> bool {
     let Some(root) = prepared
         .env
-        .get("JADE_SYMPHONY_WORKSPACE_ROOT")
+        .get("SHEA_SYMPHONY_WORKSPACE_ROOT")
         .filter(|value| !value.trim().is_empty())
     else {
         return false;
@@ -1652,7 +1652,7 @@ fn tmux_agent_shell_command(
     prompt_artifact_path: &Path,
 ) -> String {
     format!(
-        "JADE_SYMPHONY_PROMPT_PATH={} JADE_SYMPHONY_ACTOR_ROLE={} JADE_SYMPHONY_ACTOR_LABEL={} JADE_SYMPHONY_GIT_AUTHOR={} sh -lc {}",
+        "SHEA_SYMPHONY_PROMPT_PATH={} SHEA_SYMPHONY_ACTOR_ROLE={} SHEA_SYMPHONY_ACTOR_LABEL={} SHEA_SYMPHONY_GIT_AUTHOR={} sh -lc {}",
         shell_quote_str(&prompt_artifact_path.display().to_string()),
         shell_quote_str(prepared.actor_role.as_deref().unwrap_or_default()),
         shell_quote_str(prepared.actor_label.as_deref().unwrap_or_default()),
@@ -1664,9 +1664,9 @@ fn tmux_agent_shell_command(
 fn tmux_session_name(prepared: &PreparedRun) -> String {
     let prefix = prepared
         .env
-        .get("JADE_SYMPHONY_TMUX_SESSION_PREFIX")
+        .get("SHEA_SYMPHONY_TMUX_SESSION_PREFIX")
         .map(String::as_str)
-        .unwrap_or("jade");
+        .unwrap_or("shea");
     deterministic_session_name(
         prefix,
         prepared
@@ -1675,7 +1675,7 @@ fn tmux_session_name(prepared: &PreparedRun) -> String {
             .or_else(|| {
                 prepared
                     .env
-                    .get("JADE_SYMPHONY_AGENT_LANE")
+                    .get("SHEA_SYMPHONY_AGENT_LANE")
                     .map(String::as_str)
             })
             .unwrap_or("main"),
@@ -1733,7 +1733,7 @@ pub fn persist_prompt_artifact(prepared: &PreparedRun) -> Result<PathBuf, AgentE
 
 fn fallback_prompt_artifact_path(prepared: &PreparedRun) -> PathBuf {
     std::env::temp_dir()
-        .join("jade-symphony")
+        .join("shea-symphony")
         .join("prompts")
         .join(format!(
             "{}-{}-{}.prompt.md",
@@ -1940,7 +1940,7 @@ mod tests {
     fn tmux_backend_prepare_uses_local_session_config() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\nagent:\n  backend: tmux\ntmux:\n  command: /usr/local/bin/tmux\n  agent_command: codex\n  session_prefix: jade-test\n---\nPrompt",
+            "---\nagent:\n  backend: tmux\ntmux:\n  command: /usr/local/bin/tmux\n  agent_command: codex\n  session_prefix: shea-test\n---\nPrompt",
         )
         .unwrap();
         let config =
@@ -1957,16 +1957,16 @@ mod tests {
         assert_eq!(
             prepared
                 .env
-                .get("JADE_SYMPHONY_TMUX_COMMAND")
+                .get("SHEA_SYMPHONY_TMUX_COMMAND")
                 .map(String::as_str),
             Some("/usr/local/bin/tmux")
         );
         assert_eq!(
             prepared
                 .env
-                .get("JADE_SYMPHONY_TMUX_SESSION_PREFIX")
+                .get("SHEA_SYMPHONY_TMUX_SESSION_PREFIX")
                 .map(String::as_str),
-            Some("jade-test")
+            Some("shea-test")
         );
     }
 
@@ -1975,12 +1975,12 @@ mod tests {
         let events = vec![
             AgentEvent::SessionStarted {
                 backend: "tmux".into(),
-                session_id: "jade-main-220".into(),
+                session_id: "shea-main-220".into(),
             },
             AgentEvent::Message {
                 backend: "tmux".into(),
-                session_id: Some("jade-main-220".into()),
-                text: "tmux_session_started session=jade-main-220 log_path=/tmp/jade.log".into(),
+                session_id: Some("shea-main-220".into()),
+                text: "tmux_session_started session=shea-main-220 log_path=/tmp/shea.log".into(),
             },
         ];
 
@@ -1990,9 +1990,9 @@ mod tests {
         assert!(summary.pending_session);
         assert_eq!(
             summary.attach_command.as_deref(),
-            Some("tmux attach-session -t jade-main-220")
+            Some("tmux attach-session -t shea-main-220")
         );
-        assert_eq!(summary.log_path, Some(PathBuf::from("/tmp/jade.log")));
+        assert_eq!(summary.log_path, Some(PathBuf::from("/tmp/shea.log")));
     }
 
     #[test]
@@ -2049,7 +2049,7 @@ mod tests {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
             &format!(
-                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {:?}\nagent:\n  backend: tmux\ntmux:\n  command: {:?}\n  agent_command: codex\n  session_prefix: jade-test\n---\nPrompt",
+                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {:?}\nagent:\n  backend: tmux\ntmux:\n  command: {:?}\n  agent_command: codex\n  session_prefix: shea-test\n---\nPrompt",
                 workspace_root.display().to_string(),
                 fake_tmux.display().to_string()
             ),
@@ -2071,11 +2071,11 @@ mod tests {
             .env
             .insert("FAKE_TMUX_STATE".into(), state_path.display().to_string());
         prepared.env.insert(
-            "JADE_SYMPHONY_CODEX_TMUX_READINESS_ATTEMPTS".into(),
+            "SHEA_SYMPHONY_CODEX_TMUX_READINESS_ATTEMPTS".into(),
             "2".into(),
         );
         prepared.env.insert(
-            "JADE_SYMPHONY_CODEX_TMUX_READINESS_INTERVAL_MS".into(),
+            "SHEA_SYMPHONY_CODEX_TMUX_READINESS_INTERVAL_MS".into(),
             "1".into(),
         );
 
@@ -2110,7 +2110,7 @@ mod tests {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
             &format!(
-                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {:?}\nagent:\n  backend: tmux\ntmux:\n  command: {:?}\n  agent_command: gemini\n  session_prefix: jade-test\n---\nPrompt",
+                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {:?}\nagent:\n  backend: tmux\ntmux:\n  command: {:?}\n  agent_command: gemini\n  session_prefix: shea-test\n---\nPrompt",
                 workspace_root.display().to_string(),
                 fake_tmux.display().to_string()
             ),
@@ -2135,7 +2135,7 @@ mod tests {
             .env
             .insert("FAKE_TMUX_MODE".into(), "gemini".into());
         prepared.env.insert(
-            "JADE_SYMPHONY_GEMINI_TMUX_READINESS_INTERVAL_MS".into(),
+            "SHEA_SYMPHONY_GEMINI_TMUX_READINESS_INTERVAL_MS".into(),
             "1".into(),
         );
 
@@ -2170,7 +2170,7 @@ mod tests {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
             &format!(
-                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {:?}\nagent:\n  backend: tmux\ntmux:\n  command: {:?}\n  agent_command: gemini\n  session_prefix: jade-test\n---\nPrompt",
+                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {:?}\nagent:\n  backend: tmux\ntmux:\n  command: {:?}\n  agent_command: gemini\n  session_prefix: shea-test\n---\nPrompt",
                 workspace_root.display().to_string(),
                 fake_tmux.display().to_string()
             ),
@@ -2195,11 +2195,11 @@ mod tests {
             .env
             .insert("FAKE_TMUX_MODE".into(), "gemini-auth".into());
         prepared.env.insert(
-            "JADE_SYMPHONY_GEMINI_TMUX_READINESS_ATTEMPTS".into(),
+            "SHEA_SYMPHONY_GEMINI_TMUX_READINESS_ATTEMPTS".into(),
             "2".into(),
         );
         prepared.env.insert(
-            "JADE_SYMPHONY_GEMINI_TMUX_READINESS_INTERVAL_MS".into(),
+            "SHEA_SYMPHONY_GEMINI_TMUX_READINESS_INTERVAL_MS".into(),
             "1".into(),
         );
 
@@ -2234,7 +2234,7 @@ mod tests {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
             &format!(
-                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {:?}\nagent:\n  backend: tmux\ntmux:\n  command: {:?}\n  agent_command: codex\n  session_prefix: jade-test\n---\nPrompt",
+                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {:?}\nagent:\n  backend: tmux\ntmux:\n  command: {:?}\n  agent_command: codex\n  session_prefix: shea-test\n---\nPrompt",
                 workspace_root.display().to_string(),
                 fake_tmux.display().to_string()
             ),
@@ -2257,7 +2257,7 @@ mod tests {
             .insert("FAKE_TMUX_STATE".into(), state_path.display().to_string());
         prepared
             .env
-            .insert("JADE_SYMPHONY_TMUX_AUTO_TRUST".into(), "0".into());
+            .insert("SHEA_SYMPHONY_TMUX_AUTO_TRUST".into(), "0".into());
 
         let events = backend.run(prepared).unwrap();
         let summary = backend.summarize(&events);
@@ -2268,7 +2268,7 @@ mod tests {
         assert!(summary.session_id.is_some());
         assert!(summary.attach_command.is_some());
         assert!(summary.log_path.is_some());
-        assert!(summary.message.contains("JADE_SYMPHONY_TMUX_AUTO_TRUST=0"));
+        assert!(summary.message.contains("SHEA_SYMPHONY_TMUX_AUTO_TRUST=0"));
         assert!(!fake_log.contains("load-buffer"), "{fake_log}");
         assert!(!fake_log.contains("paste-buffer"), "{fake_log}");
     }
@@ -2292,7 +2292,7 @@ mod tests {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
             &format!(
-                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {:?}\nagent:\n  backend: tmux\ntmux:\n  command: {:?}\n  agent_command: codex\n  session_prefix: jade-test\n---\nPrompt",
+                "---\ntracker:\n  kind: memory\nworkspace:\n  root: {:?}\nagent:\n  backend: tmux\ntmux:\n  command: {:?}\n  agent_command: codex\n  session_prefix: shea-test\n---\nPrompt",
                 workspace_root.display().to_string(),
                 fake_tmux.display().to_string()
             ),
@@ -2314,11 +2314,11 @@ mod tests {
             .env
             .insert("FAKE_TMUX_STATE".into(), state_path.display().to_string());
         prepared.env.insert(
-            "JADE_SYMPHONY_CODEX_TMUX_READINESS_ATTEMPTS".into(),
+            "SHEA_SYMPHONY_CODEX_TMUX_READINESS_ATTEMPTS".into(),
             "2".into(),
         );
         prepared.env.insert(
-            "JADE_SYMPHONY_CODEX_TMUX_READINESS_INTERVAL_MS".into(),
+            "SHEA_SYMPHONY_CODEX_TMUX_READINESS_INTERVAL_MS".into(),
             "1".into(),
         );
 
@@ -2353,8 +2353,8 @@ mod tests {
             profile_id: None,
             instance_name: None,
             env: BTreeMap::from([(
-                "JADE_SYMPHONY_TMUX_SESSION_PREFIX".into(),
-                "jade-test".into(),
+                "SHEA_SYMPHONY_TMUX_SESSION_PREFIX".into(),
+                "shea-test".into(),
             )]),
             actor_role: None,
             actor_label: None,
@@ -2370,13 +2370,13 @@ mod tests {
         };
 
         let session = tmux_session_name(&prepared);
-        assert!(session.starts_with("jade-test-review-220-attempt-2-"));
+        assert!(session.starts_with("shea-test-review-220-attempt-2-"));
         prepared.lane = None;
         prepared
             .env
-            .insert("JADE_SYMPHONY_AGENT_LANE".into(), "merge".into());
+            .insert("SHEA_SYMPHONY_AGENT_LANE".into(), "merge".into());
         let session = tmux_session_name(&prepared);
-        assert!(session.starts_with("jade-test-merge-220-attempt-2-"));
+        assert!(session.starts_with("shea-test-merge-220-attempt-2-"));
     }
 
     #[test]
@@ -2398,7 +2398,7 @@ mod tests {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
             &format!(
-                "---\ntracker:\n  kind: memory\nagent:\n  backend: tmux\nartifacts:\n  root: {:?}\n  namespace: test/repo\ntmux:\n  command: tmux\n  agent_command: cat > jade-prompt.txt\n  session_prefix: jade-test\n---\nPrompt",
+                "---\ntracker:\n  kind: memory\nagent:\n  backend: tmux\nartifacts:\n  root: {:?}\n  namespace: test/repo\ntmux:\n  command: tmux\n  agent_command: cat > shea-prompt.txt\n  session_prefix: shea-test\n---\nPrompt",
                 artifact_root.display().to_string()
             ),
         )
@@ -2419,7 +2419,7 @@ mod tests {
         prepared.branch_name = Some("feature/issue-225".into());
         let tmux_tmp = temp.path().join("tmux-tmp");
         fs::create_dir_all(&tmux_tmp).unwrap();
-        let probe_session = format!("jade-test-probe-{}", current_time_ms());
+        let probe_session = format!("shea-test-probe-{}", current_time_ms());
         let probe = Command::new("tmux")
             .env("TMUX_TMPDIR", &tmux_tmp)
             .args(["new-session", "-d", "-s", &probe_session, "sleep 30"])
@@ -2457,7 +2457,7 @@ mod tests {
             .attach_command
             .as_deref()
             .unwrap()
-            .contains("tmux attach-session -t jade-test-main-225-attempt-2"));
+            .contains("tmux attach-session -t shea-test-main-225-attempt-2"));
         assert!(summary
             .log_path
             .as_ref()
@@ -2735,7 +2735,7 @@ done
             std::fs::read_to_string(temp.path().join("response.txt")).unwrap(),
             "hello prompt"
         );
-        assert!(!temp.path().join("JADE_SYMPHONY_PROMPT.md").exists());
+        assert!(!temp.path().join("SHEA_SYMPHONY_PROMPT.md").exists());
     }
 
     #[test]
@@ -2743,7 +2743,7 @@ done
         let temp = tempfile::tempdir().unwrap();
         let prompt_path = temp.path().join("logs").join("prompts").join("prompt.md");
         let config = codex_config(
-            "printf '%s' \"$JADE_SYMPHONY_PROMPT_PATH\" > prompt_path.txt",
+            "printf '%s' \"$SHEA_SYMPHONY_PROMPT_PATH\" > prompt_path.txt",
             5_000,
         );
         let backend = CodexBackend;
@@ -2771,7 +2771,7 @@ done
         assert!(!temp
             .path()
             .join("workspace")
-            .join("JADE_SYMPHONY_PROMPT.md")
+            .join("SHEA_SYMPHONY_PROMPT.md")
             .exists());
     }
 
@@ -2880,7 +2880,7 @@ done
         prepared.session_registry_path = Some(registry_path.clone());
         prepared.branch_name = Some("feature/issue-368".into());
         prepared.env.insert(
-            "JADE_SYMPHONY_CLAIM".into(),
+            "SHEA_SYMPHONY_CLAIM".into(),
             "v=1 lane=main issue=#368".into(),
         );
         prepared

@@ -1,24 +1,24 @@
-# Jade Symphony Workflows
+# Shea Symphony Workflows
 
-`workflows/jade-symphony.md` is the canonical normal operator workflow index for
-Jade Symphony self-dogfood. It owns shared tracker, artifact, workspace, review,
+`workflows/shea-symphony.md` is the canonical normal operator workflow index for
+Shea Symphony self-dogfood. It owns shared tracker, artifact, workspace, review,
 verification, and observability config, then points each lane at its own prompt
 contract under `workflows/prompts/`.
 
 Use it for live Project #9 operations:
 
 ```bash
-cargo run -- autopilot plan workflows/jade-symphony.md
-cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --write
-cargo run -- forge validate --workflow workflows/jade-symphony.md --status Todo --title "<title>" --body-file /private/tmp/issue.md
-cargo run -- forge validate --workflow workflows/jade-symphony.md --issue '#123' --status Todo --title "<candidate title>" --body-file /private/tmp/candidate.md
-cargo run -- forge create --workflow workflows/jade-symphony.md --status Todo --title "<title>" --body-file /private/tmp/issue.md --assignee Alive24 --write
-cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --write
-cargo run -- review loop workflows/jade-symphony.md --max-iterations 1 --write
-cargo run -- merge once workflows/jade-symphony.md --write
-cargo run -- main claim workflows/jade-symphony.md '#123' --worker "Codex Manual Main" --write
-cargo run -- session start workflows/jade-symphony.md '#123' --lane main --run <RUN_ID> --write
-cargo run -- session list workflows/jade-symphony.md
+cargo run -- autopilot plan workflows/shea-symphony.md
+cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --write
+cargo run -- forge validate --workflow workflows/shea-symphony.md --status Todo --title "<title>" --body-file /private/tmp/issue.md
+cargo run -- forge validate --workflow workflows/shea-symphony.md --issue '#123' --status Todo --title "<candidate title>" --body-file /private/tmp/candidate.md
+cargo run -- forge create --workflow workflows/shea-symphony.md --status Todo --title "<title>" --body-file /private/tmp/issue.md --assignee Alive24 --write
+cargo run -- main loop workflows/shea-symphony.md --max-iterations 1 --write
+cargo run -- review loop workflows/shea-symphony.md --max-iterations 1 --write
+cargo run -- merge once workflows/shea-symphony.md --write
+cargo run -- main claim workflows/shea-symphony.md '#123' --worker "Codex Manual Main" --write
+cargo run -- session start workflows/shea-symphony.md '#123' --lane main --run <RUN_ID> --write
+cargo run -- session list workflows/shea-symphony.md
 ```
 
 Normal all-lane dogfood starts with read-only `autopilot plan`, then uses
@@ -30,7 +30,7 @@ debugging, break-glass recovery, or deliberately lane-specific dogfood.
 
 Write-mode lane/control commands are safe to run from the canonical checkout on
 `main` even when local `main` is only behind `origin/main`: before tracker
-mutation, Jade Symphony fetches the configured upstream and performs a
+mutation, Shea Symphony fetches the configured upstream and performs a
 canonical-only `git merge --ff-only`. Dry-runs report `would_ff_only` without
 changing the checkout. Dirty, detached, non-`main`, missing-upstream, and
 non-fast-forward cases still fail closed; issue worktrees and PR branches are

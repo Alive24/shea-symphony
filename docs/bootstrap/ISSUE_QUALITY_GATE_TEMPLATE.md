@@ -2,7 +2,7 @@
 
 Status: Bootstrap v0
 
-Use this as the preferred issue contract shape for work that Jade Symphony may
+Use this as the preferred issue contract shape for work that Shea Symphony may
 dispatch to coding agents. The goal is not bureaucracy; the goal is to make the
 issue executable without forcing the agent to invent product, architecture, or
 operational intent.

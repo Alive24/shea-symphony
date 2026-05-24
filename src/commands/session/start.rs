@@ -1,14 +1,14 @@
 use std::path::{Path, PathBuf};
 
-use jade_symphony::agent::AgentSummary;
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::event_log::{EventLog, EventRecord};
-use jade_symphony::lane_claim::LaneClaim;
-use jade_symphony::model::{AgentEvent, TrackerIssue};
-use jade_symphony::profiles::selected_execution_profile;
-use jade_symphony::tracker::{adapter_from_config, TrackerAdapter};
-use jade_symphony::workflow::WorkflowDefinition;
-use jade_symphony::workspace::{
+use shea_symphony::agent::AgentSummary;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::event_log::{EventLog, EventRecord};
+use shea_symphony::lane_claim::LaneClaim;
+use shea_symphony::model::{AgentEvent, TrackerIssue};
+use shea_symphony::profiles::selected_execution_profile;
+use shea_symphony::tracker::{adapter_from_config, TrackerAdapter};
+use shea_symphony::workflow::WorkflowDefinition;
+use shea_symphony::workspace::{
     apply_local_git_identity, prepare_workspace, profile_scoped_identifier, safe_identifier,
     GitIdentityApplyResult,
 };
@@ -125,18 +125,18 @@ fn start_agent_session_with_claim(
     prepared.command = Some(backend_spec.command.clone());
     prepared
         .env
-        .insert("JADE_SYMPHONY_AGENT_LANE".into(), lane.label().to_string());
+        .insert("SHEA_SYMPHONY_AGENT_LANE".into(), lane.label().to_string());
     prepared.env.insert(
-        "JADE_SYMPHONY_AGENT_COMMAND".into(),
+        "SHEA_SYMPHONY_AGENT_COMMAND".into(),
         prepared.command.clone().unwrap_or_default(),
     );
     prepared.env.insert(
-        "JADE_SYMPHONY_AGENT_BACKEND".into(),
+        "SHEA_SYMPHONY_AGENT_BACKEND".into(),
         backend_spec.backend.clone(),
     );
     if backend_spec.backend == "tmux" {
         prepared.env.insert(
-            "JADE_SYMPHONY_TMUX_AGENT_COMMAND".into(),
+            "SHEA_SYMPHONY_TMUX_AGENT_COMMAND".into(),
             prepared.command.clone().unwrap_or_default(),
         );
     }
@@ -148,10 +148,10 @@ fn start_agent_session_with_claim(
     prepared.run_id = Some(claim.run.clone());
     prepared
         .env
-        .insert("JADE_SYMPHONY_RUN_ID".into(), claim.run.clone());
+        .insert("SHEA_SYMPHONY_RUN_ID".into(), claim.run.clone());
     prepared
         .env
-        .insert("JADE_SYMPHONY_CLAIM".into(), claim.render());
+        .insert("SHEA_SYMPHONY_CLAIM".into(), claim.render());
     prepared.attempt = 1;
     prepared.branch_name = current_git_branch(&workspace.path).ok().flatten();
 
@@ -284,7 +284,7 @@ pub(crate) fn record_agent_session_events(
     events: &[AgentEvent],
     prompt_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let log = EventLog::new(config.observability.logs_root.join("jade-symphony.jsonl"));
+    let log = EventLog::new(config.observability.logs_root.join("shea-symphony.jsonl"));
     log.append(&EventRecord {
         event: "agent_session_prompt_artifact".into(),
         issue_id: Some(issue.id.clone()),
@@ -340,9 +340,9 @@ fn agent_session_workpad(input: AgentSessionWorkpadInput<'_>) -> String {
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "n/a".into());
     let title = match input.lane {
-        AgentSessionLaneArg::Main => "## Jade Symphony Workpad",
-        AgentSessionLaneArg::Review => "## Jade Symphony Agent Review Run",
-        AgentSessionLaneArg::Merge => "## Jade Symphony Merge Run",
+        AgentSessionLaneArg::Main => "## Shea Symphony Workpad",
+        AgentSessionLaneArg::Review => "## Shea Symphony Agent Review Run",
+        AgentSessionLaneArg::Merge => "## Shea Symphony Merge Run",
     };
     let session_heading = if input.summary.backend == "tmux" {
         "### Local tmux Agent Session"

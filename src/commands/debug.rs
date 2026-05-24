@@ -1,17 +1,17 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use jade_symphony::artifacts::cleanup_plan;
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::doctor::{
+use shea_symphony::artifacts::cleanup_plan;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::doctor::{
     audit_project_issues_with_context, ProjectAuditReport, ProjectDoctorContext,
 };
-use jade_symphony::lane_claim::{LaneClaim, LaneClaimLane, LaneClaimState};
-use jade_symphony::model::{normalize_state, SessionStatusSnapshot, TrackerIssue};
-use jade_symphony::runtime_state::{load_runtime_states, runtime_state_path};
-use jade_symphony::session_registry::session_registry_path;
-use jade_symphony::tracker::adapter_from_config;
-use jade_symphony::workflow::WorkflowDefinition;
+use shea_symphony::lane_claim::{LaneClaim, LaneClaimLane, LaneClaimState};
+use shea_symphony::model::{normalize_state, SessionStatusSnapshot, TrackerIssue};
+use shea_symphony::runtime_state::{load_runtime_states, runtime_state_path};
+use shea_symphony::session_registry::session_registry_path;
+use shea_symphony::tracker::adapter_from_config;
+use shea_symphony::workflow::WorkflowDefinition;
 
 use crate::commands::doctor::{
     append_workspace_doctor_violations, doctor_health_label, hydrate_issues_for_doctor,
@@ -100,7 +100,7 @@ pub(crate) fn debug_report(workflow_path: PathBuf) -> Result<(), Box<dyn std::er
         .filter(|candidate| !candidate.removable && candidate.path.exists())
         .count();
 
-    println!("Jade Symphony Debug Report");
+    println!("Shea Symphony Debug Report");
     println!("read_only=true");
     println!("workflow={}", workflow_path.display());
     println!("tracker_kind={}", config.tracker.kind);
@@ -179,7 +179,7 @@ pub(crate) fn debug_report(workflow_path: PathBuf) -> Result<(), Box<dyn std::er
     );
     println!("supervised_ready={supervised_ready}");
     println!("unattended_ready=false");
-    println!("unattended_reason=Jade Symphony CLI still requires supervised lane commands for dogfood and repair decisions.");
+    println!("unattended_reason=Shea Symphony CLI still requires supervised lane commands for dogfood and repair decisions.");
     println!();
 
     println!("Runtime And Sessions");
@@ -202,7 +202,7 @@ pub(crate) fn debug_report(workflow_path: PathBuf) -> Result<(), Box<dyn std::er
         config
             .observability
             .logs_root
-            .join("jade-symphony.jsonl")
+            .join("shea-symphony.jsonl")
             .display()
     );
     println!();
@@ -219,7 +219,7 @@ pub(crate) fn debug_report(workflow_path: PathBuf) -> Result<(), Box<dyn std::er
     println!();
 
     println!("Tracker Authority");
-    println!("authority=Jade Symphony CLI Project reads and mutations are the operator authority for Project state.");
+    println!("authority=Shea Symphony CLI Project reads and mutations are the operator authority for Project state.");
     println!(
         "project_state_command=cargo run -- project state {}",
         workflow_path.display()

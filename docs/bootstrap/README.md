@@ -1,6 +1,6 @@
-# Jade Symphony Bootstrap
+# Shea Symphony Bootstrap
 
-This directory contains the bootstrap materials for building Jade Symphony, a
+This directory contains the bootstrap materials for building Shea Symphony, a
 private-first team harness for orchestrating coding agents.
 
 ## Source Boundaries
@@ -8,7 +8,7 @@ private-first team harness for orchestrating coding agents.
 - Official OpenAI Symphony material lives under
   `docs/bootstrap/references/openai-symphony` as a Git submodule.
 - Do not edit the official submodule directly.
-- Jade Symphony-specific interpretation and implementation decisions live in this
+- Shea Symphony-specific interpretation and implementation decisions live in this
   directory.
 - Future implementation code should live outside `docs/bootstrap`.
 
@@ -18,14 +18,14 @@ private-first team harness for orchestrating coding agents.
 2. `docs/bootstrap/references/openai-symphony/elixir/WORKFLOW.md`
 3. `docs/bootstrap/references/openai-symphony/elixir/README.md`
 4. `docs/bootstrap/OFFICIAL_REFERENCE_INDEX.md`
-5. `docs/bootstrap/JADE_SYMPHONY_SPEC.md`
+5. `docs/bootstrap/SHEA_SYMPHONY_SPEC.md`
 6. `docs/bootstrap/TRACKER_GITHUB_PROJECT_V2.md`
-7. `docs/bootstrap/JADE_WORKFLOW.md`
+7. `docs/bootstrap/SHEA_WORKFLOW.md`
 8. `docs/bootstrap/ISSUE_QUALITY_GATE_TEMPLATE.md`
 
 ## Implementation Posture
 
-Jade Symphony should be built from the official Symphony specification, not by
+Shea Symphony should be built from the official Symphony specification, not by
 blindly porting the Elixir reference implementation. The Elixir code is a
 reference for behavior, structure, and operational tradeoffs.
 

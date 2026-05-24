@@ -1,0 +1,3 @@
+display_name: Shea Symphony Issue Forge Reflect
+short_description: Reflect Shea Symphony work into Backlog seeds or promote Backlog issues into Todo.
+default_prompt: Reflect recent Shea Symphony context into Backlog candidates, or promote a named Backlog issue through discussion and forge promote after confirmation.

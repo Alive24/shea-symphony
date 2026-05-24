@@ -1,6 +1,6 @@
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::model::{LatestStatus, TrackerIssue};
-use jade_symphony::status_surface::render_latest_status_bar;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::model::{LatestStatus, TrackerIssue};
+use shea_symphony::status_surface::render_latest_status_bar;
 
 pub(crate) fn latest_status_for_issue(
     config: &RuntimeConfig,

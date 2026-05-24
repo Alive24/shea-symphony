@@ -8,28 +8,28 @@ without credentials.
 
 - `curl` is installed.
 - `LINEAR_API_KEY` is set.
-- `JADE_LINEAR_PROJECT_SLUG` names a Linear project visible to that token.
+- `SHEA_LINEAR_PROJECT_SLUG` names a Linear project visible to that token.
 
 No tokens or secrets are written to the generated workflow file. The workflow
-uses `$LINEAR_API_KEY`, which Jade Symphony resolves at runtime.
+uses `$LINEAR_API_KEY`, which Shea Symphony resolves at runtime.
 
 ## Run
 
 ```bash
-JADE_LIVE_LINEAR_SMOKE=1 \
+SHEA_LIVE_LINEAR_SMOKE=1 \
 LINEAR_API_KEY=... \
-JADE_LINEAR_PROJECT_SLUG=your-project-slug \
+SHEA_LINEAR_PROJECT_SLUG=your-project-slug \
 cargo test --test live_linear_smoke
 ```
 
 The smoke runs:
 
-- `jade-symphony project inspect <temporary-linear-live-workflow.md> '#<issue>'`
+- `shea-symphony project inspect <temporary-linear-live-workflow.md> '#<issue>'`
 
 ## Expected Behavior
 
-- Without `JADE_LIVE_LINEAR_SMOKE=1`, the test prints a skip message and passes.
-- With the flag set, missing `LINEAR_API_KEY` or `JADE_LINEAR_PROJECT_SLUG`
+- Without `SHEA_LIVE_LINEAR_SMOKE=1`, the test prints a skip message and passes.
+- With the flag set, missing `LINEAR_API_KEY` or `SHEA_LINEAR_PROJECT_SLUG`
   fails immediately.
 - The smoke must not create, update, comment on, or transition Linear issues.
 

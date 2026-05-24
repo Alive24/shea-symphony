@@ -31,7 +31,7 @@ pub(in crate::tracker) fn follow_up_issue_body(input: &FollowUpIssueInput) -> St
     if !body.ends_with('\n') {
         body.push('\n');
     }
-    body.push_str("\n## Jade Symphony Context\n");
+    body.push_str("\n## Shea Symphony Context\n");
     body.push_str(&context.join("\n"));
     body
 }

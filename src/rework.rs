@@ -162,9 +162,9 @@ pub fn render_rework_diagnostic_workpad(
 ) -> String {
     let review_origin = diagnostic.source.starts_with("agent_review:");
     let title = if review_origin {
-        "## Jade Symphony Agent Review Run"
+        "## Shea Symphony Agent Review Run"
     } else {
-        "## Jade Symphony Rework Run"
+        "## Shea Symphony Rework Run"
     };
     let lane = if review_origin { "review" } else { "main" };
     let mut lines = vec![
@@ -442,7 +442,7 @@ mod tests {
         let issue = issue();
         let diagnostic = ReworkDiagnostic::merge_conflict(
             "#50",
-            "https://github.com/Alive24/jade-symphony/pull/99",
+            "https://github.com/Alive24/shea-symphony/pull/99",
             vec!["src/main.rs".into()],
             "PR no longer merges cleanly.",
         );
@@ -450,7 +450,7 @@ mod tests {
         let workpad = render_rework_diagnostic_workpad(&issue, &diagnostic);
 
         assert!(
-            workpad.contains("Pull request: `https://github.com/Alive24/jade-symphony/pull/99`")
+            workpad.contains("Pull request: `https://github.com/Alive24/shea-symphony/pull/99`")
         );
         assert!(workpad.contains("src/main.rs"));
         assert!(workpad.contains("mirror this note to the PR conversation"));

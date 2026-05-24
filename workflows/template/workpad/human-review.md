@@ -1,4 +1,4 @@
-## Jade Symphony Human Review Decision
+## Shea Symphony Human Review Decision
 
 - Issue: #<issue>
 - PR: #<pr> <url>

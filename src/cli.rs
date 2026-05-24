@@ -2,13 +2,13 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use clap::{error::ErrorKind, Args, Parser, Subcommand, ValueEnum};
-use jade_symphony::lane_claim::LaneClaimSource;
-use jade_symphony::review::{
+use shea_symphony::lane_claim::LaneClaimSource;
+use shea_symphony::review::{
     FakeReviewOutcome, ReviewFreshnessInput, ReviewReworkClass, ReviewStaleReason,
 };
-use jade_symphony::review_status::DEFAULT_RECENT_REVIEW_JOBS;
-use jade_symphony::skill_status::SkillStatusInput;
-use jade_symphony::tracker::ProjectFieldAssignment;
+use shea_symphony::review_status::DEFAULT_RECENT_REVIEW_JOBS;
+use shea_symphony::skill_status::SkillStatusInput;
+use shea_symphony::tracker::ProjectFieldAssignment;
 
 use crate::commands::autopilot::AutopilotLoopOptions;
 use crate::commands::doctor::{DoctorAction, DoctorOptions, DoctorRepairIssueOptions};
@@ -296,7 +296,7 @@ impl Command {
             return Ok(Self::Help(usage()));
         }
 
-        let argv = std::iter::once("jade-symphony".to_string())
+        let argv = std::iter::once("shea-symphony".to_string())
             .chain(args)
             .collect::<Vec<_>>();
         match Cli::try_parse_from(argv) {
@@ -331,8 +331,8 @@ fn lane_command(lane: AgentSessionLaneArg, args: LaneCommandArgs) -> Result<Comm
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "jade-symphony",
-    about = "OpenAI Symphony-style orchestration harness with Jade Symphony extensions",
+    name = "shea-symphony",
+    about = "OpenAI Symphony-style orchestration harness with Shea Symphony extensions",
     disable_help_subcommand = true,
     arg_required_else_help = false
 )]
@@ -392,7 +392,7 @@ enum CliCommand {
         about = "Reserved for future all-lane automatic orchestration"
     )]
     Run,
-    #[command(about = "Reserved for future Jade Symphony binary and skill upgrades")]
+    #[command(about = "Reserved for future Shea Symphony binary and skill upgrades")]
     Upgrade,
 }
 
@@ -570,7 +570,7 @@ struct SkillsArgs {
 
 #[derive(Debug, Subcommand)]
 enum SkillsCommandArgs {
-    #[command(about = "Report per-repo Jade Symphony skill readiness")]
+    #[command(about = "Report per-repo Shea Symphony skill readiness")]
     Status(SkillsStatusArgs),
 }
 
@@ -1359,7 +1359,7 @@ enum ForgeCommandArgs {
 
 #[derive(Debug, Args)]
 struct ForgeCreateArgs {
-    #[arg(long, default_value = "workflows/jade-symphony.md")]
+    #[arg(long, default_value = "workflows/shea-symphony.md")]
     workflow: PathBuf,
     #[arg(long)]
     title: String,
@@ -1382,7 +1382,7 @@ struct ForgeCreateArgs {
 #[derive(Debug, Args)]
 struct ForgePromoteArgs {
     issue_ref: String,
-    #[arg(long, default_value = "workflows/jade-symphony.md")]
+    #[arg(long, default_value = "workflows/shea-symphony.md")]
     workflow: PathBuf,
     #[arg(long)]
     title: String,
@@ -1399,7 +1399,7 @@ struct ForgePromoteArgs {
 #[derive(Debug, Args)]
 struct ForgeReworkArgs {
     issue_ref: String,
-    #[arg(long, default_value = "workflows/jade-symphony.md")]
+    #[arg(long, default_value = "workflows/shea-symphony.md")]
     workflow: PathBuf,
     #[arg(long)]
     title: String,
@@ -1431,7 +1431,7 @@ struct PromotionNoteArgs {
 
 #[derive(Debug, Args)]
 struct ForgeValidateArgs {
-    #[arg(long, default_value = "workflows/jade-symphony.md")]
+    #[arg(long, default_value = "workflows/shea-symphony.md")]
     workflow: PathBuf,
     #[arg(long, value_enum, ignore_case = true)]
     status: Option<ForgeStatusArg>,
@@ -1805,10 +1805,10 @@ impl TryFrom<Cli> for Command {
                         }
                     },
                     CliCommand::Run => {
-                        Err("`jade-symphony run` is reserved for future all-lane orchestration and is not implemented yet".into())
+                        Err("`shea-symphony run` is reserved for future all-lane orchestration and is not implemented yet".into())
                     }
                     CliCommand::Upgrade => {
-                        Err("`jade-symphony upgrade` is reserved for future Jade Symphony binary and skill upgrades and is not implemented yet".into())
+                        Err("`shea-symphony upgrade` is reserved for future Shea Symphony binary and skill upgrades and is not implemented yet".into())
                     }
                 }
             }
@@ -1973,9 +1973,9 @@ fn promotion_note_input(args: PromotionNoteArgs) -> Result<PromotionNoteInput, S
 
 fn usage() -> String {
     [
-        "OpenAI Symphony-style orchestration harness with Jade Symphony extensions",
+        "OpenAI Symphony-style orchestration harness with Shea Symphony extensions",
         "",
-        "Usage: jade-symphony [path-to-WORKFLOW.md] [COMMAND]",
+        "Usage: shea-symphony [path-to-WORKFLOW.md] [COMMAND]",
         "",
         "Human / Operator operations:",
         "  plan                        Render the dispatch/status plan",
@@ -2004,7 +2004,7 @@ fn usage() -> String {
         "",
         "Reserved lifecycle topology:",
         "  run                         Reserved for future all-lane automatic orchestration",
-        "  upgrade                     Reserved for future Jade Symphony binary and skill upgrades",
+        "  upgrade                     Reserved for future Shea Symphony binary and skill upgrades",
         "",
         "Arguments:",
         "  [path-to-WORKFLOW.md]",
@@ -2029,7 +2029,7 @@ mod tests {
         let command = parse(&[
             "main",
             "loop",
-            "workflows/jade-symphony.md",
+            "workflows/shea-symphony.md",
             "--write",
             "--max-concurrent",
             "2",
@@ -2041,7 +2041,7 @@ mod tests {
 
         assert_eq!(
             options.workflow_path,
-            PathBuf::from("workflows/jade-symphony.md")
+            PathBuf::from("workflows/shea-symphony.md")
         );
         assert!(options.write);
         assert!(options.recover);
@@ -2053,7 +2053,7 @@ mod tests {
         let error = Command::parse(vec![
             "review".into(),
             "status".into(),
-            "workflows/jade-symphony.md".into(),
+            "workflows/shea-symphony.md".into(),
             "--recent-limit".into(),
             "0".into(),
         ])
@@ -2067,7 +2067,7 @@ mod tests {
         let command = parse(&[
             "autopilot",
             "loop",
-            "workflows/jade-symphony.md",
+            "workflows/shea-symphony.md",
             "--once",
             "--dry-run",
             "--display",
@@ -2080,7 +2080,7 @@ mod tests {
 
         assert_eq!(
             options.workflow_path,
-            PathBuf::from("workflows/jade-symphony.md")
+            PathBuf::from("workflows/shea-symphony.md")
         );
         assert!(options.once);
         assert_eq!(options.display, DisplayMode::Tui);
@@ -2091,7 +2091,7 @@ mod tests {
         let error = Command::parse(vec![
             "autopilot".into(),
             "loop".into(),
-            "workflows/jade-symphony.md".into(),
+            "workflows/shea-symphony.md".into(),
             "--once".into(),
             "--json".into(),
             "--display".into(),

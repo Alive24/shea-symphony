@@ -11,7 +11,7 @@ main_lane:
   max_turns: 3
   max_retry_backoff_ms: 60000
 observability:
-  logs_root: /tmp/jade-symphony-usage-limit-logs
+  logs_root: /tmp/shea-symphony-usage-limit-logs
 ---
 
 You are simulating a usage-limit interruption for {{ issue.identifier }}.

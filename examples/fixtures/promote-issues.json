@@ -6,7 +6,7 @@
     "identifier": "#241",
     "title": "Backlog: harden Issue Forge Reflect promotion",
     "description": "## Issue Setup\n\n- UAT Required: TBD\n- Assignee: Alive24\n- Dependencies: TBD\n- Related Parent Issue or Context: Fixture Backlog seed for Issue Forge Reflect promotion.\n\n## Issue Goal\n\nHarden the backlog capture and promotion workflow.\n\n## Issue Context\n\nThis lightweight seed is intentionally non-dispatchable until promoted.\n\n## Current Seed Scope\n\n- Preserve the Issue Forge Reflect promotion rules in a deterministic fixture.\n\n## Open Questions for Issue Forge\n\n- What exact verification and UAT should the promoted issue require?\n\n## Expected Promotion Path\n\nDiscuss with the operator through Issue Forge, resolve scope / dependencies / verification, then promote to an executable Todo issue if still worth doing.",
-    "url": "https://github.com/Alive24/jade-symphony/issues/241",
+    "url": "https://github.com/Alive24/shea-symphony/issues/241",
     "state": "Backlog",
     "labels": ["fixture"],
     "assignees": ["Alive24"],

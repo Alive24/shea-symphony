@@ -1,3 +1,0 @@
-display_name: Jade Symphony Manual Merge
-short_description: Run a supervised Merging Agent session for approved merge-lane work.
-default_prompt: Claim one Jade Symphony Merging Agent issue, inspect the linked PR and approval evidence, repair only merge-lane blockers when safe, and land or route conservatively.

@@ -176,7 +176,7 @@ fn resume_preflight_many_prefers_completed_app_server_session_over_stale_runtime
     record.updated_at_ms = 2_000;
     save_session_registry(
         &session_registry_path(&config),
-        &jade_symphony::session_registry::SessionRegistry {
+        &shea_symphony::session_registry::SessionRegistry {
             sessions: vec![record],
         },
     )
@@ -243,7 +243,7 @@ fn resume_preflight_many_marks_missing_session_registry_recoverable() {
     let mut state = active_runtime_state("#29");
     state.backend = "tmux".into();
     state.last_event = Some("SessionRunning".into());
-    state.backend_session_id = Some("jade-main-missing".into());
+    state.backend_session_id = Some("shea-main-missing".into());
 
     let summary = run_loop_resume_preflight_many(&tracker, &config, &[state], 2_000, true).unwrap();
 
@@ -267,17 +267,17 @@ fn resume_preflight_many_counts_running_tmux_session_in_recover_mode() {
     let mut state = active_runtime_state("#29");
     state.backend = "tmux".into();
     state.last_event = Some("SessionRunning".into());
-    state.backend_session_id = Some("jade-main-29-attempt-1".into());
+    state.backend_session_id = Some("shea-main-29-attempt-1".into());
     state.updated_at_ms = Some(1_000);
 
     let mut record = main_tmux_session_record("#29", SessionStatus::Running);
-    record.session_name = "jade-main-29-attempt-1".into();
-    record.pane_target = "jade-main-29-attempt-1".into();
+    record.session_name = "shea-main-29-attempt-1".into();
+    record.pane_target = "shea-main-29-attempt-1".into();
     record.log_path = temp.path().join("session.log");
     record.updated_at_ms = 1_000;
     save_session_registry(
         &session_registry_path(&config),
-        &jade_symphony::session_registry::SessionRegistry {
+        &shea_symphony::session_registry::SessionRegistry {
             sessions: vec![record],
         },
     )
@@ -311,13 +311,13 @@ fn resume_preflight_many_counts_registry_only_running_tmux_session_in_recover_mo
     );
     let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
     let mut record = main_tmux_session_record("#29", SessionStatus::Running);
-    record.session_name = "jade-main-29-attempt-1".into();
-    record.pane_target = "jade-main-29-attempt-1".into();
+    record.session_name = "shea-main-29-attempt-1".into();
+    record.pane_target = "shea-main-29-attempt-1".into();
     record.log_path = temp.path().join("session.log");
     record.updated_at_ms = 1_000;
     save_session_registry(
         &session_registry_path(&config),
-        &jade_symphony::session_registry::SessionRegistry {
+        &shea_symphony::session_registry::SessionRegistry {
             sessions: vec![record],
         },
     )
@@ -359,7 +359,7 @@ fn resume_preflight_many_recovers_registry_only_failed_app_server_session() {
     record.log_path = temp.path().join("logs/app-server/29.events.json");
     save_session_registry(
         &session_registry_path(&config),
-        &jade_symphony::session_registry::SessionRegistry {
+        &shea_symphony::session_registry::SessionRegistry {
             sessions: vec![record],
         },
     )
@@ -396,12 +396,12 @@ fn resume_preflight_registry_active_session_does_not_require_live_issue_read() {
         ..Default::default()
     };
     let mut record = main_tmux_session_record("#29", SessionStatus::Running);
-    record.session_name = "jade-main-29-attempt-1".into();
-    record.pane_target = "jade-main-29-attempt-1".into();
+    record.session_name = "shea-main-29-attempt-1".into();
+    record.pane_target = "shea-main-29-attempt-1".into();
     record.log_path = temp.path().join("session.log");
     save_session_registry(
         &session_registry_path(&config),
-        &jade_symphony::session_registry::SessionRegistry {
+        &shea_symphony::session_registry::SessionRegistry {
             sessions: vec![record],
         },
     )
@@ -427,12 +427,12 @@ fn resume_preflight_registry_active_session_skips_non_in_progress_tracker_state(
     );
     let tracker = MemoryTracker::new(vec![tracker_issue("Agent Review")]);
     let mut record = main_tmux_session_record("#29", SessionStatus::Running);
-    record.session_name = "jade-main-29-attempt-1".into();
-    record.pane_target = "jade-main-29-attempt-1".into();
+    record.session_name = "shea-main-29-attempt-1".into();
+    record.pane_target = "shea-main-29-attempt-1".into();
     record.log_path = temp.path().join("session.log");
     save_session_registry(
         &session_registry_path(&config),
-        &jade_symphony::session_registry::SessionRegistry {
+        &shea_symphony::session_registry::SessionRegistry {
             sessions: vec![record],
         },
     )
@@ -455,18 +455,18 @@ fn resume_preflight_prefers_running_sibling_session_over_interrupted_runtime_ses
     config.tmux.command = fake_tmux_split_session_script(temp.path());
     let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
     let mut attempt_two = main_tmux_session_record("#29", SessionStatus::Running);
-    attempt_two.session_name = "jade-main-29-attempt-2".into();
-    attempt_two.pane_target = "jade-main-29-attempt-2".into();
+    attempt_two.session_name = "shea-main-29-attempt-2".into();
+    attempt_two.pane_target = "shea-main-29-attempt-2".into();
     attempt_two.log_path = temp.path().join("attempt-2.log");
     attempt_two.attempt = 2;
     let mut attempt_three = main_tmux_session_record("#29", SessionStatus::Running);
-    attempt_three.session_name = "jade-main-29-attempt-3".into();
-    attempt_three.pane_target = "jade-main-29-attempt-3".into();
+    attempt_three.session_name = "shea-main-29-attempt-3".into();
+    attempt_three.pane_target = "shea-main-29-attempt-3".into();
     attempt_three.log_path = temp.path().join("attempt-3.log");
     attempt_three.attempt = 3;
     save_session_registry(
         &session_registry_path(&config),
-        &jade_symphony::session_registry::SessionRegistry {
+        &shea_symphony::session_registry::SessionRegistry {
             sessions: vec![attempt_two, attempt_three],
         },
     )
@@ -474,7 +474,7 @@ fn resume_preflight_prefers_running_sibling_session_over_interrupted_runtime_ses
     let mut state = active_runtime_state("#29");
     state.backend = "tmux".into();
     state.last_event = Some("SessionRunning".into());
-    state.backend_session_id = Some("jade-main-29-attempt-3".into());
+    state.backend_session_id = Some("shea-main-29-attempt-3".into());
     state.updated_at_ms = Some(1_000);
 
     let summary = run_loop_resume_preflight_many(
@@ -490,7 +490,7 @@ fn resume_preflight_prefers_running_sibling_session_over_interrupted_runtime_ses
     assert_eq!(summary.recoverable_states.len(), 0);
     assert_eq!(
         summary.retained_states[0].backend_session_id.as_deref(),
-        Some("jade-main-29-attempt-2")
+        Some("shea-main-29-attempt-2")
     );
 }
 
@@ -504,12 +504,12 @@ fn resume_preflight_many_recovers_registry_only_unavailable_tmux_session() {
     config.tmux.command = fake_tmux_unavailable_script(temp.path());
     let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
     let mut record = main_tmux_session_record("#29", SessionStatus::Running);
-    record.session_name = "jade-main-29-attempt-1".into();
-    record.pane_target = "jade-main-29-attempt-1".into();
+    record.session_name = "shea-main-29-attempt-1".into();
+    record.pane_target = "shea-main-29-attempt-1".into();
     record.log_path = temp.path().join("session.log");
     save_session_registry(
         &session_registry_path(&config),
-        &jade_symphony::session_registry::SessionRegistry {
+        &shea_symphony::session_registry::SessionRegistry {
             sessions: vec![record],
         },
     )
@@ -536,12 +536,12 @@ fn resume_preflight_many_recovers_runtime_state_unavailable_tmux_session() {
     config.tmux.command = fake_tmux_unavailable_script(temp.path());
     let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
     let mut record = main_tmux_session_record("#29", SessionStatus::Running);
-    record.session_name = "jade-main-29-attempt-1".into();
-    record.pane_target = "jade-main-29-attempt-1".into();
+    record.session_name = "shea-main-29-attempt-1".into();
+    record.pane_target = "shea-main-29-attempt-1".into();
     record.log_path = temp.path().join("session.log");
     save_session_registry(
         &session_registry_path(&config),
-        &jade_symphony::session_registry::SessionRegistry {
+        &shea_symphony::session_registry::SessionRegistry {
             sessions: vec![record],
         },
     )
@@ -549,7 +549,7 @@ fn resume_preflight_many_recovers_runtime_state_unavailable_tmux_session() {
     let mut state = active_runtime_state("#29");
     state.backend = "tmux".into();
     state.last_event = Some("SessionRunning".into());
-    state.backend_session_id = Some("jade-main-29-attempt-1".into());
+    state.backend_session_id = Some("shea-main-29-attempt-1".into());
 
     let summary = run_loop_resume_preflight_many(&tracker, &config, &[state], 2_000, true).unwrap();
 

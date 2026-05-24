@@ -15,15 +15,15 @@ submodule for source-faithful bootstrap work.
 
 - `docs/bootstrap/references/openai-symphony/SPEC.md`
 
-Use this as the protocol baseline. If Jade Symphony diverges, document the
-divergence explicitly in Jade Symphony-specific docs.
+Use this as the protocol baseline. If Shea Symphony diverges, document the
+divergence explicitly in Shea Symphony-specific docs.
 
 ## Official Reference Workflow
 
 - `docs/bootstrap/references/openai-symphony/elixir/WORKFLOW.md`
 
-Use this as the source-faithful workflow reference. Jade Symphony-specific workflow
-changes belong in `docs/bootstrap/JADE_WORKFLOW.md`, not inside the upstream
+Use this as the source-faithful workflow reference. Shea Symphony-specific workflow
+changes belong in `docs/bootstrap/SHEA_WORKFLOW.md`, not inside the upstream
 file.
 
 ## Official Reference Implementation
@@ -51,7 +51,7 @@ file.
 
 ## Bootstrap Rule
 
-When implementing Jade Symphony, cite the official file path being followed in
+When implementing Shea Symphony, cite the official file path being followed in
 the local implementation notes or PR summary. Do not paraphrase official
 behavior from memory when the source file is available in this submodule.
 

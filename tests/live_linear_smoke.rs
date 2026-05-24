@@ -4,8 +4,8 @@ use std::process::{Command, Output};
 
 use tempfile::TempDir;
 
-const LIVE_SMOKE_ENV: &str = "JADE_LIVE_LINEAR_SMOKE";
-const PROJECT_SLUG_ENV: &str = "JADE_LINEAR_PROJECT_SLUG";
+const LIVE_SMOKE_ENV: &str = "SHEA_LIVE_LINEAR_SMOKE";
+const PROJECT_SLUG_ENV: &str = "SHEA_LINEAR_PROJECT_SLUG";
 
 fn live_smoke_enabled() -> bool {
     matches!(
@@ -65,12 +65,12 @@ Live Linear read smoke.
     (tempdir, workflow_path)
 }
 
-fn run_jade(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_jade-symphony"))
+fn run_shea(args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_shea-symphony"))
         .args(args)
         .current_dir(repo_root())
         .output()
-        .expect("failed to execute jade-symphony binary")
+        .expect("failed to execute shea-symphony binary")
 }
 
 #[test]
@@ -81,7 +81,7 @@ fn live_linear_project_inspect_smoke() {
     let (_tempdir, workflow_path) = live_workflow(&project_slug);
     let workflow_arg = workflow_path.to_string_lossy().to_string();
 
-    let output = run_jade(&["inspect", &workflow_arg]);
+    let output = run_shea(&["inspect", &workflow_arg]);
     let text = combined_output(&output);
     assert!(output.status.success(), "{text}");
     assert!(text.contains("issues="), "{text}");

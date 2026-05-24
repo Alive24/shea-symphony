@@ -36,7 +36,7 @@ fn clean_autopilot_doctor(total_issues: usize) -> ProjectAuditReport {
 
 fn test_autopilot_plan(issues: Vec<TrackerIssue>) -> AutopilotPlanSnapshot {
     let config = test_config();
-    let adapter = jade_symphony::tracker::MemoryTracker::new(issues.clone());
+    let adapter = shea_symphony::tracker::MemoryTracker::new(issues.clone());
     build_autopilot_plan_from_parts(AutopilotPlanInputs {
         workflow_path: Path::new("/tmp/WORKFLOW.md"),
         config: &config,
@@ -74,9 +74,9 @@ fn autopilot_plan_reports_merge_ready_issue() {
     let mut issue = tracker_issue_with_ref("#338", "Ready merge", "Merging");
     issue
         .linked_pull_requests
-        .push(jade_symphony::model::LinkedPullRequest {
+        .push(shea_symphony::model::LinkedPullRequest {
             number: Some(339),
-            url: Some("https://github.com/Alive24/jade-symphony/pull/339".into()),
+            url: Some("https://github.com/Alive24/shea-symphony/pull/339".into()),
             state: Some("OPEN".into()),
             is_draft: Some(false),
             merge_state_status: Some("CLEAN".into()),
@@ -110,9 +110,9 @@ fn autopilot_plan_does_not_mutate_tracker_adapter() {
     adapter
         .linked_pull_requests
         .borrow_mut()
-        .push(jade_symphony::model::LinkedPullRequest {
+        .push(shea_symphony::model::LinkedPullRequest {
             number: Some(339),
-            url: Some("https://github.com/Alive24/jade-symphony/pull/339".into()),
+            url: Some("https://github.com/Alive24/shea-symphony/pull/339".into()),
             state: Some("OPEN".into()),
             is_draft: Some(false),
             merge_state_status: Some("CLEAN".into()),
@@ -166,7 +166,7 @@ fn autopilot_plan_reports_parked_operator_queues() {
 fn autopilot_plan_blocks_on_doctor_or_canonical_checkout() {
     let config = test_config();
     let issues = Vec::new();
-    let adapter = jade_symphony::tracker::MemoryTracker::new(issues.clone());
+    let adapter = shea_symphony::tracker::MemoryTracker::new(issues.clone());
     let doctor = ProjectAuditReport {
         total_issues: 0,
         violations: vec![ProjectAuditViolation {

@@ -21,10 +21,10 @@ fn review_issue_with_ref(identifier: &str, title: &str) -> TrackerIssue {
     let number = identifier.trim_start_matches('#');
     issue
         .linked_pull_requests
-        .push(jade_symphony::model::LinkedPullRequest {
+        .push(shea_symphony::model::LinkedPullRequest {
             number: number.parse().ok(),
             url: Some(format!(
-                "https://github.com/Alive24/jade-symphony/pull/{number}"
+                "https://github.com/Alive24/shea-symphony/pull/{number}"
             )),
             state: Some("OPEN".into()),
             is_draft: Some(false),
@@ -86,7 +86,7 @@ fn automatic_review_prompt_forbids_project_mutations() {
 
     assert!(prompt.contains("Review #282"));
     assert!(prompt.contains("Automatic Headless Review Boundary"));
-    assert!(prompt.contains("Do not run mutating Jade Symphony or GitHub commands"));
+    assert!(prompt.contains("Do not run mutating Shea Symphony or GitHub commands"));
     assert!(prompt.contains("`review claim`, `review pass`"));
     assert!(prompt.contains("`gh issue edit`, `gh issue comment`"));
     assert!(prompt.contains("Return review evidence in stdout only"));
@@ -376,13 +376,13 @@ fn review_pass_checklist_update_checks_non_uat_sections_only() {
 #[test]
 fn review_pass_checklist_update_removes_appended_workpad_before_editing_body() {
     let description =
-        "## Expected Outcome\n\n- [ ] Done\n\n<!-- jade-symphony-workpad -->\n## Agent Review";
+        "## Expected Outcome\n\n- [ ] Done\n\n<!-- shea-symphony-workpad -->\n## Agent Review";
 
     let body = canonical_issue_body_without_workpad(description);
     let updated = check_review_verified_issue_body_checkboxes(&body);
 
     assert_eq!(updated, "## Expected Outcome\n\n- [x] Done");
-    assert!(!updated.contains("jade-symphony-workpad"));
+    assert!(!updated.contains("shea-symphony-workpad"));
 }
 
 #[test]
@@ -427,7 +427,7 @@ fn review_pass_updates_issue_body_checkboxes_before_human_review_transition() {
         state: ReviewJobState::Completed,
         artifact_path: None,
         ledger_path: None,
-        report: Some(jade_symphony::review::AgentReviewReport {
+        report: Some(shea_symphony::review::AgentReviewReport {
             summary: Some("Review Result: PASS".into()),
             ..Default::default()
         }),

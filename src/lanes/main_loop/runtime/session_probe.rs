@@ -1,8 +1,8 @@
 use std::io;
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::runtime_state::{RuntimeIssueState, RuntimeState};
-use jade_symphony::session_registry::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::runtime_state::{RuntimeIssueState, RuntimeState};
+use shea_symphony::session_registry::{
     capture_tmux_pane_tail, classify_session_record, load_session_registry, read_log_tail,
     session_registry_path, AgentSessionRecord, SessionStatus, SessionStatusProbe,
 };

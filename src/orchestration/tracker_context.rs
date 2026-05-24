@@ -1,6 +1,6 @@
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::model::TrackerIssue;
-use jade_symphony::tracker::{TrackerAdapter, TrackerError};
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::model::TrackerIssue;
+use shea_symphony::tracker::{TrackerAdapter, TrackerError};
 
 pub(crate) fn tracker_backend_label(config: &RuntimeConfig) -> &'static str {
     match config.tracker.kind.as_str() {

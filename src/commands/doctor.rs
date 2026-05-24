@@ -3,25 +3,25 @@ use std::path::{Path, PathBuf};
 
 mod repair;
 
-use jade_symphony::canonical_checkout::{
+use shea_symphony::canonical_checkout::{
     canonical_checkout_status_line, inspect_canonical_checkout,
 };
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::doctor::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::doctor::{
     append_local_skill_install_doctor_violations, audit_project_issues_with_context,
-    default_jade_symphony_skill_targets, render_project_audit_report,
+    default_shea_symphony_skill_targets, render_project_audit_report,
     render_project_audit_report_json, AuditSeverity, ProjectAuditReport, ProjectAuditViolation,
     ProjectDoctorContext, AGENT_REVIEW_DRAFT_PR,
 };
-use jade_symphony::issue_workspace::{discover_issue_workspaces_from_parts, git_worktree_list};
-use jade_symphony::model::{native_subissue_statuses, TrackerIssue};
-use jade_symphony::presentation::render_doctor_panel;
-use jade_symphony::progress::run_with_progress_heartbeat;
-use jade_symphony::runtime_state::load_runtime_states;
-use jade_symphony::session_registry::{load_session_registry, session_registry_path};
-use jade_symphony::skill_status::{doctor_skill_readiness_summary, SkillStatusInput};
-use jade_symphony::tracker::{adapter_from_config, TrackerAdapter, TrackerError};
-use jade_symphony::workflow::WorkflowDefinition;
+use shea_symphony::issue_workspace::{discover_issue_workspaces_from_parts, git_worktree_list};
+use shea_symphony::model::{native_subissue_statuses, TrackerIssue};
+use shea_symphony::presentation::render_doctor_panel;
+use shea_symphony::progress::run_with_progress_heartbeat;
+use shea_symphony::runtime_state::load_runtime_states;
+use shea_symphony::session_registry::{load_session_registry, session_registry_path};
+use shea_symphony::skill_status::{doctor_skill_readiness_summary, SkillStatusInput};
+use shea_symphony::tracker::{adapter_from_config, TrackerAdapter, TrackerError};
+use shea_symphony::workflow::WorkflowDefinition;
 
 use crate::cli::DisplayMode;
 use crate::orchestration::{
@@ -168,7 +168,7 @@ pub(crate) fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::E
     append_canonical_checkout_doctor_violations(&mut report, &config);
     append_workspace_doctor_violations(&mut report, &config, &issues);
     let skill_repo_root = discover_skill_suite_repo_root(&workflow_path)?;
-    let skill_targets = default_jade_symphony_skill_targets();
+    let skill_targets = default_shea_symphony_skill_targets();
     append_local_skill_install_doctor_violations(&mut report, &skill_repo_root, &skill_targets);
     report.skill_readiness_summary = Some(doctor_skill_readiness_summary(SkillStatusInput {
         workflow_path: workflow_path.clone(),
@@ -218,13 +218,13 @@ pub(crate) fn resolve_doctor_workflow_path(explicit: Option<PathBuf>) -> PathBuf
     if let Some(path) = explicit {
         return path;
     }
-    if let Some(path) = std::env::var_os("JADE_SYMPHONY_WORKFLOW")
+    if let Some(path) = std::env::var_os("SHEA_SYMPHONY_WORKFLOW")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
     {
         return path;
     }
-    let repo_default = PathBuf::from("workflows/jade-symphony.md");
+    let repo_default = PathBuf::from("workflows/shea-symphony.md");
     if repo_default.exists() {
         repo_default
     } else {
@@ -247,7 +247,7 @@ pub(crate) fn discover_skill_suite_repo_root(
     loop {
         if cursor
             .join("skills")
-            .join("jade-symphony")
+            .join("shea-symphony")
             .join("manifest.toml")
             .exists()
         {
@@ -409,7 +409,7 @@ pub(crate) fn append_workspace_doctor_violations(
                         .iter()
                         .filter(|candidate| {
                             candidate.strength
-                                == jade_symphony::issue_workspace::WorkspaceMatchStrength::Strong
+                                == shea_symphony::issue_workspace::WorkspaceMatchStrength::Strong
                         })
                         .count()
                 ),

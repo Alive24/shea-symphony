@@ -2,7 +2,7 @@
 tracker:
   kind: github_project_v2
   owner: Alive24
-  repo: jade-symphony
+  repo: shea-symphony
   project_owner: Alive24
   project_number: 9
   fixture_path: fixtures/dry-run-issues.json
@@ -17,7 +17,7 @@ tracker:
   terminal_states:
     - Done
 workspace:
-  root: /tmp/jade-symphony-codex-subprocess-workspaces
+  root: /tmp/shea-symphony-codex-subprocess-workspaces
 main_lane:
   backend: codex
   max_concurrent_agents: 1

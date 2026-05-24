@@ -63,11 +63,11 @@ fn run_loop_handoff_workpad_records_planned_pr_evidence() {
         usage_limit_pause: None,
         prompt_artifact_path: None,
         actor_role: "implementation_agent".into(),
-        actor_label: "Jade Symphony Agent".into(),
-        git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+        actor_label: "Shea Symphony Agent".into(),
+        git_author: Some("Shea Symphony Agent <shea@example.invalid>".into()),
         git_identity: GitIdentityApplyResult {
-            status: jade_symphony::workspace::GitIdentityApplyStatus::Applied,
-            author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+            status: shea_symphony::workspace::GitIdentityApplyStatus::Applied,
+            author: Some("Shea Symphony Agent <shea@example.invalid>".into()),
             applied_keys: vec!["user.name".into(), "user.email".into()],
         },
         live_handoff: Some(RunLoopLiveHandoff {
@@ -78,13 +78,13 @@ fn run_loop_handoff_workpad_records_planned_pr_evidence() {
             },
             publication: PullRequestPublication {
                 branch_pushed: true,
-                pr_url: "https://github.com/Alive24/jade-symphony/pull/45".into(),
+                pr_url: "https://github.com/Alive24/shea-symphony/pull/45".into(),
                 pr_created: true,
             },
             verification: "skipped:not_configured".into(),
             project_pr_link_verified: Some(true),
             pull_request_ready: Some(PullRequestReadyStatus {
-                pr_url: "https://github.com/Alive24/jade-symphony/pull/45".into(),
+                pr_url: "https://github.com/Alive24/shea-symphony/pull/45".into(),
                 was_draft: false,
                 marked_ready: false,
             }),
@@ -99,7 +99,7 @@ fn run_loop_handoff_workpad_records_planned_pr_evidence() {
     assert!(workpad.contains("- [x] Read the issue contract"));
     assert!(workpad.contains("### Planned Handoff"));
     assert!(workpad.contains("Actor role: `implementation_agent`"));
-    assert!(workpad.contains("Git identity: `applied:Jade Symphony Agent <jade@example.invalid>`"));
+    assert!(workpad.contains("Git identity: `applied:Shea Symphony Agent <shea@example.invalid>`"));
     assert!(
         workpad.contains("Workspace key: `issue-29-wire-runtime-state-persistence-into-main-loop`")
     );
@@ -107,7 +107,7 @@ fn run_loop_handoff_workpad_records_planned_pr_evidence() {
         .contains("Branch: `feature/issue-29-wire-runtime-state-persistence-into-main-loop`"));
     assert!(workpad.contains("PR title: `#29: Wire runtime state persistence into main loop`"));
     assert!(workpad.contains("Handoff verification: `skipped:not_configured`"));
-    assert!(workpad.contains("Live PR: `https://github.com/Alive24/jade-symphony/pull/45`"));
+    assert!(workpad.contains("Live PR: `https://github.com/Alive24/shea-symphony/pull/45`"));
 }
 
 #[test]
@@ -127,7 +127,7 @@ fn live_run_loop_handoff_records_pr_link_through_tracker() {
     assert!(result.success);
     assert_eq!(
         adapter.operations(),
-        vec!["link_pr:#29:https://github.com/Alive24/jade-symphony/pull/45"]
+        vec!["link_pr:#29:https://github.com/Alive24/shea-symphony/pull/45"]
     );
 }
 
@@ -141,9 +141,9 @@ fn live_run_loop_handoff_skips_link_comment_when_pr_already_visible() {
     adapter
         .linked_pull_requests
         .borrow_mut()
-        .push(jade_symphony::model::LinkedPullRequest {
+        .push(shea_symphony::model::LinkedPullRequest {
             number: Some(45),
-            url: Some("https://github.com/Alive24/jade-symphony/pull/45".into()),
+            url: Some("https://github.com/Alive24/shea-symphony/pull/45".into()),
             state: Some("OPEN".into()),
             is_draft: Some(false),
             ..Default::default()
@@ -259,11 +259,11 @@ fn successful_live_handoff_result(handoff: &IssueHandoffPlan) -> IssueExecutionR
         usage_limit_pause: None,
         prompt_artifact_path: None,
         actor_role: "implementation_agent".into(),
-        actor_label: "Jade Symphony Agent".into(),
-        git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+        actor_label: "Shea Symphony Agent".into(),
+        git_author: Some("Shea Symphony Agent <shea@example.invalid>".into()),
         git_identity: GitIdentityApplyResult {
-            status: jade_symphony::workspace::GitIdentityApplyStatus::Applied,
-            author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+            status: shea_symphony::workspace::GitIdentityApplyStatus::Applied,
+            author: Some("Shea Symphony Agent <shea@example.invalid>".into()),
             applied_keys: vec!["user.name".into(), "user.email".into()],
         },
         live_handoff: Some(RunLoopLiveHandoff {
@@ -274,13 +274,13 @@ fn successful_live_handoff_result(handoff: &IssueHandoffPlan) -> IssueExecutionR
             },
             publication: PullRequestPublication {
                 branch_pushed: true,
-                pr_url: "https://github.com/Alive24/jade-symphony/pull/45".into(),
+                pr_url: "https://github.com/Alive24/shea-symphony/pull/45".into(),
                 pr_created: true,
             },
             verification: "skipped:not_configured".into(),
             project_pr_link_verified: Some(true),
             pull_request_ready: Some(PullRequestReadyStatus {
-                pr_url: "https://github.com/Alive24/jade-symphony/pull/45".into(),
+                pr_url: "https://github.com/Alive24/shea-symphony/pull/45".into(),
                 was_draft: false,
                 marked_ready: false,
             }),
@@ -307,7 +307,7 @@ fn handoff_verification_failure_blocks_success() {
 fn usage_limit_pause_workpad_preserves_tracker_state_boundary() {
     let issue = tracker_issue("In Progress");
     let result = IssueExecutionResult {
-        workspace_path: PathBuf::from("/tmp/jade/issue-63"),
+        workspace_path: PathBuf::from("/tmp/shea/issue-63"),
         backend: "codex".into(),
         profile_id: None,
         instance_name: None,
@@ -324,10 +324,10 @@ fn usage_limit_pause_workpad_preserves_tracker_state_boundary() {
         }),
         prompt_artifact_path: None,
         actor_role: "implementation_agent".into(),
-        actor_label: "Jade Symphony Agent".into(),
-        git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+        actor_label: "Shea Symphony Agent".into(),
+        git_author: Some("Shea Symphony Agent <shea@example.invalid>".into()),
         git_identity: GitIdentityApplyResult {
-            status: jade_symphony::workspace::GitIdentityApplyStatus::NotGitRepository,
+            status: shea_symphony::workspace::GitIdentityApplyStatus::NotGitRepository,
             author: None,
             applied_keys: Vec::new(),
         },
@@ -363,11 +363,11 @@ fn run_loop_agent_review_handoff_blocks_missing_pr_url() {
         usage_limit_pause: None,
         prompt_artifact_path: None,
         actor_role: "implementation_agent".into(),
-        actor_label: "Jade Symphony Agent".into(),
-        git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+        actor_label: "Shea Symphony Agent".into(),
+        git_author: Some("Shea Symphony Agent <shea@example.invalid>".into()),
         git_identity: GitIdentityApplyResult {
-            status: jade_symphony::workspace::GitIdentityApplyStatus::Applied,
-            author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+            status: shea_symphony::workspace::GitIdentityApplyStatus::Applied,
+            author: Some("Shea Symphony Agent <shea@example.invalid>".into()),
             applied_keys: vec!["user.name".into(), "user.email".into()],
         },
         live_handoff: None,
@@ -393,10 +393,10 @@ fn run_loop_agent_review_handoff_passes_with_pr_url() {
     let mut issue = tracker_issue("In Progress");
     issue
         .linked_pull_requests
-        .push(jade_symphony::model::LinkedPullRequest {
+        .push(shea_symphony::model::LinkedPullRequest {
             id: Some("PR_57".into()),
             number: Some(57),
-            url: Some("https://github.com/Alive24/jade-symphony/pull/57".into()),
+            url: Some("https://github.com/Alive24/shea-symphony/pull/57".into()),
             state: Some("OPEN".into()),
             is_draft: Some(false),
             ..Default::default()
@@ -417,11 +417,11 @@ fn run_loop_agent_review_handoff_passes_with_pr_url() {
         usage_limit_pause: None,
         prompt_artifact_path: None,
         actor_role: "implementation_agent".into(),
-        actor_label: "Jade Symphony Agent".into(),
-        git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+        actor_label: "Shea Symphony Agent".into(),
+        git_author: Some("Shea Symphony Agent <shea@example.invalid>".into()),
         git_identity: GitIdentityApplyResult {
-            status: jade_symphony::workspace::GitIdentityApplyStatus::Applied,
-            author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+            status: shea_symphony::workspace::GitIdentityApplyStatus::Applied,
+            author: Some("Shea Symphony Agent <shea@example.invalid>".into()),
             applied_keys: vec!["user.name".into(), "user.email".into()],
         },
         live_handoff: None,
@@ -437,7 +437,7 @@ fn run_loop_agent_review_handoff_passes_with_pr_url() {
     assert_eq!(report.target_state.as_deref(), Some("agent_review"));
     assert_eq!(
         evidence.pull_request_url.as_deref(),
-        Some("https://github.com/Alive24/jade-symphony/pull/57")
+        Some("https://github.com/Alive24/shea-symphony/pull/57")
     );
 }
 
@@ -447,10 +447,10 @@ fn run_loop_agent_review_handoff_blocks_draft_pr_and_missing_workpad_evidence() 
     let mut issue = tracker_issue("In Progress");
     issue
         .linked_pull_requests
-        .push(jade_symphony::model::LinkedPullRequest {
+        .push(shea_symphony::model::LinkedPullRequest {
             id: Some("PR_57".into()),
             number: Some(57),
-            url: Some("https://github.com/Alive24/jade-symphony/pull/57".into()),
+            url: Some("https://github.com/Alive24/shea-symphony/pull/57".into()),
             state: Some("OPEN".into()),
             is_draft: Some(false),
             ..Default::default()
@@ -473,7 +473,7 @@ fn run_loop_agent_review_handoff_blocks_draft_pr_and_missing_workpad_evidence() 
     let mut draft_result = successful_live_handoff_result(&handoff);
     if let Some(live_handoff) = draft_result.live_handoff.as_mut() {
         live_handoff.pull_request_ready = Some(PullRequestReadyStatus {
-            pr_url: "https://github.com/Alive24/jade-symphony/pull/45".into(),
+            pr_url: "https://github.com/Alive24/shea-symphony/pull/45".into(),
             was_draft: true,
             marked_ready: false,
         });

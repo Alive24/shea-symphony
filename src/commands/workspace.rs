@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
-use jade_symphony::issue_workspace::{
+use shea_symphony::issue_workspace::{
     discover_issue_workspaces_from_parts, git_worktree_list, infer_issue_ref_from_branch_or_path,
     render_workspace_adoption_workpad, validate_workspace_adoption, IssueWorkspaceCandidate,
     IssueWorkspaceReport,
 };
-use jade_symphony::session_registry::{load_session_registry, session_registry_path};
-use jade_symphony::tracker::adapter_from_config;
+use shea_symphony::session_registry::{load_session_registry, session_registry_path};
+use shea_symphony::tracker::adapter_from_config;
 
 use crate::orchestration::{
     all_mapped_tracker_states, append_tracker_mutation_audit, load_config, TrackerMutationAudit,

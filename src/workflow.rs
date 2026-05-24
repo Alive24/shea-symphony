@@ -364,7 +364,7 @@ mod tests {
             id: "ISSUE_48".into(),
             item_id: Some("PROJECT_ITEM_48".into()),
             identifier: "#48".into(),
-            title: "Replace placeholder dogfood workflow with real Jade Symphony prompt".into(),
+            title: "Replace placeholder dogfood workflow with real Shea Symphony prompt".into(),
             description: Some(
                 [
                     "## Issue Goal",
@@ -374,7 +374,7 @@ mod tests {
                 ]
                 .join("\n"),
             ),
-            url: Some("https://github.com/Alive24/jade-symphony/issues/48".into()),
+            url: Some("https://github.com/Alive24/shea-symphony/issues/48".into()),
             state: "Todo".into(),
             labels: Vec::new(),
             assignees: Vec::new(),
@@ -389,7 +389,7 @@ mod tests {
     }
 
     fn github_project_workflow() -> WorkflowDefinition {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("workflows/jade-symphony.md");
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("workflows/shea-symphony.md");
         WorkflowDefinition::load(path).unwrap()
     }
 
@@ -424,7 +424,7 @@ mod tests {
         let workflow = github_project_workflow();
         let rendered = render_prompt(&workflow.prompt_template, &fixture_issue(), Some(2)).unwrap();
 
-        assert!(rendered.contains("Jade Symphony issue #48"));
+        assert!(rendered.contains("Shea Symphony issue #48"));
         assert!(rendered.contains("Replace placeholder dogfood workflow"));
         assert!(rendered.contains("This is attempt 2."));
         assert!(rendered.contains("## Issue Goal\nReplace the placeholder live workflow prompt."));

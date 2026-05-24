@@ -1,16 +1,16 @@
 use std::path::PathBuf;
 
-use jade_symphony::agent::{
+use shea_symphony::agent::{
     backend_from_config, persist_prompt_artifact, usage_limit_pause_from_events, UsageLimitPause,
 };
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::event_log::{EventLog, EventRecord};
-use jade_symphony::lane_claim::LaneClaim;
-use jade_symphony::model::TrackerIssue;
-use jade_symphony::profiles::selected_execution_profile;
-use jade_symphony::progress::run_with_progress_heartbeat;
-use jade_symphony::workflow::{AgentLane, WorkflowDefinition};
-use jade_symphony::workspace::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::event_log::{EventLog, EventRecord};
+use shea_symphony::lane_claim::LaneClaim;
+use shea_symphony::model::TrackerIssue;
+use shea_symphony::profiles::selected_execution_profile;
+use shea_symphony::progress::run_with_progress_heartbeat;
+use shea_symphony::workflow::{AgentLane, WorkflowDefinition};
+use shea_symphony::workspace::{
     apply_local_git_identity, prepare_workspace, profile_scoped_identifier, run_after_run,
     run_before_run, safe_identifier, GitIdentityApplyResult, Workspace,
 };
@@ -24,7 +24,7 @@ turn as the implementation and local-verification worker only. Do not run \
 GitHub Project reads or mutations, do not create or update pull requests, and \
 do not attempt final Project state transitions from inside this child turn. \
 Leave a concise terminal summary of changed files, verification commands, and \
-any blocker. The outer Jade Symphony CLI will commit eligible worktree changes, \
+any blocker. The outer Shea Symphony CLI will commit eligible worktree changes, \
 publish or update the PR, write durable workpad evidence, verify linked PR \
 readback, and perform the final `Agent Review` handoff.\n";
 
@@ -117,10 +117,10 @@ fn execute_issue_once_in_workspace(
         prepared.run_id = Some(claim.run.clone());
         prepared
             .env
-            .insert("JADE_SYMPHONY_RUN_ID".into(), claim.run.clone());
+            .insert("SHEA_SYMPHONY_RUN_ID".into(), claim.run.clone());
         prepared
             .env
-            .insert("JADE_SYMPHONY_CLAIM".into(), claim.render());
+            .insert("SHEA_SYMPHONY_CLAIM".into(), claim.render());
     }
     prepared.attempt = attempt;
     prepared.branch_name = current_git_branch(&workspace.path).ok().flatten();
@@ -137,7 +137,7 @@ fn execute_issue_once_in_workspace(
     let usage_limit_pause = usage_limit_pause_from_events(&events);
     run_after_run(&workspace.path, &config.hooks);
 
-    let log = EventLog::new(config.observability.logs_root.join("jade-symphony.jsonl"));
+    let log = EventLog::new(config.observability.logs_root.join("shea-symphony.jsonl"));
     log.append(&EventRecord {
         event: "prompt_artifact".into(),
         issue_id: Some(issue.id.clone()),

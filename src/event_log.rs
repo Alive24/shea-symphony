@@ -199,8 +199,8 @@ mod tests {
             profile_id: Some("codex-alpha".into()),
             instance_name: Some("Codex Alpha".into()),
             actor_role: Some("implementation_agent".into()),
-            actor_label: Some("Jade Symphony Agent".into()),
-            git_author: Some("Jade Symphony Agent <jade@example.invalid>".into()),
+            actor_label: Some("Shea Symphony Agent".into()),
+            git_author: Some("Shea Symphony Agent <shea@example.invalid>".into()),
             tracker_mutation: None,
             message: "queued".into(),
         })

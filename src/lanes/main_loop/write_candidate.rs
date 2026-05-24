@@ -1,14 +1,14 @@
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::git_handoff::{prepare_issue_worktree, ProcessHandoffCommandRunner};
-use jade_symphony::lane_claim::{LaneClaimActor, LaneClaimSource};
-use jade_symphony::model::{normalize_state, LatestStatus, TrackerIssue};
-use jade_symphony::ownership::{runtime_ownership_decision, RuntimeOwnershipDecision};
-use jade_symphony::progress::run_with_progress_heartbeat;
-use jade_symphony::runtime_state::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::git_handoff::{prepare_issue_worktree, ProcessHandoffCommandRunner};
+use shea_symphony::lane_claim::{LaneClaimActor, LaneClaimSource};
+use shea_symphony::model::{normalize_state, LatestStatus, TrackerIssue};
+use shea_symphony::ownership::{runtime_ownership_decision, RuntimeOwnershipDecision};
+use shea_symphony::progress::run_with_progress_heartbeat;
+use shea_symphony::runtime_state::{
     load_runtime_states, mark_runtime_state_updated, runtime_state_for_issue, upsert_runtime_state,
 };
-use jade_symphony::tracker::TrackerAdapter;
-use jade_symphony::workflow::WorkflowDefinition;
+use shea_symphony::tracker::TrackerAdapter;
+use shea_symphony::workflow::WorkflowDefinition;
 
 use super::dispatch::RunLoopWorkerOutcome;
 mod live_handoff;

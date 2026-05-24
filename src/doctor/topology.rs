@@ -29,7 +29,7 @@ pub(super) fn audit_parent_subissue_topology(
                 AuditSeverity::Blocker,
                 "parent_topology_missing_integration_branch",
                 "Parent issue has native subissues but no parent integration branch evidence.",
-                "Record the parent integration branch in the parent issue body or Jade Symphony workpad before subissue PRs advance.",
+                "Record the parent integration branch in the parent issue body or Shea Symphony workpad before subissue PRs advance.",
             )),
             [_] => {}
             branches => violations.push(violation(

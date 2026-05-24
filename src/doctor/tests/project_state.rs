@@ -16,7 +16,7 @@ fn reports_agent_review_missing_pr_handoff() {
 fn accepts_agent_review_with_pr_url() {
     let mut issue = issue("#57", "Agent Review");
     issue.linked_pull_requests.push(linked_pr(
-        "https://github.com/Alive24/jade-symphony/pull/57",
+        "https://github.com/Alive24/shea-symphony/pull/57",
         "OPEN",
     ));
 
@@ -28,7 +28,7 @@ fn accepts_agent_review_with_pr_url() {
 #[test]
 fn reports_agent_review_with_draft_pr() {
     let mut issue = issue("#57", "Agent Review");
-    let mut pr = linked_pr("https://github.com/Alive24/jade-symphony/pull/57", "OPEN");
+    let mut pr = linked_pr("https://github.com/Alive24/shea-symphony/pull/57", "OPEN");
     pr.is_draft = Some(true);
     issue.linked_pull_requests.push(pr);
 
@@ -54,7 +54,7 @@ fn accepts_human_review_with_workpad_review_pass_evidence() {
     let mut issue = issue("#41", "Human Review");
     issue.description = Some(
         [
-            "<!-- jade-symphony-workpad -->",
+            "<!-- shea-symphony-workpad -->",
             "## Agent Review",
             "- Decision: Independent Agent Review passed with recorded evidence; issue is ready for Human Review.",
             "- Review pass evidence: `recorded`",
@@ -89,7 +89,7 @@ fn failed_review_workpad_does_not_satisfy_human_review_evidence() {
     let mut issue = issue("#41", "Human Review");
     issue.description = Some(
         [
-            "<!-- jade-symphony-workpad -->",
+            "<!-- shea-symphony-workpad -->",
             "## Agent Review",
             "- Decision: Agent Review needs additional context; Human Review is not allowed yet.",
             "- Review did not pass; unavailable or inconclusive review must not move to Human Review.",
@@ -109,7 +109,7 @@ fn failed_review_workpad_does_not_satisfy_human_review_evidence() {
 fn reports_dirty_merging_pr() {
     let mut issue = issue("#60", "Merging");
     issue.linked_pull_requests.push(linked_pr(
-        "https://github.com/Alive24/jade-symphony/pull/60",
+        "https://github.com/Alive24/shea-symphony/pull/60",
         "OPEN",
     ));
     issue.project_fields.insert(
@@ -134,11 +134,11 @@ fn reports_merging_missing_pr_target() {
 fn reports_merging_ambiguous_pr_target() {
     let mut issue = issue("#60", "Merging");
     issue.linked_pull_requests.push(linked_pr(
-        "https://github.com/Alive24/jade-symphony/pull/60",
+        "https://github.com/Alive24/shea-symphony/pull/60",
         "OPEN",
     ));
     issue.linked_pull_requests.push(linked_pr(
-        "https://github.com/Alive24/jade-symphony/pull/61",
+        "https://github.com/Alive24/shea-symphony/pull/61",
         "OPEN",
     ));
 
@@ -152,7 +152,7 @@ fn reports_merging_ambiguous_pr_target() {
 fn accepts_merging_with_one_pr_target() {
     let mut issue = issue("#60", "Merging");
     issue.linked_pull_requests.push(linked_pr(
-        "https://github.com/Alive24/jade-symphony/pull/60",
+        "https://github.com/Alive24/shea-symphony/pull/60",
         "OPEN",
     ));
 
@@ -187,7 +187,7 @@ fn reports_closed_github_issue_without_done_project_status() {
 fn reports_in_progress_with_pr_evidence() {
     let mut issue = issue("#202", "In Progress");
     issue.linked_pull_requests.push(linked_pr(
-        "https://github.com/Alive24/jade-symphony/pull/202",
+        "https://github.com/Alive24/shea-symphony/pull/202",
         "OPEN",
     ));
 

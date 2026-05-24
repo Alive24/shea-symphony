@@ -1,3 +1,0 @@
-display_name: Jade Symphony Manual Main
-short_description: Run a supervised Codex Main Agent session for Jade Symphony implementation work.
-default_prompt: Claim and work one Jade Symphony Main Agent issue, preserve issue gates and dependencies, open or update a ready PR, and hand off only to Agent Review.

@@ -46,7 +46,7 @@ pub(super) fn audit_project_state_pre_claims(
                 AuditSeverity::Blocker,
                 "merging_missing_pr_target",
                 "Merging issue has no reliable PR target.",
-                "Record exactly one PR link in the Project field, issue closing reference, or Jade Symphony workpad before attempting to land.",
+                "Record exactly one PR link in the Project field, issue closing reference, or Shea Symphony workpad before attempting to land.",
             ));
         }
         "merging" if reliable_pr_targets(issue).len() > 1 => {

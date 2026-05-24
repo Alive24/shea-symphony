@@ -2,7 +2,7 @@
 tracker:
   kind: github_project_v2
   owner: Alive24
-  repo: jade-symphony
+  repo: shea-symphony
   project_owner: Alive24
   project_number: 1
   status_field: Status
@@ -33,9 +33,9 @@ tracker:
     assignees: []
   workpad:
     source: issue_comment
-    marker: "<!-- jade-symphony-workpad -->"
+    marker: "<!-- shea-symphony-workpad -->"
 observability:
-  logs_root: /tmp/jade-symphony-promote-fixture-logs
+  logs_root: /tmp/shea-symphony-promote-fixture-logs
 ---
 
 Fixture workflow for dry-run Issue Forge promotion coverage.

@@ -1,4 +1,4 @@
-## Jade Symphony Doctor Triage
+## Shea Symphony Doctor Triage
 
 - Generated at: `<YYYY-MM-DD HH:MM:SS GMT>`
 - Issue: #<issue> <title>

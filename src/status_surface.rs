@@ -2,7 +2,7 @@ use crate::model::{GateDecision, LatestStatus, RuntimeSnapshot};
 
 pub fn render_snapshot(snapshot: &RuntimeSnapshot) -> String {
     let mut lines = Vec::new();
-    lines.push("JADE SYMPHONY STATUS".to_string());
+    lines.push("SHEA SYMPHONY STATUS".to_string());
     lines.push(format!(
         "polling: checking={} interval_ms={} next_poll_in_ms={}",
         snapshot.polling.checking,
@@ -214,7 +214,7 @@ mod tests {
     #[test]
     fn renders_operator_readable_snapshot() {
         let rendered = render_snapshot(&RuntimeSnapshot::default());
-        assert!(rendered.contains("JADE SYMPHONY STATUS"));
+        assert!(rendered.contains("SHEA SYMPHONY STATUS"));
         assert!(rendered.contains("activity: planned=0 running=0"));
         assert!(rendered.contains("tokens: input=0"));
     }
@@ -261,7 +261,7 @@ mod tests {
                 poll_interval_ms: 5000,
             },
             sessions: vec![SessionStatusSnapshot {
-                session_id: "jade-main-1-attempt-1".into(),
+                session_id: "shea-main-1-attempt-1".into(),
                 lane: "main".into(),
                 backend: "tmux".into(),
                 run_id: None,
@@ -270,8 +270,8 @@ mod tests {
                 evidence: "Approval required: allow this command?".into(),
                 issue_identifier: Some("#1".into()),
                 issue_title: Some("Wire runtime".into()),
-                attach_command: Some("tmux attach-session -t jade-main-1-attempt-1".into()),
-                log_path: Some("/tmp/jade-main-1.log".into()),
+                attach_command: Some("tmux attach-session -t shea-main-1-attempt-1".into()),
+                log_path: Some("/tmp/shea-main-1.log".into()),
                 updated_at_ms: 10,
             }],
             skipped: vec![SkippedIssue {
@@ -292,7 +292,7 @@ mod tests {
                 action: "pr_created".into(),
                 issue_identifier: Some("#1".into()),
                 issue_title: Some("Wire runtime".into()),
-                actor_label: Some("Jade Symphony Agent".into()),
+                actor_label: Some("Shea Symphony Agent".into()),
                 workspace: Some("/tmp/ws".into()),
                 branch: Some("feature/issue-1".into()),
                 session_id: Some("session".into()),

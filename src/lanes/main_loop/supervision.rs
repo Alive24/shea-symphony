@@ -1,6 +1,6 @@
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::event_log::{EventLog, EventRecord};
-use jade_symphony::runtime_state::RuntimeState;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::event_log::{EventLog, EventRecord};
+use shea_symphony::runtime_state::RuntimeState;
 
 pub(crate) fn append_runtime_supervision_event(
     config: &RuntimeConfig,
@@ -8,7 +8,7 @@ pub(crate) fn append_runtime_supervision_event(
     event: &str,
     message: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let log = EventLog::new(config.observability.logs_root.join("jade-symphony.jsonl"));
+    let log = EventLog::new(config.observability.logs_root.join("shea-symphony.jsonl"));
     let active_issue = state.and_then(|state| state.active_issue.as_ref());
     log.append(&EventRecord {
         event: event.into(),

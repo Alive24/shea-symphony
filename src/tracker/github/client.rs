@@ -303,7 +303,7 @@ impl GithubProjectV2GhClient {
             .map(|duration| duration.as_millis())
             .unwrap_or_default();
         let body_path =
-            std::env::temp_dir().join(format!("jade-symphony-issue-body-{number}-{nonce}.md"));
+            std::env::temp_dir().join(format!("shea-symphony-issue-body-{number}-{nonce}.md"));
         fs::write(&body_path, body)
             .map_err(|error| TrackerError::IntegrationUnavailable(error.to_string()))?;
         let result = GithubCliAccess::run_status(
@@ -514,7 +514,7 @@ impl GithubProjectV2GhClient {
                 ("subjectId", issue.id),
                 (
                     "body",
-                    format!("Jade Symphony linked pull request: {pr_ref}"),
+                    format!("Shea Symphony linked pull request: {pr_ref}"),
                 ),
             ],
         )?;

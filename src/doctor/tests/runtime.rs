@@ -7,7 +7,7 @@ use super::support::{issue, linked_pr, session, with_github_issue_state};
 fn accepts_completed_main_session_for_agent_review_issue() {
     let mut issue = issue("#57", "Agent Review");
     issue.linked_pull_requests.push(linked_pr(
-        "https://github.com/Alive24/jade-symphony/pull/57",
+        "https://github.com/Alive24/shea-symphony/pull/57",
         "OPEN",
     ));
     let context = ProjectDoctorContext {
@@ -169,7 +169,7 @@ fn reports_app_server_session_attention_without_tmux_recovery_wording() {
 
     assert!(violation
         .message
-        .contains("Registered codex session `jade-main-202-attempt-1-runtime`"));
+        .contains("Registered codex session `shea-main-202-attempt-1-runtime`"));
     assert!(violation.suggestion.contains("runtime artifacts"));
     assert!(!violation.suggestion.contains("attach command"));
 }

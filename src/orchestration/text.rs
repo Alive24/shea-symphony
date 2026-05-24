@@ -24,7 +24,7 @@ mod tests {
 
     #[test]
     fn quotes_shell_display_only_when_needed() {
-        assert_eq!(shell_quote_display("/tmp/jade-file"), "/tmp/jade-file");
+        assert_eq!(shell_quote_display("/tmp/shea-file"), "/tmp/shea-file");
         assert_eq!(shell_quote_display("two words"), "'two words'");
         assert_eq!(shell_quote_display("it's"), "'it'\\''s'");
     }

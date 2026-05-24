@@ -2,7 +2,7 @@
 tracker:
   kind: memory
   owner: Alive24
-  repo: jade-symphony
+  repo: shea-symphony
   project_owner: Alive24
   project_number: 9
   status_field: Status
@@ -33,9 +33,9 @@ tracker:
     assignees: []
   workpad:
     source: issue_comment
-    marker: "<!-- jade-symphony-workpad -->"
+    marker: "<!-- shea-symphony-workpad -->"
 workspace:
-  root: /tmp/jade-symphony-merge-conflict-fixture-workspaces
+  root: /tmp/shea-symphony-merge-conflict-fixture-workspaces
 main_lane:
   backend: dry-run
   max_concurrent_agents: 1
@@ -48,7 +48,7 @@ review_lane:
   backend: fake
   gemini_command: gemini
 observability:
-  logs_root: /tmp/jade-symphony-merge-conflict-fixture-logs
+  logs_root: /tmp/shea-symphony-merge-conflict-fixture-logs
 ---
 
 Fixture workflow for controlled `DIRTY` PR merge-lane repair rehearsal.

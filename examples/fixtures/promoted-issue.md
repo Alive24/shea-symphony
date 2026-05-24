@@ -7,7 +7,7 @@
 
 ## Issue Goal
 
-Harden the Issue Forge Reflect promotion workflow in Jade Symphony CLI fixtures.
+Harden the Issue Forge Reflect promotion workflow in Shea Symphony CLI fixtures.
 
 ## Why Now
 
@@ -37,7 +37,7 @@ The Backlog seed is non-dispatchable until an operator confirms promotion and su
 
 ### Target Repository / Package
 
-- Alive24/jade-symphony
+- Alive24/shea-symphony
 
 ### Relevant Knowledge Sources
 

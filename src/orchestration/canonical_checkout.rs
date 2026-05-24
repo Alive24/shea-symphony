@@ -1,12 +1,12 @@
 use std::path::Path;
 use std::process::Command as ProcessCommand;
 
-use jade_symphony::canonical_checkout::{
+use shea_symphony::canonical_checkout::{
     canonical_checkout_refresh_status_line, canonical_checkout_status_line,
     canonical_checkout_warning_lines, inspect_canonical_checkout,
     refresh_canonical_checkout_before_write, CanonicalCheckoutRefreshMode,
 };
-use jade_symphony::config::RuntimeConfig;
+use shea_symphony::config::RuntimeConfig;
 
 use super::text::{shell_quote_display, single_line};
 use super::tracker_context::live_github_tracker;

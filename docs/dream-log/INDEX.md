@@ -1,4 +1,4 @@
-# Jade Symphony Dream Log Index
+# Shea Symphony Dream Log Index
 
 This index is the compact entrypoint for repo-owned Dream Logs. Dream reads this
 file plus the most recent five Dream run directories by default; older runs are
@@ -14,7 +14,7 @@ instructions, or a CLI invariant.
   - Themes: post-app-server dogfood second-order backlog, parent integration
     branch merge stack order, native subissue Review evidence routing, terminal
     lane claim finalization, parent-batch Human Review UAT evidence, scoped
-    Issac/Jade Dream source inventory, stale Issac tmux ADR consolidation, and
+    Issac/Shea Dream source inventory, stale Issac tmux ADR consolidation, and
     Project write resilience.
   - Created Backlog: #380, #381, #382, #383, #384, #385, #386, #387, #388,
     #389.
@@ -57,7 +57,7 @@ instructions, or a CLI invariant.
   - Created Backlog: #324.
   - Watchlist: worker host / SSH execution and workspace lifecycle boundaries.
   - Slept enough: no; next theme should compare OpenAI Symphony worker host,
-    SSH, and workspace lifecycle assumptions against Jade's local worktree and
+    SSH, and workspace lifecycle assumptions against Shea's local worktree and
     session model.
   - Gemini review: ran; duplicate risk, evidence quality, Backlog safety,
     next-theme Watchlist, and lane-authority checks passed.
@@ -87,7 +87,7 @@ instructions, or a CLI invariant.
     claim repair UX.
   - Created Backlog: #297, #298, #299.
   - Slept enough: no; this was an issue-scoped rehearsal, not a full broad
-    Dream over recent Jade Symphony history.
+    Dream over recent Shea Symphony history.
   - Gemini review: ran; duplicate/scope/lane-authority passed, evidence detail
     follow-up applied in the run/topic logs.
 

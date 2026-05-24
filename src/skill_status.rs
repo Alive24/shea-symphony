@@ -276,7 +276,7 @@ fn discover_source_suite(input: &SkillStatusInput) -> SkillSuite {
     if let Some(path) = &input.suite_path {
         candidates.push(("explicit", path.clone()));
     }
-    if let Some(path) = nonempty_env_path("JADE_SYMPHONY_SKILL_SUITE") {
+    if let Some(path) = nonempty_env_path("SHEA_SYMPHONY_SKILL_SUITE") {
         candidates.push(("env", path));
     }
     if let Some(repo_suite) = repo_suite_path(&input.workflow_path) {
@@ -304,7 +304,7 @@ fn discover_source_suite(input: &SkillStatusInput) -> SkillSuite {
             repository: None,
             expected_count: 0,
             message:
-                "No source suite was discovered; reporting installed Jade Symphony skills only."
+                "No source suite was discovered; reporting installed Shea Symphony skills only."
                     .into(),
             attempts,
         },
@@ -320,7 +320,7 @@ fn repo_suite_path(workflow_path: &Path) -> Option<PathBuf> {
     };
     let mut cursor = start.parent()?.to_path_buf();
     loop {
-        let suite_path = cursor.join("skills").join("jade-symphony").join("suite");
+        let suite_path = cursor.join("skills").join("shea-symphony").join("suite");
         if suite_path.exists() {
             return Some(suite_path);
         }
@@ -485,7 +485,7 @@ fn target_specs(input: &SkillStatusInput) -> Vec<TargetSpec> {
             label: "codex".into(),
             root: input.codex_dir.clone().unwrap_or_else(default_codex_root),
             configured: input.codex_dir.is_some()
-                || nonempty_env_path("JADE_SYMPHONY_CODEX_SKILLS_DIR").is_some()
+                || nonempty_env_path("SHEA_SYMPHONY_CODEX_SKILLS_DIR").is_some()
                 || nonempty_env_path("CODEX_HOME").is_some(),
             required: true,
         },
@@ -494,7 +494,7 @@ fn target_specs(input: &SkillStatusInput) -> Vec<TargetSpec> {
             root: input.gemini_dir.clone().unwrap_or_else(default_gemini_root),
             configured: input.gemini_dir.is_some()
                 || input.require_gemini
-                || nonempty_env_path("JADE_SYMPHONY_GEMINI_SKILLS_DIR").is_some()
+                || nonempty_env_path("SHEA_SYMPHONY_GEMINI_SKILLS_DIR").is_some()
                 || nonempty_env_path("GEMINI_HOME").is_some()
                 || default_gemini_root().exists(),
             required: input.require_gemini,
@@ -503,7 +503,7 @@ fn target_specs(input: &SkillStatusInput) -> Vec<TargetSpec> {
 }
 
 fn default_codex_root() -> PathBuf {
-    if let Some(path) = nonempty_env_path("JADE_SYMPHONY_CODEX_SKILLS_DIR") {
+    if let Some(path) = nonempty_env_path("SHEA_SYMPHONY_CODEX_SKILLS_DIR") {
         return path;
     }
     if let Some(home) = nonempty_env_path("CODEX_HOME") {
@@ -513,7 +513,7 @@ fn default_codex_root() -> PathBuf {
 }
 
 fn default_gemini_root() -> PathBuf {
-    if let Some(path) = nonempty_env_path("JADE_SYMPHONY_GEMINI_SKILLS_DIR") {
+    if let Some(path) = nonempty_env_path("SHEA_SYMPHONY_GEMINI_SKILLS_DIR") {
         return path;
     }
     if let Some(home) = nonempty_env_path("GEMINI_HOME") {
@@ -565,7 +565,7 @@ fn discover_installed_skill_names(targets: &[TargetSpec]) -> BTreeSet<String> {
         if let Ok(entries) = fs::read_dir(&target.root) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with("jade-symphony-") {
+                if name.starts_with("shea-symphony-") {
                     names.insert(name);
                 }
             }
@@ -589,7 +589,7 @@ fn read_session_skill_set(input: &SkillStatusInput) -> BTreeSet<String> {
 
 fn extract_skill_names(text: &str) -> BTreeSet<String> {
     text.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-'))
-        .filter(|token| token.starts_with("jade-symphony-"))
+        .filter(|token| token.starts_with("shea-symphony-"))
         .map(str::to_string)
         .collect()
 }
@@ -1198,29 +1198,29 @@ mod tests {
     }
 
     fn suite(root: &Path) -> PathBuf {
-        let suite_root = root.join("skills/jade-symphony");
+        let suite_root = root.join("skills/shea-symphony");
         write(
             &suite_root.join("manifest.toml"),
             r#"version = "2026.05.18"
 release_date = "2026-05-18"
-repository = "Alive24/jade-symphony"
+repository = "Alive24/shea-symphony"
 
 [[skills]]
-name = "jade-symphony-doctor"
-path = "suite/jade-symphony-doctor"
+name = "shea-symphony-doctor"
+path = "suite/shea-symphony-doctor"
 
 [[skills]]
-name = "jade-symphony-issue-forge-dream"
-path = "suite/jade-symphony-issue-forge-dream"
+name = "shea-symphony-issue-forge-dream"
+path = "suite/shea-symphony-issue-forge-dream"
 "#,
         );
         write(
-            &suite_root.join("suite/jade-symphony-doctor/SKILL.md"),
-            "---\nname: jade-symphony-doctor\nmetadata:\n  suite-version: 2026.05.18\n  workflow-path: workflows/jade-symphony.md\n  source-suite-path: skills/jade-symphony/suite\n  rendered-at: 2026-05-18\n---\n",
+            &suite_root.join("suite/shea-symphony-doctor/SKILL.md"),
+            "---\nname: shea-symphony-doctor\nmetadata:\n  suite-version: 2026.05.18\n  workflow-path: workflows/shea-symphony.md\n  source-suite-path: skills/shea-symphony/suite\n  rendered-at: 2026-05-18\n---\n",
         );
         write(
-            &suite_root.join("suite/jade-symphony-issue-forge-dream/SKILL.md"),
-            "---\nname: jade-symphony-issue-forge-dream\nmetadata:\n  suite-version: 2026.05.18\n  workflow-path: workflows/jade-symphony.md\n  source-suite-path: skills/jade-symphony/suite\n  rendered-at: 2026-05-18\n---\n",
+            &suite_root.join("suite/shea-symphony-issue-forge-dream/SKILL.md"),
+            "---\nname: shea-symphony-issue-forge-dream\nmetadata:\n  suite-version: 2026.05.18\n  workflow-path: workflows/shea-symphony.md\n  source-suite-path: skills/shea-symphony/suite\n  rendered-at: 2026-05-18\n---\n",
         );
         suite_root.join("suite")
     }
@@ -1232,7 +1232,7 @@ path = "suite/jade-symphony-issue-forge-dream"
         gemini: PathBuf,
     ) -> SkillStatusInput {
         SkillStatusInput {
-            workflow_path: repo.join("workflows/jade-symphony.md"),
+            workflow_path: repo.join("workflows/shea-symphony.md"),
             suite_path,
             codex_dir: Some(codex),
             gemini_dir: Some(gemini),
@@ -1248,12 +1248,12 @@ path = "suite/jade-symphony-issue-forge-dream"
         let repo = temp.path().join("repo");
         let explicit = temp.path().join("explicit");
         fs::create_dir_all(repo.join("workflows")).unwrap();
-        write(&repo.join("workflows/jade-symphony.md"), "");
+        write(&repo.join("workflows/shea-symphony.md"), "");
         let repo_suite = suite(&repo);
         let explicit_suite = suite(&explicit);
         write(
-            &explicit_suite.join("jade-symphony-extra/SKILL.md"),
-            "---\nname: jade-symphony-extra\nmetadata:\n  suite-version: 2026.05.18\n---\n",
+            &explicit_suite.join("shea-symphony-extra/SKILL.md"),
+            "---\nname: shea-symphony-extra\nmetadata:\n  suite-version: 2026.05.18\n---\n",
         );
         let report = build_skill_readiness_report(input(
             &repo,
@@ -1265,7 +1265,7 @@ path = "suite/jade-symphony-issue-forge-dream"
         assert!(report
             .rows
             .iter()
-            .any(|row| row.skill_name == "jade-symphony-extra"));
+            .any(|row| row.skill_name == "shea-symphony-extra"));
         assert!(!repo_suite.as_os_str().is_empty());
     }
 
@@ -1274,8 +1274,8 @@ path = "suite/jade-symphony-issue-forge-dream"
         let temp = TempDir::new().unwrap();
         let codex = temp.path().join("codex");
         write(
-            &codex.join("jade-symphony-doctor/SKILL.md"),
-            "---\nname: jade-symphony-doctor\nmetadata:\n  suite-version: 2026.05.18\n---\n",
+            &codex.join("shea-symphony-doctor/SKILL.md"),
+            "---\nname: shea-symphony-doctor\nmetadata:\n  suite-version: 2026.05.18\n---\n",
         );
         let report = build_skill_readiness_report(input(
             temp.path(),
@@ -1287,7 +1287,7 @@ path = "suite/jade-symphony-issue-forge-dream"
         assert!(report
             .rows
             .iter()
-            .any(|row| row.skill_name == "jade-symphony-doctor"));
+            .any(|row| row.skill_name == "shea-symphony-doctor"));
     }
 
     #[test]
@@ -1297,16 +1297,16 @@ path = "suite/jade-symphony-issue-forge-dream"
         let source_suite = suite(&repo);
         let codex = temp.path().join("codex");
         write(
-            &codex.join("jade-symphony-doctor/SKILL.md"),
-            &fs::read_to_string(source_suite.join("jade-symphony-doctor/SKILL.md")).unwrap(),
+            &codex.join("shea-symphony-doctor/SKILL.md"),
+            &fs::read_to_string(source_suite.join("shea-symphony-doctor/SKILL.md")).unwrap(),
         );
         let mut status_input = input(&repo, Some(source_suite), codex, temp.path().join("gemini"));
-        status_input.session_skills = vec!["jade-symphony-doctor".into()];
+        status_input.session_skills = vec!["shea-symphony-doctor".into()];
         let report = build_skill_readiness_report(status_input);
         let dream = report
             .rows
             .iter()
-            .find(|row| row.skill_name == "jade-symphony-issue-forge-dream")
+            .find(|row| row.skill_name == "shea-symphony-issue-forge-dream")
             .unwrap();
         assert_eq!(dream.current_session_status, "missing");
     }
@@ -1322,23 +1322,23 @@ path = "suite/jade-symphony-issue-forge-dream"
         fs::create_dir_all(&gemini).unwrap();
         unix_fs::symlink(
             temp.path().join("missing-target"),
-            codex.join("jade-symphony-doctor"),
+            codex.join("shea-symphony-doctor"),
         )
         .unwrap();
-        write(&gemini.join("jade-symphony-doctor"), "alias to a file");
-        fs::create_dir_all(codex.join("jade-symphony-issue-forge-dream")).unwrap();
+        write(&gemini.join("shea-symphony-doctor"), "alias to a file");
+        fs::create_dir_all(codex.join("shea-symphony-issue-forge-dream")).unwrap();
         let report = build_skill_readiness_report(input(&repo, Some(source_suite), codex, gemini));
         let doctor = report
             .rows
             .iter()
-            .find(|row| row.skill_name == "jade-symphony-doctor")
+            .find(|row| row.skill_name == "shea-symphony-doctor")
             .unwrap();
         assert_eq!(doctor.link_status, "broken_symlink");
         assert_eq!(doctor.gemini_install_status, "path_is_file");
         let dream = report
             .rows
             .iter()
-            .find(|row| row.skill_name == "jade-symphony-issue-forge-dream")
+            .find(|row| row.skill_name == "shea-symphony-issue-forge-dream")
             .unwrap();
         assert_eq!(dream.codex_install_status, "missing_skill_md");
     }
@@ -1350,8 +1350,8 @@ path = "suite/jade-symphony-issue-forge-dream"
         let source_suite = suite(&repo);
         let codex = temp.path().join("codex");
         write(
-            &codex.join("jade-symphony-doctor/SKILL.md"),
-            &fs::read_to_string(source_suite.join("jade-symphony-doctor/SKILL.md")).unwrap(),
+            &codex.join("shea-symphony-doctor/SKILL.md"),
+            &fs::read_to_string(source_suite.join("shea-symphony-doctor/SKILL.md")).unwrap(),
         );
         let report = build_skill_readiness_report(input(
             &repo,

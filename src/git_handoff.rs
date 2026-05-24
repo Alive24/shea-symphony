@@ -623,7 +623,7 @@ mod tests {
             if command.starts_with("gh pr create") {
                 return Ok(CommandOutput {
                     status: 0,
-                    stdout: "https://github.com/Alive24/jade-symphony/pull/99\n".into(),
+                    stdout: "https://github.com/Alive24/shea-symphony/pull/99\n".into(),
                     stderr: String::new(),
                 });
             }
@@ -749,7 +749,7 @@ mod tests {
         let plan = plan_issue_handoff(temp.path(), &issue(), "main").unwrap();
         let runner = FakeRunner {
             ahead_count: 1,
-            existing_pr_url: Some("https://github.com/Alive24/jade-symphony/pull/45".into()),
+            existing_pr_url: Some("https://github.com/Alive24/shea-symphony/pull/45".into()),
             existing_pr_body: "Closes #45".into(),
             ..Default::default()
         };
@@ -760,7 +760,7 @@ mod tests {
         assert!(!result.pr_created);
         assert_eq!(
             result.pr_url,
-            "https://github.com/Alive24/jade-symphony/pull/45"
+            "https://github.com/Alive24/shea-symphony/pull/45"
         );
         let commands = runner.commands.borrow().join("\n");
         assert!(commands.contains("git push -u origin"));
@@ -774,7 +774,7 @@ mod tests {
         let plan = plan_issue_handoff(temp.path(), &issue(), "main").unwrap();
         let runner = FakeRunner {
             ahead_count: 1,
-            existing_pr_url: Some("https://github.com/Alive24/jade-symphony/pull/45".into()),
+            existing_pr_url: Some("https://github.com/Alive24/shea-symphony/pull/45".into()),
             existing_pr_body: "## Summary\n\nRecovered implementation.".into(),
             ..Default::default()
         };
@@ -785,7 +785,7 @@ mod tests {
         assert!(!result.pr_created);
         assert_eq!(
             result.pr_url,
-            "https://github.com/Alive24/jade-symphony/pull/45"
+            "https://github.com/Alive24/shea-symphony/pull/45"
         );
         let commands = runner.commands.borrow().join("\n");
         assert!(commands.contains("gh pr edit"));
@@ -822,7 +822,7 @@ mod tests {
         assert!(result.pr_created);
         assert_eq!(
             result.pr_url,
-            "https://github.com/Alive24/jade-symphony/pull/99"
+            "https://github.com/Alive24/shea-symphony/pull/99"
         );
         let commands = runner.commands.borrow().join("\n");
         assert!(commands.contains("git status --porcelain"));
@@ -869,13 +869,13 @@ mod tests {
     fn marks_existing_draft_pull_request_ready() {
         let temp = tempfile::tempdir().unwrap();
         let runner = FakeRunner {
-            existing_pr_url: Some("https://github.com/Alive24/jade-symphony/pull/45".into()),
+            existing_pr_url: Some("https://github.com/Alive24/shea-symphony/pull/45".into()),
             pr_is_draft: true,
             ..Default::default()
         };
 
         let status = ensure_pull_request_ready(
-            "https://github.com/Alive24/jade-symphony/pull/45",
+            "https://github.com/Alive24/shea-symphony/pull/45",
             &runner,
             temp.path(),
         )
@@ -892,13 +892,13 @@ mod tests {
     fn leaves_ready_pull_request_unchanged() {
         let temp = tempfile::tempdir().unwrap();
         let runner = FakeRunner {
-            existing_pr_url: Some("https://github.com/Alive24/jade-symphony/pull/45".into()),
+            existing_pr_url: Some("https://github.com/Alive24/shea-symphony/pull/45".into()),
             pr_is_draft: false,
             ..Default::default()
         };
 
         let status = ensure_pull_request_ready(
-            "https://github.com/Alive24/jade-symphony/pull/45",
+            "https://github.com/Alive24/shea-symphony/pull/45",
             &runner,
             temp.path(),
         )

@@ -2,13 +2,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
-use jade_symphony::issue_workspace::{
+use shea_symphony::issue_workspace::{
     discover_issue_workspaces_from_parts, git_worktree_list, render_workspace_ensure_workpad,
     validate_workspace_adoption, IssueWorkspaceCandidate, WorkspaceMatchStrength,
 };
-use jade_symphony::model::TrackerIssue;
-use jade_symphony::session_registry::{load_session_registry, session_registry_path};
-use jade_symphony::tracker::adapter_from_config;
+use shea_symphony::model::TrackerIssue;
+use shea_symphony::session_registry::{load_session_registry, session_registry_path};
+use shea_symphony::tracker::adapter_from_config;
 
 use crate::lanes::main_loop::{pull_request_number_from_url, run_loop_handoff_plan};
 use crate::orchestration::{

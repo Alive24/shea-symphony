@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::lane_claim::{LaneClaim, LaneClaimLane};
-use jade_symphony::model::{normalize_state, TrackerIssue};
-use jade_symphony::tracker::{adapter_from_config, TrackerAdapter};
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::lane_claim::{LaneClaim, LaneClaimLane};
+use shea_symphony::model::{normalize_state, TrackerIssue};
+use shea_symphony::tracker::{adapter_from_config, TrackerAdapter};
 
 use crate::cli::ForgeStatusArg;
 use crate::commands::session::timeline_pr_summary;
@@ -304,7 +304,7 @@ fn render_forge_rework_workpad(
     generated_readbacks: &[String],
 ) -> String {
     let mut lines = vec![
-        "## Jade Symphony Rework Run".to_string(),
+        "## Shea Symphony Rework Run".to_string(),
         String::new(),
         format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", issue.identifier, issue.title),
@@ -349,7 +349,7 @@ fn render_forge_rework_workpad(
 
 fn render_forge_rework_blocked_workpad(issue: &TrackerIssue, reason: &str) -> String {
     [
-        "## Jade Symphony Rework Run".to_string(),
+        "## Shea Symphony Rework Run".to_string(),
         String::new(),
         format!("- Generated at: `{}`", current_gmt_timestamp()),
         format!("- Issue: {} {}", issue.identifier, issue.title),

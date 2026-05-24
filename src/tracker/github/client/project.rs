@@ -225,7 +225,7 @@ impl GithubProjectV2GhClient {
             .map(|duration| duration.as_millis())
             .unwrap_or_default();
         let body_path =
-            std::env::temp_dir().join(format!("jade-symphony-project-item-field-{nonce}.json"));
+            std::env::temp_dir().join(format!("shea-symphony-project-item-field-{nonce}.json"));
         let body_bytes = serde_json::to_vec(&body)
             .map_err(|error| TrackerError::Payload(format!("invalid REST update body: {error}")))?;
         fs::write(&body_path, body_bytes)

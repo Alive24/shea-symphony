@@ -5,8 +5,8 @@
     "item_id": "PVTI_review_1",
     "identifier": "#41",
     "title": "Review fixture issue",
-    "description": "## Issue Goal\n\nExercise the review runtime fixture path.\n\n## Why Now\n\nAgent Review should be runnable without live credentials in tests.\n\n## Issue Context\n\nThis issue is already in Agent Review.\n\n## Non-Negotiable Guardrails\n\n- Main implementation agent must not set Human Review.\n\n## Scope\n\n### In Scope\n\n- Review fixture only.\n\n## Canonical References\n\n### Target Repository / Package\n\n- Alive24/jade-symphony\n\n## Verification\n\n### Completion Criteria\n\n- Review loop can select this issue.",
-    "url": "https://github.com/Alive24/jade-symphony/issues/41",
+    "description": "## Issue Goal\n\nExercise the review runtime fixture path.\n\n## Why Now\n\nAgent Review should be runnable without live credentials in tests.\n\n## Issue Context\n\nThis issue is already in Agent Review.\n\n## Non-Negotiable Guardrails\n\n- Main implementation agent must not set Human Review.\n\n## Scope\n\n### In Scope\n\n- Review fixture only.\n\n## Canonical References\n\n### Target Repository / Package\n\n- Alive24/shea-symphony\n\n## Verification\n\n### Completion Criteria\n\n- Review loop can select this issue.",
+    "url": "https://github.com/Alive24/shea-symphony/issues/41",
     "state": "Agent Review",
     "labels": ["review"],
     "assignees": [],
@@ -16,7 +16,7 @@
       {
         "id": "PR_review_1",
         "number": 41,
-        "url": "https://github.com/Alive24/jade-symphony/pull/41",
+        "url": "https://github.com/Alive24/shea-symphony/pull/41",
         "state": "OPEN"
       }
     ],
@@ -34,7 +34,7 @@
     "identifier": "#42",
     "title": "Queued review fixture issue",
     "description": "## Issue Goal\n\nExercise duplicate review worker detection.",
-    "url": "https://github.com/Alive24/jade-symphony/issues/42",
+    "url": "https://github.com/Alive24/shea-symphony/issues/42",
     "state": "Agent Review",
     "labels": ["review"],
     "assignees": [],

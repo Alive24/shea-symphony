@@ -3,7 +3,7 @@ tracker:
   kind: memory
   fixture_path: fixtures/dry-run-issues.json
 workspace:
-  root: /tmp/jade-symphony-profile-workspaces
+  root: /tmp/shea-symphony-profile-workspaces
 main_lane:
   backend: dry-run
 profiles:
@@ -16,9 +16,9 @@ profiles:
       backend: dry-run
       workspace_namespace: fallback-local
       env:
-        JADE_SYMPHONY_FIXTURE_PROFILE: fallback-local
+        SHEA_SYMPHONY_FIXTURE_PROFILE: fallback-local
 observability:
-  logs_root: /tmp/jade-symphony-profile-logs
+  logs_root: /tmp/shea-symphony-profile-logs
 ---
 
 Use the issue contract and keep this fixture workflow dry-run only.

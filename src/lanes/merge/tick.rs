@@ -1,18 +1,18 @@
 use std::path::PathBuf;
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::git_handoff::ProcessHandoffCommandRunner;
-use jade_symphony::handoff::expected_merge_base_branch_for_issue;
-use jade_symphony::lane_claim::{LaneClaimActor, LaneClaimSource};
-use jade_symphony::merge_lane::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::git_handoff::ProcessHandoffCommandRunner;
+use shea_symphony::handoff::expected_merge_base_branch_for_issue;
+use shea_symphony::lane_claim::{LaneClaimActor, LaneClaimSource};
+use shea_symphony::merge_lane::{
     expected_merge_base_branch, fetch_pull_request_status_with_recheck, fixture_merge_output,
     merge_lane_decision, merge_lane_workpad, pull_request_status_from_linked,
     update_pull_request_branch, MergeLaneDecision, MergeLaneDecisionKind, PullRequestMergeStatus,
 };
-use jade_symphony::model::{normalize_state, LinkedPullRequest, TrackerIssue};
-use jade_symphony::progress::run_with_progress_heartbeat;
-use jade_symphony::tracker::adapter_from_config;
-use jade_symphony::workflow::{AgentLane, WorkflowDefinition};
+use shea_symphony::model::{normalize_state, LinkedPullRequest, TrackerIssue};
+use shea_symphony::progress::run_with_progress_heartbeat;
+use shea_symphony::tracker::adapter_from_config;
+use shea_symphony::workflow::{AgentLane, WorkflowDefinition};
 
 use crate::lanes::claim::{
     lane_claim_for_issue, pool_claim_eligibility, project_text_field, worker_identity,

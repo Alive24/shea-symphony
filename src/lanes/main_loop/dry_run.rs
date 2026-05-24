@@ -1,8 +1,8 @@
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::handoff::IssueHandoffPlan;
-use jade_symphony::model::{normalize_state, TrackerIssue};
-use jade_symphony::profiles::selected_execution_profile;
-use jade_symphony::session_registry::session_registry_path;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::handoff::IssueHandoffPlan;
+use shea_symphony::model::{normalize_state, TrackerIssue};
+use shea_symphony::profiles::selected_execution_profile;
+use shea_symphony::session_registry::session_registry_path;
 
 use crate::lanes::main_loop::main_app_server_smoke_gate;
 use crate::orchestration::shell_quote_display;

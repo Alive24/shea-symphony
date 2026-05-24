@@ -1,14 +1,14 @@
 use std::path::PathBuf;
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::doctor::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::doctor::{
     audit_project_issues, draft_pr_repair_candidates, human_review_repair_candidates,
     render_doctor_repair_workpad, render_human_review_repair_workpad, ProjectAuditReport,
 };
-use jade_symphony::git_handoff::{ensure_pull_request_ready, ProcessHandoffCommandRunner};
-use jade_symphony::model::TrackerIssue;
-use jade_symphony::tracker::{adapter_from_config, TrackerAdapter};
-use jade_symphony::workflow::WorkflowDefinition;
+use shea_symphony::git_handoff::{ensure_pull_request_ready, ProcessHandoffCommandRunner};
+use shea_symphony::model::TrackerIssue;
+use shea_symphony::tracker::{adapter_from_config, TrackerAdapter};
+use shea_symphony::workflow::WorkflowDefinition;
 
 use crate::orchestration::{
     all_mapped_tracker_states, append_tracker_mutation_audit, TrackerMutationAudit,

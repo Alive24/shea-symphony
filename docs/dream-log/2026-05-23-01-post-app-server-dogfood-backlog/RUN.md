@@ -3,28 +3,28 @@
 Date: 2026-05-23
 Run: `2026-05-23-01-post-app-server-dogfood-backlog`
 Mode: write-mode Dream
-Operator context: after #367 app-server parent reached Human Review; operator will Human Review it later and asked Dream to mine recent Issac and Jade Symphony conversations for at least 10 Backlog seeds.
+Operator context: after #367 app-server parent reached Human Review; operator will Human Review it later and asked Dream to mine recent Issac and Shea Symphony conversations for at least 10 Backlog seeds.
 
 ## Source Inventory
 
 - `git status --short --branch`
-- `cargo run -- project state workflows/jade-symphony.md`
-- `cargo run -- doctor workflows/jade-symphony.md`
-- `gh issue list --repo Alive24/jade-symphony --state open --limit 200 --json number,title,state,assignees,labels,updatedAt,url`
-- `gh issue list --repo Alive24/jade-symphony --state closed --limit 40 --json number,title,closedAt,updatedAt,url`
+- `cargo run -- project state workflows/shea-symphony.md`
+- `cargo run -- doctor workflows/shea-symphony.md`
+- `gh issue list --repo Alive24/shea-symphony --state open --limit 200 --json number,title,state,assignees,labels,updatedAt,url`
+- `gh issue list --repo Alive24/shea-symphony --state closed --limit 40 --json number,title,closedAt,updatedAt,url`
 - `cargo run -- forge create --help`
 - `docs/dream-log/INDEX.md`
 - `docs/dream-log/2026-05-19-04-final-parity-audit/RUN.md`
 - `docs/dream-log/2026-05-19-04-final-parity-audit/topic-final-parity-audit.md`
 - `project issue` live readbacks for #367, #369, #370, and #371 from the current run context.
-- `/Users/chuntengxiao/.jade-symphony/artifacts/Alive24/jade-symphony/default/logs/reviews/jobs/_369-gemini-1779472192752-1.json`
+- `/Users/chuntengxiao/.shea-symphony/artifacts/Alive24/shea-symphony/default/logs/reviews/jobs/_369-gemini-1779472192752-1.json`
 - `issac/Journal/dream-index.md`
-- `issac/ADRs/26051500-jade-symphony-tmux-supervision/README.md`
-- `issac/ADRs/26050700-jade-harness-workflow/symphony-workflow-reference.md`
-- `/Volumes/Bohemialive/CodexHome/memories/MEMORY.md` targeted searches for Jade Symphony Human Review, parent/subissue, Dream, tmux, app-server, merge-loop, and recovery themes.
-- `rollout_summaries/2026-05-19T05-51-22-eohU-jadeintel_elmore_usecase_and_dream_skill_governance.md`
-- `rollout_summaries/2026-05-22T04-46-53-Y20q-jade_symphony_merge_review_loops_and_human_review_347.md`
-- `rollout_summaries/2026-05-22T06-26-55-siEn-jade_symphony_issue_347_main_loop_parent_subissue_readback_f.md`
+- `issac/ADRs/26051500-shea-symphony-tmux-supervision/README.md`
+- `issac/ADRs/26050700-shea-harness-workflow/symphony-workflow-reference.md`
+- `/Volumes/Bohemialive/CodexHome/memories/MEMORY.md` targeted searches for Shea Symphony Human Review, parent/subissue, Dream, tmux, app-server, merge-loop, and recovery themes.
+- `rollout_summaries/2026-05-19T05-51-22-eohU-sheaintel_elmore_usecase_and_dream_skill_governance.md`
+- `rollout_summaries/2026-05-22T04-46-53-Y20q-shea_symphony_merge_review_loops_and_human_review_347.md`
+- `rollout_summaries/2026-05-22T06-26-55-siEn-shea_symphony_issue_347_main_loop_parent_subissue_readback_f.md`
 
 ## Round Summary
 
@@ -57,7 +57,7 @@ See `created-backlog.md` for mapping and verification notes.
 - Review job ledger schema normalization: not created because the current #369 ledger already includes decision outcome and target state fields.
 - Merge-loop dry-run stack hazard warning: not split because it belongs inside #380.
 - Doctor topology warning repair UX: not split because #364 and #389 should clarify relationship/write primitives first.
-- Full Issac ADR Dream pass: valuable later, but too broad for this Jade-focused Dream round.
+- Full Issac ADR Dream pass: valuable later, but too broad for this Shea-focused Dream round.
 - Dream CLI namespace: noted from prior governance discussion, but this run created the narrower #386 source-inventory seed instead.
 
 ## Doctor / Project Warnings
@@ -82,7 +82,7 @@ Reason: the run created the requested 10 Backlog seeds and duplicate-checked the
 
 ## Next Dream Theme
 
-If the operator wants another Dream round later, the highest-value next theme is a dedicated Issac/Jade architectural memory pass: reconcile old Issac ADRs, Jade Dream logs, app-server runtime history, and the intended future Dream namespace without creating lane-authority confusion.
+If the operator wants another Dream round later, the highest-value next theme is a dedicated Issac/Shea architectural memory pass: reconcile old Issac ADRs, Shea Dream logs, app-server runtime history, and the intended future Dream namespace without creating lane-authority confusion.
 
 ## Safety Notes
 

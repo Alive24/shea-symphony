@@ -24,7 +24,7 @@ pub(in crate::tracker) fn merge_workpad_body(
 }
 
 pub(in crate::tracker) fn duplicate_workpad_body(_marker: &str) -> String {
-    "Superseded Jade Symphony workpad comment. The canonical marker was removed from this duplicate."
+    "Superseded Shea Symphony workpad comment. The canonical marker was removed from this duplicate."
         .to_string()
 }
 
@@ -138,7 +138,7 @@ fn workpad_entry_key(entry: &str) -> Option<String> {
 }
 
 fn is_canonical_workpad_entry(entry: &str) -> bool {
-    workpad_h2(entry).is_some_and(|h2| matches!(h2, "## Jade Symphony Workpad" | "## Workpad"))
+    workpad_h2(entry).is_some_and(|h2| matches!(h2, "## Shea Symphony Workpad" | "## Workpad"))
 }
 
 fn workpad_h2(entry: &str) -> Option<&str> {
@@ -157,13 +157,13 @@ fn strip_workpad_marker<'a>(markdown: &'a str, marker: &str) -> &'a str {
 
 fn replace_singleton_workpad_blocks(existing: &str, incoming: &str) -> (String, String) {
     const RUNTIME_OWNERSHIP: (&str, &str, bool) = (
-        "<!-- jade-symphony-runtime-ownership -->",
-        "<!-- /jade-symphony-runtime-ownership -->",
+        "<!-- shea-symphony-runtime-ownership -->",
+        "<!-- /shea-symphony-runtime-ownership -->",
         true,
     );
     const WORKSPACE_ADOPTION: (&str, &str, bool) = (
-        "<!-- jade-symphony-workspace-adoption -->",
-        "<!-- /jade-symphony-workspace-adoption -->",
+        "<!-- shea-symphony-workspace-adoption -->",
+        "<!-- /shea-symphony-workspace-adoption -->",
         false,
     );
 
@@ -198,9 +198,9 @@ mod tests {
 
     #[test]
     fn prepends_workpad_marker_once() {
-        let marker = "<!-- jade-symphony-workpad -->";
+        let marker = "<!-- shea-symphony-workpad -->";
         let body = ensure_workpad_marker("## Workpad", marker);
-        assert!(body.starts_with("<!-- jade-symphony-workpad -->"));
+        assert!(body.starts_with("<!-- shea-symphony-workpad -->"));
         let body = ensure_workpad_marker(&body, marker);
         let body = ensure_workpad_marker(&body, marker);
         assert_eq!(body.matches(marker).count(), 1);
@@ -208,9 +208,9 @@ mod tests {
 
     #[test]
     fn merge_workpad_body_appends_without_losing_existing_sections() {
-        let marker = "<!-- jade-symphony-workpad -->";
+        let marker = "<!-- shea-symphony-workpad -->";
         let existing =
-            format!("{marker}\n## Jade Symphony Workpad\n\n### Plan\n- [ ] inspect issue");
+            format!("{marker}\n## Shea Symphony Workpad\n\n### Plan\n- [ ] inspect issue");
         let incoming = "## Agent Review\n\n### Manual Review Evidence\n````md\npass\n````";
 
         let body = merge_workpad_body(&existing, incoming, marker);
@@ -223,9 +223,9 @@ mod tests {
 
     #[test]
     fn merge_workpad_body_appends_agent_review_handoff_without_replacing_main_workpad() {
-        let marker = "<!-- jade-symphony-workpad -->";
+        let marker = "<!-- shea-symphony-workpad -->";
         let existing = format!(
-            "{marker}\n## Jade Symphony Workpad\n\n### Plan\n- [x] inspect issue\n\n### Work Log\n- implemented main work"
+            "{marker}\n## Shea Symphony Workpad\n\n### Plan\n- [x] inspect issue\n\n### Work Log\n- implemented main work"
         );
         let incoming =
             "## Agent Review Handoff\n\n### Agent Review Handoff Invariant\n- Status: `Ready`";
@@ -233,7 +233,7 @@ mod tests {
         let body = merge_workpad_body(&existing, incoming, marker);
 
         assert_eq!(body.matches(marker).count(), 1);
-        assert_eq!(body.matches("## Jade Symphony Workpad").count(), 1);
+        assert_eq!(body.matches("## Shea Symphony Workpad").count(), 1);
         assert!(body.contains("### Plan"));
         assert!(body.contains("### Work Log"));
         assert!(body.contains("- implemented main work"));
@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn merge_workpad_body_appends_distinct_review_attempts() {
-        let marker = "<!-- jade-symphony-workpad -->";
+        let marker = "<!-- shea-symphony-workpad -->";
         let existing = format!(
             "{marker}\n## Agent Review\n\n- Reviewer backend: gemini-cli\n\n### Review Attempt gemini-old\n- Review pass evidence: `recorded`"
         );
@@ -259,18 +259,18 @@ mod tests {
     }
 
     #[test]
-    fn merge_workpad_body_replaces_matching_jade_symphony_workpad_entry() {
-        let marker = "<!-- jade-symphony-workpad -->";
+    fn merge_workpad_body_replaces_matching_shea_symphony_workpad_entry() {
+        let marker = "<!-- shea-symphony-workpad -->";
         let existing = format!(
-            "{marker}\n## Jade Symphony Workpad\n\n### Context\n- old context\n\n### Plan\n- [ ] old plan\n\n---\n\n## Agent Review\n\n### Manual Review Evidence\npass"
+            "{marker}\n## Shea Symphony Workpad\n\n### Context\n- old context\n\n### Plan\n- [ ] old plan\n\n---\n\n## Agent Review\n\n### Manual Review Evidence\npass"
         );
         let incoming =
-            "## Jade Symphony Workpad\n\n### Context\n- updated context\n\n### Plan\n- [x] updated plan";
+            "## Shea Symphony Workpad\n\n### Context\n- updated context\n\n### Plan\n- [x] updated plan";
 
         let body = merge_workpad_body(&existing, incoming, marker);
 
         assert_eq!(body.matches(marker).count(), 1);
-        assert_eq!(body.matches("## Jade Symphony Workpad").count(), 1);
+        assert_eq!(body.matches("## Shea Symphony Workpad").count(), 1);
         assert!(body.contains("- updated context"));
         assert!(body.contains("- [x] updated plan"));
         assert!(!body.contains("- old context"));
@@ -280,15 +280,15 @@ mod tests {
 
     #[test]
     fn merge_workpad_body_collapses_duplicate_matching_entries() {
-        let marker = "<!-- jade-symphony-workpad -->";
+        let marker = "<!-- shea-symphony-workpad -->";
         let existing = format!(
-            "{marker}\n## Jade Symphony Workpad\n\n### Context\n- first\n\n---\n\n## Jade Symphony Workpad\n\n### Context\n- duplicate\n\n---\n\n## Agent Review\n\n### Manual Review Evidence\npass"
+            "{marker}\n## Shea Symphony Workpad\n\n### Context\n- first\n\n---\n\n## Shea Symphony Workpad\n\n### Context\n- duplicate\n\n---\n\n## Agent Review\n\n### Manual Review Evidence\npass"
         );
-        let incoming = "## Jade Symphony Workpad\n\n### Context\n- final";
+        let incoming = "## Shea Symphony Workpad\n\n### Context\n- final";
 
         let body = merge_workpad_body(&existing, incoming, marker);
 
-        assert_eq!(body.matches("## Jade Symphony Workpad").count(), 1);
+        assert_eq!(body.matches("## Shea Symphony Workpad").count(), 1);
         assert!(body.contains("- final"));
         assert!(!body.contains("- first"));
         assert!(!body.contains("- duplicate"));
@@ -297,35 +297,35 @@ mod tests {
 
     #[test]
     fn merge_workpad_body_replaces_legacy_workpad_and_stale_pr_evidence() {
-        let marker = "<!-- jade-symphony-workpad -->";
+        let marker = "<!-- shea-symphony-workpad -->";
         let existing = format!(
-            "{marker}\n## Workpad\n\n### Workspace Evidence\n- Workspace path: `/tmp/old`\n\n---\n\n## Jade Symphony Workpad\n\n### Planned Handoff\n- Live PR: `not-created`\n\n---\n\n## Agent Review\n\n### Manual Review Evidence\npass"
+            "{marker}\n## Workpad\n\n### Workspace Evidence\n- Workspace path: `/tmp/old`\n\n---\n\n## Shea Symphony Workpad\n\n### Planned Handoff\n- Live PR: `not-created`\n\n---\n\n## Agent Review\n\n### Manual Review Evidence\npass"
         );
         let incoming =
-            "## Jade Symphony Workpad\n\n### Planned Handoff\n- Live PR: `https://github.com/Alive24/jade-symphony/pull/337`";
+            "## Shea Symphony Workpad\n\n### Planned Handoff\n- Live PR: `https://github.com/Alive24/shea-symphony/pull/337`";
 
         let body = merge_workpad_body(&existing, incoming, marker);
 
-        assert_eq!(body.matches("## Jade Symphony Workpad").count(), 1);
+        assert_eq!(body.matches("## Shea Symphony Workpad").count(), 1);
         assert!(!body.contains("## Workpad"));
         assert!(!body.contains("not-created"));
-        assert!(body.contains("https://github.com/Alive24/jade-symphony/pull/337"));
+        assert!(body.contains("https://github.com/Alive24/shea-symphony/pull/337"));
         assert!(body.contains("## Agent Review"));
     }
 
     #[test]
     fn merge_workpad_body_replaces_workspace_adoption_block() {
-        let marker = "<!-- jade-symphony-workpad -->";
+        let marker = "<!-- shea-symphony-workpad -->";
         let existing = format!(
-            "{marker}\n## Jade Symphony Workpad\n\n### Context\n- keep\n\n<!-- jade-symphony-workspace-adoption -->\n### Workspace Adoption\n- Path: `/tmp/old`\n<!-- /jade-symphony-workspace-adoption -->"
+            "{marker}\n## Shea Symphony Workpad\n\n### Context\n- keep\n\n<!-- shea-symphony-workspace-adoption -->\n### Workspace Adoption\n- Path: `/tmp/old`\n<!-- /shea-symphony-workspace-adoption -->"
         );
         let incoming =
-            "<!-- jade-symphony-workspace-adoption -->\n### Workspace Adoption\n- Path: `/tmp/new`\n<!-- /jade-symphony-workspace-adoption -->";
+            "<!-- shea-symphony-workspace-adoption -->\n### Workspace Adoption\n- Path: `/tmp/new`\n<!-- /shea-symphony-workspace-adoption -->";
 
         let body = merge_workpad_body(&existing, incoming, marker);
 
         assert_eq!(
-            body.matches("<!-- jade-symphony-workspace-adoption -->")
+            body.matches("<!-- shea-symphony-workspace-adoption -->")
                 .count(),
             1
         );
@@ -336,16 +336,16 @@ mod tests {
 
     #[test]
     fn merge_workpad_body_replaces_runtime_ownership_marker() {
-        let marker = "<!-- jade-symphony-workpad -->";
+        let marker = "<!-- shea-symphony-workpad -->";
         let existing = format!(
-            "{marker}\n## Jade Symphony Workpad\n\n<!-- jade-symphony-runtime-ownership -->\n### Runtime Ownership\n- Branch: `old`\n<!-- /jade-symphony-runtime-ownership -->\n\n### Plan\n- [ ] inspect issue"
+            "{marker}\n## Shea Symphony Workpad\n\n<!-- shea-symphony-runtime-ownership -->\n### Runtime Ownership\n- Branch: `old`\n<!-- /shea-symphony-runtime-ownership -->\n\n### Plan\n- [ ] inspect issue"
         );
-        let incoming = "<!-- jade-symphony-runtime-ownership -->\n### Runtime Ownership\n- Branch: `new`\n<!-- /jade-symphony-runtime-ownership -->\n\n### Runtime Ownership Note\nupdated";
+        let incoming = "<!-- shea-symphony-runtime-ownership -->\n### Runtime Ownership\n- Branch: `new`\n<!-- /shea-symphony-runtime-ownership -->\n\n### Runtime Ownership Note\nupdated";
 
         let body = merge_workpad_body(&existing, incoming, marker);
 
         assert_eq!(
-            body.matches("<!-- jade-symphony-runtime-ownership -->")
+            body.matches("<!-- shea-symphony-runtime-ownership -->")
                 .count(),
             1
         );

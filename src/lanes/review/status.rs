@@ -1,16 +1,16 @@
 use std::path::PathBuf;
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::model::normalize_state;
-use jade_symphony::review::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::model::normalize_state;
+use shea_symphony::review::{
     classify_review_freshness, render_review_freshness_workpad, ReviewFreshnessInput,
 };
-use jade_symphony::review_status::{
+use shea_symphony::review_status::{
     load_review_status, render_review_status_human, ReviewStatusOptions,
 };
-use jade_symphony::session_registry::unix_timestamp_ms;
-use jade_symphony::tracker::adapter_from_config;
-use jade_symphony::workflow::WorkflowDefinition;
+use shea_symphony::session_registry::unix_timestamp_ms;
+use shea_symphony::tracker::adapter_from_config;
+use shea_symphony::workflow::WorkflowDefinition;
 
 use crate::orchestration::hydrate_issues_for_review_lane;
 

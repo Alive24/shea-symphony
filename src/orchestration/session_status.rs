@@ -1,6 +1,6 @@
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::model::SessionStatusSnapshot;
-use jade_symphony::session_registry::{
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::model::SessionStatusSnapshot;
+use shea_symphony::session_registry::{
     capture_tmux_pane_tail, classify_session_record, load_session_registry, read_log_tail,
     session_registry_path, unix_timestamp_ms,
 };

@@ -358,7 +358,7 @@ impl RuntimeConfig {
                 "merge_agent_command",
             )),
             session_prefix: get_string(root.get("tmux"), "session_prefix")
-                .unwrap_or_else(|| "jade".to_string()),
+                .unwrap_or_else(|| "shea".to_string()),
         };
         let review = ReviewConfig {
             backend: get_string(review_lane_config, "backend")
@@ -624,7 +624,7 @@ fn parse_assignee_filter(value: Option<&Value>) -> AssigneeFilter {
 fn parse_workpad(value: Option<&Value>) -> WorkpadConfig {
     WorkpadConfig {
         source: value_string(value, "source", "issue_comment"),
-        marker: value_string(value, "marker", "<!-- jade-symphony-workpad -->"),
+        marker: value_string(value, "marker", "<!-- shea-symphony-workpad -->"),
     }
 }
 
@@ -732,7 +732,7 @@ fn parse_identity(value: Option<&Value>) -> IdentityConfig {
         actor_role: get_string(value, "actor_role")
             .unwrap_or_else(|| "implementation_agent".to_string()),
         actor_label: get_string(value, "actor_label")
-            .unwrap_or_else(|| "Jade Symphony Agent".to_string()),
+            .unwrap_or_else(|| "Shea Symphony Agent".to_string()),
         git: parse_git_identity(get_value(value, "git")),
     }
 }
@@ -860,7 +860,7 @@ fn resolve_env_path_token(raw: &str) -> Option<PathBuf> {
         .ok()
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-        .or_else(|| (env_name == "JADE_SYMPHONY_ARTIFACT_ROOT").then(default_artifact_root))?;
+        .or_else(|| (env_name == "SHEA_SYMPHONY_ARTIFACT_ROOT").then(default_artifact_root))?;
 
     let base = expand_tilde(base);
     if suffix.is_empty() {
@@ -886,12 +886,12 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 fn default_artifact_root() -> PathBuf {
-    env::var_os("JADE_SYMPHONY_ARTIFACT_ROOT")
+    env::var_os("SHEA_SYMPHONY_ARTIFACT_ROOT")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .map(expand_tilde)
-        .or_else(|| home_dir().map(|home| home.join(".jade-symphony").join("artifacts")))
-        .unwrap_or_else(|| env::temp_dir().join("jade-symphony-artifacts"))
+        .or_else(|| home_dir().map(|home| home.join(".shea-symphony").join("artifacts")))
+        .unwrap_or_else(|| env::temp_dir().join("shea-symphony-artifacts"))
 }
 
 fn default_codex_approval_policy() -> Value {
@@ -931,7 +931,7 @@ mod tests {
     fn applies_github_defaults_without_leaking_into_orchestrator() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_number: 1\n---\nPrompt",
         )
         .unwrap();
         let config =
@@ -941,7 +941,7 @@ mod tests {
         assert_eq!(config.tracker.status_field, "Status");
         assert_eq!(
             config.tracker.workpad.marker,
-            "<!-- jade-symphony-workpad -->"
+            "<!-- shea-symphony-workpad -->"
         );
         assert_eq!(config.tracker.project_owner_type, None);
         assert!(config.validate().is_ok());
@@ -982,7 +982,7 @@ mod tests {
     fn accepts_explicit_github_project_owner_type() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_owner_type: user\n  project_number: 1\n---\nPrompt",
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_owner_type: user\n  project_number: 1\n---\nPrompt",
         )
         .unwrap();
         let config =
@@ -996,7 +996,7 @@ mod tests {
     fn rejects_unknown_github_project_owner_type() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: jade-symphony\n  project_owner: Alive24\n  project_owner_type: team\n  project_number: 1\n---\nPrompt",
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_owner_type: team\n  project_number: 1\n---\nPrompt",
         )
         .unwrap();
         let config =
@@ -1036,7 +1036,7 @@ mod tests {
     fn parses_tmux_backend_config() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\ntracker:\n  kind: memory\nmain_lane:\n  backend: tmux\ntmux:\n  command: /opt/homebrew/bin/tmux\n  agent_command: codex\n  review_agent_command: gemini\n  merge_agent_command: codex\n  session_prefix: jade-local\n---\nPrompt",
+            "---\ntracker:\n  kind: memory\nmain_lane:\n  backend: tmux\ntmux:\n  command: /opt/homebrew/bin/tmux\n  agent_command: codex\n  review_agent_command: gemini\n  merge_agent_command: codex\n  session_prefix: shea-local\n---\nPrompt",
         )
         .unwrap();
         let config =
@@ -1048,7 +1048,7 @@ mod tests {
         assert_eq!(config.tmux.main_agent_command, None);
         assert_eq!(config.tmux.review_agent_command.as_deref(), Some("gemini"));
         assert_eq!(config.tmux.merge_agent_command.as_deref(), Some("codex"));
-        assert_eq!(config.tmux.session_prefix, "jade-local");
+        assert_eq!(config.tmux.session_prefix, "shea-local");
         assert!(config.validate().is_ok());
     }
 
@@ -1098,46 +1098,46 @@ mod tests {
 
     #[test]
     fn expands_environment_path_prefixes_with_suffixes() {
-        let previous = std::env::var_os("JADE_TEST_ARTIFACT_ROOT");
-        std::env::set_var("JADE_TEST_ARTIFACT_ROOT", "/tmp/jade-artifacts");
+        let previous = std::env::var_os("SHEA_TEST_ARTIFACT_ROOT");
+        std::env::set_var("SHEA_TEST_ARTIFACT_ROOT", "/tmp/shea-artifacts");
         let workflow = WorkflowDefinition::parse(
             "/tmp/config/WORKFLOW.md",
-            "---\nartifacts:\n  root: $JADE_TEST_ARTIFACT_ROOT\nworkspace:\n  root: $JADE_TEST_ARTIFACT_ROOT/worktrees\nobservability:\n  logs_root: $JADE_TEST_ARTIFACT_ROOT/logs\n---\nPrompt",
+            "---\nartifacts:\n  root: $SHEA_TEST_ARTIFACT_ROOT\nworkspace:\n  root: $SHEA_TEST_ARTIFACT_ROOT/worktrees\nobservability:\n  logs_root: $SHEA_TEST_ARTIFACT_ROOT/logs\n---\nPrompt",
         )
         .unwrap();
         let config =
             RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/config/WORKFLOW.md")).unwrap();
         match previous {
-            Some(value) => std::env::set_var("JADE_TEST_ARTIFACT_ROOT", value),
-            None => std::env::remove_var("JADE_TEST_ARTIFACT_ROOT"),
+            Some(value) => std::env::set_var("SHEA_TEST_ARTIFACT_ROOT", value),
+            None => std::env::remove_var("SHEA_TEST_ARTIFACT_ROOT"),
         }
 
-        assert_eq!(config.artifacts.root, PathBuf::from("/tmp/jade-artifacts"));
+        assert_eq!(config.artifacts.root, PathBuf::from("/tmp/shea-artifacts"));
         assert_eq!(
             config.workspace.root,
-            PathBuf::from("/tmp/jade-artifacts/worktrees")
+            PathBuf::from("/tmp/shea-artifacts/worktrees")
         );
         assert_eq!(
             config.observability.logs_root,
-            PathBuf::from("/tmp/jade-artifacts/logs")
+            PathBuf::from("/tmp/shea-artifacts/logs")
         );
     }
 
     #[test]
-    fn jade_artifact_env_token_falls_back_to_default_root() {
-        let previous = std::env::var_os("JADE_SYMPHONY_ARTIFACT_ROOT");
-        std::env::remove_var("JADE_SYMPHONY_ARTIFACT_ROOT");
+    fn shea_artifact_env_token_falls_back_to_default_root() {
+        let previous = std::env::var_os("SHEA_SYMPHONY_ARTIFACT_ROOT");
+        std::env::remove_var("SHEA_SYMPHONY_ARTIFACT_ROOT");
         let workflow = WorkflowDefinition::parse(
             "/tmp/config/WORKFLOW.md",
-            "---\nworkspace:\n  root: $JADE_SYMPHONY_ARTIFACT_ROOT/worktrees\n---\nPrompt",
+            "---\nworkspace:\n  root: $SHEA_SYMPHONY_ARTIFACT_ROOT/worktrees\n---\nPrompt",
         )
         .unwrap();
         let config =
             RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/config/WORKFLOW.md")).unwrap();
         let expected = default_artifact_root().join("worktrees");
         match previous {
-            Some(value) => std::env::set_var("JADE_SYMPHONY_ARTIFACT_ROOT", value),
-            None => std::env::remove_var("JADE_SYMPHONY_ARTIFACT_ROOT"),
+            Some(value) => std::env::set_var("SHEA_SYMPHONY_ARTIFACT_ROOT", value),
+            None => std::env::remove_var("SHEA_SYMPHONY_ARTIFACT_ROOT"),
         }
 
         assert_eq!(config.workspace.root, expected);
@@ -1147,7 +1147,7 @@ mod tests {
     fn parses_actor_and_git_identity_config() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\nidentity:\n  actor_role: review_agent\n  actor_label: Gemini Review Runner\n  git:\n    name: Jade Symphony Review Bot\n    email: jade-review@example.invalid\n    signing_key: ABC123\n    extra:\n      jade.actorRole: review_agent\n---\nPrompt",
+            "---\nidentity:\n  actor_role: review_agent\n  actor_label: Gemini Review Runner\n  git:\n    name: Shea Symphony Review Bot\n    email: shea-review@example.invalid\n    signing_key: ABC123\n    extra:\n      shea.actorRole: review_agent\n---\nPrompt",
         )
         .unwrap();
         let config =
@@ -1157,14 +1157,14 @@ mod tests {
         assert_eq!(config.identity.actor_label, "Gemini Review Runner");
         assert_eq!(
             config.identity.git.author().as_deref(),
-            Some("Jade Symphony Review Bot <jade-review@example.invalid>")
+            Some("Shea Symphony Review Bot <shea-review@example.invalid>")
         );
         assert_eq!(
             config
                 .identity
                 .git
                 .extra
-                .get("jade.actorRole")
+                .get("shea.actorRole")
                 .map(String::as_str),
             Some("review_agent")
         );
@@ -1172,15 +1172,15 @@ mod tests {
 
     #[test]
     fn review_gemini_command_can_use_environment_token() {
-        std::env::set_var("JADE_TEST_GEMINI_COMMAND", "/opt/homebrew/bin/gemini-test");
+        std::env::set_var("SHEA_TEST_GEMINI_COMMAND", "/opt/homebrew/bin/gemini-test");
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\nreview_lane:\n  backend: gemini-cli\n  gemini_command: $JADE_TEST_GEMINI_COMMAND\n  gemini_model: gemini-3.1-pro-preview\n  gemini_allowed_tools:\n    - run_shell_command\n---\nPrompt",
+            "---\nreview_lane:\n  backend: gemini-cli\n  gemini_command: $SHEA_TEST_GEMINI_COMMAND\n  gemini_model: gemini-3.1-pro-preview\n  gemini_allowed_tools:\n    - run_shell_command\n---\nPrompt",
         )
         .unwrap();
         let config =
             RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
-        std::env::remove_var("JADE_TEST_GEMINI_COMMAND");
+        std::env::remove_var("SHEA_TEST_GEMINI_COMMAND");
 
         assert_eq!(
             config.review.gemini_command,
@@ -1200,7 +1200,7 @@ mod tests {
     fn linear_defaults_endpoint_and_allows_fixture_without_token() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\ntracker:\n  kind: linear\n  project_slug: jade-symphony\n  fixture_path: issues.json\n---\nPrompt",
+            "---\ntracker:\n  kind: linear\n  project_slug: shea-symphony\n  fixture_path: issues.json\n---\nPrompt",
         )
         .unwrap();
         let config =
@@ -1218,7 +1218,7 @@ mod tests {
     fn parses_execution_profiles_from_workflow_config() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/config/WORKFLOW.md",
-            "---\nprofiles:\n  default: codex-alpha\n  cockpit_tools:\n    codex_instances_path: fixtures/cockpit-tools-codex-instances.json\n  entries:\n    - id: fallback\n      instance_name: Fallback Worker\n      backend: dry-run\n      workspace_namespace: fallback-worker\n      user_data_dir: ./profiles/fallback\n      env:\n        JADE_TEST_PROFILE: fallback\n---\nPrompt",
+            "---\nprofiles:\n  default: codex-alpha\n  cockpit_tools:\n    codex_instances_path: fixtures/cockpit-tools-codex-instances.json\n  entries:\n    - id: fallback\n      instance_name: Fallback Worker\n      backend: dry-run\n      workspace_namespace: fallback-worker\n      user_data_dir: ./profiles/fallback\n      env:\n        SHEA_TEST_PROFILE: fallback\n---\nPrompt",
         )
         .unwrap();
         let config =
@@ -1237,7 +1237,7 @@ mod tests {
         );
         assert_eq!(config.profiles.entries.len(), 1);
         assert_eq!(
-            config.profiles.entries[0].env.get("JADE_TEST_PROFILE"),
+            config.profiles.entries[0].env.get("SHEA_TEST_PROFILE"),
             Some(&"fallback".into())
         );
         assert_eq!(

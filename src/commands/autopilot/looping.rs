@@ -6,11 +6,11 @@ use std::sync::{
 use std::thread;
 use std::time::Duration;
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::model::PollingSnapshot;
-use jade_symphony::orchestrator::Orchestrator;
-use jade_symphony::workflow::WorkflowDefinition;
 use serde::Serialize;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::model::PollingSnapshot;
+use shea_symphony::orchestrator::Orchestrator;
+use shea_symphony::workflow::WorkflowDefinition;
 
 use crate::cli::DisplayMode;
 use crate::lanes::main_loop::{compact_evidence, run_loop, RunLoopOptions};

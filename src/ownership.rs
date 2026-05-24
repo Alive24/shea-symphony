@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-const OWNERSHIP_MARKER_START: &str = "<!-- jade-symphony-runtime-ownership -->";
-const OWNERSHIP_MARKER_END: &str = "<!-- /jade-symphony-runtime-ownership -->";
+const OWNERSHIP_MARKER_START: &str = "<!-- shea-symphony-runtime-ownership -->";
+const OWNERSHIP_MARKER_END: &str = "<!-- /shea-symphony-runtime-ownership -->";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeOwnershipMarker {
@@ -161,7 +161,7 @@ mod tests {
         RuntimeOwnershipMarker {
             issue_ref: "#99".into(),
             actor_role: "implementation_agent".into(),
-            actor_label: "Jade Symphony Agent".into(),
+            actor_label: "Shea Symphony Agent".into(),
             profile_id: profile.map(str::to_string),
             instance_name: profile.map(|value| format!("{value} instance")),
             workspace_key: "codex-alpha-_99".into(),

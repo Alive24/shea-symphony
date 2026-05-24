@@ -314,7 +314,7 @@ fn header(snapshot: &AutopilotDashboardSnapshot) -> Paragraph<'_> {
     Paragraph::new(vec![
         Line::from(vec![
             Span::styled(
-                "JADE SYMPHONY AUTOPILOT",
+                "SHEA SYMPHONY AUTOPILOT",
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
@@ -495,13 +495,13 @@ mod tests {
         AutopilotLaneActivity, AutopilotLoopCounts, AutopilotLoopSettings,
         AutopilotLoopStatusSnapshot,
     };
-    use jade_symphony::model::PollingSnapshot;
+    use shea_symphony::model::PollingSnapshot;
 
     #[test]
     fn autopilot_tui_status_surfaces_lanes_queues_and_retries() {
         let status = AutopilotLoopStatusSnapshot {
             schema_version: 1,
-            workflow_path: "workflows/jade-symphony.md".into(),
+            workflow_path: "workflows/shea-symphony.md".into(),
             iteration: 2,
             mode: "dry-run".into(),
             phase: "running".into(),
@@ -551,7 +551,7 @@ mod tests {
 
         let rendered = render_autopilot_loop_status_tui(&status);
 
-        assert!(rendered.contains("JADE SYMPHONY AUTOPILOT"));
+        assert!(rendered.contains("SHEA SYMPHONY AUTOPILOT"));
         assert!(rendered.contains("MAIN"));
         assert!(rendered.contains("REVIEW"));
         assert!(rendered.contains("MERGE"));

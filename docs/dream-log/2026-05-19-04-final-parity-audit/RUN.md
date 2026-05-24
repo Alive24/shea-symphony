@@ -8,15 +8,15 @@ Operator context: final source-window audit after OpenAI Symphony parity rounds
 ## Source Inventory
 
 - `git status --short --branch`
-- `cargo run -- project state workflows/jade-symphony.md`
-- `cargo run -- project issue workflows/jade-symphony.md '#326' --json`
-- `cargo run -- project issue workflows/jade-symphony.md '#327' --json`
-- `gh issue list --repo Alive24/jade-symphony --state open --search "Liquid OR prompt renderer OR prompt rendering OR GitHub Project v2 adapter OR Linear live adapter OR runtime state OR resume wiring OR status snapshot OR operator runtime status" --json number,title,url,state --limit 100`
-- `gh issue list --repo Alive24/jade-symphony --state open --search "\"Prompt rendering\" OR \"Liquid\" OR \"prompt-template\"" --json number,title,url,state --limit 50`
-- `gh issue list --repo Alive24/jade-symphony --state open --search "\"runtime state\" OR \"resume\" OR \"RuntimeSnapshot\" OR \"status surface\"" --json number,title,url,state --limit 80`
-- `gh issue list --repo Alive24/jade-symphony --state open --search "\"GitHub Project v2\" \"adapter\" OR \"Linear\" \"adapter\" OR \"live smoke\" OR \"GraphQL client\"" --json number,title,url,state --limit 80`
-- `gh issue view 313 --repo Alive24/jade-symphony --json number,title,state,body,url`
-- `gh issue view 308 --repo Alive24/jade-symphony --json number,title,state,body,url`
+- `cargo run -- project state workflows/shea-symphony.md`
+- `cargo run -- project issue workflows/shea-symphony.md '#326' --json`
+- `cargo run -- project issue workflows/shea-symphony.md '#327' --json`
+- `gh issue list --repo Alive24/shea-symphony --state open --search "Liquid OR prompt renderer OR prompt rendering OR GitHub Project v2 adapter OR Linear live adapter OR runtime state OR resume wiring OR status snapshot OR operator runtime status" --json number,title,url,state --limit 100`
+- `gh issue list --repo Alive24/shea-symphony --state open --search "\"Prompt rendering\" OR \"Liquid\" OR \"prompt-template\"" --json number,title,url,state --limit 50`
+- `gh issue list --repo Alive24/shea-symphony --state open --search "\"runtime state\" OR \"resume\" OR \"RuntimeSnapshot\" OR \"status surface\"" --json number,title,url,state --limit 80`
+- `gh issue list --repo Alive24/shea-symphony --state open --search "\"GitHub Project v2\" \"adapter\" OR \"Linear\" \"adapter\" OR \"live smoke\" OR \"GraphQL client\"" --json number,title,url,state --limit 80`
+- `gh issue view 313 --repo Alive24/shea-symphony --json number,title,state,body,url`
+- `gh issue view 308 --repo Alive24/shea-symphony --json number,title,state,body,url`
 - `docs/bootstrap/references/openai-symphony/SPEC.md`
 - `docs/bootstrap/references/openai-symphony/elixir/lib/symphony_elixir/orchestrator.ex`
 - `docs/implementation_notes.md`
@@ -47,10 +47,10 @@ runtime/app-server seeds.
 ## Watchlist / Not Created
 
 - GitHub Project v2 live adapter: not created because live Project reads/writes
-  are now exercised through Jade Symphony CLI and current dogfood gaps are more
+  are now exercised through Shea Symphony CLI and current dogfood gaps are more
   about PR linking/autolink and `gh api graphql` implementation details than a
   clean new Backlog seed.
-- Linear live adapter smoke tests: not created because Jade Symphony's current
+- Linear live adapter smoke tests: not created because Shea Symphony's current
   operator authority is GitHub Project v2; Linear-specific smoke coverage is
   less urgent than tracker-scoped dynamic tool design (#322).
 - Operator runtime status surface: not created because #313 covers review-loop
@@ -89,4 +89,4 @@ seeds to create safely now.
 
 Dream-created issues #326 and #327 stayed in `Backlog`. They were not promoted,
 claimed, or treated as executable lane work. Project state and issue creation
-were verified through the Jade Symphony CLI.
+were verified through the Shea Symphony CLI.

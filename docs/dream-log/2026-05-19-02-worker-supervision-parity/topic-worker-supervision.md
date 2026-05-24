@@ -4,7 +4,7 @@
 
 OpenAI Symphony distinguishes backend-specific failures from the general
 orchestrator responsibility to supervise running workers, reconcile tracker
-state, and schedule retries. Jade has several first slices, but the ownership
+state, and schedule retries. Shea has several first slices, but the ownership
 boundary is still spread across bounded loops, debug output, retry metadata, and
 session registry evidence.
 
@@ -20,7 +20,7 @@ session registry evidence.
   covers retry backoff rows and stalled-worker restart behavior.
 - `docs/implementation_notes.md`: marks retry timers, stall detection, and
   worker supervision as Partial.
-- `docs/dogfood-readiness.md`: says Jade lacks long-running worker supervision,
+- `docs/dogfood-readiness.md`: says Shea lacks long-running worker supervision,
   automated stall restart, full multi-worker runtime resume reconciliation, and
   persistent background review worker supervision.
 

@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::workflow::WorkflowDefinition;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::workflow::WorkflowDefinition;
 
 pub(crate) const DEFAULT_RUN_LOOP_BASE_BRANCH: &str = "main";
 

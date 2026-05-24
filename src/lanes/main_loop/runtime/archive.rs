@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::model::TrackerIssue;
-use jade_symphony::runtime_state::{runtime_state_path, RuntimeState};
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::model::TrackerIssue;
+use shea_symphony::runtime_state::{runtime_state_path, RuntimeState};
 
 use crate::orchestration::current_time_ms;
 

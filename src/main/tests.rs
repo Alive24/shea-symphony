@@ -1,5 +1,5 @@
 use super::*;
-use jade_symphony::tracker::MemoryTracker;
+use shea_symphony::tracker::MemoryTracker;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -80,47 +80,47 @@ use super::orchestration::{
     close_issue_with_recovery, current_git_branch, merge_pull_request_with_recovery, recovery_key,
     set_state_with_recovery, TrackerMutationAudit, TrackerMutationOutcome,
 };
-use jade_symphony::agent::UsageLimitPause;
-use jade_symphony::config::RuntimeConfig;
-use jade_symphony::doctor::ProjectAuditViolation;
-use jade_symphony::doctor::{AuditSeverity, ProjectAuditReport};
-use jade_symphony::event_log::EventLog;
-use jade_symphony::git_handoff::{CommandOutput, HandoffCommandRunner};
-use jade_symphony::git_handoff::{
+use shea_symphony::agent::UsageLimitPause;
+use shea_symphony::config::RuntimeConfig;
+use shea_symphony::doctor::ProjectAuditViolation;
+use shea_symphony::doctor::{AuditSeverity, ProjectAuditReport};
+use shea_symphony::event_log::EventLog;
+use shea_symphony::git_handoff::{CommandOutput, HandoffCommandRunner};
+use shea_symphony::git_handoff::{
     LiveWorktreeResult, PullRequestPublication, PullRequestReadyStatus,
 };
-use jade_symphony::handoff::evaluate_agent_review_handoff;
-use jade_symphony::handoff::{plan_issue_handoff_for_profile, HandoffError, IssueHandoffPlan};
-use jade_symphony::lane_claim::{
+use shea_symphony::handoff::evaluate_agent_review_handoff;
+use shea_symphony::handoff::{plan_issue_handoff_for_profile, HandoffError, IssueHandoffPlan};
+use shea_symphony::lane_claim::{
     LaneClaim, LaneClaimActor, LaneClaimLane, LaneClaimSource, LaneClaimState,
 };
-use jade_symphony::model::normalize_state;
-use jade_symphony::model::SessionStatusSnapshot;
-use jade_symphony::model::TrackerIssue;
-use jade_symphony::orchestrator::Orchestrator;
-use jade_symphony::ownership::render_runtime_ownership_marker;
-use jade_symphony::ownership::{runtime_ownership_decision, RuntimeOwnershipDecision};
-use jade_symphony::review::FakeReviewOutcome;
-use jade_symphony::review::{
+use shea_symphony::model::normalize_state;
+use shea_symphony::model::SessionStatusSnapshot;
+use shea_symphony::model::TrackerIssue;
+use shea_symphony::orchestrator::Orchestrator;
+use shea_symphony::ownership::render_runtime_ownership_marker;
+use shea_symphony::ownership::{runtime_ownership_decision, RuntimeOwnershipDecision};
+use shea_symphony::review::FakeReviewOutcome;
+use shea_symphony::review::{
     ReviewGateDecision, ReviewJob, ReviewJobState, ReviewOutcome, ReviewReworkClass,
     ReviewStaleReason,
 };
-use jade_symphony::rework::ReworkDiagnostic;
-use jade_symphony::runtime_state::{
+use shea_symphony::rework::ReworkDiagnostic;
+use shea_symphony::runtime_state::{
     load_runtime_states, record_runtime_retry, runtime_state_for_issue, upsert_runtime_state,
 };
-use jade_symphony::runtime_state::{RuntimeIssueState, RuntimeState, RuntimeTransition};
-use jade_symphony::session_registry::AgentSessionRecord;
-use jade_symphony::session_registry::{load_session_registry, save_session_record};
-use jade_symphony::session_registry::{
+use shea_symphony::runtime_state::{RuntimeIssueState, RuntimeState, RuntimeTransition};
+use shea_symphony::session_registry::AgentSessionRecord;
+use shea_symphony::session_registry::{load_session_registry, save_session_record};
+use shea_symphony::session_registry::{
     save_session_registry, session_registry_path, SessionStatus,
 };
-use jade_symphony::skill_status::SkillStatusInput;
-use jade_symphony::tracker::FollowUpIssueInput;
-use jade_symphony::tracker::ProjectFieldAssignment;
-use jade_symphony::tracker::TrackerAdapter;
-use jade_symphony::workflow::WorkflowDefinition;
-use jade_symphony::workspace::GitIdentityApplyResult;
+use shea_symphony::skill_status::SkillStatusInput;
+use shea_symphony::tracker::FollowUpIssueInput;
+use shea_symphony::tracker::ProjectFieldAssignment;
+use shea_symphony::tracker::TrackerAdapter;
+use shea_symphony::workflow::WorkflowDefinition;
+use shea_symphony::workspace::GitIdentityApplyResult;
 
 #[path = "tests/autopilot.rs"]
 mod autopilot;
@@ -181,8 +181,8 @@ fn canonical_checkout_report_blocks_main_behind_origin_main() {
         temp.path(),
         &["clone", remote.to_str().unwrap(), other.to_str().unwrap()],
     );
-    git_ok(&other, &["config", "user.email", "jade@example.invalid"]);
-    git_ok(&other, &["config", "user.name", "Jade Symphony"]);
+    git_ok(&other, &["config", "user.email", "shea@example.invalid"]);
+    git_ok(&other, &["config", "user.name", "Shea Symphony"]);
     std::fs::write(other.join("CHANGELOG.md"), "change\n").unwrap();
     git_ok(&other, &["add", "CHANGELOG.md"]);
     git_ok(&other, &["commit", "-m", "advance main"]);
@@ -203,7 +203,7 @@ fn tracker_mutation_audit_records_logical_actor_identity() {
     config.artifacts.root = temp.path().join("artifacts");
     config.observability.logs_root = temp.path().join("logs");
     config.identity.actor_role = "merge_agent".into();
-    config.identity.actor_label = "Jade Symphony Merge Worker".into();
+    config.identity.actor_label = "Shea Symphony Merge Worker".into();
 
     append_tracker_mutation_audit(
         &config,
@@ -211,14 +211,14 @@ fn tracker_mutation_audit_records_logical_actor_identity() {
             command: "merge once",
             mutation_type: "state_change",
             issue_ref: Some("#7"),
-            target: Some("https://github.com/Alive24/jade-symphony/pull/7".into()),
+            target: Some("https://github.com/Alive24/shea-symphony/pull/7".into()),
             from_state: Some("Merging".into()),
             to_state: Some("Done".into()),
             reason: "merge completed",
         },
     );
 
-    let records = EventLog::new(config.observability.logs_root.join("jade-symphony.jsonl"))
+    let records = EventLog::new(config.observability.logs_root.join("shea-symphony.jsonl"))
         .read_records()
         .unwrap();
     let record = records.first().expect("expected audit record");
@@ -226,7 +226,7 @@ fn tracker_mutation_audit_records_logical_actor_identity() {
     assert_eq!(record.actor_role.as_deref(), Some("merge_agent"));
     assert_eq!(
         record.actor_label.as_deref(),
-        Some("Jade Symphony Merge Worker")
+        Some("Shea Symphony Merge Worker")
     );
     assert_eq!(
         record
@@ -313,7 +313,7 @@ fn execute_issue_stores_rendered_prompt_outside_workspace() {
 
     assert!(!result
         .workspace_path
-        .join("JADE_SYMPHONY_PROMPT.md")
+        .join("SHEA_SYMPHONY_PROMPT.md")
         .exists());
     let prompt_path = result
         .prompt_artifact_path
@@ -328,7 +328,7 @@ fn execute_issue_stores_rendered_prompt_outside_workspace() {
         "Prompt for #29"
     );
 
-    let records = EventLog::new(logs_root.join("jade-symphony.jsonl"))
+    let records = EventLog::new(logs_root.join("shea-symphony.jsonl"))
         .read_records()
         .unwrap();
     assert!(records.iter().any(|record| {
@@ -340,7 +340,7 @@ fn execute_issue_stores_rendered_prompt_outside_workspace() {
 #[test]
 fn temporary_workflow_paths_emit_operator_warning() {
     let warning =
-        temporary_workflow_warning(Path::new("/private/tmp/jade-github-project-workflow.md"))
+        temporary_workflow_warning(Path::new("/private/tmp/shea-github-project-workflow.md"))
             .expect("expected temporary workflow warning");
 
     assert!(warning.contains("workflow_warning=temporary_path"));
@@ -367,7 +367,7 @@ fn recoverable_lane_claim_write_recovers_after_transient_failure() {
         LaneClaimSource::Loop,
         1_779_100_000_000,
     )
-    .with_worker("Jade Symphony Agent");
+    .with_worker("Shea Symphony Agent");
     let claim_value = claim.render();
 
     write_lane_claim_field(&config, &adapter, &issue, WorkerLane::Main, &claim, true).unwrap();
@@ -396,7 +396,7 @@ fn recoverable_timeline_comment_recovers_and_skips_duplicate_marker() {
         .borrow_mut()
         .insert(issue.identifier.clone(), issue.clone());
     let key = recovery_key("merge-evidence", &issue.identifier, "run-1|pr-351");
-    let workpad = "## Jade Symphony Merge Run\n\n- Result: `merged_or_done`";
+    let workpad = "## Shea Symphony Merge Run\n\n- Result: `merged_or_done`";
 
     let first = add_timeline_comment_with_recovery(
         &adapter,
@@ -489,7 +489,7 @@ fn recoverable_pr_merge_uses_readback_when_command_fails_after_merge() {
     let runner = MergeRecoveryRunner::new();
 
     let (output, outcome) = merge_pull_request_with_recovery(
-        "https://github.com/Alive24/jade-symphony/pull/351",
+        "https://github.com/Alive24/shea-symphony/pull/351",
         &runner,
         Path::new("."),
     )
@@ -682,8 +682,8 @@ fn render_state_summary_handles_empty_issue_list() {
 
 #[test]
 fn renders_plan_snapshot_as_json_when_requested() {
-    let snapshot = jade_symphony::model::RuntimeSnapshot {
-        event_log_path: Some("/tmp/jade-symphony.jsonl".into()),
+    let snapshot = shea_symphony::model::RuntimeSnapshot {
+        event_log_path: Some("/tmp/shea-symphony.jsonl".into()),
         integration_gaps: vec!["gap".into()],
         ..Default::default()
     };
@@ -695,7 +695,7 @@ fn renders_plan_snapshot_as_json_when_requested() {
         value
             .get("event_log_path")
             .and_then(serde_json::Value::as_str),
-        Some("/tmp/jade-symphony.jsonl")
+        Some("/tmp/shea-symphony.jsonl")
     );
     assert_eq!(
         value

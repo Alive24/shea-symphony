@@ -10,12 +10,12 @@ fn parses_grouped_autopilot_plan_json_command() {
     let Command::AutopilotPlan {
         workflow_path,
         json,
-    } = parse(&["autopilot", "plan", "workflows/jade-symphony.md", "--json"])
+    } = parse(&["autopilot", "plan", "workflows/shea-symphony.md", "--json"])
     else {
         panic!("expected autopilot plan command");
     };
 
-    assert_eq!(workflow_path, PathBuf::from("workflows/jade-symphony.md"));
+    assert_eq!(workflow_path, PathBuf::from("workflows/shea-symphony.md"));
     assert!(json);
 }
 
@@ -24,7 +24,7 @@ fn parses_grouped_autopilot_loop_flags() {
     let Command::AutopilotLoop { options } = parse(&[
         "autopilot",
         "loop",
-        "workflows/jade-symphony.md",
+        "workflows/shea-symphony.md",
         "--max-iterations",
         "3",
         "--write",
@@ -43,7 +43,7 @@ fn parses_grouped_autopilot_loop_flags() {
 
     assert_eq!(
         options.workflow_path,
-        PathBuf::from("workflows/jade-symphony.md")
+        PathBuf::from("workflows/shea-symphony.md")
     );
     assert_eq!(options.max_iterations, Some(3));
     assert!(options.write);
@@ -60,7 +60,7 @@ fn rejects_unbounded_autopilot_loop_for_now() {
     assert!(Command::parse(vec![
         "autopilot".into(),
         "loop".into(),
-        "workflows/jade-symphony.md".into(),
+        "workflows/shea-symphony.md".into(),
     ])
     .is_err());
 }
@@ -199,22 +199,22 @@ fn parses_skills_status_readiness_command() {
         parse(&[
             "skills",
             "status",
-            "workflows/jade-symphony.md",
+            "workflows/shea-symphony.md",
             "--suite-path",
-            "skills/jade-symphony/suite",
+            "skills/shea-symphony/suite",
             "--session-skills",
-            "jade-symphony-doctor,jade-symphony-manual-main",
+            "shea-symphony-doctor,shea-symphony-manual-main",
             "--require-gemini",
             "--json",
         ]),
         Command::SkillsStatus {
             input: SkillStatusInput {
-                workflow_path: PathBuf::from("workflows/jade-symphony.md"),
-                suite_path: Some(PathBuf::from("skills/jade-symphony/suite")),
+                workflow_path: PathBuf::from("workflows/shea-symphony.md"),
+                suite_path: Some(PathBuf::from("skills/shea-symphony/suite")),
                 codex_dir: None,
                 gemini_dir: None,
                 require_gemini: true,
-                session_skills: vec!["jade-symphony-doctor,jade-symphony-manual-main".into()],
+                session_skills: vec!["shea-symphony-doctor,shea-symphony-manual-main".into()],
                 session_skills_file: None,
             },
             json: true,
@@ -356,7 +356,7 @@ fn parses_agent_session_commands() {
         parse(&[
             "session",
             "start",
-            "workflows/jade-symphony.md",
+            "workflows/shea-symphony.md",
             "#220",
             "--lane",
             "review",
@@ -365,7 +365,7 @@ fn parses_agent_session_commands() {
             "--write"
         ]),
         Command::SessionStart {
-            workflow_path: PathBuf::from("workflows/jade-symphony.md"),
+            workflow_path: PathBuf::from("workflows/shea-symphony.md"),
             issue_ref: "#220".into(),
             lane: AgentSessionLaneArg::Review,
             run_id: "20260517T1404Z-issue220-review-manual".into(),
@@ -373,21 +373,21 @@ fn parses_agent_session_commands() {
         }
     );
     assert_eq!(
-        parse(&["session", "list", "workflows/jade-symphony.md"]),
+        parse(&["session", "list", "workflows/shea-symphony.md"]),
         Command::SessionList {
-            workflow_path: PathBuf::from("workflows/jade-symphony.md"),
+            workflow_path: PathBuf::from("workflows/shea-symphony.md"),
         }
     );
     assert_eq!(
         parse(&[
             "session",
             "attach",
-            "workflows/jade-symphony.md",
-            "jade-review-220"
+            "workflows/shea-symphony.md",
+            "shea-review-220"
         ]),
         Command::SessionAttach {
-            workflow_path: PathBuf::from("workflows/jade-symphony.md"),
-            session: "jade-review-220".into(),
+            workflow_path: PathBuf::from("workflows/shea-symphony.md"),
+            session: "shea-review-220".into(),
             exec: false,
         }
     );
@@ -402,7 +402,7 @@ fn parses_lane_claim_command_groups() {
         parse(&[
             "main",
             "claim",
-            "workflows/jade-symphony.md",
+            "workflows/shea-symphony.md",
             "#265",
             "--worker",
             "codex-manual-main",
@@ -411,7 +411,7 @@ fn parses_lane_claim_command_groups() {
             "--write"
         ]),
         Command::LaneClaim {
-            workflow_path: PathBuf::from("workflows/jade-symphony.md"),
+            workflow_path: PathBuf::from("workflows/shea-symphony.md"),
             issue_ref: "#265".into(),
             lane: AgentSessionLaneArg::Main,
             worker: "codex-manual-main".into(),
@@ -423,13 +423,13 @@ fn parses_lane_claim_command_groups() {
         parse(&[
             "review",
             "claim",
-            "workflows/jade-symphony.md",
+            "workflows/shea-symphony.md",
             "#265",
             "--worker",
             "gemini-manual-review"
         ]),
         Command::LaneClaim {
-            workflow_path: PathBuf::from("workflows/jade-symphony.md"),
+            workflow_path: PathBuf::from("workflows/shea-symphony.md"),
             issue_ref: "#265".into(),
             lane: AgentSessionLaneArg::Review,
             worker: "gemini-manual-review".into(),
@@ -445,7 +445,7 @@ fn parses_unified_session_commands() {
         parse(&[
             "session",
             "start",
-            "workflows/jade-symphony.md",
+            "workflows/shea-symphony.md",
             "#265",
             "--lane",
             "main",
@@ -454,7 +454,7 @@ fn parses_unified_session_commands() {
             "--write"
         ]),
         Command::SessionStart {
-            workflow_path: PathBuf::from("workflows/jade-symphony.md"),
+            workflow_path: PathBuf::from("workflows/shea-symphony.md"),
             issue_ref: "#265".into(),
             lane: AgentSessionLaneArg::Main,
             run_id: "20260517T0909Z-issue265-main-manual".into(),
@@ -462,9 +462,9 @@ fn parses_unified_session_commands() {
         }
     );
     assert_eq!(
-        parse(&["session", "list", "workflows/jade-symphony.md"]),
+        parse(&["session", "list", "workflows/shea-symphony.md"]),
         Command::SessionList {
-            workflow_path: PathBuf::from("workflows/jade-symphony.md"),
+            workflow_path: PathBuf::from("workflows/shea-symphony.md"),
         }
     );
 }
@@ -518,15 +518,15 @@ fn parses_cleanup_workspaces_command() {
 #[test]
 fn parses_workspace_discovery_commands() {
     assert_eq!(
-        parse(&["workspace", "list", "workflows/jade-symphony.md"]),
+        parse(&["workspace", "list", "workflows/shea-symphony.md"]),
         Command::WorkspaceList {
-            workflow_path: PathBuf::from("workflows/jade-symphony.md")
+            workflow_path: PathBuf::from("workflows/shea-symphony.md")
         }
     );
     assert_eq!(
-        parse(&["workspace", "show", "workflows/jade-symphony.md", "#253"]),
+        parse(&["workspace", "show", "workflows/shea-symphony.md", "#253"]),
         Command::WorkspaceShow {
-            workflow_path: PathBuf::from("workflows/jade-symphony.md"),
+            workflow_path: PathBuf::from("workflows/shea-symphony.md"),
             issue_ref: "#253".into(),
         }
     );
@@ -534,13 +534,13 @@ fn parses_workspace_discovery_commands() {
         parse(&[
             "workspace",
             "adopt",
-            "workflows/jade-symphony.md",
+            "workflows/shea-symphony.md",
             "#253",
             "/tmp/issue-253",
             "--write"
         ]),
         Command::WorkspaceAdopt {
-            workflow_path: PathBuf::from("workflows/jade-symphony.md"),
+            workflow_path: PathBuf::from("workflows/shea-symphony.md"),
             issue_ref: "#253".into(),
             path: PathBuf::from("/tmp/issue-253"),
             write: true,
@@ -550,7 +550,7 @@ fn parses_workspace_discovery_commands() {
         parse(&[
             "workspace",
             "ensure",
-            "workflows/jade-symphony.md",
+            "workflows/shea-symphony.md",
             "#253",
             "--pr",
             "254",
@@ -559,7 +559,7 @@ fn parses_workspace_discovery_commands() {
             "--write"
         ]),
         Command::WorkspaceEnsure {
-            workflow_path: PathBuf::from("workflows/jade-symphony.md"),
+            workflow_path: PathBuf::from("workflows/shea-symphony.md"),
             issue_ref: "#253".into(),
             pr_ref: Some("254".into()),
             branch: Some("feature/issue-253-worktree-discovery".into()),
@@ -570,28 +570,28 @@ fn parses_workspace_discovery_commands() {
 
 #[test]
 fn clap_parser_treats_help_flags_as_successful_help() {
-    assert!(help_text(&["--help"]).contains("Usage: jade-symphony"));
-    assert!(help_text(&["-h"]).contains("Usage: jade-symphony"));
+    assert!(help_text(&["--help"]).contains("Usage: shea-symphony"));
+    assert!(help_text(&["-h"]).contains("Usage: shea-symphony"));
 }
 
 #[test]
 fn clap_parser_preserves_subcommand_specific_help() {
     let link_pr = help_text(&["project", "link-pr", "--help"]);
-    assert!(link_pr.contains("Usage: jade-symphony project link-pr"));
+    assert!(link_pr.contains("Usage: shea-symphony project link-pr"));
     assert!(link_pr.contains("<path-to-WORKFLOW.md>"));
     assert!(link_pr.contains("<ISSUE_REF>"));
     assert!(link_pr.contains("<PR_REF>"));
 
     let workpad = help_text(&["project", "workpad", "--help"]);
-    assert!(workpad.contains("Usage: jade-symphony project workpad"));
+    assert!(workpad.contains("Usage: shea-symphony project workpad"));
     assert!(workpad.contains("<MARKDOWN_PATH>"));
 
     let set_state = help_text(&["project", "set-state", "--help"]);
-    assert!(set_state.contains("Usage: jade-symphony project set-state"));
+    assert!(set_state.contains("Usage: shea-symphony project set-state"));
     assert!(set_state.contains("<STATE>"));
 
     let forge_promote = help_text(&["forge", "promote", "--help"]);
-    assert!(forge_promote.contains("Usage: jade-symphony forge promote"));
+    assert!(forge_promote.contains("Usage: shea-symphony forge promote"));
     assert!(forge_promote.contains("--operator-confirmation"));
     assert!(forge_promote.contains("--readback-summary"));
 }

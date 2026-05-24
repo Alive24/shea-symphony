@@ -162,6 +162,9 @@ single catch-all file:
   owns `gh` GraphQL/REST read/write orchestration, Project owner fallback,
   metadata loading, Project item mutation, issue edits/comments, workpad
   upserts, linked-PR comments, issue closure, and targeted evidence hydration.
+- `src/tracker/github/client/project.rs`: Project metadata and field-update
+  support for the live GitHub client, including REST metadata/item overlays,
+  GraphQL Project page transport, and REST-first Project item field mutation.
 - `src/tracker/github/evidence.rs`: GitHub issue evidence parsing, including
   issue body plus workpad/timeline comment composition, blocker/native
   dependency refs, rich issue evidence merging, Project field extraction, and

@@ -124,6 +124,8 @@ Library Doctor checks should be grouped by the invariant they audit:
   structured `Main Agent`, `Review Agent`, and `Merging Agent` Project-field
   checks, legacy claim warnings, and run-id evidence matching against runtime
   state and session registry snapshots.
+- `src/doctor/tests/lane_claims.rs`: focused Doctor lane-claim tests for
+  legacy claims, structured claim registry evidence, and terminal guidance.
 - `src/doctor/project_state.rs`: Doctor Project-state diagnostics. It owns
   terminal GitHub issue/Project state mismatch checks, Agent Review PR handoff
   blockers, Human Review evidence gates, Merging PR target checks, and

@@ -165,6 +165,8 @@ entrypoint:
   grouped command surface produced by `src/cli.rs`.
 - `src/main/tests/parser/forge.rs`: Forge, Forge Validate/Rework/Promote, and
   Link PR parser compatibility tests for the grouped command surface.
+- `src/main/tests/parser/lanes.rs`: Main, Review, and Merge loop/once parser
+  compatibility tests, including write/recover defaults and numeric guards.
 - `src/main/tests/review.rs`: automatic and manual review command glue tests,
   review worker selection, terminal Review Agent claims, checklist update
   ordering, and review workspace placement.

@@ -12,6 +12,7 @@ mod follow_up;
 mod github;
 mod linear;
 mod memory;
+mod project_field;
 mod state;
 mod workpad;
 
@@ -23,6 +24,7 @@ pub use follow_up::FollowUpIssueInput;
 pub use github::GithubProjectReadMode;
 pub use linear::LinearAdapter;
 pub use memory::MemoryTracker;
+pub use project_field::ProjectFieldAssignment;
 pub use state::{claim_decision, ClaimDecision};
 
 use follow_up::follow_up_issue_body;
@@ -135,34 +137,6 @@ pub trait TrackerAdapter {
     }
     fn integration_gaps(&self) -> Vec<String> {
         Vec::new()
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectFieldAssignment {
-    pub name: String,
-    pub value: String,
-}
-
-impl ProjectFieldAssignment {
-    pub fn parse(raw: &str) -> Result<Self, TrackerError> {
-        let Some((name, value)) = raw.split_once('=') else {
-            return Err(TrackerError::Payload(format!(
-                "Project field assignment {raw:?} must use NAME=VALUE"
-            )));
-        };
-        let name = name.trim();
-        let value = value.trim();
-        if name.is_empty() || value.is_empty() {
-            return Err(TrackerError::Payload(format!(
-                "Project field assignment {raw:?} must include non-empty name and value"
-            )));
-        }
-
-        Ok(Self {
-            name: name.to_string(),
-            value: value.to_string(),
-        })
     }
 }
 

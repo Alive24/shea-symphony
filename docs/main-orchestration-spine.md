@@ -150,6 +150,8 @@ single catch-all file:
   rendering used by GitHub and Linear backends.
 - `src/tracker/memory.rs`: in-memory fixture tracker backend for dry-run and
   test surfaces.
+- `src/tracker/project_field.rs`: shared Project field assignment parser for
+  `NAME=VALUE` CLI inputs used by Project and lane claim mutations.
 - `src/tracker/state.rs`: shared tracker state normalization and read filters:
   claim decisions, mapped-status checks, assignee filtering, and no-op status
   update detection used by backends and lane selection.

@@ -147,6 +147,9 @@ single catch-all file:
 - `src/tracker/github/cli.rs`: GitHub CLI invocation, auth-mode detection,
   retry/timeout handling, and JSON/status response validation used by the
   Project v2 adapter.
+- `src/tracker/github/project_v2.rs`: GitHub Project v2 metadata/cache types,
+  Project item response parsing, REST overlay merging, REST field update
+  payloads, and REST project path construction.
 - `src/tracker/github/queries.rs`: GitHub Project v2 GraphQL query and mutation
   documents, page-size constants, and read-mode shaping for queue scans versus
   rich issue evidence.

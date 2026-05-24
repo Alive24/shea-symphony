@@ -118,12 +118,17 @@ clear owner:
 
 Library Doctor checks should be grouped by the invariant they audit:
 
-- `src/doctor.rs`: Project Doctor report types, Project issue state checks,
-  and shared Doctor helpers.
+- `src/doctor.rs`: Project Doctor report/context types, audit sequencing, and
+  shared Doctor helpers used by focused child modules.
 - `src/doctor/lane_claims.rs`: Doctor lane-claim field diagnostics. It owns
   structured `Main Agent`, `Review Agent`, and `Merging Agent` Project-field
   checks, legacy claim warnings, and run-id evidence matching against runtime
   state and session registry snapshots.
+- `src/doctor/project_state.rs`: Doctor Project-state diagnostics. It owns
+  terminal GitHub issue/Project state mismatch checks, Agent Review PR handoff
+  blockers, Human Review evidence gates, Merging PR target checks, and
+  queued/In Progress PR or ownership warnings while preserving lane-claim
+  diagnostic ordering.
 - `src/doctor/report.rs`: Doctor output and repair evidence rendering. It owns
   human/JSON audit report output, repair candidate filters, Doctor repair
   workpad text, and the local timestamp formatter used by those evidence notes.

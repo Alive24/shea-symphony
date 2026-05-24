@@ -3,8 +3,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::model::TrackerIssue;
 
 use super::{
-    claimed_main_agent, has_pr_url, issue_refs_match, reliable_pr_targets, AuditSeverity,
-    ProjectAuditReport, ProjectAuditViolation, AGENT_REVIEW_DRAFT_PR,
+    claimed_main_agent, issue_refs_match,
+    project_state::{has_pr_url, reliable_pr_targets},
+    AuditSeverity, ProjectAuditReport, ProjectAuditViolation, AGENT_REVIEW_DRAFT_PR,
     HUMAN_REVIEW_MISSING_REVIEW_EVIDENCE,
 };
 

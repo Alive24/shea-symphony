@@ -1,6 +1,6 @@
 # Jade Symphony Skill Suite
 
-Release: `2026.05.22`
+Release: `2026.05.23`
 
 This directory contains the repo-owned Jade Symphony skills used by local Codex
 and Gemini operator sessions. The suite is intentionally versioned in the repo
@@ -88,3 +88,19 @@ The Doctor skill is a read-first operator triage slot. The Jade Symphony CLI
 `doctor` command reports local install-health warnings, while automatic repair
 remains out of scope and install/update writes stay behind the confirmed #242
 installer path.
+
+## Dogfood Entry Points
+
+For normal all-lane dogfood, operators should run the CLI directly instead of
+starting three independent manual skills:
+
+```bash
+cargo run -- autopilot plan workflows/jade-symphony.md
+cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --write
+```
+
+`autopilot plan` is read-only. `autopilot loop` is a bounded foreground
+supervisor, not a daemon, background service, or app-server. Use Manual Main,
+Manual Review, and Manual Merge only for focused debugging, break-glass recovery,
+or operator-selected lane-specific work after the normal autopilot preflight
+points at that lane.

@@ -1,3 +1,10 @@
+//! Shared orchestration facade for helpers that are stable across commands and
+//! lanes.
+//!
+//! Single-command, single-lane, and backend-private helpers should stay with
+//! their owning module. This facade should not become a replacement binary
+//! prelude for `src/main.rs`.
+
 pub(crate) mod canonical_checkout;
 pub(crate) mod git;
 pub(crate) mod lane_status;

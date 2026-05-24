@@ -54,8 +54,29 @@ pub(crate) struct AutopilotRuntimeSummary {
     pub(crate) runtime_state_count: usize,
     pub(crate) session_count: usize,
     pub(crate) session_attention_count: usize,
+    pub(crate) retrying_count: usize,
+    pub(crate) active_issues: Vec<AutopilotActiveIssue>,
+    pub(crate) retrying: Vec<AutopilotRetryRecord>,
     pub(crate) blockers: Vec<String>,
     pub(crate) evidence: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct AutopilotActiveIssue {
+    pub(crate) lane: String,
+    pub(crate) identifier: String,
+    pub(crate) backend: String,
+    pub(crate) session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct AutopilotRetryRecord {
+    pub(crate) lane: String,
+    pub(crate) issue_identifier: Option<String>,
+    pub(crate) attempt: u32,
+    pub(crate) due_in_ms: u64,
+    pub(crate) next_retry_at_ms: u64,
+    pub(crate) error: String,
 }
 
 pub(crate) fn autopilot_doctor_report(
@@ -288,6 +309,38 @@ impl AutopilotRuntimeSummary {
         if !attention_sessions.is_empty() {
             blockers.push(format!("session_attention={}", attention_sessions.len()));
         }
+        let now_ms = current_time_ms();
+        let active_issues = runtime_states
+            .iter()
+            .filter_map(|state| {
+                state
+                    .active_issue
+                    .as_ref()
+                    .map(|issue| AutopilotActiveIssue {
+                        lane: state.lane.clone().unwrap_or_else(|| "unknown".into()),
+                        identifier: issue.identifier.clone(),
+                        backend: state.backend.clone(),
+                        session_id: state.backend_session_id.clone(),
+                    })
+            })
+            .collect::<Vec<_>>();
+        let retrying = runtime_states
+            .iter()
+            .filter_map(|state| {
+                let retry = state.retry.as_ref()?;
+                Some(AutopilotRetryRecord {
+                    lane: state.lane.clone().unwrap_or_else(|| "unknown".into()),
+                    issue_identifier: state
+                        .active_issue
+                        .as_ref()
+                        .map(|issue| issue.identifier.clone()),
+                    attempt: retry.attempt,
+                    due_in_ms: retry.due_in_ms(now_ms),
+                    next_retry_at_ms: retry.next_retry_at_ms,
+                    error: retry.error.clone(),
+                })
+            })
+            .collect::<Vec<_>>();
         let mut evidence = runtime_states
             .iter()
             .filter_map(|state| {
@@ -315,6 +368,9 @@ impl AutopilotRuntimeSummary {
             runtime_state_count: runtime_states.len(),
             session_count: sessions.len(),
             session_attention_count: attention_sessions.len(),
+            retrying_count: retrying.len(),
+            active_issues,
+            retrying,
             blockers,
             evidence,
         }

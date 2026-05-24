@@ -3,7 +3,7 @@ name: jade-symphony-issue-forge
 description: Use when creating, shaping, or validating Jade Symphony GitHub issues from rough operator intent. Runs a conversation-first discuss flow, resolves gate-critical ambiguity, drafts a quality-gated issue, asks for explicit confirmation, then creates it through Jade Symphony forge create.
 metadata:
   short-description: Conversational Jade Symphony issue forge
-  suite-version: 2026.05.22
+  suite-version: 2026.05.23
 ---
 
 # Jade Symphony Issue Forge

@@ -3,7 +3,7 @@ name: jade-symphony-manual-main
 description: Use when manually running a Codex Main Agent session for Jade Symphony implementation or Main-lane Rework from a fresh Codex session. This skill claims Todo, Main-lane Rework, or resumable In Progress work through the Main Agent lane, preserves issue quality and dependency gates, creates or resumes isolated workspaces and PRs, and hands off only to Agent Review.
 metadata:
   short-description: Jade Symphony manual Main Agent
-  suite-version: 2026.05.22
+  suite-version: 2026.05.23
 ---
 
 # Jade Symphony Manual Main Agent
@@ -11,6 +11,17 @@ metadata:
 Use this skill to operate a human-supervised Jade Symphony Main Agent session.
 The Main Agent owns implementation work. It does not own review approval, human
 approval, or merging.
+
+For normal all-lane dogfood, prefer the CLI foreground path first:
+
+```bash
+cargo run -- autopilot plan workflows/jade-symphony.md
+cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --write
+```
+
+Use this manual skill only for operator-selected Main implementation, Main-lane
+`Rework`, focused debugging, or break-glass recovery. Do not replace normal
+long-running dogfood with three separate manual lane loops.
 
 ## Repository
 
@@ -70,6 +81,7 @@ Run or equivalent-check:
 
 ```bash
 cargo run -- project state workflows/jade-symphony.md
+cargo run -- autopilot plan workflows/jade-symphony.md
 cargo run -- doctor workflows/jade-symphony.md
 cargo run -- project inspect workflows/jade-symphony.md '#<issue>'
 cargo run -- project issue workflows/jade-symphony.md '#<issue>' --json
@@ -81,11 +93,12 @@ Raw `gh issue view` and `gh pr view` are acceptable for ordinary issue and PR
 content. Raw Project field/status/claim reads or mutations are break-glass only;
 record the reason if they are needed.
 
-Write-mode lane/control commands may automatically refresh the canonical
-checkout when clean local `main` is only behind upstream. That `ff-only` sync is
-allowed control-surface progress. Implementation edits, PR branch freshness, and
-review/merge work still belong in the isolated issue or PR worktree, not in the
-canonical checkout.
+If `autopilot plan` shows the same Main issue as the next lane action and there
+is no need to isolate Main, run `autopilot loop --write` from clean canonical
+`main` instead of starting a manual Main session. Write-mode lane/control
+commands may automatically refresh the canonical checkout when clean local
+`main` is only behind upstream; implementation edits, PR branch freshness, and
+review/merge work still belong in the isolated issue or PR worktree.
 
 ## Selection
 

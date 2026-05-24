@@ -3,7 +3,7 @@ name: jade-symphony-manual-review
 description: Use when manually reviewing a Jade Symphony GitHub issue or pull request as a Review Agent, while recording evidence in the Jade Symphony tracker without confusing manual review with automatic review loop evidence.
 metadata:
   short-description: Jade Symphony manual review
-  suite-version: 2026.05.22
+  suite-version: 2026.05.23
 ---
 
 # Jade Symphony Manual Review
@@ -11,6 +11,18 @@ metadata:
 Use this skill for an independent manual Review Agent pass on a Jade Symphony
 issue or PR, especially when automatic `review loop` is blocked, timed out, or
 needs a human-supervised pass.
+
+Normal all-lane dogfood should reach review through:
+
+```bash
+cargo run -- autopilot plan workflows/jade-symphony.md
+cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --write
+```
+
+Use this manual skill only when the operator intentionally wants a focused
+Review Agent pass, automatic review is blocked or unavailable, or an issue needs
+manual evidence. Manual review evidence is not a substitute for automatic
+`review loop` evidence.
 
 ## Repository
 
@@ -32,7 +44,8 @@ change its branch or checkout PR code there.
 
 ## Core Rule
 
-Manual review evidence is not automatic `review loop` evidence.
+Manual review evidence is not automatic `review loop` or `autopilot loop`
+review-lane evidence.
 
 Before reviewing, claim the tracker `Review Agent` field so parallel reviewers
 do not work on the same issue. `Review Agent` is a Project text field. Use Jade

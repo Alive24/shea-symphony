@@ -71,3 +71,41 @@ fn human_review_template_supports_all_decisions() {
     assert!(template.contains("Defer"));
     assert!(template.contains("Target state after explicit confirmation"));
 }
+
+#[test]
+fn autopilot_dogfood_docs_prefer_foreground_loop() {
+    let command_reference = repo_file("docs/cli-command-reference.md");
+    let operator_dogfood = repo_file("docs/operator-dogfood.md");
+    let supervised_runbook = repo_file("docs/supervised-live-dogfood.md");
+    let launcher = repo_file("scripts/jade-dogfood");
+    let suite_readme = repo_file("skills/jade-symphony/README.md");
+    let manual_main = repo_file("skills/jade-symphony/suite/jade-symphony-manual-main/SKILL.md");
+    let manual_review =
+        repo_file("skills/jade-symphony/suite/jade-symphony-manual-review/SKILL.md");
+    let manual_merge = repo_file("skills/jade-symphony/suite/jade-symphony-manual-merge/SKILL.md");
+
+    for document in [
+        &command_reference,
+        &operator_dogfood,
+        &supervised_runbook,
+        &suite_readme,
+        &manual_main,
+        &manual_review,
+        &manual_merge,
+    ] {
+        assert!(document.contains("autopilot plan"));
+        assert!(document.contains("autopilot loop"));
+    }
+
+    assert!(command_reference.contains("not a daemon"));
+    assert!(operator_dogfood.contains("not a daemon"));
+    assert!(supervised_runbook.contains("not a daemon"));
+    assert!(suite_readme.contains("not a daemon"));
+    assert!(suite_readme.contains("app-server"));
+    assert!(command_reference.contains("debugging"));
+    assert!(suite_readme.contains("focused debugging"));
+    assert!(launcher.contains("autopilot plan"));
+    assert!(launcher.contains("autopilot loop"));
+    assert!(!launcher.contains("run-loop"));
+    assert!(!launcher.contains("project-state"));
+}

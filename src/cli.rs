@@ -10,6 +10,7 @@ use jade_symphony::review_status::DEFAULT_RECENT_REVIEW_JOBS;
 use jade_symphony::skill_status::SkillStatusInput;
 use jade_symphony::tracker::ProjectFieldAssignment;
 
+use crate::commands::autopilot::AutopilotLoopOptions;
 use crate::commands::doctor::{DoctorAction, DoctorOptions, DoctorRepairIssueOptions};
 use crate::commands::forge::{ForgeReworkOptions, PromotionNoteInput};
 use crate::commands::project::ProjectStateOptions;
@@ -28,6 +29,9 @@ pub(crate) enum Command {
     AutopilotPlan {
         workflow_path: PathBuf,
         json: bool,
+    },
+    AutopilotLoop {
+        options: AutopilotLoopOptions,
     },
     StatusApi {
         workflow_path: PathBuf,
@@ -360,7 +364,7 @@ enum CliCommand {
     #[command(
         next_help_heading = "Lane orchestration",
         name = "autopilot",
-        about = "Read-only all-lane planning preflight"
+        about = "Read-only planning and bounded all-lane loop"
     )]
     Autopilot(AutopilotArgs),
     Status(StatusArgs),
@@ -416,6 +420,11 @@ enum AutopilotCommandArgs {
         about = "Plan Main, Review, and Merge lanes without mutating tracker or runtime state"
     )]
     Plan(AutopilotPlanArgs),
+    #[command(
+        about = "Run bounded foreground Main, Review, and Merge lane ticks",
+        long_about = "`autopilot loop` is a bounded foreground CLI supervisor, not a daemon, background service, or app-server. It composes Main, Review, and Merge lane ticks in order, prints status and parked queues, and returns after the explicit iteration budget. Mutations require --write; dry-run remains the default preview boundary."
+    )]
+    Loop(AutopilotLoopArgs),
 }
 
 #[derive(Debug, Args)]
@@ -423,6 +432,60 @@ struct AutopilotPlanArgs {
     #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
     workflow_path: PathBuf,
     #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct AutopilotLoopArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
+    workflow_path: PathBuf,
+    #[arg(
+        long,
+        help = "Bounded number of foreground autopilot iterations to run"
+    )]
+    max_iterations: Option<usize>,
+    #[arg(
+        long,
+        conflicts_with = "max_iterations",
+        help = "Run exactly one bounded iteration"
+    )]
+    once: bool,
+    #[arg(
+        long,
+        conflicts_with = "dry_run",
+        help = "Allow lane ticks to mutate tracker, runtime, worktrees, and PR state"
+    )]
+    write: bool,
+    #[arg(
+        long = "dry-run",
+        conflicts_with = "write",
+        help = "Preview the bounded all-lane tick without mutation"
+    )]
+    dry_run: bool,
+    #[arg(
+        long,
+        conflicts_with = "no_recover",
+        help = "Enable recover-first handling for interrupted Main and Merge work"
+    )]
+    recover: bool,
+    #[arg(
+        long = "no-recover",
+        conflicts_with = "recover",
+        help = "Disable default recover-first handling in write mode"
+    )]
+    no_recover: bool,
+    #[arg(
+        long,
+        help = "Delay between bounded iterations when the loop waits or retries"
+    )]
+    poll_interval_ms: Option<u64>,
+    #[arg(long, help = "Maximum Main-lane worker slots per iteration")]
+    main_max_concurrent: Option<usize>,
+    #[arg(long, help = "Maximum Review-lane worker slots per iteration")]
+    review_max_concurrent: Option<usize>,
+    #[arg(long, help = "Maximum Merge-lane worker slots per iteration")]
+    merge_max_concurrent: Option<usize>,
+    #[arg(long, help = "Print structured JSON status snapshots")]
     json: bool,
 }
 
@@ -1433,6 +1496,33 @@ fn merge_loop_command(args: MergeLoopArgs) -> Result<Command, String> {
     })
 }
 
+fn autopilot_loop_command(args: AutopilotLoopArgs) -> Result<Command, String> {
+    if args.max_iterations == Some(0)
+        || args.poll_interval_ms == Some(0)
+        || args.main_max_concurrent == Some(0)
+        || args.review_max_concurrent == Some(0)
+        || args.merge_max_concurrent == Some(0)
+        || (!args.once && args.max_iterations.is_none())
+    {
+        return Err(usage());
+    }
+    Ok(Command::AutopilotLoop {
+        options: AutopilotLoopOptions {
+            workflow_path: args.workflow_path,
+            max_iterations: args.max_iterations,
+            once: args.once,
+            write: args.write,
+            dry_run: args.dry_run,
+            recover: loop_recover_enabled(args.write, args.recover, args.no_recover),
+            poll_interval_ms: args.poll_interval_ms,
+            main_max_concurrent: args.main_max_concurrent,
+            review_max_concurrent: args.review_max_concurrent,
+            merge_max_concurrent: args.merge_max_concurrent,
+            json: args.json,
+        },
+    })
+}
+
 fn loop_recover_enabled(write: bool, explicit_recover: bool, no_recover: bool) -> bool {
     explicit_recover || (write && !no_recover)
 }
@@ -1582,6 +1672,7 @@ impl TryFrom<Cli> for Command {
                             workflow_path: args.workflow_path,
                             json: args.json,
                         }),
+                        AutopilotCommandArgs::Loop(args) => autopilot_loop_command(args),
                     },
                     CliCommand::Status(args) => match args.command {
                         StatusCommandArgs::Show(show) => Ok(Self::Plan {
@@ -1895,7 +1986,7 @@ fn usage() -> String {
         "  session                     Start, list, or attach supervised lane sessions",
         "",
         "Lane orchestration:",
-        "  autopilot                   Read-only all-lane planning preflight",
+        "  autopilot                   Read-only planning and bounded all-lane loop",
         "  main                        Main Agent claim, once, and loop commands",
         "  review                      Review Agent claim, pass/reject, session, freshness, and loop commands",
         "  merge                       Merging Agent claim, once, and loop commands",

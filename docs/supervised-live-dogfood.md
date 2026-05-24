@@ -70,44 +70,50 @@ normal work:
 
 ```bash
 cargo run -- project state workflows/jade-symphony.md
+cargo run -- autopilot plan workflows/jade-symphony.md
 cargo run -- doctor workflows/jade-symphony.md
-cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 
-Proceed only when tracker access is trusted, the selected issue is claimable,
-and the dry-run shows no blocking integration gaps. Use `debug` when a compact
-human-readable readiness report is useful.
+Proceed only when tracker access is trusted, `autopilot plan` reports readiness
+or a clear idle state, and the dry-run shows no blocking integration gaps. Use
+`debug` when a compact human-readable readiness report is useful.
 
-## One Implementation Tick
+## One Autopilot Tick
 
-Preview the same bounded implementation tick without tracker mutation:
+Preview the same bounded all-lane foreground tick without tracker mutation:
 
 ```bash
-cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 
 Use one bounded write tick:
 
 ```bash
-cargo run -- main loop workflows/jade-symphony.md --max-iterations 1 --write
+cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
+
+`autopilot loop` is a bounded foreground CLI supervisor, not a daemon,
+background service, or app-server. It composes Main, Review, and Merge lane
+ticks in order and returns control to the operator after the explicit iteration
+budget. Drop to `main loop`, `review loop`, or `merge loop` only for focused
+debugging, break-glass recovery, or deliberately lane-specific dogfood.
 
 That write tick requires a real main-agent backend. The canonical workflow uses
 `main_lane.backend: codex` with `codex.command: codex app-server -c 'service_tier="fast"'` and
-`codex.approval_policy: never`, so a
-successful tick starts one app-server turn, records the prompt artifact,
-protocol log, stderr log, normalized event artifact, session registry entry,
-and runtime state, then proceeds to verification, PR publication, linked-PR
-readback, PR readiness, and the final `Agent Review` state change only after a
-terminal completed turn. Active, failed, usage-limited, unknown, stale, or
-missing-registry runtime evidence is kept out of duplicate launch and out of
-`Agent Review`.
-`main_lane.backend: tmux` remains an explicit fallback/debug option. In that
-mode, Codex tmux startup captures the pane before sending the issue prompt. By
-default, if a Jade Symphony-created issue worktree shows the Codex workspace
-trust prompt, Jade Symphony sends two `C-m` submissions and waits until the pane
-reaches a ready Codex viewport. Set `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to disable
-this auto-trust behavior. If the prompt cannot be cleared, the write tick stops with
+`codex.approval_policy: never`, so a successful tick starts one app-server turn,
+records the prompt artifact, protocol log, stderr log, normalized event
+artifact, session registry entry, and runtime state, then proceeds to
+verification, PR publication, linked-PR readback, PR readiness, and the final
+`Agent Review` state change only after a terminal completed turn. Active,
+failed, usage-limited, unknown, stale, or missing-registry runtime evidence is
+kept out of duplicate launch and out of `Agent Review`. `main_lane.backend:
+tmux` remains an explicit fallback/debug option. In that mode, Codex tmux
+startup captures the pane before sending the issue prompt. By default, if a
+Jade Symphony-created issue worktree shows the Codex workspace trust prompt,
+Jade Symphony sends two `C-m` submissions and waits until the pane reaches a
+ready Codex viewport. Set `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to disable this
+auto-trust behavior. If the prompt cannot be cleared, the write tick stops with
 the tmux attach command and log path preserved for manual inspection.
 Use `cargo run -- status workflows/jade-symphony.md` for compact session
 classification and attach/log evidence, `cargo run -- doctor

@@ -264,14 +264,27 @@ single catch-all file:
 
 Library Review code should be grouped by review-domain responsibility:
 
-- `src/review.rs`: Review report/job/backend core, review gate decisions,
-  workpad rendering, ledger records, and transition authority checks that are
-  still shared across Review command/lane surfaces.
+- `src/review.rs`: Review backend implementations, workpad rendering, run
+  eligibility, and backend-specific glue still shared across Review command/lane
+  surfaces.
+- `src/review/decision.rs`: Review outcome types, gate decisions, native
+  subissue pass routing, and transition authority checks.
 - `src/review/freshness.rs`: Review freshness inputs, decisions, and workpad
   rendering for preserving or invalidating prior Human Review evidence after
   Rework.
 - `src/review/gemini_health.rs`: Gemini review backend health categories,
   prelaunch diagnostics, retry classification, and failure signatures.
+- `src/review/job.rs`: Review job state, job records, backend trait,
+  terminal polling, ledger record/write helpers, and usage-limit pause
+  detection.
+- `src/review/report.rs`: Agent review report/finding types, finding
+  classification, and inconclusive review text detection.
+
+`src/orchestration/mod.rs` is a facade for helpers that are truly shared across
+commands and lanes. Single-command, single-lane, and backend-private helpers
+should stay in their owning module and should not be re-exported through
+orchestration just for convenience. `src/main.rs` must not become a shared
+prelude or service locator again.
 
 Binary integration-style tests live under `src/main/` instead of inline in the
 entrypoint:

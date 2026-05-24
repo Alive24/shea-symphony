@@ -3,7 +3,7 @@ name: jade-symphony-manual-merge
 description: Use when manually running a Merging Agent session for Jade Symphony merge-lane work from a fresh session. Claims Merging issues or operator-selected historical merge-lane recovery issues, repairs existing PR branches when safe, records evidence, and lands approved PRs without sending merge-lane repair back through Agent Review.
 metadata:
   short-description: Jade Symphony manual Merging Agent
-  suite-version: 2026.05.22
+  suite-version: 2026.05.23
 ---
 
 # Jade Symphony Manual Merging Agent
@@ -11,6 +11,18 @@ metadata:
 Use this skill to operate a human-supervised Jade Symphony Merging Agent
 session. The Merging Agent owns merge-lane repair and landing. It does not own
 fresh feature implementation or ordinary Todo dispatch.
+
+For normal all-lane dogfood, prefer the foreground autopilot path first:
+
+```bash
+cargo run -- autopilot plan workflows/jade-symphony.md
+cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --write
+```
+
+Use this manual skill only for operator-selected merge-lane repair, focused
+merge diagnosis, or break-glass landing work. Do not use it to bypass Review or
+Human Review, and do not make manual merge the default replacement for
+`autopilot loop`.
 
 ## Repository
 
@@ -118,13 +130,20 @@ When a merge-agent runtime session is explicitly needed after a structured
 For automated interrupted merge-loop recovery, prefer:
 
 ```bash
-cargo run -- merge loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 2 --write
+cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
-`merge loop --write` adopts interrupted structured merge-loop/goal claims first
-by default, then continues normal merge selection. It must not adopt manual
-claims, and it must not route merge repair through `Rework`. Use `--no-recover`
-only for debugging or a deliberately conservative operator pass.
+`autopilot loop --write` adopts interrupted structured Main and Merge loop/goal
+claims first by default, then continues normal lane selection. If the operator
+is intentionally isolating merge work, run a bounded focused merge loop:
+
+```bash
+cargo run -- merge loop workflows/jade-symphony.md --max-iterations 1 --write
+```
+
+Use a bounded `--max-iterations` value. Merge recovery must not adopt manual claims, and it
+must not route merge repair through `Rework`. Use `--no-recover` only for
+debugging or a deliberately conservative operator pass.
 
 Write-mode merge commands may automatically refresh the canonical checkout with
 a canonical-only `git merge --ff-only` when clean local `main` is behind its

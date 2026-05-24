@@ -15,12 +15,14 @@ use crate::orchestration::{
 };
 
 mod lanes;
+mod looping;
 mod readiness;
 
 use lanes::autopilot_lane_plans;
+pub(crate) use looping::{autopilot_loop, AutopilotLoopOptions};
 pub(crate) use readiness::{
-    autopilot_doctor_report, autopilot_readiness, AutopilotCanonicalCheckout,
-    AutopilotDoctorSummary, AutopilotReadiness, AutopilotRuntimeSummary,
+    autopilot_doctor_report, autopilot_readiness, AutopilotActiveIssue, AutopilotCanonicalCheckout,
+    AutopilotDoctorSummary, AutopilotReadiness, AutopilotRetryRecord, AutopilotRuntimeSummary,
 };
 
 pub(crate) fn autopilot_plan(

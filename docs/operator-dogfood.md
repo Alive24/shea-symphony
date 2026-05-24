@@ -27,7 +27,8 @@ The launcher checks:
 - `gh auth status` succeeds;
 - the workflow validates;
 - `project state` and `doctor` read the live workflow state;
-- in write mode, the bounded `main loop --dry-run` preflight passes.
+- in write mode, `autopilot plan` and the bounded `autopilot loop --dry-run`
+  preflight pass.
 
 The canonical supervised operator workflow is `workflows/jade-symphony.md`. It
 defaults durable worktrees, logs, and runtime artifacts under
@@ -46,13 +47,13 @@ Fixture workflows can still use inline prompt bodies. If the canonical workflow
 declares lane prompts, all three lane paths must exist before agent
 initialization continues.
 
-After preflight, dry-run mode executes:
+After preflight, dry-run mode executes the all-lane foreground preview:
 
 ```bash
-target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+target/debug/jade-symphony autopilot loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 
-Before comparing individual lane dry-runs, use the unified read-only preflight:
+Use the unified read-only preflight before any write-mode dogfood:
 
 ```bash
 target/debug/jade-symphony autopilot plan workflows/jade-symphony.md
@@ -63,10 +64,22 @@ target/debug/jade-symphony autopilot plan workflows/jade-symphony.md --json
 Review, and Merge lane decision helpers to show what each lane would do, which
 operator queues are parked in `Human Review` or `Need Human Input`, and whether
 Doctor, canonical checkout, runtime/session evidence, or ambiguous Project
-state would block a future all-lane write command. If it reports
+state would block the foreground all-lane write command. If it reports
 `idle_but_healthy`, the lanes have no work but the system is not failing; if it
 reports a blocked readiness state, resolve that evidence before running write
-lane commands.
+commands.
+
+The normal operator path is:
+
+1. Run `autopilot plan` and resolve readiness blockers.
+2. Run a bounded foreground `autopilot loop --write` from clean canonical
+   `main`.
+3. Drop to `main loop`, `review loop`, or `merge loop` only for focused
+   debugging, break-glass recovery, or intentionally bounded lane-specific work.
+
+`autopilot loop` is a CLI foreground supervisor. It is not a daemon, background
+service, or app-server, and it currently requires `--max-iterations N` or
+`--once`.
 
 For a more scannable operator view, keep the same dry-run boundary and opt into
 the terminal panel:
@@ -92,34 +105,42 @@ deliberately avoiding full-screen interaction in this issue.
 scripts/jade-dogfood --write --confirm-write --max-iterations 1
 ```
 
-Write mode is intentionally bounded. It runs one `main loop` tick only after the
-explicit confirmation flag is present. Before that mutating tick, the launcher
-runs:
+Write mode is intentionally bounded. It runs `autopilot loop` only after the
+explicit confirmation flag is present. Before that mutating foreground run, the
+launcher runs:
 
 ```bash
 target/debug/jade-symphony project state workflows/jade-symphony.md
+target/debug/jade-symphony autopilot plan workflows/jade-symphony.md
 target/debug/jade-symphony doctor workflows/jade-symphony.md
-target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --dry-run
+target/debug/jade-symphony autopilot loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 ```
 
 If the normal preflight surfaces fail, the launcher exits before claiming
 tracker work.
+`autopilot loop --write` composes one bounded Main, Review, and Merge pass in
+that order. Each lane keeps its own status authority: Main stops at
+`Agent Review`, Review records independent evidence before Human Review routing,
+and Merge consumes only `Merging` work. The loop reports lane outcomes and
+parked operator queues, then returns control to the operator; it does not detach
+as a service.
+
 The canonical workflow now uses the Codex app-server Main backend with
-`codex.approval_policy: never`, matching the local app-server schema. A write tick
-starts one app-server turn in the prepared issue worktree, records
+`codex.approval_policy: never`, matching the local app-server schema. A write
+tick starts one app-server turn in the prepared issue worktree, records
 prompt/protocol/stderr/normalized-event artifacts, persists a session registry
 record under the configured artifact root, and reconciles through verification,
 PR publication, linked-PR readback, PR readiness, Main Workpad evidence, and
 final `Agent Review` handoff only after the turn completes successfully.
 Non-terminal, failed, usage-limited, unknown, stale, or missing-registry runtime
 evidence is treated conservatively and does not launch duplicate Main Agents or
-hand off incomplete work.
-`main_lane.backend: tmux` remains available as an explicit fallback/debug
-setting. In that mode, Codex-backed tmux sessions still capture the pane before
-prompt injection and can auto-advance the Codex workspace trust prompt inside a
-Jade Symphony-created issue worktree. Set `JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to
-opt out; when disabled, or when readiness cannot be confirmed, the tick fails
-closed with attach/log evidence and does not hand off to `Agent Review`.
+hand off incomplete work. `main_lane.backend: tmux` remains available as an
+explicit fallback/debug setting. In that mode, Codex-backed tmux sessions still
+capture the pane before prompt injection and can auto-advance the Codex
+workspace trust prompt inside a Jade Symphony-created issue worktree. Set
+`JADE_SYMPHONY_TMUX_AUTO_TRUST=0` to opt out; when disabled, or when readiness
+cannot be confirmed, the tick fails closed with attach/log evidence and does
+not hand off to `Agent Review`.
 Main handoff also requires the PR relationship to be visible through Jade
 Symphony's Project/issue linked-PR read surface, and the linked PR must be
 ready, not draft. Workpad or comment URLs can identify the intended PR, but
@@ -130,9 +151,12 @@ readiness mutation fails, keep the issue out of `Agent Review`, route to
 `Need Human Input`, and preserve the blocker in the workpad.
 When Main handoff reaches `Agent Review`, Jade Symphony keeps backend artifacts
 as audit evidence while marking matching Main session registry entries completed
-and clearing matching active runtime state. Routine status output reads the
-durable session registry, probes bounded tmux pane/log tails only for tmux
-fallback sessions, and reports a conservative session classification such as
+and clearing matching active runtime state. A still-open tmux pane is not by
+itself active work after that reconciliation; attach only when the registry or
+doctor evidence says the run is still blocked or failed. Routine status output
+reads the durable session registry, probes bounded tmux pane/log tails only for
+tmux fallback sessions, and reports a conservative session classification such
+as
 `running`, `waiting_for_trust`, `waiting_for_approval`, `usage_limited`,
 `failed`, `completed`, `stale`, or `unknown`. The status surface includes only
 compact evidence snippets plus artifact, attach, or log locations; inspect the
@@ -386,10 +410,11 @@ path rather than repairing skill files itself.
 target/debug/jade-symphony project inspect workflows/jade-symphony.md '#<issue>'
 target/debug/jade-symphony project state workflows/jade-symphony.md
 target/debug/jade-symphony project issue workflows/jade-symphony.md '#235' --json
+target/debug/jade-symphony autopilot plan workflows/jade-symphony.md
 target/debug/jade-symphony debug workflows/jade-symphony.md
 target/debug/jade-symphony project state workflows/jade-symphony.md --display tui
 target/debug/jade-symphony doctor workflows/jade-symphony.md --display tui
-target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --write
+target/debug/jade-symphony autopilot loop workflows/jade-symphony.md --max-iterations 1 --write
 ```
 
 Use `project state` before claiming work when multiple operators are active. A
@@ -409,16 +434,17 @@ comment/workpad streams, and rich linked-PR hydration.
 
 The canonical checkout is only the harness launch directory. Do not use it as a
 Main, Review, or Merge issue worktree, and do not leave runtime state, logs,
-prompts, drafts, or evidence there. `main loop --write`, `review loop --write`,
-and `merge loop --write` refresh and check the launch checkout before tracker
-mutation. From a clean attached `main`, Jade Symphony fetches the configured
-upstream and performs a canonical-only `git merge --ff-only` when local `main`
-is only behind. The terminal output reports
-`canonical_checkout_refresh=already_current`, `ff_only`, `would_ff_only`, or
-`blocked`, then prints the canonical safety line. Tracked dirty files,
-detached HEAD, non-`main`, missing upstream, unclassified untracked files, and
-non-fast-forward updates block until the operator repairs the canonical checkout.
-Recognized local artifacts are moved to artifact quarantine with a warning.
+prompts, drafts, or evidence there. `autopilot loop --write`,
+`main loop --write`, `review loop --write`, and `merge loop --write` refresh and
+check the launch checkout before tracker mutation. From a clean attached
+`main`, Jade Symphony fetches the configured upstream and performs a
+canonical-only `git merge --ff-only` when local `main` is only behind. The
+terminal output reports `canonical_checkout_refresh=already_current`,
+`ff_only`, `would_ff_only`, or `blocked`, then prints the canonical safety line.
+Tracked dirty files, detached HEAD, non-`main`, missing upstream, unclassified
+untracked files, and non-fast-forward updates block until the operator repairs
+the canonical checkout. Recognized local artifacts are moved to artifact
+quarantine with a warning.
 
 Use `project issue` for per-issue Project status, Project fields, blocker
 relationships, claim locks, rich issue body, workpad/timeline comments, native
@@ -597,8 +623,20 @@ Interrupted runtime recovery flow:
 2. Run `target/debug/jade-symphony doctor workflows/jade-symphony.md` before
    retrying or clearing runtime state; stale, failed, usage-limited, or
    unattributed sessions require operator inspection.
-3. For interrupted Main-lane runtime work where the issue is still `In Progress`,
-   run a bounded recovery tick:
+3. For normal all-lane recovery, start with the same foreground autopilot path:
+
+```bash
+target/debug/jade-symphony autopilot plan workflows/jade-symphony.md
+target/debug/jade-symphony autopilot loop workflows/jade-symphony.md --max-iterations 1 --write
+```
+
+`autopilot loop --write` uses recover-first handling for Main and Merge lanes by
+default while still preserving Review's independent evidence boundary. It is the
+normal supervised dogfood path when the operator is not deliberately isolating
+one lane.
+
+4. For focused Main-lane runtime work where the issue is still `In Progress`,
+   run a bounded lane recovery tick:
 
 ```bash
 target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 3 --write
@@ -610,7 +648,7 @@ advancing to `Agent Review`. It reuses a tracker/runtime/discovery-backed git
 worktree under the configured workspace root and leaves normal handoff to a
 later successful Main result. Use `--no-recover` only for debugging or a
 deliberately conservative operator pass.
-4. For interrupted Merge-lane loop work where the issue is still `Merging`, run
+5. For focused Merge-lane loop work where the issue is still `Merging`, run
    a bounded recovery tick:
 
 ```bash
@@ -623,7 +661,7 @@ alone, keeps safe stale-base refreshes or merge-lane repairs in `Merging`, and
 routes serious blockers to `Need Human Input` rather than `Rework`. Use
 `--no-recover` only for debugging or a deliberately conservative operator pass.
 
-5. Run `target/debug/jade-symphony clean audit workflows/jade-symphony.md` only
+6. Run `target/debug/jade-symphony clean audit workflows/jade-symphony.md` only
    after evidence is preserved. Active or uncertain sessions stay
    `needs_human_decision`; completed sessions and terminal clean worktrees may
    become cleanup candidates.
@@ -671,6 +709,7 @@ events remain the durable audit trail.
 
 ```bash
 target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
+target/debug/jade-symphony autopilot loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 target/debug/jade-symphony merge loop workflows/jade-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
 ```
 

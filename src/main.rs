@@ -5,7 +5,7 @@ mod commands;
 mod lanes;
 mod orchestration;
 
-use commands::autopilot::autopilot_plan;
+use commands::autopilot::{autopilot_loop, autopilot_plan};
 use commands::clean::{clean_audit_command, cleanup_plan_command};
 use commands::debug::debug_report;
 use commands::doctor::{doctor, doctor_repair_human_review};
@@ -56,6 +56,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             workflow_path,
             json,
         } => autopilot_plan(workflow_path, json),
+        Command::AutopilotLoop { options } => autopilot_loop(options),
         Command::StatusApi {
             workflow_path,
             bind,

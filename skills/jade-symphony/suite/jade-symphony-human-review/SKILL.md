@@ -3,7 +3,7 @@ name: jade-symphony-human-review
 description: Use when briefing a Jade Symphony operator for Human Review after independent Review Agent pass evidence, guiding UAT, recording a structured decision note, and routing only after explicit operator confirmation.
 metadata:
   short-description: Jade Symphony Human Review briefing
-  suite-version: 2026.05.22
+  suite-version: 2026.05.23
 ---
 
 # Jade Symphony Human Review

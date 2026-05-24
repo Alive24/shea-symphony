@@ -17,6 +17,9 @@ fn clean_autopilot_runtime() -> AutopilotRuntimeSummary {
         runtime_state_count: 0,
         session_count: 0,
         session_attention_count: 0,
+        retrying_count: 0,
+        active_issues: Vec::new(),
+        retrying: Vec::new(),
         blockers: Vec::new(),
         evidence: Vec::new(),
     }

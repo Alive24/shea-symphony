@@ -20,6 +20,61 @@ fn parses_grouped_autopilot_plan_json_command() {
 }
 
 #[test]
+fn parses_grouped_autopilot_loop_flags() {
+    let Command::AutopilotLoop { options } = parse(&[
+        "autopilot",
+        "loop",
+        "workflows/jade-symphony.md",
+        "--max-iterations",
+        "3",
+        "--write",
+        "--main-max-concurrent",
+        "2",
+        "--review-max-concurrent",
+        "4",
+        "--merge-max-concurrent",
+        "1",
+        "--poll-interval-ms",
+        "250",
+        "--json",
+    ]) else {
+        panic!("expected autopilot loop command");
+    };
+
+    assert_eq!(
+        options.workflow_path,
+        PathBuf::from("workflows/jade-symphony.md")
+    );
+    assert_eq!(options.max_iterations, Some(3));
+    assert!(options.write);
+    assert!(options.recover);
+    assert_eq!(options.main_max_concurrent, Some(2));
+    assert_eq!(options.review_max_concurrent, Some(4));
+    assert_eq!(options.merge_max_concurrent, Some(1));
+    assert_eq!(options.poll_interval_ms, Some(250));
+    assert!(options.json);
+}
+
+#[test]
+fn rejects_unbounded_autopilot_loop_for_now() {
+    assert!(Command::parse(vec![
+        "autopilot".into(),
+        "loop".into(),
+        "workflows/jade-symphony.md".into(),
+    ])
+    .is_err());
+}
+
+#[test]
+fn autopilot_loop_help_documents_foreground_boundary() {
+    let help = help_text(&["autopilot", "loop", "--help"]);
+
+    assert!(help.contains("bounded foreground CLI supervisor"));
+    assert!(help.contains("Bounded number of foreground autopilot iterations"));
+    assert!(help.contains("Preview the bounded all-lane tick without mutation"));
+}
+
+#[test]
 fn clap_parser_preserves_default_plan_compatibility() {
     assert_eq!(
         parse(&[]),

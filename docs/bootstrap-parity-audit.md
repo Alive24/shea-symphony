@@ -49,7 +49,7 @@ must not be edited by Jade Symphony implementation work.
 | Issue Forge | Partial | `src/issue_forge.rs`, README command docs | Tracker creation exists; richer field setup and conversational UI remain follow-ups. |
 | Workspace lifecycle | Partial | `src/workspace.rs`, `src/handoff.rs`, `src/git_handoff.rs`, `clean plan` command | Terminal cleanup planning exists; automatic runtime cleanup and remote/SSH parity are not complete. |
 | Agent backend abstraction | Partial | `src/agent.rs`, Codex/Claude subprocess workflows | Full Codex app-server and Claude Code protocol parity are deferred. |
-| Run loop/orchestrator | Partial | `src/orchestrator.rs`, `src/main.rs`, `src/runtime_state.rs` | Long-running supervision, multi-worker reconciliation, and fully autonomous operation are not complete. |
+| Run loop/orchestrator | Partial | `src/orchestrator.rs`, `src/main.rs`, `src/runtime_state.rs`, `autopilot plan`, `autopilot loop` | Bounded foreground all-lane supervision exists; unbounded daemon/background operation, richer reconciliation, and fully autonomous operation are not complete. |
 | Agent Review boundary | Partial | `src/review.rs`, `review loop`, review job ledger docs | Bounded `review loop` and durable review evidence exist; persistent background reviewer supervision is still incomplete. |
 | Merging lane | Partial | `src/merge_lane.rs`, `merge once`, `merge loop` command | Guarded one-shot and bounded pool landing exist; unbounded continuous merge polling and richer reconciliation are not complete. |
 | Observability/status | Partial | `src/status_surface.rs`, `src/event_log.rs`, `src/runtime_state.rs`, `status serve` command | Terminal, JSONL, JSON snapshot, local one-shot API, and tracker mutation audit surfaces exist; persistent/remote web service mode remains incomplete. |
@@ -75,8 +75,10 @@ These items remain blockers for claiming broad self-running parity:
 1. Full Codex app-server protocol parity with session, turn, usage, and
    rate-limit accounting.
 2. Full Claude Code protocol parity beyond conservative subprocess execution.
-3. Long-running worker supervision with retry, continuation, stall recovery, and
-   terminal workspace cleanup wired into reconciliation.
+3. Persistent or unbounded worker supervision with retry, continuation, stall
+   recovery, and terminal workspace cleanup wired into reconciliation. Bounded
+   foreground autopilot loop is not a daemon and does not close this obligation
+   by itself.
 4. Persistent Review Agent supervision that is independent from the main
    implementation lane and can safely pass work to `Human Review`.
 5. Mutation-capable credential-gated live GitHub and Linear smoke tests that can

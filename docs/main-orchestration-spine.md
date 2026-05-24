@@ -146,6 +146,8 @@ single catch-all file:
   used by tracker backends.
 - `src/tracker/error.rs`: shared tracker error type plus Project-state failure
   classification used by CLI readback, retry handling, doctor output, and tests.
+- `src/tracker/follow_up.rs`: shared follow-up issue input shape and body
+  rendering used by GitHub and Linear backends.
 - `src/tracker/memory.rs`: in-memory fixture tracker backend for dry-run and
   test surfaces.
 - `src/tracker/state.rs`: shared tracker state normalization and read filters:

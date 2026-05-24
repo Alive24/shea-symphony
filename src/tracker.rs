@@ -2,14 +2,13 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::{Deserialize, Serialize};
-
 #[cfg(test)]
 use crate::config::AssigneeFilter;
 use crate::config::RuntimeConfig;
 use crate::model::{normalize_state, BlockerRef, LinkedPullRequest, TrackerIssue};
 
 mod error;
+mod follow_up;
 mod github;
 mod linear;
 mod memory;
@@ -20,11 +19,13 @@ pub use error::{
     classify_project_state_error, classify_project_state_failure_message, ProjectStateFailureKind,
     TrackerError,
 };
+pub use follow_up::FollowUpIssueInput;
 pub use github::GithubProjectReadMode;
 pub use linear::LinearAdapter;
 pub use memory::MemoryTracker;
 pub use state::{claim_decision, ClaimDecision};
 
+use follow_up::follow_up_issue_body;
 use github::{
     apply_rest_project_item_overlay_fallback, apply_rest_project_item_overlays,
     enrich_native_subissue_project_statuses_for_issue,
@@ -163,16 +164,6 @@ impl ProjectFieldAssignment {
             value: value.to_string(),
         })
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FollowUpIssueInput {
-    pub title: String,
-    pub body: String,
-    pub assignees: Vec<String>,
-    pub project_id: Option<String>,
-    pub related_issue_ref: Option<String>,
-    pub blocked_by_issue_ref: Option<String>,
 }
 
 pub fn adapter_from_config(config: &RuntimeConfig) -> Box<dyn TrackerAdapter> {
@@ -1708,32 +1699,6 @@ fn project_owner_type_miss(error: &TrackerError) -> bool {
 fn duplicate_workpad_body(_marker: &str) -> String {
     "Superseded Jade Symphony workpad comment. The canonical marker was removed from this duplicate."
         .to_string()
-}
-
-fn follow_up_issue_body(input: &FollowUpIssueInput) -> String {
-    let mut body = input.body.clone();
-    let mut context = Vec::new();
-
-    if let Some(issue_ref) = &input.related_issue_ref {
-        context.push(format!("- Related issue: {issue_ref}"));
-    }
-    if let Some(issue_ref) = &input.blocked_by_issue_ref {
-        context.push(format!("- Blocked by: {issue_ref}"));
-    }
-    if let Some(project_id) = &input.project_id {
-        context.push(format!("- Project id: {project_id}"));
-    }
-
-    if context.is_empty() {
-        return body;
-    }
-
-    if !body.ends_with('\n') {
-        body.push('\n');
-    }
-    body.push_str("\n## Jade Symphony Context\n");
-    body.push_str(&context.join("\n"));
-    body
 }
 
 fn graphql_error_message(response: &serde_json::Value) -> Option<String> {

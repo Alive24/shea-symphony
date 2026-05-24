@@ -148,9 +148,9 @@ have a narrow shared responsibility:
 Binary integration-style tests live under `src/main/` instead of inline in the
 entrypoint:
 
-- `src/main/tests.rs`: shared binary test fixtures and cross-surface behavior
-  tests that still need access to private binary shims while extraction
-  continues.
+- `src/main/tests.rs`: binary test prelude, shared fixtures, and cross-surface
+  behavior tests that still need access to private binary shims while
+  extraction continues. Test-only imports belong here, not in `src/main.rs`.
 - `src/main/tests/autopilot.rs`: read-only autopilot plan fixtures and lane
   readiness rendering tests.
 - `src/main/tests/forge.rs`: Issue Forge, promote/rework, Link PR, and Rework

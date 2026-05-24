@@ -1,6 +1,109 @@
 use super::*;
 use jade_symphony::tracker::MemoryTracker;
 use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+use super::cli::{CliLaneClaimSource, DisplayMode, ForgeStatusArg};
+use super::commands::autopilot::{
+    build_autopilot_plan_from_parts, AutopilotCanonicalCheckout, AutopilotPlanInputs,
+    AutopilotPlanSnapshot, AutopilotRuntimeSummary,
+};
+use super::commands::debug::{
+    classify_dogfood_integration_gaps, is_controlled_dogfood_smoke_issue, session_status_summary,
+};
+use super::commands::doctor::{doctor_health_label, hydrate_issues_for_doctor};
+use super::commands::forge::{
+    find_duplicate_issue_title, forge_create_requires_assignee, forge_missing_categories,
+    forge_rework_with_adapter, forge_validation_report, issue_contract_assignees,
+    render_forge_create_success, render_promotion_note, validate_forge_create_contract,
+    validate_forge_create_report_with_assignees, verify_forge_created_issue_status,
+    write_forge_created_issue, ForgeCreateResult, ForgeCreateWriteInput, ForgeReworkInput,
+};
+use super::commands::gate::live_missing_assignee_gate_blocker;
+use super::commands::project::{
+    filter_issues_by_state, link_pr_with_adapter, render_state_summary,
+};
+use super::commands::session::{
+    lane_claim_for_manual_worker, matching_lane_claim_for_session, tmux_agent_command_for_lane,
+    validate_lane_claim_state,
+};
+use super::commands::status::render_plan_snapshot;
+use super::commands::workspace::{
+    ensure_inspection_worktree, validate_workspace_path_under_root, workspace_cleanup_plan,
+    WorkspaceCleanupAction,
+};
+use super::lanes::claim::PoolClaimEligibility;
+use super::lanes::main_loop::{
+    apply_live_handoff_pr_link, execute_issue_once_with_workspace_key, no_dispatch_action,
+    reconcile_pending_main_session, run_handoff_verification,
+    run_loop_agent_review_handoff_evidence, run_loop_apply_recovery_handoff,
+    run_loop_assignee_ownership_decision, run_loop_claim_action,
+    run_loop_dispatch_write_candidates, run_loop_handoff_workpad, run_loop_ownership_workpad,
+    run_loop_resume_preflight, run_loop_resume_preflight_many, run_loop_runtime_ownership,
+    run_loop_runtime_state_for_issue, run_loop_runtime_state_with_result,
+    run_loop_runtime_state_with_transition, run_loop_usage_limit_pause_workpad,
+    runtime_state_issue_identifier, select_main_run_loop_issues, AssigneeOwnershipDecision,
+    IssueExecutionResult, MainSessionReconciliation, NoDispatchAction, ResumePreflightAction,
+    RunLoopClaimAction, RunLoopLiveHandoff, RuntimeRecoveryCandidate,
+};
+use super::lanes::merge::{
+    finish_merge_agent_repaired_branch, merge_agent_reports_repaired,
+    merge_agent_requests_human_input, merge_once_tick, record_done_merge_lane_completion,
+    select_merge_worker_issues, MergeOnceOutcome,
+};
+use super::lanes::review::{
+    apply_review_result, canonical_issue_body_without_workpad,
+    check_review_verified_issue_body_checkboxes, render_automatic_review_prompt,
+    render_manual_review_workpad, review_claim_for_issue, review_workspace_for_issue,
+    select_review_worker_issues, terminal_review_claim_value, terminal_review_loop_claim_value,
+    transition_issue_to_rework_with_diagnostic, validate_active_manual_review_claim,
+    validate_manual_review_pass_claim,
+};
+use super::orchestration::canonical_checkout::{
+    canonical_checkout_report, CanonicalCheckoutReport,
+};
+use super::orchestration::tracker_recovery::{issue_is_closed, tracker_recovery_marker};
+use super::orchestration::workflow_config::temporary_workflow_warning;
+use jade_symphony::agent::UsageLimitPause;
+use jade_symphony::doctor::ProjectAuditViolation;
+use jade_symphony::doctor::{AuditSeverity, ProjectAuditReport};
+use jade_symphony::event_log::EventLog;
+use jade_symphony::git_handoff::{CommandOutput, HandoffCommandRunner};
+use jade_symphony::git_handoff::{
+    LiveWorktreeResult, PullRequestPublication, PullRequestReadyStatus,
+};
+use jade_symphony::handoff::evaluate_agent_review_handoff;
+use jade_symphony::handoff::{plan_issue_handoff_for_profile, HandoffError, IssueHandoffPlan};
+use jade_symphony::lane_claim::{
+    LaneClaim, LaneClaimActor, LaneClaimLane, LaneClaimSource, LaneClaimState,
+};
+use jade_symphony::model::normalize_state;
+use jade_symphony::model::SessionStatusSnapshot;
+use jade_symphony::orchestrator::Orchestrator;
+use jade_symphony::ownership::render_runtime_ownership_marker;
+use jade_symphony::ownership::{runtime_ownership_decision, RuntimeOwnershipDecision};
+use jade_symphony::review::FakeReviewOutcome;
+use jade_symphony::review::{
+    ReviewGateDecision, ReviewJob, ReviewJobState, ReviewOutcome, ReviewReworkClass,
+    ReviewStaleReason,
+};
+use jade_symphony::rework::ReworkDiagnostic;
+use jade_symphony::runtime_state::{
+    load_runtime_states, record_runtime_retry, runtime_state_for_issue, upsert_runtime_state,
+};
+use jade_symphony::runtime_state::{RuntimeIssueState, RuntimeState, RuntimeTransition};
+use jade_symphony::session_registry::AgentSessionRecord;
+use jade_symphony::session_registry::{load_session_registry, save_session_record};
+use jade_symphony::session_registry::{
+    save_session_registry, session_registry_path, SessionStatus,
+};
+use jade_symphony::skill_status::SkillStatusInput;
+use jade_symphony::tracker::FollowUpIssueInput;
+use jade_symphony::tracker::ProjectFieldAssignment;
+use jade_symphony::tracker::TrackerAdapter;
+use jade_symphony::workflow::WorkflowDefinition;
+use jade_symphony::workspace::GitIdentityApplyResult;
 
 #[path = "tests/autopilot.rs"]
 mod autopilot;

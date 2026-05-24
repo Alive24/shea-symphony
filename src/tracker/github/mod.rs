@@ -1,4 +1,5 @@
 mod cli;
+mod evidence;
 mod project_v2;
 mod queries;
 
@@ -11,6 +12,15 @@ pub(in crate::tracker) use cli::{
 #[cfg(test)]
 pub(in crate::tracker) use cli::{
     project_state_error_is_retryable, run_command_with_timeout, GithubAuthMode,
+};
+#[cfg(test)]
+pub(in crate::tracker) use evidence::linked_pull_request_from_url;
+pub(in crate::tracker) use evidence::{
+    blocker_refs_from_project_fields, github_issue_comment_bodies,
+    github_issue_description_with_workpad, github_issue_number,
+    github_native_blocker_refs_from_response, json_number_to_i64,
+    linked_pull_requests_from_workpads, merge_blocker_refs, merge_linked_pull_requests,
+    project_fields, project_status, pull_requests_from_issue, string_nodes,
 };
 pub(in crate::tracker) use project_v2::{
     apply_rest_project_item_overlay_fallback, apply_rest_project_item_overlays,

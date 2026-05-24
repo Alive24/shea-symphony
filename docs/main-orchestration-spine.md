@@ -129,6 +129,9 @@ Library Doctor checks should be grouped by the invariant they audit:
   blockers, Human Review evidence gates, Merging PR target checks, and
   queued/In Progress PR or ownership warnings while preserving lane-claim
   diagnostic ordering.
+- `src/doctor/tests/project_state.rs`: focused Doctor Project-state tests for
+  Agent Review, Human Review, Merging, terminal-state, and PR-evidence
+  diagnostics.
 - `src/doctor/report.rs`: Doctor output and repair evidence rendering. It owns
   human/JSON audit report output, repair candidate filters, Doctor repair
   workpad text, and the local timestamp formatter used by those evidence notes.

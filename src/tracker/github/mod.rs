@@ -2,6 +2,7 @@ mod cli;
 mod evidence;
 mod project_v2;
 mod queries;
+mod topology;
 
 pub use queries::GithubProjectReadMode;
 
@@ -37,4 +38,11 @@ pub(super) use queries::{
     GITHUB_CLOSE_ISSUE_MUTATION, GITHUB_CREATE_ISSUE_MUTATION, GITHUB_REPOSITORY_ID_QUERY,
     GITHUB_UPDATE_ISSUE_COMMENT_MUTATION, GITHUB_UPDATE_PROJECT_ITEM_FIELD_MUTATION,
     GITHUB_UPDATE_PROJECT_ITEM_TEXT_FIELD_MUTATION,
+};
+pub(in crate::tracker) use topology::{
+    enrich_native_subissue_project_statuses_for_issue,
+    enrich_native_subissue_project_statuses_from_project_read,
+    hydrate_missing_native_subissue_project_statuses, insert_native_subissue_fields,
+    insert_native_subissue_status_fields, native_subissue_refs_from_rest_response,
+    native_subissue_refs_missing_project_state, project_state_map, NativeSubissueRef,
 };

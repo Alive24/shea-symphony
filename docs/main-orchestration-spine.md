@@ -156,6 +156,9 @@ single catch-all file:
 - `src/tracker/github/queries.rs`: GitHub Project v2 GraphQL query and mutation
   documents, page-size constants, and read-mode shaping for queue scans versus
   rich issue evidence.
+- `src/tracker/github/topology.rs`: native GitHub parent/subissue topology
+  helpers, including subissue field insertion, missing Project-state hydration,
+  and issue-ref matching used by queue and targeted reads.
 - `src/tracker/linear.rs`: Linear tracker backend, including fixture/live
   dispatch, Linear GraphQL query and mutation documents, Linear issue parsing,
   state-name mapping, and Linear-specific integration-gap reporting.

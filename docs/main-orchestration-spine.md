@@ -246,6 +246,9 @@ runtime owner:
 - `src/lanes/merge/repair/agent_contract.rs`: Merge-agent repair prompt and
   output contract. It owns the conflict-repair prompt text, required decision
   markers, agent event text aggregation, and semantic-safety summary parsing.
+- `src/lanes/merge/repair/outcome.rs`: Merge-agent repair outcomes. It owns
+  successful repair finalization, push verification, and the standard blocked,
+  backend-failed, semantic-uncertain, and verification-failed evidence shapes.
 - `src/lanes/merge/selection.rs`: Merge worker selection and recovery
   candidates. It owns priority-ordered claim recovery, unclaimed merge-worker
   selection, and the rule that manual merge claims are not adopted by the loop.

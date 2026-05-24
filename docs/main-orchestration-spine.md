@@ -263,6 +263,9 @@ runtime owner:
 - `src/lanes/merge/tick.rs`: Single merge-lane tick execution. It owns queue
   reads, merge claim writes, PR preflight, merge-lane decisions, evidence
   recording, and state transitions for one selected Merging issue.
+- `src/lanes/merge/tick/dirty.rs`: Dirty merge decision handling. It owns the
+  safe conflict repair attempt, merge-agent repair fallback, dirty-PR evidence,
+  and Need Human Input routing for unrepairable dirty branches.
 - `src/lanes/review/`: Review lane command execution. `status.rs` owns
   freshness and status reporting, `manual.rs` owns manual Review
   claim/pass/reject routing, and `automatic.rs` owns fake/once/loop runs,

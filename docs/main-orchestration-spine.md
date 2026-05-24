@@ -153,7 +153,8 @@ single catch-all file:
   Project v2 adapter.
 - `src/tracker/github/evidence.rs`: GitHub issue evidence parsing, including
   issue body plus workpad/timeline comment composition, blocker/native
-  dependency refs, Project field extraction, and linked PR discovery.
+  dependency refs, rich issue evidence merging, Project field extraction, and
+  linked PR discovery.
 - `src/tracker/github/project_v2.rs`: GitHub Project v2 metadata/cache types,
   owner typing, Project item and targeted issue response parsing, REST overlay
   merging, REST field update payloads, and REST project path construction.

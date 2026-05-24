@@ -15,13 +15,13 @@ pub(in crate::tracker) use cli::{
     project_state_error_is_retryable, run_command_with_timeout, GithubAuthMode,
 };
 #[cfg(test)]
-pub(in crate::tracker) use evidence::linked_pull_request_from_url;
 pub(in crate::tracker) use evidence::{
-    blocker_refs_from_project_fields, github_issue_comment_bodies,
-    github_issue_description_with_workpad, github_issue_number,
-    github_native_blocker_refs_from_response, json_number_to_i64,
-    linked_pull_requests_from_workpads, merge_blocker_refs, merge_linked_pull_requests,
-    pull_requests_from_issue, string_nodes,
+    blocker_refs_from_project_fields, github_issue_description_with_workpad,
+    linked_pull_request_from_url, linked_pull_requests_from_workpads, merge_linked_pull_requests,
+};
+pub(in crate::tracker) use evidence::{
+    github_issue_number, github_native_blocker_refs_from_response, json_number_to_i64,
+    merge_blocker_refs, merge_github_issue_evidence, string_nodes,
 };
 #[cfg(test)]
 pub(in crate::tracker) use project_v2::status_option_id;
@@ -45,7 +45,7 @@ pub(super) use queries::{
 pub(in crate::tracker) use topology::{
     enrich_native_subissue_project_statuses_for_issue,
     enrich_native_subissue_project_statuses_from_project_read,
-    hydrate_missing_native_subissue_project_statuses, insert_native_subissue_fields,
-    insert_native_subissue_status_fields, native_subissue_refs_from_rest_response,
-    native_subissue_refs_missing_project_state, project_state_map, NativeSubissueRef,
+    hydrate_missing_native_subissue_project_statuses, insert_native_subissue_status_fields,
+    native_subissue_refs_from_rest_response, native_subissue_refs_missing_project_state,
+    project_state_map, NativeSubissueRef,
 };

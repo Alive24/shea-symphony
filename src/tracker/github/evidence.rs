@@ -1,8 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::model::{normalize_state, BlockerRef, LinkedPullRequest};
+use crate::config::RuntimeConfig;
+use crate::model::{normalize_state, BlockerRef, LinkedPullRequest, TrackerIssue};
 
 use super::super::TrackerError;
+use super::topology::insert_native_subissue_fields;
 
 pub(in crate::tracker) fn github_issue_description_with_workpad(
     content: &serde_json::Value,
@@ -31,6 +33,71 @@ pub(in crate::tracker) fn github_issue_description_with_workpad(
     } else {
         Some(sections.join("\n\n"))
     }
+}
+
+pub(in crate::tracker) fn merge_github_issue_evidence(
+    issue: &mut TrackerIssue,
+    content: &serde_json::Value,
+    config: &RuntimeConfig,
+) -> Result<(), TrackerError> {
+    let number = content.get("number").and_then(serde_json::Value::as_u64);
+    if let Some(number) = number {
+        issue.identifier = format!("#{number}");
+    }
+    if let Some(id) = content.get("id").and_then(serde_json::Value::as_str) {
+        issue.id = id.to_string();
+    }
+    if let Some(title) = content.get("title").and_then(serde_json::Value::as_str) {
+        issue.title = title.to_string();
+    }
+    if let Some(url) = content.get("url").and_then(serde_json::Value::as_str) {
+        issue.url = Some(url.to_string());
+    }
+    if let Some(issue_state) = content.get("state").and_then(serde_json::Value::as_str) {
+        issue.project_fields.insert(
+            "GitHub Issue State".into(),
+            serde_json::Value::String(issue_state.to_string()),
+        );
+    }
+
+    insert_native_subissue_fields(&mut issue.project_fields, content);
+    issue.blocked_by = blocker_refs_from_project_fields(&issue.project_fields);
+    let comment_bodies = github_issue_comment_bodies(content)
+        .into_iter()
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    issue.linked_pull_requests = merge_linked_pull_requests(
+        pull_requests_from_issue(content),
+        linked_pull_requests_from_workpads(
+            &comment_bodies,
+            config.tracker.owner.as_deref(),
+            config.tracker.repo.as_deref(),
+        ),
+    );
+    issue.description =
+        github_issue_description_with_workpad(content, &config.tracker.workpad.marker);
+    issue.labels = string_nodes(content.pointer("/labels/nodes"), "name")
+        .into_iter()
+        .map(|label| label.to_lowercase())
+        .collect();
+    issue.assignees = string_nodes(content.pointer("/assignees/nodes"), "login");
+    issue.created_at = content
+        .get("createdAt")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned);
+    issue.updated_at = content
+        .get("updatedAt")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned);
+
+    if number.is_none() {
+        return Err(TrackerError::Payload(format!(
+            "GitHub issue evidence for {} missing number",
+            issue.identifier
+        )));
+    }
+
+    Ok(())
 }
 
 pub(in crate::tracker) fn github_issue_comment_bodies(content: &serde_json::Value) -> Vec<&str> {

@@ -23,20 +23,18 @@ pub use memory::MemoryTracker;
 
 use github::{
     apply_rest_project_item_overlay_fallback, apply_rest_project_item_overlays,
-    blocker_refs_from_project_fields, enrich_native_subissue_project_statuses_for_issue,
+    enrich_native_subissue_project_statuses_for_issue,
     enrich_native_subissue_project_statuses_from_project_read, gh_available, github_auth_gap,
-    github_auth_mode, github_graphql_auth_smoke, github_issue_comment_bodies,
-    github_issue_comments_query, github_issue_description_with_workpad,
+    github_auth_mode, github_graphql_auth_smoke, github_issue_comments_query,
     github_issue_evidence_query, github_issue_number, github_issue_project_item_query,
     github_native_blocker_refs_from_response, github_project_metadata_query, github_project_query,
     github_rest_project_path, hydrate_missing_native_subissue_project_statuses,
-    insert_native_subissue_fields, insert_native_subissue_status_fields,
-    issue_from_repository_issue_response, issues_from_project_response, json_number_to_i64,
-    linked_pull_requests_from_workpads, merge_blocker_refs, merge_linked_pull_requests,
-    native_subissue_refs_from_rest_response, native_subissue_refs_missing_project_state,
-    project_field_from_metadata_with_refresh, project_item_id_from_add_response,
-    project_metadata_from_response, project_rest_item_id, project_state_map,
-    pull_requests_from_issue, rest_project_item_field_update_body,
+    insert_native_subissue_status_fields, issue_from_repository_issue_response,
+    issues_from_project_response, json_number_to_i64, merge_blocker_refs,
+    merge_github_issue_evidence, native_subissue_refs_from_rest_response,
+    native_subissue_refs_missing_project_state, project_field_from_metadata_with_refresh,
+    project_item_id_from_add_response, project_metadata_from_response, project_rest_item_id,
+    project_state_map, rest_project_item_field_update_body,
     rest_project_item_overlays_from_response, rest_project_metadata_from_response, run_gh_api_json,
     run_gh_graphql, string_nodes, GithubCliAccess, NativeSubissueRef, ProjectFieldKind,
     ProjectFieldMetadata, ProjectFieldUpdateValue, ProjectMetadata, ProjectMetadataCache,
@@ -48,8 +46,9 @@ use github::{
 };
 #[cfg(test)]
 use github::{
-    linked_pull_request_from_url, project_state_error_is_retryable, run_command_with_timeout,
-    status_option_id, GithubAuthMode,
+    blocker_refs_from_project_fields, github_issue_description_with_workpad,
+    linked_pull_request_from_url, linked_pull_requests_from_workpads, merge_linked_pull_requests,
+    project_state_error_is_retryable, run_command_with_timeout, status_option_id, GithubAuthMode,
 };
 #[cfg(test)]
 use linear::{linear_graphql_error_message, linear_issues_from_response, linear_state_option_name};
@@ -1828,71 +1827,6 @@ fn graphql_error_message(response: &serde_json::Value) -> Option<String> {
             messages.join("; ")
         ))
     }
-}
-
-fn merge_github_issue_evidence(
-    issue: &mut TrackerIssue,
-    content: &serde_json::Value,
-    config: &RuntimeConfig,
-) -> Result<(), TrackerError> {
-    let number = content.get("number").and_then(serde_json::Value::as_u64);
-    if let Some(number) = number {
-        issue.identifier = format!("#{number}");
-    }
-    if let Some(id) = content.get("id").and_then(serde_json::Value::as_str) {
-        issue.id = id.to_string();
-    }
-    if let Some(title) = content.get("title").and_then(serde_json::Value::as_str) {
-        issue.title = title.to_string();
-    }
-    if let Some(url) = content.get("url").and_then(serde_json::Value::as_str) {
-        issue.url = Some(url.to_string());
-    }
-    if let Some(issue_state) = content.get("state").and_then(serde_json::Value::as_str) {
-        issue.project_fields.insert(
-            "GitHub Issue State".into(),
-            serde_json::Value::String(issue_state.to_string()),
-        );
-    }
-
-    insert_native_subissue_fields(&mut issue.project_fields, content);
-    issue.blocked_by = blocker_refs_from_project_fields(&issue.project_fields);
-    let comment_bodies = github_issue_comment_bodies(content)
-        .into_iter()
-        .map(ToOwned::to_owned)
-        .collect::<Vec<_>>();
-    issue.linked_pull_requests = merge_linked_pull_requests(
-        pull_requests_from_issue(content),
-        linked_pull_requests_from_workpads(
-            &comment_bodies,
-            config.tracker.owner.as_deref(),
-            config.tracker.repo.as_deref(),
-        ),
-    );
-    issue.description =
-        github_issue_description_with_workpad(content, &config.tracker.workpad.marker);
-    issue.labels = string_nodes(content.pointer("/labels/nodes"), "name")
-        .into_iter()
-        .map(|label| label.to_lowercase())
-        .collect();
-    issue.assignees = string_nodes(content.pointer("/assignees/nodes"), "login");
-    issue.created_at = content
-        .get("createdAt")
-        .and_then(serde_json::Value::as_str)
-        .map(ToOwned::to_owned);
-    issue.updated_at = content
-        .get("updatedAt")
-        .and_then(serde_json::Value::as_str)
-        .map(ToOwned::to_owned);
-
-    if number.is_none() {
-        return Err(TrackerError::Payload(format!(
-            "GitHub issue evidence for {} missing number",
-            issue.identifier
-        )));
-    }
-
-    Ok(())
 }
 
 fn load_fixture(config: &RuntimeConfig) -> Result<Vec<TrackerIssue>, TrackerError> {

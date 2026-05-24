@@ -94,10 +94,14 @@ clear owner:
   inspection glue. It keeps config loading, progress-wrapped Project summary
   reads, state filtering, and gate summary rendering out of the binary
   entrypoint.
-- `src/commands/workspace.rs`: Workspace command execution for discovery,
-  adoption, ensure, and cleanup. It owns command-level worktree safety checks
-  and evidence writes, while shared lane handoff planning remains outside the
-  command module.
+- `src/commands/workspace.rs`: Workspace command family shell for discovery,
+  adoption, report rendering, and cleanup planning/removal. It keeps
+  operator-facing inventory output and adoption workpad writes together while
+  leaving worktree creation/reuse to `ensure.rs`.
+- `src/commands/workspace/ensure.rs`: `workspace ensure` execution. It owns
+  command-level worktree creation/reuse safety checks, configured workspace-root
+  containment, PR/branch selection, and Workspace Evidence writes while shared
+  lane handoff planning remains outside the command module.
 - `src/commands/doctor.rs`: Doctor command execution, selective issue
   hydration, and command-level Doctor diagnostics. It owns audit loading and
   rendering while exposing read-only summaries for debug and autopilot preflight.

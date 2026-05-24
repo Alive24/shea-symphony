@@ -119,7 +119,11 @@ clear owner:
 Library Doctor checks should be grouped by the invariant they audit:
 
 - `src/doctor.rs`: Project Doctor report types, Project issue state checks,
-  runtime/session consistency checks, and repair workpad rendering.
+  lane-claim field checks, shared Doctor helpers, and repair workpad rendering.
+- `src/doctor/runtime.rs`: Doctor runtime/session diagnostics. It owns
+  runtime-state tracker consistency checks, stale runtime warnings, session
+  registry issue attribution, session attention warnings, and runtime/session
+  cross-reference drift.
 - `src/doctor/skills.rs`: local Jade Symphony skill install diagnostics. It
   owns suite manifest parsing, Codex/Gemini target discovery, installed skill
   shape checks, metadata freshness, and local skill drift warning records.

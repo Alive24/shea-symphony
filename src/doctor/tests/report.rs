@@ -2,7 +2,7 @@ use super::super::{
     audit_project_issues, human_review_repair_candidates, render_human_review_repair_workpad,
     render_project_audit_report, render_project_audit_report_json, ProjectAuditReport,
 };
-use super::issue;
+use super::support::issue;
 
 #[test]
 fn human_review_repair_candidates_are_specific_to_missing_review_evidence() {

@@ -1,7 +1,7 @@
 use crate::runtime_state::{RuntimeIssueState, RuntimeState};
 
 use super::super::{audit_project_issues_with_context, ProjectDoctorContext};
-use super::{issue, linked_pr, session, with_github_issue_state};
+use super::support::{issue, linked_pr, session, with_github_issue_state};
 
 #[test]
 fn accepts_completed_main_session_for_agent_review_issue() {

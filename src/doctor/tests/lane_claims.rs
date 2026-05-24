@@ -1,7 +1,7 @@
 use super::super::{
     audit_project_issues, audit_project_issues_with_context, AuditSeverity, ProjectDoctorContext,
 };
-use super::{issue, session, with_github_issue_state};
+use super::support::{issue, session, with_github_issue_state};
 
 #[test]
 fn reports_todo_with_main_agent_claim() {

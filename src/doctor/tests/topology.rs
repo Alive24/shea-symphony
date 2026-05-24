@@ -1,5 +1,7 @@
 use super::super::{audit_project_issues, AuditSeverity};
-use super::{issue, linked_pr_to, with_native_parent, with_native_subissues, with_parent_branch};
+use super::support::{
+    issue, linked_pr_to, with_native_parent, with_native_subissues, with_parent_branch,
+};
 
 #[test]
 fn accepts_happy_parent_subissue_topology() {

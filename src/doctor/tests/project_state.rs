@@ -2,7 +2,7 @@ use super::super::{
     audit_project_issues, draft_pr_repair_candidates, AGENT_REVIEW_DRAFT_PR,
     HUMAN_REVIEW_MISSING_REVIEW_EVIDENCE,
 };
-use super::{issue, linked_pr, with_github_issue_state};
+use super::support::{issue, linked_pr, with_github_issue_state};
 
 #[test]
 fn reports_agent_review_missing_pr_handoff() {

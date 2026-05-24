@@ -135,6 +135,8 @@ Library Doctor checks should be grouped by the invariant they audit:
 - `src/doctor/report.rs`: Doctor output and repair evidence rendering. It owns
   human/JSON audit report output, repair candidate filters, Doctor repair
   workpad text, and the local timestamp formatter used by those evidence notes.
+- `src/doctor/tests/report.rs`: focused Doctor report/rendering tests for
+  human/JSON output and repair-candidate workpad boundaries.
 - `src/doctor/runtime.rs`: Doctor runtime/session diagnostics. It owns
   runtime-state tracker consistency checks, stale runtime warnings, session
   registry issue attribution, session attention warnings, and runtime/session

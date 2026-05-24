@@ -98,10 +98,12 @@ clear owner:
   adoption, ensure, and cleanup. It owns command-level worktree safety checks
   and evidence writes, while shared lane handoff planning remains outside the
   command module.
-- `src/commands/doctor.rs`: Doctor command execution, repair entrypoints,
-  selective issue hydration, and command-level Doctor diagnostics. It keeps
-  repair suggestions and write-mode repair evidence close to the Doctor surface
-  while exposing read-only summaries for debug and autopilot preflight.
+- `src/commands/doctor.rs`: Doctor command execution, selective issue
+  hydration, and command-level Doctor diagnostics. It owns audit loading and
+  rendering while exposing read-only summaries for debug and autopilot preflight.
+- `src/commands/doctor/repair.rs`: Doctor repair and auto-fix command glue,
+  including write-mode repair evidence, operator-confirmed PR ready repair, and
+  the legacy Human Review repair entrypoint.
 - `src/commands/debug.rs`: read-only debug report execution, Project/Doctor
   summary rendering, smoke-readiness classification, session summaries, and
   lane next-action hints. Shared app-server smoke-gate facts stay with Main

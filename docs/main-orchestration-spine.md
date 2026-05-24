@@ -145,6 +145,8 @@ Library Doctor checks should be grouped by the invariant they audit:
   owns native parent/subissue relationship checks, parent integration-branch
   evidence parsing, subissue PR base validation, and parent Human Review
   topology gates.
+- `src/doctor/tests/topology.rs`: focused Doctor topology tests and their
+  parent/subissue fixture combinations.
 
 Cross-command orchestration helpers live under `src/orchestration/` when they
 have a narrow shared responsibility:

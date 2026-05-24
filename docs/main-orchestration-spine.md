@@ -264,12 +264,14 @@ single catch-all file:
 
 Library Review code should be grouped by review-domain responsibility:
 
-- `src/review.rs`: Review report/job/backend core, Gemini backend health,
-  review gate decisions, workpad rendering, ledger records, and transition
-  authority checks that are still shared across Review command/lane surfaces.
+- `src/review.rs`: Review report/job/backend core, review gate decisions,
+  workpad rendering, ledger records, and transition authority checks that are
+  still shared across Review command/lane surfaces.
 - `src/review/freshness.rs`: Review freshness inputs, decisions, and workpad
   rendering for preserving or invalidating prior Human Review evidence after
   Rework.
+- `src/review/gemini_health.rs`: Gemini review backend health categories,
+  prelaunch diagnostics, retry classification, and failure signatures.
 
 Binary integration-style tests live under `src/main/` instead of inline in the
 entrypoint:

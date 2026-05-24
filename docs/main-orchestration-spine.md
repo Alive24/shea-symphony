@@ -141,9 +141,11 @@ have a narrow shared responsibility:
 Tracker adapter code should stay backend-oriented instead of accumulating in a
 single catch-all file:
 
-- `src/tracker.rs`: shared tracker trait, tracker factory, memory tracker,
-  GitHub Project v2 adapter, shared normalization/parsing helpers, and fixture
-  loading used by tracker backends.
+- `src/tracker.rs`: shared tracker trait, tracker factory, GitHub Project v2
+  adapter methods, shared normalization/parsing helpers, and fixture loading
+  used by tracker backends.
+- `src/tracker/memory.rs`: in-memory fixture tracker backend for dry-run and
+  test surfaces.
 - `src/tracker/github/cli.rs`: GitHub CLI invocation, auth-mode detection,
   retry/timeout handling, and JSON/status response validation used by the
   Project v2 adapter.

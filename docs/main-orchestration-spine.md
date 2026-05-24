@@ -158,9 +158,13 @@ entrypoint:
   readiness rendering tests.
 - `src/main/tests/forge.rs`: Issue Forge, promote/rework, Link PR, and Rework
   evidence-ordering behavior tests that exercise binary-private helpers.
-- `src/main/tests/main_loop.rs`: Main-loop selection, runtime recovery,
-  pending-session reconciliation, handoff evidence, live PR linkage,
-  usage-limit pause, and write-mode guard tests.
+- `src/main/tests/main_loop.rs`: Main-loop smoke gates, selection, runtime
+  state shaping, pending-session reconciliation, handoff evidence, live PR
+  linkage, usage-limit pause, and write-mode guard tests.
+- `src/main/tests/main_loop/runtime.rs`: Main-loop runtime preflight and
+  recovery tests, including stale-state archival, retry timing,
+  active-session retention, tmux/app-server recovery candidates, and fake tmux
+  helpers.
 - `src/main/tests/merge.rs`: Merge session backend defaults, clean merge tick,
   merge-agent repair evidence, merge worker selection/recovery, and Done-state
   completion ordering tests.

@@ -139,6 +139,8 @@ Library Doctor checks should be grouped by the invariant they audit:
 - `src/doctor/skills.rs`: local Jade Symphony skill install diagnostics. It
   owns suite manifest parsing, Codex/Gemini target discovery, installed skill
   shape checks, metadata freshness, and local skill drift warning records.
+- `src/doctor/tests/skills.rs`: focused Doctor skill-install diagnostics tests
+  and their local skill-suite filesystem fixtures.
 - `src/doctor/topology.rs`: Project parent/subissue topology diagnostics. It
   owns native parent/subissue relationship checks, parent integration-branch
   evidence parsing, subissue PR base validation, and parent Human Review

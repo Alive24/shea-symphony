@@ -11,12 +11,14 @@ use super::append_runtime_supervision_event;
 
 mod archive;
 mod recovery;
+mod session_probe;
 
 use archive::{archive_runtime_state, stale_runtime_state_action};
 use recovery::{
     active_runtime_session_for_issue, recover_registered_main_sessions, runtime_recovery_reason,
-    session_status_counts_as_active_worker, terminal_runtime_session_for_issue,
+    terminal_runtime_session_for_issue,
 };
+use session_probe::session_status_counts_as_active_worker;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ResumePreflightAction {

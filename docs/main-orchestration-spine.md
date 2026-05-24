@@ -225,9 +225,12 @@ runtime owner:
   It owns workspace clean/dirty checks, archive reason mapping, and durable
   archive file writes for runtime states that no longer match tracker state.
 - `src/lanes/main_loop/runtime/recovery.rs`: Main-loop runtime/session recovery
-  helpers. It owns registered-session reconstruction, active/terminal session
-  probe selection, session status classification for worker-slot accounting,
-  and recoverable session reason text.
+  policy. It owns registered-session recovery candidates, active-session
+  retention decisions, terminal-session reconstruction, and recoverable session
+  reason text.
+- `src/lanes/main_loop/runtime/session_probe.rs`: Main runtime session probing.
+  It owns session-registry record conversion, tmux/log probing, session status
+  classification, and active-worker status priority.
 - `src/lanes/main_loop/selection.rs`: Main-loop issue selection and claim
   decisions. It owns recover-first selection, claim/resume/replan
   classification, live GitHub assignee identity lookup/ownership checks, and

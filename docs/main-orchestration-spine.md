@@ -95,9 +95,12 @@ clear owner:
   reads, state filtering, and gate summary rendering out of the binary
   entrypoint.
 - `src/commands/workspace.rs`: Workspace command family shell for discovery,
-  adoption, report rendering, and cleanup planning/removal. It keeps
-  operator-facing inventory output and adoption workpad writes together while
-  leaving worktree creation/reuse to `ensure.rs`.
+  adoption, and report rendering. It keeps operator-facing inventory output and
+  adoption workpad writes together while leaving cleanup and worktree
+  creation/reuse to focused child modules.
+- `src/commands/workspace/cleanup.rs`: Workspace cleanup execution and cleanup
+  planning. It owns terminal-state filtering, profile-aware workspace key
+  planning, dry-run/removal output, and guarded workspace removal.
 - `src/commands/workspace/ensure.rs`: `workspace ensure` execution. It owns
   command-level worktree creation/reuse safety checks, configured workspace-root
   containment, PR/branch selection, and Workspace Evidence writes while shared

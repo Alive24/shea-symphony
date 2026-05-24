@@ -85,13 +85,18 @@ For a more scannable operator view, keep the same dry-run boundary and opt into
 the terminal panel:
 
 ```bash
+target/debug/jade-symphony autopilot loop workflows/jade-symphony.md --max-iterations 1 --dry-run --display tui
 target/debug/jade-symphony main loop workflows/jade-symphony.md --max-iterations 1 --dry-run --display tui
 ```
 
-The panel view is not a full-screen dashboard. It keeps plain text and JSON/log
-evidence available by default, and only changes output when `--display tui` is
-passed. The same opt-in display flag is available on `project state` and
-`doctor`.
+The autopilot TUI is still a foreground command, not a daemon. It renders Main,
+Review, and Merge lane cards, parked operator queues, retry/backoff rows, and a
+short event log from a shared dashboard snapshot. Keep future Web UI work on
+that snapshot/model boundary rather than parsing terminal-rendered strings.
+
+Panel output keeps plain text and JSON/log evidence available by default, and
+only changes output when `--display tui` is passed. The same opt-in display flag
+is available on focused `main loop`, `project state`, and `doctor`.
 
 The first slice follows the current OpenAI Codex CLI terminal direction checked
 against `openai/codex` on 2026-05-15: the Codex TUI crate depends on `ratatui`

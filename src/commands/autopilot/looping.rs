@@ -19,8 +19,10 @@ use crate::lanes::review::{review_loop, ReviewLoopOptions};
 use crate::orchestration::{current_time_ms, shell_quote_display, warn_if_temporary_workflow_path};
 
 use super::{
-    build_autopilot_plan, AutopilotIssueSummary, AutopilotLanePlan, AutopilotParkedQueue,
-    AutopilotPlanSnapshot, AutopilotRetryRecord,
+    build_autopilot_plan,
+    dashboard::{render_autopilot_loop_iteration_tui, render_autopilot_loop_status_tui},
+    AutopilotIssueSummary, AutopilotLanePlan, AutopilotParkedQueue, AutopilotPlanSnapshot,
+    AutopilotRetryRecord,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +37,7 @@ pub(crate) struct AutopilotLoopOptions {
     pub(crate) main_max_concurrent: Option<usize>,
     pub(crate) review_max_concurrent: Option<usize>,
     pub(crate) merge_max_concurrent: Option<usize>,
+    pub(crate) display: DisplayMode,
     pub(crate) json: bool,
 }
 
@@ -92,7 +95,7 @@ fn autopilot_loop_with_cancellation(
                 iteration.saturating_sub(1),
                 "cancellation requested before next poll".into(),
             );
-            print_autopilot_loop_status(&status, options.json)?;
+            print_autopilot_loop_status(&status, options.json, options.display)?;
             println!(
                 "autopilot_loop=stopped reason=cancelled iterations={}",
                 iteration.saturating_sub(1)
@@ -103,7 +106,7 @@ fn autopilot_loop_with_cancellation(
 
         let checking_status =
             autopilot_loop_checking_status(&options, iteration, &recent_transient_failures);
-        print_autopilot_loop_status(&checking_status, options.json)?;
+        print_autopilot_loop_status(&checking_status, options.json, options.display)?;
         warn_if_temporary_workflow_path(&options.workflow_path);
 
         let workflow = match WorkflowDefinition::load(&options.workflow_path) {
@@ -115,7 +118,7 @@ fn autopilot_loop_with_cancellation(
                     format!("workflow_load_error={error}"),
                     &recent_transient_failures,
                 );
-                print_autopilot_loop_status(&status, options.json)?;
+                print_autopilot_loop_status(&status, options.json, options.display)?;
                 if iteration < max_iterations
                     && autopilot_sleep_or_cancel(status.settings.poll_interval_ms, &cancellation)
                 {
@@ -124,7 +127,7 @@ fn autopilot_loop_with_cancellation(
                         iteration,
                         "cancellation requested during blocked wait".into(),
                     );
-                    print_autopilot_loop_status(&cancelled, options.json)?;
+                    print_autopilot_loop_status(&cancelled, options.json, options.display)?;
                     println!("autopilot_loop=stopped reason=cancelled iterations={iteration}");
                     stopped_reported = true;
                     break;
@@ -146,7 +149,7 @@ fn autopilot_loop_with_cancellation(
                     format!("workflow_config_error={error}"),
                     &recent_transient_failures,
                 );
-                print_autopilot_loop_status(&status, options.json)?;
+                print_autopilot_loop_status(&status, options.json, options.display)?;
                 if iteration < max_iterations
                     && autopilot_sleep_or_cancel(status.settings.poll_interval_ms, &cancellation)
                 {
@@ -155,7 +158,7 @@ fn autopilot_loop_with_cancellation(
                         iteration,
                         "cancellation requested during blocked wait".into(),
                     );
-                    print_autopilot_loop_status(&cancelled, options.json)?;
+                    print_autopilot_loop_status(&cancelled, options.json, options.display)?;
                     println!("autopilot_loop=stopped reason=cancelled iterations={iteration}");
                     stopped_reported = true;
                     break;
@@ -191,7 +194,7 @@ fn autopilot_loop_with_cancellation(
                         "retrying",
                         Some(retry_delay_ms),
                     );
-                    print_autopilot_loop_status(&status, options.json)?;
+                    print_autopilot_loop_status(&status, options.json, options.display)?;
                     if iteration < max_iterations
                         && autopilot_sleep_or_cancel(retry_delay_ms, &cancellation)
                     {
@@ -200,7 +203,7 @@ fn autopilot_loop_with_cancellation(
                             iteration,
                             "cancellation requested during retry backoff".into(),
                         );
-                        print_autopilot_loop_status(&cancelled, options.json)?;
+                        print_autopilot_loop_status(&cancelled, options.json, options.display)?;
                         println!("autopilot_loop=stopped reason=cancelled iterations={iteration}");
                         stopped_reported = true;
                         break;
@@ -222,7 +225,7 @@ fn autopilot_loop_with_cancellation(
                     "blocked",
                     Some(settings.poll_interval_ms),
                 );
-                print_autopilot_loop_status(&status, options.json)?;
+                print_autopilot_loop_status(&status, options.json, options.display)?;
                 if iteration < max_iterations
                     && autopilot_sleep_or_cancel(settings.poll_interval_ms, &cancellation)
                 {
@@ -231,7 +234,7 @@ fn autopilot_loop_with_cancellation(
                         iteration,
                         "cancellation requested during blocked wait".into(),
                     );
-                    print_autopilot_loop_status(&cancelled, options.json)?;
+                    print_autopilot_loop_status(&cancelled, options.json, options.display)?;
                     println!("autopilot_loop=stopped reason=cancelled iterations={iteration}");
                     stopped_reported = true;
                     break;
@@ -249,7 +252,7 @@ fn autopilot_loop_with_cancellation(
             &recent_transient_failures,
             cancellation.load(Ordering::SeqCst),
         );
-        print_autopilot_loop_status(&status, options.json)?;
+        print_autopilot_loop_status(&status, options.json, options.display)?;
         if status.phase == "blocked" {
             if iteration < max_iterations
                 && autopilot_sleep_or_cancel(settings.poll_interval_ms, &cancellation)
@@ -262,7 +265,7 @@ fn autopilot_loop_with_cancellation(
                     &recent_transient_failures,
                     true,
                 );
-                print_autopilot_loop_status(&cancelled, options.json)?;
+                print_autopilot_loop_status(&cancelled, options.json, options.display)?;
                 println!("autopilot_loop=stopped reason=cancelled iterations={iteration}");
                 stopped_reported = true;
                 break;
@@ -279,7 +282,7 @@ fn autopilot_loop_with_cancellation(
                 &recent_transient_failures,
                 true,
             );
-            print_autopilot_loop_status(&cancelled, options.json)?;
+            print_autopilot_loop_status(&cancelled, options.json, options.display)?;
             println!("autopilot_loop=stopped reason=cancelled iterations={iteration}");
             stopped_reported = true;
             break;
@@ -313,6 +316,8 @@ fn autopilot_loop_with_cancellation(
         };
         if options.json {
             println!("{}", serde_json::to_string_pretty(&result)?);
+        } else if options.display == DisplayMode::Tui {
+            println!("{}", render_autopilot_loop_iteration_tui(&result));
         } else {
             println!("{}", render_autopilot_loop_iteration_result(&result));
         }
@@ -325,7 +330,7 @@ fn autopilot_loop_with_cancellation(
                 iteration,
                 "cancellation requested before next poll".into(),
             );
-            print_autopilot_loop_status(&cancelled, options.json)?;
+            print_autopilot_loop_status(&cancelled, options.json, options.display)?;
             println!("autopilot_loop=stopped reason=cancelled iterations={iteration}");
             stopped_reported = true;
             break;
@@ -362,26 +367,26 @@ impl AutopilotLoopTickSettings {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-struct AutopilotLoopIterationResult {
-    schema_version: u8,
-    iteration: usize,
-    mode: String,
-    execution_order: Vec<String>,
-    settings: AutopilotLoopTickSettings,
-    lanes: Vec<AutopilotLoopLaneResult>,
-    parked_queues: Vec<AutopilotParkedQueue>,
+pub(super) struct AutopilotLoopIterationResult {
+    pub(super) schema_version: u8,
+    pub(super) iteration: usize,
+    pub(super) mode: String,
+    pub(super) execution_order: Vec<String>,
+    pub(super) settings: AutopilotLoopTickSettings,
+    pub(super) lanes: Vec<AutopilotLoopLaneResult>,
+    pub(super) parked_queues: Vec<AutopilotParkedQueue>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-struct AutopilotLoopLaneResult {
-    lane: String,
-    status: String,
-    action: String,
-    selected_issue: Option<AutopilotIssueSummary>,
-    target_state: Option<String>,
-    max_concurrent: usize,
-    recover: bool,
-    evidence: Vec<String>,
+pub(super) struct AutopilotLoopLaneResult {
+    pub(super) lane: String,
+    pub(super) status: String,
+    pub(super) action: String,
+    pub(super) selected_issue: Option<AutopilotIssueSummary>,
+    pub(super) target_state: Option<String>,
+    pub(super) max_concurrent: usize,
+    pub(super) recover: bool,
+    pub(super) evidence: Vec<String>,
 }
 
 fn autopilot_main_tick(
@@ -981,9 +986,12 @@ fn autopilot_sleep_or_cancel(delay_ms: u64, cancellation: &Arc<AtomicBool>) -> b
 fn print_autopilot_loop_status(
     status: &AutopilotLoopStatusSnapshot,
     json: bool,
+    display: DisplayMode,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if json {
         println!("{}", serde_json::to_string_pretty(status)?);
+    } else if display == DisplayMode::Tui {
+        println!("{}", render_autopilot_loop_status_tui(status));
     } else {
         println!("{}", render_autopilot_loop_status_human(status));
     }

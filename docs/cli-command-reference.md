@@ -71,6 +71,13 @@ for interrupted Main and Merge lane work; use `--no-recover` only for focused
 debugging. Per-lane capacity uses `--main-max-concurrent`,
 `--review-max-concurrent`, and `--merge-max-concurrent`.
 
+Use `--display tui` for a scannable foreground dashboard that shows Main,
+Review, and Merge lane cards, parked operator queues, retry/backoff rows, and
+recent loop events. `--json` remains a machine-output mode and cannot be
+combined with `--display tui`. The TUI is rendered from an autopilot dashboard
+snapshot rather than from ad hoc terminal text, so a future Web UI should read
+that shared snapshot shape instead of parsing terminal output.
+
 Default resolution comes from workflow front matter unless a CLI override is
 provided:
 
@@ -82,6 +89,7 @@ provided:
 ```bash
 cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --dry-run
 cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --write
+cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 1 --dry-run --display tui
 cargo run -- autopilot loop workflows/jade-symphony.md --once --dry-run --json
 cargo run -- autopilot loop workflows/jade-symphony.md --max-iterations 3 --write --poll-interval-ms 30000
 ```

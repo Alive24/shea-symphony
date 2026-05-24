@@ -485,6 +485,8 @@ struct AutopilotLoopArgs {
     review_max_concurrent: Option<usize>,
     #[arg(long, help = "Maximum Merge-lane worker slots per iteration")]
     merge_max_concurrent: Option<usize>,
+    #[arg(long, value_enum, default_value_t = CliDisplayMode::Plain)]
+    display: CliDisplayMode,
     #[arg(long, help = "Print structured JSON status snapshots")]
     json: bool,
 }
@@ -1497,6 +1499,10 @@ fn merge_loop_command(args: MergeLoopArgs) -> Result<Command, String> {
 }
 
 fn autopilot_loop_command(args: AutopilotLoopArgs) -> Result<Command, String> {
+    let display = DisplayMode::from(args.display);
+    if args.json && display == DisplayMode::Tui {
+        return Err("autopilot loop --json cannot be combined with --display tui".into());
+    }
     if args.max_iterations == Some(0)
         || args.poll_interval_ms == Some(0)
         || args.main_max_concurrent == Some(0)
@@ -1518,6 +1524,7 @@ fn autopilot_loop_command(args: AutopilotLoopArgs) -> Result<Command, String> {
             main_max_concurrent: args.main_max_concurrent,
             review_max_concurrent: args.review_max_concurrent,
             merge_max_concurrent: args.merge_max_concurrent,
+            display,
             json: args.json,
         },
     })
@@ -2053,5 +2060,45 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("Usage:"));
+    }
+
+    #[test]
+    fn parser_accepts_autopilot_loop_tui_display() {
+        let command = parse(&[
+            "autopilot",
+            "loop",
+            "workflows/jade-symphony.md",
+            "--once",
+            "--dry-run",
+            "--display",
+            "tui",
+        ]);
+
+        let Command::AutopilotLoop { options } = command else {
+            panic!("expected autopilot loop command");
+        };
+
+        assert_eq!(
+            options.workflow_path,
+            PathBuf::from("workflows/jade-symphony.md")
+        );
+        assert!(options.once);
+        assert_eq!(options.display, DisplayMode::Tui);
+    }
+
+    #[test]
+    fn parser_rejects_autopilot_loop_json_tui_display() {
+        let error = Command::parse(vec![
+            "autopilot".into(),
+            "loop".into(),
+            "workflows/jade-symphony.md".into(),
+            "--once".into(),
+            "--json".into(),
+            "--display".into(),
+            "tui".into(),
+        ])
+        .unwrap_err();
+
+        assert!(error.contains("cannot be combined"));
     }
 }

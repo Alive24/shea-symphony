@@ -14,6 +14,7 @@ use crate::orchestration::{
     warn_if_temporary_workflow_path,
 };
 
+mod dashboard;
 mod lanes;
 mod looping;
 mod readiness;

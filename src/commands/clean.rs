@@ -8,7 +8,7 @@ use jade_symphony::canonical_checkout::canonical_quarantine_root;
 use jade_symphony::session_registry::session_registry_path;
 use jade_symphony::tracker::adapter_from_config;
 
-use crate::{load_config, session_status_snapshots};
+use crate::orchestration::{load_config, session_status_snapshots};
 
 pub(crate) fn cleanup_plan_command(
     workflow_path: PathBuf,

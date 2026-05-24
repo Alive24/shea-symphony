@@ -28,12 +28,16 @@ use super::{
     selected_profile_github_login, AssigneeOwnershipDecision, MainSessionReconciliation,
     RunLoopClaimAction, RunLoopOptions,
 };
-use crate::{
-    append_tracker_mutation_audit, current_time_ms, evaluate_issue_for_current_source,
-    lane_claim_for_issue, latest_status_for_issue, live_github_tracker, pool_claim_eligibility,
-    print_latest_status, progress_spec_with_event_log, project_text_field, recovery_key,
-    set_state_with_recovery, stable_recovery_hash, tracker_backend_label,
-    upsert_workpad_with_recovery, write_lane_claim_field, TrackerMutationAudit, WorkerLane,
+use crate::commands::gate::evaluate_issue_for_current_source;
+use crate::lanes::claim::{
+    lane_claim_for_issue, pool_claim_eligibility, project_text_field, write_lane_claim_field,
+    WorkerLane,
+};
+use crate::orchestration::{
+    append_tracker_mutation_audit, current_time_ms, latest_status_for_issue, live_github_tracker,
+    print_latest_status, progress_spec_with_event_log, recovery_key, set_state_with_recovery,
+    stable_recovery_hash, tracker_backend_label, upsert_workpad_with_recovery,
+    TrackerMutationAudit,
 };
 
 pub(crate) fn run_loop_dispatch_write_candidate(

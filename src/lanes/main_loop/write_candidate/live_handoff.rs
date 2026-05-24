@@ -7,7 +7,7 @@ use jade_symphony::handoff::IssueHandoffPlan;
 use jade_symphony::model::{LatestStatus, TrackerIssue};
 use jade_symphony::tracker::TrackerAdapter;
 
-use crate::{
+use crate::orchestration::{
     append_tracker_mutation_audit, latest_status_for_issue, print_latest_status,
     TrackerMutationAudit,
 };

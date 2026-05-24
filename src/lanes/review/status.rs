@@ -12,7 +12,7 @@ use jade_symphony::session_registry::unix_timestamp_ms;
 use jade_symphony::tracker::adapter_from_config;
 use jade_symphony::workflow::WorkflowDefinition;
 
-use crate::hydrate_issues_for_review_lane;
+use crate::orchestration::hydrate_issues_for_review_lane;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ReviewStatusCliOptions {

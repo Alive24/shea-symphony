@@ -27,12 +27,13 @@ use jade_symphony::tracker::{adapter_from_config, ProjectFieldAssignment, Tracke
 use jade_symphony::workflow::{AgentLane, WorkflowDefinition};
 
 use super::manual::{terminal_review_claim_value, write_terminal_review_claim};
-use crate::{
+use crate::lanes::claim::{lane_claim_for_issue, project_text_field, render_parseable_lane_claim};
+use crate::lanes::main_loop::run_loop_handoff_plan;
+use crate::orchestration::{
     add_timeline_comment_with_recovery, append_tracker_mutation_audit,
-    hydrate_issues_for_review_lane, lane_claim_for_issue, latest_status_for_issue,
+    hydrate_issues_for_review_lane, latest_status_for_issue,
     preflight_canonical_checkout_for_write_mode, print_latest_status, progress_spec_with_event_log,
-    project_text_field, recovery_key, render_parseable_lane_claim, require_write_intent,
-    run_loop_handoff_plan, set_project_field_with_recovery, set_state_with_recovery,
+    recovery_key, require_write_intent, set_project_field_with_recovery, set_state_with_recovery,
     shell_quote_display, stable_recovery_hash, tracker_backend_label, unbounded_loop_sleep_ms,
     TrackerMutationAudit,
 };

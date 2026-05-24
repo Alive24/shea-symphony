@@ -14,12 +14,14 @@ use jade_symphony::tracker::adapter_from_config;
 use jade_symphony::workflow::WorkflowDefinition;
 
 use crate::cli::DisplayMode;
-use crate::{
-    current_time_ms, evaluate_issue_for_current_source, hydrate_issue_for_evidence,
-    lane_claim_for_issue, latest_status_for_issue, preflight_canonical_checkout_for_write_mode,
-    print_latest_status, progress_spec_with_event_log, project_text_field, tracker_backend_label,
-    unbounded_loop_sleep_ms, warn_if_temporary_workflow_path, worker_identity,
-    write_lane_claim_field, WorkerLane,
+use crate::commands::gate::evaluate_issue_for_current_source;
+use crate::lanes::claim::{
+    lane_claim_for_issue, project_text_field, worker_identity, write_lane_claim_field, WorkerLane,
+};
+use crate::orchestration::{
+    current_time_ms, hydrate_issue_for_evidence, latest_status_for_issue,
+    preflight_canonical_checkout_for_write_mode, print_latest_status, progress_spec_with_event_log,
+    tracker_backend_label, unbounded_loop_sleep_ms, warn_if_temporary_workflow_path,
 };
 
 mod dispatch;

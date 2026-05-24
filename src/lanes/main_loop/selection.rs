@@ -6,7 +6,8 @@ use jade_symphony::profiles::selected_execution_profile;
 use jade_symphony::tracker::{claim_decision, ClaimDecision};
 
 use super::runtime::RuntimeRecoveryCandidate;
-use crate::{live_github_tracker, select_pool_worker_issues, unbounded_loop_sleep_ms, WorkerLane};
+use crate::lanes::claim::{select_pool_worker_issues, WorkerLane};
+use crate::orchestration::{live_github_tracker, unbounded_loop_sleep_ms};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NoDispatchAction {

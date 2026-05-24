@@ -3,7 +3,7 @@ use jade_symphony::merge_lane::{MergeLaneDecision, MergeLaneDecisionKind};
 use jade_symphony::model::TrackerIssue;
 use jade_symphony::tracker::TrackerAdapter;
 
-use crate::{
+use crate::orchestration::{
     add_timeline_comment_with_recovery, append_tracker_mutation_audit, close_issue_with_recovery,
     merge_completion_recovery_key, merge_decision_recovery_key, set_state_with_recovery,
     TrackerMutationAudit, TrackerMutationOutcome,

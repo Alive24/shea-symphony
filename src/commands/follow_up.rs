@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use jade_symphony::tracker::{adapter_from_config, FollowUpIssueInput};
 
-use crate::{
+use crate::orchestration::{
     append_tracker_mutation_audit, load_config, require_write_intent, TrackerMutationAudit,
 };
 

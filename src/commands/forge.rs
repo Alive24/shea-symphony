@@ -22,7 +22,7 @@ pub(crate) use rework::{forge_rework, ForgeReworkOptions};
 #[cfg(test)]
 pub(crate) use rework::{forge_rework_with_adapter, ForgeReworkInput};
 
-use crate::{append_tracker_mutation_audit, load_config, TrackerMutationAudit};
+use crate::orchestration::{append_tracker_mutation_audit, load_config, TrackerMutationAudit};
 
 pub(crate) fn forge_promote(
     workflow_path: PathBuf,

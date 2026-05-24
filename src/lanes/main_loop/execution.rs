@@ -15,10 +15,18 @@ use jade_symphony::workspace::{
     run_before_run, safe_identifier, GitIdentityApplyResult, Workspace,
 };
 
-use crate::{
-    current_git_branch, current_time_ms, progress_spec_with_event_log, render_prompt_with_claim,
-    CODEX_APP_SERVER_HANDOFF_BOUNDARY,
-};
+use crate::lanes::claim::render_prompt_with_claim;
+use crate::orchestration::{current_git_branch, current_time_ms, progress_spec_with_event_log};
+
+const CODEX_APP_SERVER_HANDOFF_BOUNDARY: &str = "\n\n## Codex App-Server Runtime Boundary\n\n\
+This run is executing inside the Codex app-server backend. Treat the app-server \
+turn as the implementation and local-verification worker only. Do not run \
+GitHub Project reads or mutations, do not create or update pull requests, and \
+do not attempt final Project state transitions from inside this child turn. \
+Leave a concise terminal summary of changed files, verification commands, and \
+any blocker. The outer Jade Symphony CLI will commit eligible worktree changes, \
+publish or update the PR, write durable workpad evidence, verify linked PR \
+readback, and perform the final `Agent Review` handoff.\n";
 
 use super::RunLoopLiveHandoff;
 

@@ -8,7 +8,7 @@ use jade_symphony::status_surface::render_snapshot;
 use jade_symphony::tracker::adapter_from_config;
 use jade_symphony::workflow::WorkflowDefinition;
 
-use crate::{session_status_snapshots, warn_if_temporary_workflow_path};
+use crate::orchestration::{session_status_snapshots, warn_if_temporary_workflow_path};
 
 pub(crate) fn plan(workflow_path: PathBuf, json: bool) -> Result<(), Box<dyn std::error::Error>> {
     let snapshot = build_plan_snapshot(&workflow_path)?;

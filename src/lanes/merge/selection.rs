@@ -2,7 +2,7 @@ use jade_symphony::config::RuntimeConfig;
 use jade_symphony::lane_claim::{LaneClaim, LaneClaimLane, LaneClaimSource, LaneClaimState};
 use jade_symphony::model::{normalize_state, TrackerIssue};
 
-use crate::{project_text_field, select_pool_worker_issues, WorkerLane};
+use crate::lanes::claim::{project_text_field, select_pool_worker_issues, WorkerLane};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct MergeWorkerSelection {

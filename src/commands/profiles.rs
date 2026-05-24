@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use jade_symphony::profiles::{discover_execution_profiles, selected_execution_profile};
 
-use crate::load_config;
+use crate::orchestration::load_config;
 
 pub(crate) fn list_profiles(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config(&workflow_path)?;

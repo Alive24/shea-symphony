@@ -17,10 +17,11 @@ use super::super::{
     run_loop_agent_review_handoff_evidence, run_loop_runtime_state_with_transition,
     run_loop_usage_limit_pause_workpad, IssueExecutionResult,
 };
-use crate::{
+use crate::lanes::claim::{write_lane_claim_state, WorkerLane};
+use crate::orchestration::{
     append_tracker_mutation_audit, current_time_ms, latest_status_for_issue, print_latest_status,
     recovery_key, set_state_with_recovery, stable_recovery_hash, upsert_workpad_with_recovery,
-    write_lane_claim_state, TrackerMutationAudit, WorkerLane,
+    TrackerMutationAudit,
 };
 
 pub(super) struct TerminalTransitionContext<'a> {

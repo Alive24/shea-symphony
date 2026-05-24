@@ -3,6 +3,8 @@ use std::path::Path;
 use jade_symphony::config::RuntimeConfig;
 use jade_symphony::workflow::WorkflowDefinition;
 
+pub(crate) const DEFAULT_RUN_LOOP_BASE_BRANCH: &str = "main";
+
 pub(crate) fn require_write_intent(write: bool) -> Result<(), Box<dyn std::error::Error>> {
     if write {
         Ok(())

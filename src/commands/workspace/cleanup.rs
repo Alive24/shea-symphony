@@ -7,7 +7,7 @@ use jade_symphony::profiles::selected_execution_profile;
 use jade_symphony::tracker::adapter_from_config;
 use jade_symphony::workspace::remove_issue_workspace;
 
-use crate::{load_config, DEFAULT_RUN_LOOP_BASE_BRANCH};
+use crate::orchestration::{load_config, DEFAULT_RUN_LOOP_BASE_BRANCH};
 
 pub(crate) fn cleanup_workspaces(
     workflow_path: PathBuf,

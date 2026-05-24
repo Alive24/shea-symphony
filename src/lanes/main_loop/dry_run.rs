@@ -4,7 +4,8 @@ use jade_symphony::model::{normalize_state, TrackerIssue};
 use jade_symphony::profiles::selected_execution_profile;
 use jade_symphony::session_registry::session_registry_path;
 
-use crate::{main_app_server_smoke_gate, shell_quote_display};
+use crate::lanes::main_loop::main_app_server_smoke_gate;
+use crate::orchestration::shell_quote_display;
 
 pub(crate) fn print_run_loop_dry_run_actions(
     issue: &TrackerIssue,

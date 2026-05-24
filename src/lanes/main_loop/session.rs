@@ -18,8 +18,9 @@ use jade_symphony::workspace::{GitIdentityApplyResult, GitIdentityApplyStatus};
 use super::{
     append_runtime_supervision_event, runtime_state_issue_identifier, IssueExecutionResult,
 };
-use crate::{
-    compact_evidence, current_time_ms, DEFAULT_SESSION_STALE_AFTER_MS, DEFAULT_SESSION_STATUS_LINES,
+use crate::lanes::main_loop::compact_evidence;
+use crate::orchestration::{
+    current_time_ms, DEFAULT_SESSION_STALE_AFTER_MS, DEFAULT_SESSION_STATUS_LINES,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

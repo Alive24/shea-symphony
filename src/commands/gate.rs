@@ -9,7 +9,7 @@ use jade_symphony::quality_gate::{
 };
 use jade_symphony::tracker::adapter_from_config;
 
-use crate::{
+use crate::orchestration::{
     append_tracker_mutation_audit, live_github_tracker, load_config, progress_spec_for_config,
     require_write_intent, tracker_backend_label, TrackerMutationAudit,
 };

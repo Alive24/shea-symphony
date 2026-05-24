@@ -5,7 +5,7 @@ use jade_symphony::git_handoff::{CommandOutput, HandoffCommandRunner};
 use jade_symphony::merge_lane::{MergeConflictRepairOutcome, MergeRepairEvidence};
 use jade_symphony::model::TrackerIssue;
 
-use crate::single_line;
+use crate::orchestration::single_line;
 
 use super::MergeAgentConflictRepairOutcome;
 

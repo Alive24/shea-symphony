@@ -9,13 +9,16 @@ use jade_symphony::progress::run_with_progress_heartbeat;
 use jade_symphony::review::review_pass_target_state;
 use jade_symphony::tracker::{adapter_from_config, ProjectFieldAssignment, TrackerAdapter};
 
-use crate::{
+use crate::commands::session::{
+    record_manual_lane_claim_evidence, timeline_claim_actor, timeline_claim_run,
+    timeline_pr_summary, AgentSessionLaneArg,
+};
+use crate::lanes::claim::{lane_claim_for_issue, project_text_field, render_parseable_lane_claim};
+use crate::orchestration::{
     add_timeline_comment_with_recovery, append_tracker_mutation_audit, current_gmt_timestamp,
-    lane_claim_for_issue, load_config, preflight_canonical_checkout_for_write_mode,
-    progress_spec_for_config, project_text_field, record_manual_lane_claim_evidence, recovery_key,
-    render_parseable_lane_claim, set_project_field_with_recovery, set_state_with_recovery,
-    stable_recovery_hash, timeline_claim_actor, timeline_claim_run, timeline_pr_summary,
-    tracker_backend_label, AgentSessionLaneArg, TrackerMutationAudit,
+    load_config, preflight_canonical_checkout_for_write_mode, progress_spec_for_config,
+    recovery_key, set_project_field_with_recovery, set_state_with_recovery, stable_recovery_hash,
+    tracker_backend_label, TrackerMutationAudit,
 };
 
 pub(crate) fn review_claim(

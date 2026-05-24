@@ -15,7 +15,8 @@ use jade_symphony::tracker::{
     ProjectStateFailureKind, TrackerAdapter, TrackerError,
 };
 
-use crate::{current_time_ms, project_text_field};
+use super::time::current_time_ms;
+use crate::lanes::claim::project_text_field;
 
 pub(crate) struct TrackerMutationAudit<'a> {
     pub(crate) command: &'a str,

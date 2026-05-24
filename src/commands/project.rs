@@ -13,10 +13,11 @@ use jade_symphony::tracker::{adapter_from_config, classify_project_state_error};
 use jade_symphony::workflow::WorkflowDefinition;
 
 use crate::cli::DisplayMode;
-use crate::{
-    append_canonical_checkout_gap, evaluate_issue_for_current_source, load_config,
-    progress_spec_for_config, report_canonical_checkout_readonly, tracker_backend_label,
-    warn_if_temporary_workflow_path, AgentSessionLaneArg,
+use crate::commands::gate::evaluate_issue_for_current_source;
+use crate::commands::session::AgentSessionLaneArg;
+use crate::orchestration::{
+    append_canonical_checkout_gap, load_config, progress_spec_for_config,
+    report_canonical_checkout_readonly, tracker_backend_label, warn_if_temporary_workflow_path,
 };
 
 mod write;

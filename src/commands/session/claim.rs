@@ -11,10 +11,11 @@ use jade_symphony::tracker::{adapter_from_config, ProjectFieldAssignment};
 use jade_symphony::workspace::safe_identifier;
 
 use crate::cli::CliLaneClaimSource;
-use crate::{
+use crate::lanes::claim::{project_text_field, render_parseable_lane_claim};
+use crate::orchestration::{
     append_tracker_mutation_audit, current_git_branch, current_time_ms, load_config,
-    preflight_canonical_checkout_for_write_mode, project_text_field, render_parseable_lane_claim,
-    set_project_field_with_recovery, TrackerMutationAudit,
+    preflight_canonical_checkout_for_write_mode, set_project_field_with_recovery,
+    TrackerMutationAudit,
 };
 
 use super::AgentSessionLaneArg;

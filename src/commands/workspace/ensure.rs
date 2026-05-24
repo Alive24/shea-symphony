@@ -10,10 +10,10 @@ use jade_symphony::model::TrackerIssue;
 use jade_symphony::session_registry::{load_session_registry, session_registry_path};
 use jade_symphony::tracker::adapter_from_config;
 
-use crate::{
+use crate::lanes::main_loop::{pull_request_number_from_url, run_loop_handoff_plan};
+use crate::orchestration::{
     append_tracker_mutation_audit, current_git_branch, load_config,
-    preflight_canonical_checkout_for_write_mode, pull_request_number_from_url,
-    run_loop_handoff_plan, TrackerMutationAudit,
+    preflight_canonical_checkout_for_write_mode, TrackerMutationAudit,
 };
 
 pub(crate) fn workspace_ensure(

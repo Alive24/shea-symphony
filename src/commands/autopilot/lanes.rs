@@ -13,9 +13,9 @@ use crate::commands::gate::{evaluate_issue_for_current_source, gate_target_state
 use crate::lanes::claim::{
     pool_claim_eligibility, select_pool_worker_issues, worker_identity, WorkerLane,
 };
+use crate::lanes::main_loop::run_loop_handoff_plan;
 use crate::lanes::merge::merge_preflight_status;
 use crate::lanes::review::{review_backend_kind, select_review_worker_issues};
-use crate::run_loop_handoff_plan;
 
 use super::{coordination_issue_hint, AutopilotIssueSummary, AutopilotLanePlan};
 

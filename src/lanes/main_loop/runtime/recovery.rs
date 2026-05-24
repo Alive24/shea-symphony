@@ -6,7 +6,7 @@ use jade_symphony::session_registry::{
 };
 use jade_symphony::tracker::TrackerAdapter;
 
-use crate::compact_evidence;
+use crate::lanes::main_loop::compact_evidence;
 
 use super::super::append_runtime_supervision_event;
 use super::session_probe::{

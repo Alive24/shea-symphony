@@ -17,7 +17,7 @@ use crate::commands::doctor::{
     append_canonical_checkout_doctor_violations, append_workspace_doctor_violations,
     discover_skill_suite_repo_root,
 };
-use crate::current_time_ms;
+use crate::orchestration::current_time_ms;
 
 use super::AutopilotLanePlan;
 

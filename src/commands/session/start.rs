@@ -13,11 +13,12 @@ use jade_symphony::workspace::{
     GitIdentityApplyResult,
 };
 
-use crate::{
+use crate::lanes::claim::render_prompt_with_claim;
+use crate::orchestration::{
     add_timeline_comment_with_recovery, append_tracker_mutation_audit, current_git_branch,
     current_gmt_timestamp, current_time_ms, preflight_canonical_checkout_for_write_mode,
-    recovery_key, render_prompt_with_claim, shell_quote_display, stable_recovery_hash,
-    upsert_workpad_with_recovery, TrackerMutationAudit,
+    recovery_key, shell_quote_display, stable_recovery_hash, upsert_workpad_with_recovery,
+    TrackerMutationAudit,
 };
 
 use super::{

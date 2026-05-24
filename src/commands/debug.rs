@@ -19,9 +19,10 @@ use crate::commands::doctor::{
 use crate::commands::gate::evaluate_issue_for_current_source;
 use crate::commands::project::render_state_summary;
 use crate::lanes::claim::project_text_field;
-use crate::{
-    all_mapped_tracker_states, current_time_ms, main_app_server_smoke_gate,
-    session_status_snapshots, shell_quote_display, warn_if_temporary_workflow_path,
+use crate::lanes::main_loop::main_app_server_smoke_gate;
+use crate::orchestration::{
+    all_mapped_tracker_states, current_time_ms, session_status_snapshots, shell_quote_display,
+    warn_if_temporary_workflow_path,
 };
 
 pub(crate) fn debug_report(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {

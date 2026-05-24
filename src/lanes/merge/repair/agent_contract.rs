@@ -3,7 +3,8 @@ use jade_symphony::lane_claim::LaneClaim;
 use jade_symphony::model::{AgentEvent, TrackerIssue};
 use jade_symphony::workflow::{AgentLane, WorkflowDefinition};
 
-use crate::{render_prompt_with_claim, single_line};
+use crate::lanes::claim::render_prompt_with_claim;
+use crate::orchestration::single_line;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn merge_agent_conflict_repair_prompt(

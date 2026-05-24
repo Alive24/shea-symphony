@@ -10,11 +10,13 @@ use jade_symphony::review_status::DEFAULT_RECENT_REVIEW_JOBS;
 use jade_symphony::skill_status::SkillStatusInput;
 use jade_symphony::tracker::ProjectFieldAssignment;
 
-use super::{
-    AgentSessionLaneArg, DoctorAction, DoctorOptions, DoctorRepairIssueOptions, ForgeReworkOptions,
-    MergeLoopOptions, ProjectStateOptions, PromotionNoteInput, ReviewLoopOptions,
-    ReviewStatusCliOptions, RunLoopOptions,
-};
+use crate::commands::doctor::{DoctorAction, DoctorOptions, DoctorRepairIssueOptions};
+use crate::commands::forge::{ForgeReworkOptions, PromotionNoteInput};
+use crate::commands::project::ProjectStateOptions;
+use crate::commands::session::AgentSessionLaneArg;
+use crate::lanes::main_loop::RunLoopOptions;
+use crate::lanes::merge::MergeLoopOptions;
+use crate::lanes::review::{ReviewLoopOptions, ReviewStatusCliOptions};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]

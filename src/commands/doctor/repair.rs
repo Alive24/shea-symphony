@@ -10,7 +10,9 @@ use jade_symphony::model::TrackerIssue;
 use jade_symphony::tracker::{adapter_from_config, TrackerAdapter};
 use jade_symphony::workflow::WorkflowDefinition;
 
-use crate::{all_mapped_tracker_states, append_tracker_mutation_audit, TrackerMutationAudit};
+use crate::orchestration::{
+    all_mapped_tracker_states, append_tracker_mutation_audit, TrackerMutationAudit,
+};
 
 use super::{hydrate_issues_for_doctor, DoctorRepairIssueOptions};
 

@@ -2,7 +2,8 @@ use super::*;
 use jade_symphony::tracker::MemoryTracker;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 
 use super::cli::{CliLaneClaimSource, DisplayMode, ForgeStatusArg};
 use super::commands::autopilot::{
@@ -12,40 +13,49 @@ use super::commands::autopilot::{
 use super::commands::debug::{
     classify_dogfood_integration_gaps, is_controlled_dogfood_smoke_issue, session_status_summary,
 };
-use super::commands::doctor::{doctor_health_label, hydrate_issues_for_doctor};
+use super::commands::doctor::{
+    doctor_health_label, hydrate_issues_for_doctor, DoctorAction, DoctorOptions,
+    DoctorRepairIssueOptions,
+};
 use super::commands::forge::{
     find_duplicate_issue_title, forge_create_requires_assignee, forge_missing_categories,
     forge_rework_with_adapter, forge_validation_report, issue_contract_assignees,
     render_forge_create_success, render_promotion_note, validate_forge_create_contract,
     validate_forge_create_report_with_assignees, verify_forge_created_issue_status,
     write_forge_created_issue, ForgeCreateResult, ForgeCreateWriteInput, ForgeReworkInput,
+    PromotionNoteInput,
 };
 use super::commands::gate::live_missing_assignee_gate_blocker;
 use super::commands::project::{
-    filter_issues_by_state, link_pr_with_adapter, render_state_summary,
+    filter_issues_by_state, link_pr_with_adapter, render_state_summary, ProjectStateOptions,
 };
 use super::commands::session::{
-    lane_claim_for_manual_worker, matching_lane_claim_for_session, tmux_agent_command_for_lane,
-    validate_lane_claim_state,
+    agent_session_backend_spec, lane_claim_for_manual_worker, matching_lane_claim_for_session,
+    record_manual_lane_claim_evidence, tmux_agent_command_for_lane, validate_lane_claim_state,
 };
 use super::commands::status::render_plan_snapshot;
 use super::commands::workspace::{
     ensure_inspection_worktree, validate_workspace_path_under_root, workspace_cleanup_plan,
     WorkspaceCleanupAction,
 };
-use super::lanes::claim::PoolClaimEligibility;
+use super::lanes::claim::{
+    pool_claim_eligibility, project_text_field, render_parseable_lane_claim,
+    select_pool_worker_issues, write_lane_claim_field, PoolClaimEligibility, WorkerLane,
+};
 use super::lanes::main_loop::{
-    apply_live_handoff_pr_link, execute_issue_once_with_workspace_key, no_dispatch_action,
+    apply_live_handoff_pr_link, execute_issue_once_with_workspace_key, main_app_server_smoke_gate,
+    no_dispatch_action, pull_request_number_from_url, reconcile_main_handoff_runtime_state,
     reconcile_pending_main_session, run_handoff_verification,
     run_loop_agent_review_handoff_evidence, run_loop_apply_recovery_handoff,
     run_loop_assignee_ownership_decision, run_loop_claim_action,
-    run_loop_dispatch_write_candidates, run_loop_handoff_workpad, run_loop_ownership_workpad,
-    run_loop_resume_preflight, run_loop_resume_preflight_many, run_loop_runtime_ownership,
-    run_loop_runtime_state_for_issue, run_loop_runtime_state_with_result,
-    run_loop_runtime_state_with_transition, run_loop_usage_limit_pause_workpad,
-    runtime_state_issue_identifier, select_main_run_loop_issues, AssigneeOwnershipDecision,
-    IssueExecutionResult, MainSessionReconciliation, NoDispatchAction, ResumePreflightAction,
-    RunLoopClaimAction, RunLoopLiveHandoff, RuntimeRecoveryCandidate,
+    run_loop_dispatch_write_candidates, run_loop_handoff_plan, run_loop_handoff_workpad,
+    run_loop_ownership_workpad, run_loop_resume_preflight, run_loop_resume_preflight_many,
+    run_loop_runtime_ownership, run_loop_runtime_state_for_issue,
+    run_loop_runtime_state_with_result, run_loop_runtime_state_with_transition,
+    run_loop_usage_limit_pause_workpad, runtime_state_issue_identifier,
+    select_main_run_loop_issues, AssigneeOwnershipDecision, IssueExecutionResult,
+    MainSessionReconciliation, NoDispatchAction, ResumePreflightAction, RunLoopClaimAction,
+    RunLoopLiveHandoff, RunLoopOptions, RuntimeRecoveryCandidate,
 };
 use super::lanes::merge::{
     finish_merge_agent_repaired_branch, merge_agent_reports_repaired,
@@ -65,7 +75,13 @@ use super::orchestration::canonical_checkout::{
 };
 use super::orchestration::tracker_recovery::{issue_is_closed, tracker_recovery_marker};
 use super::orchestration::workflow_config::temporary_workflow_warning;
+use super::orchestration::{
+    add_timeline_comment_with_recovery, all_mapped_tracker_states, append_tracker_mutation_audit,
+    close_issue_with_recovery, current_git_branch, merge_pull_request_with_recovery, recovery_key,
+    set_state_with_recovery, TrackerMutationAudit, TrackerMutationOutcome,
+};
 use jade_symphony::agent::UsageLimitPause;
+use jade_symphony::config::RuntimeConfig;
 use jade_symphony::doctor::ProjectAuditViolation;
 use jade_symphony::doctor::{AuditSeverity, ProjectAuditReport};
 use jade_symphony::event_log::EventLog;
@@ -80,6 +96,7 @@ use jade_symphony::lane_claim::{
 };
 use jade_symphony::model::normalize_state;
 use jade_symphony::model::SessionStatusSnapshot;
+use jade_symphony::model::TrackerIssue;
 use jade_symphony::orchestrator::Orchestrator;
 use jade_symphony::ownership::render_runtime_ownership_marker;
 use jade_symphony::ownership::{runtime_ownership_decision, RuntimeOwnershipDecision};

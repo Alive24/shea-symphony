@@ -8,8 +8,8 @@ use jade_symphony::canonical_checkout::{
 };
 use jade_symphony::config::RuntimeConfig;
 
+use super::text::{shell_quote_display, single_line};
 use super::tracker_context::live_github_tracker;
-use crate::{shell_quote_display, single_line};
 
 pub(crate) fn report_canonical_checkout_readonly(config: &RuntimeConfig) -> Vec<String> {
     let root = match std::env::current_dir() {

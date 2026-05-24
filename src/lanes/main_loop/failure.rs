@@ -4,10 +4,9 @@ use jade_symphony::model::{GateDecision, TrackerIssue};
 use jade_symphony::tracker::TrackerAdapter;
 
 use super::RunLoopOptions;
-use crate::{
-    gate_target_state, gate_workpad, latest_status_for_issue, print_latest_status,
-    run_loop_handoff_failure_workpad,
-};
+use crate::commands::gate::{gate_target_state, gate_workpad};
+use crate::lanes::main_loop::run_loop_handoff_failure_workpad;
+use crate::orchestration::{latest_status_for_issue, print_latest_status};
 
 pub(crate) fn handle_run_loop_gate_failure(
     adapter: &dyn TrackerAdapter,

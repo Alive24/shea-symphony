@@ -6,7 +6,7 @@ use jade_symphony::model::{native_subissue_gate_blocker, normalize_state, Tracke
 use jade_symphony::prompt::{render_prompt, PromptError};
 use jade_symphony::tracker::{ProjectFieldAssignment, TrackerAdapter};
 
-use crate::{
+use crate::orchestration::{
     append_tracker_mutation_audit, current_time_ms, set_project_field_with_recovery,
     TrackerMutationAudit,
 };

@@ -5,7 +5,7 @@ use jade_symphony::runtime_state::{
 };
 use jade_symphony::tracker::TrackerAdapter;
 
-use crate::compact_evidence;
+use crate::lanes::main_loop::compact_evidence;
 
 use super::append_runtime_supervision_event;
 

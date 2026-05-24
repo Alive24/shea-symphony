@@ -4,9 +4,9 @@ use jade_symphony::model::normalize_state;
 use jade_symphony::review::transition_allowed_for_main_agent;
 use jade_symphony::tracker::{adapter_from_config, TrackerAdapter, TrackerError};
 
-use crate::{
-    add_timeline_comment_with_recovery, append_tracker_mutation_audit,
-    linked_pull_requests_contain, load_config, reconcile_main_handoff_runtime_state, recovery_key,
+use crate::lanes::main_loop::{linked_pull_requests_contain, reconcile_main_handoff_runtime_state};
+use crate::orchestration::{
+    add_timeline_comment_with_recovery, append_tracker_mutation_audit, load_config, recovery_key,
     require_write_intent, set_state_with_recovery, stable_recovery_hash,
     upsert_workpad_with_recovery, TrackerMutationAudit,
 };

@@ -24,7 +24,7 @@ use jade_symphony::tracker::{adapter_from_config, TrackerAdapter, TrackerError};
 use jade_symphony::workflow::WorkflowDefinition;
 
 use crate::cli::DisplayMode;
-use crate::{
+use crate::orchestration::{
     all_mapped_tracker_states, append_canonical_checkout_gap, current_time_ms,
     progress_spec_for_config, session_status_snapshots, tracker_backend_label,
 };

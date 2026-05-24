@@ -29,6 +29,12 @@ The first extracted boundary is `src/cli.rs`. It owns the raw Clap command
 surface, grouped command aliases, help text, flag normalization, and the
 internal `Command` dispatcher model produced from parsed arguments.
 
+`src/main.rs` is not a shared prelude or service locator. Command and lane
+modules should import shared behavior through the owning module path, such as
+`crate::orchestration::{...}`, `crate::commands::{...}`, or
+`crate::lanes::{...}`. Keep binary-root helpers limited to entrypoint and
+dispatch needs.
+
 Command execution now lives under `src/commands/` when a command family has a
 clear owner:
 
@@ -162,6 +168,9 @@ Library Doctor checks should be grouped by the invariant they audit:
 Cross-command orchestration helpers live under `src/orchestration/` when they
 have a narrow shared responsibility:
 
+- `src/orchestration/mod.rs`: explicit orchestration export surface for
+  commands and lanes. It replaces binary-root re-exports for shared
+  orchestration helpers.
 - `src/orchestration/tracker_recovery.rs`: recovery-aware tracker mutations,
   mutation audit records, recovery markers, stable recovery keys, and PR-merge
   readback recovery. It is shared by command execution and lane modules because
@@ -177,6 +186,10 @@ have a narrow shared responsibility:
 - `src/orchestration/tracker_context.rs`: shared tracker context helpers:
   backend labels for progress output, live GitHub detection, issue evidence
   hydration, and configured Project state lists used across commands and lanes.
+- `src/orchestration/git.rs`: small shared git facts used by command and lane
+  orchestration, currently the current-branch probe.
+- `src/orchestration/lane_status.rs`: latest-status rendering helpers and loop
+  sleep policy shared by Main, Review, and Merge lane surfaces.
 - `src/orchestration/time.rs`: shared runtime clock and GMT timestamp helpers
   used in session evidence, Forge/Rework notes, audit records, and runtime
   state updates.
@@ -187,8 +200,8 @@ have a narrow shared responsibility:
 - `src/orchestration/text.rs`: shared human-output formatting helpers for
   single-line evidence summaries and shell command display strings.
 - `src/orchestration/workflow_config.rs`: workflow config loading, temporary
-  workflow path operator warnings, and explicit write-intent gating shared by
-  commands and lanes.
+  workflow path operator warnings, default branch constants, and explicit
+  write-intent gating shared by commands and lanes.
 
 Tracker adapter code should stay backend-oriented instead of accumulating in a
 single catch-all file:

@@ -7,7 +7,9 @@ use jade_symphony::workflow::WorkflowDefinition;
 
 use crate::commands::gate::evaluate_issue_for_current_source;
 use crate::commands::project::{filter_issues_by_state, render_state_summary};
-use crate::{progress_spec_for_config, tracker_backend_label, warn_if_temporary_workflow_path};
+use crate::orchestration::{
+    progress_spec_for_config, tracker_backend_label, warn_if_temporary_workflow_path,
+};
 
 pub(crate) fn validate(workflow_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     warn_if_temporary_workflow_path(&workflow_path);

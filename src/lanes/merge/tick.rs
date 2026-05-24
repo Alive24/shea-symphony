@@ -14,11 +14,14 @@ use jade_symphony::progress::run_with_progress_heartbeat;
 use jade_symphony::tracker::adapter_from_config;
 use jade_symphony::workflow::{AgentLane, WorkflowDefinition};
 
-use crate::{
-    lane_claim_for_issue, latest_status_for_issue, merge_pull_request_with_recovery,
-    pool_claim_eligibility, preflight_canonical_checkout_for_write_mode, print_latest_status,
-    progress_spec_with_event_log, project_text_field, single_line, tracker_backend_label,
-    worker_identity, WorkerLane,
+use crate::lanes::claim::{
+    lane_claim_for_issue, pool_claim_eligibility, project_text_field, worker_identity,
+    write_lane_claim_field, WorkerLane,
+};
+use crate::orchestration::{
+    latest_status_for_issue, merge_pull_request_with_recovery,
+    preflight_canonical_checkout_for_write_mode, print_latest_status, progress_spec_with_event_log,
+    single_line, tracker_backend_label,
 };
 
 use super::evidence::{
@@ -117,7 +120,7 @@ pub(crate) fn merge_once_tick(
         project_text_field(&issue, WorkerLane::Merging.claim_field()).as_deref(),
     )
     .with_worker(&worker_id);
-    crate::write_lane_claim_field(
+    write_lane_claim_field(
         &config,
         adapter.as_ref(),
         &issue,

@@ -10,10 +10,8 @@ use jade_symphony::tracker::{
 };
 
 use crate::cli::ForgeStatusArg;
-use crate::{
-    append_tracker_mutation_audit, evaluate_issue_for_current_source, load_config,
-    TrackerMutationAudit,
-};
+use crate::commands::gate::evaluate_issue_for_current_source;
+use crate::orchestration::{append_tracker_mutation_audit, load_config, TrackerMutationAudit};
 
 use super::{forge_validation_report, print_forge_validation};
 

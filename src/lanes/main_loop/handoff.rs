@@ -20,7 +20,7 @@ use jade_symphony::tracker::TrackerAdapter;
 use jade_symphony::workspace::run_workspace_command;
 
 use super::IssueExecutionResult;
-use crate::{current_git_branch, DEFAULT_RUN_LOOP_BASE_BRANCH};
+use crate::orchestration::{current_git_branch, DEFAULT_RUN_LOOP_BASE_BRANCH};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RunLoopLiveHandoff {

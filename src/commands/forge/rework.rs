@@ -6,10 +6,11 @@ use jade_symphony::model::{normalize_state, TrackerIssue};
 use jade_symphony::tracker::{adapter_from_config, TrackerAdapter};
 
 use crate::cli::ForgeStatusArg;
-use crate::{
+use crate::commands::session::timeline_pr_summary;
+use crate::lanes::claim::project_text_field;
+use crate::orchestration::{
     append_tracker_mutation_audit, current_gmt_timestamp, load_config,
-    preflight_canonical_checkout_for_write_mode, project_text_field, timeline_pr_summary,
-    TrackerMutationAudit,
+    preflight_canonical_checkout_for_write_mode, TrackerMutationAudit,
 };
 
 use super::{forge_validation_report, print_forge_validation, push_markdown_bullets};

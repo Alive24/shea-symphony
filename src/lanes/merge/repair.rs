@@ -5,10 +5,11 @@ use jade_symphony::merge_lane::{MergeConflictRepairOutcome, MergeRepairEvidence}
 use jade_symphony::model::TrackerIssue;
 use jade_symphony::workflow::WorkflowDefinition;
 
-use crate::{
+use crate::commands::session::{
     agent_session_backend, agent_session_backend_spec, record_agent_session_events,
-    rendered_lane_prompt_artifact_path, single_line, AgentSessionLaneArg,
+    rendered_lane_prompt_artifact_path, AgentSessionLaneArg,
 };
+use crate::orchestration::single_line;
 
 mod agent_contract;
 mod outcome;

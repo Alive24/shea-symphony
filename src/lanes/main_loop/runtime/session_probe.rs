@@ -7,7 +7,8 @@ use jade_symphony::session_registry::{
     session_registry_path, AgentSessionRecord, SessionStatus, SessionStatusProbe,
 };
 
-use crate::{compact_evidence, DEFAULT_SESSION_STALE_AFTER_MS, DEFAULT_SESSION_STATUS_LINES};
+use crate::lanes::main_loop::compact_evidence;
+use crate::orchestration::{DEFAULT_SESSION_STALE_AFTER_MS, DEFAULT_SESSION_STATUS_LINES};
 
 pub(super) fn registered_main_runtime_session(record: &AgentSessionRecord) -> bool {
     record.lane.eq_ignore_ascii_case("main") && record.backend != "codex-app-manual"

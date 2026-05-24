@@ -8,10 +8,9 @@ use jade_symphony::workflow::WorkflowDefinition;
 
 use super::write_candidate::run_loop_dispatch_write_candidate;
 use super::RunLoopOptions;
-use crate::{
-    latest_status_for_issue, main_app_server_smoke_gate, print_latest_status, shell_quote_display,
-    worker_identity, WorkerLane,
-};
+use crate::lanes::claim::{worker_identity, WorkerLane};
+use crate::lanes::main_loop::main_app_server_smoke_gate;
+use crate::orchestration::{latest_status_for_issue, print_latest_status, shell_quote_display};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RunLoopWorkerOutcome {

@@ -4,7 +4,43 @@ use std::collections::BTreeMap;
 use crate::config::RuntimeConfig;
 use crate::model::TrackerIssue;
 
-use super::super::{issue_from_project_item, ProjectV2OwnerType, TrackerError};
+use super::super::TrackerError;
+use super::evidence::{
+    blocker_refs_from_project_fields, github_issue_comment_bodies,
+    github_issue_description_with_workpad, json_number_to_i64, linked_pull_requests_from_workpads,
+    merge_linked_pull_requests, project_fields, project_status, pull_requests_from_issue,
+    string_nodes,
+};
+use super::topology::insert_native_subissue_fields;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::tracker) enum ProjectV2OwnerType {
+    Organization,
+    User,
+}
+
+impl ProjectV2OwnerType {
+    pub(in crate::tracker) fn parse(value: &str) -> Result<Self, TrackerError> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "organization" => Ok(Self::Organization),
+            "user" => Ok(Self::User),
+            other => Err(TrackerError::IntegrationUnavailable(format!(
+                "tracker.project_owner_type must be user or organization; got {other}"
+            ))),
+        }
+    }
+
+    pub(in crate::tracker) fn query_field(self) -> &'static str {
+        match self {
+            Self::Organization => "organization",
+            Self::User => "user",
+        }
+    }
+
+    pub(in crate::tracker) fn as_str(self) -> &'static str {
+        self.query_field()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::tracker) struct ProjectMetadata {
@@ -141,6 +177,23 @@ where
     Ok((refreshed, field))
 }
 
+#[cfg(test)]
+pub(in crate::tracker) fn status_option_id(
+    metadata: &ProjectMetadata,
+    option_name: &str,
+    status_field: &str,
+) -> Result<String, TrackerError> {
+    metadata
+        .status_options
+        .iter()
+        .find_map(|(id, name)| (name == option_name).then_some(id.clone()))
+        .ok_or_else(|| {
+            TrackerError::IntegrationUnavailable(format!(
+                "status option {option_name:?} was not found in ProjectV2 field {status_field}"
+            ))
+        })
+}
+
 pub(in crate::tracker) fn issues_from_project_response(
     response: &serde_json::Value,
     config: &RuntimeConfig,
@@ -181,6 +234,141 @@ pub(in crate::tracker) fn issues_from_project_response(
     }
 
     Ok((issues, next_cursor, has_next_page))
+}
+
+pub(in crate::tracker) fn issue_from_repository_issue_response(
+    response: &serde_json::Value,
+    config: &RuntimeConfig,
+) -> Result<Option<TrackerIssue>, TrackerError> {
+    let issue = response
+        .pointer("/data/repository/issue")
+        .ok_or_else(|| TrackerError::Payload("missing GitHub issue payload".into()))?;
+    if issue.is_null() {
+        return Ok(None);
+    }
+    let project_number = config
+        .tracker
+        .project_number
+        .ok_or_else(|| TrackerError::IntegrationUnavailable("missing project_number".into()))?;
+    let project_items = issue
+        .pointer("/projectItems/nodes")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| {
+            TrackerError::Payload("partial GitHub issue response missing projectItems".into())
+        })?;
+    let Some(project_item) = project_items.iter().find(|item| {
+        item.pointer("/project/number")
+            .and_then(serde_json::Value::as_u64)
+            == Some(project_number)
+    }) else {
+        return Ok(None);
+    };
+
+    let item = serde_json::json!({
+        "id": project_item.get("id").cloned().unwrap_or(serde_json::Value::Null),
+        "fieldValues": project_item.get("fieldValues").cloned().unwrap_or(serde_json::Value::Null),
+        "content": issue,
+    });
+    issue_from_project_item(&item, config)
+}
+
+fn issue_from_project_item(
+    item: &serde_json::Value,
+    config: &RuntimeConfig,
+) -> Result<Option<TrackerIssue>, TrackerError> {
+    let Some(content) = item.get("content") else {
+        return Ok(None);
+    };
+    if content
+        .get("__typename")
+        .and_then(serde_json::Value::as_str)
+        != Some("Issue")
+    {
+        return Ok(None);
+    }
+
+    let number = content
+        .get("number")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| TrackerError::Payload("partial ProjectV2 issue missing number".into()))?;
+    let state = project_status(item, &config.tracker.status_field).ok_or_else(|| {
+        TrackerError::Payload(format!(
+            "partial ProjectV2 response missing status field {:?} for issue #{number}",
+            config.tracker.status_field
+        ))
+    })?;
+    let mut project_fields = project_fields(item);
+    project_fields.insert(
+        config.tracker.status_field.clone(),
+        serde_json::Value::String(state.clone()),
+    );
+    if let Some(issue_state) = content.get("state").and_then(serde_json::Value::as_str) {
+        project_fields.insert(
+            "GitHub Issue State".into(),
+            serde_json::Value::String(issue_state.to_string()),
+        );
+    }
+    insert_native_subissue_fields(&mut project_fields, content);
+    let blocked_by = blocker_refs_from_project_fields(&project_fields);
+    let comment_bodies = github_issue_comment_bodies(content)
+        .into_iter()
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    let linked_pull_requests = merge_linked_pull_requests(
+        pull_requests_from_issue(content),
+        linked_pull_requests_from_workpads(
+            &comment_bodies,
+            config.tracker.owner.as_deref(),
+            config.tracker.repo.as_deref(),
+        ),
+    );
+
+    Ok(Some(TrackerIssue {
+        tracker_kind: "github_project_v2".into(),
+        id: content
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                TrackerError::Payload(format!("partial ProjectV2 issue #{number} missing id"))
+            })?
+            .to_string(),
+        item_id: item
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+        identifier: format!("#{number}"),
+        title: content
+            .get("title")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                TrackerError::Payload(format!("partial ProjectV2 issue #{number} missing title"))
+            })?
+            .to_string(),
+        description: github_issue_description_with_workpad(content, &config.tracker.workpad.marker),
+        url: content
+            .get("url")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+        state,
+        labels: string_nodes(content.pointer("/labels/nodes"), "name")
+            .into_iter()
+            .map(|label| label.to_lowercase())
+            .collect(),
+        assignees: string_nodes(content.pointer("/assignees/nodes"), "login"),
+        priority: project_fields.get("Priority").and_then(json_number_to_i64),
+        branch_name: None,
+        linked_pull_requests,
+        blocked_by,
+        project_fields,
+        created_at: content
+            .get("createdAt")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+        updated_at: content
+            .get("updatedAt")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+    }))
 }
 
 pub(in crate::tracker) fn project_metadata_from_response(
@@ -518,6 +706,18 @@ pub(in crate::tracker) fn rest_project_item_field_update_body(
             }
         ]
     }))
+}
+
+pub(in crate::tracker) fn project_item_id_from_add_response(
+    response: &serde_json::Value,
+) -> Result<String, TrackerError> {
+    response
+        .pointer("/data/addProjectV2ItemById/item/id")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| {
+            TrackerError::Payload("addProjectV2ItemById response missing item id".into())
+        })
 }
 
 pub(in crate::tracker) fn github_rest_project_path(

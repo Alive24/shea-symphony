@@ -21,15 +21,18 @@ pub(in crate::tracker) use evidence::{
     github_issue_description_with_workpad, github_issue_number,
     github_native_blocker_refs_from_response, json_number_to_i64,
     linked_pull_requests_from_workpads, merge_blocker_refs, merge_linked_pull_requests,
-    project_fields, project_status, pull_requests_from_issue, string_nodes,
+    pull_requests_from_issue, string_nodes,
 };
+#[cfg(test)]
+pub(in crate::tracker) use project_v2::status_option_id;
 pub(in crate::tracker) use project_v2::{
     apply_rest_project_item_overlay_fallback, apply_rest_project_item_overlays,
-    github_rest_project_path, issues_from_project_response,
-    project_field_from_metadata_with_refresh, project_metadata_from_response, project_rest_item_id,
-    rest_project_item_field_update_body, rest_project_item_overlays_from_response,
-    rest_project_metadata_from_response, ProjectFieldKind, ProjectFieldMetadata,
-    ProjectFieldUpdateValue, ProjectMetadata, ProjectMetadataCache, RestProjectItemOverlay,
+    github_rest_project_path, issue_from_repository_issue_response, issues_from_project_response,
+    project_field_from_metadata_with_refresh, project_item_id_from_add_response,
+    project_metadata_from_response, project_rest_item_id, rest_project_item_field_update_body,
+    rest_project_item_overlays_from_response, rest_project_metadata_from_response,
+    ProjectFieldKind, ProjectFieldMetadata, ProjectFieldUpdateValue, ProjectMetadata,
+    ProjectMetadataCache, ProjectV2OwnerType, RestProjectItemOverlay,
 };
 pub(super) use queries::{
     github_issue_comments_query, github_issue_evidence_query, github_issue_project_item_query,

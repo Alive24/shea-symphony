@@ -31,23 +31,25 @@ use github::{
     github_native_blocker_refs_from_response, github_project_metadata_query, github_project_query,
     github_rest_project_path, hydrate_missing_native_subissue_project_statuses,
     insert_native_subissue_fields, insert_native_subissue_status_fields,
-    issues_from_project_response, json_number_to_i64, linked_pull_requests_from_workpads,
-    merge_blocker_refs, merge_linked_pull_requests, native_subissue_refs_from_rest_response,
-    native_subissue_refs_missing_project_state, project_field_from_metadata_with_refresh,
-    project_fields, project_metadata_from_response, project_rest_item_id, project_state_map,
-    project_status, pull_requests_from_issue, rest_project_item_field_update_body,
+    issue_from_repository_issue_response, issues_from_project_response, json_number_to_i64,
+    linked_pull_requests_from_workpads, merge_blocker_refs, merge_linked_pull_requests,
+    native_subissue_refs_from_rest_response, native_subissue_refs_missing_project_state,
+    project_field_from_metadata_with_refresh, project_item_id_from_add_response,
+    project_metadata_from_response, project_rest_item_id, project_state_map,
+    pull_requests_from_issue, rest_project_item_field_update_body,
     rest_project_item_overlays_from_response, rest_project_metadata_from_response, run_gh_api_json,
     run_gh_graphql, string_nodes, GithubCliAccess, NativeSubissueRef, ProjectFieldKind,
     ProjectFieldMetadata, ProjectFieldUpdateValue, ProjectMetadata, ProjectMetadataCache,
-    RestProjectItemOverlay, GITHUB_ADD_COMMENT_MUTATION, GITHUB_ADD_PROJECT_ITEM_MUTATION,
-    GITHUB_CLEAR_PROJECT_ITEM_FIELD_MUTATION, GITHUB_CLOSE_ISSUE_MUTATION,
-    GITHUB_CREATE_ISSUE_MUTATION, GITHUB_REPOSITORY_ID_QUERY, GITHUB_UPDATE_ISSUE_COMMENT_MUTATION,
-    GITHUB_UPDATE_PROJECT_ITEM_FIELD_MUTATION, GITHUB_UPDATE_PROJECT_ITEM_TEXT_FIELD_MUTATION,
+    ProjectV2OwnerType, RestProjectItemOverlay, GITHUB_ADD_COMMENT_MUTATION,
+    GITHUB_ADD_PROJECT_ITEM_MUTATION, GITHUB_CLEAR_PROJECT_ITEM_FIELD_MUTATION,
+    GITHUB_CLOSE_ISSUE_MUTATION, GITHUB_CREATE_ISSUE_MUTATION, GITHUB_REPOSITORY_ID_QUERY,
+    GITHUB_UPDATE_ISSUE_COMMENT_MUTATION, GITHUB_UPDATE_PROJECT_ITEM_FIELD_MUTATION,
+    GITHUB_UPDATE_PROJECT_ITEM_TEXT_FIELD_MUTATION,
 };
 #[cfg(test)]
 use github::{
     linked_pull_request_from_url, project_state_error_is_retryable, run_command_with_timeout,
-    GithubAuthMode,
+    status_option_id, GithubAuthMode,
 };
 #[cfg(test)]
 use linear::{linear_graphql_error_message, linear_issues_from_response, linear_state_option_name};
@@ -638,35 +640,6 @@ impl TrackerAdapter for GithubProjectV2Adapter {
 struct GithubProjectV2GhClient {
     config: RuntimeConfig,
     metadata_cache: ProjectMetadataCache,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ProjectV2OwnerType {
-    Organization,
-    User,
-}
-
-impl ProjectV2OwnerType {
-    fn parse(value: &str) -> Result<Self, TrackerError> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "organization" => Ok(Self::Organization),
-            "user" => Ok(Self::User),
-            other => Err(TrackerError::IntegrationUnavailable(format!(
-                "tracker.project_owner_type must be user or organization; got {other}"
-            ))),
-        }
-    }
-
-    fn query_field(self) -> &'static str {
-        match self {
-            Self::Organization => "organization",
-            Self::User => "user",
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        self.query_field()
-    }
 }
 
 impl GithubProjectV2GhClient {
@@ -1793,33 +1766,6 @@ fn project_owner_type_miss(error: &TrackerError) -> bool {
         || message.contains("not a user account")
 }
 
-#[cfg(test)]
-fn status_option_id(
-    metadata: &ProjectMetadata,
-    option_name: &str,
-    status_field: &str,
-) -> Result<String, TrackerError> {
-    metadata
-        .status_options
-        .iter()
-        .find_map(|(id, name)| (name == option_name).then_some(id.clone()))
-        .ok_or_else(|| {
-            TrackerError::IntegrationUnavailable(format!(
-                "status option {option_name:?} was not found in ProjectV2 field {status_field}"
-            ))
-        })
-}
-
-fn project_item_id_from_add_response(response: &serde_json::Value) -> Result<String, TrackerError> {
-    response
-        .pointer("/data/addProjectV2ItemById/item/id")
-        .and_then(serde_json::Value::as_str)
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| {
-            TrackerError::Payload("addProjectV2ItemById response missing item id".into())
-        })
-}
-
 fn status_update_required(issue: &TrackerIssue, target_state: &str) -> bool {
     tracker_state_key(&issue.state) != tracker_state_key(target_state)
 }
@@ -1882,141 +1828,6 @@ fn graphql_error_message(response: &serde_json::Value) -> Option<String> {
             messages.join("; ")
         ))
     }
-}
-
-fn issue_from_repository_issue_response(
-    response: &serde_json::Value,
-    config: &RuntimeConfig,
-) -> Result<Option<TrackerIssue>, TrackerError> {
-    let issue = response
-        .pointer("/data/repository/issue")
-        .ok_or_else(|| TrackerError::Payload("missing GitHub issue payload".into()))?;
-    if issue.is_null() {
-        return Ok(None);
-    }
-    let project_number = config
-        .tracker
-        .project_number
-        .ok_or_else(|| TrackerError::IntegrationUnavailable("missing project_number".into()))?;
-    let project_items = issue
-        .pointer("/projectItems/nodes")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| {
-            TrackerError::Payload("partial GitHub issue response missing projectItems".into())
-        })?;
-    let Some(project_item) = project_items.iter().find(|item| {
-        item.pointer("/project/number")
-            .and_then(serde_json::Value::as_u64)
-            == Some(project_number)
-    }) else {
-        return Ok(None);
-    };
-
-    let item = serde_json::json!({
-        "id": project_item.get("id").cloned().unwrap_or(serde_json::Value::Null),
-        "fieldValues": project_item.get("fieldValues").cloned().unwrap_or(serde_json::Value::Null),
-        "content": issue,
-    });
-    issue_from_project_item(&item, config)
-}
-
-fn issue_from_project_item(
-    item: &serde_json::Value,
-    config: &RuntimeConfig,
-) -> Result<Option<TrackerIssue>, TrackerError> {
-    let Some(content) = item.get("content") else {
-        return Ok(None);
-    };
-    if content
-        .get("__typename")
-        .and_then(serde_json::Value::as_str)
-        != Some("Issue")
-    {
-        return Ok(None);
-    }
-
-    let number = content
-        .get("number")
-        .and_then(serde_json::Value::as_u64)
-        .ok_or_else(|| TrackerError::Payload("partial ProjectV2 issue missing number".into()))?;
-    let state = project_status(item, &config.tracker.status_field).ok_or_else(|| {
-        TrackerError::Payload(format!(
-            "partial ProjectV2 response missing status field {:?} for issue #{number}",
-            config.tracker.status_field
-        ))
-    })?;
-    let mut project_fields = project_fields(item);
-    project_fields.insert(
-        config.tracker.status_field.clone(),
-        serde_json::Value::String(state.clone()),
-    );
-    if let Some(issue_state) = content.get("state").and_then(serde_json::Value::as_str) {
-        project_fields.insert(
-            "GitHub Issue State".into(),
-            serde_json::Value::String(issue_state.to_string()),
-        );
-    }
-    insert_native_subissue_fields(&mut project_fields, content);
-    let blocked_by = blocker_refs_from_project_fields(&project_fields);
-    let comment_bodies = github_issue_comment_bodies(content)
-        .into_iter()
-        .map(ToOwned::to_owned)
-        .collect::<Vec<_>>();
-    let linked_pull_requests = merge_linked_pull_requests(
-        pull_requests_from_issue(content),
-        linked_pull_requests_from_workpads(
-            &comment_bodies,
-            config.tracker.owner.as_deref(),
-            config.tracker.repo.as_deref(),
-        ),
-    );
-
-    Ok(Some(TrackerIssue {
-        tracker_kind: "github_project_v2".into(),
-        id: content
-            .get("id")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| {
-                TrackerError::Payload(format!("partial ProjectV2 issue #{number} missing id"))
-            })?
-            .to_string(),
-        item_id: item
-            .get("id")
-            .and_then(serde_json::Value::as_str)
-            .map(ToOwned::to_owned),
-        identifier: format!("#{number}"),
-        title: content
-            .get("title")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| {
-                TrackerError::Payload(format!("partial ProjectV2 issue #{number} missing title"))
-            })?
-            .to_string(),
-        description: github_issue_description_with_workpad(content, &config.tracker.workpad.marker),
-        url: content
-            .get("url")
-            .and_then(serde_json::Value::as_str)
-            .map(ToOwned::to_owned),
-        state,
-        labels: string_nodes(content.pointer("/labels/nodes"), "name")
-            .into_iter()
-            .map(|label| label.to_lowercase())
-            .collect(),
-        assignees: string_nodes(content.pointer("/assignees/nodes"), "login"),
-        priority: project_fields.get("Priority").and_then(json_number_to_i64),
-        branch_name: None,
-        linked_pull_requests,
-        blocked_by,
-        project_fields,
-        created_at: content
-            .get("createdAt")
-            .and_then(serde_json::Value::as_str)
-            .map(ToOwned::to_owned),
-        updated_at: content
-            .get("updatedAt")
-            .and_then(serde_json::Value::as_str)
-            .map(ToOwned::to_owned),
-    }))
 }
 
 fn merge_github_issue_evidence(

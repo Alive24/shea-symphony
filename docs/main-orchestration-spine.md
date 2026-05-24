@@ -165,6 +165,8 @@ single catch-all file:
 - `src/tracker/github/client/project.rs`: Project metadata and field-update
   support for the live GitHub client, including REST metadata/item overlays,
   GraphQL Project page transport, and REST-first Project item field mutation.
+- `src/tracker/github/client/read.rs`: targeted GitHub issue evidence and
+  native dependency reads used after queue scans or issue-specific lookups.
 - `src/tracker/github/evidence.rs`: GitHub issue evidence parsing, including
   issue body plus workpad/timeline comment composition, blocker/native
   dependency refs, rich issue evidence merging, Project field extraction, and

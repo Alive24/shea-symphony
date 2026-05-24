@@ -159,8 +159,11 @@ entrypoint:
 - `src/main/tests/forge.rs`: Issue Forge, promote/rework, Link PR, and Rework
   evidence-ordering behavior tests that exercise binary-private helpers.
 - `src/main/tests/main_loop.rs`: Main-loop smoke gates, selection, runtime
-  state shaping, pending-session reconciliation, handoff evidence, live PR
-  linkage, usage-limit pause, and write-mode guard tests.
+  state shaping, pending-session reconciliation, recovery handoff reuse,
+  no-dispatch actions, and write-mode guard tests.
+- `src/main/tests/main_loop/handoff.rs`: Main-loop handoff plan/workpad, live
+  PR linkage, handoff verification, usage-limit pause workpad, and Agent
+  Review handoff evidence tests.
 - `src/main/tests/main_loop/runtime.rs`: Main-loop runtime preflight and
   recovery tests, including stale-state archival, retry timing,
   active-session retention, tmux/app-server recovery candidates, and fake tmux

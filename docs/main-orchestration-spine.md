@@ -148,6 +148,9 @@ single catch-all file:
   classification used by CLI readback, retry handling, doctor output, and tests.
 - `src/tracker/memory.rs`: in-memory fixture tracker backend for dry-run and
   test surfaces.
+- `src/tracker/state.rs`: shared tracker state normalization and read filters:
+  claim decisions, mapped-status checks, assignee filtering, and no-op status
+  update detection used by backends and lane selection.
 - `src/tracker/github/cli.rs`: GitHub CLI invocation, auth-mode detection,
   retry/timeout handling, and JSON/status response validation used by the
   Project v2 adapter.

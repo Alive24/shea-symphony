@@ -4,13 +4,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{AssigneeFilter, RuntimeConfig};
+#[cfg(test)]
+use crate::config::AssigneeFilter;
+use crate::config::RuntimeConfig;
 use crate::model::{normalize_state, BlockerRef, LinkedPullRequest, TrackerIssue};
 
 mod error;
 mod github;
 mod linear;
 mod memory;
+mod state;
 mod workpad;
 
 pub use error::{
@@ -20,6 +23,7 @@ pub use error::{
 pub use github::GithubProjectReadMode;
 pub use linear::LinearAdapter;
 pub use memory::MemoryTracker;
+pub use state::{claim_decision, ClaimDecision};
 
 use github::{
     apply_rest_project_item_overlay_fallback, apply_rest_project_item_overlays,
@@ -52,6 +56,9 @@ use github::{
 };
 #[cfg(test)]
 use linear::{linear_graphql_error_message, linear_issues_from_response, linear_state_option_name};
+use state::{
+    issue_matches_assignee_filter, status_is_mapped, status_update_required, tracker_state_key,
+};
 use workpad::{ensure_workpad_marker, merge_workpad_body};
 
 pub trait TrackerAdapter {
@@ -166,30 +173,6 @@ pub struct FollowUpIssueInput {
     pub project_id: Option<String>,
     pub related_issue_ref: Option<String>,
     pub blocked_by_issue_ref: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ClaimDecision {
-    AlreadyInProgress,
-    Claimable,
-    StopAndReplan { current_state: String },
-}
-
-pub fn claim_decision(issue: &TrackerIssue, config: &RuntimeConfig) -> ClaimDecision {
-    let state = tracker_state_key(&issue.state);
-    let state_map = &config.tracker.state_map;
-
-    if state == tracker_state_key(&state_map.in_progress) {
-        ClaimDecision::AlreadyInProgress
-    } else if state == tracker_state_key(&state_map.todo)
-        || state == tracker_state_key(&state_map.rework)
-    {
-        ClaimDecision::Claimable
-    } else {
-        ClaimDecision::StopAndReplan {
-            current_state: issue.state.clone(),
-        }
-    }
 }
 
 pub fn adapter_from_config(config: &RuntimeConfig) -> Box<dyn TrackerAdapter> {
@@ -320,27 +303,6 @@ fn apply_github_read_filters(
         .collect()
 }
 
-fn issue_matches_assignee_filter(issue: &TrackerIssue, filter: &AssigneeFilter) -> bool {
-    if issue.assignees.is_empty() {
-        return filter.allow_unassigned;
-    }
-
-    if filter.assignees.is_empty() {
-        return true;
-    }
-
-    let allowed: Vec<String> = filter
-        .assignees
-        .iter()
-        .map(|assignee| normalize_state(assignee))
-        .collect();
-
-    issue
-        .assignees
-        .iter()
-        .any(|assignee| allowed.contains(&normalize_state(assignee)))
-}
-
 fn github_issue_needs_native_blocker_prefetch(
     issue: &TrackerIssue,
     config: &RuntimeConfig,
@@ -372,28 +334,6 @@ fn github_issue_needs_native_subissue_prefetch(
 fn has_native_subissue_fields(issue: &TrackerIssue) -> bool {
     issue.project_fields.contains_key("GitHub Native Subissues")
         || issue.project_fields.contains_key("Native Subissues")
-}
-
-fn status_is_mapped(status: &str, config: &RuntimeConfig) -> bool {
-    mapped_status_names(config)
-        .iter()
-        .any(|mapped| tracker_state_key(mapped) == tracker_state_key(status))
-}
-
-fn mapped_status_names(config: &RuntimeConfig) -> Vec<&str> {
-    let state_map = &config.tracker.state_map;
-    vec![
-        state_map.backlog.as_str(),
-        state_map.todo.as_str(),
-        state_map.need_to_clarify.as_str(),
-        state_map.in_progress.as_str(),
-        state_map.need_human_input.as_str(),
-        state_map.agent_review.as_str(),
-        state_map.human_review.as_str(),
-        state_map.rework.as_str(),
-        state_map.merging.as_str(),
-        state_map.done.as_str(),
-    ]
 }
 
 impl TrackerAdapter for GithubProjectV2Adapter {
@@ -1763,18 +1703,6 @@ fn project_owner_type_miss(error: &TrackerError) -> bool {
         || message.contains("could not resolve to user")
         || message.contains("not an organization account")
         || message.contains("not a user account")
-}
-
-fn status_update_required(issue: &TrackerIssue, target_state: &str) -> bool {
-    tracker_state_key(&issue.state) != tracker_state_key(target_state)
-}
-
-fn tracker_state_key(state: &str) -> String {
-    normalize_state(state)
-        .replace('_', " ")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 fn duplicate_workpad_body(_marker: &str) -> String {

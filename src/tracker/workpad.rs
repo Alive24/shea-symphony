@@ -1,4 +1,4 @@
-pub(super) fn ensure_workpad_marker(markdown: &str, marker: &str) -> String {
+pub(in crate::tracker) fn ensure_workpad_marker(markdown: &str, marker: &str) -> String {
     if markdown.contains(marker) {
         markdown.to_string()
     } else {
@@ -6,7 +6,11 @@ pub(super) fn ensure_workpad_marker(markdown: &str, marker: &str) -> String {
     }
 }
 
-pub(super) fn merge_workpad_body(existing: &str, incoming: &str, marker: &str) -> String {
+pub(in crate::tracker) fn merge_workpad_body(
+    existing: &str,
+    incoming: &str,
+    marker: &str,
+) -> String {
     let existing = ensure_workpad_marker(existing, marker);
     let incoming = ensure_workpad_marker(incoming, marker);
     let (mut merged, incoming_remainder) = replace_singleton_workpad_blocks(&existing, &incoming);
@@ -17,6 +21,11 @@ pub(super) fn merge_workpad_body(existing: &str, incoming: &str, marker: &str) -
     }
 
     merged
+}
+
+pub(in crate::tracker) fn duplicate_workpad_body(_marker: &str) -> String {
+    "Superseded Jade Symphony workpad comment. The canonical marker was removed from this duplicate."
+        .to_string()
 }
 
 fn merge_workpad_entry(existing: &str, incoming_entry: &str, marker: &str) -> String {

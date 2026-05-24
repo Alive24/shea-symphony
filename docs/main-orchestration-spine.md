@@ -158,6 +158,10 @@ single catch-all file:
 - `src/tracker/github/cli.rs`: GitHub CLI invocation, auth-mode detection,
   retry/timeout handling, and JSON/status response validation used by the
   Project v2 adapter.
+- `src/tracker/github/client.rs`: live GitHub Project v2 adapter client. It
+  owns `gh` GraphQL/REST read/write orchestration, Project owner fallback,
+  metadata loading, Project item mutation, issue edits/comments, workpad
+  upserts, linked-PR comments, issue closure, and targeted evidence hydration.
 - `src/tracker/github/evidence.rs`: GitHub issue evidence parsing, including
   issue body plus workpad/timeline comment composition, blocker/native
   dependency refs, rich issue evidence merging, Project field extraction, and

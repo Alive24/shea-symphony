@@ -4,9 +4,11 @@ use std::process::Command;
 use crate::config::RuntimeConfig;
 use crate::model::{normalize_state, BlockerRef, LinkedPullRequest, TrackerIssue};
 
+use super::follow_up::follow_up_issue_body;
+use super::workpad::ensure_workpad_marker;
 use super::{
-    ensure_workpad_marker, follow_up_issue_body, issue_matches_assignee_filter, json_number_to_i64,
-    load_fixture, string_nodes, FollowUpIssueInput, MemoryTracker, TrackerAdapter, TrackerError,
+    issue_matches_assignee_filter, json_number_to_i64, load_fixture, string_nodes,
+    FollowUpIssueInput, MemoryTracker, TrackerAdapter, TrackerError,
 };
 
 #[derive(Debug, Clone)]

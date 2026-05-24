@@ -63,10 +63,12 @@ clear owner:
 - `src/commands/profiles.rs`: execution profile listing. It owns profile
   discovery output while shared profile selection for lane execution remains
   with the lane/runtime callers.
-- `src/commands/project.rs`: Project read and write command execution for
-  state, issue, inspect, set-state, workpad, link-pr, add, and
-  timeline-comment. It keeps write intent checks, recovery-aware mutations, and
-  readback-oriented output close to the Project command family.
+- `src/commands/project.rs`: Project command family shell and read surfaces for
+  state, issue, and inspect. It owns readback-oriented output, state filtering,
+  and state-summary rendering while delegating mutation glue to `write.rs`.
+- `src/commands/project/write.rs`: Project mutation command glue. It owns
+  set-state, workpad, timeline-comment, link-pr, and add-to-project write
+  intent checks, recovery keys, mutation audit records, and dry-run output.
 - `src/commands/session.rs`: Session startup/list/attach execution plus manual
   lane-claim command glue. It owns structured manual claim creation, session
   prompt artifact paths, registry evidence, and session-start workpad/timeline

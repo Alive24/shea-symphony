@@ -5,3 +5,8 @@
 /tmp/
 project_items.json
 .codex/config.toml
+web/node_modules/
+web/build/
+web/.svelte-kit/
+web/.npm-cache/
+.playwright-mcp

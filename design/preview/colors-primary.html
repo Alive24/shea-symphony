@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en" data-theme="daylight">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shea Symphony Colors - Primary Starbucks</title>
+  <link rel="stylesheet" href="../colors_and_type.css">
+  <style>
+    body { margin: 0; padding: 32px; background: var(--ss-bg); color: var(--ss-fg); font-family: var(--ss-font-body); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; max-width: 1180px; }
+    .mode-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+    .role { display: grid; gap: 8px; min-height: 132px; padding: 16px; border: 1px solid var(--ss-border-soft); border-radius: 8px; background: var(--ss-card-bg); box-shadow: var(--ss-elev-raised); }
+    .role .bar { height: 24px; border-radius: 999px; background: var(--token); border: 1px solid var(--ss-border-soft); }
+    .role strong { color: var(--ss-fg-2); }
+    .group { display: grid; gap: 12px; margin: 28px 0 0; }
+    .group h2 { margin: 0; color: var(--ss-fg-2); font: 700 22px/1.15 var(--ss-font-display); }
+    .swatch { min-height: 148px; display: grid; align-content: end; gap: 8px; padding: 18px; border: 1px solid var(--ss-border-soft); border-radius: 8px; background: var(--ss-surface); box-shadow: var(--ss-elev-raised); }
+    .swatch strong { font-size: 18px; }
+    .swatch code { font-family: var(--ss-font-mono); font-size: 13px; }
+    .light strong { color: rgba(0,0,0,.87); }
+    .light code { color: rgba(0,0,0,.58); }
+    .dark strong { color: #ffffff; }
+    .dark code { color: rgba(255,255,255,.78); }
+    h1 { margin: 0 0 8px; color: var(--ss-fg-2); font: 700 32px/1.1 var(--ss-font-display); }
+    p { margin: 0; color: var(--ss-muted); max-width: 76ch; }
+  </style>
+</head>
+<body>
+  <h1>Primary Palette - Starbucks Roles</h1>
+  <p>The source palette is fixed, and every role is reviewed in both Daylight and Night. Daylight uses warm cream and white cards; Night shifts the same brand system onto House Green cockpit surfaces.</p>
+
+  <section class="group" aria-label="Theme role application">
+    <h2>Theme Application</h2>
+    <div class="ss-theme-pair">
+      <article class="ss-theme-frame ss-theme-daylight">
+        <header><h2>Daylight</h2><p>Default review presentation.</p></header>
+        <div class="mode-grid">
+          <div class="role" style="--token:var(--ss-bg)"><div class="bar"></div><strong>Canvas</strong><code>--ss-bg #f2f0eb</code></div>
+          <div class="role" style="--token:var(--ss-surface)"><div class="bar"></div><strong>Surface</strong><code>--ss-surface #ffffff</code></div>
+          <div class="role" style="--token:var(--ss-accent)"><div class="bar"></div><strong>Brand signal</strong><code>--ss-accent #006241</code></div>
+          <div class="role" style="--token:var(--ss-action-bg)"><div class="bar"></div><strong>Filled CTA</strong><code>--ss-action-bg #00754A</code></div>
+        </div>
+      </article>
+      <article class="ss-theme-frame ss-theme-night">
+        <header><h2>Night</h2><p>Production cockpit presentation.</p></header>
+        <div class="mode-grid">
+          <div class="role" style="--token:var(--ss-bg)"><div class="bar"></div><strong>Canvas</strong><code>--ss-bg #1E3932</code></div>
+          <div class="role" style="--token:var(--ss-surface)"><div class="bar"></div><strong>Surface</strong><code>--ss-surface #243f37</code></div>
+          <div class="role" style="--token:var(--ss-accent)"><div class="bar"></div><strong>Brand signal</strong><code>--ss-accent #d4e9e2</code></div>
+          <div class="role" style="--token:var(--ss-action-bg)"><div class="bar"></div><strong>Filled CTA</strong><code>--ss-action-bg #00754A</code></div>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section class="group" aria-label="Primary greens">
+    <h2>Primary</h2>
+    <div class="grid">
+      <article class="swatch dark" style="background:#006241"><strong>Starbucks Green</strong><code>--ss-accent / --ss-green-brand #006241</code></article>
+      <article class="swatch dark" style="background:#00754a"><strong>Green Accent</strong><code>--ss-action-bg / --ss-green-accent #00754A</code></article>
+      <article class="swatch dark" style="background:#1e3932"><strong>House Green</strong><code>--ss-green-deep #1E3932</code></article>
+      <article class="swatch dark" style="background:#2b5148"><strong>Green Uplift</strong><code>--ss-green-uplift #2b5148</code></article>
+      <article class="swatch light" style="background:#d4e9e2"><strong>Green Light</strong><code>--ss-green-light #d4e9e2</code></article>
+    </div>
+  </section>
+
+  <section class="group" aria-label="Secondary and surface colors">
+    <h2>Secondary, Surface, Text</h2>
+    <div class="grid">
+      <article class="swatch light" style="background:#cba258"><strong>Gold</strong><code>--ss-gold #cba258</code></article>
+      <article class="swatch light" style="background:#dfc49d"><strong>Gold Light</strong><code>--ss-gold-light #dfc49d</code></article>
+      <article class="swatch light" style="background:#faf6ee"><strong>Gold Lightest</strong><code>--ss-gold-lightest #faf6ee</code></article>
+      <article class="swatch light" style="background:#ffffff"><strong>White</strong><code>--ss-surface #ffffff</code></article>
+      <article class="swatch light" style="background:#f9f9f9"><strong>Neutral Cool</strong><code>--ss-surface-cool #f9f9f9</code></article>
+      <article class="swatch light" style="background:#f2f0eb"><strong>Neutral Warm</strong><code>--ss-bg / --ss-cream #f2f0eb</code></article>
+      <article class="swatch light" style="background:#edebe9"><strong>Ceramic</strong><code>--ss-surface-warm / --ss-ceramic #edebe9</code></article>
+      <article class="swatch dark" style="background:#33433d"><strong>Rewards Green</strong><code>--ss-rewards-green #33433d</code></article>
+    </div>
+  </section>
+
+  <section class="group" aria-label="Semantic colors">
+    <h2>Semantic</h2>
+    <div class="grid">
+      <article class="swatch dark" style="background:#00754a"><strong>Success</strong><code>--ss-success #00754A</code></article>
+      <article class="swatch light" style="background:#fbbc05"><strong>Warning</strong><code>--ss-warn #fbbc05</code></article>
+      <article class="swatch dark" style="background:#c82014"><strong>Danger</strong><code>--ss-danger #c82014</code></article>
+      <article class="swatch light" style="background:rgba(212,233,226,.33)"><strong>Valid Tint</strong><code>--ss-valid-tint d4e9e2 / 33%</code></article>
+      <article class="swatch light" style="background:hsl(4 82% 43% / 5%)"><strong>Invalid Tint</strong><code>--ss-invalid-tint hsl(4 82% 43% / 5%)</code></article>
+    </div>
+  </section>
+</body>
+</html>

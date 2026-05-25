@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en" data-theme="daylight">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shea Symphony Radius</title>
+  <link rel="stylesheet" href="../colors_and_type.css">
+  <style>
+    body { margin: 0; padding: 32px; background: var(--ss-bg); color: var(--ss-fg); font-family: var(--ss-font-body); }
+    h1 { margin: 0 0 8px; color: var(--ss-fg-2); font: 700 32px/1.1 var(--ss-font-display); }
+    p { margin: 0 0 24px; color: var(--ss-muted); max-width: 70ch; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; }
+    .card { min-height: 150px; display: grid; align-content: end; gap: 8px; padding: 18px; border: 1px solid var(--ss-border-soft); background: var(--ss-card-bg); box-shadow: var(--ss-elev-raised); }
+    code { color: var(--ss-muted); font-family: var(--ss-font-mono); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>Radius Rules</h1>
+  <p>Shea Symphony uses restrained rounding: precise panels, compact controls, and pill-shaped status only. Source classes include `.field`, `.lane-card`, `.attention-card`, `.status-pill`, and `.segmented`.</p>
+  <section class="ss-theme-pair" aria-label="Radius rules by theme">
+    <article class="ss-theme-frame ss-theme-daylight">
+      <header><h2>Daylight</h2><p>Precise rounding on warm review cards.</p></header>
+      <div class="grid">
+        <article class="card" style="border-radius:var(--ss-radius-sm)"><strong>Small</strong><code>4px inputs</code></article>
+        <article class="card" style="border-radius:var(--ss-radius-md)"><strong>Medium</strong><code>8px cards</code></article>
+        <article class="card" style="border-radius:var(--ss-radius-lg)"><strong>Large</strong><code>8px panels</code></article>
+        <article class="card" style="border-radius:var(--ss-radius-pill)"><strong>Pill</strong><code>status + segmented</code></article>
+      </div>
+    </article>
+    <article class="ss-theme-frame ss-theme-night">
+      <header><h2>Night</h2><p>Same radii on dark cockpit panels.</p></header>
+      <div class="grid">
+        <article class="card" style="border-radius:var(--ss-radius-sm)"><strong>Small</strong><code>4px inputs</code></article>
+        <article class="card" style="border-radius:var(--ss-radius-md)"><strong>Medium</strong><code>8px cards</code></article>
+        <article class="card" style="border-radius:var(--ss-radius-lg)"><strong>Large</strong><code>8px panels</code></article>
+        <article class="card" style="border-radius:var(--ss-radius-pill)"><strong>Pill</strong><code>status + segmented</code></article>
+      </div>
+    </article>
+  </section>
+</body>
+</html>

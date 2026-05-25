@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en" data-theme="daylight">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shea Symphony Elevation</title>
+  <link rel="stylesheet" href="../colors_and_type.css">
+  <style>
+    body { margin: 0; padding: 32px; background: var(--ss-bg); color: var(--ss-fg); font-family: var(--ss-font-body); }
+    h1 { margin: 0 0 8px; color: var(--ss-fg-2); font: 700 32px/1.1 var(--ss-font-display); }
+    p { margin: 0 0 24px; color: var(--ss-muted); max-width: 70ch; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 18px; }
+    .card { min-height: 180px; display: grid; align-content: end; gap: 8px; padding: 20px; border: 1px solid var(--ss-border-soft); border-radius: 8px; background: var(--ss-card-bg); }
+    code { color: var(--ss-muted); font-family: var(--ss-font-mono); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>Elevation</h1>
+  <p>Borders carry most structure. Raised surfaces are reserved for source-backed `.topbar`, `.desk-primary`, `.attention-card`, `.lane-card`, `.worker-card`, and `.action-drawer` surfaces.</p>
+  <section class="ss-theme-pair" aria-label="Elevation tokens by theme">
+    <article class="ss-theme-frame ss-theme-daylight">
+      <header><h2>Daylight</h2><p>Subtle shadows lift cards from warm cream canvas.</p></header>
+      <div class="grid">
+        <article class="card" style="box-shadow:var(--ss-elev-flat)"><strong>Flat</strong><code>--ss-elev-flat</code></article>
+        <article class="card" style="box-shadow:var(--ss-elev-ring)"><strong>Ring</strong><code>--ss-elev-ring</code></article>
+        <article class="card" style="box-shadow:var(--ss-elev-raised)"><strong>Raised</strong><code>--ss-elev-raised</code></article>
+      </div>
+    </article>
+    <article class="ss-theme-frame ss-theme-night">
+      <header><h2>Night</h2><p>Inset highlights and deeper shadows preserve cockpit depth.</p></header>
+      <div class="grid">
+        <article class="card" style="box-shadow:var(--ss-elev-flat)"><strong>Flat</strong><code>--ss-elev-flat</code></article>
+        <article class="card" style="box-shadow:var(--ss-elev-ring)"><strong>Ring</strong><code>--ss-elev-ring</code></article>
+        <article class="card" style="box-shadow:var(--ss-elev-raised)"><strong>Raised</strong><code>--ss-elev-raised</code></article>
+      </div>
+    </article>
+  </section>
+</body>
+</html>

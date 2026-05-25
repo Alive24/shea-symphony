@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en" data-theme="daylight">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shea Symphony Components - Lanes</title>
+  <link rel="stylesheet" href="../colors_and_type.css">
+  <style>
+    body { margin: 0; padding: 32px; background: var(--ss-bg); color: var(--ss-fg); font-family: var(--ss-font-body); }
+    h1 { margin: 0 0 8px; color: var(--ss-fg-2); font: 700 32px/1.1 var(--ss-font-display); }
+    p { margin: 0 0 24px; color: var(--ss-muted); max-width: 70ch; }
+    .lane-stack { display: grid; gap: 14px; }
+    .lane {
+      display: grid;
+      gap: 14px;
+      padding: 16px;
+      border: 1px solid var(--ss-border-soft);
+      border-radius: 8px;
+      background: var(--ss-card-bg);
+      box-shadow: var(--ss-elev-raised);
+    }
+    .head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: start;
+    }
+    h2 { margin: 3px 0 0; color: var(--ss-fg-2); font: 700 19px/1.18 var(--ss-font-display); }
+    .metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .metric {
+      min-width: 0;
+      display: grid;
+      gap: 3px;
+      padding: 9px 10px;
+      border-radius: 6px;
+      background: var(--ss-subtle-bg);
+    }
+    .metric strong { color: var(--ss-fg-2); font: 700 19px/1 var(--ss-font-display); }
+    .metric span { color: var(--ss-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+    .evidence {
+      margin: 0;
+      padding-top: 12px;
+      border-top: 1px solid var(--ss-border-soft);
+      color: var(--ss-muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    .ss-theme-frame > header p { margin-bottom: 0; }
+    @media (max-width: 1100px) { .ss-theme-pair { grid-template-columns: 1fr; } }
+    @media (max-width: 520px) {
+      body { padding: 20px; }
+      .head { grid-template-columns: 1fr; }
+      .head .ss-button { justify-self: start; }
+      .metrics { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Lane Summary Cards</h1>
+  <p>Modeled from the captured `LaneCard` implementation: posture, lane name, action, metrics, and latest evidence.</p>
+  <section class="ss-theme-pair" aria-label="Lane summary cards by theme">
+    <article class="ss-theme-frame ss-theme-daylight">
+      <header><h2>Daylight</h2><p>Reviewable lane summaries on cream workspace surfaces.</p></header>
+      <div class="lane-stack">
+        <article class="lane"><div class="head"><div><span class="ss-mini-label">Main</span><h2>Main lane</h2></div><a class="ss-button ss-button-secondary ss-button-compact">View lane</a></div><div class="metrics"><div class="metric"><strong>2</strong><span>active</span></div><div class="metric"><strong>1</strong><span>retrying</span></div><div class="metric"><strong>0</strong><span>blocked</span></div></div><p class="evidence">Latest: PR handoff recorded; issue moved to Agent Review.</p></article>
+        <article class="lane"><div class="head"><div><span class="ss-mini-label">Review</span><h2>Review lane</h2></div><a class="ss-button ss-button-secondary ss-button-compact">View lane</a></div><div class="metrics"><div class="metric"><strong>1</strong><span>active</span></div><div class="metric"><strong>0</strong><span>retrying</span></div><div class="metric"><strong>1</strong><span>blocked</span></div></div><p class="evidence">Latest: Agent Review found missing pass evidence and routed to Need Human Input.</p></article>
+        <article class="lane"><div class="head"><div><span class="ss-mini-label">Merge</span><h2>Merge lane</h2></div><a class="ss-button ss-button-secondary ss-button-compact">View lane</a></div><div class="metrics"><div class="metric"><strong>1</strong><span>active</span></div><div class="metric"><strong>1</strong><span>retrying</span></div><div class="metric"><strong>0</strong><span>blocked</span></div></div><p class="evidence">Latest: mergeStateStatus UNKNOWN; keeping in Merging for retry.</p></article>
+      </div>
+    </article>
+    <article class="ss-theme-frame ss-theme-night">
+      <header><h2>Night</h2><p>The same LaneCard structure on House Green cockpit surfaces.</p></header>
+      <div class="lane-stack">
+        <article class="lane"><div class="head"><div><span class="ss-mini-label">Main</span><h2>Main lane</h2></div><a class="ss-button ss-button-secondary ss-button-compact">View lane</a></div><div class="metrics"><div class="metric"><strong>2</strong><span>active</span></div><div class="metric"><strong>1</strong><span>retrying</span></div><div class="metric"><strong>0</strong><span>blocked</span></div></div><p class="evidence">Latest: PR handoff recorded; issue moved to Agent Review.</p></article>
+        <article class="lane"><div class="head"><div><span class="ss-mini-label">Review</span><h2>Review lane</h2></div><a class="ss-button ss-button-secondary ss-button-compact">View lane</a></div><div class="metrics"><div class="metric"><strong>1</strong><span>active</span></div><div class="metric"><strong>0</strong><span>retrying</span></div><div class="metric"><strong>1</strong><span>blocked</span></div></div><p class="evidence">Latest: Agent Review found missing pass evidence and routed to Need Human Input.</p></article>
+        <article class="lane"><div class="head"><div><span class="ss-mini-label">Merge</span><h2>Merge lane</h2></div><a class="ss-button ss-button-secondary ss-button-compact">View lane</a></div><div class="metrics"><div class="metric"><strong>1</strong><span>active</span></div><div class="metric"><strong>1</strong><span>retrying</span></div><div class="metric"><strong>0</strong><span>blocked</span></div></div><p class="evidence">Latest: mergeStateStatus UNKNOWN; keeping in Merging for retry.</p></article>
+      </div>
+    </article>
+  </section>
+</body>
+</html>

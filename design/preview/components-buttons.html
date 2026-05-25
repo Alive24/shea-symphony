@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en" data-theme="daylight">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shea Symphony Components - Buttons</title>
+  <link rel="stylesheet" href="../colors_and_type.css">
+  <style>
+    body { margin: 0; padding: 32px; background: var(--ss-bg); color: var(--ss-fg); font-family: var(--ss-font-body); }
+    h1 { margin: 0 0 8px; color: var(--ss-fg-2); font: 700 32px/1.1 var(--ss-font-display); }
+    p { margin: 0 0 22px; color: var(--ss-muted); }
+    .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+    .group { display: grid; gap: 10px; }
+    .group h3 { margin: 0; color: var(--ss-fg); font: 700 14px/1.2 var(--ss-font-body); }
+    .ghost { color: var(--ss-accent); background: transparent; border-color: var(--ss-accent); }
+    .danger { color: var(--ss-danger-on); background: var(--ss-danger); }
+    .segmented { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid var(--ss-border); border-radius: 9999px; background: var(--ss-subtle-bg); }
+    .segmented button { min-height: 36px; padding: 8px 16px; border: 0; border-radius: 9999px; color: var(--ss-muted); background: transparent; font: 700 14px/1 var(--ss-font-body); }
+    .segmented .active { color: var(--ss-action-on); background: var(--ss-action-bg); }
+  </style>
+</head>
+<body>
+  <h1>Action Controls</h1>
+  <p>Primary actions are explicit operator moves. Secondary actions inspect evidence or open lane detail. Source component context: dashboard controls in `web/src/app.css`, captured `LaneCard` View lane action, `_layout`, `layout`, `.btn`, `.btn-primary`, `.btn-ghost`, `.mode-toggle`, and `.segmented`.</p>
+  <section class="ss-theme-pair" aria-label="Button components by theme">
+    <article class="ss-theme-frame ss-theme-daylight">
+      <header><h2>Daylight</h2><p>Green Accent filled CTA on warm cream review surfaces.</p></header>
+      <div class="group">
+        <h3>Primary operator actions</h3>
+        <div class="row">
+          <button class="ss-button">Approve to Merging</button>
+          <button class="ss-button ghost">View Review Evidence</button>
+          <button class="ss-button danger">Stop Write Mode</button>
+          <button class="ss-button" disabled>Waiting on Doctor</button>
+        </div>
+      </div>
+      <div class="group" style="margin-top:18px">
+        <h3>Compact lane and evidence actions</h3>
+        <div class="row">
+          <button class="ss-button ss-button-secondary ss-button-compact">View lane</button>
+          <button class="ss-button ss-button-secondary ss-button-compact">Open PR</button>
+          <button class="ss-button ss-button-compact">Retry</button>
+        </div>
+      </div>
+      <div class="row" style="margin-top:22px">
+        <div class="segmented" role="group" aria-label="Daylight mode">
+          <button class="active">Foreground</button>
+          <button>Dry-run</button>
+          <button>Paused</button>
+        </div>
+      </div>
+    </article>
+    <article class="ss-theme-frame ss-theme-night">
+      <header><h2>Night</h2><p>Same action roles on House Green cockpit surfaces.</p></header>
+      <div class="group">
+        <h3>Primary operator actions</h3>
+        <div class="row">
+          <button class="ss-button">Approve to Merging</button>
+          <button class="ss-button ghost">View Review Evidence</button>
+          <button class="ss-button danger">Stop Write Mode</button>
+          <button class="ss-button" disabled>Waiting on Doctor</button>
+        </div>
+      </div>
+      <div class="group" style="margin-top:18px">
+        <h3>Compact lane and evidence actions</h3>
+        <div class="row">
+          <button class="ss-button ss-button-secondary ss-button-compact">View lane</button>
+          <button class="ss-button ss-button-secondary ss-button-compact">Open PR</button>
+          <button class="ss-button ss-button-compact">Retry</button>
+        </div>
+      </div>
+      <div class="row" style="margin-top:22px">
+        <div class="segmented" role="group" aria-label="Night mode">
+          <button class="active">Foreground</button>
+          <button>Dry-run</button>
+          <button>Paused</button>
+        </div>
+      </div>
+    </article>
+  </section>
+</body>
+</html>

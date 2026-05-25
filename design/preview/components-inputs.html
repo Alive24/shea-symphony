@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en" data-theme="daylight">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shea Symphony Components - Inputs</title>
+  <link rel="stylesheet" href="../colors_and_type.css">
+  <style>
+    body { margin: 0; padding: 32px; background: var(--ss-bg); color: var(--ss-fg); font-family: var(--ss-font-body); }
+    h1 { margin: 0 0 8px; color: var(--ss-fg-2); font: 700 32px/1.1 var(--ss-font-display); }
+    p { margin: 0 0 22px; color: var(--ss-muted); }
+    form { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    label { display: grid; gap: 8px; color: var(--ss-fg); font-size: 14px; font-weight: 700; }
+    input, select, textarea { min-height: 48px; padding: 0 16px; border: 1px solid var(--ss-border); border-radius: 4px; color: var(--ss-fg); background: var(--ss-surface); font: inherit; }
+    textarea { grid-column: 1 / -1; min-height: 132px; padding-block: 12px; resize: vertical; }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--ss-accent); box-shadow: var(--ss-focus-ring); }
+    .form-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Command Console Inputs</h1>
+  <p>Inputs support bounded write-mode decisions and source-backed command previews. Source component context: dashboard command console in `web/src/app.css`, `_layout`, `layout`, `.command-console`, `.command-form`, `.command-preview`, and `.field`.</p>
+  <section class="ss-theme-pair" aria-label="Input components by theme">
+    <article class="ss-theme-frame ss-theme-daylight">
+      <header><h2>Daylight</h2><p>Crisp bordered inputs on white and ceramic surfaces.</p></header>
+      <form>
+        <label>Issue<input value="#396" aria-label="Daylight issue"></label>
+        <label>Target lane<select aria-label="Daylight target lane"><option>Human Review</option><option>Merging</option><option>Need Human Input</option></select></label>
+        <textarea aria-label="Daylight evidence summary">Review freshness passed; PR linked through project issue --json; awaiting literal operator approval.</textarea>
+        <div class="form-actions"><button class="ss-button ss-button-secondary ss-button-compact" type="button">Preview command</button><button class="ss-button ss-button-compact" type="button">Record</button></div>
+      </form>
+    </article>
+    <article class="ss-theme-frame ss-theme-night">
+      <header><h2>Night</h2><p>House Green input fields retain the same focus and evidence hierarchy.</p></header>
+      <form>
+        <label>Issue<input value="#398" aria-label="Night issue"></label>
+        <label>Target lane<select aria-label="Night target lane"><option>Rework</option><option>Merging</option><option>Need Human Input</option></select></label>
+        <textarea aria-label="Night evidence summary">mergeStateStatus UNKNOWN; stale PR conflict recorded; waiting for operator route.</textarea>
+        <div class="form-actions"><button class="ss-button ss-button-secondary ss-button-compact" type="button">Preview command</button><button class="ss-button ss-button-compact" type="button">Record</button></div>
+      </form>
+    </article>
+  </section>
+</body>
+</html>

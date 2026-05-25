@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en" data-theme="daylight">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shea Symphony Typography</title>
+  <link rel="stylesheet" href="../colors_and_type.css">
+  <style>
+    body { margin: 0; padding: 32px; background: var(--ss-bg); color: var(--ss-fg); font-family: var(--ss-font-body); }
+    .panel { padding: 28px; border: 1px solid var(--ss-border-soft); border-radius: 8px; background: var(--ss-card-bg); box-shadow: var(--ss-elev-raised); }
+    .eyebrow { color: var(--ss-accent); font: 700 13px/1 var(--ss-font-body); letter-spacing: .1em; text-transform: uppercase; }
+    h1 { margin: 8px 0 14px; color: var(--ss-fg-2); font: 700 var(--ss-text-4xl)/1.05 var(--ss-font-display); letter-spacing: var(--ss-tracking-display); text-wrap: balance; }
+    h2 { margin: 28px 0 8px; color: var(--ss-fg-2); font: 700 var(--ss-text-2xl)/1.15 var(--ss-font-display); }
+    p { color: var(--ss-muted); max-width: 74ch; }
+    .mono { margin-top: 18px; padding: 16px; border: 1px solid var(--ss-border-soft); border-radius: 8px; background: var(--ss-subtle-bg); color: var(--ss-fg-2); font-family: var(--ss-font-mono); font-size: var(--ss-text-sm); }
+  </style>
+</head>
+<body>
+  <section class="ss-theme-pair" aria-label="Typography by theme">
+    <article class="ss-theme-frame ss-theme-daylight">
+      <header><h2>Daylight</h2><p>Warm review mode uses Starbucks Green for hierarchy.</p></header>
+      <section class="panel">
+        <div class="eyebrow">Agent Review handoff</div>
+        <h1>Evidence first, then route the lane.</h1>
+        <p>Display type is strong but practical. Body copy should explain the operator decision, the source of truth, and the next safe action without collapsing into terminal output.</p>
+        <h2>Mono is reserved for operational identity.</h2>
+        <div class="mono">#396 · backend=codex-app-server · status=Human Review · project issue --json · review-freshness=passed</div>
+      </section>
+    </article>
+    <article class="ss-theme-frame ss-theme-night">
+      <header><h2>Night</h2><p>Dark cockpit mode keeps hierarchy high contrast and operational.</p></header>
+      <section class="panel">
+        <div class="eyebrow">Merge lane retry</div>
+        <h1>Hold state until evidence is clean.</h1>
+        <p>Night typography preserves the same scale, weight, and mono usage while shifting foreground values onto House Green surfaces.</p>
+        <h2>Mono stays for commands and state evidence.</h2>
+        <div class="mono">#398 · mergeStateStatus=UNKNOWN · route=Rework · blocker=stale-pr</div>
+      </section>
+    </article>
+  </section>
+</body>
+</html>

@@ -1,0 +1,26 @@
+{
+  "kind": "critique-panel",
+  "score": 4,
+  "axes": {
+    "clarity": {
+      "score": 4,
+      "notes": "The Operator Desk leads with human-attention cards and keeps system details secondary."
+    },
+    "hierarchy": {
+      "score": 4,
+      "notes": "Needs Attention dominates the main route; readiness and events stay compact."
+    },
+    "typography": {
+      "score": 4,
+      "notes": "Large readable headings and task cards use a calm cockpit scale with compact labels and generous line height."
+    },
+    "motion": {
+      "score": 4,
+      "notes": "Interactions are restrained: countdown, drawer, copy action, filter, pagination, and pressed pill states."
+    },
+    "brand": {
+      "score": 4,
+      "notes": "The visual system now follows Shea Symphony's dark graphite cockpit direction with restrained cyan, green, amber, and red accents."
+    }
+  }
+}

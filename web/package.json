@@ -1,0 +1,34 @@
+{
+  "name": "shea-symphony-operator-desk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "preview": "vite preview --host 127.0.0.1",
+    "serve": "node server.mjs",
+    "serve:detached": "node scripts/serve-detached.mjs",
+    "serve:status": "node scripts/serve-detached.mjs status",
+    "serve:stop": "node scripts/serve-detached.mjs stop",
+    "autostart:install": "node scripts/launch-agent.mjs install",
+    "autostart:status": "node scripts/launch-agent.mjs status",
+    "autostart:uninstall": "node scripts/launch-agent.mjs uninstall",
+    "autostart:logs": "node scripts/launch-agent.mjs logs",
+    "serve:fixture": "SHEA_WEB_FIXTURE=1 node server.mjs",
+    "operator": "npm run build && npm run serve",
+    "test": "node --test",
+    "test:build": "npm run build && SHEA_WEB_REQUIRE_BUILD=1 node --test test/static-build.test.mjs"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-static": "latest",
+    "@sveltejs/kit": "latest",
+    "@sveltejs/vite-plugin-svelte": "latest",
+    "@types/node": "^25.9.1",
+    "svelte": "latest",
+    "svelte-check": "^4.4.8",
+    "typescript": "^6.0.3",
+    "vite": "latest"
+  }
+}

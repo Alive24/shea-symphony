@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en" data-theme="daylight">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shea Symphony Theme Modes</title>
+  <link rel="stylesheet" href="../colors_and_type.css">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 32px; background: var(--ss-bg); color: var(--ss-fg); font-family: var(--ss-font-body); }
+    h1 { margin: 0 0 8px; color: var(--ss-fg-2); font: 700 32px/1.1 var(--ss-font-display); }
+    p { margin: 0 0 24px; color: var(--ss-muted); max-width: 76ch; }
+    .modes { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; max-width: 1080px; }
+    .mode { display: grid; gap: 16px; padding: 22px; border: 1px solid var(--ss-border-soft); border-radius: 8px; background: var(--ss-card-bg); box-shadow: var(--ss-elev-raised); }
+    .mode h2 { margin: 0; color: var(--ss-fg-2); font: 700 24px/1.15 var(--ss-font-display); }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chip { min-height: 34px; display: inline-flex; align-items: center; padding: 8px 12px; border: 1px solid var(--ss-border-soft); border-radius: 999px; background: var(--ss-surface-warm); color: var(--ss-fg-2); font: 700 13px/1 var(--ss-font-body); }
+    .sample { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--ss-border-soft); border-radius: 8px; background: var(--ss-surface); }
+    .issue { color: var(--ss-accent); font: 700 13px/1 var(--ss-font-mono); }
+    .action { width: fit-content; min-height: 38px; padding: 0 14px; border: 0; border-radius: 999px; color: var(--ss-action-on); background: var(--ss-action-bg); font: 700 13px/1 var(--ss-font-body); }
+    code { color: var(--ss-muted); font-family: var(--ss-font-mono); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>Daylight and Night Theme Modes</h1>
+  <p>Use Daylight for package previews, docs, and default review. Add <code>data-theme="night"</code> or <code>.ss-theme-night</code> when an artifact needs a House Green cockpit surface.</p>
+  <section class="modes" aria-label="Theme mode comparison">
+    <article class="mode ss-theme-daylight">
+      <h2>Daylight default</h2>
+      <div class="chips">
+        <span class="chip">#f2f0eb canvas</span>
+        <span class="chip">#00754A action</span>
+        <span class="chip">Starbucks palette</span>
+      </div>
+      <div class="sample">
+        <span class="issue">#396 / Human Review</span>
+        <strong>Approve to Merging after reading recorded evidence.</strong>
+        <span style="color:var(--ss-muted)">Cream canvas, white cards, and restrained green operator signal.</span>
+        <button class="action" type="button">Approve</button>
+      </div>
+      <code>:root or [data-theme="daylight"]</code>
+    </article>
+    <article class="mode ss-theme-night">
+      <h2>Night cockpit</h2>
+      <div class="chips">
+        <span class="chip">#1E3932 canvas</span>
+        <span class="chip">#00754A action</span>
+        <span class="chip">House Green mode</span>
+      </div>
+      <div class="sample">
+        <span class="issue">#398 / Rework</span>
+        <strong>Route back with stale PR conflict as the blocker.</strong>
+        <span style="color:var(--ss-muted)">House Green surfaces preserve cockpit contrast while staying inside the Starbucks palette.</span>
+        <button class="action" type="button">Route Rework</button>
+      </div>
+      <code>[data-theme="night"] or .ss-theme-night</code>
+    </article>
+  </section>
+</body>
+</html>

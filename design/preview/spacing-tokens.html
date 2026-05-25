@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en" data-theme="daylight">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shea Symphony Spacing Tokens</title>
+  <link rel="stylesheet" href="../colors_and_type.css">
+  <style>
+    body { margin: 0; padding: 32px; background: var(--ss-bg); color: var(--ss-fg); font-family: var(--ss-font-body); }
+    h1 { margin: 0 0 8px; color: var(--ss-fg-2); font: 700 32px/1.1 var(--ss-font-display); }
+    p { margin: 0 0 24px; color: var(--ss-muted); max-width: 70ch; }
+    .list { display: grid; gap: 12px; }
+    .row { display: grid; grid-template-columns: 120px 1fr 80px; gap: 16px; align-items: center; }
+    .bar { height: 20px; border-radius: 999px; background: var(--ss-accent); }
+    code { color: var(--ss-muted); font-family: var(--ss-font-mono); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>Spacing Scale</h1>
+  <p>Spacious enough for supervised decisions; dense enough for operational evidence. Source examples include `.app-chrome`, navigation/topbar regions, `.attention-card`, `.lane-card`, and `.worker-card` in `web/src/app.css`.</p>
+  <section class="ss-theme-pair" aria-label="Spacing tokens by theme">
+    <article class="ss-theme-frame ss-theme-daylight">
+      <header><h2>Daylight</h2><p>Spacing stays constant while surfaces shift to warm review mode.</p></header>
+      <div class="list">
+        <div class="row"><code>space-1</code><div class="bar" style="width:var(--ss-space-1)"></div><code>4px</code></div>
+        <div class="row"><code>space-2</code><div class="bar" style="width:var(--ss-space-2)"></div><code>8px</code></div>
+        <div class="row"><code>space-3</code><div class="bar" style="width:var(--ss-space-3)"></div><code>12px</code></div>
+        <div class="row"><code>space-4</code><div class="bar" style="width:var(--ss-space-4)"></div><code>16px</code></div>
+        <div class="row"><code>space-5</code><div class="bar" style="width:var(--ss-space-5)"></div><code>20px</code></div>
+        <div class="row"><code>space-6</code><div class="bar" style="width:var(--ss-space-6)"></div><code>24px</code></div>
+        <div class="row"><code>space-8</code><div class="bar" style="width:var(--ss-space-8)"></div><code>32px</code></div>
+        <div class="row"><code>space-12</code><div class="bar" style="width:var(--ss-space-12)"></div><code>48px</code></div>
+      </div>
+    </article>
+    <article class="ss-theme-frame ss-theme-night">
+      <header><h2>Night</h2><p>The same rhythm on House Green cockpit surfaces.</p></header>
+      <div class="list">
+        <div class="row"><code>space-1</code><div class="bar" style="width:var(--ss-space-1)"></div><code>4px</code></div>
+        <div class="row"><code>space-2</code><div class="bar" style="width:var(--ss-space-2)"></div><code>8px</code></div>
+        <div class="row"><code>space-3</code><div class="bar" style="width:var(--ss-space-3)"></div><code>12px</code></div>
+        <div class="row"><code>space-4</code><div class="bar" style="width:var(--ss-space-4)"></div><code>16px</code></div>
+        <div class="row"><code>space-5</code><div class="bar" style="width:var(--ss-space-5)"></div><code>20px</code></div>
+        <div class="row"><code>space-6</code><div class="bar" style="width:var(--ss-space-6)"></div><code>24px</code></div>
+        <div class="row"><code>space-8</code><div class="bar" style="width:var(--ss-space-8)"></div><code>32px</code></div>
+        <div class="row"><code>space-12</code><div class="bar" style="width:var(--ss-space-12)"></div><code>48px</code></div>
+      </div>
+    </article>
+  </section>
+</body>
+</html>

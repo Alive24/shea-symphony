@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en" data-theme="daylight">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shea Symphony Brand Assets</title>
+  <link rel="stylesheet" href="../colors_and_type.css">
+  <style>
+    body { margin: 0; padding: 32px; background: var(--ss-bg); color: var(--ss-fg); font-family: var(--ss-font-body); }
+    h1 { margin: 0 0 8px; color: var(--ss-fg-2); font: 700 32px/1.1 var(--ss-font-display); }
+    p { margin: 0 0 24px; color: var(--ss-muted); max-width: 72ch; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 18px; }
+    .asset { display: grid; place-items: center; min-height: 220px; padding: 24px; border: 1px solid var(--ss-border-soft); border-radius: 8px; background: var(--ss-card-bg); box-shadow: var(--ss-elev-raised); }
+    img { width: 96px; height: 96px; image-rendering: auto; }
+    code { display: block; margin-top: 18px; color: var(--ss-muted); font-family: var(--ss-font-mono); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>Preserved Runtime Assets</h1>
+  <p>The source intake captured a web build favicon. It is copied byte-for-byte into `build/favicon.svg` and aliased in `assets/favicon.svg` for convenience.</p>
+  <section class="ss-theme-pair" aria-label="Brand assets by theme">
+    <article class="ss-theme-frame ss-theme-daylight">
+      <header><h2>Daylight</h2><p>Preserved source assets on the default review canvas.</p></header>
+      <div class="grid">
+        <article class="asset"><div><img src="../build/favicon.svg" alt="Shea Symphony runtime favicon on Daylight"><code>build/favicon.svg</code></div></article>
+        <article class="asset"><div><img src="../assets/favicon.svg" alt="Shea Symphony asset alias favicon on Daylight"><code>assets/favicon.svg</code></div></article>
+      </div>
+    </article>
+    <article class="ss-theme-frame ss-theme-night">
+      <header><h2>Night</h2><p>The same files verified against House Green cockpit surfaces.</p></header>
+      <div class="grid">
+        <article class="asset"><div><img src="../build/favicon.svg" alt="Shea Symphony runtime favicon on Night"><code>build/favicon.svg</code></div></article>
+        <article class="asset"><div><img src="../assets/favicon.svg" alt="Shea Symphony asset alias favicon on Night"><code>assets/favicon.svg</code></div></article>
+      </div>
+    </article>
+  </section>
+</body>
+</html>

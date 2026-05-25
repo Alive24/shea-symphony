@@ -1,0 +1,22 @@
+{
+  "name": "shea-symphony-operator-desk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "serve": "node server.mjs",
+    "serve:fixture": "SHEA_WEB_FIXTURE=1 node server.mjs",
+    "operator": "npm run build && npm run serve",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-static": "latest",
+    "@sveltejs/kit": "latest",
+    "@sveltejs/vite-plugin-svelte": "latest",
+    "svelte": "latest",
+    "vite": "latest"
+  }
+}

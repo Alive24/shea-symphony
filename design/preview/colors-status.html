@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en" data-theme="daylight">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shea Symphony Colors - Status</title>
+  <link rel="stylesheet" href="../colors_and_type.css">
+  <style>
+    body { margin: 0; padding: 32px; background: var(--ss-bg); color: var(--ss-fg); font-family: var(--ss-font-body); }
+    h1 { margin: 0 0 8px; color: var(--ss-fg-2); font: 700 32px/1.1 var(--ss-font-display); }
+    p { margin: 0 0 24px; color: var(--ss-muted); max-width: 68ch; }
+    .stack { display: grid; gap: 14px; }
+    .row { display: grid; grid-template-columns: 160px 1fr auto; gap: 16px; align-items: center; padding: 16px; border: 1px solid var(--ss-border-soft); border-radius: 8px; background: var(--ss-card-bg); box-shadow: var(--ss-elev-raised); }
+    .dot { width: 12px; height: 12px; border-radius: 50%; }
+    code { color: var(--ss-muted); font-family: var(--ss-font-mono); font-size: 13px; }
+    strong { color: var(--ss-fg-2); }
+    span { color: var(--ss-muted); }
+  </style>
+</head>
+<body>
+  <h1>Status Signal System</h1>
+  <p>Use status color to clarify lane health and operator risk. Each status must stay legible in Daylight review mode and Night cockpit mode.</p>
+  <section class="ss-theme-pair" aria-label="Status colors by theme">
+    <article class="ss-theme-frame ss-theme-daylight">
+      <header><h2>Daylight</h2><p>Starbucks Green for pass/ready, Yellow for warning, Red for destructive or unsafe states.</p></header>
+      <div class="stack">
+        <article class="row"><strong>Success</strong><span>Ready, review pass, healthy backend, canonical checkout ready.</span><code><span class="dot" style="display:inline-block;background:var(--ss-success)"></span> #00754A</code></article>
+        <article class="row"><strong>Warning</strong><span>Needs attention, mergeability unknown, review retry, dry-run caution.</span><code><span class="dot" style="display:inline-block;background:var(--ss-warn)"></span> #fbbc05</code></article>
+        <article class="row"><strong>Danger</strong><span>Unsafe continuation, failed checks, missing evidence, destructive action blocked.</span><code><span class="dot" style="display:inline-block;background:var(--ss-danger)"></span> #c82014</code></article>
+        <article class="row"><strong>Accent</strong><span>Current selection, issue tag, focused decision, brand signal.</span><code><span class="dot" style="display:inline-block;background:var(--ss-accent)"></span> #006241</code></article>
+      </div>
+    </article>
+    <article class="ss-theme-frame ss-theme-night">
+      <header><h2>Night</h2><p>Status tones shift onto House Green while retaining the same operational meaning.</p></header>
+      <div class="stack">
+        <article class="row"><strong>Success</strong><span>Ready, review pass, healthy backend, canonical checkout ready.</span><code><span class="dot" style="display:inline-block;background:var(--ss-success)"></span> #d4e9e2</code></article>
+        <article class="row"><strong>Warning</strong><span>Needs attention, mergeability unknown, review retry, dry-run caution.</span><code><span class="dot" style="display:inline-block;background:var(--ss-warn)"></span> #cba258</code></article>
+        <article class="row"><strong>Danger</strong><span>Unsafe continuation, failed checks, missing evidence, destructive action blocked.</span><code><span class="dot" style="display:inline-block;background:var(--ss-danger)"></span> #ff7a70</code></article>
+        <article class="row"><strong>Accent</strong><span>Current selection, issue tag, focused decision, brand signal.</span><code><span class="dot" style="display:inline-block;background:var(--ss-accent)"></span> #d4e9e2</code></article>
+      </div>
+    </article>
+  </section>
+</body>
+</html>

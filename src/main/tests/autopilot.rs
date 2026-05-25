@@ -141,12 +141,19 @@ fn autopilot_plan_does_not_mutate_tracker_adapter() {
 
 #[test]
 fn autopilot_plan_reports_parked_operator_queues() {
+    let need_to_clarify =
+        tracker_issue_with_ref("#40", "Needs issue contract clarification", "Need to Clarify");
     let human_review = tracker_issue_with_ref("#41", "Needs human approval", "Human Review");
     let need_human_input =
         tracker_issue_with_ref("#42", "Needs operator decision", "Need Human Input");
 
-    let plan = test_autopilot_plan(vec![human_review, need_human_input]);
+    let plan = test_autopilot_plan(vec![need_to_clarify, human_review, need_human_input]);
 
+    let clarify_queue = plan
+        .parked_queues
+        .iter()
+        .find(|queue| queue.name == "Need to Clarify")
+        .unwrap();
     let human_queue = plan
         .parked_queues
         .iter()
@@ -157,6 +164,7 @@ fn autopilot_plan_reports_parked_operator_queues() {
         .iter()
         .find(|queue| queue.name == "Need Human Input")
         .unwrap();
+    assert_eq!(clarify_queue.count, 1);
     assert_eq!(human_queue.count, 1);
     assert_eq!(input_queue.count, 1);
     assert!(plan.lanes.iter().all(|lane| lane.selected_issue.is_none()));
@@ -233,6 +241,17 @@ fn autopilot_plan_does_not_select_non_dispatchable_or_parked_states() {
     let plan = test_autopilot_plan(issues);
 
     assert!(plan.lanes.iter().all(|lane| lane.selected_issue.is_none()));
+    assert_eq!(
+        plan.parked_queues
+            .iter()
+            .find(|queue| queue.name == "Need to Clarify")
+            .unwrap()
+            .issues
+            .iter()
+            .map(|issue| issue.identifier.as_str())
+            .collect::<Vec<_>>(),
+        vec!["#334"]
+    );
     assert_eq!(
         plan.parked_queues
             .iter()

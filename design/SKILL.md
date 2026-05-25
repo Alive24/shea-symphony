@@ -18,7 +18,7 @@ This package contains:
 - `preview/` for focused review cards covering colors, type, spacing, radius, elevation, components, lanes, and brand assets.
 - `assets/` for convenience brand/runtime asset aliases.
 - `build/` for source-preserved runtime files.
-- `fonts/` when future intake preserves brand font files; this package currently uses system source stacks from `web/src/app.css`.
+- `fonts/` when future intake preserves brand font files; this package currently uses system source stacks from `app/src/app.css`.
 - `source_examples/` for copied high-signal implementation examples.
 - `ui_kits/app/` for a runnable applied Operator Desk kit.
 - `context/` for bounded GitHub and local-code intake evidence.
@@ -30,7 +30,7 @@ The system is backed by bounded intake from:
 - GitHub repository: `https://github.com/Alive24/shea-symphony`.
 - Local source folder: `/Volumes/Bohemialive/GitHub/shea-symphony`.
 - Evidence notes: `context/github/Alive24-shea-symphony.md` and `context/local-code/shea-symphony.md`.
-- Live cockpit CSS: `context/local-code/shea-symphony/files/web/src/app.css`.
+- Live cockpit CSS: `app/src/app.css`.
 - Product and workflow docs: `context/local-code/shea-symphony/files/docs/bootstrap/SHEA_SYMPHONY_SPEC.md` and `context/local-code/shea-symphony/files/docs/bootstrap/SHEA_WORKFLOW.md`.
 
 ## When to use this skill
@@ -62,7 +62,7 @@ Use this skill when creating or revising Shea Symphony:
 - Daylight default canvas for package review uses the Starbucks palette: Neutral Warm canvas, white cards, Starbucks Green brand signal, Green Accent filled CTA, and House Green authority surfaces.
 - Use `--ss-accent` (`#006241`) for issue/status signal and brand emphasis; use `--ss-action-bg` (`#00754A`) plus `--ss-action-on` for high-contrast primary buttons. Night keeps the same brand palette on House Green surfaces.
 - Editorial but practical display typography, readable body type, and precise mono metadata from the source font stacks.
-- Operator Desk first, sticky top navbar in the current UI kit, and secondary lane pages for worker internals. Use the source `.app-chrome` / `.workspace` density and responsive rules from `web/src/app.css`, but keep `ui_kits/app` navigation at the top unless the user explicitly asks for the older rail.
+- Operator Desk first, sticky top navbar in the current UI kit, and secondary lane pages for worker internals. Use the source `.app-chrome` / `.workspace` density and responsive rules from `app/src/app.css`, but keep `ui_kits/app` navigation at the top unless the user explicitly asks for the older rail.
 - Human triage cards should expose issue, current state, latest evidence, recommendation, and one next action, following `.attention-card`, `.issue-tag`, `.recommendation`, and `.evidence-preview`.
 - Lane cards follow `source_examples/web/.svelte-kit/output/server/chunks/LaneCard.js`: posture, name, compact View lane action, active/retrying/blocked metrics, latest evidence. Use `.ss-button-compact` for secondary lane/evidence actions so summary cards do not crowd.
 - Command consoles follow `.command-console`, `.command-form`, `.command-preview`, `.command-output`, and `.field`.

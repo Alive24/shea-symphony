@@ -1,0 +1,29 @@
+{
+  "name": "shea-symphony-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:tauri": "vite --host 127.0.0.1 --port 1420 --strictPort",
+    "build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "preview": "vite preview --host 127.0.0.1",
+    "tauri": "tauri",
+    "test": "node --test",
+    "test:build": "npm run build && SHEA_SYMPHONY_APP_REQUIRE_BUILD=1 node --test test/static-build.test.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.9.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.0",
+    "@sveltejs/vite-plugin-svelte": "latest",
+    "@tsconfig/svelte": "latest",
+    "@types/node": "^25.9.1",
+    "svelte": "latest",
+    "svelte-check": "^4.4.8",
+    "typescript": "^6.0.3",
+    "vite": "latest"
+  }
+}

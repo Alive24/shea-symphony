@@ -25,7 +25,7 @@ Source references:
 - Local source folder: `/Volumes/Bohemialive/GitHub/shea-symphony`.
 - GitHub evidence note: `context/github/Alive24-shea-symphony.md`.
 - Local evidence note: `context/local-code/shea-symphony.md`.
-- Live cockpit CSS snapshot: `context/local-code/shea-symphony/files/web/src/app.css`.
+- Live cockpit CSS snapshot: `app/src/app.css`.
 - Product spec snapshot: `context/local-code/shea-symphony/files/docs/bootstrap/SHEA_SYMPHONY_SPEC.md`.
 - Workflow policy snapshot: `context/local-code/shea-symphony/files/docs/bootstrap/SHEA_WORKFLOW.md`.
 

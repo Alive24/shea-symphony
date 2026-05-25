@@ -22,16 +22,16 @@ Primary UI surfaces evidenced by the source package:
 
 Implementation source context:
 
-- `web/package.json` identifies the web stack as SvelteKit, Vite, and Svelte.
-- `web/src/app.css` supplies the live cockpit visual system and component classes.
+- `app/package.json` identifies the web stack as SvelteKit, Vite, and Svelte.
+- `app/src/app.css` supplies the live cockpit visual system and component classes.
 - `web/.svelte-kit/output/server/chunks/LaneCard.js` supplies the captured lane summary component structure.
-- `web/build/favicon.svg` supplies the preserved runtime icon asset.
+- `app/build/favicon.svg` supplies the preserved runtime icon asset.
 
 ## 1. Visual Theme & Atmosphere
 
 Shea Symphony should feel like a calm human operator cockpit, not a decorative SaaS dashboard or AI chat app. The visual system is evidence-first: issue contracts, lane claims, workpads, review ledgers, PR links, runtime status, Doctor diagnostics, and state transitions are treated as first-class objects.
 
-The interaction structure is grounded in `web/src/app.css`: spacious cockpit panels, compact status pills, lane cards, command consoles, drawers, and responsive navigation behavior. The reusable UI kit uses a top navbar for review clarity. The color system now intentionally uses the Starbucks palette requested in review: historic green, luminous CTA green, House Green, cream/ceramic surfaces, reserved gold ceremony accents, and black/white text ladders. Daylight is the default presentation mode for previews and UI kits; Night uses House Green as the production-like cockpit foundation.
+The interaction structure is grounded in `app/src/app.css`: spacious cockpit panels, compact status pills, lane cards, command consoles, drawers, and responsive navigation behavior. The reusable UI kit uses a top navbar for review clarity. The color system now intentionally uses the Starbucks palette requested in review: historic green, luminous CTA green, House Green, cream/ceramic surfaces, reserved gold ceremony accents, and black/white text ladders. Daylight is the default presentation mode for previews and UI kits; Night uses House Green as the production-like cockpit foundation.
 
 Personality:
 
@@ -294,7 +294,7 @@ Copy should always reveal the next safe action and the evidence behind it. Do no
 ## Source Anchors
 
 - Product README excerpt and source inventory: `context/local-code/shea-symphony.md`.
-- Live cockpit CSS tokens and components: `context/local-code/shea-symphony/files/web/src/app.css`.
+- Live cockpit CSS tokens and components: `app/src/app.css`.
 - LaneCard implementation: `source_examples/web/.svelte-kit/output/server/chunks/LaneCard.js`.
 - Runtime/workflow policy: `context/local-code/shea-symphony/files/docs/bootstrap/SHEA_WORKFLOW.md`.
 - Product specification: `context/local-code/shea-symphony/files/docs/bootstrap/SHEA_SYMPHONY_SPEC.md`.

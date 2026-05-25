@@ -190,6 +190,11 @@ fn autopilot_parked_queues(
 ) -> Vec<AutopilotParkedQueue> {
     vec![
         parked_queue_for_state(
+            "Need to Clarify",
+            &config.tracker.state_map.need_to_clarify,
+            issues,
+        ),
+        parked_queue_for_state(
             "Human Review",
             &config.tracker.state_map.human_review,
             issues,

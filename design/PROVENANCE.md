@@ -32,4 +32,4 @@ Result: `Read method: local-folder`, with snapshots under `context/local-code/sh
 
 ## Design Decisions
 
-The generated system prefers the live cockpit CSS in `web/src/app.css` over the earlier setup note's green/cream starting language because it is concrete implementation evidence. The preserved favicon still carries the green/cream runtime asset lineage, and the token file exposes those tones as supporting asset colors rather than primary app chrome.
+The generated system prefers the live cockpit CSS in `app/src/app.css` over the earlier setup note's green/cream starting language because it is concrete implementation evidence. The preserved favicon still carries the green/cream runtime asset lineage, and the token file exposes those tones as supporting asset colors rather than primary app chrome.

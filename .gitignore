@@ -9,4 +9,11 @@ web/node_modules/
 web/build/
 web/.svelte-kit/
 web/.npm-cache/
+app/node_modules/
+app/build/
+app/.svelte-kit/
+app/dist/
+app/.npm-cache/
+app/src-tauri/target/
+app/src-tauri/gen/
 .playwright-mcp

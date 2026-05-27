@@ -1349,6 +1349,9 @@ fn print_autopilot_loop_status(
         "autopilot_loop_status",
         serde_json::to_value(status)?,
     )?;
+    if event_json {
+        return Ok(());
+    }
     if json {
         println!("{}", serde_json::to_string_pretty(status)?);
     } else if display == DisplayMode::Tui {

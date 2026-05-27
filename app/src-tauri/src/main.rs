@@ -721,7 +721,8 @@ fn spawn_line_reader<R: std::io::Read + Send + 'static>(
     thread::spawn(move || {
         let reader = BufReader::new(reader);
         for line in reader.lines().map_while(Result::ok) {
-            let event = parse_autoloop_event(&line);
+            let event =
+                parse_autoloop_event(&line).or_else(|| parse_autoloop_text_event(stream, &line));
             let payload = AutoloopLine {
                 stream: stream.into(),
                 line: line.clone(),
@@ -769,6 +770,23 @@ fn parse_autoloop_event(line: &str) -> Option<Value> {
     Some(value)
 }
 
+fn parse_autoloop_text_event(stream: &str, line: &str) -> Option<Value> {
+    if line.trim().is_empty() {
+        return None;
+    }
+    Some(json!({
+        "schema_version": 1,
+        "source": "shea-symphony",
+        "event": "autopilot_cli_line",
+        "payload": {
+            "stream": stream,
+            "kind": cli_line_kind(line),
+            "raw": line,
+            "fields": parse_cli_line_fields(line),
+        }
+    }))
+}
+
 fn parse_autoloop_lane_event(event: Option<&Value>, at_ms: u128) -> Option<LaneSnapshot> {
     let event = event?;
     if event.get("event").and_then(Value::as_str)? != "autopilot_loop_lane" {
@@ -792,6 +810,92 @@ fn parse_autoloop_lane_event(event: Option<&Value>, at_ms: u128) -> Option<LaneS
         updated_at_ms: Some(at_ms),
         latest_line: Some(event.to_string()),
     })
+}
+
+fn cli_line_kind(line: &str) -> String {
+    let trimmed = line.trim();
+    if trimmed.starts_with("Latest:") {
+        return "latest".into();
+    }
+    trimmed
+        .split_once(['=', ' '])
+        .map(|(kind, _)| kind.trim_end_matches(':').to_string())
+        .filter(|kind| !kind.is_empty())
+        .unwrap_or_else(|| "line".into())
+}
+
+fn parse_cli_line_fields(line: &str) -> Value {
+    let trimmed = line.trim();
+    if trimmed.starts_with("Latest:") {
+        return parse_latest_line(trimmed);
+    }
+    let mut fields = serde_json::Map::new();
+    for (key, value) in parse_shell_like_key_values(trimmed) {
+        fields.insert(key, Value::String(value));
+    }
+    Value::Object(fields)
+}
+
+fn parse_latest_line(line: &str) -> Value {
+    let parts = line
+        .strip_prefix("Latest:")
+        .unwrap_or(line)
+        .split('|')
+        .map(str::trim)
+        .collect::<Vec<_>>();
+    let mut fields = serde_json::Map::new();
+    for (key, value) in ["lane", "issue", "status", "action", "title"]
+        .into_iter()
+        .zip(parts.iter().copied())
+    {
+        if !value.is_empty() {
+            fields.insert(key.into(), Value::String(value.into()));
+        }
+    }
+    for part in parts.into_iter().skip(5) {
+        if let Some((key, value)) = part.split_once('=') {
+            fields.insert(key.into(), Value::String(value.into()));
+        }
+    }
+    Value::Object(fields)
+}
+
+fn parse_shell_like_key_values(line: &str) -> BTreeMap<String, String> {
+    let mut fields = BTreeMap::new();
+    for token in shell_like_tokens(line) {
+        if let Some((key, value)) = token.split_once('=') {
+            fields.insert(key.to_string(), value.to_string());
+        }
+    }
+    fields
+}
+
+fn shell_like_tokens(line: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut chars = line.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match (quote, ch) {
+            (Some(active), current_ch) if current_ch == active => quote = None,
+            (None, '\'' | '"') => quote = Some(ch),
+            (None, ch) if ch.is_whitespace() => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            (_, '\\') => {
+                if let Some(next) = chars.next() {
+                    current.push(next);
+                }
+            }
+            (_, ch) => current.push(ch),
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
 }
 
 fn parse_autoloop_lane(line: &str, at_ms: u128) -> Option<LaneSnapshot> {
@@ -1138,6 +1242,35 @@ mod tests {
         assert_eq!(lane.selected.as_deref(), Some("#364"));
         assert_eq!(lane.target.as_deref(), Some("Human Review | Rework"));
         assert_eq!(lane.max_concurrent, Some(2));
+    }
+
+    #[test]
+    fn wraps_plain_autopilot_stdout_as_json_event() {
+        let event = parse_autoloop_text_event(
+            "stdout",
+            "run_loop_action=backend issue=#364 backend=codex command='codex app-server'",
+        )
+        .unwrap();
+
+        assert_eq!(event["event"], "autopilot_cli_line");
+        assert_eq!(event["payload"]["kind"], "run_loop_action");
+        assert_eq!(event["payload"]["fields"]["issue"], "#364");
+        assert_eq!(event["payload"]["fields"]["command"], "codex app-server");
+    }
+
+    #[test]
+    fn wraps_latest_status_line_as_json_event() {
+        let event = parse_autoloop_text_event(
+            "stdout",
+            "Latest: main | #364 | running | backend | Issue title | actor=Shea Symphony Agent | next=save result",
+        )
+        .unwrap();
+
+        assert_eq!(event["event"], "autopilot_cli_line");
+        assert_eq!(event["payload"]["kind"], "latest");
+        assert_eq!(event["payload"]["fields"]["issue"], "#364");
+        assert_eq!(event["payload"]["fields"]["action"], "backend");
+        assert_eq!(event["payload"]["fields"]["next"], "save result");
     }
 
     #[test]

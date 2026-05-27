@@ -53,7 +53,7 @@ test('maps live autoloop lane snapshots into existing lane board worker rows', (
 
   assert.deepEqual(worker, {
     issue: '#421',
-    title: 'reviewing',
+    title: '#421',
     action: 'reviewing',
     backend: 'Tauri dry-run',
     session: 'pid 4242',
@@ -64,6 +64,7 @@ test('maps live autoloop lane snapshots into existing lane board worker rows', (
   });
   assert.equal(laneWorkerFromAutoloop({ lane: 'main', status: 'idle' }, 'main', state), null);
   assert.equal(laneWorkerFromAutoloop({ lane: 'main', status: 'completed' }, 'main', state), null);
+  assert.equal(laneWorkerFromAutoloop({ lane: 'main', status: 'running', selected: 'none', action: 'tick_started' }, 'main', state), null);
 });
 
 test('view model uses CLI autopilot parked queues for human todo issues', () => {

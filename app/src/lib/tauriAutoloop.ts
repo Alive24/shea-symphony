@@ -174,13 +174,14 @@ export function laneWorkerFromAutoloop(
   if (!state.running && !lane.updatedAtMs) return null;
 
   const selected = issueRefFromValue(lane.selected);
+  if (!selected) return null;
+
   const action = textFromValue(lane.action, lane.status);
   const target = textFromValue(lane.target, lane.status);
-  const label = titleCaseLane(laneKey);
   const waiting = lane.status === 'running' || action === 'tick_started' || action === 'backend';
   return {
-    issue: selected ?? `${label} loop`,
-    title: selected ? action : `${label} ${lane.status}`,
+    issue: selected,
+    title: selected,
     action,
     backend: `Tauri ${state.mode}`,
     session: state.pid ? `pid ${state.pid}` : 'autoloop',
@@ -234,10 +235,4 @@ function textFromValue(value: unknown, fallback = '') {
     );
   }
   return fallback;
-}
-
-function titleCaseLane(value: string) {
-  return String(value ?? '')
-    .replace(/[-_]/g, ' ')
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }

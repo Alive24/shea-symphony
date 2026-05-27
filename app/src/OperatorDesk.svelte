@@ -51,6 +51,7 @@
   $: autoloopLogLines = autoloopState?.recentLines ?? [];
   $: autoloopStdoutLines = latestAutoloopStdout(autoloopState, autoloopLogLines);
   $: latestAutoloopLine = autoloopStdoutLines.slice(-1)[0]?.line ?? (autoloopState.running ? 'Loop is running' : 'No recent autoloop result');
+  $: issueTitleById = buildIssueTitleMap(queueIssues);
   $: humanTodoIssues = queueIssues
     .filter((issue) => isHumanTodoState(issue.state))
     .map((issue) => ({
@@ -65,15 +66,18 @@
     const liveWorker = laneWorkerFromAutoloop(autoloopLanes[laneKey], laneKey, autoloopState);
     const visibleWorkers = uniqueWorkers(liveWorker ? [liveWorker, ...workers] : workers);
     const queued = queueIssues.filter((issue) => issue.lane === label);
-    const workerIssues = visibleWorkers.map((worker, index) => ({
-      kind: 'picked',
-      id: normalizeIssueRef(worker.issue) ?? worker.issue ?? `worker-${index + 1}`,
-      title: worker.title ?? worker.action ?? 'Worker active',
-      meta: `${worker.action ?? 'Active'} · ${worker.backend ?? 'worker'} · ${worker.session ?? worker.elapsed ?? 'session'}`,
-      tone: 'success',
-      workerNumber: index + 1,
-      waiting: worker.waiting === true || worker.status === 'running'
-    }));
+    const workerIssues = visibleWorkers.map((worker, index) => {
+      const normalizedWorkerIssue = normalizeIssueRef(worker.issue);
+      return {
+        kind: 'picked',
+        id: normalizedWorkerIssue ?? worker.issue ?? `worker-${index + 1}`,
+        title: workerDisplayTitle(worker, issueTitleById),
+        meta: `${worker.action ?? 'Active'} · ${worker.backend ?? 'worker'} · ${worker.session ?? worker.elapsed ?? 'session'}`,
+        tone: 'success',
+        workerNumber: index + 1,
+        waiting: worker.waiting === true || worker.status === 'running'
+      };
+    });
     const pickedIssueIds = new Set(workerIssues.map((issue) => normalizeIssueRef(issue.id)).filter(Boolean));
     const waitingIssues = queued
       .filter((issue) => !pickedIssueIds.has(normalizeIssueRef(issue.id)))
@@ -212,6 +216,24 @@
       seen.add(key);
       return true;
     });
+  }
+
+  function buildIssueTitleMap(issues) {
+    const titles = new Map();
+    for (const issue of issues ?? []) {
+      const key = normalizeIssueRef(issue.id);
+      if (key && issue.title) titles.set(key, issue.title);
+    }
+    return titles;
+  }
+
+  function workerDisplayTitle(worker, titles) {
+    const issueRef = normalizeIssueRef(worker.issue);
+    const projectTitle = issueRef ? titles.get(issueRef) : null;
+    if (projectTitle) return projectTitle;
+    if (worker.title && normalizeIssueRef(worker.title) !== issueRef) return worker.title;
+    if (worker.action && worker.action !== 'tick_started') return worker.action;
+    return 'Waiting for agent response';
   }
 
   function isHumanTodoState(state) {

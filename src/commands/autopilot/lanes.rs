@@ -25,13 +25,17 @@ pub(super) fn autopilot_lane_plans(
     issues: &[TrackerIssue],
 ) -> Result<Vec<AutopilotLanePlan>, Box<dyn std::error::Error>> {
     Ok(vec![
-        autopilot_main_lane_plan(config, issues),
+        autopilot_main_lane_plan(config, adapter, issues),
         autopilot_review_lane_plan(config, issues),
         autopilot_merge_lane_plan(config, adapter, issues)?,
     ])
 }
 
-fn autopilot_main_lane_plan(config: &RuntimeConfig, issues: &[TrackerIssue]) -> AutopilotLanePlan {
+fn autopilot_main_lane_plan(
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    issues: &[TrackerIssue],
+) -> AutopilotLanePlan {
     let orchestrator = Orchestrator::new(config.clone());
     let lane_issues = autopilot_lane_candidate_issues(issues);
     let plan = orchestrator.plan_dispatch(lane_issues);
@@ -57,12 +61,26 @@ fn autopilot_main_lane_plan(config: &RuntimeConfig, issues: &[TrackerIssue]) -> 
             evidence: vec!["source=main loop dry-run selection".into()],
         };
     };
+    let issue = match adapter.hydrate_issue_evidence(issue.clone(), issues) {
+        Ok(issue) => issue,
+        Err(error) => {
+            return AutopilotLanePlan {
+                lane: "main".into(),
+                status: "blocked".into(),
+                selected_issue: Some(AutopilotIssueSummary::from_issue(issue)),
+                proposed_action: "quality_gate_error".into(),
+                target_state: Some(config.tracker.state_map.need_human_input.clone()),
+                reason: error.to_string(),
+                evidence: vec!["source=hydrate_issue_evidence".into()],
+            };
+        }
+    };
 
-    match evaluate_issue_for_current_source(config, issue) {
+    match evaluate_issue_for_current_source(config, &issue) {
         Ok(decision) if !decision.is_dispatchable() => AutopilotLanePlan {
             lane: "main".into(),
             status: "blocked".into(),
-            selected_issue: Some(AutopilotIssueSummary::from_issue(issue)),
+            selected_issue: Some(AutopilotIssueSummary::from_issue(&issue)),
             proposed_action: "quality_gate_route".into(),
             target_state: Some(gate_target_state(&decision).into()),
             reason: format!("quality_gate={:?}", decision.kind),
@@ -72,7 +90,7 @@ fn autopilot_main_lane_plan(config: &RuntimeConfig, issues: &[TrackerIssue]) -> 
                 .map(|missing| format!("missing={missing}"))
                 .collect(),
         },
-        Ok(_) => match run_loop_handoff_plan(config, issue) {
+        Ok(_) => match run_loop_handoff_plan(config, &issue) {
             Ok(handoff) => {
                 let action = if normalize_state(&issue.state) == "in progress" {
                     "resume_main_issue"
@@ -82,7 +100,7 @@ fn autopilot_main_lane_plan(config: &RuntimeConfig, issues: &[TrackerIssue]) -> 
                 AutopilotLanePlan {
                     lane: "main".into(),
                     status: "ready".into(),
-                    selected_issue: Some(AutopilotIssueSummary::from_issue(issue)),
+                    selected_issue: Some(AutopilotIssueSummary::from_issue(&issue)),
                     proposed_action: action.into(),
                     target_state: Some(config.tracker.state_map.agent_review.clone()),
                     reason: "dispatchable_issue".into(),
@@ -96,7 +114,7 @@ fn autopilot_main_lane_plan(config: &RuntimeConfig, issues: &[TrackerIssue]) -> 
             Err(error) => AutopilotLanePlan {
                 lane: "main".into(),
                 status: "blocked".into(),
-                selected_issue: Some(AutopilotIssueSummary::from_issue(issue)),
+                selected_issue: Some(AutopilotIssueSummary::from_issue(&issue)),
                 proposed_action: "handoff_plan_failed".into(),
                 target_state: Some(config.tracker.state_map.need_human_input.clone()),
                 reason: error.to_string(),
@@ -106,7 +124,7 @@ fn autopilot_main_lane_plan(config: &RuntimeConfig, issues: &[TrackerIssue]) -> 
         Err(error) => AutopilotLanePlan {
             lane: "main".into(),
             status: "blocked".into(),
-            selected_issue: Some(AutopilotIssueSummary::from_issue(issue)),
+            selected_issue: Some(AutopilotIssueSummary::from_issue(&issue)),
             proposed_action: "quality_gate_error".into(),
             target_state: Some(config.tracker.state_map.need_human_input.clone()),
             reason: error.to_string(),

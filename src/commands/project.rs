@@ -9,15 +9,18 @@ use shea_symphony::review_status::{
     load_review_status, render_project_inspect_review_summary, ReviewStatusOptions,
 };
 use shea_symphony::session_registry::unix_timestamp_ms;
-use shea_symphony::tracker::{adapter_from_config, classify_project_state_error};
+use shea_symphony::tracker::{
+    adapter_from_config, classify_project_state_error, IssueRelationshipReadback, TrackerAdapter,
+};
 use shea_symphony::workflow::WorkflowDefinition;
 
 use crate::cli::DisplayMode;
 use crate::commands::gate::evaluate_issue_for_current_source;
 use crate::commands::session::AgentSessionLaneArg;
 use crate::orchestration::{
-    append_canonical_checkout_gap, load_config, progress_spec_for_config,
-    report_canonical_checkout_readonly, tracker_backend_label, warn_if_temporary_workflow_path,
+    append_canonical_checkout_gap, append_tracker_mutation_audit, load_config,
+    progress_spec_for_config, report_canonical_checkout_readonly, require_write_intent,
+    tracker_backend_label, warn_if_temporary_workflow_path, TrackerMutationAudit,
 };
 
 mod write;
@@ -245,6 +248,218 @@ pub(crate) fn project_inspect(
     }
 
     Ok(())
+}
+
+pub(crate) fn project_relationship_list(
+    workflow_path: PathBuf,
+    issue_ref: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    let readback = adapter.relationship_readback(&issue_ref)?;
+    print_relationship_readback("relationship_list=ok", &readback);
+    Ok(())
+}
+
+pub(crate) fn project_relationship_verify(
+    workflow_path: PathBuf,
+    issue_ref: String,
+    blocked_by: Vec<String>,
+    subissue: Vec<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    let readback = adapter.relationship_readback(&issue_ref)?;
+    let missing_blocked_by = blocked_by
+        .iter()
+        .filter(|expected| !readback.has_blocker(expected))
+        .cloned()
+        .collect::<Vec<_>>();
+    let missing_subissues = subissue
+        .iter()
+        .filter(|expected| !readback.has_native_subissue(expected))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    print_relationship_readback("relationship_verify=ok", &readback);
+    if !missing_blocked_by.is_empty() || !missing_subissues.is_empty() {
+        return Err(format!(
+            "relationship verify failed: issue={} missing_blocked_by={} missing_subissues={}",
+            readback.issue_identifier,
+            missing_or_none(&missing_blocked_by),
+            missing_or_none(&missing_subissues)
+        )
+        .into());
+    }
+    Ok(())
+}
+
+pub(crate) fn project_relationship_add_blocked_by(
+    workflow_path: PathBuf,
+    issue_ref: String,
+    blocker_ref: String,
+    write: bool,
+    dry_run: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    project_relationship_add_blocked_by_with_adapter(
+        &config,
+        adapter.as_ref(),
+        &issue_ref,
+        &blocker_ref,
+        write,
+        dry_run,
+    )
+}
+
+fn project_relationship_add_blocked_by_with_adapter(
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    issue_ref: &str,
+    blocker_ref: &str,
+    write: bool,
+    dry_run: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if write && dry_run {
+        return Err(
+            "relationship add command accepts either --write or --dry-run, not both".into(),
+        );
+    }
+    if dry_run {
+        let readback = adapter.relationship_readback(issue_ref)?;
+        println!("relationship_add_blocked_by_dry_run=ok");
+        println!(
+            "action=add_blocked_by issue={} blocker={} already_present={} would_add={}",
+            issue_ref,
+            blocker_ref,
+            readback.has_blocker(blocker_ref),
+            !readback.has_blocker(blocker_ref)
+        );
+        print_relationship_readback("relationship_dry_run_readback=ok", &readback);
+        return Ok(());
+    }
+
+    require_write_intent(write)?;
+    let readback = adapter.add_blocked_by_relationship(issue_ref, blocker_ref)?;
+    append_tracker_mutation_audit(
+        config,
+        TrackerMutationAudit {
+            command: "project relationship add-blocked-by",
+            mutation_type: "relationship",
+            issue_ref: Some(issue_ref),
+            target: Some(blocker_ref.to_string()),
+            from_state: None,
+            to_state: None,
+            reason: "native blocked-by relationship add with readback verification",
+        },
+    );
+    print_relationship_readback("relationship_add_blocked_by=ok", &readback);
+    Ok(())
+}
+
+pub(crate) fn project_relationship_add_subissue(
+    workflow_path: PathBuf,
+    parent_ref: String,
+    subissue_ref: String,
+    write: bool,
+    dry_run: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_config(&workflow_path)?;
+    let adapter = adapter_from_config(&config);
+    project_relationship_add_subissue_with_adapter(
+        &config,
+        adapter.as_ref(),
+        &parent_ref,
+        &subissue_ref,
+        write,
+        dry_run,
+    )
+}
+
+fn project_relationship_add_subissue_with_adapter(
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    parent_ref: &str,
+    subissue_ref: &str,
+    write: bool,
+    dry_run: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if write && dry_run {
+        return Err(
+            "relationship add command accepts either --write or --dry-run, not both".into(),
+        );
+    }
+    if dry_run {
+        let readback = adapter.relationship_readback(parent_ref)?;
+        println!("relationship_add_subissue_dry_run=ok");
+        println!(
+            "action=add_subissue parent={} subissue={} already_present={} would_add={}",
+            parent_ref,
+            subissue_ref,
+            readback.has_native_subissue(subissue_ref),
+            !readback.has_native_subissue(subissue_ref)
+        );
+        print_relationship_readback("relationship_dry_run_readback=ok", &readback);
+        return Ok(());
+    }
+
+    require_write_intent(write)?;
+    let readback = adapter.add_subissue_relationship(parent_ref, subissue_ref)?;
+    append_tracker_mutation_audit(
+        config,
+        TrackerMutationAudit {
+            command: "project relationship add-subissue",
+            mutation_type: "relationship",
+            issue_ref: Some(parent_ref),
+            target: Some(subissue_ref.to_string()),
+            from_state: None,
+            to_state: None,
+            reason: "native parent/subissue relationship add with readback verification",
+        },
+    );
+    print_relationship_readback("relationship_add_subissue=ok", &readback);
+    Ok(())
+}
+
+fn print_relationship_readback(prefix: &str, readback: &IssueRelationshipReadback) {
+    println!("{prefix}");
+    println!("issue={}", readback.issue_identifier);
+    println!(
+        "native_parent={}",
+        readback.native_parent.as_deref().unwrap_or("")
+    );
+    println!("blocked_by_count={}", readback.blocked_by.len());
+    for blocker in &readback.blocked_by {
+        println!(
+            "blocked_by={} state={} id={}",
+            blocker
+                .identifier
+                .as_deref()
+                .or(blocker.id.as_deref())
+                .unwrap_or("unknown"),
+            blocker.state.as_deref().unwrap_or("unknown"),
+            blocker.id.as_deref().unwrap_or("")
+        );
+    }
+    println!("native_subissue_count={}", readback.native_subissues.len());
+    for subissue in &readback.native_subissues {
+        println!(
+            "native_subissue={} project_state={} github_state={} title={}",
+            subissue.identifier,
+            subissue.project_state.as_deref().unwrap_or("missing"),
+            subissue.github_state.as_deref().unwrap_or("unknown"),
+            subissue.title.as_deref().unwrap_or("")
+        );
+    }
+}
+
+fn missing_or_none(values: &[String]) -> String {
+    if values.is_empty() {
+        "none".into()
+    } else {
+        values.join(",")
+    }
 }
 
 fn compact_json_value(value: &serde_json::Value) -> String {

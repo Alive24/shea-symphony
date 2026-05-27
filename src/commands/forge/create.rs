@@ -13,7 +13,10 @@ use crate::cli::ForgeStatusArg;
 use crate::commands::gate::evaluate_issue_for_current_source;
 use crate::orchestration::{append_tracker_mutation_audit, load_config, TrackerMutationAudit};
 
-use super::{forge_validation_report, print_forge_validation};
+use super::{
+    apply_forge_relationship_plan, blocker_refs_from_relationship_plan,
+    forge_validation_report_with_relationships, print_forge_validation, ForgeRelationshipPlan,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ForgeCreateOptions {
@@ -24,6 +27,7 @@ pub(crate) struct ForgeCreateOptions {
     pub(crate) project: Option<String>,
     pub(crate) project_fields: Vec<ProjectFieldAssignment>,
     pub(crate) assignees: Vec<String>,
+    pub(crate) relationships: ForgeRelationshipPlan,
     pub(crate) write: bool,
     pub(crate) dry_run: bool,
 }
@@ -37,6 +41,7 @@ pub(crate) fn forge_create(options: ForgeCreateOptions) -> Result<(), Box<dyn st
         project,
         project_fields,
         assignees,
+        relationships,
         write,
         dry_run,
     } = options;
@@ -52,7 +57,14 @@ pub(crate) fn forge_create(options: ForgeCreateOptions) -> Result<(), Box<dyn st
             "forge create --status Todo requires --assignee for live GitHub issue creation".into(),
         );
     }
-    let report = forge_validation_report(status, &title, &markdown, &config, &assignees)?;
+    let report = forge_validation_report_with_relationships(
+        status,
+        &title,
+        &markdown,
+        &config,
+        &assignees,
+        &relationships,
+    )?;
     print_forge_validation(&report);
     if !report.decision.is_dispatchable() {
         return Err(format!(
@@ -70,6 +82,13 @@ pub(crate) fn forge_create(options: ForgeCreateOptions) -> Result<(), Box<dyn st
             report.title,
             project_fields.len()
         );
+        if !relationships.is_empty() {
+            println!(
+                "relationship_plan=planned blocked_by={} parent={}",
+                relationships.blocked_by.join(","),
+                relationships.parent.as_deref().unwrap_or("")
+            );
+        }
         return Ok(());
     }
 
@@ -84,6 +103,7 @@ pub(crate) fn forge_create(options: ForgeCreateOptions) -> Result<(), Box<dyn st
             status,
             project_label: &project_label,
             project_fields: &project_fields,
+            relationships: &relationships,
         },
     )?;
 
@@ -101,6 +121,7 @@ pub(crate) struct ForgeCreateWriteInput<'a> {
     pub(crate) status: ForgeStatusArg,
     pub(crate) project_label: &'a str,
     pub(crate) project_fields: &'a [ProjectFieldAssignment],
+    pub(crate) relationships: &'a ForgeRelationshipPlan,
 }
 
 #[derive(Debug, Clone)]
@@ -145,7 +166,12 @@ pub(crate) fn write_forge_created_issue(
         },
     );
 
-    adapter.add_issue_to_project_with_state(&issue_id, input.status.normalized_state())?;
+    let stage_state = if input.status == ForgeStatusArg::Todo && !input.relationships.is_empty() {
+        "backlog"
+    } else {
+        input.status.normalized_state()
+    };
+    adapter.add_issue_to_project_with_state(&issue_id, stage_state)?;
     append_tracker_mutation_audit(
         config,
         TrackerMutationAudit {
@@ -154,7 +180,7 @@ pub(crate) fn write_forge_created_issue(
             issue_ref: Some(&issue_id),
             target: Some(input.project_label.into()),
             from_state: None,
-            to_state: Some(input.status.normalized_state().into()),
+            to_state: Some(stage_state.into()),
             reason: "forge issue added to project with requested initial status",
         },
     );
@@ -170,6 +196,24 @@ pub(crate) fn write_forge_created_issue(
                 from_state: None,
                 to_state: None,
                 reason: "forge project field assignment",
+            },
+        );
+    }
+    if !input.relationships.is_empty() {
+        apply_forge_relationship_plan(adapter, &issue_id, input.relationships)?;
+    }
+    if input.status == ForgeStatusArg::Todo && stage_state != "todo" {
+        adapter.set_state(&issue_id, "todo")?;
+        append_tracker_mutation_audit(
+            config,
+            TrackerMutationAudit {
+                command: "forge create",
+                mutation_type: "status",
+                issue_ref: Some(&issue_id),
+                target: Some("Todo".into()),
+                from_state: Some("backlog".into()),
+                to_state: Some("todo".into()),
+                reason: "forge relationship-verified Todo creation final status update",
             },
         );
     }
@@ -356,11 +400,28 @@ pub(crate) fn validate_forge_create_contract(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn validate_forge_create_report_with_assignees(
     title: &str,
     markdown: &str,
     config: &RuntimeConfig,
     intended_assignees: &[String],
+) -> Result<shea_symphony::issue_forge::ForgeValidationReport, Box<dyn std::error::Error>> {
+    validate_forge_create_report_with_relationships(
+        title,
+        markdown,
+        config,
+        intended_assignees,
+        &ForgeRelationshipPlan::default(),
+    )
+}
+
+pub(crate) fn validate_forge_create_report_with_relationships(
+    title: &str,
+    markdown: &str,
+    config: &RuntimeConfig,
+    intended_assignees: &[String],
+    relationships: &ForgeRelationshipPlan,
 ) -> Result<shea_symphony::issue_forge::ForgeValidationReport, Box<dyn std::error::Error>> {
     let issue = TrackerIssue {
         tracker_kind: config.tracker.kind.clone(),
@@ -376,7 +437,7 @@ pub(crate) fn validate_forge_create_report_with_assignees(
         priority: None,
         branch_name: None,
         linked_pull_requests: Vec::new(),
-        blocked_by: Vec::new(),
+        blocked_by: blocker_refs_from_relationship_plan(relationships, config),
         project_fields: Default::default(),
         created_at: None,
         updated_at: None,

@@ -307,7 +307,7 @@ pub fn render_agent_review_handoff_workpad(
     ];
 
     if let Some(blocker) = &evidence.no_pr_blocker {
-        lines.push(format!("- No-PR blocker: {}", blocker));
+        lines.push(format!("- No-PR blocker: {blocker}"));
     }
     if let Some(parent_issue) = &evidence.branch_target.parent_issue {
         lines.push(format!("- Native parent issue: `{parent_issue}`"));

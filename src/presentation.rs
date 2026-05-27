@@ -104,7 +104,7 @@ pub fn render_project_state_panel(issues: &[TrackerIssue], integration_gaps: &[S
             title: "States".into(),
             rows: state_counts
                 .into_iter()
-                .map(|(state, count)| row(state, format!("{}", count)))
+                .map(|(state, count)| row(state, format!("{count}")))
                 .collect(),
         },
     ];

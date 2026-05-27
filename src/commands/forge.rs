@@ -1,7 +1,9 @@
 use shea_symphony::config::RuntimeConfig;
 use shea_symphony::issue_forge::{next_clarification_question, ForgeValidationReport};
-use shea_symphony::model::{normalize_state, GateDecision, GateDecisionKind, TrackerIssue};
-use shea_symphony::tracker::adapter_from_config;
+use shea_symphony::model::{
+    normalize_state, BlockerRef, GateDecision, GateDecisionKind, TrackerIssue,
+};
+use shea_symphony::tracker::{adapter_from_config, TrackerAdapter};
 use std::path::PathBuf;
 
 use crate::cli::ForgeStatusArg;
@@ -11,12 +13,11 @@ mod rework;
 #[cfg(test)]
 pub(crate) use create::{
     find_duplicate_issue_title, forge_create_requires_assignee, render_forge_create_success,
-    validate_forge_create_contract, verify_forge_created_issue_status, write_forge_created_issue,
-    ForgeCreateResult, ForgeCreateWriteInput,
+    validate_forge_create_contract, validate_forge_create_report_with_assignees,
+    verify_forge_created_issue_status, write_forge_created_issue, ForgeCreateResult,
+    ForgeCreateWriteInput,
 };
-pub(crate) use create::{
-    forge_create, validate_forge_create_report_with_assignees, ForgeCreateOptions,
-};
+pub(crate) use create::{forge_create, ForgeCreateOptions};
 
 pub(crate) use rework::{forge_rework, ForgeReworkOptions};
 #[cfg(test)]
@@ -24,15 +25,29 @@ pub(crate) use rework::{forge_rework_with_adapter, ForgeReworkInput};
 
 use crate::orchestration::{append_tracker_mutation_audit, load_config, TrackerMutationAudit};
 
-pub(crate) fn forge_promote(
-    workflow_path: PathBuf,
-    issue_ref: String,
-    title: String,
-    markdown: String,
-    promotion_note: PromotionNoteInput,
-    write: bool,
-    dry_run: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) struct ForgePromoteInput {
+    pub(crate) workflow_path: PathBuf,
+    pub(crate) issue_ref: String,
+    pub(crate) title: String,
+    pub(crate) markdown: String,
+    pub(crate) promotion_note: PromotionNoteInput,
+    pub(crate) relationships: ForgeRelationshipPlan,
+    pub(crate) write: bool,
+    pub(crate) dry_run: bool,
+}
+
+pub(crate) fn forge_promote(input: ForgePromoteInput) -> Result<(), Box<dyn std::error::Error>> {
+    let ForgePromoteInput {
+        workflow_path,
+        issue_ref,
+        title,
+        markdown,
+        promotion_note,
+        relationships,
+        write,
+        dry_run,
+    } = input;
+
     if write && dry_run {
         return Err("forge promote cannot use --write and --dry-run together".into());
     }
@@ -53,12 +68,13 @@ pub(crate) fn forge_promote(
         .into());
     }
 
-    let report = forge_validation_report(
+    let report = forge_validation_report_with_relationships(
         ForgeStatusArg::Todo,
         &title,
         &markdown,
         &config,
         &source.assignees,
+        &relationships,
     )
     .map_err(|error| format!("forge promote stopped at validate: {error}"))?;
     print_forge_validation(&report);
@@ -81,6 +97,13 @@ pub(crate) fn forge_promote(
             "forge_promote_dry_run=ok issue={} from=Backlog to=Todo title={:?}",
             source.identifier, report.title
         );
+        if !relationships.is_empty() {
+            println!(
+                "relationship_plan=planned blocked_by={} parent={}",
+                relationships.blocked_by.join(","),
+                relationships.parent.as_deref().unwrap_or("")
+            );
+        }
         println!("promotion_note_preview=\n{note}");
         return Ok(());
     }
@@ -118,10 +141,18 @@ pub(crate) fn forge_promote(
         .into());
     }
 
-    let write_readbacks = vec![format!(
+    let relationship_readbacks = apply_forge_relationship_plan(
+        adapter.as_ref(),
+        &content_verified.identifier,
+        &relationships,
+    )
+    .map_err(|error| format!("forge promote stopped at relationships: {error}"))?;
+
+    let mut write_readbacks = vec![format!(
         "`forge promote --write` updated the existing issue content; pre-status readback confirmed issue `{}` title `{}` before the final Project status mutation.",
         content_verified.identifier, content_verified.title
     )];
+    write_readbacks.extend(relationship_readbacks);
     let note = render_promotion_note(
         &source.identifier,
         &content_verified.title,
@@ -194,6 +225,45 @@ pub(crate) struct PromotionNoteInput {
     pub(crate) scope_changes: Vec<String>,
     pub(crate) dependencies_context: Vec<String>,
     pub(crate) readback_summaries: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ForgeRelationshipPlan {
+    pub(crate) blocked_by: Vec<String>,
+    pub(crate) parent: Option<String>,
+}
+
+impl ForgeRelationshipPlan {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.blocked_by.is_empty() && self.parent.is_none()
+    }
+}
+
+pub(crate) fn apply_forge_relationship_plan(
+    adapter: &dyn TrackerAdapter,
+    issue_ref: &str,
+    relationships: &ForgeRelationshipPlan,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let mut readbacks = Vec::new();
+    for blocker_ref in &relationships.blocked_by {
+        let readback = adapter.add_blocked_by_relationship(issue_ref, blocker_ref)?;
+        readbacks.push(format!(
+            "`{}` blocked-by `{}` readback verified (blocked_by_count={}).",
+            readback.issue_identifier,
+            blocker_ref,
+            readback.blocked_by.len()
+        ));
+    }
+    if let Some(parent_ref) = &relationships.parent {
+        let readback = adapter.add_subissue_relationship(parent_ref, issue_ref)?;
+        readbacks.push(format!(
+            "`{}` native subissue `{}` readback verified (native_subissue_count={}).",
+            parent_ref,
+            issue_ref,
+            readback.native_subissues.len()
+        ));
+    }
+    Ok(readbacks)
 }
 
 pub(crate) fn render_promotion_note(
@@ -306,12 +376,49 @@ pub(crate) fn forge_validation_report(
     config: &RuntimeConfig,
     intended_assignees: &[String],
 ) -> Result<ForgeValidationReport, Box<dyn std::error::Error>> {
+    forge_validation_report_with_relationships(
+        status,
+        title,
+        markdown,
+        config,
+        intended_assignees,
+        &ForgeRelationshipPlan::default(),
+    )
+}
+
+pub(crate) fn forge_validation_report_with_relationships(
+    status: ForgeStatusArg,
+    title: &str,
+    markdown: &str,
+    config: &RuntimeConfig,
+    intended_assignees: &[String],
+    relationships: &ForgeRelationshipPlan,
+) -> Result<ForgeValidationReport, Box<dyn std::error::Error>> {
     match status {
         ForgeStatusArg::Backlog => Ok(validate_backlog_seed(title, markdown)),
-        ForgeStatusArg::Todo => {
-            validate_forge_create_report_with_assignees(title, markdown, config, intended_assignees)
-        }
+        ForgeStatusArg::Todo => create::validate_forge_create_report_with_relationships(
+            title,
+            markdown,
+            config,
+            intended_assignees,
+            relationships,
+        ),
     }
+}
+
+pub(crate) fn blocker_refs_from_relationship_plan(
+    relationships: &ForgeRelationshipPlan,
+    config: &RuntimeConfig,
+) -> Vec<BlockerRef> {
+    relationships
+        .blocked_by
+        .iter()
+        .map(|blocker_ref| BlockerRef {
+            id: None,
+            identifier: Some(blocker_ref.clone()),
+            state: Some(config.tracker.state_map.done.clone()),
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

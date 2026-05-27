@@ -98,8 +98,7 @@ pub(crate) fn live_github_config(allow_unassigned: bool) -> RuntimeConfig {
     let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
             &format!(
-                "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_number: 9\n  assignee_filter:\n    allow_unassigned: {}\n---\nPrompt",
-                allow_unassigned
+                "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_number: 9\n  assignee_filter:\n    allow_unassigned: {allow_unassigned}\n---\nPrompt"
             ),
         )
         .unwrap();
@@ -448,6 +447,92 @@ impl TrackerAdapter for RecordingAdapter {
     ) -> Result<Vec<shea_symphony::model::LinkedPullRequest>, shea_symphony::tracker::TrackerError>
     {
         Ok(self.linked_pull_requests.borrow().clone())
+    }
+
+    fn relationship_readback(
+        &self,
+        issue_ref: &str,
+    ) -> Result<
+        shea_symphony::tracker::IssueRelationshipReadback,
+        shea_symphony::tracker::TrackerError,
+    > {
+        let issue = self
+            .issues
+            .borrow()
+            .get(issue_ref)
+            .cloned()
+            .ok_or_else(|| {
+                shea_symphony::tracker::TrackerError::Payload(format!(
+                    "issue not found: {issue_ref}"
+                ))
+            })?;
+        Ok(shea_symphony::tracker::relationship_readback_from_issue(
+            &issue,
+        ))
+    }
+
+    fn add_blocked_by_relationship(
+        &self,
+        issue_ref: &str,
+        blocker_ref: &str,
+    ) -> Result<
+        shea_symphony::tracker::IssueRelationshipReadback,
+        shea_symphony::tracker::TrackerError,
+    > {
+        if let Some(issue) = self.issues.borrow_mut().get_mut(issue_ref) {
+            if !issue
+                .blocked_by
+                .iter()
+                .any(|blocker| blocker.identifier.as_deref() == Some(blocker_ref))
+            {
+                issue.blocked_by.push(shea_symphony::model::BlockerRef {
+                    id: None,
+                    identifier: Some(blocker_ref.to_string()),
+                    state: Some("closed".into()),
+                });
+            }
+        }
+        self.operations
+            .borrow_mut()
+            .push(format!("add_blocked_by:{issue_ref}:{blocker_ref}"));
+        self.relationship_readback(issue_ref)
+    }
+
+    fn add_subissue_relationship(
+        &self,
+        parent_ref: &str,
+        subissue_ref: &str,
+    ) -> Result<
+        shea_symphony::tracker::IssueRelationshipReadback,
+        shea_symphony::tracker::TrackerError,
+    > {
+        if let Some(parent) = self.issues.borrow_mut().get_mut(parent_ref) {
+            let mut subissues = parent
+                .project_fields
+                .get("GitHub Native Subissues")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if !subissues.iter().any(|subissue| {
+                subissue
+                    .get("identifier")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(subissue_ref)
+            }) {
+                subissues.push(serde_json::json!({
+                    "identifier": subissue_ref,
+                    "project_state": "Backlog"
+                }));
+            }
+            parent.project_fields.insert(
+                "GitHub Native Subissues".into(),
+                serde_json::Value::Array(subissues),
+            );
+        }
+        self.operations
+            .borrow_mut()
+            .push(format!("add_subissue:{parent_ref}:{subissue_ref}"));
+        self.relationship_readback(parent_ref)
     }
 
     fn close_issue(&self, issue_ref: &str) -> Result<(), shea_symphony::tracker::TrackerError> {

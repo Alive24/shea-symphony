@@ -394,11 +394,44 @@ fn validate_dependency_semantics(issue: &TrackerIssue, markdown: &str) -> Result
         return Ok(());
     }
 
-    let lines = section_lines(markdown, "Dependencies");
-    let dependencies = lines
+    let mut dependencies = setup_dependency_values(markdown);
+    dependencies.extend(
+        section_lines(markdown, "Dependencies")
+            .iter()
+            .filter_map(|line| line.trim().strip_prefix('-'))
+            .map(clean_markdown_value)
+            .filter(|value| !value.trim().is_empty()),
+    );
+
+    if dependencies.is_empty() {
+        return Ok(());
+    }
+
+    validate_dependency_values(&dependencies)
+}
+
+fn setup_dependency_values(markdown: &str) -> Vec<String> {
+    section_lines(markdown, "Issue Setup")
         .iter()
-        .filter_map(|line| line.trim().strip_prefix('-'))
-        .map(clean_markdown_value)
+        .filter_map(|line| setup_dependency_value(line))
+        .filter(|value| !value.trim().is_empty())
+        .collect()
+}
+
+fn setup_dependency_value(line: &str) -> Option<String> {
+    let line = line.trim().trim_start_matches('-').trim();
+    let (label, value) = line.split_once(':')?;
+    if label.trim().eq_ignore_ascii_case("Dependencies") {
+        Some(clean_markdown_value(value))
+    } else {
+        None
+    }
+}
+
+fn validate_dependency_values(dependencies: &[String]) -> Result<(), String> {
+    let dependencies = dependencies
+        .iter()
+        .map(|value| clean_markdown_value(value))
         .filter(|value| !value.trim().is_empty())
         .collect::<Vec<_>>();
 
@@ -406,12 +439,21 @@ fn validate_dependency_semantics(issue: &TrackerIssue, markdown: &str) -> Result
         return Ok(());
     }
 
-    let joined = dependencies.join(" ").to_ascii_lowercase();
-    if contains_ambiguous_dependency_marker(&joined) {
+    let normalized = dependencies
+        .iter()
+        .map(|dependency| dependency.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    if normalized
+        .iter()
+        .any(|dependency| contains_ambiguous_dependency_marker(dependency))
+    {
         Err("resolved dependency semantics".into())
-    } else if claims_blocking_dependency_without_relationship(&joined) {
+    } else if normalized
+        .iter()
+        .any(|dependency| claims_blocking_dependency_without_relationship(dependency))
+    {
         Err("structured blocked-by relationship".into())
-    } else if contains_any_dependency_marker(&joined) {
+    } else if contains_any_dependency_marker(&normalized.join(" ")) {
         Ok(())
     } else {
         Err("resolved dependency semantics".into())
@@ -936,6 +978,33 @@ mod tests {
         assert!(decision
             .missing
             .contains(&"structured blocked-by relationship".to_string()));
+    }
+
+    #[test]
+    fn issue_setup_dependency_blocker_needs_structured_relationship() {
+        let body = aligned_body_with_uat("No").replace(
+            "- UAT Required: No",
+            "- UAT Required: No\n- Dependencies: Blocked By: #358 must finish before this issue dispatches.",
+        );
+
+        let decision = evaluate_issue(&issue(Some(body)));
+
+        assert_eq!(decision.kind, GateDecisionKind::NeedToClarify);
+        assert!(decision
+            .missing
+            .contains(&"structured blocked-by relationship".to_string()));
+    }
+
+    #[test]
+    fn issue_setup_dependency_none_is_dispatchable() {
+        let body = aligned_body_with_uat("No").replace(
+            "- UAT Required: No",
+            "- UAT Required: No\n- Dependencies: None",
+        );
+
+        let decision = evaluate_issue(&issue(Some(body)));
+
+        assert!(decision.is_dispatchable(), "{decision:?}");
     }
 
     #[test]

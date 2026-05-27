@@ -108,6 +108,18 @@ and rich linked-PR hydration. Use `project issue '#<issue>' --json` or
 workpad/timeline comments, linked PR readback, or detailed native topology
 evidence for one issue.
 
+Structured GitHub issue relationships have a small read/write surface under
+`project relationship`. `list` and `verify` are read-only and accept `--dry-run`
+for operator habit without requiring `--write`. Mutating commands require
+`--write` and verify readback after adding the native relationship:
+
+```bash
+cargo run -- project relationship list workflows/shea-symphony.md '#123' --dry-run
+cargo run -- project relationship verify workflows/shea-symphony.md '#123' --blocked-by '#122' --subissue '#124'
+cargo run -- project relationship add-blocked-by workflows/shea-symphony.md '#123' '#122' --write
+cargo run -- project relationship add-subissue workflows/shea-symphony.md '#120' '#123' --write
+```
+
 ## Long-Running Command Progress
 
 Live commands that wait longer than the centralized heartbeat threshold emit
@@ -463,8 +475,8 @@ cargo run -- project inspect workflows/shea-symphony.md '#123'
 | Command | Purpose | Boundary |
 | --- | --- | --- |
 | `forge validate` | Validate a body file, an existing issue, or candidate title/body content against live issue context for `Backlog` or `Todo`. | Read-only; `Todo` uses the full Issue Quality Gate, `Backlog` uses the lighter seed gate; output separates candidate contract gaps from live context gaps. |
-| `forge create` | Create a Project-backed issue in `Backlog` or `Todo`. | Dry-run by default unless `--write` is supplied; initializes the Project item to the requested status and verifies readback; write success keeps `issue_id` and adds readback issue number, URL, and `project_status` when the tracker provides them; live `Todo` creation requires `--assignee`. |
-| `forge promote` | Promote one existing Backlog issue in place by editing title/body, writing a structured Promotion Note comment, then moving it to `Todo`. | Dry-run by default unless `--write` is supplied; requires structured note inputs, keeps the `Todo` status mutation last, and reports the checkpoint where any failure stopped. |
+| `forge create` | Create a Project-backed issue in `Backlog` or `Todo`. | Dry-run by default unless `--write` is supplied; initializes the Project item to the requested status and verifies readback; write success keeps `issue_id` and adds readback issue number, URL, and `project_status` when the tracker provides them; live `Todo` creation requires `--assignee`; `--blocked-by` and `--parent` declare native relationship writes that must be read back before final `Todo` status. |
+| `forge promote` | Promote one existing Backlog issue in place by editing title/body, writing a structured Promotion Note comment, then moving it to `Todo`. | Dry-run by default unless `--write` is supplied; requires structured note inputs, keeps the `Todo` status mutation last, reports the checkpoint where any failure stopped, and can satisfy blocker/parent gates through `--blocked-by` / `--parent` relationship plans. |
 | `forge rework` | Revise one live `Human Review` issue into an explicit `Rework` contract. | Dry-run by default unless `--write` is supplied; requires a replacement title/body, evidence file, and operator confirmation; rejects active lane claims and keeps the `Rework` status mutation last. |
 
 Examples:
@@ -475,7 +487,9 @@ cargo run -- forge validate --workflow workflows/shea-symphony.md --status Todo 
 cargo run -- forge validate --workflow workflows/shea-symphony.md --issue '#293' --status Todo --title "Candidate promoted title" --body-file /tmp/candidate.md
 cargo run -- forge create --workflow workflows/shea-symphony.md --status Backlog --title "Backlog: follow-up title" --body-file /tmp/issue.md --dry-run
 cargo run -- forge create --workflow workflows/shea-symphony.md --status Todo --title "Follow-up title" --body-file /tmp/issue.md --assignee Alive24 --write
+cargo run -- forge create --workflow workflows/shea-symphony.md --status Todo --title "Blocked follow-up title" --body-file /tmp/issue.md --assignee Alive24 --blocked-by '#122' --dry-run
 cargo run -- forge promote '#241' --workflow workflows/shea-symphony.md --title "Executable title" --body-file /tmp/issue.md --operator-confirmation "promote it" --decision "Use the CLI-owned promotion note template." --scope-change "Backlog seed is now an executable Todo issue." --dependency-context "Dependencies: none; related context is non-blocking." --readback-summary "Operator confirmed the dry-run preview before write." --dry-run
+cargo run -- forge promote '#241' --workflow workflows/shea-symphony.md --title "Executable title" --body-file /tmp/issue.md --operator-confirmation "promote it" --decision "Use the CLI-owned promotion note template." --scope-change "Backlog seed is now an executable Todo issue." --dependency-context "Blocked by #122 until the prerequisite lands." --blocked-by '#122' --readback-summary "Operator confirmed the dry-run preview before write." --dry-run
 cargo run -- forge promote '#241' --workflow examples/promote-fixture-workflow.md --title "Harden Issue Forge Reflect promotion fixture" --body-file examples/fixtures/promoted-issue.md --operator-confirmation "promote it" --decision "Keep the promotion in place." --scope-change "Backlog seed becomes an executable Todo issue." --dependency-context "Dependencies: none." --readback-summary "Dry-run preview verified before write." --dry-run
 cargo run -- forge rework '#282' --workflow workflows/shea-symphony.md --title "Rework: revised execution contract" --body-file /tmp/rework-body.md --evidence-file /tmp/rework-evidence.md --operator-confirmation "route Human Review back to Rework" --dry-run
 ```
@@ -504,6 +518,14 @@ issue body/title, verifies that content readback, writes the Promotion Note, and
 only then moves the Project status from `Backlog` to `Todo`; after that final
 mutation it performs read-only status readback. On write success, the comment
 uses this short Markdown shape:
+
+When a Todo candidate names blocking dependencies in `## Issue Setup`
+`Dependencies:` or in a standalone `## Dependencies` section, the quality gate
+requires either `Dependencies: None` or a structured relationship plan. Use
+repeatable `--blocked-by '#<issue>'` for native GitHub blocked-by relationships
+and `--parent '#<issue>'` when the candidate should become a native subissue.
+`forge create --write` stages relationship-backed Todo candidates in `Backlog`,
+adds and verifies relationships, then performs the final Todo status mutation.
 
 ```md
 ## Promotion Note

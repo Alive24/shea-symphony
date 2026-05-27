@@ -346,13 +346,17 @@ Project v2 issues:
      assignee and Project context while checking replacement contract text.
      Validation output separates candidate-side gaps from live-context gaps.
    - `forge create` creates tracker issues, always inserts them into the
-     configured Project, supports `--status Backlog|Todo`, and accepts repeatable
-     `--project-field NAME=VALUE` assignments.
+     configured Project, supports `--status Backlog|Todo`, accepts repeatable
+     `--project-field NAME=VALUE` assignments, and can stage relationship-backed
+     Todo candidates in `Backlog` while native blocked-by or parent/subissue
+     relationships are written and read back.
    - `forge promote` reads a Backlog issue, validates an explicit replacement
-     title/body with the same Todo validation categories, requires structured
-     Promotion Note inputs, edits the same issue in place, writes the Promotion
-     Note comment, sets Project status to `Todo` as the final mutation, and then
-     performs read-only status readback verification.
+     title/body with the same Todo validation categories, can satisfy declared
+     blocker or parent gates through repeatable `--blocked-by` and optional
+     `--parent`, requires structured Promotion Note inputs, edits the same issue
+     in place, writes the Promotion Note comment, sets Project status to `Todo`
+     as the final mutation, and then performs read-only status readback
+     verification.
    - Reflection, discussion, and repair are skill-owned workflows, not
      Shea Symphony CLI subcommands.
    - Remaining work: text/number/date field writes and richer Project selection

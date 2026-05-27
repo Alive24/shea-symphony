@@ -205,15 +205,13 @@ pub(crate) fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error
         if options.write && available_slots == 0 {
             if let Some(delay_ms) = unbounded_loop_sleep_ms(limit, config.polling.interval_ms) {
                 println!(
-                    "run_loop_idle action=sleep reason=max_concurrent_reached active_workers={} max_concurrent={} delay_ms={delay_ms} iterations={iterations}",
-                    active_main_workers, max_concurrent
+                    "run_loop_idle action=sleep reason=max_concurrent_reached active_workers={active_main_workers} max_concurrent={max_concurrent} delay_ms={delay_ms} iterations={iterations}"
                 );
                 thread::sleep(Duration::from_millis(delay_ms));
                 continue;
             } else {
                 println!(
-                    "run_loop=stopped reason=max_concurrent_reached active_workers={} max_concurrent={}",
-                    active_main_workers, max_concurrent
+                    "run_loop=stopped reason=max_concurrent_reached active_workers={active_main_workers} max_concurrent={max_concurrent}"
                 );
                 break;
             }

@@ -144,8 +144,7 @@ pub(crate) fn run_loop_resume_preflight_many(
                         &format!("issue={issue_identifier} reason={reason}"),
                     )?;
                     println!(
-                        "run_loop_resume_preflight action=recover_read_skipped issue={} reason={}",
-                        issue_identifier, reason
+                        "run_loop_resume_preflight action=recover_read_skipped issue={issue_identifier} reason={reason}"
                     );
                     retained_states.push(state.clone());
                     continue;
@@ -235,8 +234,7 @@ pub(crate) fn run_loop_resume_preflight_many(
                         &format!("issue={issue_identifier} reason={reason}"),
                     )?;
                     println!(
-                        "run_loop_resume_preflight action=recoverable issue={} reason={}",
-                        issue_identifier, reason
+                        "run_loop_resume_preflight action=recoverable issue={issue_identifier} reason={reason}"
                     );
                     recoverable_states.push(RuntimeRecoveryCandidate {
                         state: state.clone(),

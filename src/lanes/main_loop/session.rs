@@ -310,13 +310,11 @@ pub(crate) fn reconcile_main_handoff_runtime_state(
             runtime_state.as_ref(),
             "MainHandoffRuntimeReconciled",
             &format!(
-                "issue={} target_state=agent_review sessions_completed={} runtime_cleared={}",
-                issue_ref, completed_sessions, runtime_matches_main_issue
+                "issue={issue_ref} target_state=agent_review sessions_completed={completed_sessions} runtime_cleared={runtime_matches_main_issue}"
             ),
         )?;
         println!(
-            "main_handoff_runtime_reconcile issue={} sessions_completed={} runtime_cleared={}",
-            issue_ref, completed_sessions, runtime_matches_main_issue
+            "main_handoff_runtime_reconcile issue={issue_ref} sessions_completed={completed_sessions} runtime_cleared={runtime_matches_main_issue}"
         );
     }
 

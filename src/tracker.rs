@@ -4,9 +4,9 @@ use std::fs;
 #[cfg(test)]
 use crate::config::AssigneeFilter;
 use crate::config::RuntimeConfig;
-#[cfg(test)]
-use crate::model::BlockerRef;
-use crate::model::{LinkedPullRequest, TrackerIssue};
+use crate::model::{
+    native_parent_identifier, native_subissue_statuses, BlockerRef, LinkedPullRequest, TrackerIssue,
+};
 
 mod error;
 mod follow_up;
@@ -27,6 +27,42 @@ pub use linear::LinearAdapter;
 pub use memory::MemoryTracker;
 pub use project_field::ProjectFieldAssignment;
 pub use state::{claim_decision, ClaimDecision};
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct IssueRelationshipRef {
+    pub id: Option<String>,
+    pub identifier: String,
+    pub title: Option<String>,
+    pub github_state: Option<String>,
+    pub url: Option<String>,
+    pub project_state: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct IssueRelationshipReadback {
+    pub issue_identifier: String,
+    pub native_parent: Option<String>,
+    pub blocked_by: Vec<BlockerRef>,
+    pub native_subissues: Vec<IssueRelationshipRef>,
+}
+
+impl IssueRelationshipReadback {
+    pub fn has_blocker(&self, blocker_ref: &str) -> bool {
+        self.blocked_by.iter().any(|blocker| {
+            blocker
+                .identifier
+                .as_deref()
+                .is_some_and(|identifier| issue_refs_match(identifier, blocker_ref))
+                || blocker.id.as_deref().is_some_and(|id| id == blocker_ref)
+        })
+    }
+
+    pub fn has_native_subissue(&self, subissue_ref: &str) -> bool {
+        self.native_subissues
+            .iter()
+            .any(|subissue| issue_refs_match(&subissue.identifier, subissue_ref))
+    }
+}
 
 #[cfg(test)]
 use follow_up::follow_up_issue_body;
@@ -126,6 +162,35 @@ pub trait TrackerAdapter {
         &self,
         issue_ref: &str,
     ) -> Result<Vec<LinkedPullRequest>, TrackerError>;
+    fn relationship_readback(
+        &self,
+        issue_ref: &str,
+    ) -> Result<IssueRelationshipReadback, TrackerError> {
+        Err(TrackerError::NotImplemented(format!(
+            "{} tracker does not support issue relationship readback for {issue_ref}",
+            self.kind()
+        )))
+    }
+    fn add_blocked_by_relationship(
+        &self,
+        issue_ref: &str,
+        blocker_ref: &str,
+    ) -> Result<IssueRelationshipReadback, TrackerError> {
+        Err(TrackerError::NotImplemented(format!(
+            "{} tracker does not support adding blocked-by relationship {issue_ref} <- {blocker_ref}",
+            self.kind()
+        )))
+    }
+    fn add_subissue_relationship(
+        &self,
+        parent_ref: &str,
+        subissue_ref: &str,
+    ) -> Result<IssueRelationshipReadback, TrackerError> {
+        Err(TrackerError::NotImplemented(format!(
+            "{} tracker does not support adding native subissue relationship {parent_ref} -> {subissue_ref}",
+            self.kind()
+        )))
+    }
     fn close_issue(&self, _issue_ref: &str) -> Result<(), TrackerError> {
         Err(TrackerError::NotImplemented(format!(
             "{} tracker does not support issue closure",
@@ -263,6 +328,35 @@ fn apply_github_read_filters(
         .into_iter()
         .filter(|issue| issue_matches_assignee_filter(issue, &config.tracker.assignee_filter))
         .collect()
+}
+
+pub fn relationship_readback_from_issue(issue: &TrackerIssue) -> IssueRelationshipReadback {
+    let native_subissues = native_subissue_statuses(issue)
+        .into_iter()
+        .map(|subissue| IssueRelationshipRef {
+            id: None,
+            identifier: subissue.identifier,
+            title: None,
+            github_state: subissue.github_state,
+            url: None,
+            project_state: subissue.project_state,
+        })
+        .collect();
+
+    IssueRelationshipReadback {
+        issue_identifier: issue.identifier.clone(),
+        native_parent: native_parent_identifier(issue),
+        blocked_by: issue.blocked_by.clone(),
+        native_subissues,
+    }
+}
+
+fn issue_refs_match(left: &str, right: &str) -> bool {
+    let left = left.trim();
+    let right = right.trim();
+    left.eq_ignore_ascii_case(right)
+        || (github_issue_number(left).is_some()
+            && github_issue_number(left) == github_issue_number(right))
 }
 
 fn github_issue_needs_native_blocker_prefetch(
@@ -503,6 +597,51 @@ impl TrackerAdapter for GithubProjectV2Adapter {
         }
 
         GithubProjectV2GhClient::new(&self.config).list_linked_pull_requests(issue_ref)
+    }
+
+    fn relationship_readback(
+        &self,
+        issue_ref: &str,
+    ) -> Result<IssueRelationshipReadback, TrackerError> {
+        if self.config.tracker.fixture_path.is_some() {
+            return MemoryTracker::new(self.fixture_issues.clone())
+                .relationship_readback(issue_ref);
+        }
+
+        let issue = self
+            .get_issue(issue_ref)?
+            .ok_or_else(|| TrackerError::Payload(format!("issue not found: {issue_ref}")))?;
+        Ok(relationship_readback_from_issue(&issue))
+    }
+
+    fn add_blocked_by_relationship(
+        &self,
+        issue_ref: &str,
+        blocker_ref: &str,
+    ) -> Result<IssueRelationshipReadback, TrackerError> {
+        if self.config.tracker.fixture_path.is_some() {
+            return Err(TrackerError::IntegrationUnavailable(
+                "GitHub Project v2 fixture mode cannot mutate live issue relationships".into(),
+            ));
+        }
+
+        GithubProjectV2GhClient::new(&self.config)
+            .add_blocked_by_relationship(issue_ref, blocker_ref)
+    }
+
+    fn add_subissue_relationship(
+        &self,
+        parent_ref: &str,
+        subissue_ref: &str,
+    ) -> Result<IssueRelationshipReadback, TrackerError> {
+        if self.config.tracker.fixture_path.is_some() {
+            return Err(TrackerError::IntegrationUnavailable(
+                "GitHub Project v2 fixture mode cannot mutate live issue relationships".into(),
+            ));
+        }
+
+        GithubProjectV2GhClient::new(&self.config)
+            .add_subissue_relationship(parent_ref, subissue_ref)
     }
 
     fn close_issue(&self, issue_ref: &str) -> Result<(), TrackerError> {

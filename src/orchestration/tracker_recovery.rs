@@ -279,8 +279,7 @@ pub(crate) fn set_state_with_recovery(
 ) -> Result<TrackerMutationOutcome, Box<dyn std::error::Error>> {
     if initial_issue.is_some_and(|issue| issue_state_matches(issue, normalized_state)) {
         println!(
-            "tracker_recovery action=already_applied mutation_type={} issue={} state={}",
-            mutation_type, issue_ref, normalized_state
+            "tracker_recovery action=already_applied mutation_type={mutation_type} issue={issue_ref} state={normalized_state}"
         );
         return Ok(TrackerMutationOutcome::AlreadyApplied);
     }

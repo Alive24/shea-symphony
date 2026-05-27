@@ -358,6 +358,7 @@ fn forge_create_entrypoint_rejects_live_github_without_assignee() {
         project: None,
         project_fields: Vec::new(),
         assignees: Vec::new(),
+        relationships: ForgeRelationshipPlan::default(),
         write: true,
         dry_run: false,
     })
@@ -417,6 +418,7 @@ fn forge_create_blocks_duplicate_tracker_title_before_mutation() {
         project: None,
         project_fields: Vec::new(),
         assignees: Vec::new(),
+        relationships: ForgeRelationshipPlan::default(),
         write: true,
         dry_run: false,
     })
@@ -446,6 +448,7 @@ fn forge_create_can_use_memory_tracker_adapter() {
         project: None,
         project_fields: Vec::new(),
         assignees: Vec::new(),
+        relationships: ForgeRelationshipPlan::default(),
         write: true,
         dry_run: false,
     })
@@ -469,6 +472,7 @@ fn forge_create_write_initializes_backlog_without_status_transition() {
             status: ForgeStatusArg::Backlog,
             project_label: "test project",
             project_fields: &[],
+            relationships: &ForgeRelationshipPlan::default(),
         },
     )
     .unwrap();
@@ -489,6 +493,80 @@ fn forge_create_write_initializes_backlog_without_status_transition() {
             .normalized_state(),
         "backlog"
     );
+}
+
+fn test_promotion_note() -> PromotionNoteInput {
+    PromotionNoteInput {
+        operator_confirmation: "promote it".into(),
+        decisions: vec!["Promote the Backlog seed through Forge.".into()],
+        scope_changes: vec!["Backlog seed becomes an executable Todo issue.".into()],
+        dependencies_context: vec!["Relationship requirements are explicit.".into()],
+        readback_summaries: vec!["Operator reviewed the dry-run preview.".into()],
+    }
+}
+
+fn memory_workflow_with_backlog_issue() -> (tempfile::TempDir, PathBuf) {
+    let temp = tempfile::tempdir().unwrap();
+    let fixture_path = temp.path().join("issues.json");
+    let workflow_path = temp.path().join("WORKFLOW.md");
+    let mut issue = tracker_issue_with_ref("#360", "Backlog child seed", "Backlog");
+    issue.assignees = vec!["Alive24".into()];
+    std::fs::write(&fixture_path, serde_json::to_string(&vec![issue]).unwrap()).unwrap();
+    std::fs::write(
+        &workflow_path,
+        format!(
+            "---\ntracker:\n  kind: memory\n  fixture_path: {}\nobservability:\n  logs_root: log\n---\nPrompt",
+            fixture_path.display()
+        ),
+    )
+    .unwrap();
+    (temp, workflow_path)
+}
+
+#[test]
+fn forge_todo_promotion_rejects_issue_setup_blocker_without_relationship_plan() {
+    let (_temp, workflow_path) = memory_workflow_with_backlog_issue();
+    let body = forge_contract().replace(
+        "- UAT Required: No",
+        "- UAT Required: No\n- Dependencies: Blocked By: #358 must finish before this issue dispatches.",
+    );
+
+    let error = forge_promote(ForgePromoteInput {
+        workflow_path,
+        issue_ref: "#360".into(),
+        title: "Promoted child".into(),
+        markdown: body,
+        promotion_note: test_promotion_note(),
+        relationships: ForgeRelationshipPlan::default(),
+        write: false,
+        dry_run: true,
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("forge promote stopped at validate"));
+    assert!(error.contains("promoted body failed Todo gate"));
+}
+
+#[test]
+fn forge_todo_promotion_accepts_issue_setup_dependencies_none() {
+    let (_temp, workflow_path) = memory_workflow_with_backlog_issue();
+    let body = forge_contract().replace(
+        "- UAT Required: No",
+        "- UAT Required: No\n- Dependencies: None",
+    );
+
+    forge_promote(ForgePromoteInput {
+        workflow_path,
+        issue_ref: "#360".into(),
+        title: "Promoted child".into(),
+        markdown: body,
+        promotion_note: test_promotion_note(),
+        relationships: ForgeRelationshipPlan::default(),
+        write: false,
+        dry_run: true,
+    })
+    .unwrap();
 }
 
 #[test]

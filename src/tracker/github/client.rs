@@ -8,7 +8,7 @@ use crate::model::{normalize_state, LinkedPullRequest, TrackerIssue};
 mod project;
 mod read;
 
-use super::cli::{gh_available, GithubCliAccess};
+use super::cli::{gh_available, run_gh_api_json, GithubCliAccess};
 use super::evidence::github_issue_number;
 use super::project_v2::{
     apply_rest_project_item_overlay_fallback, apply_rest_project_item_overlays,
@@ -24,7 +24,10 @@ use super::GithubProjectReadMode;
 use crate::tracker::follow_up::follow_up_issue_body;
 use crate::tracker::state::status_update_required;
 use crate::tracker::workpad::{duplicate_workpad_body, ensure_workpad_marker, merge_workpad_body};
-use crate::tracker::{FollowUpIssueInput, ProjectFieldAssignment, TrackerError};
+use crate::tracker::{
+    relationship_readback_from_issue, FollowUpIssueInput, IssueRelationshipReadback,
+    ProjectFieldAssignment, TrackerError,
+};
 
 #[derive(Debug, Clone)]
 pub(in crate::tracker) struct GithubProjectV2GhClient {
@@ -538,6 +541,129 @@ impl GithubProjectV2GhClient {
         Ok(issue.linked_pull_requests)
     }
 
+    pub(in crate::tracker) fn add_blocked_by_relationship(
+        &self,
+        issue_ref: &str,
+        blocker_ref: &str,
+    ) -> Result<IssueRelationshipReadback, TrackerError> {
+        let issue = self.resolve_github_rest_issue_identity(issue_ref)?;
+        let blocker = self.resolve_github_rest_issue_identity(blocker_ref)?;
+        let readback = relationship_readback_from_issue(&self.resolve_issue(&issue.identifier)?);
+        if readback.has_blocker(&blocker.identifier) {
+            return Ok(readback);
+        }
+
+        let owner = self
+            .config
+            .tracker
+            .owner
+            .as_deref()
+            .ok_or_else(|| TrackerError::Payload("tracker.owner is required".into()))?;
+        let repo = self
+            .config
+            .tracker
+            .repo
+            .as_deref()
+            .ok_or_else(|| TrackerError::Payload("tracker.repo is required".into()))?;
+        GithubCliAccess::run_status(
+            github_add_blocked_by_args(owner, repo, issue.number, blocker.rest_id),
+            "github issue dependency add",
+        )?;
+
+        let verified = relationship_readback_from_issue(&self.resolve_issue(&issue.identifier)?);
+        if verified.has_blocker(&blocker.identifier) {
+            Ok(verified)
+        } else {
+            Err(TrackerError::IntegrationUnavailable(format!(
+                "blocked-by relationship readback missing: issue={} blocked_by={}",
+                issue.identifier, blocker.identifier
+            )))
+        }
+    }
+
+    pub(in crate::tracker) fn add_subissue_relationship(
+        &self,
+        parent_ref: &str,
+        subissue_ref: &str,
+    ) -> Result<IssueRelationshipReadback, TrackerError> {
+        let parent = self.resolve_github_rest_issue_identity(parent_ref)?;
+        let subissue = self.resolve_github_rest_issue_identity(subissue_ref)?;
+        let readback = relationship_readback_from_issue(&self.resolve_issue(&parent.identifier)?);
+        if readback.has_native_subissue(&subissue.identifier) {
+            return Ok(readback);
+        }
+
+        let owner = self
+            .config
+            .tracker
+            .owner
+            .as_deref()
+            .ok_or_else(|| TrackerError::Payload("tracker.owner is required".into()))?;
+        let repo = self
+            .config
+            .tracker
+            .repo
+            .as_deref()
+            .ok_or_else(|| TrackerError::Payload("tracker.repo is required".into()))?;
+        GithubCliAccess::run_status(
+            github_add_subissue_args(owner, repo, parent.number, subissue.rest_id),
+            "github native subissue add",
+        )?;
+
+        let verified = relationship_readback_from_issue(&self.resolve_issue(&parent.identifier)?);
+        if verified.has_native_subissue(&subissue.identifier) {
+            Ok(verified)
+        } else {
+            Err(TrackerError::IntegrationUnavailable(format!(
+                "native subissue relationship readback missing: parent={} subissue={}",
+                parent.identifier, subissue.identifier
+            )))
+        }
+    }
+
+    fn resolve_github_rest_issue_identity(
+        &self,
+        issue_ref: &str,
+    ) -> Result<GithubRestIssueIdentity, TrackerError> {
+        let issue = self.resolve_issue(issue_ref)?;
+        let number = github_issue_number(&issue.identifier).ok_or_else(|| {
+            TrackerError::Payload(format!(
+                "issue ref {issue_ref:?} did not resolve to a GitHub issue number"
+            ))
+        })?;
+        let owner = self
+            .config
+            .tracker
+            .owner
+            .as_deref()
+            .ok_or_else(|| TrackerError::Payload("tracker.owner is required".into()))?;
+        let repo = self
+            .config
+            .tracker
+            .repo
+            .as_deref()
+            .ok_or_else(|| TrackerError::Payload("tracker.repo is required".into()))?;
+        let response = run_gh_api_json(vec![
+            "api".into(),
+            format!("repos/{owner}/{repo}/issues/{number}"),
+        ])?;
+        let rest_id = response
+            .get("id")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| {
+                TrackerError::Payload(format!(
+                    "GitHub REST issue response missing numeric id for {}",
+                    issue.identifier
+                ))
+            })?;
+
+        Ok(GithubRestIssueIdentity {
+            number,
+            rest_id,
+            identifier: issue.identifier,
+        })
+    }
+
     pub(in crate::tracker) fn close_issue(&self, issue_ref: &str) -> Result<(), TrackerError> {
         let issue = self.resolve_issue(issue_ref)?;
         if issue
@@ -656,4 +782,43 @@ fn project_owner_type_miss(error: &TrackerError) -> bool {
         || message.contains("could not resolve to user")
         || message.contains("not an organization account")
         || message.contains("not a user account")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GithubRestIssueIdentity {
+    number: u64,
+    rest_id: u64,
+    identifier: String,
+}
+
+fn github_add_blocked_by_args(
+    owner: &str,
+    repo: &str,
+    issue_number: u64,
+    blocker_rest_id: u64,
+) -> Vec<String> {
+    vec![
+        "api".into(),
+        "-X".into(),
+        "POST".into(),
+        format!("repos/{owner}/{repo}/issues/{issue_number}/dependencies/blocked_by"),
+        "-F".into(),
+        format!("issue_id={blocker_rest_id}"),
+    ]
+}
+
+fn github_add_subissue_args(
+    owner: &str,
+    repo: &str,
+    parent_number: u64,
+    subissue_rest_id: u64,
+) -> Vec<String> {
+    vec![
+        "api".into(),
+        "-X".into(),
+        "POST".into(),
+        format!("repos/{owner}/{repo}/issues/{parent_number}/sub_issues"),
+        "-F".into(),
+        format!("sub_issue_id={subissue_rest_id}"),
+    ]
 }

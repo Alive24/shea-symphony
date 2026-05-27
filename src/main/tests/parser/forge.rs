@@ -31,6 +31,7 @@ fn parses_forge_create_flags() {
         project,
         project_fields,
         assignees,
+        relationships,
         write,
         dry_run,
     } = command
@@ -51,6 +52,7 @@ fn parses_forge_create_flags() {
         }]
     );
     assert_eq!(assignees, vec!["@Alive24".to_string()]);
+    assert!(relationships.is_empty());
     assert!(write);
     assert!(!dry_run);
 }
@@ -87,6 +89,7 @@ fn parses_forge_promote_flags() {
         title,
         markdown,
         promotion_note,
+        relationships,
         write,
         dry_run,
     } = command
@@ -107,6 +110,7 @@ fn parses_forge_promote_flags() {
         promotion_note.readback_summaries,
         vec!["Operator confirmed the dry-run preview before write.".to_string()]
     );
+    assert!(relationships.is_empty());
     assert!(!write);
     assert!(dry_run);
 }

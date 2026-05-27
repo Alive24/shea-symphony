@@ -12,7 +12,7 @@ use shea_symphony::tracker::ProjectFieldAssignment;
 
 use crate::commands::autopilot::AutopilotLoopOptions;
 use crate::commands::doctor::{DoctorAction, DoctorOptions, DoctorRepairIssueOptions};
-use crate::commands::forge::{ForgeReworkOptions, PromotionNoteInput};
+use crate::commands::forge::{ForgeRelationshipPlan, ForgeReworkOptions, PromotionNoteInput};
 use crate::commands::project::ProjectStateOptions;
 use crate::commands::session::AgentSessionLaneArg;
 use crate::lanes::main_loop::RunLoopOptions;
@@ -57,6 +57,30 @@ pub(crate) enum Command {
         workflow_path: PathBuf,
         issue_ref: String,
         lane: Option<AgentSessionLaneArg>,
+    },
+    ProjectRelationshipList {
+        workflow_path: PathBuf,
+        issue_ref: String,
+    },
+    ProjectRelationshipVerify {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        blocked_by: Vec<String>,
+        subissue: Vec<String>,
+    },
+    ProjectRelationshipAddBlockedBy {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        blocker_ref: String,
+        write: bool,
+        dry_run: bool,
+    },
+    ProjectRelationshipAddSubissue {
+        workflow_path: PathBuf,
+        parent_ref: String,
+        subissue_ref: String,
+        write: bool,
+        dry_run: bool,
     },
     Doctor {
         options: DoctorOptions,
@@ -269,6 +293,7 @@ pub(crate) enum Command {
         project: Option<String>,
         project_fields: Vec<ProjectFieldAssignment>,
         assignees: Vec<String>,
+        relationships: ForgeRelationshipPlan,
         write: bool,
         dry_run: bool,
     },
@@ -278,6 +303,7 @@ pub(crate) enum Command {
         title: String,
         markdown: String,
         promotion_note: PromotionNoteInput,
+        relationships: ForgeRelationshipPlan,
         write: bool,
         dry_run: bool,
     },
@@ -945,6 +971,8 @@ enum ProjectCommandArgs {
     Issue(ProjectIssueArgs),
     #[command(about = "Inspect live issue readiness without mutating tracker state")]
     Inspect(ProjectInspectArgs),
+    #[command(about = "List, add, and verify GitHub issue relationships")]
+    Relationship(ProjectRelationshipArgs),
     #[command(name = "set-state", about = "Set one issue Project status")]
     SetState(SetStateArgs),
     #[command(name = "link-pr", about = "Record pull request evidence for one issue")]
@@ -958,6 +986,77 @@ enum ProjectCommandArgs {
         about = "Append a standalone issue timeline comment"
     )]
     TimelineComment(TimelineCommentArgs),
+}
+
+#[derive(Debug, Args)]
+struct ProjectRelationshipArgs {
+    #[command(subcommand)]
+    command: ProjectRelationshipCommandArgs,
+}
+
+#[derive(Debug, Subcommand)]
+enum ProjectRelationshipCommandArgs {
+    #[command(about = "List structured blocked-by and native subissue relationships")]
+    List(ProjectRelationshipListArgs),
+    #[command(about = "Verify expected structured issue relationships")]
+    Verify(ProjectRelationshipVerifyArgs),
+    #[command(name = "add-blocked-by", about = "Add a blocked-by relationship")]
+    AddBlockedBy(ProjectRelationshipAddBlockedByArgs),
+    #[command(
+        name = "add-subissue",
+        about = "Add a native subissue to a parent issue"
+    )]
+    AddSubissue(ProjectRelationshipAddSubissueArgs),
+}
+
+#[derive(Debug, Args)]
+struct ProjectRelationshipListArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    issue_ref: String,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+    #[arg(long = "write")]
+    _write: bool,
+}
+
+#[derive(Debug, Args)]
+struct ProjectRelationshipVerifyArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    issue_ref: String,
+    #[arg(long = "blocked-by")]
+    blocked_by: Vec<String>,
+    #[arg(long = "subissue")]
+    subissue: Vec<String>,
+    #[arg(long = "dry-run")]
+    _dry_run: bool,
+    #[arg(long = "write")]
+    _write: bool,
+}
+
+#[derive(Debug, Args)]
+struct ProjectRelationshipAddBlockedByArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    issue_ref: String,
+    blocker_ref: String,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct ProjectRelationshipAddSubissueArgs {
+    #[arg(value_name = "path-to-WORKFLOW.md")]
+    workflow_path: PathBuf,
+    parent_ref: String,
+    subissue_ref: String,
+    #[arg(long)]
+    write: bool,
+    #[arg(long = "dry-run")]
+    dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1368,6 +1467,10 @@ struct ForgeCreateArgs {
     project_fields: Vec<String>,
     #[arg(long = "assignee")]
     assignees: Vec<String>,
+    #[arg(long = "blocked-by")]
+    blocked_by: Vec<String>,
+    #[arg(long = "parent")]
+    parent: Option<String>,
     #[arg(long)]
     write: bool,
     #[arg(long = "dry-run")]
@@ -1385,6 +1488,10 @@ struct ForgePromoteArgs {
     markdown: ForgeMarkdownArgs,
     #[command(flatten)]
     promotion_note: PromotionNoteArgs,
+    #[arg(long = "blocked-by")]
+    blocked_by: Vec<String>,
+    #[arg(long = "parent")]
+    parent: Option<String>,
     #[arg(long)]
     write: bool,
     #[arg(long = "dry-run")]
@@ -1548,6 +1655,38 @@ fn command_from_project_args(command: ProjectCommandArgs) -> Result<Command, Str
             issue_ref: args.issue_ref,
             lane: args.lane,
         }),
+        ProjectCommandArgs::Relationship(args) => match args.command {
+            ProjectRelationshipCommandArgs::List(args) => Ok(Command::ProjectRelationshipList {
+                workflow_path: args.workflow_path,
+                issue_ref: args.issue_ref,
+            }),
+            ProjectRelationshipCommandArgs::Verify(args) => {
+                Ok(Command::ProjectRelationshipVerify {
+                    workflow_path: args.workflow_path,
+                    issue_ref: args.issue_ref,
+                    blocked_by: args.blocked_by,
+                    subissue: args.subissue,
+                })
+            }
+            ProjectRelationshipCommandArgs::AddBlockedBy(args) => {
+                Ok(Command::ProjectRelationshipAddBlockedBy {
+                    workflow_path: args.workflow_path,
+                    issue_ref: args.issue_ref,
+                    blocker_ref: args.blocker_ref,
+                    write: args.write,
+                    dry_run: args.dry_run,
+                })
+            }
+            ProjectRelationshipCommandArgs::AddSubissue(args) => {
+                Ok(Command::ProjectRelationshipAddSubissue {
+                    workflow_path: args.workflow_path,
+                    parent_ref: args.parent_ref,
+                    subissue_ref: args.subissue_ref,
+                    write: args.write,
+                    dry_run: args.dry_run,
+                })
+            }
+        },
         ProjectCommandArgs::SetState(args) => Ok(Command::SetState {
             workflow_path: args.workflow_path,
             issue_ref: args.issue_ref,
@@ -1754,6 +1893,10 @@ impl TryFrom<Cli> for Command {
                             project: args.project,
                             project_fields: parse_project_field_assignments(args.project_fields)?,
                             assignees: args.assignees,
+                            relationships: ForgeRelationshipPlan {
+                                blocked_by: args.blocked_by,
+                                parent: args.parent,
+                            },
                             write: args.write,
                             dry_run: args.dry_run,
                         }),
@@ -1763,6 +1906,10 @@ impl TryFrom<Cli> for Command {
                             title: args.title,
                             markdown: read_forge_markdown_arg(args.markdown)?,
                             promotion_note: promotion_note_input(args.promotion_note)?,
+                            relationships: ForgeRelationshipPlan {
+                                blocked_by: args.blocked_by,
+                                parent: args.parent,
+                            },
                             write: args.write,
                             dry_run: args.dry_run,
                         }),

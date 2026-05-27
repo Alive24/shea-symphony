@@ -1,4 +1,6 @@
-use std::path::PathBuf;
+#![allow(clippy::items_after_test_module)]
+
+use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -622,7 +624,7 @@ fn autopilot_plan_lane<'a>(
 }
 
 fn refresh_autopilot_plan_or_keep(
-    workflow_path: &PathBuf,
+    workflow_path: &Path,
     fallback: AutopilotPlanSnapshot,
 ) -> AutopilotPlanSnapshot {
     build_autopilot_plan(workflow_path).unwrap_or(fallback)

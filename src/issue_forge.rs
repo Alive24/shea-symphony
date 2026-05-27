@@ -766,9 +766,9 @@ fn reflective_table_title(line: &str) -> Option<String> {
     let capability = cells.first()?;
     let status = cells.get(1).copied().unwrap_or_default().to_lowercase();
     if status.contains("not implemented") || status.contains("remaining work") {
-        Some(format!("Follow-up: close {} readiness gap", capability))
+        Some(format!("Follow-up: close {capability} readiness gap"))
     } else {
-        Some(format!("Follow-up: {}", capability))
+        Some(format!("Follow-up: {capability}"))
     }
 }
 

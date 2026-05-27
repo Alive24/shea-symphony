@@ -2,7 +2,8 @@ use crate::config::RuntimeConfig;
 use crate::model::{normalize_state, LinkedPullRequest, TrackerIssue};
 
 use super::{
-    load_fixture, FollowUpIssueInput, ProjectFieldAssignment, TrackerAdapter, TrackerError,
+    load_fixture, relationship_readback_from_issue, FollowUpIssueInput, IssueRelationshipReadback,
+    ProjectFieldAssignment, TrackerAdapter, TrackerError,
 };
 
 #[derive(Debug, Clone)]
@@ -109,6 +110,16 @@ impl TrackerAdapter for MemoryTracker {
             .get_issue(issue_ref)?
             .map(|issue| issue.linked_pull_requests)
             .unwrap_or_default())
+    }
+
+    fn relationship_readback(
+        &self,
+        issue_ref: &str,
+    ) -> Result<IssueRelationshipReadback, TrackerError> {
+        let issue = self
+            .get_issue(issue_ref)?
+            .ok_or_else(|| TrackerError::Payload(format!("issue not found: {issue_ref}")))?;
+        Ok(relationship_readback_from_issue(&issue))
     }
 
     fn close_issue(&self, _issue_ref: &str) -> Result<(), TrackerError> {

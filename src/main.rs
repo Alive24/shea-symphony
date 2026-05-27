@@ -17,7 +17,9 @@ use commands::gate::quality_gate;
 use commands::profiles::list_profiles;
 use commands::project::{
     add_to_project, append_timeline_comment, link_pr, project_inspect, project_issue,
-    project_state, set_state, upsert_workpad,
+    project_relationship_add_blocked_by, project_relationship_add_subissue,
+    project_relationship_list, project_relationship_verify, project_state, set_state,
+    upsert_workpad,
 };
 use commands::session::{
     agent_session_attach, agent_session_list, agent_session_start, lane_claim_command,
@@ -78,6 +80,42 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             issue_ref,
             lane,
         } => project_inspect(workflow_path, issue_ref, lane),
+        Command::ProjectRelationshipList {
+            workflow_path,
+            issue_ref,
+        } => project_relationship_list(workflow_path, issue_ref),
+        Command::ProjectRelationshipVerify {
+            workflow_path,
+            issue_ref,
+            blocked_by,
+            subissue,
+        } => project_relationship_verify(workflow_path, issue_ref, blocked_by, subissue),
+        Command::ProjectRelationshipAddBlockedBy {
+            workflow_path,
+            issue_ref,
+            blocker_ref,
+            write,
+            dry_run,
+        } => project_relationship_add_blocked_by(
+            workflow_path,
+            issue_ref,
+            blocker_ref,
+            write,
+            dry_run,
+        ),
+        Command::ProjectRelationshipAddSubissue {
+            workflow_path,
+            parent_ref,
+            subissue_ref,
+            write,
+            dry_run,
+        } => project_relationship_add_subissue(
+            workflow_path,
+            parent_ref,
+            subissue_ref,
+            write,
+            dry_run,
+        ),
         Command::Doctor { options } => doctor(options),
         Command::DoctorRepairHumanReview {
             workflow_path,
@@ -260,6 +298,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             project,
             project_fields,
             assignees,
+            relationships,
             write,
             dry_run,
         } => forge_create(ForgeCreateOptions {
@@ -270,6 +309,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             project,
             project_fields,
             assignees,
+            relationships,
             write,
             dry_run,
         }),
@@ -279,17 +319,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             title,
             markdown,
             promotion_note,
+            relationships,
             write,
             dry_run,
-        } => forge_promote(
+        } => forge_promote(crate::commands::forge::ForgePromoteInput {
             workflow_path,
             issue_ref,
             title,
             markdown,
             promotion_note,
+            relationships,
             write,
             dry_run,
-        ),
+        }),
         Command::ForgeRework { options } => forge_rework(options),
         Command::Help(text) => {
             print!("{text}");

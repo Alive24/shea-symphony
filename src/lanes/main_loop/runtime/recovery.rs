@@ -164,8 +164,7 @@ fn recover_registry_issue_allows_active_retention(
                 &format!("issue={issue_identifier} reason={reason}"),
             )?;
             println!(
-                "run_loop_resume_preflight action=recover_registry_read_skipped issue={} reason={}",
-                issue_identifier, reason
+                "run_loop_resume_preflight action=recover_registry_read_skipped issue={issue_identifier} reason={reason}"
             );
             Ok(true)
         }
@@ -193,8 +192,7 @@ fn recover_registry_issue_for_restart(
                 &format!("issue={issue_identifier} reason={reason}"),
             )?;
             println!(
-                "run_loop_resume_preflight action=recover_registry_read_skipped issue={} reason={}",
-                issue_identifier, reason
+                "run_loop_resume_preflight action=recover_registry_read_skipped issue={issue_identifier} reason={reason}"
             );
             Ok(None)
         }

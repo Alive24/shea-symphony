@@ -610,7 +610,7 @@ pub(crate) fn run_loop_handoff_failure_workpad(
         "- Source: `shea-symphony main loop`".to_string(),
         String::new(),
         "### Handoff Planning Blocker".to_string(),
-        format!("- Error: `{}`", error),
+        format!("- Error: `{error}`"),
         "- Backend execution was skipped before claim/run to avoid mixing issue scope.".to_string(),
         String::new(),
         "### Required Human Decision".to_string(),

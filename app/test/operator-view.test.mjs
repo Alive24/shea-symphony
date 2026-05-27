@@ -126,9 +126,11 @@ test('fixture overview feeds first-screen human todo and lane board data', () =>
 
   assert.equal(view.dataSource.mode, 'fixture');
   assert.ok(view.queueIssues.some((issue) => issue.id === '#421' && issue.state === 'Need Human Input'));
-  assert.equal(view.laneWorkers.main[0].issue, '#418');
-  assert.equal(view.laneWorkers.review[0].issue, '#421');
-  assert.equal(view.laneWorkers.merge[0].issue, '#430');
+  assert.ok(view.queueIssues.some((issue) => issue.id === '#418' && issue.lane === 'Main'));
+  assert.ok(view.queueIssues.some((issue) => issue.id === '#430' && issue.lane === 'Merge'));
+  assert.equal(view.laneWorkers.main.length, 0);
+  assert.equal(view.laneWorkers.review.length, 0);
+  assert.equal(view.laneWorkers.merge.length, 0);
   assert.ok(view.readPathMap.some((path) => path.id === 'tauri-bridge'));
 });
 
@@ -163,9 +165,48 @@ test('view model renders object-shaped selected issues as issue references', () 
     healthy: true
   });
 
-  assert.equal(view.laneWorkers.main[0].issue, '#512');
-  assert.equal(view.laneWorkers.main[0].title, 'Object issue should not leak');
-  assert.equal(view.laneWorkers.main[0].evidence, 'Object reason should become text');
+  const queued = view.queueIssues.find((issue) => issue.id === '#512');
+  assert.equal(queued.title, 'Object issue should not leak');
+  assert.match(queued.evidence, /Object reason should become text/);
+  assert.equal(view.laneWorkers.main.length, 0);
+});
+
+test('view model exposes unresumed in-progress runtime issues as main queue rows', () => {
+  const view = buildViewModel({
+    generatedAt: new Date().toISOString(),
+    workflowPath: 'workflows/shea-symphony.md',
+    commands: {
+      autopilot: {
+        ok: true,
+        args: ['autopilot', 'plan', 'workflows/shea-symphony.md', '--json'],
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        durationMs: 12,
+        stderr: '',
+        stdoutPreview: '{}'
+      }
+    },
+    autopilot: {
+      lanes: [],
+      parked_queues: [],
+      active_issues: [
+        {
+          lane: 'main',
+          identifier: '#364',
+          backend: 'codex',
+          session_id: null
+        }
+      ]
+    },
+    healthy: true
+  });
+
+  const queued = view.queueIssues.find((issue) => issue.id === '#364');
+  assert.equal(queued.state, 'In Progress');
+  assert.equal(queued.lane, 'Main');
+  assert.match(queued.recommended, /no worker session is visible/);
+  assert.equal(view.laneWorkers.main.length, 0);
 });
 
 test('lane board queue excludes backlog project items', () => {

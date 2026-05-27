@@ -77,7 +77,10 @@ export function buildViewModel(overview: any): any {
     };
   });
 
-  const baseQueueIssues = buildQueueIssues(githubQueue, parkedTasks);
+  const baseQueueIssues = mergeQueueIssues(
+    buildQueueIssues(githubQueue, parkedTasks),
+    buildAutopilotQueueIssues(autopilot)
+  );
   const laneWorkers = {
     main: [...workersForLane(autopilot, 'main'), ...sessionWorkers.filter((worker) => worker.lane === 'main')],
     review: [...workersForLane(autopilot, 'review'), ...sessionWorkers.filter((worker) => worker.lane === 'review')],
@@ -1059,6 +1062,85 @@ function buildQueueIssues(githubQueue, attentionTasks = []) {
   return (attentionTasks ?? []).map((task) => queueIssueFromTask(task)).sort(queueIssueSort);
 }
 
+function buildAutopilotQueueIssues(autopilot) {
+  const issues = [];
+
+  for (const lane of autopilot?.lanes ?? []) {
+    const selected = lane?.selected_issue;
+    const id = issueRefFromValue(selected);
+    if (!id) continue;
+    const selectedRecord = typeof selected === 'object' && selected !== null ? selected : {};
+    const state = normalizeStateName(
+      selectedRecord.state ?? selectedRecord.status ?? fallbackStateForLane(lane?.lane)
+    );
+    issues.push({
+      id,
+      title: textFromValue(selectedRecord.title ?? lane?.action, `${id} selected by ${titleCase(lane?.lane ?? 'lane')}`),
+      state,
+      lane: stateToLane(state),
+      url: selectedRecord.url ?? selectedRecord.html_url ?? null,
+      updatedAt: null,
+      assignees: selectedRecord.assignees ?? [],
+      labels: selectedRecord.labels ?? [],
+      evidence: `Autopilot plan · ${textFromValue(lane?.status, 'selected')} · ${textFromValue(lane?.reason, 'selected issue')}`,
+      recommended: recommendationForQueueState(state),
+      tone: toneForState(state),
+      source: 'autopilotPlan'
+    });
+  }
+
+  for (const active of autopilot?.active_issues ?? []) {
+    const id = issueRefFromValue(active?.issue ?? active?.identifier);
+    if (!id) continue;
+    const state = normalizeStateName(active?.state ?? fallbackStateForLane(active?.lane));
+    issues.push({
+      id,
+      title: textFromValue(active?.title, `${id} active runtime issue`),
+      state,
+      lane: stateToLane(state),
+      url: active?.url ?? null,
+      updatedAt: null,
+      assignees: [],
+      labels: [],
+      evidence: `Runtime state · ${textFromValue(active?.backend, 'unknown backend')} · ${textFromValue(active?.session_id ?? active?.session, 'no visible session')}`,
+      recommended: active?.session_id || active?.session
+        ? 'Runtime reports a worker session; watch for lane progress.'
+        : 'Runtime still points at this issue, but no worker session is visible; recovery has not visibly resumed.',
+      tone: active?.session_id || active?.session ? 'success' : 'warn',
+      source: 'runtimeState'
+    });
+  }
+
+  return mergeQueueIssues([], issues).sort(queueIssueSort);
+}
+
+function mergeQueueIssues(primary = [], secondary = []) {
+  const byId = new Map();
+  for (const issue of [...primary, ...secondary]) {
+    const id = normalizeIssueRef(issue?.id);
+    if (!id) continue;
+    const existing = byId.get(id);
+    if (!existing) {
+      byId.set(id, { ...issue, id });
+      continue;
+    }
+    byId.set(id, {
+      ...issue,
+      ...existing,
+      evidence: [existing.evidence, issue.evidence].filter(Boolean).join(' · '),
+      source: [existing.source, issue.source].filter(Boolean).join(' + ')
+    });
+  }
+  return [...byId.values()].sort(queueIssueSort);
+}
+
+function fallbackStateForLane(lane) {
+  const normalized = String(lane ?? '').toLowerCase();
+  if (normalized === 'review') return 'Agent Review';
+  if (normalized === 'merge') return 'Merging';
+  return 'In Progress';
+}
+
 function annotateQueueIssuesWithWorkers(queueIssues: any[], laneWorkers: LooseRecord, sessionReadState: any = { status: 'unknown' }) {
   const workersByIssue = new Map();
   for (const workers of Object.values(laneWorkers ?? {}) as any[][]) {
@@ -1441,41 +1523,21 @@ function toneForState(state) {
 }
 
 function workersForLane(autopilot, lane) {
-  const plan = (autopilot?.lanes ?? []).find((item) => item.lane === lane);
-  const selectedIssue = issueRefFromValue(plan?.selected_issue);
-  const selectedAction = textFromValue(
-    plan?.action ?? plan?.selected_issue,
-    `${titleCase(lane)} selected issue`
-  );
-  const selected = selectedIssue
-    ? [
-        {
-          issue: selectedIssue,
-          title: selectedAction,
-          action: selectedAction,
-          backend: 'Shea Symphony CLI',
-          session: textFromValue(plan?.status, 'planned'),
-          elapsed: 'live',
-          evidence: textFromValue(plan?.reason, 'Autopilot plan selected this issue.'),
-          target: textFromValue(plan?.target_state ?? plan?.target, 'Next lane state')
-        }
-      ]
-    : [];
-
   const active = (autopilot?.active_issues ?? [])
     .filter((issue) => !issue.lane || issue.lane === lane)
+    .filter((issue) => issue.session || issue.session_id || issue.run_id || issue.status === 'running')
     .map((issue) => ({
       issue: issueRefFromValue(issue.issue ?? issue.identifier) ?? '#?',
       title: textFromValue(issue.title, `${titleCase(lane)} active issue`),
       action: textFromValue(issue.action ?? issue.status, 'Active'),
       backend: textFromValue(issue.backend, 'Shea Symphony CLI'),
-      session: textFromValue(issue.session ?? issue.run_id, 'active'),
+      session: textFromValue(issue.session ?? issue.session_id ?? issue.run_id, 'active'),
       elapsed: textFromValue(issue.elapsed, 'live'),
       evidence: textFromValue(issue.evidence ?? issue.reason, 'Active issue surfaced by autopilot.'),
       target: textFromValue(issue.target ?? issue.target_state ?? issue.status, 'Unknown')
     }));
 
-  return [...selected, ...active];
+  return active;
 }
 
 function issueRefFromValue(value) {

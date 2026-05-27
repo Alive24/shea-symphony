@@ -158,7 +158,19 @@ pub(super) fn has_pr_url(issue: &TrackerIssue) -> bool {
 
 pub(super) fn reliable_pr_targets(issue: &TrackerIssue) -> Vec<String> {
     let mut targets = Vec::new();
-    for pr in &issue.linked_pull_requests {
+    let native_prs: Vec<_> = issue
+        .linked_pull_requests
+        .iter()
+        .filter(|pr| pr.id.as_deref().is_some_and(|id| !id.trim().is_empty()))
+        .collect();
+    let pull_requests: Vec<_> =
+        if issue.tracker_kind == "github_project_v2" && !native_prs.is_empty() {
+            native_prs
+        } else {
+            issue.linked_pull_requests.iter().collect()
+        };
+
+    for pr in pull_requests {
         let target = pr
             .url
             .as_deref()

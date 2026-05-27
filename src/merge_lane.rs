@@ -331,6 +331,70 @@ fn blocking_review_decision(review_decision: &Option<String>) -> Option<(&'stati
     ))
 }
 
+pub fn native_linked_pull_requests_for_merge(
+    config: &RuntimeConfig,
+    linked_pull_requests: &[LinkedPullRequest],
+) -> Vec<LinkedPullRequest> {
+    native_linked_pull_requests_for_merge_parts(
+        &config.tracker.kind,
+        config.tracker.owner.as_deref(),
+        config.tracker.repo.as_deref(),
+        linked_pull_requests,
+    )
+}
+
+fn native_linked_pull_requests_for_merge_parts(
+    tracker_kind: &str,
+    owner: Option<&str>,
+    repo: Option<&str>,
+    linked_pull_requests: &[LinkedPullRequest],
+) -> Vec<LinkedPullRequest> {
+    let require_native_id = tracker_kind == "github_project_v2";
+    linked_pull_requests
+        .iter()
+        .filter(|pull_request| {
+            linked_pull_request_matches_native_repo(pull_request, require_native_id, owner, repo)
+        })
+        .cloned()
+        .collect()
+}
+
+fn linked_pull_request_matches_native_repo(
+    pull_request: &LinkedPullRequest,
+    require_native_id: bool,
+    owner: Option<&str>,
+    repo: Option<&str>,
+) -> bool {
+    if require_native_id && pull_request.id.as_deref().unwrap_or_default().is_empty() {
+        return false;
+    }
+
+    let Some((url_owner, url_repo)) = pull_request
+        .url
+        .as_deref()
+        .and_then(github_pull_request_repo)
+    else {
+        return true;
+    };
+
+    match (owner, repo) {
+        (Some(owner), Some(repo)) => {
+            url_owner.eq_ignore_ascii_case(owner) && url_repo.eq_ignore_ascii_case(repo)
+        }
+        _ => true,
+    }
+}
+
+fn github_pull_request_repo(url: &str) -> Option<(&str, &str)> {
+    let suffix = url
+        .strip_prefix("https://github.com/")
+        .or_else(|| url.strip_prefix("http://github.com/"))?;
+    let mut parts = suffix.split('/');
+    let owner = parts.next()?;
+    let repo = parts.next()?;
+    (parts.next() == Some("pull")).then_some((owner, repo))
+}
+
 pub fn pull_request_status_from_linked(
     pull_request: &LinkedPullRequest,
 ) -> Option<PullRequestMergeStatus> {
@@ -965,6 +1029,16 @@ mod tests {
         }
     }
 
+    fn historical_pr_autolink() -> LinkedPullRequest {
+        LinkedPullRequest {
+            id: None,
+            number: Some(60),
+            url: Some("https://github.com/Alive24/jade-symphony/pull/60".into()),
+            state: None,
+            ..Default::default()
+        }
+    }
+
     fn clean_fixture_pr() -> LinkedPullRequest {
         LinkedPullRequest {
             id: Some("PR_60".into()),
@@ -1081,6 +1155,25 @@ mod tests {
 
         assert_eq!(decision.kind, MergeLaneDecisionKind::ReadyToMerge);
         assert_eq!(decision.target_state, Some("done"));
+    }
+
+    #[test]
+    fn github_project_merge_prefers_current_repo_native_prs_over_history_autolinks() {
+        let raw_pull_requests = vec![pr(), historical_pr_autolink()];
+        let filtered = native_linked_pull_requests_for_merge_parts(
+            "github_project_v2",
+            Some("Alive24"),
+            Some("shea-symphony"),
+            &raw_pull_requests,
+        );
+
+        assert_eq!(filtered, vec![pr()]);
+
+        let issue = issue("Merging", raw_pull_requests);
+        let decision =
+            merge_lane_decision(&issue, "Merging", "main", &filtered, Some(&clean_status()));
+
+        assert_eq!(decision.kind, MergeLaneDecisionKind::ReadyToMerge);
     }
 
     #[test]

@@ -920,6 +920,11 @@ a {
   grid-template-rows: auto auto auto 1fr;
 }
 
+.human-todo-card.refreshing {
+  opacity: 0.48;
+  filter: grayscale(0.35);
+}
+
 .human-todo-card-head {
   display: flex;
   align-items: center;

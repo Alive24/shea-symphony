@@ -2,7 +2,8 @@ use shea_symphony::config::RuntimeConfig;
 use shea_symphony::git_handoff::ProcessHandoffCommandRunner;
 use shea_symphony::handoff::expected_merge_base_branch_for_issue;
 use shea_symphony::merge_lane::{
-    expected_merge_base_branch, merge_lane_decision, MergeLaneDecisionKind,
+    expected_merge_base_branch, merge_lane_decision, native_linked_pull_requests_for_merge,
+    MergeLaneDecisionKind,
 };
 use shea_symphony::model::{normalize_state, TrackerIssue};
 use shea_symphony::orchestrator::Orchestrator;
@@ -263,6 +264,7 @@ fn autopilot_merge_lane_plan(
     };
 
     let linked_pull_requests = adapter.list_linked_pull_requests(&issue.identifier)?;
+    let linked_pull_requests = native_linked_pull_requests_for_merge(config, &linked_pull_requests);
     let runner = ProcessHandoffCommandRunner;
     let expected_base =
         expected_merge_base_branch_for_issue(issue, expected_merge_base_branch(config));

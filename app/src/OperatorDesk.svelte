@@ -43,6 +43,7 @@
   let copiedHandoffId = '';
   let view = buildViewModel(null);
   let autoloopRefreshTimer: number | null = null;
+  let lastHumanTodoIssues = [];
 
   $: dataSource = view.dataSource;
   $: queueIssues = view.queueIssues ?? [];
@@ -60,6 +61,14 @@
       categoryDetail: humanTodoDetail(issue.state),
       categoryTone: humanTodoTone(issue.state)
     }));
+  $: if (humanTodoIssues.length || (!fullLoading && !backgroundRefreshing)) {
+    lastHumanTodoIssues = humanTodoIssues;
+  }
+  $: humanTodoRefreshing =
+    (fullLoading || backgroundRefreshing) && humanTodoIssues.length === 0 && lastHumanTodoIssues.length > 0;
+  $: visibleHumanTodoIssues = humanTodoRefreshing
+    ? lastHumanTodoIssues.map((issue) => ({ ...issue, refreshing: true }))
+    : humanTodoIssues.map((issue) => ({ ...issue, refreshing: false }));
   $: laneBoard = ['main', 'review', 'merge'].map((laneKey) => {
     const label = titleCaseLane(laneKey);
     const workers = view.laneWorkers?.[laneKey] ?? [];
@@ -101,6 +110,7 @@
 
   async function refresh(force = false, includeSlowReads = true, source = 'manual') {
     const hasRenderableState = view?.dataSource?.mode !== 'offline';
+    let backgroundReadsStarted = false;
     backgroundRefreshing = hasRenderableState;
     loading = !hasRenderableState;
     fullLoading = includeSlowReads;
@@ -118,6 +128,7 @@
       view = buildViewModel(await loadOverview(force, 'fast'));
       loading = false;
       if (!includeSlowReads) return;
+      backgroundReadsStarted = true;
       startBackgroundReads(force, source);
     } catch (error) {
       liveError = error.message;
@@ -132,7 +143,7 @@
       });
     } finally {
       loading = false;
-      backgroundRefreshing = false;
+      if (!backgroundReadsStarted) backgroundRefreshing = false;
       if (!includeSlowReads) {
         refreshStatusStore.set({
           running: false,
@@ -179,7 +190,10 @@
             finishedAt: slowReadsRemaining === 0 ? new Date().toISOString() : status.finishedAt,
             detail: slowReadsRemaining === 0 ? 'Refresh complete' : `Loading ${slowReadsRemaining} CLI surface${slowReadsRemaining === 1 ? '' : 's'}`
           }));
-          if (slowReadsRemaining === 0) fullLoading = false;
+          if (slowReadsRemaining === 0) {
+            fullLoading = false;
+            backgroundRefreshing = false;
+          }
         });
     }
   }
@@ -493,9 +507,9 @@
 <section class="operator-first-screen" aria-label="Operator first screen">
   <section class="human-todo-overview">
     <div class="human-todo-rail" aria-label="Human operator issue queue">
-      {#if humanTodoIssues.length}
-        {#each humanTodoIssues as issue}
-          <article class="human-todo-card {issue.categoryTone}">
+      {#if visibleHumanTodoIssues.length}
+        {#each visibleHumanTodoIssues as issue}
+          <article class="human-todo-card {issue.categoryTone}" class:refreshing={issue.refreshing}>
             <div class="human-todo-card-head">
               <div class="human-todo-identity">
                 <span class="issue-tag">{issue.id}</span>

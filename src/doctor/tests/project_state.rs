@@ -149,6 +149,22 @@ fn reports_merging_ambiguous_pr_target() {
 }
 
 #[test]
+fn ignores_historical_pr_autolinks_when_native_pr_target_exists() {
+    let mut issue = issue("#60", "Merging");
+    issue.linked_pull_requests.push(linked_pr(
+        "https://github.com/Alive24/shea-symphony/pull/60",
+        "OPEN",
+    ));
+    let mut historical = linked_pr("https://github.com/Alive24/jade-symphony/pull/60", "OPEN");
+    historical.id = None;
+    issue.linked_pull_requests.push(historical);
+
+    let report = audit_project_issues(&[issue]);
+
+    assert!(report.is_clean());
+}
+
+#[test]
 fn accepts_merging_with_one_pr_target() {
     let mut issue = issue("#60", "Merging");
     issue.linked_pull_requests.push(linked_pr(

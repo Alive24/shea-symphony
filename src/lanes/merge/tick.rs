@@ -6,8 +6,9 @@ use shea_symphony::handoff::expected_merge_base_branch_for_issue;
 use shea_symphony::lane_claim::{LaneClaimActor, LaneClaimSource};
 use shea_symphony::merge_lane::{
     expected_merge_base_branch, fetch_pull_request_status_with_recheck, fixture_merge_output,
-    merge_lane_decision, merge_lane_workpad, pull_request_status_from_linked,
-    update_pull_request_branch, MergeLaneDecision, MergeLaneDecisionKind, PullRequestMergeStatus,
+    merge_lane_decision, merge_lane_workpad, native_linked_pull_requests_for_merge,
+    pull_request_status_from_linked, update_pull_request_branch, MergeLaneDecision,
+    MergeLaneDecisionKind, PullRequestMergeStatus,
 };
 use shea_symphony::model::{normalize_state, LinkedPullRequest, TrackerIssue};
 use shea_symphony::progress::run_with_progress_heartbeat;
@@ -135,6 +136,8 @@ pub(crate) fn merge_once_tick(
             .next("linked_pr_read"),
         || adapter.list_linked_pull_requests(&issue.identifier),
     )?;
+    let linked_pull_requests =
+        native_linked_pull_requests_for_merge(&config, &linked_pull_requests);
     let runner = ProcessHandoffCommandRunner;
     let default_expected_base = expected_merge_base_branch(&config);
     let expected_base = expected_merge_base_branch_for_issue(&issue, default_expected_base);

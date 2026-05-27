@@ -8,6 +8,7 @@ use shea_symphony::runtime_state::load_runtime_states;
 use shea_symphony::tracker::{adapter_from_config, TrackerAdapter};
 use shea_symphony::workflow::WorkflowDefinition;
 
+use crate::commands::doctor::hydrate_issues_for_doctor;
 use crate::commands::project::render_state_summary;
 use crate::orchestration::{
     all_mapped_tracker_states, session_status_snapshots, single_line,
@@ -93,6 +94,7 @@ fn build_autopilot_plan(
     let adapter = adapter_from_config(&config);
     let mut integration_gaps = adapter.integration_gaps();
     let issues = adapter.fetch_issues_by_states(&all_mapped_tracker_states(&config))?;
+    let issues = hydrate_issues_for_doctor(adapter.as_ref(), issues)?;
 
     let (runtime_states, runtime_load_error) = match load_runtime_states(&config) {
         Ok(states) => (states, None),

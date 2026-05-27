@@ -515,6 +515,7 @@ mod tests {
             settings: AutopilotLoopSettings {
                 write: false,
                 dry_run: true,
+                recover: false,
                 poll_interval_ms: 30_000,
                 main_max_concurrent: 2,
                 review_max_concurrent: 1,

@@ -463,14 +463,7 @@ struct AutopilotLoopArgs {
     )]
     dry_run: bool,
     #[arg(
-        long,
-        conflicts_with = "no_recover",
-        help = "Enable recover-first handling for interrupted Main and Merge work"
-    )]
-    recover: bool,
-    #[arg(
         long = "no-recover",
-        conflicts_with = "recover",
         help = "Disable default recover-first handling in write mode"
     )]
     no_recover: bool,
@@ -1521,7 +1514,7 @@ fn autopilot_loop_command(args: AutopilotLoopArgs) -> Result<Command, String> {
             once: args.once,
             write: args.write,
             dry_run: args.dry_run,
-            recover: loop_recover_enabled(args.write, args.recover, args.no_recover),
+            recover: loop_recover_enabled(args.write, false, args.no_recover),
             poll_interval_ms: args.poll_interval_ms,
             main_max_concurrent: args.main_max_concurrent,
             review_max_concurrent: args.review_max_concurrent,

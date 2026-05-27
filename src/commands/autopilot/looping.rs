@@ -373,7 +373,9 @@ fn autopilot_loop_with_cancellation(
         let mut lane_results = Vec::new();
 
         let main_plan = autopilot_plan_lane(Some(&latest_plan), "main");
-        let main_result = if autopilot_lane_plan_should_tick(main_plan) {
+        let main_result = if autopilot_lane_plan_should_tick(main_plan)
+            || autopilot_main_recovery_should_tick(Some(&latest_plan), &tick_settings)
+        {
             print_autopilot_lane_running(
                 "main",
                 main_plan,
@@ -632,6 +634,51 @@ fn autopilot_lane_plan_should_tick(lane_plan: Option<&AutopilotLanePlan>) -> boo
         .unwrap_or(false)
 }
 
+fn autopilot_main_recovery_should_tick(
+    plan: Option<&AutopilotPlanSnapshot>,
+    settings: &AutopilotLoopTickSettings,
+) -> bool {
+    let Some(plan) = plan else {
+        return false;
+    };
+    settings.recover
+        && settings.main_max_concurrent > 0
+        && autopilot_main_recovery_blocker_is_lane_local(plan)
+}
+
+fn autopilot_main_recovery_can_tick(
+    plan: &AutopilotPlanSnapshot,
+    settings: AutopilotLoopSettings,
+) -> bool {
+    settings.write
+        && settings.recover
+        && settings.main_max_concurrent > 0
+        && autopilot_main_recovery_blocker_is_lane_local(plan)
+}
+
+fn autopilot_main_recovery_blocker_is_lane_local(plan: &AutopilotPlanSnapshot) -> bool {
+    !plan.readiness.blockers.is_empty()
+        && plan
+            .readiness
+            .blockers
+            .iter()
+            .all(|blocker| autopilot_active_runtime_blocker(blocker))
+        && !plan.runtime.active_issues.is_empty()
+        && plan
+            .runtime
+            .active_issues
+            .iter()
+            .all(|issue| issue.lane.eq_ignore_ascii_case("main"))
+        && plan
+            .lanes
+            .iter()
+            .all(|lane| !lane.status.eq_ignore_ascii_case("blocked"))
+}
+
+fn autopilot_active_runtime_blocker(blocker: &str) -> bool {
+    blocker.starts_with("active_runtime_states=")
+}
+
 fn print_autopilot_lane_running(
     lane: &str,
     lane_plan: Option<&AutopilotLanePlan>,
@@ -806,6 +853,7 @@ fn render_autopilot_loop_iteration_result(result: &AutopilotLoopIterationResult)
 pub(crate) struct AutopilotLoopSettings {
     pub(crate) write: bool,
     pub(crate) dry_run: bool,
+    pub(crate) recover: bool,
     pub(crate) poll_interval_ms: u64,
     pub(crate) main_max_concurrent: usize,
     pub(crate) review_max_concurrent: usize,
@@ -864,6 +912,7 @@ impl AutopilotLoopSettings {
         Self {
             write: options.write,
             dry_run: options.dry_run || !options.write,
+            recover: options.recover,
             poll_interval_ms: options
                 .poll_interval_ms
                 .unwrap_or(config.polling.interval_ms)
@@ -887,6 +936,7 @@ impl AutopilotLoopSettings {
         Self {
             write: options.write,
             dry_run: options.dry_run || !options.write,
+            recover: options.recover,
             poll_interval_ms: options.poll_interval_ms.unwrap_or(30_000).max(1),
             main_max_concurrent: options.main_max_concurrent.unwrap_or(1).max(1),
             review_max_concurrent: options.review_max_concurrent.unwrap_or(1).max(1),
@@ -950,8 +1000,19 @@ pub(crate) fn autopilot_loop_status_from_plan(
         .iter()
         .filter_map(|lane| lane.selected_issue.clone())
         .collect::<Vec<_>>();
-    let readiness_blocker_count = plan.readiness.blockers.len();
-    let mut blocked_reasons = plan.readiness.blockers.clone();
+    let main_recovery_can_tick = autopilot_main_recovery_can_tick(plan, settings);
+    let effective_readiness_blockers = if main_recovery_can_tick {
+        plan.readiness
+            .blockers
+            .iter()
+            .filter(|blocker| !autopilot_active_runtime_blocker(blocker))
+            .cloned()
+            .collect::<Vec<_>>()
+    } else {
+        plan.readiness.blockers.clone()
+    };
+    let readiness_blocker_count = effective_readiness_blockers.len();
+    let mut blocked_reasons = effective_readiness_blockers.clone();
     blocked_reasons.extend(
         plan.lanes
             .iter()
@@ -962,17 +1023,25 @@ pub(crate) fn autopilot_loop_status_from_plan(
     retrying.extend(retry_records_from_transient_failures(
         recent_transient_failures,
     ));
-    let counts = autopilot_loop_counts(
+    let mut counts = autopilot_loop_counts(
         &lane_activity,
         readiness_blocker_count,
         plan.runtime
             .retrying_count
             .saturating_add(recent_transient_failures.len()),
     );
+    if main_recovery_can_tick && counts.running == 0 {
+        counts.running = 1;
+    }
+    let readiness_status = if main_recovery_can_tick && effective_readiness_blockers.is_empty() {
+        "ready"
+    } else {
+        plan.readiness.status.as_str()
+    };
     let phase = if cancellation_requested {
         "cancelled".into()
     } else {
-        autopilot_loop_phase(&counts, &plan.readiness.status)
+        autopilot_loop_phase(&counts, readiness_status)
     };
     let message = match phase.as_str() {
         "cancelled" => "cancellation requested; no further lane work will be started",

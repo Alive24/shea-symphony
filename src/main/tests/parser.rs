@@ -56,6 +56,24 @@ fn parses_grouped_autopilot_loop_flags() {
 }
 
 #[test]
+fn parses_autopilot_loop_no_recover_debug_escape_hatch() {
+    let Command::AutopilotLoop { options } = parse(&[
+        "autopilot",
+        "loop",
+        "workflows/shea-symphony.md",
+        "--max-iterations",
+        "1",
+        "--write",
+        "--no-recover",
+    ]) else {
+        panic!("expected autopilot loop command");
+    };
+
+    assert!(options.write);
+    assert!(!options.recover);
+}
+
+#[test]
 fn rejects_unbounded_autopilot_loop_for_now() {
     assert!(Command::parse(vec![
         "autopilot".into(),
@@ -72,6 +90,8 @@ fn autopilot_loop_help_documents_foreground_boundary() {
     assert!(help.contains("bounded foreground CLI supervisor"));
     assert!(help.contains("Bounded number of foreground autopilot iterations"));
     assert!(help.contains("Preview the bounded all-lane tick without mutation"));
+    assert!(help.contains("--no-recover"));
+    assert!(!help.contains("Enable recover-first handling"));
 }
 
 #[test]

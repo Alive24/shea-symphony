@@ -42,6 +42,7 @@
   let defaultHandoffTarget = 'codex-app';
   let copiedHandoffId = '';
   let view = buildViewModel(null);
+  let autoloopRefreshTimer: number | null = null;
 
   $: dataSource = view.dataSource;
   $: queueIssues = view.queueIssues ?? [];
@@ -62,7 +63,7 @@
     const label = titleCaseLane(laneKey);
     const workers = view.laneWorkers?.[laneKey] ?? [];
     const liveWorker = laneWorkerFromAutoloop(autoloopLanes[laneKey], laneKey, autoloopState);
-    const visibleWorkers = liveWorker ? [liveWorker, ...workers] : workers;
+    const visibleWorkers = uniqueWorkers(liveWorker ? [liveWorker, ...workers] : workers);
     const queued = queueIssues.filter((issue) => issue.lane === label);
     const workerIssues = visibleWorkers.map((worker, index) => ({
       kind: 'picked',
@@ -70,7 +71,8 @@
       title: worker.title ?? worker.action ?? 'Worker active',
       meta: `${worker.action ?? 'Active'} · ${worker.backend ?? 'worker'} · ${worker.session ?? worker.elapsed ?? 'session'}`,
       tone: 'success',
-      workerNumber: index + 1
+      workerNumber: index + 1,
+      waiting: worker.waiting === true || worker.status === 'running'
     }));
     const pickedIssueIds = new Set(workerIssues.map((issue) => normalizeIssueRef(issue.id)).filter(Boolean));
     const waitingIssues = queued
@@ -191,6 +193,24 @@
       window.setTimeout(() => {
         refresh(force, includeSlowReads, source);
       }, 0);
+    });
+  }
+
+  function scheduleAutoloopRefresh(source = 'autoloop') {
+    if (autoloopRefreshTimer) window.clearTimeout(autoloopRefreshTimer);
+    autoloopRefreshTimer = window.setTimeout(() => {
+      autoloopRefreshTimer = null;
+      refresh(true, true, source);
+    }, 900);
+  }
+
+  function uniqueWorkers(workers) {
+    const seen = new Set();
+    return (workers ?? []).filter((worker) => {
+      const key = normalizeIssueRef(worker.issue) ?? `${worker.lane ?? 'lane'}:${worker.issue ?? worker.action ?? ''}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
     });
   }
 
@@ -383,10 +403,12 @@
         autoloopState = appendAutoloopLine(autoloopState, event.payload);
       } else if (event.type === 'lane') {
         autoloopState = mergeLaneSnapshot(autoloopState, event.payload);
+        scheduleAutoloopRefresh('autoloop-lane');
       } else if (event.type === 'snapshot') {
         autoloopState = event.payload;
       } else if (event.type === 'started' || event.type === 'stopped' || event.type === 'error') {
         refreshAutoloopState();
+        if (event.type !== 'started') scheduleAutoloopRefresh(`autoloop-${event.type}`);
       }
     }).then((unlisten) => {
       unlistenAutoloop = unlisten;
@@ -414,6 +436,7 @@
       window.removeEventListener(REFRESH_REQUEST_EVENT, refreshRequestListener);
       window.removeEventListener(HANDOFF_TARGET_CHANGE_EVENT, handoffTargetListener);
       window.clearInterval(handoffRefresh);
+      if (autoloopRefreshTimer) window.clearTimeout(autoloopRefreshTimer);
       unlistenAutoloop?.();
     };
   });
@@ -518,9 +541,9 @@
           <div class="lane-board-issue-list">
             {#if lane.issues.length}
               {#each lane.issues as issue}
-                <div class="lane-board-item {issue.kind === 'picked' ? 'picked' : issue.tone}">
+                <div class="lane-board-item {issue.kind === 'picked' ? 'picked' : issue.tone} {issue.waiting ? 'waiting' : ''}">
                   {#if issue.kind === 'picked'}
-                    <span class="worker-number">{issue.workerNumber}</span>
+                    <span class="worker-number {issue.waiting ? 'waiting' : ''}">{issue.workerNumber}</span>
                   {:else}
                     <span class="worker-number placeholder" aria-hidden="true"></span>
                   {/if}

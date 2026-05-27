@@ -1231,6 +1231,11 @@ a {
   border-color: color-mix(in oklab, var(--success), var(--border) 72%);
 }
 
+.lane-board-item.waiting {
+  border-color: color-mix(in oklab, var(--accent), var(--border) 48%);
+  background: color-mix(in oklab, var(--accent-soft), var(--card-bg) 72%);
+}
+
 .lane-board-item.warn {
   border-color: color-mix(in oklab, var(--warn), var(--border) 66%);
 }
@@ -1260,9 +1265,32 @@ a {
   font-weight: 800;
 }
 
+.worker-number.waiting {
+  position: relative;
+  color: var(--accent);
+  background: color-mix(in oklab, var(--accent-soft), var(--surface) 24%);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent), transparent 55%);
+}
+
+.worker-number.waiting::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border: 2px solid color-mix(in oklab, var(--accent), transparent 65%);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: worker-wait-spin 0.9s linear infinite;
+}
+
 .worker-number.placeholder {
   color: transparent;
   background: transparent;
+}
+
+@keyframes worker-wait-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .lane-board-item span:not(.worker-number) {

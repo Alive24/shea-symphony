@@ -602,10 +602,11 @@ fn run_codex_app_server_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>
         .stderr
         .take()
         .ok_or_else(|| AgentError::Unavailable("Codex app-server stderr was unavailable".into()))?;
-    let stderr_handle = thread::spawn(move || {
+    let (stderr_tx, stderr_rx) = mpsc::channel();
+    thread::spawn(move || {
         let mut stderr_text = String::new();
         let _ = BufReader::new(stderr).read_to_string(&mut stderr_text);
-        stderr_text
+        let _ = stderr_tx.send(stderr_text);
     });
     let stdout_rx = spawn_app_server_stdout_reader(stdout);
 
@@ -622,13 +623,14 @@ fn run_codex_app_server_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>
         &mut events,
     );
 
+    drop(stdin);
     let terminal_session_id = events.iter().find_map(|event| match event {
         AgentEvent::SessionStarted { session_id, .. } => Some(session_id.clone()),
         _ => None,
     });
     let exit_status = finish_app_server_run(
         child,
-        Some(stderr_handle),
+        Some(stderr_rx),
         Some(&mut events),
         &artifacts,
         &protocol_log,
@@ -1120,7 +1122,7 @@ fn app_server_final_session_status(events: &[AgentEvent]) -> SessionStatus {
 
 fn finish_app_server_run(
     mut child: Child,
-    stderr_handle: Option<thread::JoinHandle<String>>,
+    stderr_rx: Option<Receiver<String>>,
     events: Option<&mut Vec<AgentEvent>>,
     artifacts: &AppServerArtifactPaths,
     protocol_log: &str,
@@ -1134,8 +1136,8 @@ fn finish_app_server_run(
     };
 
     fs::write(&artifacts.protocol_path, protocol_log)?;
-    let stderr = stderr_handle
-        .and_then(|handle| handle.join().ok())
+    let stderr = stderr_rx
+        .and_then(|rx| rx.recv_timeout(Duration::from_millis(500)).ok())
         .unwrap_or_default();
     fs::write(&artifacts.stderr_path, &stderr)?;
     if !stderr.trim().is_empty() {

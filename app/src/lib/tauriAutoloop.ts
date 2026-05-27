@@ -41,6 +41,8 @@ export type LaneWorker = {
   session: string;
   elapsed: string;
   lane: string;
+  status?: string | null;
+  waiting?: boolean;
 };
 
 export type StartAutoloopOptions = {
@@ -168,13 +170,14 @@ export function laneWorkerFromAutoloop(
   laneKey: string,
   state: LoopStateSnapshot
 ): LaneWorker | null {
-  if (!lane || lane.status === 'idle') return null;
+  if (!lane || lane.status === 'idle' || lane.status === 'completed') return null;
   if (!state.running && !lane.updatedAtMs) return null;
 
   const selected = issueRefFromValue(lane.selected);
   const action = textFromValue(lane.action, lane.status);
   const target = textFromValue(lane.target, lane.status);
   const label = titleCaseLane(laneKey);
+  const waiting = lane.status === 'running' || action === 'tick_started' || action === 'backend';
   return {
     issue: selected ?? `${label} loop`,
     title: selected ? action : `${label} ${lane.status}`,
@@ -182,7 +185,9 @@ export function laneWorkerFromAutoloop(
     backend: `Tauri ${state.mode}`,
     session: state.pid ? `pid ${state.pid}` : 'autoloop',
     elapsed: target,
-    lane: laneKey
+    lane: laneKey,
+    status: lane.status,
+    waiting
   };
 }
 

@@ -16,6 +16,7 @@ use crate::lanes::claim::{
 use crate::lanes::main_loop::run_loop_handoff_plan;
 use crate::lanes::merge::merge_preflight_status;
 use crate::lanes::review::{review_backend_kind, select_review_worker_issues};
+use crate::orchestration::hydrate_issues_for_review_lane;
 
 use super::{coordination_issue_hint, AutopilotIssueSummary, AutopilotLanePlan};
 
@@ -26,7 +27,7 @@ pub(super) fn autopilot_lane_plans(
 ) -> Result<Vec<AutopilotLanePlan>, Box<dyn std::error::Error>> {
     Ok(vec![
         autopilot_main_lane_plan(config, adapter, issues),
-        autopilot_review_lane_plan(config, issues),
+        autopilot_review_lane_plan(config, adapter, issues)?,
         autopilot_merge_lane_plan(config, adapter, issues)?,
     ])
 }
@@ -135,8 +136,9 @@ fn autopilot_main_lane_plan(
 
 fn autopilot_review_lane_plan(
     config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
     issues: &[TrackerIssue],
-) -> AutopilotLanePlan {
+) -> Result<AutopilotLanePlan, Box<dyn std::error::Error>> {
     let agent_review_state = &config.tracker.state_map.agent_review;
     let review_issues = issues
         .iter()
@@ -144,8 +146,9 @@ fn autopilot_review_lane_plan(
         .filter(|issue| !coordination_issue_hint(issue))
         .cloned()
         .collect::<Vec<_>>();
+    let review_issues = hydrate_issues_for_review_lane(adapter, review_issues)?;
     if review_issues.is_empty() {
-        return AutopilotLanePlan {
+        return Ok(AutopilotLanePlan {
             lane: "review".into(),
             status: "idle".into(),
             selected_issue: None,
@@ -153,7 +156,7 @@ fn autopilot_review_lane_plan(
             target_state: None,
             reason: "no_agent_review_issue".into(),
             evidence: vec!["source=review loop dry-run selection".into()],
-        };
+        });
     }
 
     let backend_kind = review_backend_kind(config, None);
@@ -161,7 +164,7 @@ fn autopilot_review_lane_plan(
         select_review_worker_issues(&review_issues, agent_review_state, &backend_kind, 1);
     if let Some(issue) = selected.first() {
         let worker_key = review_worker_key(issue, &backend_kind);
-        return AutopilotLanePlan {
+        return Ok(AutopilotLanePlan {
             lane: "review".into(),
             status: "ready".into(),
             selected_issue: Some(AutopilotIssueSummary::from_issue(issue)),
@@ -178,7 +181,7 @@ fn autopilot_review_lane_plan(
                 format!("worker_key={worker_key}"),
                 "source=review loop dry-run selection".into(),
             ],
-        };
+        });
     }
 
     let reason = review_issues
@@ -198,7 +201,7 @@ fn autopilot_review_lane_plan(
             },
         )
         .unwrap_or_else(|| "no_agent_review_issue".into());
-    AutopilotLanePlan {
+    Ok(AutopilotLanePlan {
         lane: "review".into(),
         status: "blocked".into(),
         selected_issue: None,
@@ -209,7 +212,7 @@ fn autopilot_review_lane_plan(
             format!("backend={backend_kind}"),
             "source=review_run_eligibility".into(),
         ],
-    }
+    })
 }
 
 fn autopilot_merge_lane_plan(

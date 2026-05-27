@@ -298,11 +298,42 @@ fn autopilot_loop_with_cancellation(
             tick_settings.merge_max_concurrent
         );
 
-        let lane_results = vec![
-            autopilot_main_tick(&options, &tick_settings, Some(&plan)),
-            autopilot_review_tick(&options, &tick_settings, Some(&plan)),
-            autopilot_merge_tick(&options, &tick_settings, Some(&plan)),
-        ];
+        let mut latest_plan = plan.clone();
+        let mut lane_results = Vec::new();
+
+        print_autopilot_lane_running(
+            "main",
+            autopilot_plan_lane(Some(&latest_plan), "main"),
+            tick_settings.main_max_concurrent,
+            tick_settings.recover,
+        );
+        let main_result = autopilot_main_tick(&options, &tick_settings, Some(&latest_plan));
+        print_autopilot_lane_result(&main_result);
+        lane_results.push(main_result);
+        latest_plan = refresh_autopilot_plan_or_keep(&options.workflow_path, latest_plan);
+
+        print_autopilot_lane_running(
+            "review",
+            autopilot_plan_lane(Some(&latest_plan), "review"),
+            tick_settings.review_max_concurrent,
+            false,
+        );
+        let review_result = autopilot_review_tick(&options, &tick_settings, Some(&latest_plan));
+        print_autopilot_lane_result(&review_result);
+        lane_results.push(review_result);
+        latest_plan = refresh_autopilot_plan_or_keep(&options.workflow_path, latest_plan);
+
+        print_autopilot_lane_running(
+            "merge",
+            autopilot_plan_lane(Some(&latest_plan), "merge"),
+            tick_settings.merge_max_concurrent,
+            tick_settings.recover,
+        );
+        let merge_result = autopilot_merge_tick(&options, &tick_settings, Some(&latest_plan));
+        print_autopilot_lane_result(&merge_result);
+        lane_results.push(merge_result);
+        latest_plan = refresh_autopilot_plan_or_keep(&options.workflow_path, latest_plan);
+
         had_lane_error |= lane_results.iter().any(|result| result.status == "error");
 
         let result = AutopilotLoopIterationResult {
@@ -312,7 +343,7 @@ fn autopilot_loop_with_cancellation(
             execution_order: vec!["main".into(), "review".into(), "merge".into()],
             settings: tick_settings,
             lanes: lane_results,
-            parked_queues: plan.parked_queues,
+            parked_queues: latest_plan.parked_queues,
         };
         if options.json {
             println!("{}", serde_json::to_string_pretty(&result)?);
@@ -469,6 +500,53 @@ fn autopilot_plan_lane<'a>(
             .iter()
             .find(|candidate| candidate.lane == lane)
     })
+}
+
+fn refresh_autopilot_plan_or_keep(
+    workflow_path: &PathBuf,
+    fallback: AutopilotPlanSnapshot,
+) -> AutopilotPlanSnapshot {
+    build_autopilot_plan(workflow_path).unwrap_or(fallback)
+}
+
+fn print_autopilot_lane_running(
+    lane: &str,
+    lane_plan: Option<&AutopilotLanePlan>,
+    max_concurrent: usize,
+    recover: bool,
+) {
+    let selected = lane_plan
+        .and_then(|plan| plan.selected_issue.as_ref())
+        .map(|issue| issue.identifier.as_str())
+        .unwrap_or("none");
+    println!(
+        "autopilot_loop_lane lane={} status=running action=tick_started selected={} target={} max_concurrent={} recover={}",
+        lane,
+        selected,
+        lane_plan
+            .and_then(|plan| plan.target_state.as_deref())
+            .unwrap_or("none"),
+        max_concurrent,
+        recover
+    );
+}
+
+fn print_autopilot_lane_result(lane: &AutopilotLoopLaneResult) {
+    let selected = lane
+        .selected_issue
+        .as_ref()
+        .map(|issue| issue.identifier.as_str())
+        .unwrap_or("none");
+    println!(
+        "autopilot_loop_lane lane={} status={} action={} selected={} target={} max_concurrent={} recover={}",
+        lane.lane,
+        lane.status,
+        lane.action,
+        selected,
+        lane.target_state.as_deref().unwrap_or("none"),
+        lane.max_concurrent,
+        lane.recover
+    );
 }
 
 fn autopilot_lane_result_from_execution(

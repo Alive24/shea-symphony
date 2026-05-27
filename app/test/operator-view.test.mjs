@@ -58,9 +58,12 @@ test('maps live autoloop lane snapshots into existing lane board worker rows', (
     backend: 'Tauri dry-run',
     session: 'pid 4242',
     elapsed: 'Human Review',
-    lane: 'review'
+    lane: 'review',
+    status: 'running',
+    waiting: true
   });
   assert.equal(laneWorkerFromAutoloop({ lane: 'main', status: 'idle' }, 'main', state), null);
+  assert.equal(laneWorkerFromAutoloop({ lane: 'main', status: 'completed' }, 'main', state), null);
 });
 
 test('view model uses CLI autopilot parked queues for human todo issues', () => {

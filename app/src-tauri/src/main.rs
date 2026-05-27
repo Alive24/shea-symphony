@@ -927,6 +927,21 @@ mod tests {
     }
 
     #[test]
+    fn parses_autopilot_running_lane_line() {
+        let lane = parse_autoloop_lane(
+            "autopilot_loop_lane lane=main status=running action=tick_started selected=#364 target=AgentReview max_concurrent=3 recover=true",
+            84,
+        )
+        .unwrap();
+
+        assert_eq!(lane.lane, "main");
+        assert_eq!(lane.status, "running");
+        assert_eq!(lane.action.as_deref(), Some("tick_started"));
+        assert_eq!(lane.selected.as_deref(), Some("#364"));
+        assert_eq!(lane.target.as_deref(), Some("AgentReview"));
+    }
+
+    #[test]
     fn ignores_non_lane_lines() {
         assert!(parse_autoloop_lane("autopilot_loop=stopped reason=max_iterations", 1).is_none());
     }

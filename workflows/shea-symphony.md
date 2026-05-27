@@ -67,6 +67,9 @@ review_lane:
   gemini_model: gemini-3.1-pro-preview
   gemini_allowed_tools:
     - run_shell_command
+    - read_file
+    - grep_search
+    - list_directory
   timeout_ms: 1200000
   max_concurrent_workers: 2
 merge_lane:

@@ -318,6 +318,7 @@ impl ReviewBackend for GeminiCliReviewBackend {
 }
 
 pub fn gemini_cli_headless_args(model: Option<&str>, allowed_tools: &[String]) -> Vec<String> {
+    let allowed_tools = gemini_headless_allowed_tools(allowed_tools);
     let mut args = vec![
         "--skip-trust".to_string(),
         "--prompt".to_string(),
@@ -332,6 +333,21 @@ pub fn gemini_cli_headless_args(model: Option<&str>, allowed_tools: &[String]) -
         args.extend(["--allowed-tools".to_string(), allowed_tools.join(",")]);
     }
     args
+}
+
+fn gemini_headless_allowed_tools(configured_tools: &[String]) -> Vec<String> {
+    let mut tools = Vec::new();
+    for tool in configured_tools
+        .iter()
+        .map(|tool| tool.trim())
+        .filter(|tool| !tool.is_empty())
+        .chain(["read_file", "grep_search", "list_directory"])
+    {
+        if !tools.iter().any(|existing| existing == tool) {
+            tools.push(tool.to_string());
+        }
+    }
+    tools
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1273,7 +1289,7 @@ mod tests {
     }
 
     #[test]
-    fn gemini_headless_args_include_prompt_json_model_and_allowed_tools() {
+    fn gemini_headless_args_include_prompt_json_model_and_review_tools() {
         let args = gemini_cli_headless_args(
             Some("gemini-3.1-pro-preview"),
             &["run_shell_command".into()],
@@ -1290,7 +1306,7 @@ mod tests {
                 "--model",
                 "gemini-3.1-pro-preview",
                 "--allowed-tools",
-                "run_shell_command",
+                "run_shell_command,read_file,grep_search,list_directory",
             ]
         );
     }
@@ -1335,7 +1351,7 @@ mod tests {
         assert_eq!(job.state, ReviewJobState::Completed);
         assert_eq!(
             fs::read_to_string(workspace.join("args.txt")).unwrap(),
-            "--skip-trust\n--prompt\n\n--output-format\njson\n--model\ngemini-3.1-pro-preview\n--allowed-tools\nrun_shell_command\n"
+            "--skip-trust\n--prompt\n\n--output-format\njson\n--model\ngemini-3.1-pro-preview\n--allowed-tools\nrun_shell_command,read_file,grep_search,list_directory\n"
         );
         assert_eq!(
             fs::read_to_string(workspace.join("prompt.txt")).unwrap(),

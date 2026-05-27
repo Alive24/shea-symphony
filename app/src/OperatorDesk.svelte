@@ -285,6 +285,118 @@
     return new Date(time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
+  function formatAutoloopLogLine(entry: AutoloopLine) {
+    const event = autoloopEvent(entry);
+    if (!event) {
+      return {
+        kind: entry.stream,
+        label: entry.stream,
+        summary: entry.line,
+        detail: ''
+      };
+    }
+
+    const eventName = String(event.event ?? 'event');
+    const payload = recordValue(event.payload);
+    if (eventName === 'autopilot_loop_status') {
+      const counts = recordValue(payload.counts);
+      return {
+        kind: String(payload.phase ?? 'status'),
+        label: 'Loop status',
+        summary: [
+          payload.mode,
+          payload.phase,
+          counts.running != null ? `${counts.running} running` : '',
+          counts.blocked != null ? `${counts.blocked} blocked` : ''
+        ]
+          .filter(Boolean)
+          .join(' · '),
+        detail: String(payload.message ?? '')
+      };
+    }
+    if (eventName === 'autopilot_loop_lane') {
+      const issue = issueLabelFromPayload(payload.selected_issue ?? payload.selectedIssue ?? payload.selected);
+      return {
+        kind: String(payload.status ?? 'lane'),
+        label: `${titleCaseLane(String(payload.lane ?? 'lane'))} lane`,
+        summary: [
+          payload.status,
+          payload.action,
+          issue,
+          payload.target_state ?? payload.targetState
+        ]
+          .filter(Boolean)
+          .join(' · '),
+        detail: ''
+      };
+    }
+    if (eventName === 'autopilot_loop_iteration') {
+      const settings = recordValue(payload.settings);
+      return {
+        kind: 'iteration',
+        label: 'Iteration',
+        summary: [
+          `#${payload.iteration ?? '?'}`,
+          payload.mode,
+          `main ${settings.main_max_concurrent ?? settings.mainMaxConcurrent ?? '-'}`,
+          `review ${settings.review_max_concurrent ?? settings.reviewMaxConcurrent ?? '-'}`,
+          `merge ${settings.merge_max_concurrent ?? settings.mergeMaxConcurrent ?? '-'}`
+        ].join(' · '),
+        detail: ''
+      };
+    }
+    if (eventName === 'autopilot_loop_result') {
+      const lanes = Array.isArray(payload.lanes)
+        ? payload.lanes.map((lane) => {
+            const laneRecord = recordValue(lane);
+            return `${laneRecord.lane}:${laneRecord.status}`;
+          })
+        : [];
+      return {
+        kind: 'result',
+        label: 'Iteration result',
+        summary: [`#${payload.iteration ?? '?'}`, payload.mode, ...lanes].filter(Boolean).join(' · '),
+        detail: ''
+      };
+    }
+    if (eventName === 'autopilot_loop_stopped') {
+      return {
+        kind: 'stopped',
+        label: 'Loop stopped',
+        summary: [`reason ${payload.reason ?? 'unknown'}`, `${payload.iterations ?? 0} iterations`].join(' · '),
+        detail: ''
+      };
+    }
+
+    return {
+      kind: 'event',
+      label: eventName,
+      summary: '',
+      detail: JSON.stringify(payload, null, 2)
+    };
+  }
+
+  function autoloopEvent(entry: AutoloopLine) {
+    if (entry.event && typeof entry.event === 'object') return entry.event;
+    try {
+      const parsed = JSON.parse(entry.line);
+      return parsed?.source === 'shea-symphony' && parsed?.event ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function recordValue(value: unknown) {
+    return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  }
+
+  function issueLabelFromPayload(value: unknown) {
+    if (!value) return '';
+    if (typeof value === 'string') return value === 'none' ? '' : value;
+    const record = recordValue(value);
+    return String(record.identifier ?? record.issue ?? record.number ?? '');
+  }
+
   function latestAutoloopStdout(state: LoopStateSnapshot, lines: AutoloopLine[]) {
     const startedAt = Number(state.startedAtMs);
     const lowerBound = Number.isFinite(startedAt) ? startedAt - 1000 : null;
@@ -599,9 +711,18 @@
       {#if autoloopStdoutLines.length}
         <div class="autoloop-stdout-list" aria-label="Autoloop stdout">
           {#each autoloopStdoutLines as entry}
-            <div class="autoloop-stdout-line">
+            {@const logLine = formatAutoloopLogLine(entry)}
+            <div class="autoloop-stdout-line {logLine.kind}">
               <time>{formatAutoloopTime(entry.atMs)}</time>
-              <code>{entry.line}</code>
+              <div class="autoloop-line-content">
+                <strong>{logLine.label}</strong>
+                {#if logLine.summary}
+                  <span>{logLine.summary}</span>
+                {/if}
+                {#if logLine.detail}
+                  <code>{logLine.detail}</code>
+                {/if}
+              </div>
             </div>
           {/each}
         </div>

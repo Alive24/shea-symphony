@@ -7,6 +7,7 @@ use std::thread;
 use std::time::Duration;
 
 use serde::Serialize;
+use serde_json::{json, Value};
 use shea_symphony::config::RuntimeConfig;
 use shea_symphony::model::PollingSnapshot;
 use shea_symphony::orchestrator::Orchestrator;
@@ -39,6 +40,7 @@ pub(crate) struct AutopilotLoopOptions {
     pub(crate) merge_max_concurrent: Option<usize>,
     pub(crate) display: DisplayMode,
     pub(crate) json: bool,
+    pub(crate) event_json: bool,
 }
 
 impl AutopilotLoopOptions {
@@ -95,18 +97,25 @@ fn autopilot_loop_with_cancellation(
                 iteration.saturating_sub(1),
                 "cancellation requested before next poll".into(),
             );
-            print_autopilot_loop_status(&status, options.json, options.display)?;
-            println!(
-                "autopilot_loop=stopped reason=cancelled iterations={}",
-                iteration.saturating_sub(1)
-            );
+            print_autopilot_loop_status(
+                &status,
+                options.json,
+                options.display,
+                options.event_json,
+            )?;
+            print_autopilot_stopped(options.event_json, "cancelled", iteration.saturating_sub(1))?;
             stopped_reported = true;
             break;
         }
 
         let checking_status =
             autopilot_loop_checking_status(&options, iteration, &recent_transient_failures);
-        print_autopilot_loop_status(&checking_status, options.json, options.display)?;
+        print_autopilot_loop_status(
+            &checking_status,
+            options.json,
+            options.display,
+            options.event_json,
+        )?;
         warn_if_temporary_workflow_path(&options.workflow_path);
 
         let workflow = match WorkflowDefinition::load(&options.workflow_path) {
@@ -118,7 +127,12 @@ fn autopilot_loop_with_cancellation(
                     format!("workflow_load_error={error}"),
                     &recent_transient_failures,
                 );
-                print_autopilot_loop_status(&status, options.json, options.display)?;
+                print_autopilot_loop_status(
+                    &status,
+                    options.json,
+                    options.display,
+                    options.event_json,
+                )?;
                 if iteration < max_iterations
                     && autopilot_sleep_or_cancel(status.settings.poll_interval_ms, &cancellation)
                 {
@@ -127,8 +141,13 @@ fn autopilot_loop_with_cancellation(
                         iteration,
                         "cancellation requested during blocked wait".into(),
                     );
-                    print_autopilot_loop_status(&cancelled, options.json, options.display)?;
-                    println!("autopilot_loop=stopped reason=cancelled iterations={iteration}");
+                    print_autopilot_loop_status(
+                        &cancelled,
+                        options.json,
+                        options.display,
+                        options.event_json,
+                    )?;
+                    print_autopilot_stopped(options.event_json, "cancelled", iteration)?;
                     stopped_reported = true;
                     break;
                 }
@@ -149,7 +168,12 @@ fn autopilot_loop_with_cancellation(
                     format!("workflow_config_error={error}"),
                     &recent_transient_failures,
                 );
-                print_autopilot_loop_status(&status, options.json, options.display)?;
+                print_autopilot_loop_status(
+                    &status,
+                    options.json,
+                    options.display,
+                    options.event_json,
+                )?;
                 if iteration < max_iterations
                     && autopilot_sleep_or_cancel(status.settings.poll_interval_ms, &cancellation)
                 {
@@ -158,8 +182,13 @@ fn autopilot_loop_with_cancellation(
                         iteration,
                         "cancellation requested during blocked wait".into(),
                     );
-                    print_autopilot_loop_status(&cancelled, options.json, options.display)?;
-                    println!("autopilot_loop=stopped reason=cancelled iterations={iteration}");
+                    print_autopilot_loop_status(
+                        &cancelled,
+                        options.json,
+                        options.display,
+                        options.event_json,
+                    )?;
+                    print_autopilot_stopped(options.event_json, "cancelled", iteration)?;
                     stopped_reported = true;
                     break;
                 }
@@ -194,7 +223,12 @@ fn autopilot_loop_with_cancellation(
                         "retrying",
                         Some(retry_delay_ms),
                     );
-                    print_autopilot_loop_status(&status, options.json, options.display)?;
+                    print_autopilot_loop_status(
+                        &status,
+                        options.json,
+                        options.display,
+                        options.event_json,
+                    )?;
                     if iteration < max_iterations
                         && autopilot_sleep_or_cancel(retry_delay_ms, &cancellation)
                     {
@@ -203,8 +237,13 @@ fn autopilot_loop_with_cancellation(
                             iteration,
                             "cancellation requested during retry backoff".into(),
                         );
-                        print_autopilot_loop_status(&cancelled, options.json, options.display)?;
-                        println!("autopilot_loop=stopped reason=cancelled iterations={iteration}");
+                        print_autopilot_loop_status(
+                            &cancelled,
+                            options.json,
+                            options.display,
+                            options.event_json,
+                        )?;
+                        print_autopilot_stopped(options.event_json, "cancelled", iteration)?;
                         stopped_reported = true;
                         break;
                     }
@@ -225,7 +264,12 @@ fn autopilot_loop_with_cancellation(
                     "blocked",
                     Some(settings.poll_interval_ms),
                 );
-                print_autopilot_loop_status(&status, options.json, options.display)?;
+                print_autopilot_loop_status(
+                    &status,
+                    options.json,
+                    options.display,
+                    options.event_json,
+                )?;
                 if iteration < max_iterations
                     && autopilot_sleep_or_cancel(settings.poll_interval_ms, &cancellation)
                 {
@@ -234,8 +278,13 @@ fn autopilot_loop_with_cancellation(
                         iteration,
                         "cancellation requested during blocked wait".into(),
                     );
-                    print_autopilot_loop_status(&cancelled, options.json, options.display)?;
-                    println!("autopilot_loop=stopped reason=cancelled iterations={iteration}");
+                    print_autopilot_loop_status(
+                        &cancelled,
+                        options.json,
+                        options.display,
+                        options.event_json,
+                    )?;
+                    print_autopilot_stopped(options.event_json, "cancelled", iteration)?;
                     stopped_reported = true;
                     break;
                 }
@@ -252,7 +301,7 @@ fn autopilot_loop_with_cancellation(
             &recent_transient_failures,
             cancellation.load(Ordering::SeqCst),
         );
-        print_autopilot_loop_status(&status, options.json, options.display)?;
+        print_autopilot_loop_status(&status, options.json, options.display, options.event_json)?;
         if status.phase == "blocked" {
             if iteration < max_iterations
                 && autopilot_sleep_or_cancel(settings.poll_interval_ms, &cancellation)
@@ -265,8 +314,13 @@ fn autopilot_loop_with_cancellation(
                     &recent_transient_failures,
                     true,
                 );
-                print_autopilot_loop_status(&cancelled, options.json, options.display)?;
-                println!("autopilot_loop=stopped reason=cancelled iterations={iteration}");
+                print_autopilot_loop_status(
+                    &cancelled,
+                    options.json,
+                    options.display,
+                    options.event_json,
+                )?;
+                print_autopilot_stopped(options.event_json, "cancelled", iteration)?;
                 stopped_reported = true;
                 break;
             }
@@ -282,55 +336,105 @@ fn autopilot_loop_with_cancellation(
                 &recent_transient_failures,
                 true,
             );
-            print_autopilot_loop_status(&cancelled, options.json, options.display)?;
-            println!("autopilot_loop=stopped reason=cancelled iterations={iteration}");
+            print_autopilot_loop_status(
+                &cancelled,
+                options.json,
+                options.display,
+                options.event_json,
+            )?;
+            print_autopilot_stopped(options.event_json, "cancelled", iteration)?;
             stopped_reported = true;
             break;
         }
 
-        println!(
-            "autopilot_loop_iteration={} mode={} order=main,review,merge recover={} main_max_concurrent={} review_max_concurrent={} merge_max_concurrent={}",
-            iteration,
-            if options.write { "write" } else { "dry-run" },
-            tick_settings.recover,
-            tick_settings.main_max_concurrent,
-            tick_settings.review_max_concurrent,
-            tick_settings.merge_max_concurrent
-        );
+        if !options.event_json {
+            println!(
+                "autopilot_loop_iteration={} mode={} order=main,review,merge recover={} main_max_concurrent={} review_max_concurrent={} merge_max_concurrent={}",
+                iteration,
+                if options.write { "write" } else { "dry-run" },
+                tick_settings.recover,
+                tick_settings.main_max_concurrent,
+                tick_settings.review_max_concurrent,
+                tick_settings.merge_max_concurrent
+            );
+        }
+        print_autopilot_event(
+            options.event_json,
+            "autopilot_loop_iteration",
+            json!({
+                "iteration": iteration,
+                "mode": if options.write { "write" } else { "dry-run" },
+                "order": ["main", "review", "merge"],
+                "settings": &tick_settings,
+            }),
+        )?;
 
         let mut latest_plan = plan.clone();
         let mut lane_results = Vec::new();
 
-        print_autopilot_lane_running(
-            "main",
-            autopilot_plan_lane(Some(&latest_plan), "main"),
-            tick_settings.main_max_concurrent,
-            tick_settings.recover,
-        );
-        let main_result = autopilot_main_tick(&options, &tick_settings, Some(&latest_plan));
-        print_autopilot_lane_result(&main_result);
+        let main_plan = autopilot_plan_lane(Some(&latest_plan), "main");
+        let main_result = if autopilot_lane_plan_should_tick(main_plan) {
+            print_autopilot_lane_running(
+                "main",
+                main_plan,
+                tick_settings.main_max_concurrent,
+                tick_settings.recover,
+                options.event_json,
+            )?;
+            autopilot_main_tick(&options, &tick_settings, Some(&latest_plan))
+        } else {
+            autopilot_lane_result_from_skip(
+                "main",
+                main_plan,
+                tick_settings.main_max_concurrent,
+                tick_settings.recover,
+            )
+        };
+        print_autopilot_lane_result(&main_result, options.event_json)?;
         lane_results.push(main_result);
         latest_plan = refresh_autopilot_plan_or_keep(&options.workflow_path, latest_plan);
 
-        print_autopilot_lane_running(
-            "review",
-            autopilot_plan_lane(Some(&latest_plan), "review"),
-            tick_settings.review_max_concurrent,
-            false,
-        );
-        let review_result = autopilot_review_tick(&options, &tick_settings, Some(&latest_plan));
-        print_autopilot_lane_result(&review_result);
+        let review_plan = autopilot_plan_lane(Some(&latest_plan), "review");
+        let review_result = if autopilot_lane_plan_should_tick(review_plan) {
+            print_autopilot_lane_running(
+                "review",
+                review_plan,
+                tick_settings.review_max_concurrent,
+                false,
+                options.event_json,
+            )?;
+            autopilot_review_tick(&options, &tick_settings, Some(&latest_plan))
+        } else {
+            autopilot_lane_result_from_skip(
+                "review",
+                review_plan,
+                tick_settings.review_max_concurrent,
+                false,
+            )
+        };
+        print_autopilot_lane_result(&review_result, options.event_json)?;
         lane_results.push(review_result);
         latest_plan = refresh_autopilot_plan_or_keep(&options.workflow_path, latest_plan);
 
-        print_autopilot_lane_running(
-            "merge",
-            autopilot_plan_lane(Some(&latest_plan), "merge"),
-            tick_settings.merge_max_concurrent,
-            tick_settings.recover,
-        );
-        let merge_result = autopilot_merge_tick(&options, &tick_settings, Some(&latest_plan));
-        print_autopilot_lane_result(&merge_result);
+        let merge_plan = autopilot_plan_lane(Some(&latest_plan), "merge");
+        let merge_result = if autopilot_lane_plan_should_tick(merge_plan) {
+            print_autopilot_lane_running(
+                "merge",
+                merge_plan,
+                tick_settings.merge_max_concurrent,
+                tick_settings.recover,
+                options.event_json,
+            )?;
+            autopilot_merge_tick(&options, &tick_settings, Some(&latest_plan))
+        } else {
+            autopilot_lane_result_from_skip(
+                "merge",
+                merge_plan,
+                tick_settings.merge_max_concurrent,
+                tick_settings.recover,
+            )
+        };
+        print_autopilot_lane_result(&merge_result, options.event_json)?;
         lane_results.push(merge_result);
         latest_plan = refresh_autopilot_plan_or_keep(&options.workflow_path, latest_plan);
 
@@ -345,13 +449,21 @@ fn autopilot_loop_with_cancellation(
             lanes: lane_results,
             parked_queues: latest_plan.parked_queues,
         };
-        if options.json {
+        if options.event_json {
+            // JSON signal mode emits the structured iteration event below instead of
+            // legacy key=value lane lines that are intentionally parser-hostile.
+        } else if options.json {
             println!("{}", serde_json::to_string_pretty(&result)?);
         } else if options.display == DisplayMode::Tui {
             println!("{}", render_autopilot_loop_iteration_tui(&result));
         } else {
             println!("{}", render_autopilot_loop_iteration_result(&result));
         }
+        print_autopilot_event(
+            options.event_json,
+            "autopilot_loop_result",
+            serde_json::to_value(&result)?,
+        )?;
 
         if iteration < max_iterations
             && autopilot_sleep_or_cancel(settings.poll_interval_ms, &cancellation)
@@ -361,8 +473,13 @@ fn autopilot_loop_with_cancellation(
                 iteration,
                 "cancellation requested before next poll".into(),
             );
-            print_autopilot_loop_status(&cancelled, options.json, options.display)?;
-            println!("autopilot_loop=stopped reason=cancelled iterations={iteration}");
+            print_autopilot_loop_status(
+                &cancelled,
+                options.json,
+                options.display,
+                options.event_json,
+            )?;
+            print_autopilot_stopped(options.event_json, "cancelled", iteration)?;
             stopped_reported = true;
             break;
         }
@@ -372,7 +489,7 @@ fn autopilot_loop_with_cancellation(
         Err("one or more autopilot lane ticks failed; see per-lane results above".into())
     } else {
         if !stopped_reported {
-            println!("autopilot_loop=stopped reason=max_iterations iterations={max_iterations}");
+            print_autopilot_stopped(options.event_json, "max_iterations", max_iterations)?;
         }
         Ok(())
     }
@@ -509,44 +626,106 @@ fn refresh_autopilot_plan_or_keep(
     build_autopilot_plan(workflow_path).unwrap_or(fallback)
 }
 
+fn autopilot_lane_plan_should_tick(lane_plan: Option<&AutopilotLanePlan>) -> bool {
+    lane_plan
+        .map(|plan| plan.status == "ready" && plan.selected_issue.is_some())
+        .unwrap_or(false)
+}
+
 fn print_autopilot_lane_running(
     lane: &str,
     lane_plan: Option<&AutopilotLanePlan>,
     max_concurrent: usize,
     recover: bool,
-) {
+    event_json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let selected = lane_plan
         .and_then(|plan| plan.selected_issue.as_ref())
         .map(|issue| issue.identifier.as_str())
         .unwrap_or("none");
-    println!(
-        "autopilot_loop_lane lane={} status=running action=tick_started selected={} target={} max_concurrent={} recover={}",
-        lane,
-        selected,
-        lane_plan
-            .and_then(|plan| plan.target_state.as_deref())
-            .unwrap_or("none"),
-        max_concurrent,
-        recover
-    );
+    if !event_json {
+        println!(
+            "autopilot_loop_lane lane={} status=running action=tick_started selected={} target={} max_concurrent={} recover={}",
+            lane,
+            selected,
+            lane_plan
+                .and_then(|plan| plan.target_state.as_deref())
+                .unwrap_or("none"),
+            max_concurrent,
+            recover
+        );
+    }
+    print_autopilot_event(
+        event_json,
+        "autopilot_loop_lane",
+        json!({
+            "lane": lane,
+            "status": "running",
+            "action": "tick_started",
+            "selected_issue": lane_plan.and_then(|plan| plan.selected_issue.clone()),
+            "target_state": lane_plan.and_then(|plan| plan.target_state.clone()),
+            "max_concurrent": max_concurrent,
+            "recover": recover,
+        }),
+    )?;
+    Ok(())
 }
 
-fn print_autopilot_lane_result(lane: &AutopilotLoopLaneResult) {
+fn print_autopilot_lane_result(
+    lane: &AutopilotLoopLaneResult,
+    event_json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let selected = lane
         .selected_issue
         .as_ref()
         .map(|issue| issue.identifier.as_str())
         .unwrap_or("none");
-    println!(
-        "autopilot_loop_lane lane={} status={} action={} selected={} target={} max_concurrent={} recover={}",
-        lane.lane,
-        lane.status,
-        lane.action,
-        selected,
-        lane.target_state.as_deref().unwrap_or("none"),
-        lane.max_concurrent,
-        lane.recover
-    );
+    if !event_json {
+        println!(
+            "autopilot_loop_lane lane={} status={} action={} selected={} target={} max_concurrent={} recover={}",
+            lane.lane,
+            lane.status,
+            lane.action,
+            selected,
+            lane.target_state.as_deref().unwrap_or("none"),
+            lane.max_concurrent,
+            lane.recover
+        );
+    }
+    print_autopilot_event(
+        event_json,
+        "autopilot_loop_lane",
+        serde_json::to_value(lane)?,
+    )?;
+    Ok(())
+}
+
+fn autopilot_lane_result_from_skip(
+    lane: &str,
+    lane_plan: Option<&AutopilotLanePlan>,
+    max_concurrent: usize,
+    recover: bool,
+) -> AutopilotLoopLaneResult {
+    let mut evidence = lane_plan
+        .map(|plan| plan.evidence.clone())
+        .unwrap_or_else(|| vec!["source=autopilot_loop".into()]);
+    if let Some(plan) = lane_plan {
+        evidence.push(format!("planned_status={}", plan.status));
+        evidence.push(format!("planned_action={}", plan.proposed_action));
+        evidence.push(format!("planned_reason={}", plan.reason));
+    }
+    evidence.push("skip_reason=no_ready_selected_issue".into());
+
+    AutopilotLoopLaneResult {
+        lane: lane.into(),
+        status: "skipped".into(),
+        action: "lane_tick_skipped".into(),
+        selected_issue: lane_plan.and_then(|plan| plan.selected_issue.clone()),
+        target_state: lane_plan.and_then(|plan| plan.target_state.clone()),
+        max_concurrent,
+        recover,
+        evidence,
+    }
 }
 
 fn autopilot_lane_result_from_execution(
@@ -1061,11 +1240,115 @@ fn autopilot_sleep_or_cancel(delay_ms: u64, cancellation: &Arc<AtomicBool>) -> b
     cancellation.load(Ordering::SeqCst)
 }
 
+fn print_autopilot_event(
+    enabled: bool,
+    event: &str,
+    payload: Value,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if enabled {
+        println!(
+            "{}",
+            serde_json::to_string(&json!({
+                "schema_version": 1,
+                "source": "shea-symphony",
+                "event": event,
+                "payload": payload,
+            }))?
+        );
+    }
+    Ok(())
+}
+
+fn print_autopilot_stopped(
+    event_json: bool,
+    reason: &str,
+    iterations: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    print_autopilot_event(
+        event_json,
+        "autopilot_loop_stopped",
+        json!({
+            "reason": reason,
+            "iterations": iterations,
+        }),
+    )?;
+    if !event_json {
+        println!("autopilot_loop=stopped reason={reason} iterations={iterations}");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn autopilot_lane_tick_requires_ready_selected_issue() {
+        let idle = AutopilotLanePlan {
+            lane: "merge".into(),
+            status: "idle".into(),
+            selected_issue: None,
+            proposed_action: "idle".into(),
+            target_state: None,
+            reason: "no_merging_issue".into(),
+            evidence: vec![],
+        };
+        let ready = AutopilotLanePlan {
+            lane: "review".into(),
+            status: "ready".into(),
+            selected_issue: Some(AutopilotIssueSummary {
+                identifier: "#364".into(),
+                title: "Add Forge and Project relationship support".into(),
+                state: "Agent Review".into(),
+                url: None,
+                priority: None,
+                pull_request: None,
+            }),
+            proposed_action: "start_independent_review".into(),
+            target_state: Some("Human Review | Rework | Need Human Input | unchanged".into()),
+            reason: "agent_review_issue".into(),
+            evidence: vec![],
+        };
+
+        assert!(!autopilot_lane_plan_should_tick(Some(&idle)));
+        assert!(autopilot_lane_plan_should_tick(Some(&ready)));
+        assert!(!autopilot_lane_plan_should_tick(None));
+    }
+
+    #[test]
+    fn skipped_lane_result_does_not_report_tick_failure() {
+        let idle = AutopilotLanePlan {
+            lane: "merge".into(),
+            status: "idle".into(),
+            selected_issue: None,
+            proposed_action: "idle".into(),
+            target_state: None,
+            reason: "no_merging_issue".into(),
+            evidence: vec!["source=merge loop dry-run selection".into()],
+        };
+
+        let result = autopilot_lane_result_from_skip("merge", Some(&idle), 3, true);
+
+        assert_eq!(result.status, "skipped");
+        assert_eq!(result.action, "lane_tick_skipped");
+        assert_eq!(result.selected_issue, None);
+        assert!(result
+            .evidence
+            .contains(&"skip_reason=no_ready_selected_issue".into()));
+    }
+}
+
 fn print_autopilot_loop_status(
     status: &AutopilotLoopStatusSnapshot,
     json: bool,
     display: DisplayMode,
+    event_json: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    print_autopilot_event(
+        event_json,
+        "autopilot_loop_status",
+        serde_json::to_value(status)?,
+    )?;
     if json {
         println!("{}", serde_json::to_string_pretty(status)?);
     } else if display == DisplayMode::Tui {

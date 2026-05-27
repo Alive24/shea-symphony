@@ -64,6 +64,7 @@ test('maps live autoloop lane snapshots into existing lane board worker rows', (
   });
   assert.equal(laneWorkerFromAutoloop({ lane: 'main', status: 'idle' }, 'main', state), null);
   assert.equal(laneWorkerFromAutoloop({ lane: 'main', status: 'completed' }, 'main', state), null);
+  assert.equal(laneWorkerFromAutoloop({ lane: 'main', status: 'skipped', selected: '#421' }, 'main', state), null);
   assert.equal(laneWorkerFromAutoloop({ lane: 'main', status: 'running', selected: 'none', action: 'tick_started' }, 'main', state), null);
 });
 

@@ -14,6 +14,7 @@ export type AutoloopLine = {
   stream: string;
   line: string;
   atMs: number;
+  event?: Record<string, unknown> | null;
 };
 
 export type LoopStateSnapshot = {
@@ -54,6 +55,7 @@ export type StartAutoloopOptions = {
   mainMaxConcurrent?: number;
   reviewMaxConcurrent?: number;
   mergeMaxConcurrent?: number;
+  signalFormat?: 'json' | 'plain';
 };
 
 export type AutoloopEvent =
@@ -170,7 +172,7 @@ export function laneWorkerFromAutoloop(
   laneKey: string,
   state: LoopStateSnapshot
 ): LaneWorker | null {
-  if (!lane || lane.status === 'idle' || lane.status === 'completed') return null;
+  if (!lane || lane.status !== 'running') return null;
   if (!state.running && !lane.updatedAtMs) return null;
 
   const selected = issueRefFromValue(lane.selected);

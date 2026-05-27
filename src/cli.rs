@@ -489,6 +489,8 @@ struct AutopilotLoopArgs {
     display: CliDisplayMode,
     #[arg(long, help = "Print structured JSON status snapshots")]
     json: bool,
+    #[arg(long, help = "Emit newline-delimited JSON work-signal events")]
+    event_json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1526,6 +1528,7 @@ fn autopilot_loop_command(args: AutopilotLoopArgs) -> Result<Command, String> {
             merge_max_concurrent: args.merge_max_concurrent,
             display,
             json: args.json,
+            event_json: args.event_json,
         },
     })
 }
@@ -2084,6 +2087,24 @@ mod tests {
         );
         assert!(options.once);
         assert_eq!(options.display, DisplayMode::Tui);
+    }
+
+    #[test]
+    fn parser_accepts_autopilot_loop_event_json_signal() {
+        let command = parse(&[
+            "autopilot",
+            "loop",
+            "workflows/shea-symphony.md",
+            "--once",
+            "--dry-run",
+            "--event-json",
+        ]);
+
+        let Command::AutopilotLoop { options } = command else {
+            panic!("expected autopilot loop command");
+        };
+
+        assert!(options.event_json);
     }
 
     #[test]

@@ -20,6 +20,7 @@ struct AutoloopOptions {
     max_iterations: Option<usize>,
     once: Option<bool>,
     write: Option<bool>,
+    signal_format: Option<String>,
     poll_interval_ms: Option<u64>,
     main_max_concurrent: Option<usize>,
     review_max_concurrent: Option<usize>,
@@ -80,6 +81,8 @@ struct AutoloopLine {
     stream: String,
     line: String,
     at_ms: u128,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    event: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -226,6 +229,7 @@ fn start_autoloop(
         max_iterations: Some(1),
         once: None,
         write: Some(false),
+        signal_format: Some("json".into()),
         poll_interval_ms: None,
         main_max_concurrent: None,
         review_max_concurrent: None,
@@ -249,6 +253,9 @@ fn start_autoloop(
         args.push(options.max_iterations.unwrap_or(1).max(1).to_string());
     }
     args.push(if write { "--write" } else { "--dry-run" }.into());
+    if options.signal_format.as_deref().unwrap_or("json") != "plain" {
+        args.push("--event-json".into());
+    }
     if let Some(value) = options.poll_interval_ms {
         args.push("--poll-interval-ms".into());
         args.push(value.max(1).to_string());
@@ -714,19 +721,24 @@ fn spawn_line_reader<R: std::io::Read + Send + 'static>(
     thread::spawn(move || {
         let reader = BufReader::new(reader);
         for line in reader.lines().map_while(Result::ok) {
+            let event = parse_autoloop_event(&line);
             let payload = AutoloopLine {
                 stream: stream.into(),
                 line: line.clone(),
                 at_ms: now_ms(),
+                event: event.clone(),
             };
             let mut snapshot = None;
             if let Ok(mut runtime) = manager.lock() {
                 push_recent_line(&mut runtime.state, payload.clone());
-                if let Some(lane) = parse_autoloop_lane(&line, payload.at_ms) {
+                if let Some(lane) = parse_autoloop_lane_event(event.as_ref(), payload.at_ms)
+                    .or_else(|| parse_autoloop_lane(&line, payload.at_ms))
+                {
                     runtime.state.lanes.insert(lane.lane.clone(), lane.clone());
                     emit(&app, "autoloop:lane", &lane);
                 }
-                if apply_autoloop_result(&mut runtime.state, &line)
+                if apply_autoloop_event(&mut runtime.state, event.as_ref(), payload.at_ms)
+                    || apply_autoloop_result(&mut runtime.state, &line)
                     || apply_autoloop_stopped(&mut runtime.state, &line, payload.at_ms)
                 {
                     snapshot = Some(runtime.state.clone());
@@ -746,6 +758,40 @@ fn push_recent_line(state: &mut LoopStateSnapshot, line: AutoloopLine) {
         let overflow = state.recent_lines.len() - 200;
         state.recent_lines.drain(0..overflow);
     }
+}
+
+fn parse_autoloop_event(line: &str) -> Option<Value> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    if value.get("source").and_then(Value::as_str) != Some("shea-symphony") {
+        return None;
+    }
+    value.get("event").and_then(Value::as_str)?;
+    Some(value)
+}
+
+fn parse_autoloop_lane_event(event: Option<&Value>, at_ms: u128) -> Option<LaneSnapshot> {
+    let event = event?;
+    if event.get("event").and_then(Value::as_str)? != "autopilot_loop_lane" {
+        return None;
+    }
+    let payload = event.get("payload")?;
+    let lane = string_json_field(payload, "lane")?;
+    Some(LaneSnapshot {
+        lane,
+        status: string_json_field(payload, "status").unwrap_or_else(|| "unknown".into()),
+        action: optional_json_field(payload, "action"),
+        selected: selected_issue_field(payload),
+        target: optional_json_field(payload, "target_state")
+            .or_else(|| optional_json_field(payload, "target")),
+        max_concurrent: payload
+            .get("max_concurrent")
+            .or_else(|| payload.get("maxConcurrent"))
+            .and_then(Value::as_u64)
+            .map(|value| value as usize),
+        recover: payload.get("recover").and_then(Value::as_bool),
+        updated_at_ms: Some(at_ms),
+        latest_line: Some(event.to_string()),
+    })
 }
 
 fn parse_autoloop_lane(line: &str, at_ms: u128) -> Option<LaneSnapshot> {
@@ -802,6 +848,94 @@ fn apply_autoloop_result(state: &mut LoopStateSnapshot, line: &str) -> bool {
     true
 }
 
+fn apply_autoloop_event(state: &mut LoopStateSnapshot, event: Option<&Value>, at_ms: u128) -> bool {
+    let Some(event) = event else {
+        return false;
+    };
+    let Some(event_name) = event.get("event").and_then(Value::as_str) else {
+        return false;
+    };
+    let payload = event.get("payload").unwrap_or(&Value::Null);
+    match event_name {
+        "autopilot_loop_status" => {
+            if let Some(mode) = string_json_field(payload, "mode") {
+                state.mode = mode;
+            }
+            apply_json_settings(state, payload.get("settings"));
+            if let Some(lanes) = payload.get("lane_activity").and_then(Value::as_array) {
+                for lane_payload in lanes {
+                    if let Some(lane) = parse_status_lane_activity(lane_payload, at_ms) {
+                        state.lanes.insert(lane.lane.clone(), lane);
+                    }
+                }
+            }
+            true
+        }
+        "autopilot_loop_iteration" => {
+            if let Some(mode) = string_json_field(payload, "mode") {
+                state.mode = mode;
+            }
+            apply_json_settings(state, payload.get("settings"));
+            true
+        }
+        "autopilot_loop_result" => {
+            if let Some(mode) = string_json_field(payload, "mode") {
+                state.mode = mode;
+            }
+            apply_json_settings(state, payload.get("settings"));
+            true
+        }
+        "autopilot_loop_stopped" => {
+            state.running = false;
+            state.stopping = false;
+            state.pid = None;
+            state.stopped_at_ms = Some(at_ms);
+            true
+        }
+        _ => false,
+    }
+}
+
+fn parse_status_lane_activity(payload: &Value, at_ms: u128) -> Option<LaneSnapshot> {
+    let lane = string_json_field(payload, "lane")?;
+    Some(LaneSnapshot {
+        lane,
+        status: string_json_field(payload, "status").unwrap_or_else(|| "unknown".into()),
+        action: optional_json_field(payload, "action"),
+        selected: selected_issue_field(payload),
+        target: optional_json_field(payload, "target_state")
+            .or_else(|| optional_json_field(payload, "target")),
+        max_concurrent: None,
+        recover: None,
+        updated_at_ms: Some(at_ms),
+        latest_line: Some(payload.to_string()),
+    })
+}
+
+fn apply_json_settings(state: &mut LoopStateSnapshot, settings: Option<&Value>) {
+    let Some(settings) = settings else {
+        return;
+    };
+    let lane_concurrency = [
+        ("main", "main_max_concurrent"),
+        ("review", "review_max_concurrent"),
+        ("merge", "merge_max_concurrent"),
+    ];
+    for (lane, field) in lane_concurrency {
+        if let Some(value) = settings
+            .get(field)
+            .or_else(|| settings.get(&snake_to_camel(field)))
+            .and_then(Value::as_u64)
+        {
+            state
+                .lanes
+                .entry(lane.into())
+                .or_insert_with(|| default_lane(lane))
+                .max_concurrent = Some(value as usize);
+        }
+    }
+}
+
 fn apply_autoloop_stopped(state: &mut LoopStateSnapshot, line: &str, at_ms: u128) -> bool {
     if !line.starts_with("autopilot_loop=stopped ") {
         return false;
@@ -818,6 +952,55 @@ fn optional_field(fields: &BTreeMap<String, String>, key: &str) -> Option<String
         .get(key)
         .filter(|value| !value.is_empty() && value.as_str() != "none")
         .cloned()
+}
+
+fn string_json_field(payload: &Value, key: &str) -> Option<String> {
+    payload
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| {
+            payload
+                .get(&snake_to_camel(key))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+}
+
+fn optional_json_field(payload: &Value, key: &str) -> Option<String> {
+    string_json_field(payload, key).filter(|value| !value.is_empty() && value != "none")
+}
+
+fn selected_issue_field(payload: &Value) -> Option<String> {
+    optional_json_field(payload, "selected").or_else(|| {
+        payload
+            .get("selected_issue")
+            .or_else(|| payload.get("selectedIssue"))
+            .and_then(|issue| {
+                issue
+                    .get("identifier")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .or_else(|| issue.as_str().map(str::to_string))
+            })
+            .filter(|value| !value.is_empty() && value != "none")
+    })
+}
+
+fn snake_to_camel(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut uppercase_next = false;
+    for ch in value.chars() {
+        if ch == '_' {
+            uppercase_next = true;
+        } else if uppercase_next {
+            output.extend(ch.to_uppercase());
+            uppercase_next = false;
+        } else {
+            output.push(ch);
+        }
+    }
+    output
 }
 
 fn parse_key_values(line: &str) -> BTreeMap<String, String> {
@@ -942,6 +1125,22 @@ mod tests {
     }
 
     #[test]
+    fn parses_autopilot_json_lane_event() {
+        let event = parse_autoloop_event(
+            r##"{"schema_version":1,"source":"shea-symphony","event":"autopilot_loop_lane","payload":{"lane":"review","status":"running","action":"tick_started","selected_issue":{"identifier":"#364","title":"Issue title","state":"Agent Review","url":null,"priority":null,"pull_request":null},"target_state":"Human Review | Rework","max_concurrent":2,"recover":false}}"##,
+        )
+        .unwrap();
+        let lane = parse_autoloop_lane_event(Some(&event), 84).unwrap();
+
+        assert_eq!(lane.lane, "review");
+        assert_eq!(lane.status, "running");
+        assert_eq!(lane.action.as_deref(), Some("tick_started"));
+        assert_eq!(lane.selected.as_deref(), Some("#364"));
+        assert_eq!(lane.target.as_deref(), Some("Human Review | Rework"));
+        assert_eq!(lane.max_concurrent, Some(2));
+    }
+
+    #[test]
     fn ignores_non_lane_lines() {
         assert!(parse_autoloop_lane("autopilot_loop=stopped reason=max_iterations", 1).is_none());
     }
@@ -972,6 +1171,22 @@ mod tests {
         assert_eq!(state.lanes["main"].max_concurrent, Some(1));
         assert_eq!(state.lanes["review"].max_concurrent, Some(2));
         assert_eq!(state.lanes["merge"].max_concurrent, Some(3));
+    }
+
+    #[test]
+    fn applies_autopilot_json_result_to_snapshot() {
+        let mut state = LoopStateSnapshot::default();
+        let event = parse_autoloop_event(
+            r#"{"schema_version":1,"source":"shea-symphony","event":"autopilot_loop_result","payload":{"mode":"write","settings":{"main_max_concurrent":3,"review_max_concurrent":2,"merge_max_concurrent":1}}}"#,
+        )
+        .unwrap();
+
+        assert!(apply_autoloop_event(&mut state, Some(&event), 101));
+
+        assert_eq!(state.mode, "write");
+        assert_eq!(state.lanes["main"].max_concurrent, Some(3));
+        assert_eq!(state.lanes["review"].max_concurrent, Some(2));
+        assert_eq!(state.lanes["merge"].max_concurrent, Some(1));
     }
 
     #[test]

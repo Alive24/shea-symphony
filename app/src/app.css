@@ -803,12 +803,26 @@ a {
   display: grid;
   grid-template-columns: 76px minmax(0, 1fr);
   gap: var(--space-3);
-  align-items: baseline;
+  align-items: start;
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border-soft);
-  font-family: var(--font-mono);
   font-size: var(--text-xs);
   line-height: var(--leading-normal);
+}
+
+.autoloop-stdout-line.running,
+.autoloop-stdout-line.retrying {
+  background: color-mix(in oklab, var(--warn), transparent 92%);
+}
+
+.autoloop-stdout-line.completed,
+.autoloop-stdout-line.result {
+  background: color-mix(in oklab, var(--success), transparent 94%);
+}
+
+.autoloop-stdout-line.error,
+.autoloop-stdout-line.blocked {
+  background: color-mix(in oklab, var(--danger), transparent 93%);
 }
 
 .autoloop-stdout-line:last-child {
@@ -817,11 +831,31 @@ a {
 
 .autoloop-stdout-line time {
   color: var(--muted);
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+}
+
+.autoloop-line-content {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.autoloop-line-content strong {
+  color: var(--fg-2);
+  font-size: var(--text-xs);
+}
+
+.autoloop-line-content span {
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .autoloop-stdout-line code {
   color: var(--fg);
+  font-family: var(--font-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

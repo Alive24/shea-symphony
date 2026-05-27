@@ -272,6 +272,7 @@ function buildParkedTasks(autopilot, githubQueue, githubQueueResult) {
       reason: issue.reason ?? queue.reason ?? 'Issue is parked outside active lane dispatch.',
       recommended: queue.next_action ?? issue.next_action ?? 'Inspect the issue readback before routing.',
       evidence: issue.evidence ?? queue.evidence ?? 'Autopilot plan surfaced this item.',
+      assignees: issue.assignees ?? [],
       source: 'Autopilot plan'
     }))
   );
@@ -285,6 +286,7 @@ function buildParkedTasks(autopilot, githubQueue, githubQueueResult) {
       reason: `${issue.state} issue is visible in the operator queue readback.`,
       recommended: issue.state === 'Human Review' ? 'Review evidence in chat Skill before routing.' : 'Inspect diagnostics and issue readback before routing.',
       evidence: `${githubQueue.source ?? 'Operator queue'} · updated ${issue.updatedAt ?? 'unknown'}`,
+      assignees: issue.assignees ?? [],
       source: 'Operator queue readback'
     }));
   }
@@ -293,7 +295,7 @@ function buildParkedTasks(autopilot, githubQueue, githubQueueResult) {
   return [];
 }
 
-function parkedTaskFromIssue({ id, title, state, reason, recommended, evidence, source }) {
+function parkedTaskFromIssue({ id, title, state, reason, recommended, evidence, assignees = [], source }) {
   return {
     id,
     title,
@@ -304,6 +306,7 @@ function parkedTaskFromIssue({ id, title, state, reason, recommended, evidence, 
     evidence,
     urgency: state,
     tone: state === 'Need Human Input' ? 'danger' : 'warn',
+    assignees,
     sourceLabel: source,
     decisions: [
       {
@@ -1338,7 +1341,7 @@ function queueIssueFromTask(task) {
     lane: stateToLane(state),
     url: null,
     updatedAt: null,
-    assignees: [],
+    assignees: task.assignees ?? [],
     labels: [],
     evidence: task.evidence,
     recommended: task.recommended,
@@ -1472,10 +1475,14 @@ function ensureIssue(issues, id) {
 
 function stateToLane(state) {
   if (!isLaneQueueState(state)) return 'Unknown';
-  if (state === 'Agent Review' || state === 'Human Review') return 'Review';
+  if (isHumanOperatorQueueState(state)) return 'Human';
+  if (state === 'Agent Review') return 'Review';
   if (state === 'Merging') return 'Merge';
-  if (state === 'Need Human Input') return 'Human';
   return 'Main';
+}
+
+function isHumanOperatorQueueState(state) {
+  return ['Need to Clarify', 'Need Human Input', 'Human Review'].includes(normalizeStateName(state));
 }
 
 function isLaneQueueState(state) {

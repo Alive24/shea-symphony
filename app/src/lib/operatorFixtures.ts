@@ -61,7 +61,7 @@ function baseFixtureOverview() {
       number: 418,
       title: 'Forge contract needs blocker relationship clarification',
       state: 'Need to Clarify',
-      lane: 'Main',
+      lane: 'Human',
       updatedAt: now,
       url: 'https://github.com/Alive24/shea-symphony/issues/418',
       labels: ['fixture', 'issue-forge'],
@@ -72,7 +72,7 @@ function baseFixtureOverview() {
       number: 421,
       title: 'Agent Review evidence needs Human Review routing',
       state: 'Need Human Input',
-      lane: 'Review',
+      lane: 'Human',
       updatedAt: now,
       url: 'https://github.com/Alive24/shea-symphony/issues/421',
       labels: ['fixture', 'review'],
@@ -83,7 +83,7 @@ function baseFixtureOverview() {
       number: 425,
       title: 'Parent app-server batch awaits UAT approval',
       state: 'Human Review',
-      lane: 'Review',
+      lane: 'Human',
       updatedAt: now,
       url: 'https://github.com/Alive24/shea-symphony/issues/425',
       labels: ['fixture', 'human-review'],
@@ -184,8 +184,8 @@ function baseFixtureOverview() {
         Merging: 1
       },
       laneCounts: {
-        main: 1,
-        review: 2,
+        main: 0,
+        review: 0,
         merge: 1
       },
       operatorIssues: issues.filter((issue) => ['Need to Clarify', 'Need Human Input', 'Human Review'].includes(issue.state)),

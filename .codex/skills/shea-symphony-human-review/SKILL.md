@@ -64,14 +64,18 @@ workflows/template/workpad/human-review.md
 
 ## Conversation Language
 
-- Match the operator-facing language to the current session's user language.
-- Do not force English for Human Review briefings, UAT guidance, summaries, or
-  confirmation prompts when the operator is using another language.
+- Match the operator-facing language to the current session's user language or
+  the language already being used in the immediate review context.
+- Do not force English for Human Review briefings, UAT guidance, summaries,
+  durable decision notes, or confirmation prompts when the operator is using
+  another language.
 - Preserve exact command names, state names, file paths, issue titles, and
   decision labels in their canonical English form.
-- Use English inside durable decision-note fields when the template, command
-  surface, or issue evidence expects canonical values, but keep explanatory
-  prose in the operator's session language.
+- Use the current context language inside durable decision-note fields by
+  default. Preserve canonical values exactly where the template, command
+  surface, or issue evidence expects fixed values, such as `Approve for
+  Merging`, `Request Rework`, `Need Human Input`, `Defer`, `Merging`, `Rework`,
+  and `Human Review`.
 
 ## CLI Topology Transition
 

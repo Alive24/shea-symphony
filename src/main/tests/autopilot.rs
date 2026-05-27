@@ -146,7 +146,8 @@ fn autopilot_plan_reports_parked_operator_queues() {
         "Needs issue contract clarification",
         "Need to Clarify",
     );
-    let human_review = tracker_issue_with_ref("#41", "Needs human approval", "Human Review");
+    let mut human_review = tracker_issue_with_ref("#41", "Needs human approval", "Human Review");
+    human_review.assignees = vec!["Alive24".into()];
     let need_human_input =
         tracker_issue_with_ref("#42", "Needs operator decision", "Need Human Input");
 
@@ -170,6 +171,7 @@ fn autopilot_plan_reports_parked_operator_queues() {
     assert_eq!(clarify_queue.count, 1);
     assert_eq!(human_queue.count, 1);
     assert_eq!(input_queue.count, 1);
+    assert_eq!(human_queue.issues[0].assignees, vec!["Alive24"]);
     assert!(plan.lanes.iter().all(|lane| lane.selected_issue.is_none()));
 }
 

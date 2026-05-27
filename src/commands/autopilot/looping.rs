@@ -1369,6 +1369,7 @@ mod tests {
                 identifier: "#364".into(),
                 title: "Add Forge and Project relationship support".into(),
                 state: "Agent Review".into(),
+                assignees: Vec::new(),
                 url: None,
                 priority: None,
                 pull_request: None,

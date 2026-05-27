@@ -73,6 +73,7 @@ pub(crate) struct AutopilotIssueSummary {
     pub(crate) identifier: String,
     pub(crate) title: String,
     pub(crate) state: String,
+    pub(crate) assignees: Vec<String>,
     pub(crate) url: Option<String>,
     pub(crate) priority: Option<i64>,
     pub(crate) pull_request: Option<String>,
@@ -274,6 +275,7 @@ impl AutopilotIssueSummary {
             identifier: issue.identifier.clone(),
             title: issue.title.clone(),
             state: issue.state.clone(),
+            assignees: issue.assignees.clone(),
             url: issue.url.clone(),
             priority: issue.priority,
             pull_request: issue.linked_pull_requests.first().and_then(|pr| {

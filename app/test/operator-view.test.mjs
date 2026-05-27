@@ -100,7 +100,7 @@ test('view model uses CLI autopilot parked queues for human todo issues', () => 
         {
           name: 'Human Review',
           state: 'Human Review',
-          issues: [{ identifier: '#503', title: 'Approve review evidence' }]
+          issues: [{ identifier: '#503', title: 'Approve review evidence', assignees: ['Alive24'] }]
         }
       ]
     },
@@ -112,12 +112,55 @@ test('view model uses CLI autopilot parked queues for human todo issues', () => 
       .map((issue) => [issue.id, issue.state, issue.lane])
       .sort((left, right) => left[0].localeCompare(right[0])),
     [
-      ['#501', 'Need to Clarify', 'Main'],
+      ['#501', 'Need to Clarify', 'Human'],
       ['#502', 'Need Human Input', 'Human'],
-      ['#503', 'Human Review', 'Review']
+      ['#503', 'Human Review', 'Human']
     ]
   );
+  assert.deepEqual(view.queueIssues.find((issue) => issue.id === '#503').assignees, ['Alive24']);
   assert.ok(view.attentionTasks.every((task) => task.sourceLabel === 'Autopilot plan'));
+});
+
+test('human review project state does not appear in the review lane board queue', () => {
+  const view = buildViewModel({
+    generatedAt: new Date().toISOString(),
+    workflowPath: 'workflows/shea-symphony.md',
+    commands: {
+      autopilot: {
+        ok: true,
+        args: ['autopilot', 'plan', 'workflows/shea-symphony.md', '--json'],
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        durationMs: 12,
+        stderr: '',
+        stdoutPreview: '{}'
+      }
+    },
+    autopilot: {
+      lanes: [
+        {
+          lane: 'review',
+          status: 'idle',
+          selected_issue: {
+            identifier: '#364',
+            title: 'Operator approval pending',
+            state: 'Human Review'
+          },
+          action: 'idle',
+          reason: 'human review is parked for the operator'
+        }
+      ],
+      parked_queues: []
+    },
+    healthy: true
+  });
+
+  const issue = view.queueIssues.find((item) => item.id === '#364');
+  assert.equal(issue.state, 'Human Review');
+  assert.equal(issue.lane, 'Human');
+  assert.equal(issue.nextSkill, 'Human Review');
+  assert.equal(view.projectWorkerMatch.lanes.find((lane) => lane.lane === 'Review').project, 0);
 });
 
 test('fixture overview feeds first-screen human todo and lane board data', () => {
@@ -126,7 +169,7 @@ test('fixture overview feeds first-screen human todo and lane board data', () =>
 
   assert.equal(view.dataSource.mode, 'fixture');
   assert.ok(view.queueIssues.some((issue) => issue.id === '#421' && issue.state === 'Need Human Input'));
-  assert.ok(view.queueIssues.some((issue) => issue.id === '#418' && issue.lane === 'Main'));
+  assert.ok(view.queueIssues.some((issue) => issue.id === '#418' && issue.lane === 'Human'));
   assert.ok(view.queueIssues.some((issue) => issue.id === '#430' && issue.lane === 'Merge'));
   assert.equal(view.laneWorkers.main.length, 0);
   assert.equal(view.laneWorkers.review.length, 0);

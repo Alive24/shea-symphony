@@ -700,6 +700,11 @@ a {
   line-height: var(--leading-tight);
 }
 
+.cli-log-modal > header span {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
 .cli-log-list {
   min-height: 0;
   display: grid;
@@ -778,6 +783,47 @@ a {
 
 .cli-log-empty p {
   margin: 0;
+}
+
+.autoloop-log-modal {
+  width: min(880px, calc(100vw - 48px));
+}
+
+.autoloop-stdout-list {
+  min-height: 0;
+  display: grid;
+  overflow: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface-cool);
+  padding-right: var(--space-1);
+}
+
+.autoloop-stdout-line {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-soft);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+
+.autoloop-stdout-line:last-child {
+  border-bottom: 0;
+}
+
+.autoloop-stdout-line time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.autoloop-stdout-line code {
+  color: var(--fg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .operator-grid {
@@ -2087,6 +2133,16 @@ a {
 
 .btn-primary:hover {
   background: color-mix(in oklab, var(--action-bg), black 8%);
+}
+
+.btn-write {
+  color: var(--action-on);
+  background: var(--project-yellow);
+  border-color: var(--project-yellow);
+}
+
+.btn-write:hover {
+  background: color-mix(in oklab, var(--project-yellow), black 10%);
 }
 
 .btn-ghost {

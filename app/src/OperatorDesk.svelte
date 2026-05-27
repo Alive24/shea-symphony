@@ -24,13 +24,15 @@
     stopAutoloop,
     subscribeAutoloopEvents,
     type LaneSnapshot,
-    type LoopStateSnapshot
+    type LoopStateSnapshot,
+    type AutoloopLine
   } from './lib/tauriAutoloop.ts';
 
   let loading = true;
   let liveError = '';
   let tauriError = '';
   let autoloopBusy = false;
+  let autoloopLogsOpen = false;
   let tauriAvailable = false;
   let autoloopState: LoopStateSnapshot = defaultLoopState();
   let fullLoading = false;
@@ -45,7 +47,9 @@
   $: queueIssues = view.queueIssues ?? [];
   $: liveUnavailable = dataSource?.mode === 'offline';
   $: autoloopLanes = autoloopState?.lanes ?? {};
-  $: latestAutoloopLine = autoloopState?.recentLines?.slice(-1)[0]?.line ?? '';
+  $: autoloopLogLines = autoloopState?.recentLines ?? [];
+  $: autoloopStdoutLines = latestAutoloopStdout(autoloopState, autoloopLogLines);
+  $: latestAutoloopLine = autoloopStdoutLines.slice(-1)[0]?.line ?? (autoloopState.running ? 'Loop is running' : 'No recent autoloop result');
   $: humanTodoIssues = queueIssues
     .filter((issue) => isHumanTodoState(issue.state))
     .map((issue) => ({
@@ -233,6 +237,18 @@
     return HANDOFF_TARGETS.find((target) => target.id === targetId)?.label ?? 'Codex App';
   }
 
+  function formatAutoloopTime(value: unknown) {
+    const time = Number(value);
+    if (!Number.isFinite(time)) return '--:--:--';
+    return new Date(time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  function latestAutoloopStdout(state: LoopStateSnapshot, lines: AutoloopLine[]) {
+    const startedAt = Number(state.startedAtMs);
+    const lowerBound = Number.isFinite(startedAt) ? startedAt - 1000 : null;
+    return lines.filter((entry) => entry.stream === 'stdout' && (lowerBound == null || entry.atMs >= lowerBound));
+  }
+
   function handoffPrompt(issue) {
     return [
       `Use the appropriate Shea Symphony Skill for ${issue.id}.`,
@@ -278,22 +294,23 @@
     }
   }
 
-  async function startDryRunAutoloop() {
+  async function startAutoloopMode(write: boolean) {
     autoloopBusy = true;
     tauriError = '';
     const startedAt = performance.now();
+    const modeLabel = write ? 'write' : 'dry-run';
     const logId = recordCliLog({
       surface: 'autoloop',
       phase: 'start',
       status: 'running',
-      detail: 'Starting dry-run autopilot loop.',
-      args: ['autopilot', 'loop', 'workflows/shea-symphony.md', '--max-iterations', '1', '--dry-run']
+      detail: `Starting ${modeLabel} autopilot loop.`,
+      args: ['autopilot', 'loop', 'workflows/shea-symphony.md', '--max-iterations', '1', write ? '--write' : '--dry-run']
     });
     try {
       autoloopState = await startAutoloop({
         workflowPath: 'workflows/shea-symphony.md',
         maxIterations: 1,
-        write: false
+        write
       });
       updateCliLog(logId, {
         surface: 'autoloop',
@@ -314,6 +331,14 @@
     } finally {
       autoloopBusy = false;
     }
+  }
+
+  async function startDryRunAutoloop() {
+    return startAutoloopMode(false);
+  }
+
+  async function startWriteAutoloop() {
+    return startAutoloopMode(true);
   }
 
   async function stopRunningAutoloop() {
@@ -472,6 +497,12 @@
         <button class="btn btn-primary" type="button" disabled={!tauriAvailable || autoloopBusy || autoloopState.running} onclick={startDryRunAutoloop}>
           Start dry-run
         </button>
+        <button class="btn btn-write" type="button" disabled={!tauriAvailable || autoloopBusy || autoloopState.running} onclick={startWriteAutoloop}>
+          Start write
+        </button>
+        <button class="btn btn-ghost" type="button" onclick={() => (autoloopLogsOpen = true)}>
+          Logs
+        </button>
         <button class="btn btn-ghost" type="button" disabled={!tauriAvailable || autoloopBusy || !autoloopState.running} onclick={stopRunningAutoloop}>
           Stop
         </button>
@@ -506,3 +537,35 @@
     </div>
   </section>
 </section>
+
+{#if autoloopLogsOpen}
+  <div class="modal-backdrop">
+    <button class="modal-scrim" type="button" aria-label="Close autoloop CLI log" onclick={() => (autoloopLogsOpen = false)}></button>
+    <div class="cli-log-modal autoloop-log-modal" role="dialog" aria-modal="true" aria-labelledby="autoloop-log-title">
+      <header>
+        <div>
+          <p class="eyebrow">Autoloop</p>
+          <h2 id="autoloop-log-title">CLI Log</h2>
+          <span>{autoloopState.mode} · {autoloopState.workflowPath}</span>
+        </div>
+        <button class="btn btn-ghost" type="button" onclick={() => (autoloopLogsOpen = false)}>Close</button>
+      </header>
+
+      {#if autoloopStdoutLines.length}
+        <div class="autoloop-stdout-list" aria-label="Autoloop stdout">
+          {#each autoloopStdoutLines as entry}
+            <div class="autoloop-stdout-line">
+              <time>{formatAutoloopTime(entry.atMs)}</time>
+              <code>{entry.line}</code>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <div class="cli-log-empty">
+          <strong>No autoloop CLI output yet</strong>
+          <p>Start dry-run or write mode to stream stdout here.</p>
+        </div>
+      {/if}
+    </div>
+  </div>
+{/if}

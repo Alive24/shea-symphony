@@ -1,308 +1,9 @@
-import { writable } from 'svelte/store';
 import {
   fullEvents as fallbackEvents,
   laneSummaries as fallbackLaneSummaries
 } from './data.ts';
-import { getOperatorOverview, getReadSurface, isTauriRuntime } from './tauriAutoloop.ts';
 
 type LooseRecord = Record<string, any>;
-
-const DATA_MODE_KEY = 'shea-data-mode';
-const FIXTURE_OVERVIEW_KEY = 'shea-fixture-overview';
-const HANDOFF_TARGET_KEY = 'shea-handoff-target';
-export const DATA_MODE_CHANGE_EVENT = 'shea-data-mode-change';
-export const HANDOFF_TARGET_CHANGE_EVENT = 'shea-handoff-target-change';
-export const HANDOFF_TARGETS = [
-  { id: 'codex-app', label: 'Codex App' },
-  { id: 'codex-cli', label: 'Codex CLI' },
-  { id: 'github', label: 'GitHub Issue' }
-];
-export const defaultHandoffTargetStore = writable('codex-app');
-
-export async function loadOverview(force = false, scope = 'full') {
-  if (getDataMode() === 'fixture') return buildFixtureOverview(force);
-  if (isTauriRuntime()) {
-    const overview = await getOperatorOverview(force, scope);
-    if (overview) return overview;
-  }
-  return buildFixtureOverview(force);
-}
-
-export function getDataMode() {
-  if (typeof localStorage === 'undefined') return 'live';
-  return localStorage.getItem(DATA_MODE_KEY) === 'fixture' ? 'fixture' : 'live';
-}
-
-export function setDataMode(mode: 'live' | 'fixture') {
-  if (typeof localStorage === 'undefined') return;
-  localStorage.setItem(DATA_MODE_KEY, mode);
-  window.dispatchEvent(new CustomEvent(DATA_MODE_CHANGE_EVENT, { detail: { mode } }));
-}
-
-export function getDefaultHandoffTarget() {
-  if (typeof localStorage === 'undefined') return 'codex-app';
-  const saved = localStorage.getItem(HANDOFF_TARGET_KEY);
-  return HANDOFF_TARGETS.some((target) => target.id === saved) ? saved : 'codex-app';
-}
-
-export function setDefaultHandoffTarget(targetId: string) {
-  if (typeof localStorage === 'undefined') return;
-  const nextTarget = HANDOFF_TARGETS.some((target) => target.id === targetId) ? targetId : 'codex-app';
-  localStorage.setItem(HANDOFF_TARGET_KEY, nextTarget);
-  defaultHandoffTargetStore.set(nextTarget);
-  window.dispatchEvent(new CustomEvent(HANDOFF_TARGET_CHANGE_EVENT, { detail: { target: nextTarget } }));
-}
-
-export function resetFixtureOverview() {
-  if (typeof localStorage === 'undefined') return;
-  localStorage.removeItem(FIXTURE_OVERVIEW_KEY);
-  window.dispatchEvent(new CustomEvent(DATA_MODE_CHANGE_EVENT, { detail: { mode: getDataMode(), reset: true } }));
-}
-
-export async function loadHealth() {
-  return {
-    ok: true,
-    generatedAt: Date.now(),
-    workflowPath: 'workflows/shea-symphony.md',
-    fixture: !isTauriRuntime(),
-    buildPresent: false,
-    cli: {
-      mode: isTauriRuntime() ? 'tauri' : 'fixture',
-      path: isTauriRuntime() ? 'Tauri allowlisted CLI commands' : 'Browser fixture preview'
-    },
-    runtime: {
-      host: isTauriRuntime() ? 'desktop' : 'browser',
-      bridge: isTauriRuntime() ? 'tauri' : 'fixture'
-    }
-  };
-}
-
-export async function loadReadSurface(name, force = false) {
-  if (getDataMode() === 'fixture') return buildFixtureReadSurface(name, force);
-  if (isTauriRuntime()) {
-    const surface = await getReadSurface(name, force);
-    if (surface) return surface;
-  }
-  return buildFixtureReadSurface(name, force);
-}
-
-export function buildFixtureReadSurface(name: string, force = false) {
-  const fixture = buildFixtureOverview(force);
-  const command = fixture.commands?.[name] ?? {
-    ok: true,
-    args: ['fixture', name],
-    exitCode: 0,
-    durationMs: 8,
-    stderr: '',
-    stdoutPreview: 'fixture output'
-  };
-  return {
-    name,
-    generatedAt: fixture.generatedAt,
-    command,
-    parsed: name === 'local' ? fixture.localStatus : fixture[name] ?? null,
-    text: name === 'sessions' ? fixture.sessionsText : ''
-  };
-}
-
-export function buildFixtureOverview(force = false) {
-  if (typeof localStorage !== 'undefined' && !force) {
-    const saved = localStorage.getItem(FIXTURE_OVERVIEW_KEY);
-    if (saved) {
-      try {
-        return { ...JSON.parse(saved), generatedAt: new Date().toISOString() };
-      } catch (_) {
-        localStorage.removeItem(FIXTURE_OVERVIEW_KEY);
-      }
-    }
-  }
-
-  const overview = baseFixtureOverview();
-  if (typeof localStorage !== 'undefined') {
-    localStorage.setItem(FIXTURE_OVERVIEW_KEY, JSON.stringify(overview));
-  }
-  return overview;
-}
-
-function fixtureCommand(args: string[]) {
-  return {
-    ok: true,
-    args,
-    exitCode: 0,
-    signal: null,
-    durationMs: 12,
-    stderr: '',
-    stdoutPreview: 'fixture output'
-  };
-}
-
-function baseFixtureOverview() {
-  const now = new Date().toISOString();
-  const workflowPath = 'workflows/shea-symphony.md';
-  const issues = [
-    {
-      identifier: '#418',
-      number: 418,
-      title: 'Forge contract needs blocker relationship clarification',
-      state: 'Need to Clarify',
-      lane: 'Main',
-      updatedAt: now,
-      url: 'https://github.com/Alive24/shea-symphony/issues/418',
-      labels: ['fixture', 'issue-forge'],
-      assignees: ['operator']
-    },
-    {
-      identifier: '#421',
-      number: 421,
-      title: 'Agent Review evidence needs Human Review routing',
-      state: 'Need Human Input',
-      lane: 'Review',
-      updatedAt: now,
-      url: 'https://github.com/Alive24/shea-symphony/issues/421',
-      labels: ['fixture', 'review'],
-      assignees: ['operator']
-    },
-    {
-      identifier: '#425',
-      number: 425,
-      title: 'Parent app-server batch awaits UAT approval',
-      state: 'Human Review',
-      lane: 'Review',
-      updatedAt: now,
-      url: 'https://github.com/Alive24/shea-symphony/issues/425',
-      labels: ['fixture', 'human-review'],
-      assignees: ['operator']
-    },
-    {
-      identifier: '#430',
-      number: 430,
-      title: 'Merge lane should land approved app-server cleanup',
-      state: 'Merging',
-      lane: 'Merge',
-      updatedAt: now,
-      url: 'https://github.com/Alive24/shea-symphony/issues/430',
-      labels: ['fixture', 'merge'],
-      assignees: ['merge-agent']
-    }
-  ];
-
-  return {
-    generatedAt: now,
-    workflowPath,
-    fixture: true,
-    commands: {
-      autopilot: fixtureCommand(['autopilot', 'plan', workflowPath, '--json']),
-      doctor: fixtureCommand(['doctor', workflowPath, '--json']),
-      review: fixtureCommand(['review', 'status', workflowPath, '--json']),
-      skills: fixtureCommand(['skills', 'status', workflowPath, '--json']),
-      sessions: fixtureCommand(['session', 'list', workflowPath]),
-      local: fixtureCommand(['local', 'status']),
-      githubQueue: fixtureCommand(['autopilot', 'plan', workflowPath, '--json'])
-    },
-    autopilot: {
-      readiness: {
-        status: 'ready',
-        reason: 'Fixture mode is exercising the operator UI without GitHub writes.'
-      },
-      lanes: [
-        {
-          lane: 'main',
-          status: 'ready',
-          selected_issue: '#418',
-          action: 'Clarify blocker relationship semantics',
-          reason: 'Issue needs one execution-critical product decision.',
-          target_state: 'Need to Clarify'
-        },
-        {
-          lane: 'review',
-          status: 'blocked',
-          selected_issue: '#421',
-          action: 'Human review routing decision needed',
-          reason: 'Independent review evidence is present; operator must choose pass or reject.',
-          target_state: 'Human Review'
-        },
-        {
-          lane: 'merge',
-          status: 'ready',
-          selected_issue: '#430',
-          action: 'Verify approved PR and land',
-          reason: 'Fixture merge queue has one approved issue.',
-          target_state: 'Done'
-        }
-      ],
-      parked_queues: [
-        {
-          state: 'Need Human Input',
-          reason: 'Operator confirmation required before status mutation.',
-          issues: [
-            {
-              identifier: '#421',
-              title: 'Agent Review evidence needs Human Review routing',
-              reason: 'Review evidence exists but no human decision has been recorded.',
-              evidence: 'Fixture: review pass checklist is present; PR readback is fresh.'
-            }
-          ]
-        }
-      ],
-      active_issues: []
-    },
-    doctor: { blockers: 0, warnings: 1 },
-    review: { recent: [{ issue: '#421', state: 'passed', evidence: 'Fixture review pass evidence.' }] },
-    skills: { status: 'ready' },
-    sessionsText: 'agent_session_list=none',
-    localStatus: {
-      branch: 'main',
-      head: 'fixture',
-      dirtyCount: 0,
-      worktreeCount: 1,
-      buildPresent: true,
-      binaryPresent: true,
-      dirtyPreview: []
-    },
-    githubQueue: {
-      totalOpen: issues.length,
-      stateCounts: {
-        'Need to Clarify': 1,
-        'Need Human Input': 1,
-        'Human Review': 1,
-        Merging: 1
-      },
-      laneCounts: {
-        main: 1,
-        review: 2,
-        merge: 1
-      },
-      operatorIssues: issues.filter((issue) => ['Need to Clarify', 'Need Human Input', 'Human Review'].includes(issue.state)),
-      issues,
-      source: 'fixture operator queue'
-    },
-    healthy: true
-  };
-}
-
-export function mergeReadSurface(overview: any, surface: any) {
-  if (!overview || !surface?.name) return overview;
-  const next = {
-    ...overview,
-    generatedAt: surface.generatedAt ?? overview.generatedAt,
-    scope: 'incremental',
-    commands: {
-      ...(overview.commands ?? {}),
-      [surface.name]: surface.command
-    }
-  };
-
-  if (surface.name === 'sessions') {
-    next.sessionsText = surface.text ?? '';
-  } else if (surface.name === 'local') {
-    next.localStatus = surface.parsed ?? null;
-  } else {
-    next[surface.name] = surface.parsed ?? null;
-  }
-
-  next.healthy = Object.values(next.commands).some((result: any) => result?.ok);
-  return next;
-}
 
 export function buildViewModel(overview: any): any {
   if (!overview) return fallbackViewModel('Waiting for Tauri or fixture readback.');
@@ -1334,21 +1035,24 @@ function buildOperatorBrief({ attentionTasks, laneSummaries, evidenceColumns, da
 
 function buildQueueIssues(githubQueue, attentionTasks = []) {
   const fromGithub = (githubQueue?.issues ?? [])
-    .filter((issue) => issue.state && issue.state !== 'Backlog' && issue.state !== 'Done')
-    .map((issue) => ({
-      id: issue.identifier,
-      title: issue.title,
-      state: normalizeStateName(issue.state),
-      lane: stateToLane(normalizeStateName(issue.state)),
-      url: issue.url,
-      updatedAt: issue.updatedAt,
-      assignees: issue.assignees ?? [],
-      labels: issue.labels ?? [],
-      evidence: `${githubQueue.source ?? 'GitHub queue'} · ${issue.state}`,
-      recommended: recommendationForQueueState(issue.state),
-      tone: toneForState(normalizeStateName(issue.state)),
-      source: 'githubQueue'
-    }));
+    .map((issue) => {
+      const state = normalizeStateName(issue.state);
+      return {
+        id: issue.identifier,
+        title: issue.title,
+        state,
+        lane: stateToLane(state),
+        url: issue.url,
+        updatedAt: issue.updatedAt,
+        assignees: issue.assignees ?? [],
+        labels: issue.labels ?? [],
+        evidence: `${githubQueue.source ?? 'GitHub queue'} · ${issue.state}`,
+        recommended: recommendationForQueueState(state),
+        tone: toneForState(state),
+        source: 'githubQueue'
+      };
+    })
+    .filter((issue) => isLaneQueueState(issue.state) && issue.lane !== 'Unknown');
 
   if (fromGithub.length) return fromGithub.sort(queueIssueSort);
 
@@ -1685,10 +1389,24 @@ function ensureIssue(issues, id) {
 }
 
 function stateToLane(state) {
+  if (!isLaneQueueState(state)) return 'Unknown';
   if (state === 'Agent Review' || state === 'Human Review') return 'Review';
   if (state === 'Merging') return 'Merge';
   if (state === 'Need Human Input') return 'Human';
   return 'Main';
+}
+
+function isLaneQueueState(state) {
+  return [
+    'Need to Clarify',
+    'Todo',
+    'In Progress',
+    'Rework',
+    'Agent Review',
+    'Human Review',
+    'Merging',
+    'Need Human Input'
+  ].includes(normalizeStateName(state));
 }
 
 function bump(rows, state, amount = 1, sourceLabel = 'Derived', provenance = 'live') {
@@ -1724,17 +1442,22 @@ function toneForState(state) {
 
 function workersForLane(autopilot, lane) {
   const plan = (autopilot?.lanes ?? []).find((item) => item.lane === lane);
-  const selected = plan?.selected_issue
+  const selectedIssue = issueRefFromValue(plan?.selected_issue);
+  const selectedAction = textFromValue(
+    plan?.action ?? plan?.selected_issue,
+    `${titleCase(lane)} selected issue`
+  );
+  const selected = selectedIssue
     ? [
         {
-          issue: plan.selected_issue,
-          title: plan.action ?? `${titleCase(lane)} selected issue`,
-          action: plan.action ?? 'Inspect selected issue',
+          issue: selectedIssue,
+          title: selectedAction,
+          action: selectedAction,
           backend: 'Shea Symphony CLI',
-          session: plan.status ?? 'planned',
+          session: textFromValue(plan?.status, 'planned'),
           elapsed: 'live',
-          evidence: plan.reason ?? 'Autopilot plan selected this issue.',
-          target: plan.target_state ?? plan.target ?? 'Next lane state'
+          evidence: textFromValue(plan?.reason, 'Autopilot plan selected this issue.'),
+          target: textFromValue(plan?.target_state ?? plan?.target, 'Next lane state')
         }
       ]
     : [];
@@ -1742,17 +1465,60 @@ function workersForLane(autopilot, lane) {
   const active = (autopilot?.active_issues ?? [])
     .filter((issue) => !issue.lane || issue.lane === lane)
     .map((issue) => ({
-      issue: issue.issue ?? issue.identifier ?? '#?',
-      title: issue.title ?? `${titleCase(lane)} active issue`,
-      action: issue.action ?? issue.status ?? 'Active',
-      backend: issue.backend ?? 'Shea Symphony CLI',
-      session: issue.session ?? issue.run_id ?? 'active',
-      elapsed: issue.elapsed ?? 'live',
-      evidence: issue.evidence ?? issue.reason ?? 'Active issue surfaced by autopilot.',
-      target: issue.target ?? issue.target_state ?? issue.status ?? 'Unknown'
+      issue: issueRefFromValue(issue.issue ?? issue.identifier) ?? '#?',
+      title: textFromValue(issue.title, `${titleCase(lane)} active issue`),
+      action: textFromValue(issue.action ?? issue.status, 'Active'),
+      backend: textFromValue(issue.backend, 'Shea Symphony CLI'),
+      session: textFromValue(issue.session ?? issue.run_id, 'active'),
+      elapsed: textFromValue(issue.elapsed, 'live'),
+      evidence: textFromValue(issue.evidence ?? issue.reason, 'Active issue surfaced by autopilot.'),
+      target: textFromValue(issue.target ?? issue.target_state ?? issue.status, 'Unknown')
     }));
 
   return [...selected, ...active];
+}
+
+function issueRefFromValue(value) {
+  if (value == null || value === '' || value === 'none') return null;
+  if (typeof value === 'number') return `#${value}`;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed === 'none') return null;
+    const match = trimmed.match(/#?(\d+)/);
+    return match ? `#${match[1]}` : trimmed;
+  }
+  if (typeof value === 'object') {
+    return issueRefFromValue(
+      value.identifier ??
+        value.issue ??
+        value.id ??
+        value.number ??
+        value.url ??
+        value.html_url ??
+        value.title
+    );
+  }
+  return String(value);
+}
+
+function textFromValue(value, fallback = '') {
+  if (value == null || value === '' || value === 'none') return fallback;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (typeof value === 'object') {
+    return textFromValue(
+      value.title ??
+        value.name ??
+        value.label ??
+        value.action ??
+        value.status ??
+        value.state ??
+        value.identifier ??
+        value.issue,
+      fallback
+    );
+  }
+  return fallback;
 }
 
 function firstLine(value) {

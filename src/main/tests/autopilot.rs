@@ -141,8 +141,11 @@ fn autopilot_plan_does_not_mutate_tracker_adapter() {
 
 #[test]
 fn autopilot_plan_reports_parked_operator_queues() {
-    let need_to_clarify =
-        tracker_issue_with_ref("#40", "Needs issue contract clarification", "Need to Clarify");
+    let need_to_clarify = tracker_issue_with_ref(
+        "#40",
+        "Needs issue contract clarification",
+        "Need to Clarify",
+    );
     let human_review = tracker_issue_with_ref("#41", "Needs human approval", "Human Review");
     let need_human_input =
         tracker_issue_with_ref("#42", "Needs operator decision", "Need Human Input");

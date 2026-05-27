@@ -4,12 +4,15 @@
     DATA_MODE_CHANGE_EVENT,
     HANDOFF_TARGETS,
     HANDOFF_TARGET_CHANGE_EVENT,
-    buildViewModel,
+    REFRESH_REQUEST_EVENT,
     getDefaultHandoffTarget,
-    loadOverview,
-    loadReadSurface,
-    mergeReadSurface
-  } from './lib/api.ts';
+    recordCliLog,
+    refreshStatusStore,
+    updateCliLog
+  } from './lib/uiState.ts';
+  import { buildViewModel } from './lib/operatorViewModel.ts';
+  import { loadOverview, loadReadSurface } from './lib/operatorReads.ts';
+  import { mergeReadSurface } from './lib/operatorReadModel.ts';
   import {
     appendAutoloopLine,
     defaultLoopState,
@@ -33,10 +36,10 @@
   let fullLoading = false;
   let backgroundRefreshing = false;
   let slowReadsRemaining = 0;
+  let readGeneration = 0;
   let defaultHandoffTarget = 'codex-app';
   let copiedHandoffId = '';
   let view = buildViewModel(null);
-  const autoRefreshMs = 45_000;
 
   $: dataSource = view.dataSource;
   $: queueIssues = view.queueIssues ?? [];
@@ -86,41 +89,105 @@
     };
   });
 
-  async function refresh(force = false, includeSlowReads = true, background = false) {
-    if (background) {
-      backgroundRefreshing = true;
-    } else {
-      loading = true;
-      fullLoading = false;
-    }
+  async function refresh(force = false, includeSlowReads = true, source = 'manual') {
+    const hasRenderableState = view?.dataSource?.mode !== 'offline';
+    backgroundRefreshing = hasRenderableState;
+    loading = !hasRenderableState;
+    fullLoading = includeSlowReads;
     slowReadsRemaining = 0;
     liveError = '';
+    refreshStatusStore.set({
+      running: true,
+      remaining: includeSlowReads ? 6 : 1,
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      source,
+      detail: 'Requesting overview'
+    });
     try {
       view = buildViewModel(await loadOverview(force, 'fast'));
       loading = false;
       if (!includeSlowReads) return;
-      fullLoading = true;
-      const slowSurfaces = ['autopilot', 'doctor', 'review', 'local'];
-      slowReadsRemaining = slowSurfaces.length;
-      await Promise.allSettled(
-        slowSurfaces.map(async (name) => {
-          try {
-            const surface = await loadReadSurface(name, force);
-            view = buildViewModel(mergeReadSurface(view.raw, surface));
-          } finally {
-            slowReadsRemaining -= 1;
-          }
-        })
-      );
+      startBackgroundReads(force, source);
     } catch (error) {
       liveError = error.message;
-      view = buildViewModel(null);
+      if (!hasRenderableState) view = buildViewModel(null);
+      refreshStatusStore.set({
+        running: false,
+        remaining: 0,
+        startedAt: null,
+        finishedAt: new Date().toISOString(),
+        source,
+        detail: error.message
+      });
     } finally {
-      if (!background) loading = false;
-      fullLoading = false;
+      loading = false;
       backgroundRefreshing = false;
-      slowReadsRemaining = 0;
+      if (!includeSlowReads) {
+        refreshStatusStore.set({
+          running: false,
+          remaining: 0,
+          startedAt: null,
+          finishedAt: new Date().toISOString(),
+          source,
+          detail: 'Overview refreshed'
+        });
+      }
     }
+  }
+
+  function startBackgroundReads(force = false, source = 'manual') {
+    const generation = ++readGeneration;
+    const slowSurfaces = ['autopilot', 'doctor', 'review', 'skills', 'sessions', 'local'];
+    fullLoading = true;
+    slowReadsRemaining = slowSurfaces.length;
+    refreshStatusStore.update((status) => ({
+      ...status,
+      running: true,
+      remaining: slowSurfaces.length,
+      source,
+      detail: 'Loading CLI read surfaces'
+    }));
+
+    for (const name of slowSurfaces) {
+      loadReadSurface(name, force)
+        .then((surface) => {
+          if (generation !== readGeneration) return;
+          view = buildViewModel(mergeReadSurface(view.raw, surface));
+        })
+        .catch((error) => {
+          if (generation !== readGeneration) return;
+          liveError = error.message;
+        })
+        .finally(() => {
+          if (generation !== readGeneration) return;
+          slowReadsRemaining = Math.max(0, slowReadsRemaining - 1);
+          refreshStatusStore.update((status) => ({
+            ...status,
+            running: slowReadsRemaining > 0,
+            remaining: slowReadsRemaining,
+            finishedAt: slowReadsRemaining === 0 ? new Date().toISOString() : status.finishedAt,
+            detail: slowReadsRemaining === 0 ? 'Refresh complete' : `Loading ${slowReadsRemaining} CLI surface${slowReadsRemaining === 1 ? '' : 's'}`
+          }));
+          if (slowReadsRemaining === 0) fullLoading = false;
+        });
+    }
+  }
+
+  function scheduleRefresh(force = false, includeSlowReads = true, source = 'manual') {
+    refreshStatusStore.set({
+      running: true,
+      remaining: includeSlowReads ? 6 : 1,
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      source,
+      detail: 'Queued refresh'
+    });
+    window.requestAnimationFrame(() => {
+      window.setTimeout(() => {
+        refresh(force, includeSlowReads, source);
+      }, 0);
+    });
   }
 
   function isHumanTodoState(state) {
@@ -214,14 +281,36 @@
   async function startDryRunAutoloop() {
     autoloopBusy = true;
     tauriError = '';
+    const startedAt = performance.now();
+    const logId = recordCliLog({
+      surface: 'autoloop',
+      phase: 'start',
+      status: 'running',
+      detail: 'Starting dry-run autopilot loop.',
+      args: ['autopilot', 'loop', 'workflows/shea-symphony.md', '--max-iterations', '1', '--dry-run']
+    });
     try {
       autoloopState = await startAutoloop({
         workflowPath: 'workflows/shea-symphony.md',
         maxIterations: 1,
         write: false
       });
+      updateCliLog(logId, {
+        surface: 'autoloop',
+        phase: 'finish',
+        status: 'ok',
+        detail: autoloopState.pid ? `Autoloop started with pid ${autoloopState.pid}.` : 'Autoloop start command returned.',
+        durationMs: Math.round(performance.now() - startedAt)
+      });
     } catch (error) {
       tauriError = error.message;
+      updateCliLog(logId, {
+        surface: 'autoloop',
+        phase: 'error',
+        status: 'failed',
+        detail: error.message,
+        durationMs: Math.round(performance.now() - startedAt)
+      });
     } finally {
       autoloopBusy = false;
     }
@@ -230,10 +319,31 @@
   async function stopRunningAutoloop() {
     autoloopBusy = true;
     tauriError = '';
+    const startedAt = performance.now();
+    const logId = recordCliLog({
+      surface: 'autoloop',
+      phase: 'stop',
+      status: 'running',
+      detail: 'Stopping autopilot loop.'
+    });
     try {
       autoloopState = await stopAutoloop();
+      updateCliLog(logId, {
+        surface: 'autoloop',
+        phase: 'finish',
+        status: 'ok',
+        detail: 'Autoloop stop signal sent.',
+        durationMs: Math.round(performance.now() - startedAt)
+      });
     } catch (error) {
       tauriError = error.message;
+      updateCliLog(logId, {
+        surface: 'autoloop',
+        phase: 'error',
+        status: 'failed',
+        detail: error.message,
+        durationMs: Math.round(performance.now() - startedAt)
+      });
     } finally {
       autoloopBusy = false;
     }
@@ -256,17 +366,18 @@
     }).then((unlisten) => {
       unlistenAutoloop = unlisten;
     });
-    refresh();
-    const dataModeListener = () => refresh(true);
+    scheduleRefresh(false, true, 'initial');
+    const dataModeListener = () => scheduleRefresh(true, true, 'mode');
+    const refreshRequestListener = (event) => {
+      const detail = event.detail ?? {};
+      scheduleRefresh(detail.force ?? true, true, detail.source ?? 'manual');
+    };
     const handoffTargetListener = (event) => {
       defaultHandoffTarget = event.detail?.target ?? getDefaultHandoffTarget();
     };
     window.addEventListener(DATA_MODE_CHANGE_EVENT, dataModeListener);
+    window.addEventListener(REFRESH_REQUEST_EVENT, refreshRequestListener);
     window.addEventListener(HANDOFF_TARGET_CHANGE_EVENT, handoffTargetListener);
-    const autoRefresh = window.setInterval(() => {
-      if (loading || fullLoading || backgroundRefreshing || document.visibilityState !== 'visible') return;
-      refresh(false, false, true);
-    }, autoRefreshMs);
     const handoffRefresh = window.setInterval(() => {
       const nextTarget = getDefaultHandoffTarget();
       if (nextTarget !== defaultHandoffTarget) {
@@ -275,8 +386,8 @@
     }, 300);
     return () => {
       window.removeEventListener(DATA_MODE_CHANGE_EVENT, dataModeListener);
+      window.removeEventListener(REFRESH_REQUEST_EVENT, refreshRequestListener);
       window.removeEventListener(HANDOFF_TARGET_CHANGE_EVENT, handoffTargetListener);
-      window.clearInterval(autoRefresh);
       window.clearInterval(handoffRefresh);
       unlistenAutoloop?.();
     };
@@ -333,7 +444,9 @@
           <span class="issue-tag">Clear</span>
           <strong>No human to-do issues visible</strong>
           <p>
-            {liveUnavailable
+            {fullLoading
+              ? `Loading CLI readback... ${slowReadsRemaining} surface${slowReadsRemaining === 1 ? '' : 's'} remaining.`
+              : liveUnavailable
               ? 'Waiting for live Project readback before showing operator-owned issues.'
               : 'The current Project read did not surface Need to Clarify, Need Human Input, or Human Review items.'}
           </p>
@@ -351,6 +464,8 @@
         </span>
         {#if latestAutoloopLine}
           <small>{latestAutoloopLine}</small>
+        {:else if fullLoading}
+          <small>Loading CLI readback · {slowReadsRemaining} surface{slowReadsRemaining === 1 ? '' : 's'} remaining</small>
         {/if}
       </div>
       <div>
@@ -383,7 +498,7 @@
                 </div>
               {/each}
             {:else}
-              <div class="lane-board-empty">No issue visible.</div>
+              <div class="lane-board-empty">{fullLoading ? 'Loading CLI readback...' : 'No issue visible.'}</div>
             {/if}
           </div>
         </article>

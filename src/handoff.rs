@@ -372,20 +372,31 @@ pub fn plan_issue_handoff_for_profile(
     let branch_target = branch_target_evidence(issue, base_branch);
     let branch_name = match issue.branch_name.as_deref() {
         Some(existing_branch) if is_rework => existing_branch.to_string(),
-        None if let Some(continuation) = &continuation => continuation
-            .branch_name
-            .as_deref()
-            .map(str::trim)
-            .filter(|branch_name| !branch_name.is_empty())
-            .map(|branch_name| {
-                guard_branch_for_issue(branch_name, &issue.identifier)?;
-                Ok::<_, HandoffError>(branch_name.to_string())
-            })
-            .transpose()?
-            .ok_or_else(|| HandoffError::MissingReworkContinuationBranch {
-                issue_ref: issue.identifier.clone(),
-                pull_request_url: continuation.pull_request_url.clone(),
-            })?,
+        None => {
+            if let Some(continuation) = &continuation {
+                continuation
+                    .branch_name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|branch_name| !branch_name.is_empty())
+                    .map(|branch_name| {
+                        guard_branch_for_issue(branch_name, &issue.identifier)?;
+                        Ok::<_, HandoffError>(branch_name.to_string())
+                    })
+                    .transpose()?
+                    .ok_or_else(|| HandoffError::MissingReworkContinuationBranch {
+                        issue_ref: issue.identifier.clone(),
+                        pull_request_url: continuation.pull_request_url.clone(),
+                    })?
+            } else if branch_target.role == BranchTargetRole::ParentIssue {
+                branch_target
+                    .parent_integration_branch
+                    .clone()
+                    .unwrap_or_else(|| branch_name_for_issue(&issue.identifier, &issue.title))
+            } else {
+                branch_name_for_issue(&issue.identifier, &issue.title)
+            }
+        }
         _ if branch_target.role == BranchTargetRole::ParentIssue => branch_target
             .parent_integration_branch
             .clone()

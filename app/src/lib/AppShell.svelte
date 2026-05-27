@@ -3,21 +3,44 @@
   import {
     HANDOFF_TARGETS,
     HANDOFF_TARGET_CHANGE_EVENT,
+    REFRESH_REQUEST_EVENT,
+    cliLogStore,
     defaultHandoffTargetStore,
     getDataMode,
     getDefaultHandoffTarget,
+    refreshStatusStore,
     resetFixtureOverview,
     setDataMode,
     setDefaultHandoffTarget
-  } from './api.ts';
+  } from './uiState.ts';
 
   type ThemeMode = 'daylight' | 'night';
   type DataMode = 'live' | 'fixture';
   type HandoffTarget = 'codex-app' | 'codex-cli' | 'github';
+  type RefreshInterval = 'manual' | '10000' | '30000' | '60000';
+
+  export let currentPath = '/';
+
+  const navItems = [
+    { href: '/', label: 'Operator Desk' },
+    { href: '/lanes/main', label: 'Main Lane' },
+    { href: '/lanes/review', label: 'Review Lane' },
+    { href: '/lanes/merge', label: 'Merge Lane' },
+    { href: '/observability', label: 'Observability' },
+    { href: '/intelligence', label: 'Intelligence' },
+    { href: '/reference', label: 'Reference' }
+  ];
 
   let theme: ThemeMode = 'daylight';
   let dataMode: DataMode = 'live';
   let handoffTarget: HandoffTarget = 'codex-app';
+  let refreshInterval: RefreshInterval = 'manual';
+  let refreshTimer: number | undefined;
+  let logsOpen = false;
+
+  $: latestLog = $cliLogStore[0];
+  $: refreshRunning = $refreshStatusStore.running;
+  $: refreshLabel = refreshRunning ? `Refreshing${$refreshStatusStore.remaining ? ` (${$refreshStatusStore.remaining})` : ''}` : 'Refresh';
 
   function applyTheme(nextTheme: ThemeMode) {
     theme = nextTheme;
@@ -46,12 +69,56 @@
     window.dispatchEvent(new CustomEvent(HANDOFF_TARGET_CHANGE_EVENT, { detail: { target: handoffTarget } }));
   }
 
+  function formatLogTime(value: string) {
+    return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  function requestRefresh(source = 'manual') {
+    window.dispatchEvent(new CustomEvent(REFRESH_REQUEST_EVENT, { detail: { source, force: true } }));
+  }
+
+  function updateRefreshInterval(event: Event) {
+    refreshInterval = (event.currentTarget as HTMLSelectElement).value as RefreshInterval;
+    localStorage.setItem('shea-refresh-interval', refreshInterval);
+    configureRefreshTimer();
+  }
+
+  function configureRefreshTimer() {
+    if (refreshTimer) {
+      window.clearInterval(refreshTimer);
+      refreshTimer = undefined;
+    }
+    if (refreshInterval === 'manual') return;
+    refreshTimer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible' || $refreshStatusStore.running) return;
+      requestRefresh('auto');
+    }, Number(refreshInterval));
+  }
+
+  function isActivePath(href: string) {
+    if (href === '/') return currentPath === '/';
+    return currentPath === href || currentPath.startsWith(`${href}/`);
+  }
+
+  function navigate(event: MouseEvent, href: string) {
+    event.preventDefault();
+    window.dispatchEvent(new CustomEvent('shea-navigate', { detail: { href } }));
+  }
+
   onMount(() => {
     const savedTheme = localStorage.getItem('shea-theme');
     applyTheme(savedTheme === 'night' ? 'night' : 'daylight');
     dataMode = getDataMode();
     handoffTarget = getDefaultHandoffTarget() as HandoffTarget;
+    const savedRefreshInterval = localStorage.getItem('shea-refresh-interval');
+    refreshInterval = ['manual', '10000', '30000', '60000'].includes(savedRefreshInterval ?? '')
+      ? (savedRefreshInterval as RefreshInterval)
+      : 'manual';
+    configureRefreshTimer();
     defaultHandoffTargetStore.set(handoffTarget);
+    return () => {
+      if (refreshTimer) window.clearInterval(refreshTimer);
+    };
   });
 </script>
 
@@ -65,8 +132,11 @@
 
 <div class="app-chrome">
   <header class="rail" aria-label="Primary navigation">
-    <a class="brand-lockup" href="/">
-      <span class="brand-mark" aria-hidden="true">SS</span>
+    <a class:loading={refreshRunning} class="brand-lockup" href="/" onclick={(event) => navigate(event, '/')}>
+      <span class="brand-mark" aria-hidden="true">
+        <span>SS</span>
+        <span class="brand-loader"></span>
+      </span>
       <span>
         <strong>Shea Symphony</strong>
         <small>App</small>
@@ -74,13 +144,16 @@
     </a>
 
     <nav class="nav-list" aria-label="Current surface">
-      <a class="active" href="/">Operator Desk</a>
+      {#each navItems as item}
+        <a
+          class:active={isActivePath(item.href)}
+          href={item.href}
+          onclick={(event) => navigate(event, item.href)}
+        >
+          {item.label}
+        </a>
+      {/each}
     </nav>
-
-    <div class="rail-foot">
-      <span class="mini-label">Foreground</span>
-      <span class="rail-state">Local loop armed</span>
-    </div>
 
     <div class="topbar-cluster nav-actions" aria-label="Runtime state">
       <label class="handoff-default">
@@ -103,8 +176,32 @@
       {#if dataMode === 'fixture'}
         <button class="mode-reset" type="button" onclick={resetFixture}>Reset</button>
       {/if}
-      <span class="countdown">Manual refresh</span>
-      <span class="health-pill">Writes gated</span>
+      <button class="refresh-button" type="button" aria-busy={refreshRunning} onclick={() => requestRefresh('manual')}>
+        {refreshLabel}
+      </button>
+      <label class="refresh-interval">
+        <span>Auto</span>
+        <select value={refreshInterval} onchange={updateRefreshInterval} aria-label="Auto refresh interval">
+          <option value="manual">Manual</option>
+          <option value="10000">10s</option>
+          <option value="30000">30s</option>
+          <option value="60000">1m</option>
+        </select>
+      </label>
+      <button
+        class="cli-log-toggle"
+        type="button"
+        aria-label="Open CLI command log"
+        aria-pressed={logsOpen}
+        onclick={() => (logsOpen = true)}
+      >
+        <span>CLI Logs</span>
+        {#if refreshRunning}
+          <small>{$refreshStatusStore.remaining || '...'}</small>
+        {:else if latestLog}
+          <small>{latestLog.status}</small>
+        {/if}
+      </button>
       <button
         class="theme-toggle"
         type="button"
@@ -123,3 +220,47 @@
     </main>
   </section>
 </div>
+
+{#if logsOpen}
+  <div class="modal-backdrop">
+    <button class="modal-scrim" type="button" aria-label="Close CLI command log" onclick={() => (logsOpen = false)}></button>
+    <div class="cli-log-modal" role="dialog" aria-modal="true" aria-labelledby="cli-log-title">
+      <header>
+        <div>
+          <p class="eyebrow">Runtime</p>
+          <h2 id="cli-log-title">CLI Command Log</h2>
+        </div>
+        <button class="btn btn-ghost" type="button" onclick={() => (logsOpen = false)}>Close</button>
+      </header>
+
+      {#if $cliLogStore.length}
+        <div class="cli-log-list">
+          {#each $cliLogStore as entry}
+            <article class="cli-log-row {entry.status}">
+              <div>
+                <span>{formatLogTime(entry.at)}</span>
+                <strong>{entry.surface}</strong>
+                <em>{entry.phase}</em>
+              </div>
+              <p>{entry.detail || entry.status}</p>
+              <footer>
+                <span>{entry.status}</span>
+                {#if entry.durationMs != null}
+                  <span>{Math.round(entry.durationMs)}ms</span>
+                {/if}
+                {#if entry.args?.length}
+                  <code>{entry.args.join(' ')}</code>
+                {/if}
+              </footer>
+            </article>
+          {/each}
+        </div>
+      {:else}
+        <div class="cli-log-empty">
+          <strong>No CLI command activity yet</strong>
+          <p>Read surfaces and autoloop controls will appear here when they start.</p>
+        </div>
+      {/if}
+    </div>
+  </div>
+{/if}

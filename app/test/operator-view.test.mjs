@@ -3,13 +3,19 @@ import assert from 'node:assert/strict';
 
 import {
   buildFixtureOverview,
-  buildFixtureReadSurface,
+  buildFixtureReadSurface
+} from '../src/lib/operatorFixtures.ts';
+import {
   buildViewModel,
+} from '../src/lib/operatorViewModel.ts';
+import {
   loadHealth,
   loadOverview,
-  loadReadSurface,
+  loadReadSurface
+} from '../src/lib/operatorReads.ts';
+import {
   mergeReadSurface
-} from '../src/lib/api.ts';
+} from '../src/lib/operatorReadModel.ts';
 import { defaultLoopState, laneWorkerFromAutoloop } from '../src/lib/tauriAutoloop.ts';
 
 test('browser fallback uses fixture data instead of a Node API bridge', async () => {
@@ -119,6 +125,85 @@ test('fixture overview feeds first-screen human todo and lane board data', () =>
   assert.equal(view.laneWorkers.review[0].issue, '#421');
   assert.equal(view.laneWorkers.merge[0].issue, '#430');
   assert.ok(view.readPathMap.some((path) => path.id === 'tauri-bridge'));
+});
+
+test('view model renders object-shaped selected issues as issue references', () => {
+  const view = buildViewModel({
+    generatedAt: new Date().toISOString(),
+    workflowPath: 'workflows/shea-symphony.md',
+    commands: {
+      autopilot: {
+        ok: true,
+        args: ['autopilot', 'plan', 'workflows/shea-symphony.md', '--json'],
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        durationMs: 12,
+        stderr: '',
+        stdoutPreview: '{}'
+      }
+    },
+    autopilot: {
+      lanes: [
+        {
+          lane: 'main',
+          status: 'ready',
+          selected_issue: { identifier: '#512', title: 'Object issue should not leak' },
+          action: null,
+          reason: { title: 'Object reason should become text' }
+        }
+      ],
+      parked_queues: []
+    },
+    healthy: true
+  });
+
+  assert.equal(view.laneWorkers.main[0].issue, '#512');
+  assert.equal(view.laneWorkers.main[0].title, 'Object issue should not leak');
+  assert.equal(view.laneWorkers.main[0].evidence, 'Object reason should become text');
+});
+
+test('lane board queue excludes backlog project items', () => {
+  const view = buildViewModel({
+    generatedAt: new Date().toISOString(),
+    workflowPath: 'workflows/shea-symphony.md',
+    commands: {
+      githubQueue: {
+        ok: true,
+        args: ['autopilot', 'plan', 'workflows/shea-symphony.md', '--json'],
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        durationMs: 12,
+        stderr: '',
+        stdoutPreview: '{}'
+      }
+    },
+    githubQueue: {
+      source: 'test queue',
+      issues: [
+        {
+          identifier: '#329',
+          title: 'Add a Dogfood session workflow and skill',
+          state: 'Project Backlog'
+        },
+        {
+          identifier: '#330',
+          title: 'Dogfood: 2026-05-19 manual lane readiness run',
+          state: 'Backlog'
+        },
+        {
+          identifier: '#331',
+          title: 'Executable main issue',
+          state: 'Todo'
+        }
+      ]
+    },
+    healthy: true
+  });
+
+  assert.deepEqual(view.queueIssues.map((issue) => issue.id), ['#331']);
+  assert.deepEqual(view.laneProjectIssues.main.map((issue) => issue.id), ['#331']);
 });
 
 test('read surface payloads incrementally replace pending overview commands', () => {

@@ -13,7 +13,6 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, State};
 
 const DEFAULT_WORKFLOW_PATH: &str = "workflows/shea-symphony.md";
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AutoloopOptions {
@@ -155,27 +154,41 @@ fn get_loop_state(manager: State<'_, LoopManager>) -> Result<LoopStateSnapshot, 
 }
 
 #[tauri::command]
-fn get_runtime_snapshot() -> Result<serde_json::Value, String> {
-    let output = shea_command(&["status", "show", DEFAULT_WORKFLOW_PATH, "--json"])
-        .output()
-        .map_err(|error| format!("failed to run status snapshot: {error}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
-    serde_json::from_slice(&output.stdout).map_err(|error| format!("invalid status JSON: {error}"))
+async fn get_runtime_snapshot() -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let output = shea_command(&["status", "show", DEFAULT_WORKFLOW_PATH, "--json"])
+            .output()
+            .map_err(|error| format!("failed to run status snapshot: {error}"))?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+        serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("invalid status JSON: {error}"))
+    })
+    .await
+    .map_err(|error| format!("runtime snapshot task failed: {error}"))?
 }
 
 #[tauri::command]
-fn get_operator_overview(options: Option<OverviewOptions>) -> Result<Value, String> {
+async fn get_operator_overview(options: Option<OverviewOptions>) -> Result<Value, String> {
     let scope = options
         .as_ref()
         .and_then(|options| options.scope.as_deref())
-        .unwrap_or("full");
-    build_operator_overview(scope)
+        .unwrap_or("full")
+        .to_string();
+    tauri::async_runtime::spawn_blocking(move || build_operator_overview(&scope))
+        .await
+        .map_err(|error| format!("operator overview task failed: {error}"))?
 }
 
 #[tauri::command]
-fn get_read_surface(name: String, _force: Option<bool>) -> Result<Value, String> {
+async fn get_read_surface(name: String, _force: Option<bool>) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || build_read_surface(&name))
+        .await
+        .map_err(|error| format!("read surface task failed: {error}"))?
+}
+
+fn build_read_surface(name: &str) -> Result<Value, String> {
     if name == "githubQueue" {
         return Ok(surface_payload(
             "githubQueue",
@@ -188,10 +201,10 @@ fn get_read_surface(name: String, _force: Option<bool>) -> Result<Value, String>
         ));
     }
 
-    let args = read_surface_args(&name).ok_or_else(|| format!("unknown read surface: {name}"))?;
+    let args = read_surface_args(name).ok_or_else(|| format!("unknown read surface: {name}"))?;
     let result = run_shea_read(&args);
     Ok(surface_payload(
-        &name,
+        name,
         command_summary_value(&result.summary),
         parse_json_output(&result.stdout),
         if name == "sessions" {
@@ -360,23 +373,19 @@ fn start_autoloop(
 
 fn build_operator_overview(scope: &str) -> Result<Value, String> {
     let generated_at = timestamp_iso_like();
-    let runtime = run_shea_read(&read_surface_args("local").unwrap_or_default());
     let github_queue_command = pending_result(
         &["autopilot", "plan", DEFAULT_WORKFLOW_PATH, "--json"],
         "Project queue is represented through CLI autopilot parked queues in Tauri mode.",
     );
 
     if scope == "fast" {
-        let skills = run_shea_read(&read_surface_args("skills").unwrap_or_default());
-        let sessions = run_shea_read(&read_surface_args("sessions").unwrap_or_default());
-        let healthy = skills.summary.ok || sessions.summary.ok || runtime.summary.ok;
         let commands = json!({
             "autopilot": pending_result(&["autopilot", "plan", DEFAULT_WORKFLOW_PATH, "--json"], "Deferred to full overview."),
             "doctor": pending_result(&["doctor", DEFAULT_WORKFLOW_PATH, "--json"], "Deferred to full overview."),
             "review": pending_result(&["review", "status", DEFAULT_WORKFLOW_PATH, "--json"], "Deferred to full overview."),
-            "skills": command_summary_value(&skills.summary),
-            "sessions": command_summary_value(&sessions.summary),
-            "local": command_summary_value(&runtime.summary),
+            "skills": pending_result(&["skills", "status", DEFAULT_WORKFLOW_PATH, "--json"], "Deferred to background read."),
+            "sessions": pending_result(&["session", "list", DEFAULT_WORKFLOW_PATH], "Deferred to background read."),
+            "local": pending_result(&["status", "show", DEFAULT_WORKFLOW_PATH, "--json"], "Deferred to background read."),
             "githubQueue": github_queue_command,
         });
         return Ok(json!({
@@ -387,22 +396,28 @@ fn build_operator_overview(scope: &str) -> Result<Value, String> {
             "autopilot": Value::Null,
             "doctor": Value::Null,
             "review": Value::Null,
-            "skills": parse_json_output(&skills.stdout),
-            "sessionsText": sessions.stdout.trim(),
-            "localStatus": runtime_status_summary(&runtime),
+            "skills": Value::Null,
+            "sessionsText": "",
+            "localStatus": Value::Null,
             "githubQueue": Value::Null,
-            "healthy": healthy,
+            "healthy": true,
         }));
     }
 
+    let runtime = run_shea_read(&read_surface_args("local").unwrap_or_default());
     let autopilot = run_shea_read(&read_surface_args("autopilot").unwrap_or_default());
     let doctor = run_shea_read(&read_surface_args("doctor").unwrap_or_default());
     let review = run_shea_read(&read_surface_args("review").unwrap_or_default());
     let skills = run_shea_read(&read_surface_args("skills").unwrap_or_default());
     let sessions = run_shea_read(&read_surface_args("sessions").unwrap_or_default());
-    let healthy = [autopilot.summary.ok, doctor.summary.ok, review.summary.ok, skills.summary.ok]
-        .iter()
-        .any(|ok| *ok);
+    let healthy = [
+        autopilot.summary.ok,
+        doctor.summary.ok,
+        review.summary.ok,
+        skills.summary.ok,
+    ]
+    .iter()
+    .any(|ok| *ok);
 
     Ok(json!({
         "generatedAt": generated_at,
@@ -435,7 +450,11 @@ fn read_surface_args(name: &str) -> Option<Vec<String>> {
             DEFAULT_WORKFLOW_PATH.into(),
             "--json".into(),
         ]),
-        "doctor" => Some(vec!["doctor".into(), DEFAULT_WORKFLOW_PATH.into(), "--json".into()]),
+        "doctor" => Some(vec![
+            "doctor".into(),
+            DEFAULT_WORKFLOW_PATH.into(),
+            "--json".into(),
+        ]),
         "review" => Some(vec![
             "review".into(),
             "status".into(),
@@ -448,7 +467,11 @@ fn read_surface_args(name: &str) -> Option<Vec<String>> {
             DEFAULT_WORKFLOW_PATH.into(),
             "--json".into(),
         ]),
-        "sessions" => Some(vec!["session".into(), "list".into(), DEFAULT_WORKFLOW_PATH.into()]),
+        "sessions" => Some(vec![
+            "session".into(),
+            "list".into(),
+            DEFAULT_WORKFLOW_PATH.into(),
+        ]),
         "local" => Some(vec![
             "status".into(),
             "show".into(),
@@ -462,37 +485,67 @@ fn read_surface_args(name: &str) -> Option<Vec<String>> {
 fn run_shea_read(args: &[String]) -> CommandRun {
     let started_at = Instant::now();
     let string_args = args.iter().map(String::as_str).collect::<Vec<_>>();
-    match shea_command(&string_args).output() {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            CommandRun {
-                summary: CommandSummary {
-                    ok: output.status.success(),
-                    args: args.to_vec(),
-                    exit_code: output.status.code(),
-                    signal: None,
-                    timed_out: false,
-                    duration_ms: started_at.elapsed().as_millis(),
-                    stderr,
-                    stdout_preview: stdout.trim().chars().take(6000).collect(),
-                },
-                stdout,
-            }
-        }
-        Err(error) => CommandRun {
-            summary: CommandSummary {
-                ok: false,
-                args: args.to_vec(),
-                exit_code: None,
-                signal: None,
-                timed_out: false,
-                duration_ms: started_at.elapsed().as_millis(),
-                stderr: error.to_string(),
-                stdout_preview: String::new(),
-            },
-            stdout: String::new(),
+    let mut command = shea_command(&string_args);
+    match command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => match child.wait_with_output() {
+            Ok(output) => command_run_from_output(args, started_at, output, false),
+            Err(error) => command_run_from_error(args, started_at, error.to_string()),
         },
+        Err(error) => command_run_from_error(args, started_at, error.to_string()),
+    }
+}
+
+fn command_run_from_output(
+    args: &[String],
+    started_at: Instant,
+    output: std::process::Output,
+    timed_out: bool,
+) -> CommandRun {
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let mut stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if timed_out {
+        stderr = if stderr.is_empty() {
+            "read command timed out".into()
+        } else {
+            format!("read command timed out\n{stderr}")
+        };
+    }
+    CommandRun {
+        summary: CommandSummary {
+            ok: output.status.success() && !timed_out,
+            args: args.to_vec(),
+            exit_code: output.status.code(),
+            signal: if timed_out {
+                Some("timeout".into())
+            } else {
+                None
+            },
+            timed_out,
+            duration_ms: started_at.elapsed().as_millis(),
+            stderr,
+            stdout_preview: stdout.trim().chars().take(6000).collect(),
+        },
+        stdout,
+    }
+}
+
+fn command_run_from_error(args: &[String], started_at: Instant, error: String) -> CommandRun {
+    CommandRun {
+        summary: CommandSummary {
+            ok: false,
+            args: args.to_vec(),
+            exit_code: None,
+            signal: None,
+            timed_out: false,
+            duration_ms: started_at.elapsed().as_millis(),
+            stderr: error,
+            stdout_preview: String::new(),
+        },
+        stdout: String::new(),
     }
 }
 
@@ -592,14 +645,21 @@ fn stop_autoloop(
     };
 
     #[cfg(unix)]
-    let stop_result = Command::new("kill").arg("-TERM").arg(pid.to_string()).status();
+    let stop_result = Command::new("kill")
+        .arg("-TERM")
+        .arg(pid.to_string())
+        .status();
     #[cfg(not(unix))]
     let stop_result = Command::new("taskkill")
         .args(["/PID", &pid.to_string(), "/T"])
         .status();
 
     if let Err(error) = stop_result {
-        record_error(&app, &manager, format!("failed to signal autoloop stop: {error}"))?;
+        record_error(
+            &app,
+            &manager,
+            format!("failed to signal autoloop stop: {error}"),
+        )?;
         return Err(format!("failed to signal autoloop stop: {error}"));
     }
 
@@ -706,7 +766,9 @@ fn parse_autoloop_lane(line: &str, at_ms: u128) -> Option<LaneSnapshot> {
         max_concurrent: fields
             .get("max_concurrent")
             .and_then(|value| value.parse::<usize>().ok()),
-        recover: fields.get("recover").and_then(|value| value.parse::<bool>().ok()),
+        recover: fields
+            .get("recover")
+            .and_then(|value| value.parse::<bool>().ok()),
         updated_at_ms: Some(at_ms),
         latest_line: Some(line.into()),
     })

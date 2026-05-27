@@ -171,17 +171,64 @@ export function laneWorkerFromAutoloop(
   if (!lane || lane.status === 'idle') return null;
   if (!state.running && !lane.updatedAtMs) return null;
 
-  const selected = lane.selected ?? null;
+  const selected = issueRefFromValue(lane.selected);
+  const action = textFromValue(lane.action, lane.status);
+  const target = textFromValue(lane.target, lane.status);
   const label = titleCaseLane(laneKey);
   return {
     issue: selected ?? `${label} loop`,
-    title: selected ? `${lane.action ?? lane.status}` : `${label} ${lane.status}`,
-    action: lane.action ?? lane.status,
+    title: selected ? action : `${label} ${lane.status}`,
+    action,
     backend: `Tauri ${state.mode}`,
     session: state.pid ? `pid ${state.pid}` : 'autoloop',
-    elapsed: lane.target ?? lane.status,
+    elapsed: target,
     lane: laneKey
   };
+}
+
+function issueRefFromValue(value: unknown) {
+  if (value == null || value === '' || value === 'none') return null;
+  if (typeof value === 'number') return `#${value}`;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed === 'none') return null;
+    const match = trimmed.match(/#?(\d+)/);
+    return match ? `#${match[1]}` : trimmed;
+  }
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return issueRefFromValue(
+      record.identifier ??
+        record.issue ??
+        record.id ??
+        record.number ??
+        record.url ??
+        record.html_url ??
+        record.title
+    );
+  }
+  return String(value);
+}
+
+function textFromValue(value: unknown, fallback = '') {
+  if (value == null || value === '' || value === 'none') return fallback;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return textFromValue(
+      record.title ??
+        record.name ??
+        record.label ??
+        record.action ??
+        record.status ??
+        record.state ??
+        record.identifier ??
+        record.issue,
+      fallback
+    );
+  }
+  return fallback;
 }
 
 function titleCaseLane(value: string) {

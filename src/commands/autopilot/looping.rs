@@ -33,6 +33,7 @@ pub(crate) struct AutopilotLoopOptions {
     pub(crate) workflow_path: PathBuf,
     pub(crate) max_iterations: Option<usize>,
     pub(crate) once: bool,
+    pub(crate) continuous: bool,
     pub(crate) write: bool,
     pub(crate) dry_run: bool,
     pub(crate) recover: bool,
@@ -49,6 +50,8 @@ impl AutopilotLoopOptions {
     pub(crate) fn iteration_limit(&self) -> Option<usize> {
         if self.once {
             Some(1)
+        } else if self.continuous {
+            None
         } else {
             self.max_iterations
         }
@@ -84,15 +87,20 @@ fn autopilot_loop_with_cancellation(
     options: AutopilotLoopOptions,
     cancellation: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let max_iterations = options
-        .iteration_limit()
-        .ok_or("autopilot loop requires --max-iterations or --once for this bounded slice")?;
+    let max_iterations = options.iteration_limit();
+    if max_iterations.is_none() && !options.continuous {
+        return Err("autopilot loop requires --max-iterations, --once, or --continuous".into());
+    }
     let mut had_lane_error = false;
     let mut stopped_reported = false;
     let mut transient_attempt = 0u32;
     let mut recent_transient_failures = Vec::new();
+    let mut iteration = 1usize;
 
-    for iteration in 1..=max_iterations {
+    loop {
+        if max_iterations.is_some_and(|limit| iteration > limit) {
+            break;
+        }
         if cancellation.load(Ordering::SeqCst) {
             let status = autopilot_loop_cancelled_status(
                 &options,
@@ -135,7 +143,7 @@ fn autopilot_loop_with_cancellation(
                     options.display,
                     options.event_json,
                 )?;
-                if iteration < max_iterations
+                if autopilot_should_continue(iteration, max_iterations)
                     && autopilot_sleep_or_cancel(status.settings.poll_interval_ms, &cancellation)
                 {
                     let cancelled = autopilot_loop_cancelled_status(
@@ -153,6 +161,7 @@ fn autopilot_loop_with_cancellation(
                     stopped_reported = true;
                     break;
                 }
+                iteration = iteration.saturating_add(1);
                 continue;
             }
         };
@@ -176,7 +185,7 @@ fn autopilot_loop_with_cancellation(
                     options.display,
                     options.event_json,
                 )?;
-                if iteration < max_iterations
+                if autopilot_should_continue(iteration, max_iterations)
                     && autopilot_sleep_or_cancel(status.settings.poll_interval_ms, &cancellation)
                 {
                     let cancelled = autopilot_loop_cancelled_status(
@@ -194,6 +203,7 @@ fn autopilot_loop_with_cancellation(
                     stopped_reported = true;
                     break;
                 }
+                iteration = iteration.saturating_add(1);
                 continue;
             }
         };
@@ -231,7 +241,7 @@ fn autopilot_loop_with_cancellation(
                         options.display,
                         options.event_json,
                     )?;
-                    if iteration < max_iterations
+                    if autopilot_should_continue(iteration, max_iterations)
                         && autopilot_sleep_or_cancel(retry_delay_ms, &cancellation)
                     {
                         let cancelled = autopilot_loop_cancelled_status(
@@ -249,6 +259,7 @@ fn autopilot_loop_with_cancellation(
                         stopped_reported = true;
                         break;
                     }
+                    iteration = iteration.saturating_add(1);
                     continue;
                 }
 
@@ -272,7 +283,7 @@ fn autopilot_loop_with_cancellation(
                     options.display,
                     options.event_json,
                 )?;
-                if iteration < max_iterations
+                if autopilot_should_continue(iteration, max_iterations)
                     && autopilot_sleep_or_cancel(settings.poll_interval_ms, &cancellation)
                 {
                     let cancelled = autopilot_loop_cancelled_status(
@@ -290,6 +301,7 @@ fn autopilot_loop_with_cancellation(
                     stopped_reported = true;
                     break;
                 }
+                iteration = iteration.saturating_add(1);
                 continue;
             }
         };
@@ -305,7 +317,7 @@ fn autopilot_loop_with_cancellation(
         );
         print_autopilot_loop_status(&status, options.json, options.display, options.event_json)?;
         if status.phase == "blocked" {
-            if iteration < max_iterations
+            if autopilot_should_continue(iteration, max_iterations)
                 && autopilot_sleep_or_cancel(settings.poll_interval_ms, &cancellation)
             {
                 let cancelled = autopilot_loop_status_from_plan(
@@ -326,6 +338,7 @@ fn autopilot_loop_with_cancellation(
                 stopped_reported = true;
                 break;
             }
+            iteration = iteration.saturating_add(1);
             continue;
         }
 
@@ -469,7 +482,7 @@ fn autopilot_loop_with_cancellation(
             serde_json::to_value(&result)?,
         )?;
 
-        if iteration < max_iterations
+        if autopilot_should_continue(iteration, max_iterations)
             && autopilot_sleep_or_cancel(settings.poll_interval_ms, &cancellation)
         {
             let cancelled = autopilot_loop_cancelled_status(
@@ -487,16 +500,25 @@ fn autopilot_loop_with_cancellation(
             stopped_reported = true;
             break;
         }
+        iteration = iteration.saturating_add(1);
     }
 
-    if had_lane_error {
+    if had_lane_error && !options.continuous {
         Err("one or more autopilot lane ticks failed; see per-lane results above".into())
     } else {
         if !stopped_reported {
-            print_autopilot_stopped(options.event_json, "max_iterations", max_iterations)?;
+            if let Some(max_iterations) = max_iterations {
+                print_autopilot_stopped(options.event_json, "max_iterations", max_iterations)?;
+            }
         }
         Ok(())
     }
+}
+
+fn autopilot_should_continue(iteration: usize, max_iterations: Option<usize>) -> bool {
+    max_iterations
+        .map(|limit| iteration < limit)
+        .unwrap_or(true)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

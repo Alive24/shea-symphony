@@ -1172,6 +1172,25 @@ a {
   gap: var(--space-2);
 }
 
+.autoloop-toggle {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-pill);
+  color: var(--fg-2);
+  background: color-mix(in oklab, var(--surface), var(--card-bg) 42%);
+  font-size: var(--text-xs);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.autoloop-toggle input {
+  accent-color: var(--accent);
+}
+
 .lane-board-column-head {
   display: grid;
   place-items: center;

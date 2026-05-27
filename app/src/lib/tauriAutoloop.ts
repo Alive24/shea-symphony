@@ -50,6 +50,7 @@ export type StartAutoloopOptions = {
   workflowPath?: string;
   maxIterations?: number;
   once?: boolean;
+  continuous?: boolean;
   write?: boolean;
   pollIntervalMs?: number;
   mainMaxConcurrent?: number;

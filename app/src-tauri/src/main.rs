@@ -19,6 +19,7 @@ struct AutoloopOptions {
     workflow_path: Option<String>,
     max_iterations: Option<usize>,
     once: Option<bool>,
+    continuous: Option<bool>,
     write: Option<bool>,
     signal_format: Option<String>,
     poll_interval_ms: Option<u64>,
@@ -228,6 +229,7 @@ fn start_autoloop(
         workflow_path: None,
         max_iterations: Some(1),
         once: None,
+        continuous: Some(true),
         write: Some(false),
         signal_format: Some("json".into()),
         poll_interval_ms: None,
@@ -248,6 +250,8 @@ fn start_autoloop(
     ];
     if options.once.unwrap_or(false) {
         args.push("--once".into());
+    } else if options.continuous.unwrap_or(true) {
+        args.push("--continuous".into());
     } else {
         args.push("--max-iterations".into());
         args.push(options.max_iterations.unwrap_or(1).max(1).to_string());

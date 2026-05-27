@@ -43,6 +43,7 @@
   let copiedHandoffId = '';
   let view = buildViewModel(null);
   let autoloopRefreshTimer: number | null = null;
+  let autoloopContinuous = true;
   let lastHumanTodoIssues = [];
 
   $: dataSource = view.dataSource;
@@ -367,17 +368,21 @@
     tauriError = '';
     const startedAt = performance.now();
     const modeLabel = write ? 'write' : 'dry-run';
+    const loopArgs = autoloopContinuous
+      ? ['autopilot', 'loop', 'workflows/shea-symphony.md', '--continuous', write ? '--write' : '--dry-run']
+      : ['autopilot', 'loop', 'workflows/shea-symphony.md', '--max-iterations', '1', write ? '--write' : '--dry-run'];
     const logId = recordCliLog({
       surface: 'autoloop',
       phase: 'start',
       status: 'running',
-      detail: `Starting ${modeLabel} autopilot loop.`,
-      args: ['autopilot', 'loop', 'workflows/shea-symphony.md', '--max-iterations', '1', write ? '--write' : '--dry-run']
+      detail: `Starting ${modeLabel} ${autoloopContinuous ? 'continuous' : 'single-iteration'} autopilot loop.`,
+      args: loopArgs
     });
     try {
       autoloopState = await startAutoloop({
         workflowPath: 'workflows/shea-symphony.md',
-        maxIterations: 1,
+        maxIterations: autoloopContinuous ? undefined : 1,
+        continuous: autoloopContinuous,
         write
       });
       updateCliLog(logId, {
@@ -565,6 +570,10 @@
         {/if}
       </div>
       <div>
+        <label class="autoloop-toggle">
+          <input type="checkbox" bind:checked={autoloopContinuous} disabled={autoloopState.running || autoloopBusy} />
+          <span>Continuous</span>
+        </label>
         <button class="btn btn-primary" type="button" disabled={!tauriAvailable || autoloopBusy || autoloopState.running} onclick={startDryRunAutoloop}>
           Start dry-run
         </button>

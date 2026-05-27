@@ -447,8 +447,8 @@ enum AutopilotCommandArgs {
     )]
     Plan(AutopilotPlanArgs),
     #[command(
-        about = "Run bounded foreground Main, Review, and Merge lane ticks",
-        long_about = "`autopilot loop` is a bounded foreground CLI supervisor, not a daemon, background service, or app-server. It composes Main, Review, and Merge lane ticks in order, prints status and parked queues, and returns after the explicit iteration budget. Mutations require --write; dry-run remains the default preview boundary."
+        about = "Run foreground Main, Review, and Merge lane ticks",
+        long_about = "`autopilot loop` is a foreground CLI supervisor, not a daemon, background service, or app-server. It composes Main, Review, and Merge lane ticks in order, prints status and parked queues, and runs with --once, --max-iterations, or --continuous. Mutations require --write; dry-run remains the default preview boundary."
     )]
     Loop(AutopilotLoopArgs),
 }
@@ -476,6 +476,12 @@ struct AutopilotLoopArgs {
         help = "Run exactly one bounded iteration"
     )]
     once: bool,
+    #[arg(
+        long,
+        conflicts_with_all = ["max_iterations", "once"],
+        help = "Run foreground autopilot until cancelled"
+    )]
+    continuous: bool,
     #[arg(
         long,
         conflicts_with = "dry_run",
@@ -1610,7 +1616,7 @@ fn autopilot_loop_command(args: AutopilotLoopArgs) -> Result<Command, String> {
         || args.main_max_concurrent == Some(0)
         || args.review_max_concurrent == Some(0)
         || args.merge_max_concurrent == Some(0)
-        || (!args.once && args.max_iterations.is_none())
+        || (!args.once && !args.continuous && args.max_iterations.is_none())
     {
         return Err(usage());
     }
@@ -1619,6 +1625,7 @@ fn autopilot_loop_command(args: AutopilotLoopArgs) -> Result<Command, String> {
             workflow_path: args.workflow_path,
             max_iterations: args.max_iterations,
             once: args.once,
+            continuous: args.continuous,
             write: args.write,
             dry_run: args.dry_run,
             recover: loop_recover_enabled(args.write, false, args.no_recover),

@@ -2,7 +2,7 @@
 
 Shea Symphony is an opinionated and extended Rust implementation with GUI of OpenAI Symphony orchestration system to make it also work for small teams of humans that want to start building AI-native engineering workflows in a responsible and manageable way.
 
-This project is built by itself with self-dogfooding.
+> NOTE: This project is being built by itself with self-dogfooding and not fully stabilized for release yet;
 
 ## TLDR: Beyond OpenAI Symphony
 
@@ -11,6 +11,15 @@ This project is built by itself with self-dogfooding.
 - Leave the Harness Alone: Do not interfere with how Codex or Claude Code work and evolve.
 - Team Workflow: Also scale in quality and productivity with more human operators.
 - Human Input: Human can help more by writing better issues and providing feedback.
+
+### How Human Use It
+
+After setting up Shea Symphony, the desired human workflow looks like this:
+
+1. Use "issue-forge-skill" to discuss your ideas and observation in any agent session to set up issues directly
+2. Use "issue-forge-reflect-skill" to record sparse ideas into backlogs, collect ideas from previous work, and promote existing backlogs.
+3. Use "human-review" skill for issues waiting for the last UATs before getting approved for merging
+4. Use "doctor" skill for issues that requires human input to recover.
 
 ### Extension Modules
 
@@ -44,45 +53,21 @@ This project is built by itself with self-dogfooding.
 
 Codex and Claude Code are good at coding in a session, OpenAI Symphony simplifies the orchestration for a complete workflow with shared state, Shea Symphony makes the orchestration consistent, reliable, mindful, and collaborative.
 
-A real team needs a way to say:
+A real team needs a way to say that a slice of work is:
 
-- this issue is clear and meaningful enough to dispatch;
-- this work is claimed by the right agent in the right environment;
-- this PR is sufficiently reviewed by agents and worth human attention;
-- this human is guided and informed to provide feedback and approve;
-- this merge failure is mechanical and auto-repairable, or semantic and requires human intervention;
-- this run can be resumed without guessing and the state is recoverable;
-- this important finding/problem is captured and tracked in the backlog and promotable into issues later.
+- **Dispatchable**: clear and meaningful enough to dispatch;
+- **Isolated**: claimed by the right agent in the right environment;
+- **Worths Attention**: sufficiently reviewed by agents and worth human attention;
+- **Contextual for Review and Approval**: providing human with sufficient information and guidance to provide feedback and approve;
+- **Mergeable Automatically**: mergeable directly or assisted by agents, and only requires human intervention when there sematic conflicts;
+- **Recoverable**: able to restore state, progress, and runtime when stopped no matter how, or restart atomically;
+- **Tracked Semantically**: tracked in the backlog and promotable into issues later if not fully dispatchable yet.
 
-Shea Symphony turns those questions into a workflow.
-
-```mermaid
-flowchart LR
-    A["Rough idea"] --> B["Issue Forge"]
-    B --> C["Todo issue contract"]
-    C --> D["Main lane"]
-    D --> E["Agent Review"]
-    E --> F["Human Review"]
-    F --> G["Merge lane"]
-    G --> H["Done"]
-
-    E --> I["Rework"]
-    I --> D
-    G --> J["Need Human Input"]
-    J --> F
-```
+<!-- ![Shea Symphony lifecycle](docs/assets/shea-lifecycle.svg) -->
 
 The tracker stays the shared source of truth. Local artifacts, worktrees, logs,
 and session records exist to make the tracker state explainable and recoverable,
 not to replace it.
-
-## How People Use It
-
-Shea Symphony is designed around a human operator, not a hidden daemon.
-
-The operator can ask:
-
-The system answers through a few surfaces:
 
 - **Issue Forge** shapes rough work into executable issues.
 - **Main lane** implements one issue in an isolated workspace and stops at
@@ -154,28 +139,6 @@ cargo run -- merge loop workflows/shea-symphony.md --max-iterations 1 --dry-run
 `autopilot plan` is the bridge toward all-lane automation. It does not launch
 workers. It shows lane readiness, parked human queues, runtime concerns,
 doctor findings, and the next likely actions.
-
-### 4. When should you allow writes?
-
-Write mode is explicit because tracker mutation is real team state.
-
-For a bounded supervised tick:
-
-```bash
-cargo run -- main loop workflows/shea-symphony.md --max-iterations 1 --write
-cargo run -- review loop workflows/shea-symphony.md --max-iterations 1 --write
-cargo run -- merge loop workflows/shea-symphony.md --max-iterations 1 --write
-```
-
-The canonical operator launcher wraps the same idea:
-
-```bash
-scripts/shea-dogfood --dry-run
-scripts/shea-dogfood --write --confirm-write --max-iterations 1
-```
-
-The system is intentionally conservative. It should prefer a visible blocked
-state over a silent unsafe advance.
 
 ## The Lane Model
 

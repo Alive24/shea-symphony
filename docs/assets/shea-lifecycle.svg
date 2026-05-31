@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="360" viewBox="0 0 1120 360" role="img" aria-labelledby="title desc">
+  <title id="title">Shea Symphony lifecycle</title>
+  <desc id="desc">Shea Symphony workflow from Issue to Main to Agent Review to Human Review to Merge to Done, with Issue Forge, Rework, and Need Human Input optional paths.</desc>
+  <defs>
+    <filter id="node-shadow" x="-20%" y="-30%" width="140%" height="170%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#1e3932" flood-opacity="0.12"/>
+    </filter>
+    <marker id="main-arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#1e3932"/>
+    </marker>
+    <marker id="soft-arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#7b8a83"/>
+    </marker>
+    <marker id="gold-arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#a66f13"/>
+    </marker>
+  </defs>
+
+  <rect width="1120" height="360" rx="18" fill="#f2f0eb"/>
+  <rect x="28" y="28" width="1064" height="304" rx="14" fill="#ffffff" stroke="#d9d4cc"/>
+
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M190 176H244" stroke="#1e3932" stroke-width="2.8" marker-end="url(#main-arrow)"/>
+    <path d="M346 176H400" stroke="#1e3932" stroke-width="2.8" marker-end="url(#main-arrow)"/>
+    <path d="M532 176H586" stroke="#1e3932" stroke-width="2.8" marker-end="url(#main-arrow)"/>
+    <path d="M718 176H772" stroke="#1e3932" stroke-width="2.8" marker-end="url(#main-arrow)"/>
+    <path d="M874 176H928" stroke="#1e3932" stroke-width="2.8" marker-end="url(#main-arrow)"/>
+
+    <path d="M130 106V137" stroke="#7b8a83" stroke-width="2.2" stroke-dasharray="7 7" marker-end="url(#soft-arrow)"/>
+    <path d="M466 216C466 250 466 262 422 262H330C294 262 294 244 294 222" stroke="#7b8a83" stroke-width="2.2" stroke-dasharray="7 7" marker-end="url(#soft-arrow)"/>
+    <path d="M651 216C651 286 585 298 520 298H294C260 298 260 252 260 222" stroke="#a66f13" stroke-width="2.2" stroke-dasharray="7 7" marker-end="url(#gold-arrow)"/>
+    <path d="M822 216C822 250 822 262 780 262H710C676 262 676 244 676 222" stroke="#7b8a83" stroke-width="2.2" stroke-dasharray="7 7" marker-end="url(#soft-arrow)"/>
+    <path d="M892 285C842 315 725 315 676 222" stroke="#7b8a83" stroke-width="2.2" stroke-dasharray="7 7" marker-end="url(#soft-arrow)"/>
+  </g>
+
+  <g filter="url(#node-shadow)" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <g>
+      <rect x="70" y="136" width="120" height="80" rx="8" fill="#1e3932"/>
+      <text x="130" y="182" text-anchor="middle" fill="#ffffff" font-size="18" font-weight="700">Issue</text>
+    </g>
+    <g>
+      <rect x="244" y="136" width="102" height="80" rx="8" fill="#ffffff" stroke="#006241" stroke-width="2"/>
+      <text x="295" y="182" text-anchor="middle" fill="#006241" font-size="18" font-weight="700">Main</text>
+    </g>
+    <g>
+      <rect x="400" y="136" width="132" height="80" rx="8" fill="#ffffff" stroke="#006241" stroke-width="2"/>
+      <text x="466" y="170" text-anchor="middle" fill="#006241" font-size="15" font-weight="700">Agent</text>
+      <text x="466" y="190" text-anchor="middle" fill="#006241" font-size="15" font-weight="700">Review</text>
+    </g>
+    <g>
+      <rect x="586" y="136" width="132" height="80" rx="8" fill="#faf6ee" stroke="#cba258" stroke-width="2"/>
+      <text x="652" y="170" text-anchor="middle" fill="#6f4e16" font-size="15" font-weight="700">Human</text>
+      <text x="652" y="190" text-anchor="middle" fill="#6f4e16" font-size="15" font-weight="700">Review</text>
+    </g>
+    <g>
+      <rect x="772" y="136" width="102" height="80" rx="8" fill="#ffffff" stroke="#006241" stroke-width="2"/>
+      <text x="823" y="182" text-anchor="middle" fill="#006241" font-size="18" font-weight="700">Merge</text>
+    </g>
+    <g>
+      <rect x="928" y="136" width="120" height="80" rx="8" fill="#d4e9e2" stroke="#00754a" stroke-width="2"/>
+      <text x="988" y="182" text-anchor="middle" fill="#1e3932" font-size="18" font-weight="700">Done</text>
+    </g>
+
+    <g>
+      <rect x="61" y="65" width="138" height="42" rx="8" fill="#f9f9f9" stroke="#d9d4cc"/>
+      <text x="130" y="91" text-anchor="middle" fill="#33433d" font-size="14" font-weight="700">Issue Forge</text>
+    </g>
+    <g>
+      <rect x="244" y="243" width="102" height="42" rx="8" fill="#f9f9f9" stroke="#d9d4cc"/>
+      <text x="295" y="269" text-anchor="middle" fill="#33433d" font-size="14" font-weight="700">Rework</text>
+    </g>
+    <g>
+      <rect x="735" y="243" width="176" height="42" rx="8" fill="#f9f9f9" stroke="#d9d4cc"/>
+      <text x="823" y="269" text-anchor="middle" fill="#33433d" font-size="14" font-weight="700">Need Human Input</text>
+    </g>
+  </g>
+</svg>

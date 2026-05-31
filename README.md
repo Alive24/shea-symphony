@@ -1,40 +1,58 @@
 # Shea Symphony
 
-Shea Symphony is a team workflow system for supervised AI-native engineering.
+Shea Symphony is an opinionated and extended Rust implementation with GUI of OpenAI Symphony orchestration system to make it also work for small teams of humans that want to start building AI-native engineering workflows in a responsible and manageable way.
 
-It helps a human operator turn rough engineering intent into issue contracts,
-run implementation agents in isolated workspaces, request independent agent
-review, preserve audit evidence, and land approved pull requests through a
-guarded merge lane.
+This project is built by itself with self-dogfooding.
 
-It is inspired by OpenAI Symphony, but the focus here is not just launching an
-agent. The focus is the whole team loop around the agent:
+## TLDR: Beyond OpenAI Symphony
 
-- what work is safe to start;
-- who or what currently owns it;
-- where the implementation happened;
-- which evidence proves it is ready;
-- when a human must decide;
-- how the merge should be repaired, retried, or stopped.
+### Extension Principles
 
-Current maturity: **supervised team-workflow dogfood**. Shea Symphony can run
-bounded Main, Review, and Merge lane ticks against a live tracker. It is moving
-toward all-lane autopilot, but write-mode automation is still deliberately
-observable, bounded, and operator-led.
+- Leave the Harness Alone: Do not interfere with how Codex or Claude Code work and evolve.
+- Team Workflow: Also scale in quality and productivity with more human operators.
+- Human Input: Human can help more by writing better issues and providing feedback.
 
-## The Short Version
+### Extension Modules
 
-Modern coding agents are good at making changes. Teams need more than that.
+#### Issue Forge
+
+- A "grill-me" style dialectical experience activated by a configurable skill for the operator to shape ideas into executable issue contracts.
+- An issue quality gate before dispatch to ensure the issue is clear enough to dispatch.
+- A reflective skill to collect sparse backlog candidates from recent sessions or deep "dreaming logs" and promote them into executable issue contracts.
+
+#### Lane Model
+
+- Configurable backends and prompts for Main, Review, and Merge lanes.
+- Configurable handoff templates
+- Switch between Autopilot and Manual mode for fine control
+
+#### CLI Toolkit
+
+- Consistent state machine powered by tracker and mutation behaviors across all lanes.
+- Workspace management and session restoration for interrupted runs.
+
+#### Additional Features
+
+- GitHub Project v2 and Linear tracker state machines;
+- parent/subissue branch topology;
+- Doctor diagnostics for stuck states;
+- repo-owned skills for conversational operator workflows;
+
+---
+
+## Overview
+
+Codex and Claude Code are good at coding in a session, OpenAI Symphony simplifies the orchestration for a complete workflow with shared state, Shea Symphony makes the orchestration consistent, reliable, mindful, and collaborative.
 
 A real team needs a way to say:
 
-- this issue is clear enough to dispatch;
-- this agent is allowed to work on it;
-- this work happened in the right branch and worktree;
-- this PR was independently reviewed;
-- this human approval was recorded;
-- this merge failure is mechanical, semantic, or blocked;
-- this run can be resumed without guessing.
+- this issue is clear and meaningful enough to dispatch;
+- this work is claimed by the right agent in the right environment;
+- this PR is sufficiently reviewed by agents and worth human attention;
+- this human is guided and informed to provide feedback and approve;
+- this merge failure is mechanical and auto-repairable, or semantic and requires human intervention;
+- this run can be resumed without guessing and the state is recoverable;
+- this important finding/problem is captured and tracked in the backlog and promotable into issues later.
 
 Shea Symphony turns those questions into a workflow.
 
@@ -63,12 +81,6 @@ not to replace it.
 Shea Symphony is designed around a human operator, not a hidden daemon.
 
 The operator can ask:
-
-1. What is ready to work on?
-2. What is blocked or ambiguous?
-3. Which lane should run next?
-4. Did the agent leave enough evidence?
-5. Is this safe to approve, repair, or merge?
 
 The system answers through a few surfaces:
 
@@ -233,28 +245,6 @@ turns into archaeology.
 
 The goal is not to keep every byte forever. The goal is that a human can answer
 "what happened here?" without guessing.
-
-## Relationship To OpenAI Symphony
-
-Shea Symphony follows the OpenAI Symphony lineage for workflow loading, agent
-execution, app-server direction, tracker-backed operation, runtime state, and
-operator surfaces.
-
-It extends that lineage for a more explicit team workflow:
-
-- Issue Forge and quality gates before dispatch;
-- GitHub Project v2 and Linear tracker state machines;
-- separate Main, Review, Human Review, and Merge authority boundaries;
-- workpad and timeline evidence conventions;
-- parent/subissue branch topology;
-- Doctor diagnostics for stuck states;
-- repo-owned skills for conversational operator workflows;
-- Reflect and Dream loops for safe backlog formation;
-- read-only autopilot planning before write-mode all-lane automation.
-
-Pinned upstream references live under
-[`docs/bootstrap/references/openai-symphony`](docs/bootstrap/references/openai-symphony/).
-Do not edit those reference files.
 
 ## What Works Today
 

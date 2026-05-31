@@ -34,6 +34,14 @@ export type LoopStateSnapshot = {
 export type RuntimeSnapshot = Record<string, unknown>;
 export type OperatorOverview = Record<string, unknown>;
 export type ReadSurface = Record<string, unknown>;
+export type GitHubUserSnapshot = {
+  available: boolean;
+  login: string;
+  name: string;
+  email: string;
+  avatarUrl: string;
+  error: string;
+};
 export type LaneWorker = {
   issue: string;
   title: string;
@@ -103,6 +111,21 @@ export async function getRuntimeSnapshot(): Promise<RuntimeSnapshot | null> {
   if (!isTauriRuntime()) return null;
   const { invoke } = await import('@tauri-apps/api/core');
   return invoke<RuntimeSnapshot>('get_runtime_snapshot');
+}
+
+export async function getGitHubUser(): Promise<GitHubUserSnapshot> {
+  if (!isTauriRuntime()) {
+    return {
+      available: false,
+      login: '',
+      name: '',
+      email: '',
+      avatarUrl: '',
+      error: 'GitHub CLI identity is only available in the desktop shell.'
+    };
+  }
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<GitHubUserSnapshot>('get_github_user');
 }
 
 export async function getOperatorOverview(force = false, scope = 'full'): Promise<OperatorOverview | null> {

@@ -4,7 +4,7 @@
   import EvidenceColumns from './lib/EvidenceColumns.svelte';
   import IntelligenceDashboard from './lib/IntelligenceDashboard.svelte';
   import IssueIndex from './lib/IssueIndex.svelte';
-  import LaneDetail from './lib/LaneDetail.svelte';
+  import LaneViews from './lib/LaneViews.svelte';
   import OperatorBrief from './lib/OperatorBrief.svelte';
   import ReadPathMap from './lib/ReadPathMap.svelte';
   import ReadSurfaceObservatory from './lib/ReadSurfaceObservatory.svelte';
@@ -14,12 +14,6 @@
 
   export let route = '/reference';
   export let view: any;
-
-  const laneDescriptions = {
-    main: 'Main-lane workbench draft for Todo, Rework, and implementation evidence.',
-    review: 'Review-lane draft for Agent Review, Human Review, and rework routing evidence.',
-    merge: 'Merge-lane draft for approved PR verification and landing evidence.'
-  };
 
   const skillHandoffs = [
     { lane: 'Main', name: 'shea-symphony-manual-main', reads: 'Project issue, workpad, linked PR', output: 'Agent Review handoff' },
@@ -33,10 +27,6 @@
     { lane: 'Merge', owns: 'Approved PR landing', stops: 'Done', evidence: 'Freshness, merge result, closeout' }
   ];
 
-  $: laneKey = route.split('/').filter(Boolean)[1] ?? 'main';
-  $: laneTitle = `${titleCase(laneKey)} Lane`;
-  $: laneWorkers = view?.laneWorkers?.[laneKey] ?? [];
-  $: laneProjectItems = view?.laneProjectIssues?.[laneKey] ?? [];
   $: diagnosticCount = view?.attentionTasks?.filter((task) => task.type === 'Diagnostics').length ?? 0;
   $: blockedCount = view?.laneSummaries?.reduce((total, lane) => total + Number(lane.blocked ?? 0), 0) ?? 0;
   $: stateMax = Math.max(1, ...(view?.stateDistribution ?? []).map((row) => Number(row.count ?? 0)));
@@ -64,14 +54,8 @@
   }
 </script>
 
-{#if route.startsWith('/lanes/')}
-  <LaneDetail
-    title={laneTitle}
-    description={laneDescriptions[laneKey] ?? 'Lane detail draft.'}
-    workers={laneWorkers}
-    projectItems={laneProjectItems}
-    generatedAtLabel={view?.generatedAtLabel}
-  />
+{#if route.startsWith('/lanes')}
+  <LaneViews {view} />
 {:else if route === '/observability'}
   <RuntimeRibbon
     source={view?.dataSource}

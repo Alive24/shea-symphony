@@ -17,6 +17,7 @@ export const HANDOFF_TARGET_KEY = 'shea-handoff-target';
 export const DATA_MODE_CHANGE_EVENT = 'shea-data-mode-change';
 export const HANDOFF_TARGET_CHANGE_EVENT = 'shea-handoff-target-change';
 export const REFRESH_REQUEST_EVENT = 'shea-refresh-request';
+export const START_DRY_RUN_EVENT = 'shea-start-dry-run-autoloop';
 export const HANDOFF_TARGETS = [
   { id: 'codex-app', label: 'Codex App' },
   { id: 'codex-cli', label: 'Codex CLI' },
@@ -25,6 +26,14 @@ export const HANDOFF_TARGETS = [
 
 export const defaultHandoffTargetStore = writable('codex-app');
 export const cliLogStore = writable<CliLogEntry[]>([]);
+export const autoloopControlStore = writable({
+  tauriAvailable: false,
+  busy: false,
+  running: false,
+  mode: 'dry-run',
+  workflowPath: 'workflows/shea-symphony.md',
+  latestLine: 'No recent autoloop result'
+});
 export const refreshStatusStore = writable({
   running: false,
   remaining: 0,

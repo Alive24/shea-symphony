@@ -4,6 +4,8 @@
     HANDOFF_TARGETS,
     HANDOFF_TARGET_CHANGE_EVENT,
     REFRESH_REQUEST_EVENT,
+    START_DRY_RUN_EVENT,
+    autoloopControlStore,
     cliLogStore,
     defaultHandoffTargetStore,
     getDataMode,
@@ -13,6 +15,11 @@
     setDataMode,
     setDefaultHandoffTarget
   } from './uiState.ts';
+  import { getGitHubUser, type GitHubUserSnapshot } from './tauriAutoloop.ts';
+  import BrandRefreshStatus from './shell/BrandRefreshStatus.svelte';
+  import CliLogModal from './shell/CliLogModal.svelte';
+  import DeveloperToolsPanel from './shell/DeveloperToolsPanel.svelte';
+  import SettingsModal from './shell/SettingsModal.svelte';
 
   type ThemeMode = 'daylight' | 'night';
   type DataMode = 'live' | 'fixture';
@@ -23,9 +30,7 @@
 
   const navItems = [
     { href: '/', label: 'Operator Desk' },
-    { href: '/lanes/main', label: 'Main Lane' },
-    { href: '/lanes/review', label: 'Review Lane' },
-    { href: '/lanes/merge', label: 'Merge Lane' },
+    { href: '/lanes', label: 'Lane Views' },
     { href: '/observability', label: 'Observability' },
     { href: '/intelligence', label: 'Intelligence' },
     { href: '/reference', label: 'Reference' }
@@ -37,10 +42,26 @@
   let refreshInterval: RefreshInterval = 'manual';
   let refreshTimer: number | undefined;
   let logsOpen = false;
+  let settingsOpen = false;
+  let developerToolsOpen = true;
+  let developerToolsWidth = 340;
+  let resizingDeveloperTools = false;
+  let githubUser: GitHubUserSnapshot = {
+    available: false,
+    login: '',
+    name: '',
+    email: '',
+    avatarUrl: '',
+    error: 'Loading GitHub identity'
+  };
 
   $: latestLog = $cliLogStore[0];
   $: refreshRunning = $refreshStatusStore.running;
   $: refreshLabel = refreshRunning ? `Refreshing${$refreshStatusStore.remaining ? ` (${$refreshStatusStore.remaining})` : ''}` : 'Refresh';
+  $: githubUserLabel = githubUser.available && githubUser.login ? `@${githubUser.login}` : 'gh unavailable';
+  $: githubUserDetail = githubUser.available
+    ? githubUser.name || githubUser.email || 'GitHub CLI authenticated'
+    : githubUser.error || 'GitHub CLI unavailable';
 
   function applyTheme(nextTheme: ThemeMode) {
     theme = nextTheme;
@@ -69,12 +90,39 @@
     window.dispatchEvent(new CustomEvent(HANDOFF_TARGET_CHANGE_EVENT, { detail: { target: handoffTarget } }));
   }
 
-  function formatLogTime(value: string) {
-    return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  }
-
   function requestRefresh(source = 'manual') {
     window.dispatchEvent(new CustomEvent(REFRESH_REQUEST_EVENT, { detail: { source, force: true } }));
+  }
+
+  function startDryRunFromTools() {
+    window.dispatchEvent(new CustomEvent(START_DRY_RUN_EVENT));
+  }
+
+  function setDeveloperToolsOpen(open: boolean) {
+    developerToolsOpen = open;
+    localStorage.setItem('shea-developer-tools-open', open ? 'true' : 'false');
+  }
+
+  function updateDeveloperToolsVisibility(event: Event) {
+    setDeveloperToolsOpen((event.currentTarget as HTMLInputElement).checked);
+  }
+
+  function startDeveloperToolsResize(event: PointerEvent) {
+    resizingDeveloperTools = true;
+    const startX = event.clientX;
+    const startWidth = developerToolsWidth;
+    const resize = (moveEvent: PointerEvent) => {
+      const nextWidth = startWidth - (moveEvent.clientX - startX);
+      developerToolsWidth = Math.min(520, Math.max(280, nextWidth));
+      localStorage.setItem('shea-developer-tools-width', String(developerToolsWidth));
+    };
+    const stop = () => {
+      resizingDeveloperTools = false;
+      window.removeEventListener('pointermove', resize);
+      window.removeEventListener('pointerup', stop);
+    };
+    window.addEventListener('pointermove', resize);
+    window.addEventListener('pointerup', stop);
   }
 
   function updateRefreshInterval(event: Event) {
@@ -114,6 +162,23 @@
     refreshInterval = ['manual', '10000', '30000', '60000'].includes(savedRefreshInterval ?? '')
       ? (savedRefreshInterval as RefreshInterval)
       : 'manual';
+    developerToolsOpen = localStorage.getItem('shea-developer-tools-open') !== 'false';
+    const savedDeveloperToolsWidth = Number(localStorage.getItem('shea-developer-tools-width'));
+    if (Number.isFinite(savedDeveloperToolsWidth) && savedDeveloperToolsWidth > 0) {
+      developerToolsWidth = Math.min(520, Math.max(280, savedDeveloperToolsWidth));
+    }
+    getGitHubUser().then((user) => {
+      githubUser = user;
+    }).catch((error) => {
+      githubUser = {
+        available: false,
+        login: '',
+        name: '',
+        email: '',
+        avatarUrl: '',
+        error: error.message
+      };
+    });
     configureRefreshTimer();
     defaultHandoffTargetStore.set(handoffTarget);
     return () => {
@@ -139,7 +204,11 @@
       </span>
       <span>
         <strong>Shea Symphony</strong>
-        <small>App</small>
+        <BrandRefreshStatus
+          running={refreshRunning}
+          remaining={$refreshStatusStore.remaining}
+          finishedAt={$refreshStatusStore.finishedAt}
+        />
       </span>
     </a>
 
@@ -156,111 +225,67 @@
     </nav>
 
     <div class="topbar-cluster nav-actions" aria-label="Runtime state">
-      <label class="handoff-default">
-        <span>Handoff</span>
-        <select value={handoffTarget} onchange={updateHandoffTarget} aria-label="Default handoff development environment">
-          {#each HANDOFF_TARGETS as target}
-            <option value={target.id}>{target.label}</option>
-          {/each}
-        </select>
-      </label>
       <button
-        class="mode-switch"
+        class="menu-button"
         type="button"
-        aria-label="Toggle Live and Fixture data"
-        aria-pressed={dataMode === 'fixture'}
-        onclick={toggleDataMode}
+        aria-label={`Settings ${githubUserLabel}`}
+        aria-haspopup="dialog"
+        aria-expanded={settingsOpen}
+        onclick={() => (settingsOpen = true)}
       >
-        <span>{dataMode === 'fixture' ? 'Fixture' : 'Live'}</span>
-      </button>
-      {#if dataMode === 'fixture'}
-        <button class="mode-reset" type="button" onclick={resetFixture}>Reset</button>
-      {/if}
-      <button class="refresh-button" type="button" aria-busy={refreshRunning} onclick={() => requestRefresh('manual')}>
-        {refreshLabel}
-      </button>
-      <label class="refresh-interval">
-        <span>Auto</span>
-        <select value={refreshInterval} onchange={updateRefreshInterval} aria-label="Auto refresh interval">
-          <option value="manual">Manual</option>
-          <option value="10000">10s</option>
-          <option value="30000">30s</option>
-          <option value="60000">1m</option>
-        </select>
-      </label>
-      <button
-        class="cli-log-toggle"
-        type="button"
-        aria-label="Open CLI command log"
-        aria-pressed={logsOpen}
-        onclick={() => (logsOpen = true)}
-      >
-        <span>CLI Logs</span>
-        {#if refreshRunning}
-          <small>{$refreshStatusStore.remaining || '...'}</small>
-        {:else if latestLog}
-          <small>{latestLog.status}</small>
+        {#if githubUser.avatarUrl}
+          <img src={githubUser.avatarUrl} alt="" />
+        {:else}
+          <span class="menu-avatar" aria-hidden="true">gh</span>
         {/if}
-      </button>
-      <button
-        class="theme-toggle"
-        type="button"
-        aria-label="Toggle Day and Night theme"
-        aria-pressed={theme === 'night'}
-        onclick={toggleTheme}
-      >
-        <span>{theme === 'daylight' ? 'Day' : 'Night'}</span>
+        <span class="menu-user-id">{githubUserLabel}</span>
       </button>
     </div>
   </header>
 
-  <section class="workspace">
+  <section class:developer-tools-resizing={resizingDeveloperTools} class="workspace">
     <main class="screen-shell">
       <slot />
     </main>
+    {#if developerToolsOpen}
+      <DeveloperToolsPanel
+        width={developerToolsWidth}
+        {dataMode}
+        {refreshRunning}
+        {latestLog}
+        autoloopControl={$autoloopControlStore}
+        onResizeStart={startDeveloperToolsResize}
+        onHide={() => setDeveloperToolsOpen(false)}
+        onToggleDataMode={toggleDataMode}
+        onResetFixture={resetFixture}
+        onOpenLogs={() => (logsOpen = true)}
+        onStartDryRun={startDryRunFromTools}
+      />
+    {/if}
   </section>
 </div>
 
-{#if logsOpen}
-  <div class="modal-backdrop">
-    <button class="modal-scrim" type="button" aria-label="Close CLI command log" onclick={() => (logsOpen = false)}></button>
-    <div class="cli-log-modal" role="dialog" aria-modal="true" aria-labelledby="cli-log-title">
-      <header>
-        <div>
-          <p class="eyebrow">Runtime</p>
-          <h2 id="cli-log-title">CLI Command Log</h2>
-        </div>
-        <button class="btn btn-ghost" type="button" onclick={() => (logsOpen = false)}>Close</button>
-      </header>
+{#if settingsOpen}
+  <SettingsModal
+    {githubUser}
+    {githubUserLabel}
+    {githubUserDetail}
+    handoffTargets={HANDOFF_TARGETS}
+    {handoffTarget}
+    {refreshInterval}
+    {refreshRunning}
+    {refreshLabel}
+    {theme}
+    {developerToolsOpen}
+    onClose={() => (settingsOpen = false)}
+    onHandoffTargetChange={updateHandoffTarget}
+    onRefresh={() => requestRefresh('manual')}
+    onRefreshIntervalChange={updateRefreshInterval}
+    onToggleTheme={toggleTheme}
+    onDeveloperToolsVisibilityChange={updateDeveloperToolsVisibility}
+  />
+{/if}
 
-      {#if $cliLogStore.length}
-        <div class="cli-log-list">
-          {#each $cliLogStore as entry}
-            <article class="cli-log-row {entry.status}">
-              <div>
-                <span>{formatLogTime(entry.at)}</span>
-                <strong>{entry.surface}</strong>
-                <em>{entry.phase}</em>
-              </div>
-              <p>{entry.detail || entry.status}</p>
-              <footer>
-                <span>{entry.status}</span>
-                {#if entry.durationMs != null}
-                  <span>{Math.round(entry.durationMs)}ms</span>
-                {/if}
-                {#if entry.args?.length}
-                  <code>{entry.args.join(' ')}</code>
-                {/if}
-              </footer>
-            </article>
-          {/each}
-        </div>
-      {:else}
-        <div class="cli-log-empty">
-          <strong>No CLI command activity yet</strong>
-          <p>Read surfaces and autoloop controls will appear here when they start.</p>
-        </div>
-      {/if}
-    </div>
-  </div>
+{#if logsOpen}
+  <CliLogModal onClose={() => (logsOpen = false)} />
 {/if}

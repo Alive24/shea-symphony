@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import {
-    DATA_MODE_CHANGE_EVENT,
     HANDOFF_TARGETS,
     HANDOFF_TARGET_CHANGE_EVENT,
     REFRESH_REQUEST_EVENT,
+    START_DRY_RUN_EVENT,
+    autoloopControlStore,
     getDefaultHandoffTarget,
     recordCliLog,
     refreshStatusStore,
@@ -53,6 +54,14 @@
   $: autoloopLogLines = autoloopState?.recentLines ?? [];
   $: autoloopStdoutLines = latestAutoloopStdout(autoloopState, autoloopLogLines);
   $: latestAutoloopLine = autoloopStdoutLines.slice(-1)[0]?.line ?? (autoloopState.running ? 'Loop is running' : 'No recent autoloop result');
+  $: autoloopControlStore.set({
+    tauriAvailable,
+    busy: autoloopBusy,
+    running: autoloopState.running,
+    mode: autoloopState.mode,
+    workflowPath: autoloopState.workflowPath,
+    latestLine: latestAutoloopLine
+  });
   $: issueTitleById = buildIssueTitleMap(queueIssues);
   $: humanTodoIssues = queueIssues
     .filter((issue) => isHumanTodoState(issue.state))
@@ -109,7 +118,7 @@
     };
   });
 
-  async function refresh(force = false, includeSlowReads = true, source = 'manual') {
+  async function refresh(force = false, includeSlowReads = true, source = 'manual', publishStatus = true) {
     const hasRenderableState = view?.dataSource?.mode !== 'offline';
     let backgroundReadsStarted = false;
     backgroundRefreshing = hasRenderableState;
@@ -117,59 +126,67 @@
     fullLoading = includeSlowReads;
     slowReadsRemaining = 0;
     liveError = '';
-    refreshStatusStore.set({
-      running: true,
-      remaining: includeSlowReads ? 6 : 1,
-      startedAt: new Date().toISOString(),
-      finishedAt: null,
-      source,
-      detail: 'Requesting overview'
-    });
+    if (publishStatus) {
+      refreshStatusStore.set({
+        running: true,
+        remaining: includeSlowReads ? 6 : 1,
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        source,
+        detail: 'Requesting overview'
+      });
+    }
     try {
       view = buildViewModel(await loadOverview(force, 'fast'));
       loading = false;
       if (!includeSlowReads) return;
       backgroundReadsStarted = true;
-      startBackgroundReads(force, source);
+      startBackgroundReads(force, source, publishStatus);
     } catch (error) {
       liveError = error.message;
       if (!hasRenderableState) view = buildViewModel(null);
-      refreshStatusStore.set({
-        running: false,
-        remaining: 0,
-        startedAt: null,
-        finishedAt: new Date().toISOString(),
-        source,
-        detail: error.message
-      });
-    } finally {
-      loading = false;
-      if (!backgroundReadsStarted) backgroundRefreshing = false;
-      if (!includeSlowReads) {
+      if (publishStatus) {
         refreshStatusStore.set({
           running: false,
           remaining: 0,
           startedAt: null,
           finishedAt: new Date().toISOString(),
           source,
-          detail: 'Overview refreshed'
+          detail: error.message
         });
+      }
+    } finally {
+      loading = false;
+      if (!backgroundReadsStarted) backgroundRefreshing = false;
+      if (!includeSlowReads) {
+        if (publishStatus) {
+          refreshStatusStore.set({
+            running: false,
+            remaining: 0,
+            startedAt: null,
+            finishedAt: new Date().toISOString(),
+            source,
+            detail: 'Overview refreshed'
+          });
+        }
       }
     }
   }
 
-  function startBackgroundReads(force = false, source = 'manual') {
+  function startBackgroundReads(force = false, source = 'manual', publishStatus = true) {
     const generation = ++readGeneration;
     const slowSurfaces = ['autopilot', 'doctor', 'review', 'skills', 'sessions', 'local'];
     fullLoading = true;
     slowReadsRemaining = slowSurfaces.length;
-    refreshStatusStore.update((status) => ({
-      ...status,
-      running: true,
-      remaining: slowSurfaces.length,
-      source,
-      detail: 'Loading CLI read surfaces'
-    }));
+    if (publishStatus) {
+      refreshStatusStore.update((status) => ({
+        ...status,
+        running: true,
+        remaining: slowSurfaces.length,
+        source,
+        detail: 'Loading CLI read surfaces'
+      }));
+    }
 
     for (const name of slowSurfaces) {
       loadReadSurface(name, force)
@@ -184,13 +201,15 @@
         .finally(() => {
           if (generation !== readGeneration) return;
           slowReadsRemaining = Math.max(0, slowReadsRemaining - 1);
-          refreshStatusStore.update((status) => ({
-            ...status,
-            running: slowReadsRemaining > 0,
-            remaining: slowReadsRemaining,
-            finishedAt: slowReadsRemaining === 0 ? new Date().toISOString() : status.finishedAt,
-            detail: slowReadsRemaining === 0 ? 'Refresh complete' : `Loading ${slowReadsRemaining} CLI surface${slowReadsRemaining === 1 ? '' : 's'}`
-          }));
+          if (publishStatus) {
+            refreshStatusStore.update((status) => ({
+              ...status,
+              running: slowReadsRemaining > 0,
+              remaining: slowReadsRemaining,
+              finishedAt: slowReadsRemaining === 0 ? new Date().toISOString() : status.finishedAt,
+              detail: slowReadsRemaining === 0 ? 'Refresh complete' : `Loading ${slowReadsRemaining} CLI surface${slowReadsRemaining === 1 ? '' : 's'}`
+            }));
+          }
           if (slowReadsRemaining === 0) {
             fullLoading = false;
             backgroundRefreshing = false;
@@ -199,27 +218,30 @@
     }
   }
 
-  function scheduleRefresh(force = false, includeSlowReads = true, source = 'manual') {
-    refreshStatusStore.set({
-      running: true,
-      remaining: includeSlowReads ? 6 : 1,
-      startedAt: new Date().toISOString(),
-      finishedAt: null,
-      source,
-      detail: 'Queued refresh'
-    });
+  function scheduleRefresh(force = false, includeSlowReads = true, source = 'manual', publishStatus = true) {
+    if (publishStatus) {
+      refreshStatusStore.set({
+        running: true,
+        remaining: includeSlowReads ? 6 : 1,
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        source,
+        detail: 'Queued refresh'
+      });
+    }
     window.requestAnimationFrame(() => {
       window.setTimeout(() => {
-        refresh(force, includeSlowReads, source);
+        refresh(force, includeSlowReads, source, publishStatus);
       }, 0);
     });
   }
 
   function scheduleAutoloopRefresh(source = 'autoloop') {
+    if ($refreshStatusStore.running) return;
     if (autoloopRefreshTimer) window.clearTimeout(autoloopRefreshTimer);
     autoloopRefreshTimer = window.setTimeout(() => {
       autoloopRefreshTimer = null;
-      refresh(true, true, source);
+      refresh(true, true, source, false);
     }, 900);
   }
 
@@ -466,8 +488,6 @@
     }).then((unlisten) => {
       unlistenAutoloop = unlisten;
     });
-    scheduleRefresh(false, true, 'initial');
-    const dataModeListener = () => scheduleRefresh(true, true, 'mode');
     const refreshRequestListener = (event) => {
       const detail = event.detail ?? {};
       scheduleRefresh(detail.force ?? true, true, detail.source ?? 'manual');
@@ -475,9 +495,13 @@
     const handoffTargetListener = (event) => {
       defaultHandoffTarget = event.detail?.target ?? getDefaultHandoffTarget();
     };
-    window.addEventListener(DATA_MODE_CHANGE_EVENT, dataModeListener);
+    const startDryRunListener = () => {
+      if (!tauriAvailable || autoloopBusy || autoloopState.running) return;
+      startDryRunAutoloop();
+    };
     window.addEventListener(REFRESH_REQUEST_EVENT, refreshRequestListener);
     window.addEventListener(HANDOFF_TARGET_CHANGE_EVENT, handoffTargetListener);
+    window.addEventListener(START_DRY_RUN_EVENT, startDryRunListener);
     const handoffRefresh = window.setInterval(() => {
       const nextTarget = getDefaultHandoffTarget();
       if (nextTarget !== defaultHandoffTarget) {
@@ -485,9 +509,17 @@
       }
     }, 300);
     return () => {
-      window.removeEventListener(DATA_MODE_CHANGE_EVENT, dataModeListener);
       window.removeEventListener(REFRESH_REQUEST_EVENT, refreshRequestListener);
       window.removeEventListener(HANDOFF_TARGET_CHANGE_EVENT, handoffTargetListener);
+      window.removeEventListener(START_DRY_RUN_EVENT, startDryRunListener);
+      autoloopControlStore.set({
+        tauriAvailable: false,
+        busy: false,
+        running: false,
+        mode: 'dry-run',
+        workflowPath: 'workflows/shea-symphony.md',
+        latestLine: 'No recent autoloop result'
+      });
       window.clearInterval(handoffRefresh);
       if (autoloopRefreshTimer) window.clearTimeout(autoloopRefreshTimer);
       unlistenAutoloop?.();
@@ -574,9 +606,6 @@
           <input type="checkbox" bind:checked={autoloopContinuous} disabled={autoloopState.running || autoloopBusy} />
           <span>Continuous</span>
         </label>
-        <button class="btn btn-primary" type="button" disabled={!tauriAvailable || autoloopBusy || autoloopState.running} onclick={startDryRunAutoloop}>
-          Start dry-run
-        </button>
         <button class="btn btn-write" type="button" disabled={!tauriAvailable || autoloopBusy || autoloopState.running} onclick={startWriteAutoloop}>
           Start write
         </button>

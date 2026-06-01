@@ -47,8 +47,8 @@ use super::lanes::main_loop::{
     apply_live_handoff_pr_link, execute_issue_once_with_workspace_key, main_app_server_smoke_gate,
     no_dispatch_action, pull_request_number_from_url, reconcile_main_handoff_runtime_state,
     reconcile_pending_main_session, run_handoff_verification,
-    run_loop_agent_review_handoff_evidence, run_loop_apply_recovery_handoff,
-    run_loop_assignee_ownership_decision, run_loop_claim_action,
+    run_loop_agent_review_handoff_evidence, run_loop_apply_launch_workspace_report,
+    run_loop_apply_recovery_handoff, run_loop_assignee_ownership_decision, run_loop_claim_action,
     run_loop_dispatch_write_candidates, run_loop_handoff_plan, run_loop_handoff_workpad,
     run_loop_ownership_workpad, run_loop_resume_preflight, run_loop_resume_preflight_many,
     run_loop_runtime_ownership, run_loop_runtime_state_for_issue,
@@ -92,12 +92,15 @@ use shea_symphony::git_handoff::{
 };
 use shea_symphony::handoff::evaluate_agent_review_handoff;
 use shea_symphony::handoff::{plan_issue_handoff_for_profile, HandoffError, IssueHandoffPlan};
+use shea_symphony::issue_workspace::{
+    IssueWorkspaceCandidate, IssueWorkspaceReport, WorkspaceEvidence, WorkspaceMatchStrength,
+};
 use shea_symphony::lane_claim::{
     LaneClaim, LaneClaimActor, LaneClaimLane, LaneClaimSource, LaneClaimState,
 };
-use shea_symphony::model::normalize_state;
 use shea_symphony::model::SessionStatusSnapshot;
 use shea_symphony::model::TrackerIssue;
+use shea_symphony::model::{normalize_state, LinkedPullRequest};
 use shea_symphony::orchestrator::Orchestrator;
 use shea_symphony::ownership::render_runtime_ownership_marker;
 use shea_symphony::ownership::{runtime_ownership_decision, RuntimeOwnershipDecision};

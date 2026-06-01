@@ -5,7 +5,7 @@ use std::process::Command;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::handoff::IssueHandoffPlan;
+use crate::handoff::{BranchTargetRole, IssueHandoffPlan};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LiveWorktreeResult {
@@ -173,21 +173,9 @@ pub fn prepare_issue_worktree(
         fs::create_dir_all(parent)?;
     }
 
-    let branch_ref = format!("refs/heads/{}", plan.branch_name);
-    let branch_exists = command_status(
-        "git",
-        &[
-            "-C".into(),
-            repo_root.display().to_string(),
-            "show-ref".into(),
-            "--verify".into(),
-            "--quiet".into(),
-            branch_ref,
-        ],
-        repo_root,
-        runner,
-    )? == 0;
+    ensure_local_parent_integration_branch(repo_root, plan, runner)?;
 
+    let branch_exists = local_branch_exists(repo_root, &plan.branch_name, runner)?;
     let args = if branch_exists {
         vec![
             "-C".into(),
@@ -223,6 +211,7 @@ pub fn publish_issue_pull_request(
     runner: &dyn HandoffCommandRunner,
 ) -> Result<PullRequestPublication, GitHandoffError> {
     ensure_publishable_branch(plan, runner)?;
+    ensure_remote_parent_integration_branch(plan, runner)?;
 
     require_success(
         "git",
@@ -282,6 +271,104 @@ pub fn publish_issue_pull_request(
         pr_url: extract_url(&created.stdout)?,
         pr_created: true,
     })
+}
+
+fn ensure_local_parent_integration_branch(
+    repo_root: &Path,
+    plan: &IssueHandoffPlan,
+    runner: &dyn HandoffCommandRunner,
+) -> Result<(), GitHandoffError> {
+    if plan.branch_target.role != BranchTargetRole::Subissue {
+        return Ok(());
+    }
+    let Some(parent_branch) = &plan.branch_target.parent_integration_branch else {
+        return Ok(());
+    };
+    if local_branch_exists(repo_root, parent_branch, runner)? {
+        return Ok(());
+    }
+
+    let base_branch = plan
+        .branch_target
+        .parent_final_base_branch
+        .as_deref()
+        .unwrap_or("main");
+    require_success(
+        "git",
+        runner.run(
+            "git",
+            &[
+                "-C".into(),
+                repo_root.display().to_string(),
+                "branch".into(),
+                parent_branch.clone(),
+                base_branch.into(),
+            ],
+            repo_root,
+        )?,
+    )
+}
+
+fn ensure_remote_parent_integration_branch(
+    plan: &IssueHandoffPlan,
+    runner: &dyn HandoffCommandRunner,
+) -> Result<(), GitHandoffError> {
+    if plan.branch_target.role != BranchTargetRole::Subissue {
+        return Ok(());
+    }
+    let Some(parent_branch) = &plan.branch_target.parent_integration_branch else {
+        return Ok(());
+    };
+    let remote_exists = command_status(
+        "git",
+        &[
+            "ls-remote".into(),
+            "--exit-code".into(),
+            "--heads".into(),
+            "origin".into(),
+            parent_branch.clone(),
+        ],
+        &plan.workspace_path,
+        runner,
+    )? == 0;
+    if remote_exists {
+        return Ok(());
+    }
+
+    require_success(
+        "git",
+        runner.run(
+            "git",
+            &[
+                "push".into(),
+                "-u".into(),
+                "origin".into(),
+                parent_branch.clone(),
+            ],
+            &plan.workspace_path,
+        )?,
+    )
+}
+
+fn local_branch_exists(
+    repo_root: &Path,
+    branch_name: &str,
+    runner: &dyn HandoffCommandRunner,
+) -> Result<bool, GitHandoffError> {
+    let branch_ref = format!("refs/heads/{branch_name}");
+    Ok(command_status(
+        "git",
+        &[
+            "-C".into(),
+            repo_root.display().to_string(),
+            "show-ref".into(),
+            "--verify".into(),
+            "--quiet".into(),
+            branch_ref,
+        ],
+        repo_root,
+        runner,
+    )? == 0)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -540,6 +627,7 @@ mod tests {
         dirty_status: Option<String>,
         ahead_count: u32,
         pr_is_draft: bool,
+        remote_parent_branch_exists: bool,
     }
 
     impl FakeRunner {
@@ -564,6 +652,17 @@ mod tests {
             if command.contains("show-ref --verify --quiet") {
                 return Ok(CommandOutput {
                     status: if self.existing_branch { 0 } else { 1 },
+                    stdout: String::new(),
+                    stderr: String::new(),
+                });
+            }
+            if command.contains("ls-remote --exit-code --heads") {
+                return Ok(CommandOutput {
+                    status: if self.remote_parent_branch_exists {
+                        0
+                    } else {
+                        2
+                    },
                     stdout: String::new(),
                     stderr: String::new(),
                 });
@@ -672,6 +771,22 @@ mod tests {
         }
     }
 
+    fn subissue() -> TrackerIssue {
+        let mut issue = issue();
+        issue.identifier = "#383".into();
+        issue.title = "Surface write queue state in Tauri".into();
+        issue
+            .project_fields
+            .insert("Native Parent Issue".into(), serde_json::json!("#400"));
+        issue.project_fields.insert(
+            "Native Parent Title".into(),
+            serde_json::json!(
+                "Harden operator trust for supervised dogfood before persistent service mode"
+            ),
+        );
+        issue
+    }
+
     #[test]
     fn commits_dirty_issue_worktree_changes_before_handoff_publication() {
         let temp = tempfile::tempdir().unwrap();
@@ -722,6 +837,46 @@ mod tests {
         let commands = runner.commands.borrow().join("\n");
         assert!(commands.contains("show-ref --verify --quiet"));
         assert!(commands.contains("worktree add -b feature/issue-45"));
+    }
+
+    #[test]
+    fn creates_parent_integration_branch_before_subissue_worktree() {
+        let temp = tempfile::tempdir().unwrap();
+        let plan = plan_issue_handoff(temp.path(), &subissue(), "main").unwrap();
+        let runner = FakeRunner::default();
+
+        let result = prepare_issue_worktree(temp.path(), &plan, &runner).unwrap();
+
+        assert!(result.created);
+        let commands = runner.commands.borrow().join("\n");
+        assert!(commands.contains("git -C "));
+        assert!(commands.contains(
+            "branch integration/issue-400-harden-operator-trust-for-supervised-dogfood-before-persistent-s main"
+        ));
+        assert!(commands
+            .contains("worktree add -b feature/issue-383-surface-write-queue-state-in-tauri"));
+    }
+
+    #[test]
+    fn pushes_parent_integration_branch_before_subissue_pr_creation() {
+        let temp = tempfile::tempdir().unwrap();
+        let plan = plan_issue_handoff(temp.path(), &subissue(), "main").unwrap();
+        let runner = FakeRunner::clean_with_commits();
+
+        let publication = publish_issue_pull_request(&plan, &runner).unwrap();
+
+        assert!(publication.pr_created);
+        let commands = runner.commands.borrow().join("\n");
+        assert!(commands.contains(
+            "git ls-remote --exit-code --heads origin integration/issue-400-harden-operator-trust-for-supervised-dogfood-before-persistent-s"
+        ));
+        assert!(commands.contains(
+            "git push -u origin integration/issue-400-harden-operator-trust-for-supervised-dogfood-before-persistent-s"
+        ));
+        assert!(commands.contains("gh pr create --title #383: Surface write queue state in Tauri"));
+        assert!(commands.contains(
+            "--base integration/issue-400-harden-operator-trust-for-supervised-dogfood-before-persistent-s"
+        ));
     }
 
     #[test]

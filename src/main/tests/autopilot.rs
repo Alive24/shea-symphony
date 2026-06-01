@@ -35,7 +35,7 @@ fn clean_autopilot_doctor(total_issues: usize) -> ProjectAuditReport {
 }
 
 fn test_autopilot_plan(issues: Vec<TrackerIssue>) -> AutopilotPlanSnapshot {
-    let config = test_config();
+    let config = main_loop_test_config();
     let adapter = shea_symphony::tracker::MemoryTracker::new(issues.clone());
     build_autopilot_plan_from_parts(AutopilotPlanInputs {
         workflow_path: Path::new("/tmp/WORKFLOW.md"),
@@ -274,6 +274,110 @@ fn autopilot_loop_status_allows_main_recovery_runtime_blocker() {
     assert_eq!(status.counts.running, 1);
     assert!(status.blocked_reasons.is_empty());
     assert_eq!(status.active_issues[0].identifier, "#364");
+}
+
+#[test]
+fn autopilot_loop_status_allows_main_parent_topology_ensure() {
+    let config = main_loop_test_config();
+    let mut subissue = tracker_issue_with_ref("#383", "Surface write queue state", "Todo");
+    subissue.description = Some(
+        [
+            "## Issue Setup",
+            "- UAT Required: No",
+            "## Issue Goal",
+            "Ship the child issue.",
+            "## Why Now",
+            "It blocks the parent branch flow.",
+            "## Issue Context",
+            "Context.",
+            "## Dependencies",
+            "- No blocking dependencies.",
+            "## Non-Negotiable Guardrails",
+            "- Keep tracker writes owned by Main.",
+            "## Scope",
+            "### In Scope",
+            "- Code.",
+            "## Canonical References",
+            "### Target Repository / Package",
+            "- Alive24/shea-symphony",
+            "## Verification",
+            "### Functional Verification",
+            "- `cargo test`",
+            "### Completion Criteria",
+            "- Tests pass.",
+        ]
+        .join("\n"),
+    );
+    subissue
+        .project_fields
+        .insert("Native Parent Issue".into(), serde_json::json!("#400"));
+    subissue.project_fields.insert(
+        "Native Parent Title".into(),
+        serde_json::json!("Harden operator trust for supervised dogfood"),
+    );
+    let issues = vec![subissue];
+    let adapter = shea_symphony::tracker::MemoryTracker::new(issues.clone());
+    let doctor = ProjectAuditReport {
+        total_issues: 1,
+        violations: vec![ProjectAuditViolation {
+            issue_ref: "#400".into(),
+            title: "Harden operator trust for supervised dogfood".into(),
+            state: "Todo".into(),
+            severity: AuditSeverity::Blocker,
+            code: "parent_topology_missing_integration_branch".into(),
+            message: "Parent issue has native subissues but no parent integration branch evidence."
+                .into(),
+            suggestion: "Record the parent integration branch before subissue PRs advance.".into(),
+        }],
+        integration_gaps: Vec::new(),
+        skill_readiness_summary: None,
+    };
+
+    let plan = build_autopilot_plan_from_parts(AutopilotPlanInputs {
+        workflow_path: Path::new("/tmp/WORKFLOW.md"),
+        config: &config,
+        adapter: &adapter,
+        issues,
+        doctor_report: doctor,
+        canonical_checkout: clean_autopilot_canonical(),
+        runtime: clean_autopilot_runtime(),
+        integration_gaps: Vec::new(),
+    })
+    .unwrap();
+
+    assert_eq!(
+        plan.readiness.status,
+        "blocked_by_doctor_or_canonical_checkout"
+    );
+    assert_eq!(
+        plan.doctor.blocker_codes,
+        vec!["parent_topology_missing_integration_branch"]
+    );
+    let main_lane = plan.lanes.iter().find(|lane| lane.lane == "main").unwrap();
+    assert_eq!(main_lane.status, "ready", "{main_lane:?}");
+
+    let status = autopilot_loop_status_from_plan(
+        &plan,
+        AutopilotLoopSettings {
+            write: true,
+            dry_run: false,
+            recover: false,
+            poll_interval_ms: 5_000,
+            main_max_concurrent: 1,
+            review_max_concurrent: 1,
+            merge_max_concurrent: 1,
+        },
+        1,
+        Some(5_000),
+        &[],
+        false,
+    );
+
+    assert_eq!(status.phase, "running");
+    assert_eq!(status.counts.blocked, 0);
+    assert_eq!(status.counts.running, 1);
+    assert!(status.blocked_reasons.is_empty());
+    assert_eq!(status.selected_issues[0].identifier, "#383");
 }
 
 #[test]

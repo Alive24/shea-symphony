@@ -1,5 +1,6 @@
 use shea_symphony::config::RuntimeConfig;
 use shea_symphony::git_handoff::{prepare_issue_worktree, ProcessHandoffCommandRunner};
+use shea_symphony::handoff::{BranchTargetRole, IssueHandoffPlan};
 use shea_symphony::lane_claim::{LaneClaimActor, LaneClaimSource};
 use shea_symphony::model::{normalize_state, LatestStatus, TrackerIssue};
 use shea_symphony::ownership::{runtime_ownership_decision, RuntimeOwnershipDecision};
@@ -83,6 +84,7 @@ pub(crate) fn run_loop_dispatch_write_candidate(
             return Ok(RunLoopWorkerOutcome::Completed);
         }
     };
+    ensure_parent_integration_branch_evidence(config, adapter, &latest, &handoff)?;
 
     let profile_login = selected_profile_github_login(config)?;
     let active_login = if live_github_tracker(config) && profile_login.is_none() {
@@ -561,4 +563,142 @@ pub(crate) fn run_loop_dispatch_write_candidate(
         runtime_state,
         &result,
     )
+}
+
+fn ensure_parent_integration_branch_evidence(
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    issue: &TrackerIssue,
+    handoff: &IssueHandoffPlan,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if handoff.branch_target.role != BranchTargetRole::Subissue {
+        return Ok(());
+    }
+    let Some(parent_issue_ref) = handoff.branch_target.parent_issue.as_deref() else {
+        return Ok(());
+    };
+    let Some(parent_integration_branch) =
+        handoff.branch_target.parent_integration_branch.as_deref()
+    else {
+        return Ok(());
+    };
+
+    let parent_issue = run_with_progress_heartbeat(
+        progress_spec_with_event_log(config, "github_project_read")
+            .issue(parent_issue_ref.to_string())
+            .backend(tracker_backend_label(config))
+            .next("parent_topology_read"),
+        || adapter.get_issue(parent_issue_ref),
+    )?
+    .ok_or_else(|| {
+        format!(
+            "native parent issue {parent_issue_ref} disappeared before Main parent topology ensure"
+        )
+    })?;
+    if parent_issue_has_integration_branch_evidence(&parent_issue, parent_integration_branch) {
+        println!(
+            "run_loop_action=parent_topology issue={} parent={} branch={} outcome=already_recorded",
+            issue.identifier, parent_issue_ref, parent_integration_branch
+        );
+        return Ok(());
+    }
+
+    let workpad = run_loop_parent_topology_workpad(issue, &parent_issue, handoff);
+    let topology_key = recovery_key(
+        "main-parent-topology-workpad",
+        parent_issue_ref,
+        &format!(
+            "{}|{}|{}",
+            parent_issue_ref, issue.identifier, parent_integration_branch
+        ),
+    );
+    let topology_outcome = upsert_workpad_with_recovery(
+        adapter,
+        parent_issue_ref,
+        Some(&parent_issue),
+        &workpad,
+        &topology_key,
+    )?;
+    if topology_outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            config,
+            TrackerMutationAudit {
+                command: "main loop",
+                mutation_type: "workpad_write",
+                issue_ref: Some(parent_issue_ref),
+                target: Some(issue.identifier.clone()),
+                from_state: Some(parent_issue.state.clone()),
+                to_state: None,
+                reason: "parent integration branch evidence",
+            },
+        );
+    }
+    println!(
+        "run_loop_action=parent_topology issue={} parent={} branch={} outcome={}",
+        issue.identifier,
+        parent_issue_ref,
+        parent_integration_branch,
+        topology_outcome.as_str()
+    );
+    Ok(())
+}
+
+fn parent_issue_has_integration_branch_evidence(issue: &TrackerIssue, branch: &str) -> bool {
+    issue.branch_name.as_deref() == Some(branch)
+        || issue
+            .description
+            .as_deref()
+            .is_some_and(|description| description.contains(branch))
+        || issue
+            .project_fields
+            .values()
+            .any(|value| project_field_contains_branch(value, branch))
+}
+
+fn project_field_contains_branch(value: &serde_json::Value, branch: &str) -> bool {
+    match value {
+        serde_json::Value::String(value) => value == branch || value.contains(branch),
+        serde_json::Value::Array(values) => values
+            .iter()
+            .any(|value| project_field_contains_branch(value, branch)),
+        serde_json::Value::Object(values) => values
+            .values()
+            .any(|value| project_field_contains_branch(value, branch)),
+        _ => false,
+    }
+}
+
+fn run_loop_parent_topology_workpad(
+    issue: &TrackerIssue,
+    parent_issue: &TrackerIssue,
+    handoff: &IssueHandoffPlan,
+) -> String {
+    let parent_integration_branch = handoff
+        .branch_target
+        .parent_integration_branch
+        .as_deref()
+        .unwrap_or("n/a");
+    let parent_final_base_branch = handoff
+        .branch_target
+        .parent_final_base_branch
+        .as_deref()
+        .unwrap_or("n/a");
+    [
+        "## Shea Symphony Workpad".to_string(),
+        String::new(),
+        "### Parent Topology".to_string(),
+        format!(
+            "- Parent issue: {} {}",
+            parent_issue.identifier, parent_issue.title
+        ),
+        format!(
+            "- First observed subissue: {} {}",
+            issue.identifier, issue.title
+        ),
+        format!("- Parent integration branch: `{parent_integration_branch}`"),
+        format!("- Parent final base branch: `{parent_final_base_branch}`"),
+        "- Source: `shea-symphony main loop parent topology ensure`".to_string(),
+        "- Purpose: durable branch evidence before native subissue PR handoff.".to_string(),
+    ]
+    .join("\n")
 }

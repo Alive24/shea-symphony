@@ -2383,7 +2383,7 @@ a {
 
 .lane-completed-table-head,
 .lane-completed-row {
-  --worktree-row-columns: 86px minmax(220px, 1.35fr) 92px 86px minmax(220px, 1fr) 72px;
+  --worktree-row-columns: 76px minmax(190px, 1.25fr) 116px 94px 96px 62px minmax(150px, 0.85fr) 66px;
   min-width: 0;
   display: grid;
   grid-template-columns: var(--worktree-row-columns);
@@ -2447,8 +2447,24 @@ a {
   text-align: right;
 }
 
-.lane-completed-state {
+.lane-completed-state,
+.lane-tree-state {
   font-weight: 700;
+}
+
+.lane-completed-row .lane-tree-state {
+  justify-self: start;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in oklab, var(--success), var(--border) 58%);
+  border-radius: 999px;
+  color: var(--success);
+  background: color-mix(in oklab, var(--success-soft), var(--card-bg) 62%);
+}
+
+.lane-completed-row .lane-tree-state.dirty {
+  border-color: color-mix(in oklab, var(--warning), var(--border) 52%);
+  color: var(--warning);
+  background: color-mix(in oklab, var(--warning-soft), var(--card-bg) 60%);
 }
 
 .lane-completed-row code,
@@ -2464,7 +2480,7 @@ a {
 
 .lane-detail-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .lane-worktree-strip {

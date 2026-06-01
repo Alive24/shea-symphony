@@ -289,10 +289,14 @@ fn completed_issue_worktrees(
                     "state": "Done",
                     "lane": session.get("lane").cloned().unwrap_or(Value::Null),
                     "completedAt": updated_at,
+                    "createdAt": session.get("started_at_ms").cloned().unwrap_or_else(|| worktree.get("createdAt").cloned().unwrap_or(Value::Null)),
+                    "lastProgressAt": session.get("updated_at_ms").cloned().unwrap_or(Value::Null),
                     "path": worktree.get("path").cloned().unwrap_or(Value::Null),
                     "branch": worktree.get("branch").cloned().unwrap_or(Value::Null),
                     "head": worktree.get("head").cloned().unwrap_or(Value::Null),
                     "lastModified": worktree.get("lastModified").cloned().unwrap_or(Value::Null),
+                    "treeState": worktree.get("treeState").cloned().unwrap_or(Value::Null),
+                    "diskBytes": worktree.get("diskBytes").cloned().unwrap_or(Value::Null),
                     "evidence": session.get("evidence").cloned().unwrap_or(Value::Null),
                     "artifactSource": "session_registry",
                 }),
@@ -317,10 +321,14 @@ fn completed_issue_worktrees(
                 "lane": previous.and_then(|entry| entry.get("lane")).cloned().unwrap_or(Value::Null),
                 "url": project_issue.get("url").cloned().unwrap_or(Value::Null),
                 "completedAt": previous.and_then(|entry| entry.get("completedAt")).cloned().unwrap_or_else(|| worktree.get("lastModified").cloned().unwrap_or(Value::Null)),
+                "createdAt": previous.and_then(|entry| entry.get("createdAt")).cloned().unwrap_or_else(|| worktree.get("createdAt").cloned().unwrap_or(Value::Null)),
+                "lastProgressAt": previous.and_then(|entry| entry.get("lastProgressAt")).cloned().unwrap_or_else(|| project_issue.get("updatedAt").or_else(|| project_issue.get("updated_at")).cloned().unwrap_or(Value::Null)),
                 "path": worktree.get("path").cloned().unwrap_or(Value::Null),
                 "branch": worktree.get("branch").cloned().unwrap_or(Value::Null),
                 "head": worktree.get("head").cloned().unwrap_or(Value::Null),
                 "lastModified": worktree.get("lastModified").cloned().unwrap_or(Value::Null),
+                "treeState": worktree.get("treeState").cloned().unwrap_or(Value::Null),
+                "diskBytes": worktree.get("diskBytes").cloned().unwrap_or(Value::Null),
                 "evidence": previous.and_then(|entry| entry.get("evidence")).cloned().unwrap_or_else(|| Value::String("project issue readback + git worktree".into())),
                 "artifactSource": previous.and_then(|entry| entry.get("artifactSource")).cloned().unwrap_or_else(|| Value::String("project_issue".into())),
             }),
@@ -369,7 +377,11 @@ fn session_registry_issue_refs(snapshot: &Value) -> BTreeMap<String, Value> {
             .get("issue_title")
             .and_then(Value::as_str)
             .is_some_and(|title| !title.trim().is_empty());
-        if has_title {
+        let has_project_state = session
+            .get("project_state")
+            .and_then(Value::as_str)
+            .is_some();
+        if status == "completed" || (has_title && has_project_state) {
             issues.insert(issue.to_string(), session.clone());
         }
     }
@@ -412,6 +424,8 @@ fn write_project_readback_session(
         "issue_id": issue.get("id").cloned().unwrap_or(Value::Null),
         "issue_identifier": identifier,
         "issue_title": issue.get("title").cloned().unwrap_or(Value::Null),
+        "project_state": issue.get("state").cloned().unwrap_or(Value::Null),
+        "project_url": issue.get("url").cloned().unwrap_or(Value::Null),
         "lane": "project",
         "run_id": "project-readback-cache",
         "session_source": "project_readback_cache",
@@ -476,12 +490,16 @@ fn git_worktree_issue_inventory() -> Value {
             .into_iter()
             .filter_map(|worktree| {
                 let issue = infer_issue_ref(worktree.branch.as_deref(), Path::new(&worktree.path))?;
+                let stats = worktree_stats(&worktree.path);
                 Some(json!({
                     "issue": issue,
                     "path": worktree.path,
                     "branch": worktree.branch,
                     "head": worktree.head,
-                    "lastModified": worktree_last_modified(&worktree.path),
+                    "createdAt": worktree_created_at(&worktree.path),
+                    "lastModified": stats.last_modified_ms.map(Value::from).unwrap_or(Value::Null),
+                    "treeState": worktree_tree_state(&worktree.path),
+                    "diskBytes": Value::from(stats.disk_bytes),
                     "evidence": "git worktree list --porcelain",
                 }))
             })
@@ -553,13 +571,79 @@ fn issue_ref_from_text(text: &str) -> Option<String> {
     None
 }
 
-fn worktree_last_modified(path: &str) -> Value {
-    let modified = fs::metadata(path)
-        .and_then(|metadata| metadata.modified())
+#[derive(Default)]
+struct WorktreeStats {
+    disk_bytes: u64,
+    last_modified_ms: Option<u64>,
+}
+
+fn worktree_created_at(path: &str) -> Value {
+    let created = fs::metadata(path)
+        .and_then(|metadata| metadata.created())
         .ok()
         .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|duration| duration.as_millis() as u64);
-    modified.map(Value::from).unwrap_or(Value::Null)
+    created.map(Value::from).unwrap_or(Value::Null)
+}
+
+fn worktree_tree_state(path: &str) -> Value {
+    let output = Command::new("git")
+        .args(["-C", path, "status", "--porcelain"])
+        .output();
+    let Ok(output) = output else {
+        return Value::String("unknown".into());
+    };
+    if !output.status.success() {
+        return Value::String("unknown".into());
+    }
+    if output.stdout.is_empty() {
+        Value::String("clean".into())
+    } else {
+        Value::String("dirty".into())
+    }
+}
+
+fn worktree_stats(path: &str) -> WorktreeStats {
+    let mut stats = WorktreeStats::default();
+    accumulate_worktree_stats(Path::new(path), &mut stats);
+    stats
+}
+
+fn accumulate_worktree_stats(path: &Path, stats: &mut WorktreeStats) {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return;
+    };
+    if metadata.is_file() {
+        stats.disk_bytes = stats.disk_bytes.saturating_add(metadata.len());
+    }
+    if should_count_modified_time(path) {
+        if let Ok(modified) = metadata.modified() {
+            if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
+                let ms = duration.as_millis() as u64;
+                stats.last_modified_ms =
+                    Some(stats.last_modified_ms.map_or(ms, |current| current.max(ms)));
+            }
+        }
+    }
+    if !metadata.is_dir() {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(path) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        accumulate_worktree_stats(&entry.path(), stats);
+    }
+}
+
+fn should_count_modified_time(path: &Path) -> bool {
+    !path.components().any(|component| {
+        let name = component.as_os_str().to_string_lossy();
+        matches!(
+            name.as_ref(),
+            ".git" | "target" | "node_modules" | ".svelte-kit" | "dist" | "build"
+        )
+    })
 }
 
 fn surface_payload(name: &str, command: Value, parsed: Value, text: String) -> Value {

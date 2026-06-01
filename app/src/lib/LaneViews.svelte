@@ -136,7 +136,7 @@
     const id = normalizeIssueRef(entry.issue ?? entry.issueRef ?? entry.id);
     const row = rows.find((issue) => issue.id === id) ?? (model?.issueIndex ?? []).find((issue: any) => normalizeIssueRef(issue.id ?? issue.identifier) === id);
     const issueUrl = entry.url ?? row?.url ?? githubIssueUrl(id);
-    const completedAt = entry.completedAt ?? entry.updatedAt ?? entry.lastModified ?? row?.updatedAt ?? model?.generatedAt;
+    const completedAt = entry.completedAt ?? entry.lastProgressAt ?? entry.updatedAt ?? entry.lastModified ?? row?.updatedAt ?? model?.generatedAt;
     return {
       id,
       title: entry.title ?? row?.title ?? 'Project read unavailable',
@@ -149,7 +149,11 @@
         path: entry.path ?? entry.worktreePath,
         branch: entry.branch,
         head: entry.head,
+        createdAt: entry.createdAt,
+        lastProgressAt: entry.lastProgressAt ?? entry.updatedAt ?? completedAt,
         lastModified: entry.lastModified ?? completedAt,
+        treeState: entry.treeState ?? 'unknown',
+        diskBytes: entry.diskBytes,
         evidence: entry.evidence
       }
     };
@@ -359,6 +363,27 @@
     return text ? text.slice(0, 7) : 'unknown';
   }
 
+  function formatBytes(value: unknown) {
+    const bytes = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(bytes) || bytes < 0) return 'unknown';
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ['KB', 'MB', 'GB', 'TB'];
+    let amount = bytes / 1024;
+    let unitIndex = 0;
+    while (amount >= 1024 && unitIndex < units.length - 1) {
+      amount /= 1024;
+      unitIndex += 1;
+    }
+    return `${amount >= 10 ? amount.toFixed(1) : amount.toFixed(2)} ${units[unitIndex]}`;
+  }
+
+  function treeStateLabel(value: unknown) {
+    const text = String(value ?? 'unknown').trim().toLowerCase();
+    if (text === 'clean') return 'Clean';
+    if (text === 'dirty') return 'Dirty';
+    return 'Unknown';
+  }
+
   function githubIssueUrl(issueRef: unknown) {
     const number = issueNumber(issueRef);
     return number ? `https://github.com/Alive24/shea-symphony/issues/${number}` : undefined;
@@ -393,6 +418,10 @@
       <div>
         <span class="mini-label">Last event</span>
         <strong>{formatTime(selectedIssue.completedAt ?? selectedIssue.updatedAt)}</strong>
+      </div>
+      <div>
+        <span class="mini-label">Disk size</span>
+        <strong>{formatBytes(selectedIssue.worktree?.diskBytes)}</strong>
       </div>
     </div>
 
@@ -496,8 +525,10 @@
         <div class="lane-completed-table-head" aria-hidden="true">
           <span>Issue</span>
           <span>Title</span>
-          <span>Project</span>
-          <span>Updated</span>
+          <span>Created</span>
+          <span>Last Progress</span>
+          <span>Last Modified</span>
+          <span>Tree</span>
           <span>Branch</span>
           <span>Head</span>
         </div>
@@ -509,8 +540,10 @@
           >
             <span class="issue-tag">{issue.id}</span>
             <strong class="lane-completed-title">{issue.title}</strong>
-            <span class="lane-completed-state">{issue.state}</span>
-            <span class="lane-completed-age">{relativeAge(issue.completedAt ?? issue.updatedAt)}</span>
+            <span>{formatTime(issue.worktree?.createdAt)}</span>
+            <span class="lane-completed-age">{relativeAge(issue.worktree?.lastProgressAt ?? issue.completedAt ?? issue.updatedAt)}</span>
+            <span class="lane-completed-age">{relativeAge(issue.worktree?.lastModified)}</span>
+            <span class:dirty={treeStateLabel(issue.worktree?.treeState) === 'Dirty'} class="lane-tree-state">{treeStateLabel(issue.worktree?.treeState)}</span>
             <code class="lane-completed-branch">{issue.worktree?.branch ?? 'branch unknown'}</code>
             <code class="lane-completed-headsha">{shortHead(issue.worktree?.head)}</code>
           </a>

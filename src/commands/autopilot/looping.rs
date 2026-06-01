@@ -680,9 +680,9 @@ fn autopilot_main_recovery_can_tick(
     settings: AutopilotLoopSettings,
 ) -> bool {
     settings.write
-        && settings.recover
         && settings.main_max_concurrent > 0
-        && autopilot_main_recovery_blocker_is_lane_local(plan)
+        && (settings.recover && autopilot_main_recovery_blocker_is_lane_local(plan)
+            || autopilot_main_parent_topology_can_tick(plan))
 }
 
 fn autopilot_main_recovery_blocker_is_lane_local(plan: &AutopilotPlanSnapshot) -> bool {
@@ -706,6 +706,21 @@ fn autopilot_main_recovery_blocker_is_lane_local(plan: &AutopilotPlanSnapshot) -
 
 fn autopilot_active_runtime_blocker(blocker: &str) -> bool {
     blocker.starts_with("active_runtime_states=")
+}
+
+fn autopilot_main_parent_topology_can_tick(plan: &AutopilotPlanSnapshot) -> bool {
+    plan.canonical_checkout.safe_for_write
+        && plan.doctor.blocker_codes == ["parent_topology_missing_integration_branch"]
+        && plan.readiness.blockers == ["doctor_blockers=1"]
+        && autopilot_lane_plan_should_tick(autopilot_plan_lane(Some(plan), "main"))
+}
+
+fn autopilot_readiness_blocker_is_main_recoverable(
+    plan: &AutopilotPlanSnapshot,
+    blocker: &str,
+) -> bool {
+    autopilot_active_runtime_blocker(blocker)
+        || (blocker == "doctor_blockers=1" && autopilot_main_parent_topology_can_tick(plan))
 }
 
 fn print_autopilot_lane_running(
@@ -1031,7 +1046,7 @@ pub(crate) fn autopilot_loop_status_from_plan(
         plan.readiness
             .blockers
             .iter()
-            .filter(|blocker| !autopilot_active_runtime_blocker(blocker))
+            .filter(|blocker| !autopilot_readiness_blocker_is_main_recoverable(plan, blocker))
             .cloned()
             .collect::<Vec<_>>()
     } else {

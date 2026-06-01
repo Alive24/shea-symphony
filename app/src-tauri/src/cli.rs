@@ -80,33 +80,42 @@ pub fn now_ms() -> u128 {
 
 pub fn shea_command(args: &[&str]) -> Command {
     let repo_root = repo_root();
-    let binary = repo_root.join("target").join("debug").join("shea-symphony");
-    if binary.exists() {
-        let mut command = Command::new(binary);
-        command.args(args).current_dir(repo_root);
-        command
-    } else {
+    if should_use_cargo_runner() {
         let mut command = Command::new("cargo");
         command
             .args(["run", "--quiet", "--"])
             .args(args)
             .current_dir(repo_root);
         command
+    } else {
+        let binary = repo_root.join("target").join("debug").join("shea-symphony");
+        let mut command = Command::new(binary);
+        command.args(args).current_dir(repo_root);
+        command
     }
 }
 
 pub fn command_preview(args: &[String]) -> Vec<String> {
-    let repo_root = repo_root();
-    let binary = repo_root.join("target").join("debug").join("shea-symphony");
-    if binary.exists() {
-        let mut preview = vec![binary.display().to_string()];
-        preview.extend(args.iter().cloned());
-        preview
-    } else {
+    if should_use_cargo_runner() {
         let mut preview = vec!["cargo".into(), "run".into(), "--quiet".into(), "--".into()];
         preview.extend(args.iter().cloned());
         preview
+    } else {
+        let repo_root = repo_root();
+        let binary = repo_root.join("target").join("debug").join("shea-symphony");
+        let mut preview = vec![binary.display().to_string()];
+        preview.extend(args.iter().cloned());
+        preview
     }
+}
+
+fn should_use_cargo_runner() -> bool {
+    cfg!(debug_assertions)
+        || !repo_root()
+            .join("target")
+            .join("debug")
+            .join("shea-symphony")
+            .exists()
 }
 
 fn command_run_from_output(
@@ -160,9 +169,67 @@ fn command_run_from_error(args: &[String], started_at: Instant, error: String) -
 }
 
 fn repo_root() -> PathBuf {
+    let source_root = source_repo_root();
+    canonical_main_worktree(&source_root).unwrap_or(source_root)
+}
+
+fn source_repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(|path| path.parent())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn canonical_main_worktree(source_root: &PathBuf) -> Option<PathBuf> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(source_root)
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    parse_canonical_main_worktree(&text)
+}
+
+fn parse_canonical_main_worktree(text: &str) -> Option<PathBuf> {
+    let mut current_worktree: Option<PathBuf> = None;
+    for line in text.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            current_worktree = Some(PathBuf::from(path));
+        } else if line == "branch refs/heads/main" {
+            return current_worktree;
+        } else if line.is_empty() {
+            current_worktree = None;
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_canonical_main_worktree;
+    use std::path::PathBuf;
+
+    #[test]
+    fn parses_main_worktree_from_git_porcelain_output() {
+        let output = "\
+worktree /repo/feature
+HEAD abc
+branch refs/heads/feature/app
+
+worktree /repo/main
+HEAD def
+branch refs/heads/main
+";
+
+        assert_eq!(
+            parse_canonical_main_worktree(output),
+            Some(PathBuf::from("/repo/main"))
+        );
+    }
 }

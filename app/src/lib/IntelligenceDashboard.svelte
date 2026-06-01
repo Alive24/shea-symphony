@@ -44,9 +44,9 @@
       {/each}
     </section>
 
-    <section class="capability-panel" aria-label="Observability capabilities">
+    <section class="capability-panel" aria-label="Doctor capabilities">
       <div>
-        <p class="eyebrow">Observability</p>
+        <p class="eyebrow">Doctor</p>
         <h3>Capability Coverage</h3>
       </div>
       <div class="capability-grid">

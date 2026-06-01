@@ -12,7 +12,7 @@
   import RuntimeRibbon from './lib/RuntimeRibbon.svelte';
   import WorkflowMap from './lib/WorkflowMap.svelte';
 
-  export let route = '/reference';
+  export let route = '/intelligence';
   export let view: any;
 
   const skillHandoffs = [
@@ -55,8 +55,8 @@
 </script>
 
 {#if route.startsWith('/lanes')}
-  <LaneViews {view} />
-{:else if route === '/observability'}
+  <LaneViews {view} {route} />
+{:else if route === '/doctor' || route === '/observability'}
   <RuntimeRibbon
     source={view?.dataSource}
     generatedAtLabel={view?.generatedAtLabel}
@@ -70,7 +70,7 @@
   <ReadSurfaceObservatory commands={view?.commandHealth ?? []} />
   <CommandHealthPanel commands={view?.commandHealth ?? []} />
   <ReadPathMap paths={view?.readPathMap ?? []} />
-{:else if route === '/intelligence'}
+{:else if route === '/intelligence' || route === '/reference'}
   <IntelligenceDashboard
     trackerSignals={view?.trackerSignals ?? []}
     gateChecklist={view?.gateChecklist ?? []}
@@ -87,14 +87,14 @@
     title="Cross-Lane Signals"
     eyebrow="Evidence Flow"
     columns={view?.evidenceColumns ?? []}
-    href="/observability"
+    href="/doctor"
   />
-{:else}
-  <OperatorBrief brief={view?.operatorBrief} />
-  <IssueIndex issues={view?.issueIndex ?? []} limit={12} />
   <ReferencePanels
     skillHandoffs={skillHandoffs}
     boundaryCards={boundaryCards}
     timelineModel={view?.timelineModel ?? []}
   />
+{:else}
+  <OperatorBrief brief={view?.operatorBrief} />
+  <IssueIndex issues={view?.issueIndex ?? []} limit={12} />
 {/if}

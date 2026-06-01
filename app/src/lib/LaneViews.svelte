@@ -1,23 +1,48 @@
 <script lang="ts">
-  export let view: any;
+  import { REFRESH_REQUEST_EVENT } from './uiState.ts';
 
-  const laneOrder = ['Main', 'Review', 'Merge'];
+  export let view: any;
+  export let route = '/lanes';
+
+  const laneOrder = ['Human Todo', 'Main', 'Review', 'Merge'];
+  const humanStates = new Set(['Need To Clarify', 'Need Human Input', 'Human Review']);
+  const completedWindows = [
+    { label: 'All', hours: null },
+    { label: '1h', hours: 1 },
+    { label: '3h', hours: 3 },
+    { label: '6h', hours: 6 },
+    { label: '12h', hours: 12 },
+    { label: '24h', hours: 24 },
+    { label: '72h', hours: 72 }
+  ];
+
+  let completedWindowHours = null;
 
   $: laneWorkers = view?.laneWorkers ?? {};
   $: queueIssues = view?.queueIssues ?? [];
   $: issueRows = buildIssueRows(queueIssues, laneWorkers, view);
-  $: laneColumns = laneOrder.map((lane) => ({
-    lane,
-    issues: issueRows.filter((issue) => issue.lane === lane),
-    pickedCount: issueRows.filter((issue) => issue.lane === lane && issue.runtimeCategory === 'Active runtime').length,
-    completedCount: issueRows.filter((issue) => issue.lane === lane && issue.runtimeCategory === 'Recent completion').length
-  }));
+  $: selectedIssueRef = routeIssueRef(route);
+  $: completedLocalIssues = buildCompletedLocalIssues(view, issueRows);
+  $: filteredCompletedLocalIssues = filterCompletedByWindow(completedLocalIssues, completedWindowHours);
+  $: selectedIssue = selectedIssueRef ? findIssueForDetail(selectedIssueRef, issueRows, completedLocalIssues, view) : null;
+  $: lifecycleEvents = selectedIssue ? buildLifecycleEvents(selectedIssue, view) : [];
+  $: laneColumns = laneOrder.map((lane) => {
+    const issues = lane === 'Human Todo'
+      ? issueRows.filter((issue) => humanStates.has(normalizeState(issue.state)))
+      : issueRows.filter((issue) => issue.lane === lane && !humanStates.has(normalizeState(issue.state)));
+    return {
+      lane,
+      issues,
+      pickedCount: issues.filter((issue) => issue.runtimeCategory === 'Active runtime').length,
+      completedCount: issues.filter((issue) => issue.runtimeCategory === 'Recent completion').length
+    };
+  });
 
   function buildIssueRows(issues: any[] = [], workersByLane: Record<string, any[]> = {}, model: any = {}) {
     const byId = new Map();
 
     for (const issue of issues ?? []) {
-      const id = normalizeIssueRef(issue.id);
+      const id = normalizeIssueRef(issue.id ?? issue.identifier ?? issue.number);
       if (!id) continue;
       byId.set(id, baseIssueRow(issue, model));
     }
@@ -29,7 +54,7 @@
         const existing = byId.get(id) ?? baseIssueRow({ id, title: worker.title, lane: titleCase(laneKey), state: worker.target }, model);
         byId.set(id, {
           ...existing,
-          lane: existing.lane || titleCase(laneKey),
+          lane: humanStates.has(normalizeState(existing.state)) ? 'Human Todo' : existing.lane || titleCase(laneKey),
           title: worker.title || existing.title,
           worker,
           runtimeCategory: 'Active runtime',
@@ -51,21 +76,23 @@
   }
 
   function baseIssueRow(issue: any, model: any) {
-    const state = issue.state ?? 'Unknown';
+    const state = issue.state ?? issue.status ?? 'Unknown';
     const completed = isCompletedIssue(issue);
+    const id = normalizeIssueRef(issue.id ?? issue.identifier ?? issue.number) ?? issue.id;
     return {
-      id: normalizeIssueRef(issue.id) ?? issue.id,
+      id,
+      number: issue.number ?? issueNumber(id),
       title: issue.title ?? 'Untitled issue',
-      lane: issue.lane ?? stateToLane(state),
+      lane: humanStates.has(normalizeState(state)) ? 'Human Todo' : issue.lane ?? stateToLane(state),
       state,
-      url: issue.url,
-      updatedAt: issue.updatedAt,
+      url: issue.url ?? issue.htmlUrl,
+      updatedAt: issue.updatedAt ?? issue.updated_at,
       evidence: issue.evidence,
       recommended: issue.recommended,
       workerStatus: issue.workerStatus,
       nextSkill: issue.nextSkill,
       runtimeCategory: completed ? 'Recent completion' : runtimeCategoryForIssue(issue),
-      runtimeTone: completed ? 'success' : issue.workerStatus === 'Worker read unavailable' ? 'warn' : 'neutral',
+      runtimeTone: completed ? 'success' : issue.workerStatus === 'Worker read unavailable' ? 'warn' : humanStates.has(normalizeState(state)) ? 'warn' : 'neutral',
       runtimeDetail: completed
         ? 'Local runtime is no longer active; use the issue timeline for closeout evidence.'
         : issue.workerDetail ?? 'No active local runtime is visible for this issue.',
@@ -80,6 +107,125 @@
       workpadTone: workpadToneForIssue(issue),
       workpadLink: issue.url
     }));
+  }
+
+  function buildCompletedLocalIssues(model: any, rows: any[]) {
+    const byId = new Map();
+    for (const entry of model?.raw?.localStatus?.completedIssueWorktrees ?? []) {
+      const id = normalizeIssueRef(entry.issue ?? entry.issueRef ?? entry.id);
+      if (!id) continue;
+      byId.set(id, normalizeCompletedEntry(entry, rows, model));
+    }
+    for (const entry of model?.raw?.localStatus?.issueWorktrees ?? []) {
+      const id = normalizeIssueRef(entry.issue ?? entry.issueRef ?? entry.id);
+      if (!id) continue;
+      const row = rows.find((issue) => issue.id === id);
+      const existing = byId.get(id);
+      if (existing) {
+        byId.set(id, { ...existing, worktree: { ...existing.worktree, ...entry } });
+      } else if (row && isCompletedIssue(row)) {
+        byId.set(id, normalizeCompletedEntry({ ...entry, completedAt: row.updatedAt }, rows, model));
+      } else if (!row || row.runtimeCategory !== 'Active runtime') {
+        byId.set(id, normalizeCompletedEntry({ ...entry, state: row?.state, completedAt: entry.lastModified }, rows, model));
+      }
+    }
+    return [...byId.values()].sort((left, right) => dateMs(right.completedAt ?? right.updatedAt) - dateMs(left.completedAt ?? left.updatedAt));
+  }
+
+  function normalizeCompletedEntry(entry: any, rows: any[], model: any) {
+    const id = normalizeIssueRef(entry.issue ?? entry.issueRef ?? entry.id);
+    const row = rows.find((issue) => issue.id === id) ?? (model?.issueIndex ?? []).find((issue: any) => normalizeIssueRef(issue.id ?? issue.identifier) === id);
+    const issueUrl = entry.url ?? row?.url ?? githubIssueUrl(id);
+    const completedAt = entry.completedAt ?? entry.updatedAt ?? entry.lastModified ?? row?.updatedAt ?? model?.generatedAt;
+    return {
+      id,
+      title: entry.title ?? row?.title ?? 'Project read unavailable',
+      state: entry.state ?? row?.state ?? 'Unknown',
+      lane: entry.lane ?? row?.lane ?? 'Merge',
+      url: issueUrl,
+      completedAt,
+      updatedAt: entry.updatedAt ?? completedAt,
+      worktree: {
+        path: entry.path ?? entry.worktreePath,
+        branch: entry.branch,
+        head: entry.head,
+        lastModified: entry.lastModified ?? completedAt,
+        evidence: entry.evidence
+      }
+    };
+  }
+
+  function filterCompletedByWindow(issues: any[], hours: number | null) {
+    if (hours == null) return issues;
+    const cutoff = Date.now() - hours * 60 * 60 * 1000;
+    return issues.filter((issue) => {
+      const timestamp = dateMs(issue.completedAt ?? issue.updatedAt);
+      return timestamp && timestamp >= cutoff;
+    });
+  }
+
+  function findIssueForDetail(issueRef: string, rows: any[], completedIssues: any[], model: any) {
+    const normalized = normalizeIssueRef(issueRef);
+    return completedIssues.find((issue) => issue.id === normalized) ??
+      rows.find((issue) => issue.id === normalized) ??
+      (model?.issueIndex ?? []).find((issue: any) => normalizeIssueRef(issue.id ?? issue.identifier) === normalized) ??
+      { id: normalized, title: 'Issue', state: 'Unknown', url: githubIssueUrl(normalized) };
+  }
+
+  function buildLifecycleEvents(issue: any, model: any) {
+    const fixtureEvents = (model?.raw?.localStatus?.issueLifecycle?.[issue.id] ?? model?.raw?.localStatus?.issueLifecycle?.[issue.id?.replace('#', '')] ?? []).map((event: any) => ({
+      label: event.label ?? event.phase ?? 'Lifecycle event',
+      phase: event.phase ?? event.label ?? 'Timeline',
+      time: event.time ?? event.at,
+      detail: event.detail ?? '',
+      url: event.url ?? issue.url
+    }));
+    const events = fixtureEvents.length ? fixtureEvents : inferLifecycleEvents(issue, model);
+    return dedupeEvents(events).sort((left, right) => dateMs(left.time) - dateMs(right.time));
+  }
+
+  function inferLifecycleEvents(issue: any, model: any) {
+    const events: any[] = [];
+    const issueUrl = issue.url ?? githubIssueUrl(issue.id);
+    const updatedAt = issue.completedAt ?? issue.updatedAt ?? model?.generatedAt;
+    events.push({ phase: 'Backlog', label: 'Issue visible in tracker', time: updatedAt, detail: 'Tracker issue readback is available.', url: issueUrl });
+    if (issue.lane && issue.lane !== 'Unknown') {
+      events.push({ phase: 'Promoted', label: `Promoted into ${issue.lane}`, time: updatedAt, detail: issue.state ?? 'Lane state visible.', url: issueUrl });
+    }
+    for (const event of model?.fullEvents ?? []) {
+      const text = `${event.title ?? ''} ${event.detail ?? ''}`;
+      if (!text.includes(issue.id)) continue;
+      events.push({
+        phase: phaseFromText(text, event.lane),
+        label: event.title ?? 'Timeline event',
+        time: event.timestamp ?? event.time ?? updatedAt,
+        detail: event.detail ?? '',
+        url: event.url ?? issueUrl
+      });
+    }
+    if (isCompletedIssue(issue)) {
+      events.push({ phase: 'Done', label: 'Completed locally', time: issue.completedAt ?? updatedAt, detail: issue.worktree?.path ? 'Local worktree is still present.' : 'Completion is visible in tracker readback.', url: issueUrl });
+    }
+    return events;
+  }
+
+  function phaseFromText(text: string, lane: string) {
+    if (/rework/i.test(text)) return 'Rework';
+    if (/human review|human input|clarify/i.test(text)) return 'Human Review';
+    if (/agent review|review/i.test(text)) return 'Agent Review';
+    if (/merge|done|land/i.test(text)) return 'Merge';
+    if (/promote|todo|main|workpad/i.test(text)) return 'Main';
+    return lane ?? 'Timeline';
+  }
+
+  function dedupeEvents(events: any[]) {
+    const seen = new Set();
+    return events.filter((event) => {
+      const key = `${event.phase}|${event.label}|${event.time}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }
 
   function runtimeCategoryForIssue(issue: any) {
@@ -105,6 +251,7 @@
     if (isCompletedIssue(issue)) return local?.head ? `Last local head ${local.head}` : 'Completion has no active local runtime.';
     if (issue.workerStatus === 'Worker read unavailable') return 'Session/runtime read unavailable.';
     if (local?.head) return `${local.head} · ${local.dirtyCount ?? 0} dirty · ${local.worktreeCount ?? 0} worktrees`;
+    if (local?.issueWorktrees?.length) return `${local.issueWorktrees.length} local issue worktrees`;
     return 'No runtime metadata attached to this issue.';
   }
 
@@ -120,20 +267,45 @@
 
   function workpadToneForIssue(issue: any) {
     if (!issue.url) return 'warn';
-    if (['Need Human Input', 'Need To Clarify', 'Human Review'].includes(normalizeState(issue.state))) return 'warn';
+    if (humanStates.has(normalizeState(issue.state))) return 'warn';
     return 'success';
   }
 
   function isCompletedIssue(issue: any) {
     const state = normalizeState(issue.state);
-    return state === 'Done' || /done|merged|completed|closed/i.test(`${issue.evidence ?? ''} ${issue.recommended ?? ''}`);
+    return state === 'Done' || state === 'Merged' || /done|merged|completed|closed/i.test(`${issue.evidence ?? ''} ${issue.recommended ?? ''} ${issue.runtimeCategory ?? ''}`);
   }
 
   function stateToLane(state: string) {
     const normalized = normalizeState(state);
-    if (['Agent Review', 'Human Review', 'Need Human Input', 'Need To Clarify'].includes(normalized)) return 'Review';
-    if (normalized === 'Merging' || normalized === 'Done') return 'Merge';
+    if (humanStates.has(normalized) || normalized === 'Agent Review') return 'Review';
+    if (normalized === 'Merging' || normalized === 'Done' || normalized === 'Merged') return 'Merge';
     return 'Main';
+  }
+
+  function navigate(event: MouseEvent, href: string) {
+    event.preventDefault();
+    window.dispatchEvent(new CustomEvent('shea-navigate', { detail: { href } }));
+  }
+
+  function refreshLocalArtifacts() {
+    window.dispatchEvent(new CustomEvent(REFRESH_REQUEST_EVENT, {
+      detail: { source: 'local-artifacts', force: true, localOnly: true }
+    }));
+  }
+
+  function routeIssueRef(path: string) {
+    const match = path.match(/^\/lanes\/(\d+)/);
+    return match ? `#${match[1]}` : null;
+  }
+
+  function issuePath(issue: any) {
+    return `/lanes/${String(issue.id ?? '').replace('#', '')}`;
+  }
+
+  function issueNumber(value: unknown) {
+    const match = String(value ?? '').match(/\d+/);
+    return match ? Number(match[0]) : null;
   }
 
   function normalizeState(state: unknown) {
@@ -158,82 +330,197 @@
     return (runtimeRank[left.runtimeCategory] ?? 9) - (runtimeRank[right.runtimeCategory] ?? 9) ||
       String(left.id).localeCompare(String(right.id), undefined, { numeric: true });
   }
+
+  function dateMs(value: unknown) {
+    if (!value) return 0;
+    if (typeof value === 'number') return value;
+    const parsed = Date.parse(String(value));
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+
+  function formatTime(value: unknown) {
+    const ms = dateMs(value);
+    if (!ms) return 'unknown';
+    return new Date(ms).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function relativeAge(value: unknown) {
+    const ms = dateMs(value);
+    if (!ms) return 'unknown';
+    const minutes = Math.max(0, Math.round((Date.now() - ms) / 60000));
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 48) return `${hours}h ago`;
+    return `${Math.round(hours / 24)}d ago`;
+  }
+
+  function shortHead(value: unknown) {
+    const text = String(value ?? '').trim();
+    return text ? text.slice(0, 7) : 'unknown';
+  }
+
+  function githubIssueUrl(issueRef: unknown) {
+    const number = issueNumber(issueRef);
+    return number ? `https://github.com/Alive24/shea-symphony/issues/${number}` : undefined;
+  }
 </script>
 
-<section class="route-hero compact">
-  <div>
-    <p class="eyebrow">Lane Observability</p>
-    <h2>Lane Views</h2>
-    <p>Issue-first lane posture, local runtime visibility, and workpad routing without duplicating lane pages.</p>
-  </div>
-
-  <div class="pagination">
-    <span class="section-note">{view?.generatedAtLabel ?? 'not checked'}</span>
-  </div>
-</section>
-
-<section class="lane-board-overview lane-views-board" aria-label="Lane issue board">
-  <div class="lane-board-grid">
-    {#each laneColumns as lane}
-      <article class="lane-board-column {lane.pickedCount ? 'success' : lane.issues.length ? 'warn' : 'neutral'}">
-        <div class="lane-board-column-head">
-          <strong>{lane.lane}</strong>
-          <small>{lane.pickedCount} active · {lane.completedCount} completed</small>
-        </div>
-
-        <div class="lane-board-issue-list">
-          {#if lane.issues.length}
-            {#each lane.issues as issue}
-              <a class="lane-board-item {issue.runtimeTone} {issue.runtimeCategory === 'Active runtime' ? 'picked' : ''}" href={`#${issue.id.replace('#', 'issue-')}`}>
-                <strong>{issue.id}</strong>
-                <span>{issue.title}</span>
-              </a>
-            {/each}
-          {:else}
-            <div class="lane-board-empty">No issue visible.</div>
-          {/if}
-        </div>
-      </article>
-    {/each}
-  </div>
-</section>
-
-<section class="lane-issue-table" aria-label="Issue runtime and workpad status">
-  {#if issueRows.length}
-    {#each issueRows as issue}
-      <article class="lane-issue-row" id={issue.id.replace('#', 'issue-')}>
-        <div class="lane-issue-title">
-          <span class="issue-tag">{issue.id}</span>
-          <div>
-            <h3>{issue.title}</h3>
-            <p>{issue.state} · {issue.lane}</p>
-          </div>
-        </div>
-
-        <div class="lane-issue-observability">
-          <section>
-            <span class="mini-label">Local runtime</span>
-            <strong class={issue.runtimeTone}>{issue.runtimeCategory}</strong>
-            <p>{issue.runtimeDetail}</p>
-            <small>{issue.localRuntime}</small>
-          </section>
-          <section>
-            <span class="mini-label">Workpad status</span>
-            <strong class={issue.workpadTone}>{issue.workpadCategory}</strong>
-            <p>{issue.recommended ?? issue.nextSkill ?? 'Open the issue timeline before acting.'}</p>
-            {#if issue.workpadLink}
-              <a class="queue-link" href={issue.workpadLink} target="_blank" rel="noreferrer">Open issue body/comments</a>
-            {:else}
-              <small>No issue link in current readback.</small>
-            {/if}
-          </section>
-        </div>
-      </article>
-    {/each}
-  {:else}
-    <div class="inline-empty">
-      <strong>No lane issues visible</strong>
-      <p>Refresh live reads or switch to fixture mode to inspect the Lane Views layout.</p>
+{#if selectedIssue}
+  <section class="route-hero compact">
+    <div>
+      <p class="eyebrow">Lane Views</p>
+      <h2>{selectedIssue.id} Lifecycle</h2>
+      <p>{selectedIssue.title}</p>
     </div>
-  {/if}
-</section>
+
+    <div class="pagination">
+      <span class="section-note">{view?.generatedAtLabel ?? 'not checked'}</span>
+      <button class="btn btn-ghost" type="button" on:click={refreshLocalArtifacts}>Refresh local artifacts</button>
+      <a class="btn btn-ghost" href="/lanes" on:click={(event) => navigate(event, '/lanes')}>Back</a>
+    </div>
+  </section>
+
+  <section class="lane-detail-shell" aria-label={`${selectedIssue.id} lifecycle`}>
+    <div class="lane-detail-summary">
+      <div>
+        <span class="mini-label">State</span>
+        <strong>{selectedIssue.state ?? 'Unknown'}</strong>
+      </div>
+      <div>
+        <span class="mini-label">Local worktree</span>
+        <strong>{selectedIssue.worktree?.path ? 'Preserved' : 'Not visible'}</strong>
+      </div>
+      <div>
+        <span class="mini-label">Last event</span>
+        <strong>{formatTime(selectedIssue.completedAt ?? selectedIssue.updatedAt)}</strong>
+      </div>
+    </div>
+
+    {#if selectedIssue.worktree?.path}
+      <div class="lane-worktree-strip">
+        <span>{selectedIssue.worktree.branch ?? 'branch unknown'}</span>
+        <strong>{selectedIssue.worktree.head ?? 'head unknown'}</strong>
+        <code>{selectedIssue.worktree.path}</code>
+      </div>
+    {/if}
+
+    <div class="lane-lifecycle-list">
+      {#if lifecycleEvents.length}
+        {#each lifecycleEvents as event}
+          <article class="lane-lifecycle-row">
+            <time>{formatTime(event.time)}</time>
+            <div>
+              <span>{event.phase}</span>
+              <strong>{event.label}</strong>
+              {#if event.detail}
+                <p>{event.detail}</p>
+              {/if}
+            </div>
+            {#if event.url}
+              <a class="queue-link" href={event.url} target="_blank" rel="noreferrer">Source</a>
+            {/if}
+          </article>
+        {/each}
+      {:else}
+        <div class="inline-empty">
+          <strong>No lifecycle events visible</strong>
+          <p>The current readback does not include timeline evidence for this issue.</p>
+        </div>
+      {/if}
+    </div>
+  </section>
+{:else}
+  <section class="route-hero compact">
+    <div>
+      <p class="eyebrow">Lane Views</p>
+      <h2>Lane Views</h2>
+      <p>Issue-first lane posture, local runtime visibility, and workpad routing without duplicating lane pages.</p>
+    </div>
+
+    <div class="pagination">
+      <span class="section-note">{view?.generatedAtLabel ?? 'not checked'}</span>
+    </div>
+  </section>
+
+  <section class="lane-board-overview lane-views-board" aria-label="Lane issue board">
+    <div class="lane-board-grid">
+      {#each laneColumns as lane}
+        <article class="lane-board-column {lane.pickedCount ? 'success' : lane.issues.length ? 'warn' : 'neutral'}">
+          <div class="lane-board-column-head">
+            <strong>{lane.lane}</strong>
+            <small>{lane.pickedCount} active · {lane.completedCount} completed</small>
+          </div>
+
+          <div class="lane-board-issue-list">
+            {#if lane.issues.length}
+              {#each lane.issues as issue}
+                <a
+                  class="lane-board-item {issue.runtimeTone} {issue.runtimeCategory === 'Active runtime' ? 'picked' : ''}"
+                  href={issuePath(issue)}
+                  on:click={(event) => navigate(event, issuePath(issue))}
+                >
+                  <strong>{issue.id}</strong>
+                  <span>{issue.title}</span>
+                </a>
+              {/each}
+            {:else}
+              <div class="lane-board-empty">No issue visible.</div>
+            {/if}
+          </div>
+        </article>
+      {/each}
+    </div>
+  </section>
+
+  <section class="lane-completed-panel" aria-label="Local issue worktrees">
+    <div class="lane-completed-head">
+      <div>
+        <span class="mini-label">Local worktrees</span>
+        <strong>{filteredCompletedLocalIssues.length} visible</strong>
+      </div>
+      <div class="segmented-control compact" role="group" aria-label="Local worktree time window">
+        {#each completedWindows as window}
+          <button
+            class:active={completedWindowHours === window.hours}
+            type="button"
+            on:click={() => completedWindowHours = window.hours}
+          >
+            {window.label}
+          </button>
+        {/each}
+      </div>
+    </div>
+
+    <div class="lane-completed-list">
+      {#if filteredCompletedLocalIssues.length}
+        <div class="lane-completed-table-head" aria-hidden="true">
+          <span>Issue</span>
+          <span>Title</span>
+          <span>Project</span>
+          <span>Updated</span>
+          <span>Branch</span>
+          <span>Head</span>
+        </div>
+        {#each filteredCompletedLocalIssues as issue}
+          <a
+            class="lane-completed-row"
+            href={issuePath(issue)}
+            on:click={(event) => navigate(event, issuePath(issue))}
+          >
+            <span class="issue-tag">{issue.id}</span>
+            <strong class="lane-completed-title">{issue.title}</strong>
+            <span class="lane-completed-state">{issue.state}</span>
+            <span class="lane-completed-age">{relativeAge(issue.completedAt ?? issue.updatedAt)}</span>
+            <code class="lane-completed-branch">{issue.worktree?.branch ?? 'branch unknown'}</code>
+            <code class="lane-completed-headsha">{shortHead(issue.worktree?.head)}</code>
+          </a>
+        {/each}
+      {:else}
+        <div class="inline-empty compact-empty">
+          <strong>No local issue worktree in this window</strong>
+          <p>Switch to All or refresh after an issue worktree is created locally.</p>
+        </div>
+      {/if}
+    </div>
+  </section>
+{/if}

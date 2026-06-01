@@ -1613,9 +1613,6 @@ fn autopilot_loop_command(args: AutopilotLoopArgs) -> Result<Command, String> {
     }
     if args.max_iterations == Some(0)
         || args.poll_interval_ms == Some(0)
-        || args.main_max_concurrent == Some(0)
-        || args.review_max_concurrent == Some(0)
-        || args.merge_max_concurrent == Some(0)
         || (!args.once && !args.continuous && args.max_iterations.is_none())
     {
         return Err(usage());

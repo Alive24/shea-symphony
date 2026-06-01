@@ -25,10 +25,13 @@ export function buildFixtureOverview(force = false) {
     const saved = storage.getItem(FIXTURE_OVERVIEW_KEY);
     if (saved) {
       try {
-        return { ...JSON.parse(saved), generatedAt: new Date().toISOString() };
+        const parsed = JSON.parse(saved);
+        if (parsed.fixtureVersion === 2) {
+          return { ...parsed, generatedAt: new Date().toISOString() };
+        }
       } catch (_) {
-        storage.removeItem(FIXTURE_OVERVIEW_KEY);
       }
+      storage.removeItem(FIXTURE_OVERVIEW_KEY);
     }
   }
 
@@ -54,6 +57,7 @@ function fixtureCommand(args: string[]) {
 
 function baseFixtureOverview() {
   const now = new Date().toISOString();
+  const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
   const workflowPath = 'workflows/shea-symphony.md';
   const issues = [
     {
@@ -103,6 +107,7 @@ function baseFixtureOverview() {
   ];
 
   return {
+    fixtureVersion: 2,
     generatedAt: now,
     workflowPath,
     fixture: true,
@@ -170,10 +175,102 @@ function baseFixtureOverview() {
       branch: 'main',
       head: 'fixture',
       dirtyCount: 0,
-      worktreeCount: 1,
+      worktreeCount: 3,
       buildPresent: true,
       binaryPresent: true,
-      dirtyPreview: []
+      dirtyPreview: [],
+      issueWorktrees: [
+        {
+          issue: '#409',
+          title: 'Tauri read surface should preserve doctor refresh state',
+          state: 'Done',
+          lane: 'Merge',
+          path: '/tmp/shea-symphony/worktrees/issue-409-doctor-refresh',
+          branch: 'feature/issue-409-doctor-refresh',
+          head: 'fixture409',
+          lastModified: minutesAgo(34),
+          evidence: 'fixture local worktree'
+        },
+        {
+          issue: '#412',
+          title: 'Operator desk menu consolidation follow-up',
+          state: 'Done',
+          lane: 'Merge',
+          path: '/tmp/shea-symphony/worktrees/issue-412-menu-followup',
+          branch: 'feature/issue-412-menu-followup',
+          head: 'fixture412',
+          lastModified: minutesAgo(164),
+          evidence: 'fixture local worktree'
+        },
+        {
+          issue: '#417',
+          title: 'Lane detail timeline should link back to tracker evidence',
+          state: 'Done',
+          lane: 'Review',
+          path: '/tmp/shea-symphony/worktrees/issue-417-lane-detail',
+          branch: 'feature/issue-417-lane-detail',
+          head: 'fixture417',
+          lastModified: minutesAgo(490),
+          evidence: 'fixture local worktree'
+        }
+      ],
+      completedIssueWorktrees: [
+        {
+          issue: '#409',
+          title: 'Tauri read surface should preserve doctor refresh state',
+          state: 'Done',
+          lane: 'Merge',
+          url: 'https://github.com/Alive24/shea-symphony/issues/409',
+          path: '/tmp/shea-symphony/worktrees/issue-409-doctor-refresh',
+          branch: 'feature/issue-409-doctor-refresh',
+          head: 'fixture409',
+          completedAt: minutesAgo(34)
+        },
+        {
+          issue: '#412',
+          title: 'Operator desk menu consolidation follow-up',
+          state: 'Done',
+          lane: 'Merge',
+          url: 'https://github.com/Alive24/shea-symphony/issues/412',
+          path: '/tmp/shea-symphony/worktrees/issue-412-menu-followup',
+          branch: 'feature/issue-412-menu-followup',
+          head: 'fixture412',
+          completedAt: minutesAgo(164)
+        },
+        {
+          issue: '#417',
+          title: 'Lane detail timeline should link back to tracker evidence',
+          state: 'Done',
+          lane: 'Review',
+          url: 'https://github.com/Alive24/shea-symphony/issues/417',
+          path: '/tmp/shea-symphony/worktrees/issue-417-lane-detail',
+          branch: 'feature/issue-417-lane-detail',
+          head: 'fixture417',
+          completedAt: minutesAgo(490)
+        }
+      ],
+      issueLifecycle: {
+        '#409': [
+          { phase: 'Backlog', label: 'Created in Project Backlog', time: minutesAgo(950), url: 'https://github.com/Alive24/shea-symphony/issues/409' },
+          { phase: 'Promoted', label: 'Promoted to Todo', time: minutesAgo(890), url: 'https://github.com/Alive24/shea-symphony/issues/409#issuecomment-1004091' },
+          { phase: 'Main', label: 'Main lane picked up implementation', time: minutesAgo(740), url: 'https://github.com/Alive24/shea-symphony/issues/409#issuecomment-1004092' },
+          { phase: 'Agent Review', label: 'Independent review recorded pass evidence', time: minutesAgo(210), url: 'https://github.com/Alive24/shea-symphony/issues/409#issuecomment-1004093' },
+          { phase: 'Human Review', label: 'Operator approved merge routing', time: minutesAgo(86), url: 'https://github.com/Alive24/shea-symphony/issues/409#issuecomment-1004094' },
+          { phase: 'Done', label: 'Merge lane completed closeout', time: minutesAgo(34), url: 'https://github.com/Alive24/shea-symphony/issues/409#issuecomment-1004095' }
+        ],
+        '#412': [
+          { phase: 'Backlog', label: 'Created in Project Backlog', time: minutesAgo(620), url: 'https://github.com/Alive24/shea-symphony/issues/412' },
+          { phase: 'Main', label: 'Main lane wrote menu changes', time: minutesAgo(470), url: 'https://github.com/Alive24/shea-symphony/issues/412#issuecomment-1004121' },
+          { phase: 'Rework', label: 'Review returned compactness fix', time: minutesAgo(330), url: 'https://github.com/Alive24/shea-symphony/issues/412#issuecomment-1004122' },
+          { phase: 'Done', label: 'Merge lane closed issue', time: minutesAgo(164), url: 'https://github.com/Alive24/shea-symphony/issues/412#issuecomment-1004123' }
+        ],
+        '#417': [
+          { phase: 'Backlog', label: 'Created from Lane Views polish note', time: minutesAgo(980), url: 'https://github.com/Alive24/shea-symphony/issues/417' },
+          { phase: 'Main', label: 'Implementation handoff published', time: minutesAgo(790), url: 'https://github.com/Alive24/shea-symphony/issues/417#issuecomment-1004171' },
+          { phase: 'Agent Review', label: 'Review evidence linked tracker timeline', time: minutesAgo(610), url: 'https://github.com/Alive24/shea-symphony/issues/417#issuecomment-1004172' },
+          { phase: 'Done', label: 'Closeout retained local worktree', time: minutesAgo(490), url: 'https://github.com/Alive24/shea-symphony/issues/417#issuecomment-1004173' }
+        ]
+      }
     },
     githubQueue: {
       totalOpen: issues.length,

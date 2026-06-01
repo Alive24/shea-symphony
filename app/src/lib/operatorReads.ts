@@ -19,7 +19,8 @@ export async function loadOverview(force = false, scope = 'full') {
           surface: `overview:${scope}`,
           phase: 'finish',
           status: 'ok',
-          detail: 'Overview returned; slow CLI surfaces may still be pending.',
+          detail: `Overview ${scope} returned.`,
+          raw: overview,
           durationMs: Math.round(performance.now() - startedAt)
         });
         return overview;
@@ -74,8 +75,9 @@ export async function loadReadSurface(name, force = false) {
           surface: name,
           phase: 'finish',
           status: command.ok ? 'ok' : command.timedOut ? 'timeout' : command.pending ? 'pending' : 'failed',
-          detail: command.stderr || command.stdoutPreview || `Finished CLI read surface: ${name}.`,
+          detail: humanReadSurfaceDetail(name, command),
           args: command.args ?? [],
+          raw: surface,
           durationMs: command.durationMs ?? Math.round(performance.now() - startedAt)
         });
         return surface;
@@ -96,4 +98,12 @@ export async function loadReadSurface(name, force = false) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error ?? 'unknown error');
+}
+
+function humanReadSurfaceDetail(name: string, command: any) {
+  if (command.pending) return `${name} read is still pending.`;
+  if (command.timedOut) return `${name} read timed out.`;
+  if (command.ok) return `${name} read completed.`;
+  if (command.stderr) return `${name} read failed: ${String(command.stderr).slice(0, 180)}`;
+  return `${name} read failed.`;
 }

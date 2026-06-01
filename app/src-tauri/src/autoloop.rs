@@ -75,15 +75,15 @@ pub fn start_autoloop(
     }
     if let Some(value) = options.main_max_concurrent {
         args.push("--main-max-concurrent".into());
-        args.push(value.max(1).to_string());
+        args.push(value.to_string());
     }
     if let Some(value) = options.review_max_concurrent {
         args.push("--review-max-concurrent".into());
-        args.push(value.max(1).to_string());
+        args.push(value.to_string());
     }
     if let Some(value) = options.merge_max_concurrent {
         args.push("--merge-max-concurrent".into());
-        args.push(value.max(1).to_string());
+        args.push(value.to_string());
     }
 
     {

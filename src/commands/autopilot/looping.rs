@@ -388,8 +388,9 @@ fn autopilot_loop_with_cancellation(
         let mut lane_results = Vec::new();
 
         let main_plan = autopilot_plan_lane(Some(&latest_plan), "main");
-        let main_result = if autopilot_lane_plan_should_tick(main_plan)
-            || autopilot_main_recovery_should_tick(Some(&latest_plan), &tick_settings)
+        let main_result = if tick_settings.main_max_concurrent > 0
+            && (autopilot_lane_plan_should_tick(main_plan)
+                || autopilot_main_recovery_should_tick(Some(&latest_plan), &tick_settings))
         {
             print_autopilot_lane_running(
                 "main",
@@ -412,7 +413,9 @@ fn autopilot_loop_with_cancellation(
         latest_plan = refresh_autopilot_plan_or_keep(&options.workflow_path, latest_plan);
 
         let review_plan = autopilot_plan_lane(Some(&latest_plan), "review");
-        let review_result = if autopilot_lane_plan_should_tick(review_plan) {
+        let review_result = if tick_settings.review_max_concurrent > 0
+            && autopilot_lane_plan_should_tick(review_plan)
+        {
             print_autopilot_lane_running(
                 "review",
                 review_plan,
@@ -434,7 +437,9 @@ fn autopilot_loop_with_cancellation(
         latest_plan = refresh_autopilot_plan_or_keep(&options.workflow_path, latest_plan);
 
         let merge_plan = autopilot_plan_lane(Some(&latest_plan), "merge");
-        let merge_result = if autopilot_lane_plan_should_tick(merge_plan) {
+        let merge_result = if tick_settings.merge_max_concurrent > 0
+            && autopilot_lane_plan_should_tick(merge_plan)
+        {
             print_autopilot_lane_running(
                 "merge",
                 merge_plan,
@@ -943,16 +948,13 @@ impl AutopilotLoopSettings {
                 .max(1),
             main_max_concurrent: options
                 .main_max_concurrent
-                .unwrap_or(config.agent.max_concurrent_agents)
-                .max(1),
+                .unwrap_or(config.agent.max_concurrent_agents),
             review_max_concurrent: options
                 .review_max_concurrent
-                .unwrap_or(config.review.max_concurrent_workers)
-                .max(1),
+                .unwrap_or(config.review.max_concurrent_workers),
             merge_max_concurrent: options
                 .merge_max_concurrent
-                .unwrap_or(config.merge_lane.max_concurrent_workers)
-                .max(1),
+                .unwrap_or(config.merge_lane.max_concurrent_workers),
         }
     }
 
@@ -962,9 +964,9 @@ impl AutopilotLoopSettings {
             dry_run: options.dry_run || !options.write,
             recover: options.recover,
             poll_interval_ms: options.poll_interval_ms.unwrap_or(30_000).max(1),
-            main_max_concurrent: options.main_max_concurrent.unwrap_or(1).max(1),
-            review_max_concurrent: options.review_max_concurrent.unwrap_or(1).max(1),
-            merge_max_concurrent: options.merge_max_concurrent.unwrap_or(1).max(1),
+            main_max_concurrent: options.main_max_concurrent.unwrap_or(1),
+            review_max_concurrent: options.review_max_concurrent.unwrap_or(1),
+            merge_max_concurrent: options.merge_max_concurrent.unwrap_or(1),
         }
     }
 }

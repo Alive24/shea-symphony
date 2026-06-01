@@ -1,3 +1,11 @@
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -63,10 +71,15 @@ fn build_read_surface(name: &str) -> Result<Value, String> {
 
     let args = read_surface_args(name).ok_or_else(|| format!("unknown read surface: {name}"))?;
     let result = run_shea_read(&args);
+    let parsed = if name == "local" {
+        runtime_status_summary(&result)
+    } else {
+        parse_json_output(&result.stdout)
+    };
     Ok(surface_payload(
         name,
         command_summary_value(&result.summary),
-        parse_json_output(&result.stdout),
+        parsed,
         if name == "sessions" {
             result.stdout.trim().to_string()
         } else {
@@ -216,6 +229,10 @@ fn runtime_status_summary(result: &CommandRun) -> Value {
         .and_then(Value::as_array)
         .map(Vec::len)
         .unwrap_or(0);
+    let issue_worktrees = git_worktree_issue_inventory();
+    let project_issues = project_issue_readbacks(&issue_worktrees, &snapshot);
+    let completed_issue_worktrees =
+        completed_issue_worktrees(&snapshot, &issue_worktrees, &project_issues);
     json!({
         "source": "shea-symphony status show --json",
         "runningCount": running_count,
@@ -223,9 +240,326 @@ fn runtime_status_summary(result: &CommandRun) -> Value {
         "retryingCount": retrying_count,
         "sessionCount": session_count,
         "integrationGapCount": integration_gap_count,
+        "issueWorktrees": issue_worktrees,
+        "projectIssues": project_issues,
+        "completedIssueWorktrees": completed_issue_worktrees,
         "eventLogPath": snapshot.get("event_log_path").cloned().unwrap_or(Value::Null),
         "snapshot": snapshot,
     })
+}
+
+fn completed_issue_worktrees(
+    snapshot: &Value,
+    issue_worktrees: &Value,
+    project_issues: &Value,
+) -> Value {
+    let mut worktrees_by_issue = BTreeMap::new();
+    for worktree in issue_worktrees.as_array().into_iter().flatten() {
+        if let Some(issue) = worktree.get("issue").and_then(Value::as_str) {
+            worktrees_by_issue.insert(issue.to_string(), worktree.clone());
+        }
+    }
+
+    let mut completed = BTreeMap::new();
+    if let Some(sessions) = snapshot.get("sessions").and_then(Value::as_array) {
+        for session in sessions {
+            let status = session
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !matches!(status, "completed" | "recorded") {
+                continue;
+            }
+            let Some(issue) = session
+                .get("issue_identifier")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let Some(worktree) = worktrees_by_issue.get(&issue) else {
+                continue;
+            };
+            let updated_at = session.get("updated_at_ms").cloned().unwrap_or(Value::Null);
+            completed.insert(
+                issue.clone(),
+                json!({
+                    "issue": issue,
+                    "title": session.get("issue_title").cloned().unwrap_or(Value::Null),
+                    "state": "Done",
+                    "lane": session.get("lane").cloned().unwrap_or(Value::Null),
+                    "completedAt": updated_at,
+                    "path": worktree.get("path").cloned().unwrap_or(Value::Null),
+                    "branch": worktree.get("branch").cloned().unwrap_or(Value::Null),
+                    "head": worktree.get("head").cloned().unwrap_or(Value::Null),
+                    "lastModified": worktree.get("lastModified").cloned().unwrap_or(Value::Null),
+                    "evidence": session.get("evidence").cloned().unwrap_or(Value::Null),
+                    "artifactSource": "session_registry",
+                }),
+            );
+        }
+    }
+
+    for project_issue in project_issues.as_array().into_iter().flatten() {
+        let Some(issue) = project_issue.get("identifier").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(worktree) = worktrees_by_issue.get(issue) else {
+            continue;
+        };
+        let previous = completed.get(issue);
+        completed.insert(
+            issue.to_string(),
+            json!({
+                "issue": issue,
+                "title": project_issue.get("title").cloned().unwrap_or(Value::Null),
+                "state": project_issue.get("state").cloned().unwrap_or(Value::Null),
+                "lane": previous.and_then(|entry| entry.get("lane")).cloned().unwrap_or(Value::Null),
+                "url": project_issue.get("url").cloned().unwrap_or(Value::Null),
+                "completedAt": previous.and_then(|entry| entry.get("completedAt")).cloned().unwrap_or_else(|| worktree.get("lastModified").cloned().unwrap_or(Value::Null)),
+                "path": worktree.get("path").cloned().unwrap_or(Value::Null),
+                "branch": worktree.get("branch").cloned().unwrap_or(Value::Null),
+                "head": worktree.get("head").cloned().unwrap_or(Value::Null),
+                "lastModified": worktree.get("lastModified").cloned().unwrap_or(Value::Null),
+                "evidence": previous.and_then(|entry| entry.get("evidence")).cloned().unwrap_or_else(|| Value::String("project issue readback + git worktree".into())),
+                "artifactSource": previous.and_then(|entry| entry.get("artifactSource")).cloned().unwrap_or_else(|| Value::String("project_issue".into())),
+            }),
+        );
+    }
+    Value::Array(completed.into_values().collect())
+}
+
+fn project_issue_readbacks(issue_worktrees: &Value, snapshot: &Value) -> Value {
+    let registry_issues = session_registry_issue_refs(snapshot);
+    let mut issues = BTreeMap::new();
+    for worktree in issue_worktrees.as_array().into_iter().flatten() {
+        let Some(issue) = worktree.get("issue").and_then(Value::as_str) else {
+            continue;
+        };
+        if registry_issues.contains_key(issue) || issues.contains_key(issue) {
+            continue;
+        }
+        if let Some(readback) = project_issue_readback(issue) {
+            let _ = write_project_readback_session(snapshot, worktree, &readback);
+            issues.insert(issue.to_string(), readback);
+        }
+    }
+    Value::Array(issues.into_values().collect())
+}
+
+fn session_registry_issue_refs(snapshot: &Value) -> BTreeMap<String, Value> {
+    let mut issues = BTreeMap::new();
+    for session in snapshot
+        .get("sessions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let status = session
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !matches!(status, "completed" | "recorded") {
+            continue;
+        }
+        let Some(issue) = session.get("issue_identifier").and_then(Value::as_str) else {
+            continue;
+        };
+        let has_title = session
+            .get("issue_title")
+            .and_then(Value::as_str)
+            .is_some_and(|title| !title.trim().is_empty());
+        if has_title {
+            issues.insert(issue.to_string(), session.clone());
+        }
+    }
+    issues
+}
+
+fn project_issue_readback(issue: &str) -> Option<Value> {
+    let output = shea_command(&["project", "issue", "--json", DEFAULT_WORKFLOW_PATH, issue])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    serde_json::from_slice(&output.stdout).ok()
+}
+
+fn write_project_readback_session(
+    snapshot: &Value,
+    worktree: &Value,
+    issue: &Value,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(registry_path) = session_registry_path_from_snapshot(snapshot) else {
+        return Ok(());
+    };
+    let Some(identifier) = issue.get("identifier").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    let number = identifier.trim_start_matches('#');
+    let session_name = format!("project-readback-issue-{number}");
+    let now_ms = unix_timestamp_ms();
+    let mut registry = fs::read_to_string(&registry_path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<Value>(&content).ok())
+        .unwrap_or_else(|| json!({ "sessions": [] }));
+    let sessions = registry
+        .get_mut("sessions")
+        .and_then(Value::as_array_mut)
+        .ok_or("session registry payload missing sessions array")?;
+    let record = json!({
+        "issue_id": issue.get("id").cloned().unwrap_or(Value::Null),
+        "issue_identifier": identifier,
+        "issue_title": issue.get("title").cloned().unwrap_or(Value::Null),
+        "lane": "project",
+        "run_id": "project-readback-cache",
+        "session_source": "project_readback_cache",
+        "actor_role": "operator-ui",
+        "actor_label": "Lane Views",
+        "git_author": Value::Null,
+        "profile_id": Value::Null,
+        "instance_name": Value::Null,
+        "worktree": worktree.get("path").cloned().unwrap_or(Value::String(String::new())),
+        "branch": worktree.get("branch").cloned().unwrap_or(Value::Null),
+        "backend": "project-readback",
+        "session_name": session_name,
+        "pane_target": "",
+        "prompt_artifact_path": "",
+        "log_path": "",
+        "attach_command": "",
+        "attempt": 0,
+        "status": "recorded",
+        "started_at_ms": now_ms,
+        "updated_at_ms": now_ms,
+    });
+    if let Some(existing) = sessions.iter_mut().find(|session| {
+        session.get("session_name").and_then(Value::as_str) == Some(session_name.as_str())
+    }) {
+        *existing = record;
+    } else {
+        sessions.push(record);
+    }
+    if let Some(parent) = registry_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(registry_path, serde_json::to_string_pretty(&registry)?)?;
+    Ok(())
+}
+
+fn session_registry_path_from_snapshot(snapshot: &Value) -> Option<PathBuf> {
+    let event_log_path = snapshot.get("event_log_path").and_then(Value::as_str)?;
+    let default_root = Path::new(event_log_path).parent()?.parent()?;
+    Some(default_root.join("sessions").join("session-registry.json"))
+}
+
+fn unix_timestamp_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn git_worktree_issue_inventory() -> Value {
+    let output = Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .output();
+    let Ok(output) = output else {
+        return Value::Array(vec![]);
+    };
+    if !output.status.success() {
+        return Value::Array(vec![]);
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    Value::Array(
+        parse_git_worktree_porcelain(&text)
+            .into_iter()
+            .filter_map(|worktree| {
+                let issue = infer_issue_ref(worktree.branch.as_deref(), Path::new(&worktree.path))?;
+                Some(json!({
+                    "issue": issue,
+                    "path": worktree.path,
+                    "branch": worktree.branch,
+                    "head": worktree.head,
+                    "lastModified": worktree_last_modified(&worktree.path),
+                    "evidence": "git worktree list --porcelain",
+                }))
+            })
+            .collect(),
+    )
+}
+
+#[derive(Default)]
+struct LocalWorktree {
+    path: String,
+    head: Option<String>,
+    branch: Option<String>,
+}
+
+fn parse_git_worktree_porcelain(input: &str) -> Vec<LocalWorktree> {
+    let mut worktrees = Vec::new();
+    let mut current: Option<LocalWorktree> = None;
+
+    for line in input.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            if let Some(worktree) = current.take() {
+                worktrees.push(worktree);
+            }
+            current = Some(LocalWorktree {
+                path: path.to_string(),
+                ..LocalWorktree::default()
+            });
+        } else if let Some(head) = line.strip_prefix("HEAD ") {
+            if let Some(worktree) = &mut current {
+                worktree.head = Some(head.to_string());
+            }
+        } else if let Some(branch) = line.strip_prefix("branch ") {
+            if let Some(worktree) = &mut current {
+                worktree.branch = Some(branch.trim_start_matches("refs/heads/").to_string());
+            }
+        }
+    }
+
+    if let Some(worktree) = current {
+        worktrees.push(worktree);
+    }
+    worktrees
+}
+
+fn infer_issue_ref(branch: Option<&str>, path: &Path) -> Option<String> {
+    branch
+        .and_then(issue_ref_from_text)
+        .or_else(|| {
+            path.file_name()
+                .and_then(|name| issue_ref_from_text(&name.to_string_lossy()))
+        })
+        .or_else(|| issue_ref_from_text(&path.display().to_string()))
+}
+
+fn issue_ref_from_text(text: &str) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    for marker in ["issue-", "issue_", "issue/", "#"] {
+        if let Some(index) = lower.find(marker) {
+            let suffix = &lower[index + marker.len()..];
+            let digits: String = suffix
+                .chars()
+                .take_while(|ch| ch.is_ascii_digit())
+                .collect();
+            if !digits.is_empty() {
+                return Some(format!("#{digits}"));
+            }
+        }
+    }
+    None
+}
+
+fn worktree_last_modified(path: &str) -> Value {
+    let modified = fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as u64);
+    modified.map(Value::from).unwrap_or(Value::Null)
 }
 
 fn surface_payload(name: &str, command: Value, parsed: Value, text: String) -> Value {

@@ -56,6 +56,30 @@ fn parses_grouped_autopilot_loop_flags() {
 }
 
 #[test]
+fn parses_autopilot_loop_zero_lane_concurrency_for_lane_isolation() {
+    let Command::AutopilotLoop { options } = parse(&[
+        "autopilot",
+        "loop",
+        "workflows/shea-symphony.md",
+        "--max-iterations",
+        "1",
+        "--dry-run",
+        "--main-max-concurrent",
+        "1",
+        "--review-max-concurrent",
+        "0",
+        "--merge-max-concurrent",
+        "0",
+    ]) else {
+        panic!("expected autopilot loop command");
+    };
+
+    assert_eq!(options.main_max_concurrent, Some(1));
+    assert_eq!(options.review_max_concurrent, Some(0));
+    assert_eq!(options.merge_max_concurrent, Some(0));
+}
+
+#[test]
 fn parses_autopilot_loop_no_recover_debug_escape_hatch() {
     let Command::AutopilotLoop { options } = parse(&[
         "autopilot",

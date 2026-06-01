@@ -8,6 +8,7 @@ export type CliLogEntry = {
   status: string;
   detail: string;
   args: string[];
+  raw?: unknown;
   durationMs: number | null;
 };
 
@@ -18,13 +19,17 @@ export const DATA_MODE_CHANGE_EVENT = 'shea-data-mode-change';
 export const HANDOFF_TARGET_CHANGE_EVENT = 'shea-handoff-target-change';
 export const REFRESH_REQUEST_EVENT = 'shea-refresh-request';
 export const START_DRY_RUN_EVENT = 'shea-start-dry-run-autoloop';
+export const START_WRITE_EVENT = 'shea-start-write-autoloop';
+export const STOP_AUTOLOOP_EVENT = 'shea-stop-autoloop';
+export const OPEN_AUTOLOOP_LOGS_EVENT = 'shea-open-autoloop-logs';
 export const HANDOFF_TARGETS = [
-  { id: 'codex-app', label: 'Codex App' },
-  { id: 'codex-cli', label: 'Codex CLI' },
-  { id: 'github', label: 'GitHub Issue' }
+  { id: 'codex-app', label: 'Codex App', icon: 'codex' },
+  { id: 'claude-code', label: 'Claude Code', icon: 'claude' },
+  { id: 'gemini-cli', label: 'Gemini CLI', icon: 'gemini' }
 ];
 
 export const defaultHandoffTargetStore = writable('codex-app');
+export const autoloopStateStore = writable(null);
 export const cliLogStore = writable<CliLogEntry[]>([]);
 export const autoloopControlStore = writable({
   tauriAvailable: false,
@@ -51,6 +56,7 @@ export function recordCliLog(entry: {
   status?: string;
   detail?: string;
   args?: string[];
+  raw?: unknown;
   durationMs?: number | null;
 }) {
   const nextEntry = {
@@ -61,6 +67,7 @@ export function recordCliLog(entry: {
     status: entry.status ?? 'info',
     detail: entry.detail ?? '',
     args: entry.args ?? [],
+    raw: entry.raw,
     durationMs: entry.durationMs ?? null
   };
   cliLogStore.update((logs) => [nextEntry, ...logs].slice(0, 200));
@@ -75,6 +82,7 @@ export function updateCliLog(
     status?: string;
     detail?: string;
     args?: string[];
+    raw?: unknown;
     durationMs?: number | null;
   }
 ) {
@@ -88,6 +96,7 @@ export function updateCliLog(
             status: entry.status ?? log.status,
             detail: entry.detail ?? log.detail,
             args: entry.args ?? log.args,
+            raw: entry.raw ?? log.raw,
             durationMs: entry.durationMs ?? log.durationMs
           }
         : log

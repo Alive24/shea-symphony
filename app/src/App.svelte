@@ -3,12 +3,17 @@
   import './app.css';
   import DraftSurface from './DraftSurface.svelte';
   import AppShell from './lib/AppShell.svelte';
-  import { buildFixtureOverview } from './lib/operatorFixtures.ts';
-  import { buildViewModel } from './lib/operatorViewModel.ts';
+  import {
+    initializeOperatorOverview,
+    operatorOverviewStore,
+    requestOperatorLocalArtifactsRefresh,
+    requestOperatorOverviewRefresh
+  } from './lib/operatorOverviewStore.ts';
+  import { REFRESH_REQUEST_EVENT } from './lib/uiState.ts';
   import OperatorDesk from './OperatorDesk.svelte';
 
   let currentPath = '/';
-  const draftView = buildViewModel(buildFixtureOverview(false));
+  $: operatorView = $operatorOverviewStore.view;
 
   function normalizePath(pathname: string) {
     const path = pathname || '/';
@@ -26,13 +31,36 @@
     currentPath = href;
   }
 
+  function scheduleRefresh(force = false, includeSlowReads = true, source = 'manual', publishStatus = true) {
+    if (publishStatus) {
+      window.requestAnimationFrame(() => {
+        window.setTimeout(() => {
+          requestOperatorOverviewRefresh(force, includeSlowReads, source, publishStatus);
+        }, 0);
+      });
+    } else {
+      requestOperatorOverviewRefresh(force, includeSlowReads, source, publishStatus);
+    }
+  }
+
   onMount(() => {
     setRouteFromLocation();
+    initializeOperatorOverview();
+    const refreshRequestListener = (event: Event) => {
+      const detail = (event as CustomEvent).detail ?? {};
+      if (detail.localOnly) {
+        requestOperatorLocalArtifactsRefresh(detail.source ?? 'local-artifacts');
+        return;
+      }
+      scheduleRefresh(detail.force ?? true, true, detail.source ?? 'manual');
+    };
     window.addEventListener('popstate', setRouteFromLocation);
     window.addEventListener('shea-navigate', navigate as EventListener);
+    window.addEventListener(REFRESH_REQUEST_EVENT, refreshRequestListener);
     return () => {
       window.removeEventListener('popstate', setRouteFromLocation);
       window.removeEventListener('shea-navigate', navigate as EventListener);
+      window.removeEventListener(REFRESH_REQUEST_EVENT, refreshRequestListener);
     };
   });
 </script>
@@ -49,6 +77,6 @@
   {#if currentPath === '/'}
     <OperatorDesk />
   {:else}
-    <DraftSurface route={currentPath} view={draftView} />
+    <DraftSurface route={currentPath} view={operatorView} />
   {/if}
 </AppShell>

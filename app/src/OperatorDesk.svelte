@@ -3,17 +3,12 @@
   import {
     HANDOFF_TARGETS,
     HANDOFF_TARGET_CHANGE_EVENT,
-    REFRESH_REQUEST_EVENT,
-    START_DRY_RUN_EVENT,
     autoloopControlStore,
+    autoloopStateStore,
     getDefaultHandoffTarget,
-    recordCliLog,
-    refreshStatusStore,
-    updateCliLog
+    refreshStatusStore
   } from './lib/uiState.ts';
-  import { buildViewModel } from './lib/operatorViewModel.ts';
-  import { loadOverview, loadReadSurface } from './lib/operatorReads.ts';
-  import { mergeReadSurface } from './lib/operatorReadModel.ts';
+  import { operatorOverviewStore, requestOperatorOverviewRefresh } from './lib/operatorOverviewStore.ts';
   import {
     appendAutoloopLine,
     defaultLoopState,
@@ -21,32 +16,26 @@
     isTauriRuntime,
     laneWorkerFromAutoloop,
     mergeLaneSnapshot,
-    startAutoloop,
-    stopAutoloop,
     subscribeAutoloopEvents,
     type LaneSnapshot,
     type LoopStateSnapshot,
     type AutoloopLine
   } from './lib/tauriAutoloop.ts';
 
-  let loading = true;
-  let liveError = '';
   let tauriError = '';
   let autoloopBusy = false;
-  let autoloopLogsOpen = false;
   let tauriAvailable = false;
   let autoloopState: LoopStateSnapshot = defaultLoopState();
-  let fullLoading = false;
-  let backgroundRefreshing = false;
-  let slowReadsRemaining = 0;
-  let readGeneration = 0;
   let defaultHandoffTarget = 'codex-app';
   let copiedHandoffId = '';
-  let view = buildViewModel(null);
   let autoloopRefreshTimer: number | null = null;
-  let autoloopContinuous = true;
-  let lastHumanTodoIssues = [];
+  let lastStableHumanTodoIssues = [];
+  let lastStableLaneBoard = [];
 
+  $: view = $operatorOverviewStore.view;
+  $: liveError = $operatorOverviewStore.liveError;
+  $: fullLoading = $operatorOverviewStore.fullLoading;
+  $: slowReadsRemaining = $operatorOverviewStore.slowReadsRemaining;
   $: dataSource = view.dataSource;
   $: queueIssues = view.queueIssues ?? [];
   $: liveUnavailable = dataSource?.mode === 'offline';
@@ -62,6 +51,8 @@
     workflowPath: autoloopState.workflowPath,
     latestLine: latestAutoloopLine
   });
+  $: autoloopStateStore.set(autoloopState);
+  $: operatorSurfaceRefreshing = $refreshStatusStore.running;
   $: issueTitleById = buildIssueTitleMap(queueIssues);
   $: humanTodoIssues = queueIssues
     .filter((issue) => isHumanTodoState(issue.state))
@@ -71,15 +62,7 @@
       categoryDetail: humanTodoDetail(issue.state),
       categoryTone: humanTodoTone(issue.state)
     }));
-  $: if (humanTodoIssues.length || (!fullLoading && !backgroundRefreshing)) {
-    lastHumanTodoIssues = humanTodoIssues;
-  }
-  $: humanTodoRefreshing =
-    (fullLoading || backgroundRefreshing) && humanTodoIssues.length === 0 && lastHumanTodoIssues.length > 0;
-  $: visibleHumanTodoIssues = humanTodoRefreshing
-    ? lastHumanTodoIssues.map((issue) => ({ ...issue, refreshing: true }))
-    : humanTodoIssues.map((issue) => ({ ...issue, refreshing: false }));
-  $: laneBoard = ['main', 'review', 'merge'].map((laneKey) => {
+  $: currentLaneBoard = ['main', 'review', 'merge'].map((laneKey) => {
     const label = titleCaseLane(laneKey);
     const workers = view.laneWorkers?.[laneKey] ?? [];
     const liveWorker = laneWorkerFromAutoloop(autoloopLanes[laneKey], laneKey, autoloopState);
@@ -117,131 +100,25 @@
       tone: visibleWorkers.length ? 'success' : waitingIssues.length ? 'warn' : 'neutral'
     };
   });
-
-  async function refresh(force = false, includeSlowReads = true, source = 'manual', publishStatus = true) {
-    const hasRenderableState = view?.dataSource?.mode !== 'offline';
-    let backgroundReadsStarted = false;
-    backgroundRefreshing = hasRenderableState;
-    loading = !hasRenderableState;
-    fullLoading = includeSlowReads;
-    slowReadsRemaining = 0;
-    liveError = '';
-    if (publishStatus) {
-      refreshStatusStore.set({
-        running: true,
-        remaining: includeSlowReads ? 6 : 1,
-        startedAt: new Date().toISOString(),
-        finishedAt: null,
-        source,
-        detail: 'Requesting overview'
-      });
-    }
-    try {
-      view = buildViewModel(await loadOverview(force, 'fast'));
-      loading = false;
-      if (!includeSlowReads) return;
-      backgroundReadsStarted = true;
-      startBackgroundReads(force, source, publishStatus);
-    } catch (error) {
-      liveError = error.message;
-      if (!hasRenderableState) view = buildViewModel(null);
-      if (publishStatus) {
-        refreshStatusStore.set({
-          running: false,
-          remaining: 0,
-          startedAt: null,
-          finishedAt: new Date().toISOString(),
-          source,
-          detail: error.message
-        });
-      }
-    } finally {
-      loading = false;
-      if (!backgroundReadsStarted) backgroundRefreshing = false;
-      if (!includeSlowReads) {
-        if (publishStatus) {
-          refreshStatusStore.set({
-            running: false,
-            remaining: 0,
-            startedAt: null,
-            finishedAt: new Date().toISOString(),
-            source,
-            detail: 'Overview refreshed'
-          });
-        }
-      }
-    }
+  $: if (!operatorSurfaceRefreshing) {
+    lastStableHumanTodoIssues = humanTodoIssues;
+    lastStableLaneBoard = currentLaneBoard;
   }
-
-  function startBackgroundReads(force = false, source = 'manual', publishStatus = true) {
-    const generation = ++readGeneration;
-    const slowSurfaces = ['autopilot', 'doctor', 'review', 'skills', 'sessions', 'local'];
-    fullLoading = true;
-    slowReadsRemaining = slowSurfaces.length;
-    if (publishStatus) {
-      refreshStatusStore.update((status) => ({
-        ...status,
-        running: true,
-        remaining: slowSurfaces.length,
-        source,
-        detail: 'Loading CLI read surfaces'
-      }));
-    }
-
-    for (const name of slowSurfaces) {
-      loadReadSurface(name, force)
-        .then((surface) => {
-          if (generation !== readGeneration) return;
-          view = buildViewModel(mergeReadSurface(view.raw, surface));
-        })
-        .catch((error) => {
-          if (generation !== readGeneration) return;
-          liveError = error.message;
-        })
-        .finally(() => {
-          if (generation !== readGeneration) return;
-          slowReadsRemaining = Math.max(0, slowReadsRemaining - 1);
-          if (publishStatus) {
-            refreshStatusStore.update((status) => ({
-              ...status,
-              running: slowReadsRemaining > 0,
-              remaining: slowReadsRemaining,
-              finishedAt: slowReadsRemaining === 0 ? new Date().toISOString() : status.finishedAt,
-              detail: slowReadsRemaining === 0 ? 'Refresh complete' : `Loading ${slowReadsRemaining} CLI surface${slowReadsRemaining === 1 ? '' : 's'}`
-            }));
-          }
-          if (slowReadsRemaining === 0) {
-            fullLoading = false;
-            backgroundRefreshing = false;
-          }
-        });
-    }
-  }
-
-  function scheduleRefresh(force = false, includeSlowReads = true, source = 'manual', publishStatus = true) {
-    if (publishStatus) {
-      refreshStatusStore.set({
-        running: true,
-        remaining: includeSlowReads ? 6 : 1,
-        startedAt: new Date().toISOString(),
-        finishedAt: null,
-        source,
-        detail: 'Queued refresh'
-      });
-    }
-    window.requestAnimationFrame(() => {
-      window.setTimeout(() => {
-        refresh(force, includeSlowReads, source, publishStatus);
-      }, 0);
-    });
-  }
+  $: visibleHumanTodoIssues =
+    operatorSurfaceRefreshing && lastStableHumanTodoIssues.length
+      ? lastStableHumanTodoIssues.map((issue) => ({ ...issue, refreshing: true }))
+      : humanTodoIssues.map((issue) => ({ ...issue, refreshing: operatorSurfaceRefreshing }));
+  $: laneBoard =
+    operatorSurfaceRefreshing && lastStableLaneBoard.length
+      ? lastStableLaneBoard.map((lane) => ({ ...lane, refreshing: true }))
+      : currentLaneBoard.map((lane) => ({ ...lane, refreshing: operatorSurfaceRefreshing }));
 
   function scheduleAutoloopRefresh(source = 'autoloop') {
     if ($refreshStatusStore.running) return;
     if (autoloopRefreshTimer) window.clearTimeout(autoloopRefreshTimer);
     autoloopRefreshTimer = window.setTimeout(() => {
       autoloopRefreshTimer = null;
-      refresh(true, true, source, false);
+      requestOperatorOverviewRefresh(true, true, source, false);
     }, 900);
   }
 
@@ -316,24 +193,6 @@
     return HANDOFF_TARGETS.find((target) => target.id === targetId)?.label ?? 'Codex App';
   }
 
-  function formatAutoloopTime(value: unknown) {
-    const time = Number(value);
-    if (!Number.isFinite(time)) return '--:--:--';
-    return new Date(time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  }
-
-  function prettifyAutoloopLine(entry: AutoloopLine) {
-    if (entry.event && typeof entry.event === 'object') {
-      return JSON.stringify(entry.event, null, 2);
-    }
-    try {
-      const parsed = JSON.parse(entry.line);
-      return JSON.stringify(parsed, null, 2);
-    } catch {
-      return entry.line;
-    }
-  }
-
   function latestAutoloopStdout(state: LoopStateSnapshot, lines: AutoloopLine[]) {
     const startedAt = Number(state.startedAtMs);
     const lowerBound = Number.isFinite(startedAt) ? startedAt - 1000 : null;
@@ -371,9 +230,6 @@
 
   async function openHandoff(issue) {
     await copyHandoffPrompt(issue);
-    if (defaultHandoffTarget === 'github' && issue.url) {
-      window.open(issue.url, '_blank', 'noreferrer');
-    }
   }
 
   async function refreshAutoloopState() {
@@ -382,90 +238,6 @@
       autoloopState = await getLoopState();
     } catch (error) {
       tauriError = error.message;
-    }
-  }
-
-  async function startAutoloopMode(write: boolean) {
-    autoloopBusy = true;
-    tauriError = '';
-    const startedAt = performance.now();
-    const modeLabel = write ? 'write' : 'dry-run';
-    const loopArgs = autoloopContinuous
-      ? ['autopilot', 'loop', 'workflows/shea-symphony.md', '--continuous', write ? '--write' : '--dry-run']
-      : ['autopilot', 'loop', 'workflows/shea-symphony.md', '--max-iterations', '1', write ? '--write' : '--dry-run'];
-    const logId = recordCliLog({
-      surface: 'autoloop',
-      phase: 'start',
-      status: 'running',
-      detail: `Starting ${modeLabel} ${autoloopContinuous ? 'continuous' : 'single-iteration'} autopilot loop.`,
-      args: loopArgs
-    });
-    try {
-      autoloopState = await startAutoloop({
-        workflowPath: 'workflows/shea-symphony.md',
-        maxIterations: autoloopContinuous ? undefined : 1,
-        continuous: autoloopContinuous,
-        write
-      });
-      updateCliLog(logId, {
-        surface: 'autoloop',
-        phase: 'finish',
-        status: 'ok',
-        detail: autoloopState.pid ? `Autoloop started with pid ${autoloopState.pid}.` : 'Autoloop start command returned.',
-        durationMs: Math.round(performance.now() - startedAt)
-      });
-    } catch (error) {
-      tauriError = error.message;
-      updateCliLog(logId, {
-        surface: 'autoloop',
-        phase: 'error',
-        status: 'failed',
-        detail: error.message,
-        durationMs: Math.round(performance.now() - startedAt)
-      });
-    } finally {
-      autoloopBusy = false;
-    }
-  }
-
-  async function startDryRunAutoloop() {
-    return startAutoloopMode(false);
-  }
-
-  async function startWriteAutoloop() {
-    return startAutoloopMode(true);
-  }
-
-  async function stopRunningAutoloop() {
-    autoloopBusy = true;
-    tauriError = '';
-    const startedAt = performance.now();
-    const logId = recordCliLog({
-      surface: 'autoloop',
-      phase: 'stop',
-      status: 'running',
-      detail: 'Stopping autopilot loop.'
-    });
-    try {
-      autoloopState = await stopAutoloop();
-      updateCliLog(logId, {
-        surface: 'autoloop',
-        phase: 'finish',
-        status: 'ok',
-        detail: 'Autoloop stop signal sent.',
-        durationMs: Math.round(performance.now() - startedAt)
-      });
-    } catch (error) {
-      tauriError = error.message;
-      updateCliLog(logId, {
-        surface: 'autoloop',
-        phase: 'error',
-        status: 'failed',
-        detail: error.message,
-        durationMs: Math.round(performance.now() - startedAt)
-      });
-    } finally {
-      autoloopBusy = false;
     }
   }
 
@@ -488,20 +260,10 @@
     }).then((unlisten) => {
       unlistenAutoloop = unlisten;
     });
-    const refreshRequestListener = (event) => {
-      const detail = event.detail ?? {};
-      scheduleRefresh(detail.force ?? true, true, detail.source ?? 'manual');
-    };
     const handoffTargetListener = (event) => {
       defaultHandoffTarget = event.detail?.target ?? getDefaultHandoffTarget();
     };
-    const startDryRunListener = () => {
-      if (!tauriAvailable || autoloopBusy || autoloopState.running) return;
-      startDryRunAutoloop();
-    };
-    window.addEventListener(REFRESH_REQUEST_EVENT, refreshRequestListener);
     window.addEventListener(HANDOFF_TARGET_CHANGE_EVENT, handoffTargetListener);
-    window.addEventListener(START_DRY_RUN_EVENT, startDryRunListener);
     const handoffRefresh = window.setInterval(() => {
       const nextTarget = getDefaultHandoffTarget();
       if (nextTarget !== defaultHandoffTarget) {
@@ -509,9 +271,7 @@
       }
     }, 300);
     return () => {
-      window.removeEventListener(REFRESH_REQUEST_EVENT, refreshRequestListener);
       window.removeEventListener(HANDOFF_TARGET_CHANGE_EVENT, handoffTargetListener);
-      window.removeEventListener(START_DRY_RUN_EVENT, startDryRunListener);
       autoloopControlStore.set({
         tauriAvailable: false,
         busy: false,
@@ -542,7 +302,7 @@
 {/if}
 
 <section class="operator-first-screen" aria-label="Operator first screen">
-  <section class="human-todo-overview">
+  <section class:refreshing={operatorSurfaceRefreshing} class="human-todo-overview" aria-busy={operatorSurfaceRefreshing}>
     <div class="human-todo-rail" aria-label="Human operator issue queue">
       {#if visibleHumanTodoIssues.length}
         {#each visibleHumanTodoIssues as issue}
@@ -563,10 +323,10 @@
               <small>{issue.recommended}</small>
             </div>
             <div class="handoff-actions">
-              <button class="btn btn-primary" type="button" onclick={() => openHandoff(issue)}>
+              <button class="btn btn-primary" type="button" disabled={operatorSurfaceRefreshing} onclick={() => openHandoff(issue)}>
                 Open in {handoffLabel(defaultHandoffTarget)}
               </button>
-              <button class="btn btn-ghost" type="button" onclick={() => copyHandoffPrompt(issue)}>
+              <button class="btn btn-ghost" type="button" disabled={operatorSurfaceRefreshing} onclick={() => copyHandoffPrompt(issue)}>
                 {copiedHandoffId === issue.id ? 'Copied' : 'Copy Handoff Prompt'}
               </button>
             </div>
@@ -588,7 +348,7 @@
     </div>
   </section>
 
-  <section class="lane-board-overview" aria-label="Worker pickup and queue by lane">
+  <section class:refreshing={operatorSurfaceRefreshing} class="lane-board-overview" aria-label="Worker pickup and queue by lane" aria-busy={operatorSurfaceRefreshing}>
     <div class="autoloop-control-bar" aria-label="Autoloop controls">
       <div>
         <strong>{autoloopState.running ? 'Autoloop running' : 'Autoloop idle'}</strong>
@@ -600,21 +360,6 @@
         {:else if fullLoading}
           <small>Loading CLI readback · {slowReadsRemaining} surface{slowReadsRemaining === 1 ? '' : 's'} remaining</small>
         {/if}
-      </div>
-      <div>
-        <label class="autoloop-toggle">
-          <input type="checkbox" bind:checked={autoloopContinuous} disabled={autoloopState.running || autoloopBusy} />
-          <span>Continuous</span>
-        </label>
-        <button class="btn btn-write" type="button" disabled={!tauriAvailable || autoloopBusy || autoloopState.running} onclick={startWriteAutoloop}>
-          Start write
-        </button>
-        <button class="btn btn-ghost" type="button" onclick={() => (autoloopLogsOpen = true)}>
-          Logs
-        </button>
-        <button class="btn btn-ghost" type="button" disabled={!tauriAvailable || autoloopBusy || !autoloopState.running} onclick={stopRunningAutoloop}>
-          Stop
-        </button>
       </div>
     </div>
     <div class="lane-board-grid">
@@ -646,35 +391,3 @@
     </div>
   </section>
 </section>
-
-{#if autoloopLogsOpen}
-  <div class="modal-backdrop">
-    <button class="modal-scrim" type="button" aria-label="Close autoloop CLI log" onclick={() => (autoloopLogsOpen = false)}></button>
-    <div class="cli-log-modal autoloop-log-modal" role="dialog" aria-modal="true" aria-labelledby="autoloop-log-title">
-      <header>
-        <div>
-          <p class="eyebrow">Autoloop</p>
-          <h2 id="autoloop-log-title">CLI Log</h2>
-          <span>{autoloopState.mode} · {autoloopState.workflowPath}</span>
-        </div>
-        <button class="btn btn-ghost" type="button" onclick={() => (autoloopLogsOpen = false)}>Close</button>
-      </header>
-
-      {#if autoloopStdoutLines.length}
-        <div class="autoloop-stdout-list" aria-label="Autoloop stdout">
-          {#each autoloopStdoutLines as entry}
-            <div class="autoloop-stdout-line">
-              <time>{formatAutoloopTime(entry.atMs)}</time>
-              <code>{prettifyAutoloopLine(entry)}</code>
-            </div>
-          {/each}
-        </div>
-      {:else}
-        <div class="cli-log-empty">
-          <strong>No autoloop CLI output yet</strong>
-          <p>Start dry-run or write mode to stream stdout here.</p>
-        </div>
-      {/if}
-    </div>
-  </div>
-{/if}

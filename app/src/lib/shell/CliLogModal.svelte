@@ -6,6 +6,16 @@
   function formatLogTime(value: string) {
     return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
+
+  function humanDetail(entry) {
+    const detail = String(entry.detail || entry.status || '');
+    const trimmed = detail.trim();
+    if (!trimmed) return `${entry.surface} ${entry.phase}.`;
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+      return `${entry.surface} returned structured output.`;
+    }
+    return trimmed.length > 220 ? `${trimmed.slice(0, 220)}...` : trimmed;
+  }
 </script>
 
 <div class="modal-backdrop">
@@ -14,7 +24,7 @@
     <header>
       <div>
         <p class="eyebrow">Runtime</p>
-        <h2 id="cli-log-title">CLI Command Log</h2>
+        <h2 id="cli-log-title">Progress Log</h2>
       </div>
       <button class="btn btn-ghost" type="button" onclick={onClose}>Close</button>
     </header>
@@ -28,14 +38,14 @@
               <strong>{entry.surface}</strong>
               <em>{entry.phase}</em>
             </div>
-            <p>{entry.detail || entry.status}</p>
+            <p>{humanDetail(entry)}</p>
             <footer>
               <span>{entry.status}</span>
               {#if entry.durationMs != null}
                 <span>{Math.round(entry.durationMs)}ms</span>
               {/if}
               {#if entry.args?.length}
-                <code>{entry.args.join(' ')}</code>
+                <span>{entry.args[0]} {entry.args[1] ?? ''}</span>
               {/if}
             </footer>
           </article>

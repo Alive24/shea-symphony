@@ -273,7 +273,13 @@ pub(crate) fn merge_once_tick(
             output
         };
         let workpad = merge_lane_workpad(&issue, &decision, Some(&output));
-        record_done_merge_lane_completion(&config, adapter.as_ref(), &issue, &workpad)?;
+        record_done_merge_lane_completion(
+            &config,
+            adapter.as_ref(),
+            &issue,
+            &merge_claim,
+            &workpad,
+        )?;
         println!(
             "merge_once_action=merged issue={} target_state=done",
             issue.identifier

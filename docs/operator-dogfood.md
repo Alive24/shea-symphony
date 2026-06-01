@@ -688,9 +688,12 @@ worker=<worker> source=<loop|manual|goal> issue=#N run=<id>
 state=<active|done|stale|failed|superseded> thread=<codex-link|unknown>
 registry=run/<id>`. Keep full paths and terminal logs in the session registry
 or workpad, and update terminal completed work to `state=done` instead of
-clearing useful claim evidence by default. Display labels with spaces are stored
-with reversible quoting, for example `worker="Codex Manual Main"`; raw Project
-field edits are a break-glass repair path, not normal claim ownership.
+clearing useful claim evidence by default. Terminal handoffs also append a
+compact `result=...` token so operators can distinguish `agent_review_handoff`,
+Review `passed` or `rejected`, and Merge `merged` audit pointers from live
+ownership. Display labels with spaces are stored with reversible quoting, for
+example `worker="Codex Manual Main"`; raw Project field edits are a break-glass
+repair path, not normal claim ownership.
 If GitHub returns a transient transport, rate-limit, or HTTP 5xx error after a
 claim, workpad, timeline comment, Project status, merge, or issue-close write,
 the CLI performs read-after-write reconciliation instead of blindly retrying the

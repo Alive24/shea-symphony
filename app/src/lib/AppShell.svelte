@@ -62,8 +62,8 @@
   let refreshInterval: RefreshInterval = 'manual';
   let refreshTimer: number | undefined;
   let logsOpen = false;
-  let jsonLogsOpen = false;
-  let expandedJsonLogRows = new Set<string>();
+  let runLogsOpen = false;
+  let expandedRunLogRows = new Set<string>();
   let autoloopBusy = false;
   let tauriAvailable = false;
   let tauriError = '';
@@ -226,20 +226,14 @@
     return new Date(time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
-  function formatDuration(value: number | null | undefined) {
-    if (value == null || !Number.isFinite(value)) return null;
-    const duration = Math.max(0, Math.round(value));
-    return duration >= 1000 ? `${(duration / 1000).toFixed(duration >= 10_000 ? 0 : 1)}s` : `${duration}ms`;
-  }
-
-  function toggleJsonLogRow(id: string) {
-    const nextRows = new Set(expandedJsonLogRows);
+  function toggleRunLogRow(id: string) {
+    const nextRows = new Set(expandedRunLogRows);
     if (nextRows.has(id)) {
       nextRows.delete(id);
     } else {
       nextRows.add(id);
     }
-    expandedJsonLogRows = nextRows;
+    expandedRunLogRows = nextRows;
   }
 
   async function refreshAutoloopState() {
@@ -417,7 +411,7 @@
     };
     const startWriteListener = () => startAutoloopMode(true);
     const stopAutoloopListener = () => stopRunningAutoloop();
-    const openAutoloopLogsListener = () => (logsOpen = true);
+    const openAutoloopLogsListener = () => (runLogsOpen = true);
     window.addEventListener(START_DRY_RUN_EVENT, startDryRunListener);
     window.addEventListener(START_WRITE_EVENT, startWriteListener);
     window.addEventListener(STOP_AUTOLOOP_EVENT, stopAutoloopListener);
@@ -541,7 +535,8 @@
         onHide={() => setDeveloperToolsCollapsed(true)}
         onToggleDataMode={toggleDataMode}
         onResetFixture={resetFixture}
-        onOpenLogs={() => (jsonLogsOpen = true)}
+        onOpenLogs={() => (logsOpen = true)}
+        onOpenRunLogs={() => (runLogsOpen = true)}
         onStartDryRun={startDryRunFromTools}
         onStartDryRunWithMaxIterations={startDryRunWithMaxIterations}
         onStartDryRunForLane={startDryRunForLane}
@@ -585,51 +580,21 @@
   <CliLogModal onClose={() => (logsOpen = false)} />
 {/if}
 
-{#if jsonLogsOpen}
+{#if runLogsOpen}
   <div class="modal-backdrop">
-    <button class="modal-scrim" type="button" aria-label="Close CLI JSON log" onclick={() => (jsonLogsOpen = false)}></button>
+    <button class="modal-scrim" type="button" aria-label="Close run log" onclick={() => (runLogsOpen = false)}></button>
     <div class="cli-log-modal autoloop-log-modal" role="dialog" aria-modal="true" aria-labelledby="autoloop-log-title">
       <header>
         <div>
           <p class="eyebrow">Developer Tools</p>
-          <h2 id="autoloop-log-title">CLI JSON Log</h2>
+          <h2 id="autoloop-log-title">Run Logs</h2>
           <span>{autoloopState.mode} · {autoloopState.workflowPath}</span>
         </div>
-        <button class="btn btn-ghost" type="button" onclick={() => (jsonLogsOpen = false)}>Close</button>
+        <button class="btn btn-ghost" type="button" onclick={() => (runLogsOpen = false)}>Close</button>
       </header>
 
       {#if autoloopStdoutLines.length}
-        <div class="autoloop-stdout-list" aria-label="CLI structured logs">
-          {#each $cliLogStore as entry}
-            <div class="autoloop-stdout-line cli-json-log-row">
-              <time>{formatAutoloopTime(Date.parse(entry.at))}</time>
-              <div>
-                <button
-                  class="cli-json-log-meta"
-                  type="button"
-                  aria-expanded={expandedJsonLogRows.has(`log-${entry.id}`)}
-                  onclick={() => toggleJsonLogRow(`log-${entry.id}`)}
-                >
-                  <span class="json-tree-arrow" aria-hidden="true">›</span>
-                  <strong>{entry.surface}</strong>
-                  <span>{entry.phase}</span>
-                  <span>{entry.status}</span>
-                  {#if formatDuration(entry.durationMs)}
-                    <span>{formatDuration(entry.durationMs)}</span>
-                  {/if}
-                </button>
-                {#if expandedJsonLogRows.has(`log-${entry.id}`)}
-                  <JsonLogView
-                    value={entry.raw ?? { detail: entry.detail, args: entry.args, status: entry.status }}
-                    fallbackLabel="CLI structured log"
-                  />
-                {/if}
-                {#if entry.args?.length}
-                  <code class="cli-json-command">{entry.args.join(' ')}</code>
-                {/if}
-              </div>
-            </div>
-          {/each}
+        <div class="autoloop-stdout-list" aria-label="Run logs">
           {#each autoloopStdoutLines as entry, index}
             <div class="autoloop-stdout-line">
               <time>{formatAutoloopTime(entry.atMs)}</time>
@@ -637,48 +602,15 @@
                 <button
                   class="cli-json-log-meta"
                   type="button"
-                  aria-expanded={expandedJsonLogRows.has(`stdout-${entry.atMs}-${index}`)}
-                  onclick={() => toggleJsonLogRow(`stdout-${entry.atMs}-${index}`)}
+                  aria-expanded={expandedRunLogRows.has(`stdout-${entry.atMs}-${index}`)}
+                  onclick={() => toggleRunLogRow(`stdout-${entry.atMs}-${index}`)}
                 >
                   <span class="json-tree-arrow" aria-hidden="true">›</span>
                   <strong>{entry.stream}</strong>
                   <span>{entry.event ? 'json' : 'text'}</span>
                 </button>
-                {#if expandedJsonLogRows.has(`stdout-${entry.atMs}-${index}`)}
+                {#if expandedRunLogRows.has(`stdout-${entry.atMs}-${index}`)}
                   <JsonLogView value={entry.event ?? entry.line} fallbackLabel="Autoloop stdout text" />
-                {/if}
-              </div>
-            </div>
-          {/each}
-        </div>
-      {:else if $cliLogStore.length}
-        <div class="autoloop-stdout-list" aria-label="CLI structured logs">
-          {#each $cliLogStore as entry}
-            <div class="autoloop-stdout-line cli-json-log-row">
-              <time>{formatAutoloopTime(Date.parse(entry.at))}</time>
-              <div>
-                <button
-                  class="cli-json-log-meta"
-                  type="button"
-                  aria-expanded={expandedJsonLogRows.has(`log-${entry.id}`)}
-                  onclick={() => toggleJsonLogRow(`log-${entry.id}`)}
-                >
-                  <span class="json-tree-arrow" aria-hidden="true">›</span>
-                  <strong>{entry.surface}</strong>
-                  <span>{entry.phase}</span>
-                  <span>{entry.status}</span>
-                  {#if formatDuration(entry.durationMs)}
-                    <span>{formatDuration(entry.durationMs)}</span>
-                  {/if}
-                </button>
-                {#if expandedJsonLogRows.has(`log-${entry.id}`)}
-                  <JsonLogView
-                    value={entry.raw ?? { detail: entry.detail, args: entry.args, status: entry.status }}
-                    fallbackLabel="CLI structured log"
-                  />
-                {/if}
-                {#if entry.args?.length}
-                  <code class="cli-json-command">{entry.args.join(' ')}</code>
                 {/if}
               </div>
             </div>
@@ -686,8 +618,8 @@
         </div>
       {:else}
         <div class="cli-log-empty">
-          <strong>No structured CLI output yet</strong>
-          <p>{tauriError || 'Refresh or start a run to capture JSON payloads here.'}</p>
+          <strong>No run output yet</strong>
+          <p>{tauriError || 'Start a dry run or write run to capture autoloop output here.'}</p>
         </div>
       {/if}
     </div>

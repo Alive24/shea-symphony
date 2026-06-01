@@ -967,6 +967,11 @@ a {
   gap: var(--space-2);
 }
 
+.developer-log-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .dev-run-list {
   display: grid;
   gap: var(--space-2);
@@ -1083,6 +1088,7 @@ a {
 .developer-tools-panel .cli-log-toggle {
   justify-content: space-between;
   width: 100%;
+  min-width: 0;
 }
 
 .developer-tools-panel .cli-log-toggle small {

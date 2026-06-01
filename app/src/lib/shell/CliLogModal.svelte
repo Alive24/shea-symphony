@@ -23,8 +23,8 @@
   <div class="cli-log-modal" role="dialog" aria-modal="true" aria-labelledby="cli-log-title">
     <header>
       <div>
-        <p class="eyebrow">Runtime</p>
-        <h2 id="cli-log-title">Progress Log</h2>
+        <p class="eyebrow">Developer Tools</p>
+        <h2 id="cli-log-title">CLI Logs</h2>
       </div>
       <button class="btn btn-ghost" type="button" onclick={onClose}>Close</button>
     </header>
@@ -54,7 +54,7 @@
     {:else}
       <div class="cli-log-empty">
         <strong>No CLI command activity yet</strong>
-        <p>Read surfaces and autoloop controls will appear here when they start.</p>
+        <p>Read surfaces will appear here when they start.</p>
       </div>
     {/if}
   </div>

@@ -36,6 +36,7 @@
   export let onToggleDataMode: () => void = () => {};
   export let onResetFixture: () => void = () => {};
   export let onOpenLogs: () => void = () => {};
+  export let onOpenRunLogs: () => void = () => {};
   export let onStartDryRun: () => void = () => {};
   export let onStartDryRunWithMaxIterations: (maxIterations: number, lane: AutoloopLaneTarget) => void = () => {};
   export let onStartDryRunForLane: (lane: AutoloopLaneTarget) => void = () => {};
@@ -89,20 +90,32 @@
 
   <div class="developer-tool-group">
     <span class="developer-tool-label">CLI</span>
-    <button
-      class="cli-log-toggle"
-      type="button"
-      aria-label="Open CLI command log"
-      aria-pressed="false"
-      onclick={onOpenLogs}
-    >
-      <span>CLI Logs</span>
-      {#if refreshRunning}
-        <small>...</small>
-      {:else if latestLog}
-        <small>{latestLog.status}</small>
-      {/if}
-    </button>
+    <div class="developer-tool-row developer-log-actions">
+      <button
+        class="cli-log-toggle"
+        type="button"
+        aria-label="Open CLI command log"
+        aria-pressed="false"
+        onclick={onOpenLogs}
+      >
+        <span>CLI Logs</span>
+        {#if refreshRunning}
+          <small>...</small>
+        {:else if latestLog}
+          <small>{latestLog.status}</small>
+        {/if}
+      </button>
+      <button
+        class="cli-log-toggle"
+        type="button"
+        aria-label="Open run log"
+        aria-pressed="false"
+        onclick={onOpenRunLogs}
+      >
+        <span>Run Logs</span>
+        <small>{autoloopControl.running ? 'running' : autoloopControl.mode}</small>
+      </button>
+    </div>
   </div>
 
   <div class="developer-tool-group">

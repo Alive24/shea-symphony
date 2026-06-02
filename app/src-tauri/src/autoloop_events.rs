@@ -68,6 +68,11 @@ pub fn parse_autoloop_lane_event(event: Option<&Value>, at_ms: u128) -> Option<L
             .or_else(|| payload.get("maxConcurrent"))
             .and_then(Value::as_u64)
             .map(|value| value as usize),
+        running_count: count_json_field(payload, "running_count"),
+        queued_count: count_json_field(payload, "queued_count"),
+        blocked_count: count_json_field(payload, "blocked_count"),
+        idle_count: count_json_field(payload, "idle_count"),
+        completed_count: count_json_field(payload, "completed_count"),
         recover: payload.get("recover").and_then(Value::as_bool),
         updated_at_ms: Some(at_ms),
         latest_line: Some(event.to_string()),
@@ -100,6 +105,11 @@ pub fn parse_autoloop_lane(line: &str, at_ms: u128) -> Option<LaneSnapshot> {
         max_concurrent: fields
             .get("max_concurrent")
             .and_then(|value| value.parse::<usize>().ok()),
+        running_count: count_field(&fields, "running_count"),
+        queued_count: count_field(&fields, "queued_count"),
+        blocked_count: count_field(&fields, "blocked_count"),
+        idle_count: count_field(&fields, "idle_count"),
+        completed_count: count_field(&fields, "completed_count"),
         recover: fields
             .get("recover")
             .and_then(|value| value.parse::<bool>().ok()),
@@ -322,6 +332,11 @@ fn parse_status_lane_activity(payload: &Value, at_ms: u128) -> Option<LaneSnapsh
             .join(":"),
         ),
         max_concurrent: None,
+        running_count: count_json_field(payload, "running_count"),
+        queued_count: count_json_field(payload, "queued_count"),
+        blocked_count: count_json_field(payload, "blocked_count"),
+        idle_count: count_json_field(payload, "idle_count"),
+        completed_count: count_json_field(payload, "completed_count"),
         recover: None,
         updated_at_ms: Some(at_ms),
         latest_line: Some(payload.to_string()),
@@ -374,6 +389,10 @@ fn optional_field(fields: &BTreeMap<String, String>, key: &str) -> Option<String
         .cloned()
 }
 
+fn count_field(fields: &BTreeMap<String, String>, key: &str) -> Option<usize> {
+    fields.get(key).and_then(|value| value.parse::<usize>().ok())
+}
+
 fn string_json_field(payload: &Value, key: &str) -> Option<String> {
     payload
         .get(key)
@@ -385,6 +404,14 @@ fn string_json_field(payload: &Value, key: &str) -> Option<String> {
                 .and_then(Value::as_str)
                 .map(str::to_string)
         })
+}
+
+fn count_json_field(payload: &Value, key: &str) -> Option<usize> {
+    payload
+        .get(key)
+        .or_else(|| payload.get(&snake_to_camel(key)))
+        .and_then(Value::as_u64)
+        .map(|value| value as usize)
 }
 
 fn optional_json_field(payload: &Value, key: &str) -> Option<String> {
@@ -515,7 +542,7 @@ mod tests {
     #[test]
     fn parses_autopilot_json_lane_event() {
         let event = parse_autoloop_event(
-            r##"{"schema_version":1,"source":"shea-symphony","event":"autopilot_loop_lane","payload":{"lane":"review","status":"completed","action":"lane_tick_completed","work_unit_completed":true,"completed_work_units":3,"issue_ref":"#364","latest_result":{"status":"completed","action":"lane_tick_completed","issue_ref":"#364"},"selected_issue":{"identifier":"#364","title":"Issue title","state":"Agent Review","url":null,"priority":null,"pull_request":null},"target_state":"Human Review | Rework","max_concurrent":2,"recover":false}}"##,
+            r##"{"schema_version":1,"source":"shea-symphony","event":"autopilot_loop_lane","payload":{"lane":"review","status":"completed","action":"lane_tick_completed","work_unit_completed":true,"completed_work_units":3,"issue_ref":"#364","latest_result":{"status":"completed","action":"lane_tick_completed","issue_ref":"#364"},"selected_issue":{"identifier":"#364","title":"Issue title","state":"Agent Review","url":null,"priority":null,"pull_request":null},"target_state":"Human Review | Rework","max_concurrent":2,"running_count":1,"queued_count":3,"blocked_count":0,"idle_count":0,"completed_count":2,"recover":false}}"##,
         )
         .unwrap();
         let lane = parse_autoloop_lane_event(Some(&event), 84).unwrap();
@@ -533,6 +560,11 @@ mod tests {
         );
         assert_eq!(lane.target.as_deref(), Some("Human Review | Rework"));
         assert_eq!(lane.max_concurrent, Some(2));
+        assert_eq!(lane.running_count, Some(1));
+        assert_eq!(lane.queued_count, Some(3));
+        assert_eq!(lane.blocked_count, Some(0));
+        assert_eq!(lane.idle_count, Some(0));
+        assert_eq!(lane.completed_count, Some(2));
     }
 
     #[test]

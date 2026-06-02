@@ -9,6 +9,11 @@ export type LaneSnapshot = {
   issueRef?: string | null;
   latestResult?: string | null;
   maxConcurrent?: number | null;
+  runningCount?: number | null;
+  queuedCount?: number | null;
+  blockedCount?: number | null;
+  idleCount?: number | null;
+  completedCount?: number | null;
   recover?: boolean | null;
   updatedAtMs?: number | null;
   latestLine?: string | null;

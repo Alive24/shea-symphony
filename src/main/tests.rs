@@ -29,8 +29,8 @@ use super::commands::forge::{
 };
 use super::commands::gate::live_missing_assignee_gate_blocker;
 use super::commands::project::{
-    filter_issues_by_state, link_pr_with_adapter, render_project_state_json, render_state_summary,
-    ProjectStateOptions,
+    filter_issues_by_state, link_pr_with_adapter, project_state_issues_for_scope,
+    render_project_state_json, render_state_summary, ProjectStateOptions,
 };
 use super::commands::session::{
     agent_session_backend_spec, lane_claim_for_manual_worker, matching_lane_claim_for_session,
@@ -695,15 +695,44 @@ fn renders_project_state_json_queue_projection() {
         tracker_issue_with_ref("#3", "Approval", "Human Review"),
     ];
 
-    let rendered = render_project_state_json(&issues, &["gap".into()]).unwrap();
+    let rendered = render_project_state_json(&issues, &["gap".into()], "queue").unwrap();
     let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
 
     assert_eq!(value["trusted"], true);
+    assert_eq!(value["scope"], "queue");
     assert_eq!(value["totalOpen"], 3);
     assert_eq!(value["laneCounts"]["main"], 1);
     assert_eq!(value["laneCounts"]["review"], 1);
     assert_eq!(value["operatorIssues"][0]["identifier"], "#3");
     assert_eq!(value["integrationGaps"][0], "gap");
+}
+
+#[test]
+fn project_state_queue_scope_excludes_terminal_issues_by_default() {
+    let workflow = WorkflowDefinition::parse(
+        "/tmp/WORKFLOW.md",
+        "---\ntracker:\n  kind: memory\n  terminal_states:\n    - Done\n    - Closed\n---\nPrompt",
+    )
+    .unwrap();
+    let config =
+        RuntimeConfig::from_workflow(&workflow, std::path::Path::new("/tmp/WORKFLOW.md")).unwrap();
+    let issues = vec![
+        tracker_issue_with_ref("#1", "Ready", "Todo"),
+        tracker_issue_with_ref("#2", "Review", "Agent Review"),
+        tracker_issue_with_ref("#3", "Done", "Done"),
+    ];
+
+    let queue = project_state_issues_for_scope(issues.clone(), &config, false);
+    assert_eq!(
+        queue
+            .iter()
+            .map(|issue| issue.identifier.as_str())
+            .collect::<Vec<_>>(),
+        vec!["#1", "#2"]
+    );
+
+    let all = project_state_issues_for_scope(issues, &config, true);
+    assert_eq!(all.len(), 3);
 }
 
 #[test]

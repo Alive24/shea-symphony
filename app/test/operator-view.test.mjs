@@ -512,6 +512,11 @@ test('lane board queue excludes backlog project items', () => {
           state: 'Backlog'
         },
         {
+          identifier: '#332',
+          title: 'Already completed issue',
+          state: 'Done'
+        },
+        {
           identifier: '#331',
           title: 'Executable main issue',
           state: 'Todo'

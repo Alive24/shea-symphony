@@ -528,6 +528,12 @@ struct ProjectStateArgs {
     display: CliDisplayMode,
     #[arg(long)]
     json: bool,
+    #[arg(
+        long = "all",
+        alias = "include-terminal",
+        help = "Include terminal Project states such as Done in the project state summary"
+    )]
+    include_terminal: bool,
     #[arg(long = "dry-run")]
     _dry_run: bool,
     #[arg(long = "write")]
@@ -1654,6 +1660,7 @@ fn command_from_project_args(command: ProjectCommandArgs) -> Result<Command, Str
                 workflow_path: args.workflow_path,
                 display: args.display.into(),
                 json: args.json,
+                include_terminal: args.include_terminal,
             },
         }),
         ProjectCommandArgs::Issue(args) => Ok(Command::ProjectIssue {

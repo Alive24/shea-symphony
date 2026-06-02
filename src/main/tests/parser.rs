@@ -227,6 +227,7 @@ fn parses_project_state_read_surface() {
                 workflow_path: PathBuf::from("examples/github-project-workflow.md"),
                 display: DisplayMode::Plain,
                 json: false,
+                include_terminal: false,
             }
         }
     );
@@ -247,6 +248,7 @@ fn parses_project_state_tui_display() {
                 workflow_path: PathBuf::from("examples/github-project-workflow.md"),
                 display: DisplayMode::Tui,
                 json: false,
+                include_terminal: false,
             }
         }
     );
@@ -266,6 +268,28 @@ fn parses_project_state_json() {
                 workflow_path: PathBuf::from("examples/github-project-workflow.md"),
                 display: DisplayMode::Plain,
                 json: true,
+                include_terminal: false,
+            }
+        }
+    );
+}
+
+#[test]
+fn parses_project_state_all_scope() {
+    assert_eq!(
+        parse(&[
+            "project",
+            "state",
+            "examples/github-project-workflow.md",
+            "--json",
+            "--all"
+        ]),
+        Command::ProjectState {
+            options: ProjectStateOptions {
+                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                display: DisplayMode::Plain,
+                json: true,
+                include_terminal: true,
             }
         }
     );

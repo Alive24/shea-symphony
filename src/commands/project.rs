@@ -37,6 +37,7 @@ pub(crate) struct ProjectStateOptions {
     pub(crate) workflow_path: PathBuf,
     pub(crate) display: DisplayMode,
     pub(crate) json: bool,
+    pub(crate) include_terminal: bool,
 }
 
 pub(crate) fn project_state(
@@ -57,10 +58,18 @@ pub(crate) fn project_state(
     );
     match read_result {
         Ok(issues) => {
+            let issues = project_state_issues_for_scope(issues, &config, options.include_terminal);
             let mut integration_gaps = adapter.integration_gaps();
             append_canonical_checkout_gap(&config, &mut integration_gaps);
             if options.json {
-                println!("{}", render_project_state_json(&issues, &integration_gaps)?);
+                println!(
+                    "{}",
+                    render_project_state_json(
+                        &issues,
+                        &integration_gaps,
+                        project_state_scope(options.include_terminal)
+                    )?
+                );
                 return Ok(());
             }
             if options.display == DisplayMode::Tui {
@@ -69,6 +78,7 @@ pub(crate) fn project_state(
             }
             println!("project_state_access=ok");
             println!("trusted=true");
+            println!("scope={}", project_state_scope(options.include_terminal));
             println!("issues={}", issues.len());
             println!("empty_queue={}", issues.is_empty());
             println!("{}", render_state_summary(&issues));
@@ -92,6 +102,29 @@ pub(crate) fn project_state(
             )
             .into())
         }
+    }
+}
+
+pub(crate) fn project_state_issues_for_scope(
+    issues: Vec<TrackerIssue>,
+    config: &RuntimeConfig,
+    include_terminal: bool,
+) -> Vec<TrackerIssue> {
+    if include_terminal {
+        return issues;
+    }
+    let terminal_states = config.terminal_state_set();
+    issues
+        .into_iter()
+        .filter(|issue| !terminal_states.contains(&issue.normalized_state()))
+        .collect()
+}
+
+fn project_state_scope(include_terminal: bool) -> &'static str {
+    if include_terminal {
+        "all"
+    } else {
+        "queue"
     }
 }
 
@@ -535,6 +568,7 @@ pub(crate) fn render_state_summary(issues: &[TrackerIssue]) -> String {
 pub(crate) fn render_project_state_json(
     issues: &[TrackerIssue],
     integration_gaps: &[String],
+    scope: &str,
 ) -> Result<String, serde_json::Error> {
     let mut state_counts = BTreeMap::new();
     let mut lane_counts = BTreeMap::from([
@@ -571,6 +605,7 @@ pub(crate) fn render_project_state_json(
         "issues": rendered_issues,
         "integrationGaps": integration_gaps,
         "source": "project state",
+        "scope": scope,
     }))
 }
 

@@ -52,6 +52,17 @@ pub fn parse_autoloop_lane_event(event: Option<&Value>, at_ms: u128) -> Option<L
         selected: selected_issue_field(payload),
         target: optional_json_field(payload, "target_state")
             .or_else(|| optional_json_field(payload, "target")),
+        work_unit_completed: payload
+            .get("work_unit_completed")
+            .or_else(|| payload.get("workUnitCompleted"))
+            .and_then(Value::as_bool),
+        completed_work_units: payload
+            .get("completed_work_units")
+            .or_else(|| payload.get("completedWorkUnits"))
+            .and_then(Value::as_u64)
+            .map(|value| value as usize),
+        issue_ref: optional_json_field(payload, "issue_ref"),
+        latest_result: latest_result_field(payload),
         max_concurrent: payload
             .get("max_concurrent")
             .or_else(|| payload.get("maxConcurrent"))
@@ -83,6 +94,14 @@ pub fn parse_autoloop_lane(line: &str, at_ms: u128) -> Option<LaneSnapshot> {
         action: optional_field(&fields, "action"),
         selected: optional_field(&fields, "selected"),
         target: optional_field(&fields, "target"),
+        work_unit_completed: fields
+            .get("work_unit_completed")
+            .and_then(|value| value.parse::<bool>().ok()),
+        completed_work_units: fields
+            .get("completed_work_units")
+            .and_then(|value| value.parse::<usize>().ok()),
+        issue_ref: optional_field(&fields, "issue_ref"),
+        latest_result: optional_field(&fields, "latest_result"),
         max_concurrent: fields
             .get("max_concurrent")
             .and_then(|value| value.parse::<usize>().ok()),
@@ -145,6 +164,7 @@ pub fn apply_autoloop_event(
                 state.mode = mode;
             }
             apply_json_settings(state, payload.get("settings"));
+            apply_json_lane_work_units(state, payload.get("lane_work_units"));
             if let Some(lanes) = payload.get("lane_activity").and_then(Value::as_array) {
                 for lane_payload in lanes {
                     if let Some(lane) = parse_status_lane_activity(lane_payload, at_ms) {
@@ -159,6 +179,7 @@ pub fn apply_autoloop_event(
                 state.mode = mode;
             }
             apply_json_settings(state, payload.get("settings"));
+            apply_json_lane_work_units(state, payload.get("lane_work_units"));
             true
         }
         "autopilot_loop_result" => {
@@ -166,6 +187,21 @@ pub fn apply_autoloop_event(
                 state.mode = mode;
             }
             apply_json_settings(state, payload.get("settings"));
+            apply_json_lane_work_units(state, payload.get("lane_work_units"));
+            if let Some(lanes) = payload.get("lanes").and_then(Value::as_array) {
+                for lane_payload in lanes {
+                    if let Some(lane) = parse_autoloop_lane_event(
+                        Some(&json!({
+                            "source": "shea-symphony",
+                            "event": "autopilot_loop_lane",
+                            "payload": lane_payload,
+                        })),
+                        at_ms,
+                    ) {
+                        state.lanes.insert(lane.lane.clone(), lane);
+                    }
+                }
+            }
             true
         }
         "autopilot_loop_stopped" => {
@@ -285,6 +321,16 @@ fn parse_status_lane_activity(payload: &Value, at_ms: u128) -> Option<LaneSnapsh
         selected: selected_issue_field(payload),
         target: optional_json_field(payload, "target_state")
             .or_else(|| optional_json_field(payload, "target")),
+        work_unit_completed: None,
+        completed_work_units: None,
+        issue_ref: selected_issue_field(payload),
+        latest_result: Some(
+            [
+                string_json_field(payload, "status").unwrap_or_else(|| "unknown".into()),
+                optional_json_field(payload, "action").unwrap_or_else(|| "event".into()),
+            ]
+            .join(":"),
+        ),
         max_concurrent: None,
         running_count: count_json_field(payload, "running_count"),
         queued_count: count_json_field(payload, "queued_count"),
@@ -317,6 +363,21 @@ fn apply_json_settings(state: &mut LoopStateSnapshot, settings: Option<&Value>) 
                 .entry(lane.into())
                 .or_insert_with(|| default_lane(lane))
                 .max_concurrent = Some(value as usize);
+        }
+    }
+}
+
+fn apply_json_lane_work_units(state: &mut LoopStateSnapshot, lane_work_units: Option<&Value>) {
+    let Some(lane_work_units) = lane_work_units.and_then(Value::as_object) else {
+        return;
+    };
+    for (lane, value) in lane_work_units {
+        if let Some(count) = value.as_u64() {
+            state
+                .lanes
+                .entry(lane.clone())
+                .or_insert_with(|| default_lane(lane))
+                .completed_work_units = Some(count as usize);
         }
     }
 }
@@ -373,6 +434,24 @@ fn selected_issue_field(payload: &Value) -> Option<String> {
     })
 }
 
+fn latest_result_field(payload: &Value) -> Option<String> {
+    if let Some(value) = optional_json_field(payload, "latest_result") {
+        return Some(value);
+    }
+    let latest = payload
+        .get("latest_result")
+        .or_else(|| payload.get("latestResult"))?;
+    if latest.is_object() {
+        let status = string_json_field(latest, "status").unwrap_or_else(|| "unknown".into());
+        let action = optional_json_field(latest, "action").unwrap_or_else(|| "event".into());
+        let issue = optional_json_field(latest, "issue_ref")
+            .map(|value| format!(":{value}"))
+            .unwrap_or_default();
+        return Some(format!("{status}:{action}{issue}"));
+    }
+    latest.as_str().map(str::to_string)
+}
+
 fn snake_to_camel(value: &str) -> String {
     let mut output = String::with_capacity(value.len());
     let mut uppercase_next = false;
@@ -423,9 +502,26 @@ mod tests {
         assert_eq!(lane.status, "completed");
         assert_eq!(lane.action.as_deref(), Some("lane_tick_completed"));
         assert_eq!(lane.selected.as_deref(), Some("#421"));
+        assert_eq!(lane.work_unit_completed, None);
+        assert_eq!(lane.completed_work_units, None);
         assert_eq!(lane.max_concurrent, Some(2));
         assert_eq!(lane.recover, Some(false));
         assert_eq!(lane.updated_at_ms, Some(42));
+    }
+
+    #[test]
+    fn parses_autopilot_lane_work_unit_line() {
+        let lane = parse_autoloop_lane(
+            "autopilot_loop_lane lane=merge status=completed action=lane_tick_completed selected=#412 target=Done work_unit_completed=true completed_work_units=2 issue_ref=#412 max_concurrent=1 recover=true",
+            45,
+        )
+        .unwrap();
+
+        assert_eq!(lane.lane, "merge");
+        assert_eq!(lane.status, "completed");
+        assert_eq!(lane.issue_ref.as_deref(), Some("#412"));
+        assert_eq!(lane.work_unit_completed, Some(true));
+        assert_eq!(lane.completed_work_units, Some(2));
     }
 
     #[test]
@@ -446,15 +542,22 @@ mod tests {
     #[test]
     fn parses_autopilot_json_lane_event() {
         let event = parse_autoloop_event(
-            r##"{"schema_version":1,"source":"shea-symphony","event":"autopilot_loop_lane","payload":{"lane":"review","status":"running","action":"tick_started","selected_issue":{"identifier":"#364","title":"Issue title","state":"Agent Review","url":null,"priority":null,"pull_request":null},"target_state":"Human Review | Rework","max_concurrent":2,"running_count":1,"queued_count":3,"blocked_count":0,"idle_count":0,"completed_count":2,"recover":false}}"##,
+            r##"{"schema_version":1,"source":"shea-symphony","event":"autopilot_loop_lane","payload":{"lane":"review","status":"completed","action":"lane_tick_completed","work_unit_completed":true,"completed_work_units":3,"issue_ref":"#364","latest_result":{"status":"completed","action":"lane_tick_completed","issue_ref":"#364"},"selected_issue":{"identifier":"#364","title":"Issue title","state":"Agent Review","url":null,"priority":null,"pull_request":null},"target_state":"Human Review | Rework","max_concurrent":2,"running_count":1,"queued_count":3,"blocked_count":0,"idle_count":0,"completed_count":2,"recover":false}}"##,
         )
         .unwrap();
         let lane = parse_autoloop_lane_event(Some(&event), 84).unwrap();
 
         assert_eq!(lane.lane, "review");
-        assert_eq!(lane.status, "running");
-        assert_eq!(lane.action.as_deref(), Some("tick_started"));
+        assert_eq!(lane.status, "completed");
+        assert_eq!(lane.action.as_deref(), Some("lane_tick_completed"));
         assert_eq!(lane.selected.as_deref(), Some("#364"));
+        assert_eq!(lane.issue_ref.as_deref(), Some("#364"));
+        assert_eq!(lane.work_unit_completed, Some(true));
+        assert_eq!(lane.completed_work_units, Some(3));
+        assert_eq!(
+            lane.latest_result.as_deref(),
+            Some("completed:lane_tick_completed:#364")
+        );
         assert_eq!(lane.target.as_deref(), Some("Human Review | Rework"));
         assert_eq!(lane.max_concurrent, Some(2));
         assert_eq!(lane.running_count, Some(1));
@@ -530,7 +633,7 @@ mod tests {
     fn applies_autopilot_json_result_to_snapshot() {
         let mut state = LoopStateSnapshot::default();
         let event = parse_autoloop_event(
-            r#"{"schema_version":1,"source":"shea-symphony","event":"autopilot_loop_result","payload":{"mode":"write","settings":{"main_max_concurrent":3,"review_max_concurrent":2,"merge_max_concurrent":1}}}"#,
+            r##"{"schema_version":1,"source":"shea-symphony","event":"autopilot_loop_result","payload":{"mode":"write","completed_work_units":2,"lane_work_units":{"review":2},"settings":{"main_max_concurrent":3,"review_max_concurrent":2,"merge_max_concurrent":1},"lanes":[{"lane":"review","status":"completed","action":"lane_tick_completed","work_unit_completed":true,"completed_work_units":2,"issue_ref":"#412","selected_issue":{"identifier":"#412"},"target_state":"Merging","max_concurrent":2,"recover":false}]}}"##,
         )
         .unwrap();
 
@@ -540,6 +643,10 @@ mod tests {
         assert_eq!(state.lanes["main"].max_concurrent, Some(3));
         assert_eq!(state.lanes["review"].max_concurrent, Some(2));
         assert_eq!(state.lanes["merge"].max_concurrent, Some(1));
+        assert_eq!(state.lanes["review"].status, "completed");
+        assert_eq!(state.lanes["review"].selected.as_deref(), Some("#412"));
+        assert_eq!(state.lanes["review"].completed_work_units, Some(2));
+        assert_eq!(state.lanes["review"].work_unit_completed, Some(true));
     }
 
     #[test]

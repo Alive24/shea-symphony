@@ -4,6 +4,10 @@ export type LaneSnapshot = {
   action?: string | null;
   selected?: string | null;
   target?: string | null;
+  workUnitCompleted?: boolean | null;
+  completedWorkUnits?: number | null;
+  issueRef?: string | null;
+  latestResult?: string | null;
   maxConcurrent?: number | null;
   runningCount?: number | null;
   queuedCount?: number | null;
@@ -257,7 +261,14 @@ function workerFromAutoloopLine(
     const issue = issueRefFromValue(recordValue(payload, 'selected_issue') ?? recordValue(payload, 'selected'));
     if (!issue) return null;
     const status = textFromValue(recordValue(payload, 'status'), 'running');
-    return liveWorker(issue, laneKey, state, textFromValue(recordValue(payload, 'action'), status), status);
+    const latestResult = textFromValue(recordValue(payload, 'latest_result') ?? recordValue(payload, 'latestResult'));
+    return liveWorker(
+      issue,
+      laneKey,
+      state,
+      latestResult || textFromValue(recordValue(payload, 'action'), status),
+      status
+    );
   }
 
   if (eventName !== 'autopilot_cli_line') return null;

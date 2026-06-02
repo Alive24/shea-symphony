@@ -1,9 +1,9 @@
 #![allow(clippy::items_after_test_module)]
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc,
+    mpsc, Arc,
 };
 use std::thread;
 use std::time::Duration;
@@ -60,19 +60,16 @@ impl AutopilotLoopOptions {
     fn main_worker_limit(&self, config: &RuntimeConfig) -> usize {
         self.main_max_concurrent
             .unwrap_or(config.agent.max_concurrent_agents)
-            .max(1)
     }
 
     fn review_worker_limit(&self, config: &RuntimeConfig) -> usize {
         self.review_max_concurrent
             .unwrap_or(config.review.max_concurrent_workers)
-            .max(1)
     }
 
     fn merge_worker_limit(&self, config: &RuntimeConfig) -> usize {
         self.merge_max_concurrent
             .unwrap_or(config.merge_lane.max_concurrent_workers)
-            .max(1)
     }
 }
 
@@ -306,7 +303,6 @@ fn autopilot_loop_with_cancellation(
             }
         };
 
-        transient_attempt = 0;
         let status = autopilot_loop_status_from_plan(
             &plan,
             settings,
@@ -316,31 +312,6 @@ fn autopilot_loop_with_cancellation(
             cancellation.load(Ordering::SeqCst),
         );
         print_autopilot_loop_status(&status, options.json, options.display, options.event_json)?;
-        if status.phase == "blocked" {
-            if autopilot_should_continue(iteration, max_iterations)
-                && autopilot_sleep_or_cancel(settings.poll_interval_ms, &cancellation)
-            {
-                let cancelled = autopilot_loop_status_from_plan(
-                    &plan,
-                    settings,
-                    iteration,
-                    None,
-                    &recent_transient_failures,
-                    true,
-                );
-                print_autopilot_loop_status(
-                    &cancelled,
-                    options.json,
-                    options.display,
-                    options.event_json,
-                )?;
-                print_autopilot_stopped(options.event_json, "cancelled", iteration)?;
-                stopped_reported = true;
-                break;
-            }
-            iteration = iteration.saturating_add(1);
-            continue;
-        }
 
         if cancellation.load(Ordering::SeqCst) {
             let cancelled = autopilot_loop_status_from_plan(
@@ -362,150 +333,16 @@ fn autopilot_loop_with_cancellation(
             break;
         }
 
-        if !options.event_json {
-            println!(
-                "autopilot_loop_iteration={} mode={} order=main,review,merge recover={} main_max_concurrent={} review_max_concurrent={} merge_max_concurrent={}",
-                iteration,
-                if options.write { "write" } else { "dry-run" },
-                tick_settings.recover,
-                tick_settings.main_max_concurrent,
-                tick_settings.review_max_concurrent,
-                tick_settings.merge_max_concurrent
-            );
-        }
-        print_autopilot_event(
-            options.event_json,
-            "autopilot_loop_iteration",
-            json!({
-                "iteration": iteration,
-                "mode": if options.write { "write" } else { "dry-run" },
-                "order": ["main", "review", "merge"],
-                "settings": &tick_settings,
-            }),
+        let supervisor_result = run_independent_autopilot_lane_supervisor(
+            &options,
+            settings,
+            tick_settings,
+            max_iterations,
+            &cancellation,
         )?;
-
-        let mut latest_plan = plan.clone();
-        let mut lane_results = Vec::new();
-
-        let main_plan = autopilot_plan_lane(Some(&latest_plan), "main");
-        let main_result = if tick_settings.main_max_concurrent > 0
-            && (autopilot_lane_plan_should_tick(main_plan)
-                || autopilot_main_recovery_should_tick(Some(&latest_plan), &tick_settings))
-        {
-            print_autopilot_lane_running(
-                "main",
-                main_plan,
-                tick_settings.main_max_concurrent,
-                tick_settings.recover,
-                options.event_json,
-            )?;
-            autopilot_main_tick(&options, &tick_settings, Some(&latest_plan))
-        } else {
-            autopilot_lane_result_from_skip(
-                "main",
-                main_plan,
-                tick_settings.main_max_concurrent,
-                tick_settings.recover,
-            )
-        };
-        print_autopilot_lane_result(&main_result, options.event_json)?;
-        lane_results.push(main_result);
-        latest_plan = refresh_autopilot_plan_or_keep(&options.workflow_path, latest_plan);
-
-        let review_plan = autopilot_plan_lane(Some(&latest_plan), "review");
-        let review_result = if tick_settings.review_max_concurrent > 0
-            && autopilot_lane_plan_should_tick(review_plan)
-        {
-            print_autopilot_lane_running(
-                "review",
-                review_plan,
-                tick_settings.review_max_concurrent,
-                false,
-                options.event_json,
-            )?;
-            autopilot_review_tick(&options, &tick_settings, Some(&latest_plan))
-        } else {
-            autopilot_lane_result_from_skip(
-                "review",
-                review_plan,
-                tick_settings.review_max_concurrent,
-                false,
-            )
-        };
-        print_autopilot_lane_result(&review_result, options.event_json)?;
-        lane_results.push(review_result);
-        latest_plan = refresh_autopilot_plan_or_keep(&options.workflow_path, latest_plan);
-
-        let merge_plan = autopilot_plan_lane(Some(&latest_plan), "merge");
-        let merge_result = if tick_settings.merge_max_concurrent > 0
-            && autopilot_lane_plan_should_tick(merge_plan)
-        {
-            print_autopilot_lane_running(
-                "merge",
-                merge_plan,
-                tick_settings.merge_max_concurrent,
-                tick_settings.recover,
-                options.event_json,
-            )?;
-            autopilot_merge_tick(&options, &tick_settings, Some(&latest_plan))
-        } else {
-            autopilot_lane_result_from_skip(
-                "merge",
-                merge_plan,
-                tick_settings.merge_max_concurrent,
-                tick_settings.recover,
-            )
-        };
-        print_autopilot_lane_result(&merge_result, options.event_json)?;
-        lane_results.push(merge_result);
-        latest_plan = refresh_autopilot_plan_or_keep(&options.workflow_path, latest_plan);
-
-        had_lane_error |= lane_results.iter().any(|result| result.status == "error");
-
-        let result = AutopilotLoopIterationResult {
-            schema_version: 1,
-            iteration,
-            mode: if options.write { "write" } else { "dry-run" }.into(),
-            execution_order: vec!["main".into(), "review".into(), "merge".into()],
-            settings: tick_settings,
-            lanes: lane_results,
-            parked_queues: latest_plan.parked_queues,
-        };
-        if options.event_json {
-            // JSON signal mode emits the structured iteration event below instead of
-            // legacy key=value lane lines that are intentionally parser-hostile.
-        } else if options.json {
-            println!("{}", serde_json::to_string_pretty(&result)?);
-        } else if options.display == DisplayMode::Tui {
-            println!("{}", render_autopilot_loop_iteration_tui(&result));
-        } else {
-            println!("{}", render_autopilot_loop_iteration_result(&result));
-        }
-        print_autopilot_event(
-            options.event_json,
-            "autopilot_loop_result",
-            serde_json::to_value(&result)?,
-        )?;
-
-        if autopilot_should_continue(iteration, max_iterations)
-            && autopilot_sleep_or_cancel(settings.poll_interval_ms, &cancellation)
-        {
-            let cancelled = autopilot_loop_cancelled_status(
-                &options,
-                iteration,
-                "cancellation requested before next poll".into(),
-            );
-            print_autopilot_loop_status(
-                &cancelled,
-                options.json,
-                options.display,
-                options.event_json,
-            )?;
-            print_autopilot_stopped(options.event_json, "cancelled", iteration)?;
-            stopped_reported = true;
-            break;
-        }
-        iteration = iteration.saturating_add(1);
+        had_lane_error |= supervisor_result.had_lane_error;
+        stopped_reported = supervisor_result.stopped_reported;
+        break;
     }
 
     if had_lane_error && !options.continuous {
@@ -526,7 +363,7 @@ fn autopilot_should_continue(iteration: usize, max_iterations: Option<usize>) ->
         .unwrap_or(true)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub(crate) struct AutopilotLoopTickSettings {
     pub(crate) recover: bool,
     pub(crate) main_max_concurrent: usize,
@@ -543,6 +380,356 @@ impl AutopilotLoopTickSettings {
             merge_max_concurrent: options.merge_worker_limit(config),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AutopilotLaneKind {
+    Main,
+    Review,
+    Merge,
+}
+
+impl AutopilotLaneKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Main => "main",
+            Self::Review => "review",
+            Self::Merge => "merge",
+        }
+    }
+
+    fn max_concurrent(self, settings: &AutopilotLoopTickSettings) -> usize {
+        match self {
+            Self::Main => settings.main_max_concurrent,
+            Self::Review => settings.review_max_concurrent,
+            Self::Merge => settings.merge_max_concurrent,
+        }
+    }
+
+    fn recover(self, settings: &AutopilotLoopTickSettings) -> bool {
+        match self {
+            Self::Main | Self::Merge => settings.recover,
+            Self::Review => false,
+        }
+    }
+
+    fn tick(
+        self,
+        options: &AutopilotLoopOptions,
+        settings: &AutopilotLoopTickSettings,
+        plan: Option<&AutopilotPlanSnapshot>,
+    ) -> AutopilotLoopLaneResult {
+        match self {
+            Self::Main => autopilot_main_tick(options, settings, plan),
+            Self::Review => autopilot_review_tick(options, settings, plan),
+            Self::Merge => autopilot_merge_tick(options, settings, plan),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct AutopilotLaneWorkerFinished {
+    lane: AutopilotLaneKind,
+    iteration: usize,
+    result: AutopilotLoopLaneResult,
+    parked_queues: Vec<AutopilotParkedQueue>,
+}
+
+#[derive(Debug)]
+enum AutopilotLaneWorkerMessage {
+    Running {
+        lane: AutopilotLaneKind,
+        iteration: usize,
+        lane_plan: Option<AutopilotLanePlan>,
+    },
+    Finished(AutopilotLaneWorkerFinished),
+    Stopped {
+        lane: AutopilotLaneKind,
+        reason: String,
+        iterations: usize,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AutopilotLaneSupervisorResult {
+    had_lane_error: bool,
+    stopped_reported: bool,
+}
+
+fn run_independent_autopilot_lane_supervisor(
+    options: &AutopilotLoopOptions,
+    settings: AutopilotLoopSettings,
+    tick_settings: AutopilotLoopTickSettings,
+    max_iterations: Option<usize>,
+    cancellation: &Arc<AtomicBool>,
+) -> Result<AutopilotLaneSupervisorResult, Box<dyn std::error::Error>> {
+    let lanes = enabled_autopilot_lanes(&tick_settings);
+    if lanes.is_empty() {
+        print_autopilot_stopped(options.event_json, "no_enabled_lanes", 0)?;
+        return Ok(AutopilotLaneSupervisorResult {
+            had_lane_error: false,
+            stopped_reported: true,
+        });
+    }
+
+    if !options.event_json {
+        println!(
+            "autopilot_loop_supervisor mode={} scheduler=independent lanes={} recover={} main_max_concurrent={} review_max_concurrent={} merge_max_concurrent={}",
+            if options.write { "write" } else { "dry-run" },
+            lanes
+                .iter()
+                .map(|lane| lane.name())
+                .collect::<Vec<_>>()
+                .join(","),
+            tick_settings.recover,
+            tick_settings.main_max_concurrent,
+            tick_settings.review_max_concurrent,
+            tick_settings.merge_max_concurrent
+        );
+    }
+    print_autopilot_event(
+        options.event_json,
+        "autopilot_loop_supervisor",
+        json!({
+            "mode": if options.write { "write" } else { "dry-run" },
+            "scheduler": "independent",
+            "lanes": lanes.iter().map(|lane| lane.name()).collect::<Vec<_>>(),
+            "settings": &tick_settings,
+        }),
+    )?;
+
+    let (sender, receiver) = mpsc::channel();
+    let mut handles = Vec::new();
+    for lane in lanes {
+        let sender = sender.clone();
+        let options = options.clone();
+        let cancellation = Arc::clone(cancellation);
+        let handle = thread::spawn(move || {
+            run_autopilot_lane_worker(
+                lane,
+                options,
+                settings,
+                tick_settings,
+                max_iterations,
+                cancellation,
+                sender,
+            );
+        });
+        handles.push(handle);
+    }
+    drop(sender);
+
+    let mut had_lane_error = false;
+    let mut stopped_count = 0usize;
+    let mut final_iterations = 0usize;
+    for message in receiver {
+        match message {
+            AutopilotLaneWorkerMessage::Running {
+                lane,
+                iteration,
+                lane_plan,
+            } => {
+                if !options.event_json {
+                    println!(
+                        "autopilot_loop_lane_iteration lane={} iteration={} scheduler=independent",
+                        lane.name(),
+                        iteration
+                    );
+                }
+                print_autopilot_lane_running(
+                    lane.name(),
+                    lane_plan.as_ref(),
+                    lane.max_concurrent(&tick_settings),
+                    lane.recover(&tick_settings),
+                    options.event_json,
+                )?;
+            }
+            AutopilotLaneWorkerMessage::Finished(finished) => {
+                had_lane_error |= finished.result.status == "error";
+                print_autopilot_lane_result(&finished.result, options.event_json)?;
+                let result = AutopilotLoopIterationResult {
+                    schema_version: 1,
+                    iteration: finished.iteration,
+                    mode: if options.write { "write" } else { "dry-run" }.into(),
+                    execution_order: vec!["independent".into(), finished.lane.name().into()],
+                    settings: tick_settings,
+                    lanes: vec![finished.result],
+                    parked_queues: finished.parked_queues,
+                };
+                if options.event_json {
+                    // JSON signal mode emits the structured iteration event below.
+                } else if options.json {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else if options.display == DisplayMode::Tui {
+                    println!("{}", render_autopilot_loop_iteration_tui(&result));
+                } else {
+                    println!("{}", render_autopilot_loop_iteration_result(&result));
+                }
+                print_autopilot_event(
+                    options.event_json,
+                    "autopilot_loop_result",
+                    serde_json::to_value(&result)?,
+                )?;
+            }
+            AutopilotLaneWorkerMessage::Stopped {
+                lane,
+                reason,
+                iterations,
+            } => {
+                stopped_count = stopped_count.saturating_add(1);
+                final_iterations = final_iterations.max(iterations);
+                print_autopilot_event(
+                    options.event_json,
+                    "autopilot_lane_stopped",
+                    json!({
+                        "lane": lane.name(),
+                        "reason": reason,
+                        "iterations": iterations,
+                    }),
+                )?;
+                if !options.event_json {
+                    println!(
+                        "autopilot_loop_lane lane={} status=stopped reason={} iterations={}",
+                        lane.name(),
+                        reason,
+                        iterations
+                    );
+                }
+            }
+        }
+    }
+
+    for handle in handles {
+        if handle.join().is_err() {
+            had_lane_error = true;
+        }
+    }
+
+    let reason = if cancellation.load(Ordering::SeqCst) {
+        "cancelled"
+    } else if stopped_count == 0 {
+        "worker_channel_closed"
+    } else {
+        "max_iterations"
+    };
+    print_autopilot_stopped(options.event_json, reason, final_iterations)?;
+    Ok(AutopilotLaneSupervisorResult {
+        had_lane_error,
+        stopped_reported: true,
+    })
+}
+
+fn run_autopilot_lane_worker(
+    lane: AutopilotLaneKind,
+    options: AutopilotLoopOptions,
+    settings: AutopilotLoopSettings,
+    tick_settings: AutopilotLoopTickSettings,
+    max_iterations: Option<usize>,
+    cancellation: Arc<AtomicBool>,
+    sender: mpsc::Sender<AutopilotLaneWorkerMessage>,
+) {
+    let mut iteration = 1usize;
+    let mut error_attempt = 0u32;
+    loop {
+        if max_iterations.is_some_and(|limit| iteration > limit) {
+            let _ = sender.send(AutopilotLaneWorkerMessage::Stopped {
+                lane,
+                reason: "max_iterations".into(),
+                iterations: iteration.saturating_sub(1),
+            });
+            break;
+        }
+        if cancellation.load(Ordering::SeqCst) {
+            let _ = sender.send(AutopilotLaneWorkerMessage::Stopped {
+                lane,
+                reason: "cancelled".into(),
+                iterations: iteration.saturating_sub(1),
+            });
+            break;
+        }
+
+        let (plan, plan_error) = match build_autopilot_plan(&options.workflow_path) {
+            Ok(plan) => (Some(plan), None),
+            Err(error) => (None, Some(error.to_string())),
+        };
+        let lane_plan = autopilot_plan_lane(plan.as_ref(), lane.name()).cloned();
+        if sender
+            .send(AutopilotLaneWorkerMessage::Running {
+                lane,
+                iteration,
+                lane_plan: lane_plan.clone(),
+            })
+            .is_err()
+        {
+            break;
+        }
+
+        let mut result = lane.tick(&options, &tick_settings, plan.as_ref());
+        if let Some(error) = plan_error {
+            result
+                .evidence
+                .push(format!("plan_snapshot_error={}", compact_evidence(&error)));
+        }
+        let had_error = result.status == "error";
+        if had_error {
+            error_attempt = error_attempt.saturating_add(1);
+        } else {
+            error_attempt = 0;
+        }
+        let parked_queues = plan
+            .map(|snapshot| snapshot.parked_queues)
+            .unwrap_or_default();
+        if sender
+            .send(AutopilotLaneWorkerMessage::Finished(
+                AutopilotLaneWorkerFinished {
+                    lane,
+                    iteration,
+                    result,
+                    parked_queues,
+                },
+            ))
+            .is_err()
+        {
+            break;
+        }
+
+        if !autopilot_should_continue(iteration, max_iterations) {
+            iteration = iteration.saturating_add(1);
+            continue;
+        }
+        let delay_ms = if had_error {
+            autopilot_lane_error_backoff_ms(settings.poll_interval_ms, error_attempt)
+        } else {
+            settings.poll_interval_ms
+        };
+        if autopilot_sleep_or_cancel(delay_ms, &cancellation) {
+            let _ = sender.send(AutopilotLaneWorkerMessage::Stopped {
+                lane,
+                reason: "cancelled".into(),
+                iterations: iteration,
+            });
+            break;
+        }
+        iteration = iteration.saturating_add(1);
+    }
+}
+
+fn enabled_autopilot_lanes(settings: &AutopilotLoopTickSettings) -> Vec<AutopilotLaneKind> {
+    [
+        (AutopilotLaneKind::Main, settings.main_max_concurrent),
+        (AutopilotLaneKind::Review, settings.review_max_concurrent),
+        (AutopilotLaneKind::Merge, settings.merge_max_concurrent),
+    ]
+    .into_iter()
+    .filter_map(|(lane, max_concurrent)| (max_concurrent > 0).then_some(lane))
+    .collect()
+}
+
+fn autopilot_lane_error_backoff_ms(poll_interval_ms: u64, attempt: u32) -> u64 {
+    let exponent = attempt.saturating_sub(1).min(5);
+    poll_interval_ms
+        .saturating_mul(2u64.saturating_pow(exponent))
+        .clamp(1, 60_000)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -650,29 +837,10 @@ fn autopilot_plan_lane<'a>(
     })
 }
 
-fn refresh_autopilot_plan_or_keep(
-    workflow_path: &Path,
-    fallback: AutopilotPlanSnapshot,
-) -> AutopilotPlanSnapshot {
-    build_autopilot_plan(workflow_path).unwrap_or(fallback)
-}
-
 fn autopilot_lane_plan_should_tick(lane_plan: Option<&AutopilotLanePlan>) -> bool {
     lane_plan
         .map(|plan| plan.status == "ready" && plan.selected_issue.is_some())
         .unwrap_or(false)
-}
-
-fn autopilot_main_recovery_should_tick(
-    plan: Option<&AutopilotPlanSnapshot>,
-    settings: &AutopilotLoopTickSettings,
-) -> bool {
-    let Some(plan) = plan else {
-        return false;
-    };
-    settings.recover
-        && settings.main_max_concurrent > 0
-        && autopilot_main_recovery_blocker_is_lane_local(plan)
 }
 
 fn autopilot_main_recovery_can_tick(
@@ -806,6 +974,7 @@ fn print_autopilot_lane_result(
     Ok(())
 }
 
+#[cfg(test)]
 fn autopilot_lane_result_from_skip(
     lane: &str,
     lane_plan: Option<&AutopilotLanePlan>,
@@ -1461,6 +1630,31 @@ mod tests {
         assert!(result
             .evidence
             .contains(&"skip_reason=no_ready_selected_issue".into()));
+    }
+
+    #[test]
+    fn independent_scheduler_respects_disabled_lane_limits() {
+        let settings = AutopilotLoopTickSettings {
+            recover: true,
+            main_max_concurrent: 1,
+            review_max_concurrent: 0,
+            merge_max_concurrent: 2,
+        };
+
+        let lanes = enabled_autopilot_lanes(&settings);
+
+        assert_eq!(
+            lanes,
+            vec![AutopilotLaneKind::Main, AutopilotLaneKind::Merge]
+        );
+    }
+
+    #[test]
+    fn lane_error_backoff_is_conservative_and_capped() {
+        assert_eq!(autopilot_lane_error_backoff_ms(250, 0), 250);
+        assert_eq!(autopilot_lane_error_backoff_ms(250, 1), 250);
+        assert_eq!(autopilot_lane_error_backoff_ms(250, 3), 1_000);
+        assert_eq!(autopilot_lane_error_backoff_ms(30_000, 9), 60_000);
     }
 }
 

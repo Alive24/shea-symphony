@@ -119,6 +119,47 @@ fn reports_parent_human_review_before_subissues_done() {
 }
 
 #[test]
+fn reports_native_subissue_in_human_review_without_real_exception() {
+    let parent_branch = "integration/issue-400-native-subissue-batch";
+    let parent = with_parent_branch(
+        with_native_subissues(issue("#400", "Agent Review"), &["#399"]),
+        parent_branch,
+    );
+    let mut subissue = with_native_parent(issue("#399", "Human Review"), "#400");
+    subissue.description = Some(
+        "Related Parent Issue or Context: native subissue under #400.\nSubissue Human Review Exception: None."
+            .into(),
+    );
+
+    let report = audit_project_issues(&[parent, subissue]);
+
+    assert!(report.violations.iter().any(|violation| {
+        violation.code == "subissue_human_review_without_exception"
+            && violation.severity == AuditSeverity::Blocker
+            && violation.issue_ref == "#399"
+    }));
+}
+
+#[test]
+fn accepts_native_subissue_in_human_review_with_real_exception() {
+    let parent_branch = "integration/issue-400-native-subissue-batch";
+    let parent = with_parent_branch(
+        with_native_subissues(issue("#400", "Agent Review"), &["#399"]),
+        parent_branch,
+    );
+    let mut subissue = with_native_parent(issue("#399", "Human Review"), "#400");
+    subissue.description =
+        Some("Subissue Human Review Exception: operator must inspect live credentials.".into());
+
+    let report = audit_project_issues(&[parent, subissue]);
+
+    assert!(!report
+        .violations
+        .iter()
+        .any(|violation| violation.code == "subissue_human_review_without_exception"));
+}
+
+#[test]
 fn reports_body_only_parent_hierarchy_as_warning() {
     let mut subissue = issue("#274", "Todo");
     subissue.description =

@@ -113,14 +113,7 @@ pub fn native_subissue_human_review_exception(issue: &TrackerIssue) -> bool {
     issue
         .description
         .as_deref()
-        .map(|description| {
-            let text = description.to_ascii_lowercase();
-            text.contains("subissue human review exception:")
-                || text.contains("direct human review exception:")
-                || text.contains("direct human review required: yes")
-                || text.contains("requires direct human review: yes")
-                || text.contains("requires routine direct human review: yes")
-        })
+        .map(description_has_truthy_subissue_human_review_exception)
         .unwrap_or(false)
 }
 
@@ -240,16 +233,84 @@ fn explicit_truthy_project_field(issue: &TrackerIssue, field: &str) -> bool {
         .get(field)
         .is_some_and(|value| match value {
             serde_json::Value::Bool(value) => *value,
-            serde_json::Value::String(value) => {
-                let normalized = value.trim().to_ascii_lowercase();
-                !normalized.is_empty()
-                    && !matches!(
-                        normalized.as_str(),
-                        "false" | "no" | "none" | "n/a" | "not required"
-                    )
-            }
+            serde_json::Value::String(value) => exception_value_is_truthy(value),
             _ => false,
         })
+}
+
+fn description_has_truthy_subissue_human_review_exception(description: &str) -> bool {
+    const EXCEPTION_LABELS: &[&str] = &[
+        "Subissue Human Review Exception",
+        "Direct Human Review Exception",
+        "Direct Human Review Required",
+        "Requires Direct Human Review",
+        "Requires Routine Direct Human Review",
+    ];
+
+    description.lines().any(|line| {
+        EXCEPTION_LABELS
+            .iter()
+            .filter_map(|label| field_value_after_label(line, label))
+            .any(exception_value_is_truthy)
+    })
+}
+
+fn field_value_after_label<'a>(line: &'a str, label: &str) -> Option<&'a str> {
+    let lower = line.to_ascii_lowercase();
+    let label = label.to_ascii_lowercase();
+    let start = lower.find(&label)?;
+    let after_label = line[start + label.len()..].trim_start();
+    let value = after_label
+        .strip_prefix(':')
+        .or_else(|| after_label.strip_prefix('：'))
+        .or_else(|| after_label.strip_prefix('='))
+        .or_else(|| after_label.strip_prefix('-'))?
+        .trim();
+    Some(value)
+}
+
+fn exception_value_is_truthy(value: &str) -> bool {
+    let normalized = normalize_exception_value(value);
+    !normalized.is_empty()
+        && !matches!(
+            normalized.as_str(),
+            "false"
+                | "no"
+                | "none"
+                | "n/a"
+                | "na"
+                | "not applicable"
+                | "not required"
+                | "not needed"
+                | "null"
+                | "nil"
+                | "无"
+                | "沒有"
+                | "没有"
+        )
+}
+
+fn normalize_exception_value(value: &str) -> String {
+    value
+        .trim_matches(|character: char| {
+            character.is_whitespace()
+                || matches!(
+                    character,
+                    '`' | '*'
+                        | '_'
+                        | '"'
+                        | '\''
+                        | '.'
+                        | ','
+                        | ';'
+                        | ':'
+                        | '。'
+                        | '，'
+                        | '；'
+                        | '：'
+                )
+        })
+        .to_lowercase()
 }
 
 fn push_native_subissue_status(

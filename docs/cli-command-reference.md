@@ -71,6 +71,25 @@ for interrupted Main and Merge lane work; use `--no-recover` only for focused
 debugging. Per-lane capacity uses `--main-max-concurrent`,
 `--review-max-concurrent`, and `--merge-max-concurrent`.
 
+Lane throughput is independent inside each foreground supervisor iteration. The
+supervisor checks Main, Review, and Merge in that order, refreshes the plan
+between lanes, and records one lane work-unit result for each lane. A slow,
+blocked, idle, or busy lane remains visible in the status and result output, but
+it is not a shared global iteration gate when another lane has ready work. A
+global readiness blocker such as an unsafe canonical checkout, Doctor blocker,
+or non-recoverable runtime ambiguity still blocks write-mode autopilot before
+lane mutation.
+
+The iteration budget controls the supervisor lifetime, not the total number of
+Main, Review, or Merge items that may complete. Lane-specific worker limits
+control per-lane work-unit capacity for that iteration. For example,
+`--max-iterations 1 --main-max-concurrent 2 --review-max-concurrent 1
+--merge-max-concurrent 3` means one foreground supervisor pass may start or
+recover up to two Main work units, one Review work unit, and three Merge work
+units, subject to each lane's own claim locks and eligibility rules. Setting a
+lane limit to `0` intentionally skips that lane for the iteration without
+turning the other lanes off.
+
 Use `--display tui` for a scannable foreground dashboard that shows Main,
 Review, and Merge lane cards, parked operator queues, retry/backoff rows, and
 recent loop events. `--json` remains a machine-output mode and cannot be
@@ -92,6 +111,7 @@ cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --writ
 cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --dry-run --display tui
 cargo run -- autopilot loop workflows/shea-symphony.md --once --dry-run --json
 cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 3 --write --poll-interval-ms 30000
+cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --write --main-max-concurrent 2 --review-max-concurrent 1 --merge-max-concurrent 3
 ```
 
 Normal dogfood should run `autopilot plan` first, then `autopilot loop --write`

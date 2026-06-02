@@ -8,8 +8,8 @@ use std::process::Command as ProcessCommand;
 use super::cli::{CliLaneClaimSource, DisplayMode, ForgeStatusArg};
 use super::commands::autopilot::{
     autopilot_loop_status_from_plan, build_autopilot_plan_from_parts, AutopilotActiveIssue,
-    AutopilotCanonicalCheckout, AutopilotLoopSettings, AutopilotPlanInputs, AutopilotPlanSnapshot,
-    AutopilotRuntimeSummary,
+    AutopilotCanonicalCheckout, AutopilotIssueSummary, AutopilotLanePlan, AutopilotLoopSettings,
+    AutopilotPlanInputs, AutopilotPlanSnapshot, AutopilotRuntimeSummary,
 };
 use super::commands::debug::{
     classify_dogfood_integration_gaps, is_controlled_dogfood_smoke_issue, session_status_summary,

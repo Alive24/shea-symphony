@@ -365,7 +365,7 @@ fn linked_pull_request_matches_native_repo(
     owner: Option<&str>,
     repo: Option<&str>,
 ) -> bool {
-    if require_native_id && pull_request.id.as_deref().unwrap_or_default().is_empty() {
+    if require_native_id && !pull_request.is_github_native_linkage() {
         return false;
     }
 
@@ -1050,6 +1050,7 @@ mod tests {
             review_decision: Some("APPROVED".into()),
             base_ref_name: Some("main".into()),
             head_ref_name: None,
+            source: crate::model::LinkedPullRequestSource::GithubNative,
         }
     }
 

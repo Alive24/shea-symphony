@@ -152,9 +152,10 @@ pub(crate) fn project_issue(
                 .or_else(|| pr.number.map(|number| format!("#{number}")))
                 .unwrap_or_else(|| "unknown".into());
             println!(
-                "linked_pr={} state={}",
+                "linked_pr={} state={} source={}",
                 pr_ref,
-                pr.state.as_deref().unwrap_or("unknown")
+                pr.state.as_deref().unwrap_or("unknown"),
+                linked_pull_request_source_label(pr)
             );
         }
     }
@@ -228,9 +229,10 @@ pub(crate) fn project_inspect(
                 .or_else(|| pr.number.map(|number| format!("#{number}")))
                 .unwrap_or_else(|| "unknown".into());
             println!(
-                "linked_pr={} state={}",
+                "linked_pr={} state={} source={}",
                 pr_ref,
-                pr.state.as_deref().unwrap_or("unknown")
+                pr.state.as_deref().unwrap_or("unknown"),
+                linked_pull_request_source_label(pr)
             );
         }
     }
@@ -254,6 +256,14 @@ pub(crate) fn project_inspect(
     }
 
     Ok(())
+}
+
+fn linked_pull_request_source_label(pr: &shea_symphony::model::LinkedPullRequest) -> &'static str {
+    match pr.source {
+        shea_symphony::model::LinkedPullRequestSource::GithubNative => "github_native",
+        shea_symphony::model::LinkedPullRequestSource::FallbackDiagnostic => "fallback_diagnostic",
+        shea_symphony::model::LinkedPullRequestSource::Unknown => "unknown",
+    }
 }
 
 pub(crate) fn project_relationship_list(

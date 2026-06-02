@@ -4,7 +4,10 @@ use shea_symphony::model::normalize_state;
 use shea_symphony::review::transition_allowed_for_main_agent;
 use shea_symphony::tracker::{adapter_from_config, TrackerAdapter, TrackerError};
 
-use crate::lanes::main_loop::{linked_pull_requests_contain, reconcile_main_handoff_runtime_state};
+use crate::lanes::main_loop::{
+    linked_pull_requests_contain, native_linked_pull_requests_contain,
+    reconcile_main_handoff_runtime_state,
+};
 use crate::orchestration::{
     add_timeline_comment_with_recovery, append_tracker_mutation_audit, load_config, recovery_key,
     require_write_intent, set_state_with_recovery, stable_recovery_hash,
@@ -199,9 +202,9 @@ pub(crate) fn link_pr(
         );
     }
     let action = if repaired {
-        "repair_comment"
+        "repair_verified_github_native"
     } else {
-        "already_visible"
+        "github_native_visible"
     };
     println!("link_pr=ok issue_ref={issue_ref} pr_ref={pr_ref} action={action}");
     Ok(())
@@ -215,10 +218,17 @@ pub(crate) fn link_pr_with_adapter(
 ) -> Result<bool, TrackerError> {
     if write {
         let linked = adapter.list_linked_pull_requests(issue_ref)?;
-        if linked_pull_requests_contain(&linked, pr_ref) {
+        if native_linked_pull_requests_contain(&linked, pr_ref) {
             return Ok(false);
         }
         adapter.link_pull_request(issue_ref, pr_ref)?;
+        let linked = adapter.list_linked_pull_requests(issue_ref)?;
+        if !native_linked_pull_requests_contain(&linked, pr_ref) {
+            let fallback_visible = linked_pull_requests_contain(&linked, pr_ref);
+            return Err(TrackerError::IntegrationUnavailable(format!(
+                "GitHub-native linked PR readback is missing for {pr_ref}; fallback_diagnostic_visible={fallback_visible}"
+            )));
+        }
         Ok(true)
     } else {
         Ok(false)

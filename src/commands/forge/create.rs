@@ -200,7 +200,7 @@ pub(crate) fn write_forge_created_issue(
         );
     }
     if !input.relationships.is_empty() {
-        apply_forge_relationship_plan(adapter, &issue_id, input.relationships)?;
+        apply_forge_relationship_plan(config, adapter, &issue_id, input.relationships)?;
     }
     if input.status == ForgeStatusArg::Todo && stage_state != "todo" {
         adapter.set_state(&issue_id, "todo")?;

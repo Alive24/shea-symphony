@@ -1,5 +1,6 @@
 #![allow(clippy::items_after_test_module)]
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -84,8 +85,8 @@ fn autopilot_loop_with_cancellation(
     options: AutopilotLoopOptions,
     cancellation: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let max_iterations = options.iteration_limit();
-    if max_iterations.is_none() && !options.continuous {
+    let work_unit_limit = options.iteration_limit();
+    if work_unit_limit.is_none() && !options.continuous {
         return Err("autopilot loop requires --max-iterations, --once, or --continuous".into());
     }
     let mut had_lane_error = false;
@@ -93,15 +94,28 @@ fn autopilot_loop_with_cancellation(
     let mut transient_attempt = 0u32;
     let mut recent_transient_failures = Vec::new();
     let mut iteration = 1usize;
+    let mut completed_work_units = AutopilotWorkUnitCounters::default();
 
     loop {
-        if max_iterations.is_some_and(|limit| iteration > limit) {
+        if work_unit_limit.is_some_and(|limit| completed_work_units.total >= limit) {
+            break;
+        }
+        if work_unit_limit.is_some_and(|limit| iteration > limit) {
+            print_autopilot_stopped(
+                options.event_json,
+                "no_work_units",
+                iteration.saturating_sub(1),
+                &completed_work_units,
+                work_unit_limit,
+            )?;
+            stopped_reported = true;
             break;
         }
         if cancellation.load(Ordering::SeqCst) {
             let status = autopilot_loop_cancelled_status(
                 &options,
                 iteration.saturating_sub(1),
+                AutopilotLoopProgress::new(work_unit_limit, completed_work_units.clone()),
                 "cancellation requested before next poll".into(),
             );
             print_autopilot_loop_status(
@@ -110,13 +124,23 @@ fn autopilot_loop_with_cancellation(
                 options.display,
                 options.event_json,
             )?;
-            print_autopilot_stopped(options.event_json, "cancelled", iteration.saturating_sub(1))?;
+            print_autopilot_stopped(
+                options.event_json,
+                "cancelled",
+                iteration.saturating_sub(1),
+                &completed_work_units,
+                work_unit_limit,
+            )?;
             stopped_reported = true;
             break;
         }
 
-        let checking_status =
-            autopilot_loop_checking_status(&options, iteration, &recent_transient_failures);
+        let checking_status = autopilot_loop_checking_status(
+            &options,
+            iteration,
+            AutopilotLoopProgress::new(work_unit_limit, completed_work_units.clone()),
+            &recent_transient_failures,
+        );
         print_autopilot_loop_status(
             &checking_status,
             options.json,
@@ -132,6 +156,7 @@ fn autopilot_loop_with_cancellation(
                     &options,
                     iteration,
                     format!("workflow_load_error={error}"),
+                    AutopilotLoopProgress::new(work_unit_limit, completed_work_units.clone()),
                     &recent_transient_failures,
                 );
                 print_autopilot_loop_status(
@@ -140,12 +165,13 @@ fn autopilot_loop_with_cancellation(
                     options.display,
                     options.event_json,
                 )?;
-                if autopilot_should_continue(iteration, max_iterations)
+                if autopilot_should_continue(iteration, work_unit_limit)
                     && autopilot_sleep_or_cancel(status.settings.poll_interval_ms, &cancellation)
                 {
                     let cancelled = autopilot_loop_cancelled_status(
                         &options,
                         iteration,
+                        AutopilotLoopProgress::new(work_unit_limit, completed_work_units.clone()),
                         "cancellation requested during blocked wait".into(),
                     );
                     print_autopilot_loop_status(
@@ -154,7 +180,13 @@ fn autopilot_loop_with_cancellation(
                         options.display,
                         options.event_json,
                     )?;
-                    print_autopilot_stopped(options.event_json, "cancelled", iteration)?;
+                    print_autopilot_stopped(
+                        options.event_json,
+                        "cancelled",
+                        iteration,
+                        &completed_work_units,
+                        work_unit_limit,
+                    )?;
                     stopped_reported = true;
                     break;
                 }
@@ -174,6 +206,7 @@ fn autopilot_loop_with_cancellation(
                     &options,
                     iteration,
                     format!("workflow_config_error={error}"),
+                    AutopilotLoopProgress::new(work_unit_limit, completed_work_units.clone()),
                     &recent_transient_failures,
                 );
                 print_autopilot_loop_status(
@@ -182,12 +215,13 @@ fn autopilot_loop_with_cancellation(
                     options.display,
                     options.event_json,
                 )?;
-                if autopilot_should_continue(iteration, max_iterations)
+                if autopilot_should_continue(iteration, work_unit_limit)
                     && autopilot_sleep_or_cancel(status.settings.poll_interval_ms, &cancellation)
                 {
                     let cancelled = autopilot_loop_cancelled_status(
                         &options,
                         iteration,
+                        AutopilotLoopProgress::new(work_unit_limit, completed_work_units.clone()),
                         "cancellation requested during blocked wait".into(),
                     );
                     print_autopilot_loop_status(
@@ -196,7 +230,13 @@ fn autopilot_loop_with_cancellation(
                         options.display,
                         options.event_json,
                     )?;
-                    print_autopilot_stopped(options.event_json, "cancelled", iteration)?;
+                    print_autopilot_stopped(
+                        options.event_json,
+                        "cancelled",
+                        iteration,
+                        &completed_work_units,
+                        work_unit_limit,
+                    )?;
                     stopped_reported = true;
                     break;
                 }
@@ -228,6 +268,7 @@ fn autopilot_loop_with_cancellation(
                         &options,
                         settings,
                         iteration,
+                        AutopilotLoopProgress::new(work_unit_limit, completed_work_units.clone()),
                         &recent_transient_failures,
                         "retrying",
                         Some(retry_delay_ms),
@@ -238,12 +279,16 @@ fn autopilot_loop_with_cancellation(
                         options.display,
                         options.event_json,
                     )?;
-                    if autopilot_should_continue(iteration, max_iterations)
+                    if autopilot_should_continue(iteration, work_unit_limit)
                         && autopilot_sleep_or_cancel(retry_delay_ms, &cancellation)
                     {
                         let cancelled = autopilot_loop_cancelled_status(
                             &options,
                             iteration,
+                            AutopilotLoopProgress::new(
+                                work_unit_limit,
+                                completed_work_units.clone(),
+                            ),
                             "cancellation requested during retry backoff".into(),
                         );
                         print_autopilot_loop_status(
@@ -252,7 +297,13 @@ fn autopilot_loop_with_cancellation(
                             options.display,
                             options.event_json,
                         )?;
-                        print_autopilot_stopped(options.event_json, "cancelled", iteration)?;
+                        print_autopilot_stopped(
+                            options.event_json,
+                            "cancelled",
+                            iteration,
+                            &completed_work_units,
+                            work_unit_limit,
+                        )?;
                         stopped_reported = true;
                         break;
                     }
@@ -264,6 +315,7 @@ fn autopilot_loop_with_cancellation(
                     &options,
                     settings,
                     iteration,
+                    AutopilotLoopProgress::new(work_unit_limit, completed_work_units.clone()),
                     &[AutopilotTransientFailure {
                         at_ms: current_time_ms(),
                         attempt: 1,
@@ -280,12 +332,13 @@ fn autopilot_loop_with_cancellation(
                     options.display,
                     options.event_json,
                 )?;
-                if autopilot_should_continue(iteration, max_iterations)
+                if autopilot_should_continue(iteration, work_unit_limit)
                     && autopilot_sleep_or_cancel(settings.poll_interval_ms, &cancellation)
                 {
                     let cancelled = autopilot_loop_cancelled_status(
                         &options,
                         iteration,
+                        AutopilotLoopProgress::new(work_unit_limit, completed_work_units.clone()),
                         "cancellation requested during blocked wait".into(),
                     );
                     print_autopilot_loop_status(
@@ -294,7 +347,13 @@ fn autopilot_loop_with_cancellation(
                         options.display,
                         options.event_json,
                     )?;
-                    print_autopilot_stopped(options.event_json, "cancelled", iteration)?;
+                    print_autopilot_stopped(
+                        options.event_json,
+                        "cancelled",
+                        iteration,
+                        &completed_work_units,
+                        work_unit_limit,
+                    )?;
                     stopped_reported = true;
                     break;
                 }
@@ -303,21 +362,56 @@ fn autopilot_loop_with_cancellation(
             }
         };
 
-        let status = autopilot_loop_status_from_plan(
+        transient_attempt = 0;
+        let status = autopilot_loop_status_from_plan_with_work_units(
             &plan,
             settings,
             iteration,
+            AutopilotLoopProgress::new(work_unit_limit, completed_work_units.clone()),
             Some(settings.poll_interval_ms),
             &recent_transient_failures,
             cancellation.load(Ordering::SeqCst),
         );
         print_autopilot_loop_status(&status, options.json, options.display, options.event_json)?;
+        if status.phase == "blocked" {
+            if autopilot_should_continue(iteration, work_unit_limit)
+                && autopilot_sleep_or_cancel(settings.poll_interval_ms, &cancellation)
+            {
+                let cancelled = autopilot_loop_status_from_plan_with_work_units(
+                    &plan,
+                    settings,
+                    iteration,
+                    AutopilotLoopProgress::new(work_unit_limit, completed_work_units.clone()),
+                    None,
+                    &recent_transient_failures,
+                    true,
+                );
+                print_autopilot_loop_status(
+                    &cancelled,
+                    options.json,
+                    options.display,
+                    options.event_json,
+                )?;
+                print_autopilot_stopped(
+                    options.event_json,
+                    "cancelled",
+                    iteration,
+                    &completed_work_units,
+                    work_unit_limit,
+                )?;
+                stopped_reported = true;
+                break;
+            }
+            iteration = iteration.saturating_add(1);
+            continue;
+        }
 
         if cancellation.load(Ordering::SeqCst) {
-            let cancelled = autopilot_loop_status_from_plan(
+            let cancelled = autopilot_loop_status_from_plan_with_work_units(
                 &plan,
                 settings,
                 iteration,
+                AutopilotLoopProgress::new(work_unit_limit, completed_work_units.clone()),
                 None,
                 &recent_transient_failures,
                 true,
@@ -328,7 +422,13 @@ fn autopilot_loop_with_cancellation(
                 options.display,
                 options.event_json,
             )?;
-            print_autopilot_stopped(options.event_json, "cancelled", iteration)?;
+            print_autopilot_stopped(
+                options.event_json,
+                "cancelled",
+                iteration,
+                &completed_work_units,
+                work_unit_limit,
+            )?;
             stopped_reported = true;
             break;
         }
@@ -337,7 +437,8 @@ fn autopilot_loop_with_cancellation(
             &options,
             settings,
             tick_settings,
-            max_iterations,
+            work_unit_limit,
+            &mut completed_work_units,
             &cancellation,
         )?;
         had_lane_error |= supervisor_result.had_lane_error;
@@ -349,8 +450,14 @@ fn autopilot_loop_with_cancellation(
         Err("one or more autopilot lane ticks failed; see per-lane results above".into())
     } else {
         if !stopped_reported {
-            if let Some(max_iterations) = max_iterations {
-                print_autopilot_stopped(options.event_json, "max_iterations", max_iterations)?;
+            if let Some(work_unit_limit) = work_unit_limit {
+                print_autopilot_stopped(
+                    options.event_json,
+                    "work_unit_limit",
+                    iteration.saturating_sub(1),
+                    &completed_work_units,
+                    Some(work_unit_limit),
+                )?;
             }
         }
         Ok(())
@@ -460,12 +567,19 @@ fn run_independent_autopilot_lane_supervisor(
     options: &AutopilotLoopOptions,
     settings: AutopilotLoopSettings,
     tick_settings: AutopilotLoopTickSettings,
-    max_iterations: Option<usize>,
+    work_unit_limit: Option<usize>,
+    completed_work_units: &mut AutopilotWorkUnitCounters,
     cancellation: &Arc<AtomicBool>,
 ) -> Result<AutopilotLaneSupervisorResult, Box<dyn std::error::Error>> {
     let lanes = enabled_autopilot_lanes(&tick_settings);
     if lanes.is_empty() {
-        print_autopilot_stopped(options.event_json, "no_enabled_lanes", 0)?;
+        print_autopilot_stopped(
+            options.event_json,
+            "no_enabled_lanes",
+            0,
+            completed_work_units,
+            work_unit_limit,
+        )?;
         return Ok(AutopilotLaneSupervisorResult {
             had_lane_error: false,
             stopped_reported: true,
@@ -510,7 +624,7 @@ fn run_independent_autopilot_lane_supervisor(
                 options,
                 settings,
                 tick_settings,
-                max_iterations,
+                work_unit_limit,
                 cancellation,
                 sender,
             );
@@ -545,15 +659,26 @@ fn run_independent_autopilot_lane_supervisor(
                 )?;
             }
             AutopilotLaneWorkerMessage::Finished(finished) => {
-                had_lane_error |= finished.result.status == "error";
-                print_autopilot_lane_result(&finished.result, options.event_json)?;
+                let cycle_start_work_units = completed_work_units.total;
+                let mut lane_result = finished.result;
+                completed_work_units.record_lane_result(&mut lane_result);
+                had_lane_error |= lane_result.status == "error";
+                print_autopilot_lane_result(&lane_result, options.event_json)?;
+                let work_units_completed_this_cycle = completed_work_units
+                    .total
+                    .saturating_sub(cycle_start_work_units);
                 let result = AutopilotLoopIterationResult {
                     schema_version: 1,
                     iteration: finished.iteration,
+                    supervisor_cycle: finished.iteration,
                     mode: if options.write { "write" } else { "dry-run" }.into(),
+                    work_unit_limit,
+                    completed_work_units: completed_work_units.total,
+                    work_units_completed_this_cycle,
+                    lane_work_units: completed_work_units.lanes.clone(),
                     execution_order: vec!["independent".into(), finished.lane.name().into()],
                     settings: tick_settings,
-                    lanes: vec![finished.result],
+                    lanes: vec![lane_result],
                     parked_queues: finished.parked_queues,
                 };
                 if options.event_json {
@@ -570,6 +695,9 @@ fn run_independent_autopilot_lane_supervisor(
                     "autopilot_loop_result",
                     serde_json::to_value(&result)?,
                 )?;
+                if work_unit_limit.is_some_and(|limit| completed_work_units.total >= limit) {
+                    cancellation.store(true, Ordering::SeqCst);
+                }
             }
             AutopilotLaneWorkerMessage::Stopped {
                 lane,
@@ -606,13 +734,23 @@ fn run_independent_autopilot_lane_supervisor(
     }
 
     let reason = if cancellation.load(Ordering::SeqCst) {
-        "cancelled"
+        if work_unit_limit.is_some_and(|limit| completed_work_units.total >= limit) {
+            "work_unit_limit"
+        } else {
+            "cancelled"
+        }
     } else if stopped_count == 0 {
         "worker_channel_closed"
     } else {
         "max_iterations"
     };
-    print_autopilot_stopped(options.event_json, reason, final_iterations)?;
+    print_autopilot_stopped(
+        options.event_json,
+        reason,
+        final_iterations,
+        completed_work_units,
+        work_unit_limit,
+    )?;
     Ok(AutopilotLaneSupervisorResult {
         had_lane_error,
         stopped_reported: true,
@@ -735,8 +873,15 @@ fn autopilot_lane_error_backoff_ms(poll_interval_ms: u64, attempt: u32) -> u64 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(super) struct AutopilotLoopIterationResult {
     pub(super) schema_version: u8,
+    /// Compatibility alias for older consumers. New consumers should read
+    /// `supervisor_cycle` for lifecycle and `completed_work_units` for progress.
     pub(super) iteration: usize,
+    pub(super) supervisor_cycle: usize,
     pub(super) mode: String,
+    pub(super) work_unit_limit: Option<usize>,
+    pub(super) completed_work_units: usize,
+    pub(super) work_units_completed_this_cycle: usize,
+    pub(super) lane_work_units: BTreeMap<String, usize>,
     pub(super) execution_order: Vec<String>,
     pub(super) settings: AutopilotLoopTickSettings,
     pub(super) lanes: Vec<AutopilotLoopLaneResult>,
@@ -748,11 +893,64 @@ pub(super) struct AutopilotLoopLaneResult {
     pub(super) lane: String,
     pub(super) status: String,
     pub(super) action: String,
+    pub(super) work_unit_completed: bool,
+    pub(super) completed_work_units: usize,
+    pub(super) issue_ref: Option<String>,
+    pub(super) latest_result: AutopilotLaneLatestResult,
     pub(super) selected_issue: Option<AutopilotIssueSummary>,
     pub(super) target_state: Option<String>,
     pub(super) max_concurrent: usize,
     pub(super) recover: bool,
     pub(super) evidence: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(super) struct AutopilotLaneLatestResult {
+    pub(super) status: String,
+    pub(super) action: String,
+    pub(super) issue_ref: Option<String>,
+    pub(super) target_state: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
+pub(crate) struct AutopilotWorkUnitCounters {
+    pub(crate) total: usize,
+    pub(crate) lanes: BTreeMap<String, usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AutopilotLoopProgress {
+    pub(crate) work_unit_limit: Option<usize>,
+    pub(crate) completed_work_units: AutopilotWorkUnitCounters,
+}
+
+impl AutopilotLoopProgress {
+    fn new(
+        work_unit_limit: Option<usize>,
+        completed_work_units: AutopilotWorkUnitCounters,
+    ) -> Self {
+        Self {
+            work_unit_limit,
+            completed_work_units,
+        }
+    }
+}
+
+impl AutopilotWorkUnitCounters {
+    fn record_lane_result(&mut self, lane: &mut AutopilotLoopLaneResult) {
+        lane.work_unit_completed = lane.status == "completed";
+        if lane.work_unit_completed {
+            self.total = self.total.saturating_add(1);
+            *self.lanes.entry(lane.lane.clone()).or_default() += 1;
+        }
+        lane.completed_work_units = self.lanes.get(&lane.lane).copied().unwrap_or_default();
+        lane.latest_result = AutopilotLaneLatestResult {
+            status: lane.status.clone(),
+            action: lane.action.clone(),
+            issue_ref: lane.issue_ref.clone(),
+            target_state: lane.target_state.clone(),
+        };
+    }
 }
 
 fn autopilot_main_tick(
@@ -995,6 +1193,19 @@ fn autopilot_lane_result_from_skip(
         lane: lane.into(),
         status: "skipped".into(),
         action: "lane_tick_skipped".into(),
+        work_unit_completed: false,
+        completed_work_units: 0,
+        issue_ref: lane_plan
+            .and_then(|plan| plan.selected_issue.as_ref())
+            .map(|issue| issue.identifier.clone()),
+        latest_result: AutopilotLaneLatestResult {
+            status: "skipped".into(),
+            action: "lane_tick_skipped".into(),
+            issue_ref: lane_plan
+                .and_then(|plan| plan.selected_issue.as_ref())
+                .map(|issue| issue.identifier.clone()),
+            target_state: lane_plan.and_then(|plan| plan.target_state.clone()),
+        },
         selected_issue: lane_plan.and_then(|plan| plan.selected_issue.clone()),
         target_state: lane_plan.and_then(|plan| plan.target_state.clone()),
         max_concurrent,
@@ -1018,20 +1229,33 @@ fn autopilot_lane_result_from_execution(
         evidence.push(format!("planned_action={}", plan.proposed_action));
         evidence.push(format!("planned_reason={}", plan.reason));
     }
-    let (status, action) = match result {
+    let (status, action): (String, String) = match result {
         Ok(()) => ("completed".into(), "lane_tick_completed".into()),
         Err(error) => {
             evidence.push(format!("error={}", compact_evidence(&error.to_string())));
             ("error".into(), "tick_failed".into())
         }
     };
+    let issue_ref = lane_plan
+        .and_then(|plan| plan.selected_issue.as_ref())
+        .map(|issue| issue.identifier.clone());
+    let target_state = lane_plan.and_then(|plan| plan.target_state.clone());
 
     AutopilotLoopLaneResult {
         lane: lane.into(),
-        status,
-        action,
+        status: status.clone(),
+        action: action.clone(),
+        work_unit_completed: false,
+        completed_work_units: 0,
+        issue_ref: issue_ref.clone(),
+        latest_result: AutopilotLaneLatestResult {
+            status,
+            action,
+            issue_ref,
+            target_state: target_state.clone(),
+        },
         selected_issue: lane_plan.and_then(|plan| plan.selected_issue.clone()),
-        target_state: lane_plan.and_then(|plan| plan.target_state.clone()),
+        target_state,
         max_concurrent,
         recover,
         evidence,
@@ -1040,12 +1264,18 @@ fn autopilot_lane_result_from_execution(
 
 fn render_autopilot_loop_iteration_result(result: &AutopilotLoopIterationResult) -> String {
     let mut lines = vec![format!(
-        "autopilot_loop_result iteration={} mode={} order={} recover={} main_max_concurrent={} review_max_concurrent={} merge_max_concurrent={}",
-        result.iteration,
-        result.mode,
-        result.execution_order.join(","),
-        result.settings.recover,
-        result.settings.main_max_concurrent,
+            "autopilot_loop_result supervisor_cycle={} iteration={} mode={} work_units={} work_unit_limit={} order={} recover={} main_max_concurrent={} review_max_concurrent={} merge_max_concurrent={}",
+            result.supervisor_cycle,
+            result.iteration,
+            result.mode,
+            result.completed_work_units,
+            result
+                .work_unit_limit
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "none".into()),
+            result.execution_order.join(","),
+            result.settings.recover,
+            result.settings.main_max_concurrent,
         result.settings.review_max_concurrent,
         result.settings.merge_max_concurrent
     )];
@@ -1056,12 +1286,14 @@ fn render_autopilot_loop_iteration_result(result: &AutopilotLoopIterationResult)
             .map(|issue| issue.identifier.as_str())
             .unwrap_or("none");
         lines.push(format!(
-            "autopilot_loop_lane lane={} status={} action={} selected={} target={} max_concurrent={} recover={}",
+            "autopilot_loop_lane lane={} status={} action={} selected={} target={} work_unit_completed={} completed_work_units={} max_concurrent={} recover={}",
             lane.lane,
             lane.status,
             lane.action,
             selected,
             lane.target_state.as_deref().unwrap_or("none"),
+            lane.work_unit_completed,
+            lane.completed_work_units,
             lane.max_concurrent,
             lane.recover
         ));
@@ -1092,11 +1324,16 @@ pub(crate) struct AutopilotLoopSettings {
 pub(crate) struct AutopilotLoopStatusSnapshot {
     pub(crate) schema_version: u8,
     pub(crate) workflow_path: String,
+    /// Compatibility alias for older consumers.
     pub(crate) iteration: usize,
+    pub(crate) supervisor_cycle: usize,
     pub(crate) mode: String,
     pub(crate) phase: String,
     pub(crate) message: String,
     pub(crate) cancellation_requested: bool,
+    pub(crate) work_unit_limit: Option<usize>,
+    pub(crate) completed_work_units: usize,
+    pub(crate) lane_work_units: BTreeMap<String, usize>,
     pub(crate) polling: PollingSnapshot,
     pub(crate) settings: AutopilotLoopSettings,
     pub(crate) lane_activity: Vec<AutopilotLaneActivity>,
@@ -1173,6 +1410,7 @@ impl AutopilotLoopSettings {
 pub(crate) fn autopilot_loop_checking_status(
     options: &AutopilotLoopOptions,
     iteration: usize,
+    progress: AutopilotLoopProgress,
     recent_transient_failures: &[AutopilotTransientFailure],
 ) -> AutopilotLoopStatusSnapshot {
     let settings = AutopilotLoopSettings::fallback(options);
@@ -1180,10 +1418,14 @@ pub(crate) fn autopilot_loop_checking_status(
         schema_version: 1,
         workflow_path: options.workflow_path.display().to_string(),
         iteration,
+        supervisor_cycle: iteration,
         mode: autopilot_loop_mode(settings).into(),
         phase: "checking".into(),
         message: "checking Project, lane state, runtime state, and readiness".into(),
         cancellation_requested: false,
+        work_unit_limit: progress.work_unit_limit,
+        completed_work_units: progress.completed_work_units.total,
+        lane_work_units: progress.completed_work_units.lanes,
         polling: PollingSnapshot {
             checking: true,
             next_poll_in_ms: None,
@@ -1201,10 +1443,31 @@ pub(crate) fn autopilot_loop_checking_status(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn autopilot_loop_status_from_plan(
     plan: &AutopilotPlanSnapshot,
     settings: AutopilotLoopSettings,
     iteration: usize,
+    next_poll_in_ms: Option<u64>,
+    recent_transient_failures: &[AutopilotTransientFailure],
+    cancellation_requested: bool,
+) -> AutopilotLoopStatusSnapshot {
+    autopilot_loop_status_from_plan_with_work_units(
+        plan,
+        settings,
+        iteration,
+        AutopilotLoopProgress::new(None, AutopilotWorkUnitCounters::default()),
+        next_poll_in_ms,
+        recent_transient_failures,
+        cancellation_requested,
+    )
+}
+
+pub(crate) fn autopilot_loop_status_from_plan_with_work_units(
+    plan: &AutopilotPlanSnapshot,
+    settings: AutopilotLoopSettings,
+    iteration: usize,
+    progress: AutopilotLoopProgress,
     next_poll_in_ms: Option<u64>,
     recent_transient_failures: &[AutopilotTransientFailure],
     cancellation_requested: bool,
@@ -1281,10 +1544,14 @@ pub(crate) fn autopilot_loop_status_from_plan(
         schema_version: 1,
         workflow_path: plan.workflow_path.clone(),
         iteration,
+        supervisor_cycle: iteration,
         mode: autopilot_loop_mode(settings).into(),
         phase,
         message,
         cancellation_requested,
+        work_unit_limit: progress.work_unit_limit,
+        completed_work_units: progress.completed_work_units.total,
+        lane_work_units: progress.completed_work_units.lanes,
         polling: PollingSnapshot {
             checking: false,
             next_poll_in_ms,
@@ -1306,6 +1573,7 @@ fn autopilot_loop_blocked_status(
     options: &AutopilotLoopOptions,
     iteration: usize,
     reason: String,
+    progress: AutopilotLoopProgress,
     recent_transient_failures: &[AutopilotTransientFailure],
 ) -> AutopilotLoopStatusSnapshot {
     let settings = AutopilotLoopSettings::fallback(options);
@@ -1313,11 +1581,15 @@ fn autopilot_loop_blocked_status(
         schema_version: 1,
         workflow_path: options.workflow_path.display().to_string(),
         iteration,
+        supervisor_cycle: iteration,
         mode: autopilot_loop_mode(settings).into(),
         phase: "blocked".into(),
         message: "blocked before mutation; operator intervention or config repair is required"
             .into(),
         cancellation_requested: false,
+        work_unit_limit: progress.work_unit_limit,
+        completed_work_units: progress.completed_work_units.total,
+        lane_work_units: progress.completed_work_units.lanes,
         polling: PollingSnapshot {
             checking: false,
             next_poll_in_ms: Some(settings.poll_interval_ms),
@@ -1343,6 +1615,7 @@ pub(crate) fn autopilot_loop_failure_status(
     options: &AutopilotLoopOptions,
     settings: AutopilotLoopSettings,
     iteration: usize,
+    progress: AutopilotLoopProgress,
     recent_failures: &[AutopilotTransientFailure],
     phase: &str,
     next_poll_in_ms: Option<u64>,
@@ -1360,6 +1633,7 @@ pub(crate) fn autopilot_loop_failure_status(
         schema_version: 1,
         workflow_path: options.workflow_path.display().to_string(),
         iteration,
+        supervisor_cycle: iteration,
         mode: autopilot_loop_mode(settings).into(),
         phase: phase.into(),
         message: if phase == "blocked" {
@@ -1373,6 +1647,9 @@ pub(crate) fn autopilot_loop_failure_status(
             next_poll_in_ms,
             poll_interval_ms: settings.poll_interval_ms,
         },
+        work_unit_limit: progress.work_unit_limit,
+        completed_work_units: progress.completed_work_units.total,
+        lane_work_units: progress.completed_work_units.lanes,
         settings,
         lane_activity: Vec::new(),
         counts: AutopilotLoopCounts {
@@ -1392,6 +1669,7 @@ pub(crate) fn autopilot_loop_failure_status(
 pub(crate) fn autopilot_loop_cancelled_status(
     options: &AutopilotLoopOptions,
     iteration: usize,
+    progress: AutopilotLoopProgress,
     message: String,
 ) -> AutopilotLoopStatusSnapshot {
     let settings = AutopilotLoopSettings::fallback(options);
@@ -1399,10 +1677,14 @@ pub(crate) fn autopilot_loop_cancelled_status(
         schema_version: 1,
         workflow_path: options.workflow_path.display().to_string(),
         iteration,
+        supervisor_cycle: iteration,
         mode: autopilot_loop_mode(settings).into(),
         phase: "cancelled".into(),
         message,
         cancellation_requested: true,
+        work_unit_limit: progress.work_unit_limit,
+        completed_work_units: progress.completed_work_units.total,
+        lane_work_units: progress.completed_work_units.lanes,
         polling: PollingSnapshot {
             checking: false,
             next_poll_in_ms: None,
@@ -1556,18 +1838,31 @@ fn print_autopilot_event(
 fn print_autopilot_stopped(
     event_json: bool,
     reason: &str,
-    iterations: usize,
+    supervisor_cycles: usize,
+    completed_work_units: &AutopilotWorkUnitCounters,
+    work_unit_limit: Option<usize>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     print_autopilot_event(
         event_json,
         "autopilot_loop_stopped",
         json!({
             "reason": reason,
-            "iterations": iterations,
+            "iterations": supervisor_cycles,
+            "supervisor_cycles": supervisor_cycles,
+            "work_units": completed_work_units.total,
+            "completed_work_units": completed_work_units.total,
+            "work_unit_limit": work_unit_limit,
+            "lane_work_units": completed_work_units.lanes.clone(),
         }),
     )?;
     if !event_json {
-        println!("autopilot_loop=stopped reason={reason} iterations={iterations}");
+        println!(
+            "autopilot_loop=stopped reason={reason} supervisor_cycles={supervisor_cycles} iterations={supervisor_cycles} work_units={} work_unit_limit={}",
+            completed_work_units.total,
+            work_unit_limit
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "none".into())
+        );
     }
     Ok(())
 }
@@ -1655,6 +1950,52 @@ mod tests {
         assert_eq!(autopilot_lane_error_backoff_ms(250, 1), 250);
         assert_eq!(autopilot_lane_error_backoff_ms(250, 3), 1_000);
         assert_eq!(autopilot_lane_error_backoff_ms(30_000, 9), 60_000);
+    }
+
+    #[test]
+    fn lane_work_unit_counters_only_count_completed_lane_results() {
+        let ready = AutopilotLanePlan {
+            lane: "review".into(),
+            status: "ready".into(),
+            selected_issue: Some(AutopilotIssueSummary {
+                identifier: "#412".into(),
+                title: "Report autopilot lane work units in run events".into(),
+                state: "Agent Review".into(),
+                assignees: Vec::new(),
+                url: None,
+                priority: None,
+                pull_request: None,
+            }),
+            proposed_action: "start_independent_review".into(),
+            target_state: Some("Merging".into()),
+            reason: "agent_review_issue".into(),
+            evidence: vec!["source=test".into()],
+        };
+        let idle = AutopilotLanePlan {
+            lane: "merge".into(),
+            status: "idle".into(),
+            selected_issue: None,
+            proposed_action: "idle".into(),
+            target_state: None,
+            reason: "no_merging_issue".into(),
+            evidence: vec!["source=test".into()],
+        };
+        let mut counters = AutopilotWorkUnitCounters::default();
+        let mut completed =
+            autopilot_lane_result_from_execution("review", Some(&ready), 2, false, Ok(()));
+        let mut skipped = autopilot_lane_result_from_skip("merge", Some(&idle), 1, true);
+
+        counters.record_lane_result(&mut completed);
+        counters.record_lane_result(&mut skipped);
+
+        assert_eq!(counters.total, 1);
+        assert_eq!(counters.lanes.get("review").copied(), Some(1));
+        assert_eq!(counters.lanes.get("merge"), None);
+        assert!(completed.work_unit_completed);
+        assert_eq!(completed.completed_work_units, 1);
+        assert_eq!(completed.issue_ref.as_deref(), Some("#412"));
+        assert!(!skipped.work_unit_completed);
+        assert_eq!(skipped.completed_work_units, 0);
     }
 }
 

@@ -149,6 +149,12 @@ export async function getReadSurface(name: string, force = false, allowProjectFa
   return invoke<ReadSurface>('get_read_surface', { name, force, allowProjectFallback });
 }
 
+export async function getCodexTranscript(issueRef: string, sessionId: string | null = null): Promise<Record<string, unknown> | null> {
+  if (!isTauriRuntime()) return null;
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<Record<string, unknown>>('get_codex_transcript', { issueRef, sessionId });
+}
+
 export async function startAutoloop(options: StartAutoloopOptions = {}): Promise<LoopStateSnapshot> {
   if (!isTauriRuntime()) {
     throw new Error('Tauri runtime is unavailable; open Shea Symphony App in the desktop shell.');

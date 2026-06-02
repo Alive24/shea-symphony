@@ -17,7 +17,8 @@ fn main() {
             read_surfaces::get_runtime_snapshot,
             github::get_github_user,
             read_surfaces::get_operator_overview,
-            read_surfaces::get_read_surface
+            read_surfaces::get_read_surface,
+            read_surfaces::get_codex_transcript
         ])
         .run(tauri::generate_context!())
         .expect("error while running Shea Symphony App");

@@ -248,9 +248,10 @@ Shea Symphony uses two issue-comment evidence surfaces:
   entered `Rework`; they do not replace the Main Agent Workpad for
   implementation evidence.
 
-PR linkage repair should be quiet when normal GitHub/Project readback already
-shows the PR. A visible linkage repair comment is a fallback for cases where
-GitHub Project v2 cannot otherwise expose the PR, not routine timeline noise.
+PR linkage repair should be quiet when GitHub-native linked PR readback already
+shows the PR. A visible linkage repair comment or Workpad PR URL is fallback
+diagnostic evidence only; it does not satisfy Main handoff linkage success when
+GitHub itself still has no first-class linked PR.
 
 Review, Merge, Human Review, and Doctor flows must not overwrite or restructure
 the Main Agent Workpad. Rework-trigger diagnostics should reference Main

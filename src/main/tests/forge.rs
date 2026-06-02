@@ -230,11 +230,31 @@ fn link_pr_helper_skips_repair_when_project_readback_already_has_pr() {
             url: Some("https://github.com/Alive24/shea-symphony/pull/128".into()),
             state: Some("OPEN".into()),
             is_draft: Some(false),
+            source: shea_symphony::model::LinkedPullRequestSource::GithubNative,
             ..Default::default()
         });
 
     assert!(!link_pr_with_adapter(&adapter, "#127", "PR_128", true).unwrap());
     assert!(adapter.operations().is_empty());
+}
+
+#[test]
+fn link_pr_helper_does_not_treat_fallback_pr_readback_as_native() {
+    let adapter = RecordingAdapter::default();
+    adapter
+        .linked_pull_requests
+        .borrow_mut()
+        .push(shea_symphony::model::LinkedPullRequest {
+            number: Some(128),
+            url: Some("https://github.com/Alive24/shea-symphony/pull/128".into()),
+            state: Some("OPEN".into()),
+            is_draft: Some(false),
+            source: shea_symphony::model::LinkedPullRequestSource::FallbackDiagnostic,
+            ..Default::default()
+        });
+
+    assert!(link_pr_with_adapter(&adapter, "#127", "PR_128", true).unwrap());
+    assert_eq!(adapter.operations(), vec!["link_pr:#127:PR_128"]);
 }
 
 #[test]
@@ -493,6 +513,56 @@ fn forge_create_write_initializes_backlog_without_status_transition() {
             .normalized_state(),
         "backlog"
     );
+}
+
+#[test]
+fn forge_relationship_parent_records_integration_branch_evidence() {
+    let config = test_config();
+    let adapter = RecordingAdapter::default();
+    let mut parent = tracker_issue_with_ref(
+        "#405",
+        "Make autopilot lanes independently throughput-oriented",
+        "Todo",
+    );
+    parent.description = Some("## Issue Setup\n\n- UAT Required: Yes".into());
+    adapter
+        .issues
+        .borrow_mut()
+        .insert(parent.identifier.clone(), parent);
+    let child = tracker_issue_with_ref("#410", "Show independent lane throughput in Tauri", "Todo");
+    adapter
+        .issues
+        .borrow_mut()
+        .insert(child.identifier.clone(), child);
+
+    let readbacks = apply_forge_relationship_plan(
+        &config,
+        &adapter,
+        "#410",
+        &ForgeRelationshipPlan {
+            blocked_by: Vec::new(),
+            parent: Some("#405".into()),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        adapter.operations(),
+        vec![
+            "add_subissue:#405:#410".to_string(),
+            "workpad:#405".to_string()
+        ]
+    );
+    assert!(readbacks.iter().any(|readback| readback.contains(
+        "parent integration branch `integration/issue-405-make-autopilot-lanes-independently-throughput-oriented` recorded"
+    )));
+    let parent = adapter.get_issue("#405").unwrap().unwrap();
+    let description = parent.description.unwrap();
+    assert!(description.contains("### Parent Topology"));
+    assert!(description.contains("- First observed subissue: #410"));
+    assert!(description.contains(
+        "- Parent integration branch: `integration/issue-405-make-autopilot-lanes-independently-throughput-oriented`"
+    ));
 }
 
 fn test_promotion_note() -> PromotionNoteInput {

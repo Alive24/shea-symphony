@@ -19,16 +19,18 @@ use super::commands::doctor::{
     DoctorRepairIssueOptions,
 };
 use super::commands::forge::{
-    find_duplicate_issue_title, forge_create_requires_assignee, forge_missing_categories,
-    forge_promote, forge_rework_with_adapter, forge_validation_report, issue_contract_assignees,
-    render_forge_create_success, render_promotion_note, validate_forge_create_contract,
-    validate_forge_create_report_with_assignees, verify_forge_created_issue_status,
-    write_forge_created_issue, ForgeCreateResult, ForgeCreateWriteInput, ForgePromoteInput,
-    ForgeRelationshipPlan, ForgeReworkInput, PromotionNoteInput,
+    apply_forge_relationship_plan, find_duplicate_issue_title, forge_create_requires_assignee,
+    forge_missing_categories, forge_promote, forge_rework_with_adapter, forge_validation_report,
+    issue_contract_assignees, render_forge_create_success, render_promotion_note,
+    validate_forge_create_contract, validate_forge_create_report_with_assignees,
+    verify_forge_created_issue_status, write_forge_created_issue, ForgeCreateResult,
+    ForgeCreateWriteInput, ForgePromoteInput, ForgeRelationshipPlan, ForgeReworkInput,
+    PromotionNoteInput,
 };
 use super::commands::gate::live_missing_assignee_gate_blocker;
 use super::commands::project::{
-    filter_issues_by_state, link_pr_with_adapter, render_state_summary, ProjectStateOptions,
+    filter_issues_by_state, link_pr_with_adapter, render_project_state_json, render_state_summary,
+    ProjectStateOptions,
 };
 use super::commands::session::{
     agent_session_backend_spec, lane_claim_for_manual_worker, matching_lane_claim_for_session,
@@ -683,6 +685,25 @@ fn render_state_summary_counts_states_in_stable_order() {
 #[test]
 fn render_state_summary_handles_empty_issue_list() {
     assert_eq!(render_state_summary(&[]), "state_summary=(none)");
+}
+
+#[test]
+fn renders_project_state_json_queue_projection() {
+    let issues = vec![
+        tracker_issue_with_ref("#1", "Ready", "Todo"),
+        tracker_issue_with_ref("#2", "Review", "Agent Review"),
+        tracker_issue_with_ref("#3", "Approval", "Human Review"),
+    ];
+
+    let rendered = render_project_state_json(&issues, &["gap".into()]).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+
+    assert_eq!(value["trusted"], true);
+    assert_eq!(value["totalOpen"], 3);
+    assert_eq!(value["laneCounts"]["main"], 1);
+    assert_eq!(value["laneCounts"]["review"], 1);
+    assert_eq!(value["operatorIssues"][0]["identifier"], "#3");
+    assert_eq!(value["integrationGaps"][0], "gap");
 }
 
 #[test]

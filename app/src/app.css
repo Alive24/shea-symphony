@@ -1641,6 +1641,62 @@ a {
   font-size: var(--text-xs);
 }
 
+.run-log-human {
+  display: grid;
+  gap: var(--space-2);
+  padding: 0 var(--space-2) var(--space-2) 26px;
+}
+
+.run-log-human p {
+  margin: 0;
+  color: var(--fg);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  line-height: var(--leading-normal);
+}
+
+.run-log-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.run-log-chips span {
+  max-width: 100%;
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-pill);
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 11px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.run-log-tone {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-pill);
+  background: var(--muted);
+}
+
+.run-log-tone.info {
+  background: var(--accent);
+}
+
+.run-log-tone.success {
+  background: var(--success);
+}
+
+.run-log-tone.warn {
+  background: var(--warning);
+}
+
+.run-log-tone.error {
+  background: var(--danger);
+}
+
 .cli-json-command {
   display: block;
   margin-top: var(--space-2);
@@ -2144,6 +2200,7 @@ a {
   display: grid;
   place-items: center;
   min-height: 28px;
+  gap: 2px;
 }
 
 .lane-board-grid {
@@ -2184,6 +2241,9 @@ a {
 .lane-board-column-head small {
   color: var(--muted);
   font-size: var(--text-xs);
+  font-weight: 700;
+  line-height: var(--leading-tight);
+  text-align: center;
 }
 
 .lane-board-issue-list {

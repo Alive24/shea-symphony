@@ -15,6 +15,7 @@
     getLoopState,
     isTauriRuntime,
     laneWorkerFromAutoloop,
+    laneWorkersFromAutoloopLines,
     mergeLaneSnapshot,
     subscribeAutoloopEvents,
     type LaneSnapshot,
@@ -66,7 +67,8 @@
     const label = titleCaseLane(laneKey);
     const workers = view.laneWorkers?.[laneKey] ?? [];
     const liveWorker = laneWorkerFromAutoloop(autoloopLanes[laneKey], laneKey, autoloopState);
-    const visibleWorkers = uniqueWorkers(liveWorker ? [liveWorker, ...workers] : workers);
+    const liveLogWorkers = laneWorkersFromAutoloopLines(autoloopState, laneKey);
+    const visibleWorkers = uniqueWorkers([...(liveWorker ? [liveWorker] : []), ...liveLogWorkers, ...workers]);
     const queued = queueIssues.filter((issue) => issue.lane === label);
     const workerIssues = visibleWorkers.map((worker, index) => {
       const normalizedWorkerIssue = normalizeIssueRef(worker.issue);
@@ -97,6 +99,7 @@
       issues: [...workerIssues, ...waitingIssues],
       pickedCount: visibleWorkers.length,
       queuedCount: waitingIssues.length,
+      maxConcurrent: autoloopLanes[laneKey]?.maxConcurrent ?? null,
       tone: visibleWorkers.length ? 'success' : waitingIssues.length ? 'warn' : 'neutral'
     };
   });
@@ -367,6 +370,13 @@
         <article class="lane-board-column {lane.tone}">
           <div class="lane-board-column-head">
             <strong>{lane.label}</strong>
+            <small>
+              picked {lane.pickedCount}
+              {#if lane.maxConcurrent != null}
+                / max {lane.maxConcurrent}
+              {/if}
+              · queued {lane.queuedCount}
+            </small>
           </div>
 
           <div class="lane-board-issue-list">

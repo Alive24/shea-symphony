@@ -339,6 +339,7 @@ fn live_run_loop_handoff_skips_link_comment_when_pr_already_visible() {
             url: Some("https://github.com/Alive24/shea-symphony/pull/45".into()),
             state: Some("OPEN".into()),
             is_draft: Some(false),
+            source: shea_symphony::model::LinkedPullRequestSource::GithubNative,
             ..Default::default()
         });
 
@@ -350,6 +351,41 @@ fn live_run_loop_handoff_skips_link_comment_when_pr_already_visible() {
 
     assert!(result.success);
     assert!(adapter.operations().is_empty());
+}
+
+#[test]
+fn live_run_loop_handoff_rejects_fallback_only_pr_evidence() {
+    let config = test_config();
+    let issue = tracker_issue("In Progress");
+    let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+    let mut result = successful_live_handoff_result(&handoff);
+    let adapter = RecordingAdapter {
+        confirm_link_pr: false,
+        ..Default::default()
+    };
+    adapter
+        .linked_pull_requests
+        .borrow_mut()
+        .push(shea_symphony::model::LinkedPullRequest {
+            number: Some(45),
+            url: Some("https://github.com/Alive24/shea-symphony/pull/45".into()),
+            state: Some("OPEN".into()),
+            is_draft: Some(false),
+            source: shea_symphony::model::LinkedPullRequestSource::FallbackDiagnostic,
+            ..Default::default()
+        });
+
+    assert!(!apply_live_handoff_pr_link(
+        &adapter,
+        &issue.identifier,
+        &mut result
+    ));
+
+    assert!(!result.success);
+    assert!(result
+        .message
+        .contains("GitHub-native linked PR was not visible"));
+    assert!(result.message.contains("fallback_diagnostic_visible=true"));
 }
 
 #[test]
@@ -426,7 +462,9 @@ fn live_run_loop_handoff_requires_verified_project_pr_linkage() {
     ));
 
     assert!(!result.success);
-    assert!(result.message.contains("not Project-visible"));
+    assert!(result
+        .message
+        .contains("GitHub-native linked PR was not visible"));
     assert_eq!(
         result
             .live_handoff

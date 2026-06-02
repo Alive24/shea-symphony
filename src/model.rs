@@ -24,6 +24,25 @@ pub struct LinkedPullRequest {
     pub base_ref_name: Option<String>,
     #[serde(default)]
     pub head_ref_name: Option<String>,
+    #[serde(default)]
+    pub source: LinkedPullRequestSource,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkedPullRequestSource {
+    #[default]
+    Unknown,
+    GithubNative,
+    FallbackDiagnostic,
+}
+
+impl LinkedPullRequest {
+    pub fn is_github_native_linkage(&self) -> bool {
+        self.source == LinkedPullRequestSource::GithubNative
+            || (self.source == LinkedPullRequestSource::Unknown
+                && self.id.as_deref().is_some_and(|id| !id.is_empty()))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

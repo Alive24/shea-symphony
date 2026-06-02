@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::config::RuntimeConfig;
-use crate::model::{normalize_state, BlockerRef, LinkedPullRequest, TrackerIssue};
+use crate::model::{
+    normalize_state, BlockerRef, LinkedPullRequest, LinkedPullRequestSource, TrackerIssue,
+};
 
 use super::super::TrackerError;
 use super::topology::insert_native_subissue_fields;
@@ -376,6 +378,7 @@ pub(in crate::tracker) fn pull_requests_from_issue(
                 .get("headRefName")
                 .and_then(serde_json::Value::as_str)
                 .map(ToOwned::to_owned),
+            source: LinkedPullRequestSource::GithubNative,
             ..Default::default()
         })
         .collect()
@@ -466,6 +469,7 @@ pub(in crate::tracker) fn linked_pull_request_from_url(url: &str) -> LinkedPullR
         review_decision: None,
         base_ref_name: None,
         head_ref_name: None,
+        source: LinkedPullRequestSource::FallbackDiagnostic,
     }
 }
 
@@ -502,6 +506,7 @@ fn linked_pull_request_comment_refs(
                 review_decision: None,
                 base_ref_name: None,
                 head_ref_name: None,
+                source: LinkedPullRequestSource::FallbackDiagnostic,
             })
         })
         .collect()

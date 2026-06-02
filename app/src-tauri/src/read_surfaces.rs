@@ -57,18 +57,6 @@ pub async fn get_read_surface(name: String, _force: Option<bool>) -> Result<Valu
 }
 
 fn build_read_surface(name: &str) -> Result<Value, String> {
-    if name == "githubQueue" {
-        return Ok(surface_payload(
-            "githubQueue",
-            pending_result(
-                &["autopilot", "plan", DEFAULT_WORKFLOW_PATH, "--json"],
-                "Project queue is represented through CLI autopilot parked queues in Tauri mode.",
-            ),
-            Value::Null,
-            String::new(),
-        ));
-    }
-
     let args = read_surface_args(name).ok_or_else(|| format!("unknown read surface: {name}"))?;
     let result = run_shea_read(&args);
     let parsed = if name == "local" {
@@ -90,10 +78,7 @@ fn build_read_surface(name: &str) -> Result<Value, String> {
 
 fn build_operator_overview(scope: &str) -> Result<Value, String> {
     let generated_at = timestamp_iso_like();
-    let github_queue_command = pending_result(
-        &["autopilot", "plan", DEFAULT_WORKFLOW_PATH, "--json"],
-        "Project queue is represented through CLI autopilot parked queues in Tauri mode.",
-    );
+    let github_queue_args = read_surface_args("githubQueue").unwrap_or_default();
 
     if scope == "fast" {
         let commands = json!({
@@ -103,7 +88,7 @@ fn build_operator_overview(scope: &str) -> Result<Value, String> {
             "skills": pending_result(&["skills", "status", DEFAULT_WORKFLOW_PATH, "--json"], "Deferred to background read."),
             "sessions": pending_result(&["session", "list", DEFAULT_WORKFLOW_PATH], "Deferred to background read."),
             "local": pending_result(&["status", "show", DEFAULT_WORKFLOW_PATH, "--json"], "Deferred to background read."),
-            "githubQueue": github_queue_command,
+            "githubQueue": pending_result(&["project", "state", DEFAULT_WORKFLOW_PATH, "--json"], "Deferred to background Project queue read."),
         });
         return Ok(json!({
             "generatedAt": generated_at,
@@ -127,6 +112,7 @@ fn build_operator_overview(scope: &str) -> Result<Value, String> {
     let review = run_shea_read(&read_surface_args("review").unwrap_or_default());
     let skills = run_shea_read(&read_surface_args("skills").unwrap_or_default());
     let sessions = run_shea_read(&read_surface_args("sessions").unwrap_or_default());
+    let github_queue = run_shea_read(&github_queue_args);
     let healthy = [
         autopilot.summary.ok,
         doctor.summary.ok,
@@ -146,7 +132,7 @@ fn build_operator_overview(scope: &str) -> Result<Value, String> {
             "skills": command_summary_value(&skills.summary),
             "sessions": command_summary_value(&sessions.summary),
             "local": command_summary_value(&runtime.summary),
-            "githubQueue": github_queue_command,
+            "githubQueue": command_summary_value(&github_queue.summary),
         },
         "autopilot": parse_json_output(&autopilot.stdout),
         "doctor": parse_json_output(&doctor.stdout),
@@ -154,7 +140,7 @@ fn build_operator_overview(scope: &str) -> Result<Value, String> {
         "skills": parse_json_output(&skills.stdout),
         "sessionsText": sessions.stdout.trim(),
         "localStatus": runtime_status_summary(&runtime),
-        "githubQueue": Value::Null,
+        "githubQueue": parse_json_output(&github_queue.stdout),
         "healthy": healthy,
     }))
 }
@@ -192,6 +178,12 @@ fn read_surface_args(name: &str) -> Option<Vec<String>> {
         "local" => Some(vec![
             "status".into(),
             "show".into(),
+            DEFAULT_WORKFLOW_PATH.into(),
+            "--json".into(),
+        ]),
+        "githubQueue" => Some(vec![
+            "project".into(),
+            "state".into(),
             DEFAULT_WORKFLOW_PATH.into(),
             "--json".into(),
         ]),

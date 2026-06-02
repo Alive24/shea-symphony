@@ -691,13 +691,7 @@ fn autopilot_main_recovery_blocker_is_lane_local(plan: &AutopilotPlanSnapshot) -
             .readiness
             .blockers
             .iter()
-            .all(|blocker| autopilot_active_runtime_blocker(blocker))
-        && !plan.runtime.active_issues.is_empty()
-        && plan
-            .runtime
-            .active_issues
-            .iter()
-            .all(|issue| issue.lane.eq_ignore_ascii_case("main"))
+            .all(|blocker| autopilot_main_runtime_recovery_blocker(plan, blocker))
         && plan
             .lanes
             .iter()
@@ -706,6 +700,27 @@ fn autopilot_main_recovery_blocker_is_lane_local(plan: &AutopilotPlanSnapshot) -
 
 fn autopilot_active_runtime_blocker(blocker: &str) -> bool {
     blocker.starts_with("active_runtime_states=")
+}
+
+fn autopilot_session_attention_blocker(blocker: &str) -> bool {
+    blocker.starts_with("session_attention=")
+}
+
+fn autopilot_main_runtime_recovery_blocker(plan: &AutopilotPlanSnapshot, blocker: &str) -> bool {
+    if autopilot_active_runtime_blocker(blocker) {
+        return autopilot_runtime_active_issues_are_main_local(plan);
+    }
+    autopilot_session_attention_blocker(blocker)
+        && autopilot_runtime_active_issues_are_main_local(plan)
+}
+
+fn autopilot_runtime_active_issues_are_main_local(plan: &AutopilotPlanSnapshot) -> bool {
+    !plan.runtime.active_issues.is_empty()
+        && plan
+            .runtime
+            .active_issues
+            .iter()
+            .all(|issue| issue.lane.eq_ignore_ascii_case("main"))
 }
 
 fn autopilot_main_parent_topology_can_tick(plan: &AutopilotPlanSnapshot) -> bool {
@@ -719,7 +734,7 @@ fn autopilot_readiness_blocker_is_main_recoverable(
     plan: &AutopilotPlanSnapshot,
     blocker: &str,
 ) -> bool {
-    autopilot_active_runtime_blocker(blocker)
+    autopilot_main_runtime_recovery_blocker(plan, blocker)
         || (blocker == "doctor_blockers=1" && autopilot_main_parent_topology_can_tick(plan))
 }
 

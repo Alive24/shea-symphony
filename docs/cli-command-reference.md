@@ -64,12 +64,16 @@ checkout safety are blockers for write-mode autopilot; historical Doctor
 warnings remain visible evidence without automatically blocking the plan.
 
 `autopilot loop` is a foreground command, not a daemon, background service, or
-app-server. It currently requires `--max-iterations N` or `--once`; use a larger
-explicit iteration count for a longer supervised run. `--write` is still the
-mutation boundary. In write mode, recover-first handling is enabled by default
-for interrupted Main and Merge lane work; use `--no-recover` only for focused
-debugging. Per-lane capacity uses `--main-max-concurrent`,
-`--review-max-concurrent`, and `--merge-max-concurrent`.
+app-server. It currently requires `--max-iterations N` or `--once`; the flag
+name is retained for compatibility, but the primary progress limit is completed
+lane work units, not supervisor cycles. A single supervisor cycle may complete
+Main, Review, and Merge work independently, and JSON events report both
+`supervisor_cycle` and `completed_work_units` so consumers can distinguish
+lifecycle from throughput. `--write` is still the mutation boundary. In write
+mode, recover-first handling is enabled by default for interrupted Main and
+Merge lane work; use `--no-recover` only for focused debugging. Per-lane
+capacity uses `--main-max-concurrent`, `--review-max-concurrent`, and
+`--merge-max-concurrent`.
 
 Lane throughput is independent inside each foreground supervisor iteration. The
 supervisor checks Main, Review, and Merge in that order, refreshes the plan

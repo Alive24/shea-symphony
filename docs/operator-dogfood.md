@@ -79,7 +79,11 @@ The normal operator path is:
 
 `autopilot loop` is a CLI foreground supervisor. It is not a daemon, background
 service, or app-server, and it currently requires `--max-iterations N` or
-`--once`.
+`--once`. The compatibility flag still says iterations, but autopilot run
+events now treat completed lane work units as the primary throughput counter.
+Supervisor cycles remain visible as lifecycle evidence through
+`supervisor_cycle`; lane events and result events carry `completed_work_units`
+and per-lane counters so operators can see which lane actually completed work.
 
 For a more scannable operator view, keep the same dry-run boundary and opt into
 the terminal panel:
@@ -123,8 +127,10 @@ target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-itera
 
 If the normal preflight surfaces fail, the launcher exits before claiming
 tracker work.
-`autopilot loop --write` composes one bounded Main, Review, and Merge pass in
-that order. Each lane keeps its own status authority: Main stops at
+`autopilot loop --write` composes bounded Main, Review, and Merge lane work in
+that order, with the run limit counted against completed lane work units rather
+than a shared supervisor iteration. Each lane keeps its own status authority:
+Main stops at
 `Agent Review`, Review records independent evidence before Human Review routing,
 and Merge consumes only `Merging` work. The loop reports lane outcomes and
 parked operator queues, then returns control to the operator; it does not detach

@@ -132,9 +132,10 @@ fn autopilot_loop_help_documents_foreground_boundary() {
     let help = help_text(&["autopilot", "loop", "--help"]);
 
     assert!(help.contains("foreground CLI supervisor"));
+    assert!(help.contains("independent Main, Review, and Merge lane loops"));
     assert!(help.contains("--continuous"));
     assert!(help.contains("Bounded number of foreground autopilot iterations"));
-    assert!(help.contains("Preview the bounded all-lane tick without mutation"));
+    assert!(help.contains("Preview bounded independent lane loops without mutation"));
     assert!(help.contains("--no-recover"));
     assert!(!help.contains("Enable recover-first handling"));
 }

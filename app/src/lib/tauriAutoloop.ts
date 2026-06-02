@@ -218,6 +218,86 @@ export function laneWorkerFromAutoloop(
   };
 }
 
+export function laneWorkersFromAutoloopLines(
+  state: LoopStateSnapshot,
+  laneKey: string
+): LaneWorker[] {
+  if (!state.running) return [];
+  const startedAt = Number(state.startedAtMs);
+  const lowerBound = Number.isFinite(startedAt) ? startedAt - 1000 : null;
+  const workers = new Map<string, LaneWorker>();
+
+  for (const line of state.recentLines ?? []) {
+    if (lowerBound != null && line.atMs < lowerBound) continue;
+    const candidate = workerFromAutoloopLine(line, laneKey, state);
+    if (candidate) workers.set(candidate.issue, candidate);
+  }
+
+  return [...workers.values()];
+}
+
+function workerFromAutoloopLine(
+  line: AutoloopLine,
+  laneKey: string,
+  state: LoopStateSnapshot
+): LaneWorker | null {
+  const event = line.event;
+  const eventName = textFromValue(recordValue(event, 'event'));
+  const payload = recordFromValue(recordValue(event, 'payload'));
+  const fields = recordFromValue(recordValue(payload, 'fields'));
+
+  if (eventName === 'autopilot_loop_lane') {
+    const lane = textFromValue(recordValue(payload, 'lane'));
+    if (lane !== laneKey) return null;
+    const issue = issueRefFromValue(recordValue(payload, 'selected_issue') ?? recordValue(payload, 'selected'));
+    if (!issue) return null;
+    const status = textFromValue(recordValue(payload, 'status'), 'running');
+    return liveWorker(issue, laneKey, state, textFromValue(recordValue(payload, 'action'), status), status);
+  }
+
+  if (eventName !== 'autopilot_cli_line') return null;
+
+  const parsedLane = textFromValue(recordValue(fields, 'lane'));
+  const kind = textFromValue(recordValue(payload, 'kind'));
+  const inferredLane = parsedLane || (kind.startsWith('run_loop') ? 'main' : '');
+  if (inferredLane !== laneKey) return null;
+
+  const issue = issueRefFromValue(recordValue(fields, 'issue'));
+  if (!issue) return null;
+  const status = textFromValue(recordValue(fields, 'status'), 'running');
+  const action = textFromValue(recordValue(fields, 'action'), textFromValue(recordValue(fields, 'run_loop_action'), kind || status));
+  if (status === 'idle' || action === 'skip') return null;
+  return liveWorker(issue, laneKey, state, action, status);
+}
+
+function liveWorker(
+  issue: string,
+  laneKey: string,
+  state: LoopStateSnapshot,
+  action: string,
+  status: string
+): LaneWorker {
+  return {
+    issue,
+    title: issue,
+    action,
+    backend: `Tauri ${state.mode}`,
+    session: state.pid ? `pid ${state.pid}` : 'autoloop',
+    elapsed: status,
+    lane: laneKey,
+    status,
+    waiting: true
+  };
+}
+
+function recordValue(value: unknown, key: string): unknown {
+  return recordFromValue(value)[key];
+}
+
+function recordFromValue(value: unknown): Record<string, unknown> {
+  return value != null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
 function issueRefFromValue(value: unknown) {
   if (value == null || value === '' || value === 'none') return null;
   if (typeof value === 'number') return `#${value}`;

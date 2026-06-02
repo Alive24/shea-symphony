@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use serde_json::{json, Value};
 use shea_symphony::config::RuntimeConfig;
 use shea_symphony::model::{native_subissue_gate_blocker, normalize_state, TrackerIssue};
 use shea_symphony::presentation::render_project_state_panel;
@@ -35,6 +36,7 @@ pub(crate) use write::{
 pub(crate) struct ProjectStateOptions {
     pub(crate) workflow_path: PathBuf,
     pub(crate) display: DisplayMode,
+    pub(crate) json: bool,
 }
 
 pub(crate) fn project_state(
@@ -57,6 +59,10 @@ pub(crate) fn project_state(
         Ok(issues) => {
             let mut integration_gaps = adapter.integration_gaps();
             append_canonical_checkout_gap(&config, &mut integration_gaps);
+            if options.json {
+                println!("{}", render_project_state_json(&issues, &integration_gaps)?);
+                return Ok(());
+            }
             if options.display == DisplayMode::Tui {
                 println!("{}", render_project_state_panel(&issues, &integration_gaps));
                 return Ok(());
@@ -514,4 +520,77 @@ pub(crate) fn render_state_summary(issues: &[TrackerIssue]) -> String {
     };
 
     format!("state_summary={summary}")
+}
+
+pub(crate) fn render_project_state_json(
+    issues: &[TrackerIssue],
+    integration_gaps: &[String],
+) -> Result<String, serde_json::Error> {
+    let mut state_counts = BTreeMap::new();
+    let mut lane_counts = BTreeMap::from([
+        ("main".to_string(), 0usize),
+        ("review".to_string(), 0usize),
+        ("merge".to_string(), 0usize),
+    ]);
+    let mut operator_issues = Vec::new();
+    let mut rendered_issues = Vec::new();
+
+    for issue in issues {
+        let state = issue.state.trim();
+        let state = if state.is_empty() { "(unknown)" } else { state };
+        *state_counts.entry(state.to_string()).or_insert(0usize) += 1;
+        if let Some(lane) = lane_for_state(state) {
+            *lane_counts.entry(lane.to_string()).or_insert(0usize) += 1;
+        }
+
+        let rendered = render_queue_issue(issue);
+        if is_operator_state(state) {
+            operator_issues.push(rendered.clone());
+        }
+        rendered_issues.push(rendered);
+    }
+
+    serde_json::to_string_pretty(&json!({
+        "projectStateAccess": "ok",
+        "trusted": true,
+        "totalOpen": issues.len(),
+        "emptyQueue": issues.is_empty(),
+        "stateCounts": state_counts,
+        "laneCounts": lane_counts,
+        "operatorIssues": operator_issues,
+        "issues": rendered_issues,
+        "integrationGaps": integration_gaps,
+        "source": "project state",
+    }))
+}
+
+fn render_queue_issue(issue: &TrackerIssue) -> Value {
+    json!({
+        "identifier": issue.identifier,
+        "title": issue.title,
+        "state": issue.state,
+        "url": issue.url,
+        "updatedAt": issue.updated_at,
+        "createdAt": issue.created_at,
+        "assignees": issue.assignees,
+        "labels": issue.labels,
+        "priority": issue.priority,
+        "branchName": issue.branch_name,
+    })
+}
+
+fn lane_for_state(state: &str) -> Option<&'static str> {
+    match normalize_state(state).as_str() {
+        "todo" | "rework" | "in progress" => Some("main"),
+        "agent review" => Some("review"),
+        "merging" => Some("merge"),
+        _ => None,
+    }
+}
+
+fn is_operator_state(state: &str) -> bool {
+    matches!(
+        normalize_state(state).as_str(),
+        "need to clarify" | "need human input" | "human review"
+    )
 }

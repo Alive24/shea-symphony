@@ -46,6 +46,13 @@
   type HandoffTarget = 'codex-app' | 'claude-code' | 'gemini-cli';
   type RefreshInterval = 'manual' | '10000' | '30000' | '60000';
   type AutoloopLaneTarget = 'main' | 'review' | 'merge' | 'autoloop';
+  type RunLogSummary = {
+    eventName: string;
+    title: string;
+    detail: string;
+    chips: string[];
+    tone: 'info' | 'success' | 'warn' | 'error';
+  };
 
   export let currentPath = '/';
 
@@ -234,6 +241,184 @@
       nextRows.add(id);
     }
     expandedRunLogRows = nextRows;
+  }
+
+  function runLogSummary(entry: AutoloopLine): RunLogSummary {
+    const event = entry.event;
+    if (!event) {
+      return {
+        eventName: entry.stream,
+        title: entry.stream === 'stderr' ? 'stderr output' : 'stdout output',
+        detail: compactRunLine(entry.line),
+        chips: [entry.stream],
+        tone: entry.stream === 'stderr' ? 'warn' : 'info'
+      };
+    }
+
+    const eventName = stringField(event, 'event') ?? 'event';
+    const payload = objectField(event, 'payload') ?? {};
+    if (eventName === 'autopilot_loop_status') {
+      const phase = stringField(payload, 'phase') ?? 'unknown';
+      const counts = objectField(payload, 'counts') ?? {};
+      const selected = selectedIssuesLabel(arrayField(payload, 'selected_issues'));
+      const blockers = arrayField(payload, 'blocked_reasons')?.length ?? 0;
+      return {
+        eventName,
+        title: `Loop ${phase}`,
+        detail: stringField(payload, 'message') ?? 'Loop status updated.',
+        chips: [
+          ...concurrencyChips(objectField(payload, 'settings')),
+          `running ${numberField(counts, 'running') ?? 0}`,
+          `blocked ${numberField(counts, 'blocked') ?? blockers}`,
+          selected
+        ].filter(Boolean),
+        tone: runLogTone(phase, blockers)
+      };
+    }
+    if (eventName === 'autopilot_loop_lane') {
+      const lane = stringField(payload, 'lane') ?? 'lane';
+      const status = stringField(payload, 'status') ?? 'unknown';
+      const action = stringField(payload, 'action') ?? 'event';
+      const selected = selectedIssueLabel(objectField(payload, 'selected_issue')) ?? stringField(payload, 'selected') ?? 'none';
+      return {
+        eventName,
+        title: `${lane} ${status}`,
+        detail: `${action} · selected ${selected}`,
+        chips: [lane, status, action, maxConcurrentChip(payload)].filter(Boolean),
+        tone: runLogTone(status, 0)
+      };
+    }
+    if (eventName === 'autopilot_loop_iteration') {
+      const iteration = numberField(payload, 'iteration');
+      const mode = stringField(payload, 'mode') ?? autoloopState.mode;
+      const order = arrayField(payload, 'order')?.map(String).join(' -> ');
+      return {
+        eventName,
+        title: `Iteration ${iteration ?? '?'}`,
+        detail: order ? `${mode} · ${order}` : `${mode} iteration started.`,
+        chips: [mode, ...concurrencyChips(objectField(payload, 'settings'))],
+        tone: 'info'
+      };
+    }
+    if (eventName === 'autopilot_loop_result') {
+      const iteration = numberField(payload, 'iteration');
+      const lanes = arrayField(payload, 'lanes') ?? [];
+      const laneSummary = lanes
+        .map((lane) => {
+          const value = objectFromUnknown(lane);
+          return `${stringField(value, 'lane') ?? 'lane'}:${stringField(value, 'status') ?? 'unknown'}`;
+        })
+        .join('  ');
+      const hasError = lanes.some((lane) => stringField(objectFromUnknown(lane), 'status') === 'error');
+      return {
+        eventName,
+        title: `Iteration ${iteration ?? '?'} result`,
+        detail: laneSummary || 'Loop iteration completed.',
+        chips: [
+          ...concurrencyChips(objectField(payload, 'settings')),
+          ...lanes.slice(0, 3).map((lane) => stringField(objectFromUnknown(lane), 'status') ?? 'unknown')
+        ],
+        tone: hasError ? 'error' : 'success'
+      };
+    }
+    if (eventName === 'autopilot_loop_stopped') {
+      return {
+        eventName,
+        title: 'Loop stopped',
+        detail: `reason ${stringField(payload, 'reason') ?? 'unknown'} · iterations ${numberField(payload, 'iterations') ?? '?'}`,
+        chips: ['stopped'],
+        tone: 'success'
+      };
+    }
+    if (eventName === 'autopilot_cli_line') {
+      const kind = stringField(payload, 'kind') ?? entry.stream;
+      const fields = objectField(payload, 'fields') ?? {};
+      const issue = stringField(fields, 'issue');
+      const status = stringField(fields, 'status');
+      const action = stringField(fields, 'action');
+      return {
+        eventName,
+        title: kind === 'latest' ? 'Latest lane update' : kind,
+        detail: [issue, status, action].filter(Boolean).join(' · ') || compactRunLine(stringField(payload, 'raw') ?? entry.line),
+        chips: [kind, entry.stream],
+        tone: entry.stream === 'stderr' ? 'warn' : 'info'
+      };
+    }
+
+    return {
+      eventName,
+      title: eventName.replaceAll('_', ' '),
+      detail: compactRunLine(entry.line),
+      chips: [entry.stream, eventName],
+      tone: 'info'
+    };
+  }
+
+  function runLogTone(status: string, blockers: number) {
+    const value = status.toLowerCase();
+    if (value.includes('error') || value.includes('failed')) return 'error';
+    if (value.includes('blocked') || blockers > 0) return 'warn';
+    if (value.includes('completed') || value.includes('success') || value.includes('stopped')) return 'success';
+    return 'info';
+  }
+
+  function compactRunLine(value: string) {
+    const compact = value.trim().replace(/\s+/g, ' ');
+    return compact.length > 180 ? `${compact.slice(0, 180)}...` : compact || 'No output text.';
+  }
+
+  function objectField(value: unknown, key: string): Record<string, unknown> | null {
+    return objectFromUnknown(objectFromUnknown(value)[key]);
+  }
+
+  function objectFromUnknown(value: unknown): Record<string, unknown> {
+    return value != null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  }
+
+  function arrayField(value: unknown, key: string): unknown[] | null {
+    const next = objectFromUnknown(value)[key];
+    return Array.isArray(next) ? next : null;
+  }
+
+  function stringField(value: unknown, key: string): string | null {
+    const next = objectFromUnknown(value)[key];
+    return typeof next === 'string' && next.trim() ? next : null;
+  }
+
+  function numberField(value: unknown, key: string): number | null {
+    const next = objectFromUnknown(value)[key];
+    return typeof next === 'number' && Number.isFinite(next) ? next : null;
+  }
+
+  function maxConcurrentChip(value: Record<string, unknown>) {
+    const maxConcurrent = numberField(value, 'max_concurrent');
+    return maxConcurrent == null ? null : `max ${maxConcurrent}`;
+  }
+
+  function concurrencyChips(settings: Record<string, unknown> | null) {
+    if (!settings) return [];
+    return [
+      laneLimitChip(settings, 'main_max_concurrent', 'main'),
+      laneLimitChip(settings, 'review_max_concurrent', 'review'),
+      laneLimitChip(settings, 'merge_max_concurrent', 'merge')
+    ].filter(Boolean);
+  }
+
+  function laneLimitChip(settings: Record<string, unknown>, key: string, label: string) {
+    const value = numberField(settings, key);
+    return value == null ? null : `${label} max ${value}`;
+  }
+
+  function selectedIssuesLabel(values: unknown[] | null) {
+    const identifiers = (values ?? [])
+      .map((value) => selectedIssueLabel(objectFromUnknown(value)))
+      .filter(Boolean);
+    return identifiers.length ? `selected ${identifiers.join(', ')}` : 'selected none';
+  }
+
+  function selectedIssueLabel(issue: Record<string, unknown> | null) {
+    if (!issue) return null;
+    return stringField(issue, 'identifier') ?? stringField(issue, 'title');
   }
 
   async function refreshAutoloopState() {
@@ -596,6 +781,7 @@
       {#if autoloopStdoutLines.length}
         <div class="autoloop-stdout-list" aria-label="Run logs">
           {#each autoloopStdoutLines as entry, index}
+            {@const summary = runLogSummary(entry)}
             <div class="autoloop-stdout-line">
               <time>{formatAutoloopTime(entry.atMs)}</time>
               <div>
@@ -606,9 +792,20 @@
                   onclick={() => toggleRunLogRow(`stdout-${entry.atMs}-${index}`)}
                 >
                   <span class="json-tree-arrow" aria-hidden="true">›</span>
-                  <strong>{entry.stream}</strong>
-                  <span>{entry.event ? 'json' : 'text'}</span>
+                  <span class="run-log-tone {summary.tone}" aria-hidden="true"></span>
+                  <strong>{summary.title}</strong>
+                  <span>{summary.eventName}</span>
                 </button>
+                <div class="run-log-human">
+                  <p>{summary.detail}</p>
+                  {#if summary.chips.length}
+                    <div class="run-log-chips" aria-label="Run log summary">
+                      {#each summary.chips as chip}
+                        <span>{chip}</span>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
                 {#if expandedRunLogRows.has(`stdout-${entry.atMs}-${index}`)}
                   <JsonLogView value={entry.event ?? entry.line} fallbackLabel="Autoloop stdout text" />
                 {/if}

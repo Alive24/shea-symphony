@@ -524,6 +524,8 @@ struct ProjectStateArgs {
     workflow_path: PathBuf,
     #[arg(long, value_enum, default_value_t = CliDisplayMode::Plain)]
     display: CliDisplayMode,
+    #[arg(long)]
+    json: bool,
     #[arg(long = "dry-run")]
     _dry_run: bool,
     #[arg(long = "write")]
@@ -1647,6 +1649,7 @@ fn command_from_project_args(command: ProjectCommandArgs) -> Result<Command, Str
             options: ProjectStateOptions {
                 workflow_path: args.workflow_path,
                 display: args.display.into(),
+                json: args.json,
             },
         }),
         ProjectCommandArgs::Issue(args) => Ok(Command::ProjectIssue {

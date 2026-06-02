@@ -2606,6 +2606,168 @@ a {
   font-size: var(--text-xs);
 }
 
+.lane-session-panel,
+.transcript-panel {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+}
+
+.lane-session-head,
+.transcript-panel-head,
+.transcript-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.lane-session-head h3,
+.transcript-panel-head h3 {
+  margin: 0;
+  color: var(--fg-2);
+  font-size: var(--text-md);
+}
+
+.lane-session-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.lane-session-grid > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: var(--space-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--subtle-bg);
+}
+
+.lane-session-grid span,
+.transcript-summary span {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.lane-session-grid strong {
+  min-width: 0;
+  color: var(--fg-2);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lane-session-grid small {
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transcript-actions {
+  flex: none;
+}
+
+.transcript-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.transcript-summary span {
+  padding: 4px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--subtle-bg);
+}
+
+.transcript-timeline {
+  display: grid;
+  gap: var(--space-2);
+  max-height: 560px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.transcript-event {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--subtle-bg);
+}
+
+.transcript-event.final,
+.transcript-event.success {
+  border-color: color-mix(in oklab, var(--success), var(--border) 62%);
+}
+
+.transcript-event.warn {
+  border-color: color-mix(in oklab, var(--warning), var(--border) 58%);
+}
+
+.transcript-event.danger {
+  border-color: color-mix(in oklab, var(--danger), var(--border) 58%);
+}
+
+.transcript-event-meta,
+.transcript-event-body {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 3px;
+}
+
+.transcript-event-meta span {
+  color: var(--accent);
+  font-size: var(--text-xs);
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.transcript-event-meta small {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.transcript-event-body strong {
+  min-width: 0;
+  color: var(--fg-2);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transcript-event-body p {
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .lane-lifecycle-row {
   min-width: 0;
   display: grid;

@@ -17,6 +17,11 @@ import {
   mergeReadSurface
 } from '../src/lib/operatorReadModel.ts';
 import {
+  classifyHeartbeat,
+  parseCodexTranscriptJsonl,
+  transcriptUnavailable
+} from '../src/lib/viewModel/codexTranscript.ts';
+import {
   defaultBackgroundReadSurfaces,
   projectCooldownReadSurfaces
 } from '../src/lib/operatorOverviewStore.ts';
@@ -222,6 +227,53 @@ test('lane throughput board keeps independent running and queued lane work visib
   assert.equal(merge.runningCount, 0);
   assert.equal(merge.queuedCount, 1);
   assert.deepEqual(merge.issues.map((issue) => issue.id), ['#430']);
+});
+
+test('Codex transcript parser renders conversation turns, tool calls, outputs, final answers, and usage', () => {
+  const transcript = [
+    JSON.stringify({ type: 'message', item: { role: 'user', content: [{ text: 'Please inspect status.' }] } }),
+    JSON.stringify({ type: 'function_call', item: { name: 'functions.exec_command', arguments: JSON.stringify({ cmd: 'git status --short' }), status: 'completed' } }),
+    JSON.stringify({ type: 'function_call_output', item: { name: 'functions.exec_command', output: '## branch\n M app/src/file.ts' } }),
+    JSON.stringify({ type: 'message', item: { role: 'assistant', content: 'I found one modified file.' } }),
+    JSON.stringify({ type: 'final_answer', item: { role: 'assistant', content: 'Done.' } }),
+    JSON.stringify({ type: 'response.completed', response: { usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } } })
+  ].join('\n');
+
+  const parsed = parseCodexTranscriptJsonl(transcript);
+
+  assert.equal(parsed.status, 'available');
+  assert.equal(parsed.summary.userTurns, 1);
+  assert.equal(parsed.summary.assistantTurns, 2);
+  assert.equal(parsed.summary.toolCalls, 1);
+  assert.equal(parsed.summary.tokenUsage, 'input 10 · output 5 · total 15');
+  assert.equal(parsed.events.find((event) => event.kind === 'tool_call').title, 'functions.exec_command');
+  assert.match(parsed.events.find((event) => event.kind === 'tool_call').body, /cmd: git status --short/);
+  assert.match(parsed.events.find((event) => event.kind === 'tool_output').body, /modified file|## branch/);
+});
+
+test('Codex transcript parser marks malformed still-growing JSONL as partial', () => {
+  const parsed = parseCodexTranscriptJsonl(`${JSON.stringify({ type: 'message', item: { role: 'user', content: 'hi' } })}\n{"type":`);
+
+  assert.equal(parsed.status, 'partial');
+  assert.equal(parsed.malformedLines, 1);
+  assert.equal(parsed.events.some((event) => event.title === 'Malformed JSONL line'), true);
+});
+
+test('missing transcript state is local-only and explicit', () => {
+  const unavailable = transcriptUnavailable('No local transcript candidate was found.');
+
+  assert.equal(unavailable.status, 'unavailable');
+  assert.equal(unavailable.localOnly, true);
+  assert.match(unavailable.reason, /No local transcript/);
+});
+
+test('heartbeat classifier separates running, stale, stopped, and unavailable states', () => {
+  const now = 10_000;
+
+  assert.equal(classifyHeartbeat({ running: true, lanes: { main: { updatedAtMs: now - 15_000 } } }, 'main', now).state, 'running');
+  assert.equal(classifyHeartbeat({ running: true, lanes: { main: { updatedAtMs: now - 180_000 } } }, 'main', now).state, 'stale');
+  assert.equal(classifyHeartbeat({ running: false, lanes: { main: { updatedAtMs: now - 180_000 } } }, 'main', now).state, 'stopped');
+  assert.equal(classifyHeartbeat(null, 'main', now).state, 'unavailable');
 });
 
 test('project read cooldown preserves last stable review queue visibility', () => {

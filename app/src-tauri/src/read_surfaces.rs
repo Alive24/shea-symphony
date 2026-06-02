@@ -66,6 +66,18 @@ pub async fn get_read_surface(
     .map_err(|error| format!("read surface task failed: {error}"))?
 }
 
+#[tauri::command]
+pub async fn get_codex_transcript(
+    issue_ref: String,
+    session_id: Option<String>,
+) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        build_codex_transcript(&issue_ref, session_id.as_deref())
+    })
+    .await
+    .map_err(|error| format!("transcript read task failed: {error}"))?
+}
+
 fn build_read_surface(name: &str, allow_project_fallback: bool) -> Result<Value, String> {
     let args = read_surface_args(name).ok_or_else(|| format!("unknown read surface: {name}"))?;
     let result = if project_backed_surface(name) {
@@ -98,6 +110,241 @@ fn build_read_surface(name: &str, allow_project_fallback: bool) -> Result<Value,
             String::new()
         },
     ))
+}
+
+fn build_codex_transcript(issue_ref: &str, session_id: Option<&str>) -> Result<Value, String> {
+    let local_status = run_shea_read(&read_surface_args("local").unwrap_or_default());
+    let snapshot = parse_json_output(&local_status.stdout);
+    let normalized_issue = normalize_issue_ref(issue_ref);
+    let candidates = transcript_candidates(&snapshot, normalized_issue.as_deref(), session_id);
+
+    for candidate in &candidates {
+        let Some(path) = candidate.get("path").and_then(Value::as_str) else {
+            continue;
+        };
+        let path = PathBuf::from(path);
+        if !path.exists() || !path.is_file() {
+            continue;
+        }
+        let metadata = fs::metadata(&path).ok();
+        let modified_at_ms = metadata
+            .as_ref()
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_millis() as u64);
+        let content = fs::read_to_string(&path)
+            .map_err(|error| format!("failed to read local Codex transcript: {error}"))?;
+        return Ok(json!({
+            "status": "available",
+            "localOnly": true,
+            "path": path.display().to_string(),
+            "content": content,
+            "candidates": candidates,
+            "metadata": {
+                "bytes": metadata.map(|metadata| metadata.len()).unwrap_or(0),
+                "modifiedAtMs": modified_at_ms,
+            },
+        }));
+    }
+
+    Ok(json!({
+        "status": "unavailable",
+        "localOnly": true,
+        "reason": if candidates.is_empty() {
+            "No local Codex transcript candidate was found from session registry, runtime metadata, or .codex/sessions fallback search."
+        } else {
+            "Local Codex transcript candidates were found, but no readable JSONL file exists at those paths."
+        },
+        "path": Value::Null,
+        "content": "",
+        "candidates": candidates,
+    }))
+}
+
+fn transcript_candidates(
+    snapshot: &Value,
+    issue_ref: Option<&str>,
+    session_id: Option<&str>,
+) -> Vec<Value> {
+    let mut candidates = Vec::new();
+    push_registry_transcript_candidates(&mut candidates, snapshot, issue_ref, session_id);
+    if let Some(session_id) = session_id {
+        push_session_store_candidates(&mut candidates, session_id, "runtime_session_id");
+    }
+    if let Some(issue_ref) = issue_ref {
+        for session in snapshot
+            .get("sessions")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if normalize_issue_ref(
+                session
+                    .get("issue_identifier")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            )
+            .as_deref()
+                != Some(issue_ref)
+            {
+                continue;
+            }
+            for key in ["session_id", "session_name", "run_id", "instance_name"] {
+                if let Some(value) = session.get(key).and_then(Value::as_str) {
+                    push_session_store_candidates(&mut candidates, value, key);
+                }
+            }
+        }
+    }
+    dedupe_candidates(candidates)
+}
+
+fn push_registry_transcript_candidates(
+    candidates: &mut Vec<Value>,
+    snapshot: &Value,
+    issue_ref: Option<&str>,
+    session_id: Option<&str>,
+) {
+    for session in snapshot
+        .get("sessions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let session_issue = normalize_issue_ref(
+            session
+                .get("issue_identifier")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        );
+        let issue_matches = issue_ref.is_some_and(|issue| session_issue.as_deref() == Some(issue));
+        let session_matches = session_id.is_some_and(|id| {
+            ["session_id", "session_name", "run_id", "instance_name"]
+                .iter()
+                .any(|key| {
+                    session
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| value.contains(id) || id.contains(value))
+                })
+        });
+        if !issue_matches && !session_matches {
+            continue;
+        }
+        for key in [
+            "transcript_path",
+            "codex_transcript_path",
+            "jsonl_path",
+            "protocol_artifact_path",
+            "log_path",
+        ] {
+            if let Some(path) = session
+                .get(key)
+                .and_then(Value::as_str)
+                .filter(|path| path.ends_with(".jsonl"))
+            {
+                candidates.push(json!({
+                    "source": format!("session_registry.{key}"),
+                    "path": path,
+                    "session": session.get("session_name").or_else(|| session.get("run_id")).cloned().unwrap_or(Value::Null),
+                    "issue": session_issue,
+                }));
+            }
+        }
+    }
+}
+
+fn push_session_store_candidates(candidates: &mut Vec<Value>, needle: &str, source: &str) {
+    let Some(root) = codex_sessions_root() else {
+        return;
+    };
+    let needle = needle.trim();
+    if needle.is_empty() {
+        return;
+    }
+    for path in find_rollout_jsonl(&root, needle, 40) {
+        candidates.push(json!({
+            "source": source,
+            "path": path.display().to_string(),
+            "session": needle,
+        }));
+    }
+}
+
+fn find_rollout_jsonl(root: &Path, needle: &str, limit: usize) -> Vec<PathBuf> {
+    let mut matches = Vec::new();
+    collect_rollout_jsonl(root, needle, limit, &mut matches);
+    matches.sort_by_key(|path| {
+        fs::metadata(path)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| std::cmp::Reverse(duration.as_millis()))
+    });
+    matches.truncate(limit);
+    matches
+}
+
+fn collect_rollout_jsonl(root: &Path, needle: &str, limit: usize, matches: &mut Vec<PathBuf>) {
+    if matches.len() >= limit {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rollout_jsonl(&path, needle, limit, matches);
+        } else if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| {
+                name.starts_with("rollout-") && name.ends_with(".jsonl") && name.contains(needle)
+            })
+        {
+            matches.push(path);
+        }
+        if matches.len() >= limit {
+            return;
+        }
+    }
+}
+
+fn codex_sessions_root() -> Option<PathBuf> {
+    std::env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))
+        .map(|path| path.join("sessions"))
+}
+
+fn dedupe_candidates(candidates: Vec<Value>) -> Vec<Value> {
+    let mut seen = BTreeMap::new();
+    for candidate in candidates {
+        let key = candidate
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if key.is_empty() || seen.contains_key(&key) {
+            continue;
+        }
+        seen.insert(key, candidate);
+    }
+    seen.into_values().collect()
+}
+
+fn normalize_issue_ref(value: &str) -> Option<String> {
+    let digits: String = value
+        .chars()
+        .skip_while(|ch| !ch.is_ascii_digit())
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect();
+    if digits.is_empty() {
+        None
+    } else {
+        Some(format!("#{digits}"))
+    }
 }
 
 fn build_operator_overview(scope: &str) -> Result<Value, String> {
@@ -871,5 +1118,22 @@ mod tests {
         );
         assert_eq!(parsed["projectStateAccess"], "paused");
         assert_eq!(parsed["failureKind"], "rate_limit");
+    }
+
+    #[test]
+    fn finds_rollout_jsonl_by_session_id_under_codex_sessions_tree() {
+        let root =
+            std::env::temp_dir().join(format!("shea-transcript-test-{}", unix_timestamp_ms()));
+        let day = root.join("2026").join("06").join("02");
+        fs::create_dir_all(&day).unwrap();
+        let wanted = day.join("rollout-2026-06-02T17-30-00-019f-session-match.jsonl");
+        let ignored = day.join("rollout-2026-06-02T17-31-00-other.jsonl");
+        fs::write(&wanted, "{}\n").unwrap();
+        fs::write(&ignored, "{}\n").unwrap();
+
+        let matches = find_rollout_jsonl(&root, "019f-session-match", 10);
+
+        assert_eq!(matches, vec![wanted]);
+        let _ = fs::remove_dir_all(root);
     }
 }

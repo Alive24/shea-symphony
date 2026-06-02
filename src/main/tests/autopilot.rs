@@ -277,6 +277,208 @@ fn autopilot_loop_status_allows_main_recovery_runtime_blocker() {
 }
 
 #[test]
+fn autopilot_loop_status_allows_main_recovery_with_session_attention() {
+    let mut plan = test_autopilot_plan(Vec::new());
+    let mut runtime = clean_autopilot_runtime();
+    runtime.runtime_state_count = 1;
+    runtime.session_attention_count = 1;
+    runtime.blockers = vec![
+        "active_runtime_states=1".into(),
+        "session_attention=1".into(),
+    ];
+    runtime.evidence = vec!["runtime issue=#381 lane=main backend=codex session=stale".into()];
+    runtime.active_issues = vec![AutopilotActiveIssue {
+        lane: "main".into(),
+        identifier: "#381".into(),
+        backend: "codex".into(),
+        session_id: Some("stale-session".into()),
+    }];
+    plan.runtime = runtime;
+    plan.readiness.status = "blocked_by_ambiguous_lane_or_runtime_state".into();
+    plan.readiness.reason =
+        "Runtime/session state needs operator attention before write-mode autopilot.".into();
+    plan.readiness.blockers = vec![
+        "active_runtime_states=1".into(),
+        "session_attention=1".into(),
+    ];
+
+    let status = autopilot_loop_status_from_plan(
+        &plan,
+        AutopilotLoopSettings {
+            write: true,
+            dry_run: false,
+            recover: true,
+            poll_interval_ms: 5_000,
+            main_max_concurrent: 3,
+            review_max_concurrent: 2,
+            merge_max_concurrent: 3,
+        },
+        6,
+        Some(5_000),
+        &[],
+        false,
+    );
+
+    assert_eq!(status.phase, "running");
+    assert_eq!(status.counts.blocked, 0);
+    assert_eq!(status.counts.running, 1);
+    assert!(status.blocked_reasons.is_empty());
+    assert_eq!(status.active_issues[0].identifier, "#381");
+}
+
+#[test]
+fn autopilot_loop_status_keeps_main_session_attention_blocked_when_recover_disabled() {
+    let mut plan = test_autopilot_plan(Vec::new());
+    let mut runtime = clean_autopilot_runtime();
+    runtime.runtime_state_count = 1;
+    runtime.session_attention_count = 1;
+    runtime.blockers = vec![
+        "active_runtime_states=1".into(),
+        "session_attention=1".into(),
+    ];
+    runtime.active_issues = vec![AutopilotActiveIssue {
+        lane: "main".into(),
+        identifier: "#381".into(),
+        backend: "codex".into(),
+        session_id: Some("stale-session".into()),
+    }];
+    plan.runtime = runtime;
+    plan.readiness.status = "blocked_by_ambiguous_lane_or_runtime_state".into();
+    plan.readiness.reason =
+        "Runtime/session state needs operator attention before write-mode autopilot.".into();
+    plan.readiness.blockers = vec![
+        "active_runtime_states=1".into(),
+        "session_attention=1".into(),
+    ];
+
+    let status = autopilot_loop_status_from_plan(
+        &plan,
+        AutopilotLoopSettings {
+            write: true,
+            dry_run: false,
+            recover: false,
+            poll_interval_ms: 5_000,
+            main_max_concurrent: 3,
+            review_max_concurrent: 2,
+            merge_max_concurrent: 3,
+        },
+        6,
+        Some(5_000),
+        &[],
+        false,
+    );
+
+    assert_eq!(status.phase, "blocked");
+    assert_eq!(
+        status.blocked_reasons,
+        vec!["active_runtime_states=1", "session_attention=1"]
+    );
+}
+
+#[test]
+fn autopilot_loop_status_keeps_mixed_doctor_and_session_attention_blocked() {
+    let mut plan = test_autopilot_plan(Vec::new());
+    let mut runtime = clean_autopilot_runtime();
+    runtime.runtime_state_count = 1;
+    runtime.session_attention_count = 1;
+    runtime.blockers = vec![
+        "active_runtime_states=1".into(),
+        "session_attention=1".into(),
+    ];
+    runtime.active_issues = vec![AutopilotActiveIssue {
+        lane: "main".into(),
+        identifier: "#381".into(),
+        backend: "codex".into(),
+        session_id: Some("stale-session".into()),
+    }];
+    plan.runtime = runtime;
+    plan.readiness.status = "blocked_by_doctor_or_canonical_checkout".into();
+    plan.readiness.reason =
+        "Doctor or runtime state needs attention before write-mode autopilot.".into();
+    plan.readiness.blockers = vec![
+        "doctor_blockers=1".into(),
+        "active_runtime_states=1".into(),
+        "session_attention=1".into(),
+    ];
+
+    let status = autopilot_loop_status_from_plan(
+        &plan,
+        AutopilotLoopSettings {
+            write: true,
+            dry_run: false,
+            recover: true,
+            poll_interval_ms: 5_000,
+            main_max_concurrent: 3,
+            review_max_concurrent: 2,
+            merge_max_concurrent: 3,
+        },
+        6,
+        Some(5_000),
+        &[],
+        false,
+    );
+
+    assert_eq!(status.phase, "blocked");
+    assert_eq!(
+        status.blocked_reasons,
+        vec![
+            "doctor_blockers=1",
+            "active_runtime_states=1",
+            "session_attention=1"
+        ]
+    );
+}
+
+#[test]
+fn autopilot_loop_status_keeps_non_main_session_attention_blocked() {
+    let mut plan = test_autopilot_plan(Vec::new());
+    let mut runtime = clean_autopilot_runtime();
+    runtime.runtime_state_count = 1;
+    runtime.session_attention_count = 1;
+    runtime.blockers = vec![
+        "active_runtime_states=1".into(),
+        "session_attention=1".into(),
+    ];
+    runtime.active_issues = vec![AutopilotActiveIssue {
+        lane: "review".into(),
+        identifier: "#406".into(),
+        backend: "codex".into(),
+        session_id: Some("stale-review-session".into()),
+    }];
+    plan.runtime = runtime;
+    plan.readiness.status = "blocked_by_ambiguous_lane_or_runtime_state".into();
+    plan.readiness.reason =
+        "Runtime/session state needs operator attention before write-mode autopilot.".into();
+    plan.readiness.blockers = vec![
+        "active_runtime_states=1".into(),
+        "session_attention=1".into(),
+    ];
+
+    let status = autopilot_loop_status_from_plan(
+        &plan,
+        AutopilotLoopSettings {
+            write: true,
+            dry_run: false,
+            recover: true,
+            poll_interval_ms: 5_000,
+            main_max_concurrent: 3,
+            review_max_concurrent: 2,
+            merge_max_concurrent: 3,
+        },
+        6,
+        Some(5_000),
+        &[],
+        false,
+    );
+
+    assert_eq!(status.phase, "blocked");
+    assert_eq!(
+        status.blocked_reasons,
+        vec!["active_runtime_states=1", "session_attention=1"]
+    );
+}
+
+#[test]
 fn autopilot_loop_status_allows_main_parent_topology_ensure() {
     let config = main_loop_test_config();
     let mut subissue = tracker_issue_with_ref("#383", "Surface write queue state", "Todo");

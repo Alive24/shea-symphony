@@ -516,6 +516,8 @@ struct AutopilotLoopArgs {
     json: bool,
     #[arg(long, help = "Emit newline-delimited JSON work-signal events")]
     event_json: bool,
+    #[arg(long, help = "Show idle/no-op lane heartbeat lines")]
+    verbose: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1604,6 +1606,7 @@ fn merge_loop_command(args: MergeLoopArgs) -> Result<Command, String> {
             write: args.write,
             recover: loop_recover_enabled(args.write, args.recover, args.no_recover),
             max_concurrent: args.max_concurrent,
+            quiet_idle: false,
         },
     })
 }
@@ -1635,6 +1638,7 @@ fn autopilot_loop_command(args: AutopilotLoopArgs) -> Result<Command, String> {
             display,
             json: args.json,
             event_json: args.event_json,
+            verbose: args.verbose,
         },
     })
 }
@@ -2054,6 +2058,7 @@ fn command_from_review_args(command: ReviewCommandArgs) -> Result<Command, Strin
                     write: args.write,
                     fake_outcome: args.fake_outcome.map(Into::into),
                     max_concurrent: args.max_concurrent,
+                    quiet_idle: false,
                 },
             })
         }

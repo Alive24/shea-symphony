@@ -48,6 +48,7 @@ pub(crate) fn merge_once_tick(
     workflow_path: PathBuf,
     write: bool,
     recover: bool,
+    quiet_idle: bool,
 ) -> Result<MergeOnceOutcome, Box<dyn std::error::Error>> {
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
@@ -66,7 +67,9 @@ pub(crate) fn merge_once_tick(
         || adapter.fetch_issues_by_states(std::slice::from_ref(&merging_state)),
     )?;
     if issues.is_empty() {
-        println!("merge_once=stopped reason=no_merging_issue");
+        if !quiet_idle {
+            println!("merge_once=stopped reason=no_merging_issue");
+        }
         return Ok(MergeOnceOutcome::NoMergingIssue);
     }
 
@@ -76,7 +79,9 @@ pub(crate) fn merge_once_tick(
         .into_iter()
         .next()
     else {
-        println!("merge_once=stopped reason=no_unclaimed_merging_issue");
+        if !quiet_idle {
+            println!("merge_once=stopped reason=no_unclaimed_merging_issue");
+        }
         return Ok(MergeOnceOutcome::NoMergingIssue);
     };
     let latest_issue = run_with_progress_heartbeat(

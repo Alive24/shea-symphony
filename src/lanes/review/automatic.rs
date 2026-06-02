@@ -262,13 +262,19 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
 
         if issues.is_empty() {
             if let Some(delay_ms) = unbounded_loop_sleep_ms(limit, config.polling.interval_ms) {
-                println!(
-                    "review_loop_idle action=sleep reason=no_agent_review_issue delay_ms={delay_ms} iterations={iterations}"
-                );
+                if !options.quiet_idle {
+                    println!(
+                        "review_loop_idle action=sleep reason=no_agent_review_issue delay_ms={delay_ms} iterations={iterations}"
+                    );
+                }
                 thread::sleep(Duration::from_millis(delay_ms));
                 continue;
             }
-            println!("review_loop=stopped reason=no_agent_review_issue iterations={iterations}");
+            if !options.quiet_idle {
+                println!(
+                    "review_loop=stopped reason=no_agent_review_issue iterations={iterations}"
+                );
+            }
             break;
         };
 
@@ -873,6 +879,7 @@ pub(crate) struct ReviewLoopOptions {
     pub(crate) write: bool,
     pub(crate) fake_outcome: Option<FakeReviewOutcome>,
     pub(crate) max_concurrent: Option<usize>,
+    pub(crate) quiet_idle: bool,
 }
 
 impl ReviewLoopOptions {

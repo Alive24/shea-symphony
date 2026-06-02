@@ -194,6 +194,7 @@ export function mergeLaneSnapshot(state: LoopStateSnapshot, lane: LaneSnapshot):
 }
 
 export function appendAutoloopLine(state: LoopStateSnapshot, line: AutoloopLine): LoopStateSnapshot {
+  if (isAutoloopLaneNoopEventLine(line)) return state;
   if (isSkippedIssueDetailLine(line)) return state;
   if (isAutoloopLaneIdlePrimitiveLine(line)) return state;
   if (isAutoloopRoutineStatusLine(line)) return state;
@@ -201,6 +202,18 @@ export function appendAutoloopLine(state: LoopStateSnapshot, line: AutoloopLine)
     ...state,
     recentLines: [...(state.recentLines ?? []), line].slice(-200)
   };
+}
+
+function isAutoloopLaneNoopEventLine(line: AutoloopLine) {
+  const eventName = textFromValue(recordValue(line.event, 'event'));
+  if (eventName !== 'autopilot_loop_lane') return false;
+  const payload = recordFromValue(recordValue(line.event, 'payload'));
+  const action = textFromValue(recordValue(payload, 'action'));
+  const status = textFromValue(recordValue(payload, 'status'));
+  const selected = issueRefFromValue(recordValue(payload, 'selected_issue') ?? recordValue(payload, 'selected'));
+  if (selected) return false;
+  return (status === 'running' && action === 'tick_started')
+    || (status === 'skipped' && action === 'lane_tick_skipped');
 }
 
 function isSkippedIssueDetailLine(line: AutoloopLine) {
@@ -220,7 +233,9 @@ function isAutoloopLaneIdlePrimitiveLine(line: AutoloopLine) {
   const payload = recordFromValue(recordValue(line.event, 'payload'));
   const raw = textFromValue(recordValue(payload, 'raw') ?? line.line);
   return /^(merge_once|merge_loop)=stopped reason=no_merging_issue\b/.test(raw)
-    || /^review_loop=stopped reason=no_agent_review_issue\b/.test(raw);
+    || /^review_loop=stopped reason=no_agent_review_issue\b/.test(raw)
+    || /^autopilot_loop_lane\b.*\bstatus=running\b.*\baction=tick_started\b.*\bselected=none\b/.test(raw)
+    || /^autopilot_loop_lane\b.*\bstatus=skipped\b.*\baction=lane_tick_skipped\b.*\bselected=none\b/.test(raw);
 }
 
 function isAutoloopRoutineStatusLine(line: AutoloopLine) {

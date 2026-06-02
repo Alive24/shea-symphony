@@ -40,7 +40,7 @@ fn clean_merge_tick_does_not_require_merge_agent_backend() {
         )
         .unwrap();
 
-    let outcome = merge_once_tick(workflow_path, false, false).unwrap();
+    let outcome = merge_once_tick(workflow_path, false, false, false).unwrap();
 
     assert_eq!(outcome, MergeOnceOutcome::NoMergingIssue);
 }

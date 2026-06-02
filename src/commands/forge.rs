@@ -4,6 +4,10 @@ use shea_symphony::model::{
     normalize_state, BlockerRef, GateDecision, GateDecisionKind, TrackerIssue,
 };
 use shea_symphony::tracker::{adapter_from_config, TrackerAdapter};
+use shea_symphony::{
+    handoff::parent_integration_branch_name,
+    workspace::safe_identifier as workspace_safe_identifier,
+};
 use std::path::PathBuf;
 
 use crate::cli::ForgeStatusArg;
@@ -142,6 +146,7 @@ pub(crate) fn forge_promote(input: ForgePromoteInput) -> Result<(), Box<dyn std:
     }
 
     let relationship_readbacks = apply_forge_relationship_plan(
+        &config,
         adapter.as_ref(),
         &content_verified.identifier,
         &relationships,
@@ -240,6 +245,7 @@ impl ForgeRelationshipPlan {
 }
 
 pub(crate) fn apply_forge_relationship_plan(
+    config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
     issue_ref: &str,
     relationships: &ForgeRelationshipPlan,
@@ -262,8 +268,110 @@ pub(crate) fn apply_forge_relationship_plan(
             issue_ref,
             readback.native_subissues.len()
         ));
+        if let Some(parent_readback) =
+            ensure_forge_parent_integration_branch_evidence(config, adapter, parent_ref, issue_ref)?
+        {
+            readbacks.push(parent_readback);
+        }
     }
     Ok(readbacks)
+}
+
+fn ensure_forge_parent_integration_branch_evidence(
+    config: &RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    parent_ref: &str,
+    first_subissue_ref: &str,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let Some(parent_issue) = adapter.get_issue(parent_ref)? else {
+        return Ok(None);
+    };
+    let parent_integration_branch =
+        parent_integration_branch_name(&parent_issue.identifier, Some(&parent_issue.title));
+    if parent_issue_has_integration_branch_evidence(&parent_issue, &parent_integration_branch) {
+        return Ok(Some(format!(
+            "`{}` parent integration branch `{}` already recorded.",
+            parent_issue.identifier, parent_integration_branch
+        )));
+    }
+
+    let workpad = render_forge_parent_topology_workpad(
+        &parent_issue,
+        first_subissue_ref,
+        &parent_integration_branch,
+        "main",
+    );
+    adapter.upsert_workpad(&parent_issue.identifier, &workpad)?;
+    append_tracker_mutation_audit(
+        config,
+        TrackerMutationAudit {
+            command: "forge relationship",
+            mutation_type: "workpad_write",
+            issue_ref: Some(&parent_issue.identifier),
+            target: Some(first_subissue_ref.to_string()),
+            from_state: Some(parent_issue.state.clone()),
+            to_state: None,
+            reason: "parent integration branch evidence after native subissue relationship",
+        },
+    );
+    Ok(Some(format!(
+        "`{}` parent integration branch `{}` recorded before subissue dispatch.",
+        parent_issue.identifier, parent_integration_branch
+    )))
+}
+
+fn parent_issue_has_integration_branch_evidence(issue: &TrackerIssue, branch: &str) -> bool {
+    issue.branch_name.as_deref() == Some(branch)
+        || issue
+            .description
+            .as_deref()
+            .is_some_and(|description| description.contains(branch))
+        || issue
+            .project_fields
+            .values()
+            .any(|value| project_field_contains_branch(value, branch))
+}
+
+fn project_field_contains_branch(value: &serde_json::Value, branch: &str) -> bool {
+    match value {
+        serde_json::Value::String(value) => value == branch || value.contains(branch),
+        serde_json::Value::Array(values) => values
+            .iter()
+            .any(|value| project_field_contains_branch(value, branch)),
+        serde_json::Value::Object(values) => values
+            .values()
+            .any(|value| project_field_contains_branch(value, branch)),
+        _ => false,
+    }
+}
+
+fn render_forge_parent_topology_workpad(
+    parent_issue: &TrackerIssue,
+    first_subissue_ref: &str,
+    parent_integration_branch: &str,
+    parent_final_base_branch: &str,
+) -> String {
+    let workspace_key = workspace_safe_identifier(&format!(
+        "issue-{}",
+        parent_issue.identifier.trim_start_matches('#')
+    ));
+    [
+        "## Shea Symphony Workpad".to_string(),
+        String::new(),
+        "### Parent Topology".to_string(),
+        format!("- Parent issue: {} {}", parent_issue.identifier, parent_issue.title),
+        format!("- First observed subissue: {first_subissue_ref}"),
+        format!("- Parent integration branch: `{parent_integration_branch}`"),
+        format!("- Parent final base branch: `{parent_final_base_branch}`"),
+        "- Source: `shea-symphony forge relationship parent topology ensure`".to_string(),
+        "- Purpose: durable branch evidence immediately after native subissue relationship creation.".to_string(),
+        String::new(),
+        "### Runtime Ownership".to_string(),
+        format!("- Issue: `{}`", parent_issue.identifier),
+        format!("- Workspace key: `{workspace_key}`"),
+        format!("- Branch: `{parent_integration_branch}`"),
+    ]
+    .join("\n")
 }
 
 pub(crate) fn render_promotion_note(

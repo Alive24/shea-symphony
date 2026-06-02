@@ -515,6 +515,56 @@ fn forge_create_write_initializes_backlog_without_status_transition() {
     );
 }
 
+#[test]
+fn forge_relationship_parent_records_integration_branch_evidence() {
+    let config = test_config();
+    let adapter = RecordingAdapter::default();
+    let mut parent = tracker_issue_with_ref(
+        "#405",
+        "Make autopilot lanes independently throughput-oriented",
+        "Todo",
+    );
+    parent.description = Some("## Issue Setup\n\n- UAT Required: Yes".into());
+    adapter
+        .issues
+        .borrow_mut()
+        .insert(parent.identifier.clone(), parent);
+    let child = tracker_issue_with_ref("#410", "Show independent lane throughput in Tauri", "Todo");
+    adapter
+        .issues
+        .borrow_mut()
+        .insert(child.identifier.clone(), child);
+
+    let readbacks = apply_forge_relationship_plan(
+        &config,
+        &adapter,
+        "#410",
+        &ForgeRelationshipPlan {
+            blocked_by: Vec::new(),
+            parent: Some("#405".into()),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        adapter.operations(),
+        vec![
+            "add_subissue:#405:#410".to_string(),
+            "workpad:#405".to_string()
+        ]
+    );
+    assert!(readbacks.iter().any(|readback| readback.contains(
+        "parent integration branch `integration/issue-405-make-autopilot-lanes-independently-throughput-oriented` recorded"
+    )));
+    let parent = adapter.get_issue("#405").unwrap().unwrap();
+    let description = parent.description.unwrap();
+    assert!(description.contains("### Parent Topology"));
+    assert!(description.contains("- First observed subissue: #410"));
+    assert!(description.contains(
+        "- Parent integration branch: `integration/issue-405-make-autopilot-lanes-independently-throughput-oriented`"
+    ));
+}
+
 fn test_promotion_note() -> PromotionNoteInput {
     PromotionNoteInput {
         operator_confirmation: "promote it".into(),

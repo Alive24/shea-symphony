@@ -28,6 +28,17 @@ pub struct AgentReviewReport {
 }
 
 impl AgentReviewReport {
+    pub(crate) fn has_parsed_review_result(&self) -> bool {
+        [
+            self.summary.as_deref(),
+            self.stdout.as_deref(),
+            self.stderr.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|text| parse_review_result(text).is_some())
+    }
+
     pub fn blocks_progress(&self) -> bool {
         self.findings.iter().any(review_finding_blocks_progress)
     }

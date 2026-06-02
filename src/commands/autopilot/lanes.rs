@@ -14,7 +14,7 @@ use crate::commands::gate::{evaluate_issue_for_current_source, gate_target_state
 use crate::lanes::claim::{
     pool_claim_eligibility, select_pool_worker_issues, worker_identity, WorkerLane,
 };
-use crate::lanes::main_loop::run_loop_handoff_plan;
+use crate::lanes::main_loop::{run_loop_handoff_plan, run_loop_preflight_launch_workspace};
 use crate::lanes::merge::merge_preflight_status;
 use crate::lanes::review::{review_backend_kind, select_review_worker_issues};
 use crate::orchestration::hydrate_issues_for_review_lane;
@@ -93,24 +93,39 @@ fn autopilot_main_lane_plan(
                 .collect(),
         },
         Ok(_) => match run_loop_handoff_plan(config, &issue) {
-            Ok(handoff) => {
-                let action = if normalize_state(&issue.state) == "in progress" {
-                    "resume_main_issue"
-                } else {
-                    "claim_main_issue"
-                };
-                AutopilotLanePlan {
-                    lane: "main".into(),
-                    status: "ready".into(),
-                    selected_issue: Some(AutopilotIssueSummary::from_issue(&issue)),
-                    proposed_action: action.into(),
-                    target_state: Some(config.tracker.state_map.agent_review.clone()),
-                    reason: "dispatchable_issue".into(),
-                    evidence: vec![
-                        format!("workspace={}", handoff.workspace_path.display()),
-                        format!("branch={}", handoff.branch_name),
-                        "source=main loop dry-run selection".into(),
-                    ],
+            Ok(mut handoff) => {
+                match run_loop_preflight_launch_workspace(config, &issue, &mut handoff) {
+                    Ok(workspace_preflight) => {
+                        let action = if normalize_state(&issue.state) == "in progress" {
+                            "resume_main_issue"
+                        } else {
+                            "claim_main_issue"
+                        };
+                        let mut evidence = vec![
+                            format!("workspace={}", handoff.workspace_path.display()),
+                            format!("branch={}", handoff.branch_name),
+                            "source=main loop dry-run selection".into(),
+                        ];
+                        evidence.extend(workspace_preflight.evidence);
+                        AutopilotLanePlan {
+                            lane: "main".into(),
+                            status: "ready".into(),
+                            selected_issue: Some(AutopilotIssueSummary::from_issue(&issue)),
+                            proposed_action: action.into(),
+                            target_state: Some(config.tracker.state_map.agent_review.clone()),
+                            reason: "dispatchable_issue".into(),
+                            evidence,
+                        }
+                    }
+                    Err(error) => AutopilotLanePlan {
+                        lane: "main".into(),
+                        status: "blocked".into(),
+                        selected_issue: Some(AutopilotIssueSummary::from_issue(&issue)),
+                        proposed_action: "workspace_preflight_failed".into(),
+                        target_state: Some(config.tracker.state_map.need_human_input.clone()),
+                        reason: error.to_string(),
+                        evidence: vec!["source=run_loop_preflight_launch_workspace".into()],
+                    },
                 }
             }
             Err(error) => AutopilotLanePlan {

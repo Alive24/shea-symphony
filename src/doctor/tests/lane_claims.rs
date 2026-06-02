@@ -33,7 +33,7 @@ fn skips_done_issue_legacy_lane_claims() {
 }
 
 #[test]
-fn skips_done_issue_active_structured_claims_without_registry() {
+fn reports_done_issue_active_structured_claims_as_terminal_warning() {
     let mut issue = with_github_issue_state(issue("#244", "Done"), "CLOSED");
     issue.project_fields.insert(
         "Main Agent".into(),
@@ -51,7 +51,14 @@ fn skips_done_issue_active_structured_claims_without_registry() {
 
     let report = audit_project_issues_with_context(&[issue], Some(&context));
 
-    assert!(report.is_clean());
+    assert!(report.violations.iter().any(|violation| {
+        violation.code == "terminal_issue_active_lane_claim"
+            && violation.severity == AuditSeverity::Warning
+    }));
+    assert!(!report
+        .violations
+        .iter()
+        .any(|violation| violation.code == "active_lane_claim_missing_registry"));
 }
 
 #[test]

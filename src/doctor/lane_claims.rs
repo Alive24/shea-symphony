@@ -117,6 +117,38 @@ pub(super) fn audit_lane_claim_fields(
     }
 }
 
+pub(super) fn audit_terminal_active_lane_claim_fields(
+    issue: &TrackerIssue,
+    normalized_issue_state: &str,
+    violations: &mut Vec<ProjectAuditViolation>,
+) {
+    if !matches!(normalized_issue_state, "done" | "closed") {
+        return;
+    }
+
+    for field in ["Main Agent", "Review Agent", "Merging Agent"] {
+        let Some(value) = string_project_field(issue, field)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+
+        if LaneClaim::parse(&value)
+            .map(|claim| claim.state == LaneClaimState::Active)
+            .unwrap_or(false)
+        {
+            violations.push(violation(
+                issue,
+                AuditSeverity::Warning,
+                "terminal_issue_active_lane_claim",
+                &format!("{field} claim is still `state=active` on a terminal issue."),
+                "Update the structured claim to `state=done` after preserving run evidence.",
+            ));
+        }
+    }
+}
+
 pub(super) fn has_runtime_owner_metadata(issue: &TrackerIssue) -> bool {
     issue.project_fields.contains_key("runtime_owner")
         || issue.project_fields.contains_key("runtime_state")

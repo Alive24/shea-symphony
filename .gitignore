@@ -17,3 +17,4 @@ app/.npm-cache/
 app/src-tauri/target/
 app/src-tauri/gen/
 .playwright-mcp
+.shea-symphony

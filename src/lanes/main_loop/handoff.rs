@@ -9,7 +9,8 @@ use shea_symphony::handoff::{
     plan_issue_handoff_for_profile, AgentReviewHandoffEvidence, HandoffError, IssueHandoffPlan,
 };
 use shea_symphony::issue_workspace::{
-    discover_issue_workspaces, infer_issue_ref_from_branch_or_path,
+    discover_issue_workspaces, infer_issue_ref_from_branch_or_path, IssueWorkspaceCandidate,
+    IssueWorkspaceReport, WorkspaceMatchStrength,
 };
 use shea_symphony::lane_claim::LaneClaim;
 use shea_symphony::model::{LinkedPullRequest, TrackerIssue};
@@ -35,6 +36,11 @@ pub(crate) struct RunLoopLiveHandoff {
 pub(crate) struct HandoffVerification {
     pub(crate) success: bool,
     pub(crate) summary: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MainLaunchWorkspacePreflight {
+    pub(crate) evidence: Vec<String>,
 }
 
 pub(crate) fn run_loop_handoff_plan(
@@ -68,6 +74,131 @@ pub(crate) fn run_loop_handoff_plan(
     }
 
     Ok(plan)
+}
+
+pub(crate) fn run_loop_preflight_launch_workspace(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    handoff: &mut IssueHandoffPlan,
+) -> Result<MainLaunchWorkspacePreflight, HandoffError> {
+    if config.tracker.kind != "github_project_v2" {
+        return Ok(MainLaunchWorkspacePreflight {
+            evidence: vec![format!(
+                "workspace_preflight action=prepare path={} branch={} mode=fixture_or_non_github",
+                handoff.workspace_path.display(),
+                handoff.branch_name
+            )],
+        });
+    }
+    let repo_root =
+        std::env::current_dir().map_err(|error| HandoffError::WorkspacePreflightBlocked {
+            issue_ref: issue.identifier.clone(),
+            reason: format!("cannot inspect current repository worktrees: {error}"),
+        })?;
+    let report = discover_issue_workspaces(config, issue, &repo_root).map_err(|error| {
+        HandoffError::WorkspacePreflightBlocked {
+            issue_ref: issue.identifier.clone(),
+            reason: error.to_string(),
+        }
+    })?;
+    run_loop_apply_launch_workspace_report(config, issue, handoff, &report)
+}
+
+pub(crate) fn run_loop_apply_launch_workspace_report(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    handoff: &mut IssueHandoffPlan,
+    report: &IssueWorkspaceReport,
+) -> Result<MainLaunchWorkspacePreflight, HandoffError> {
+    let mut evidence = Vec::new();
+    for warning in &report.warnings {
+        evidence.push(format!("workspace_warning={}", compact_evidence(warning)));
+    }
+
+    let (missing_candidates, live_candidates): (Vec<_>, Vec<_>) = report
+        .candidates
+        .iter()
+        .partition(|candidate| !candidate.path.exists());
+
+    for candidate in &missing_candidates {
+        evidence.push(format!(
+            "ignored_missing_workspace path={} namespace={} evidence={} next=`git worktree prune` after operator review or `workspace ensure`",
+            candidate.path.display(),
+            workspace_namespace_label(&candidate.path),
+            candidate_evidence_summary(candidate)
+        ));
+    }
+
+    let strong_live = live_candidates
+        .iter()
+        .copied()
+        .filter(|candidate| candidate.strength == WorkspaceMatchStrength::Strong)
+        .collect::<Vec<_>>();
+    let selected = if strong_live.len() > 1 {
+        return Err(workspace_preflight_error(
+            issue,
+            format!(
+                "multiple strong live workspace candidates: {}; run `workspace show` and resolve with `workspace adopt`",
+                candidate_path_list(&strong_live)
+            ),
+        ));
+    } else if let Some(candidate) = strong_live.first() {
+        Some(*candidate)
+    } else if live_candidates.len() > 1 {
+        return Err(workspace_preflight_error(
+            issue,
+            format!(
+                "multiple live workspace candidates without a canonical match: {}; run `workspace show` and resolve with `workspace adopt`",
+                candidate_path_list(&live_candidates)
+            ),
+        ));
+    } else {
+        live_candidates.first().copied()
+    };
+
+    if let Some(candidate) = selected {
+        validate_launch_candidate_clean(issue, candidate)?;
+        let branch = candidate.branch.as_deref().ok_or_else(|| {
+            workspace_preflight_error(
+                issue,
+                format!(
+                    "detached workspace candidate {}; resolve with `workspace adopt` after choosing a branch worktree",
+                    candidate.path.display()
+                ),
+            )
+        })?;
+        let inferred_issue = infer_issue_ref_from_branch_or_path(Some(branch), &candidate.path);
+        if inferred_issue.as_deref() != Some(issue.identifier.as_str())
+            && branch != handoff.branch_name
+        {
+            return Err(workspace_preflight_error(
+                issue,
+                format!(
+                    "workspace candidate {} on branch {} does not match issue {}; run `workspace show` before launch",
+                    candidate.path.display(),
+                    branch,
+                    issue.identifier
+                ),
+            ));
+        }
+        apply_recovery_worktree_to_handoff(config, issue, handoff, &candidate.path, branch)
+            .map_err(|error| workspace_preflight_error(issue, error.to_string()))?;
+        evidence.push(format!(
+            "workspace_preflight action=reuse path={} branch={} evidence={}",
+            candidate.path.display(),
+            branch,
+            candidate_evidence_summary(candidate)
+        ));
+    } else {
+        evidence.push(format!(
+            "workspace_preflight action=prepare path={} branch={} next=`workspace ensure {}`",
+            handoff.workspace_path.display(),
+            handoff.branch_name,
+            issue.identifier
+        ));
+    }
+
+    Ok(MainLaunchWorkspacePreflight { evidence })
 }
 
 pub(crate) fn run_loop_apply_recovery_handoff(
@@ -138,6 +269,96 @@ fn apply_recovery_worktree_to_handoff(
     handoff.branch_name = branch.to_string();
     handoff.pull_request.head_branch = branch.to_string();
     Ok(())
+}
+
+fn validate_launch_candidate_clean(
+    issue: &TrackerIssue,
+    candidate: &IssueWorkspaceCandidate,
+) -> Result<(), HandoffError> {
+    if candidate.branch.is_none() {
+        return Err(workspace_preflight_error(
+            issue,
+            format!(
+                "workspace candidate {} is detached and cannot be launched safely",
+                candidate.path.display()
+            ),
+        ));
+    }
+    let output = std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(&candidate.path)
+        .output()
+        .map_err(|error| {
+            workspace_preflight_error(
+                issue,
+                format!(
+                    "could not inspect workspace candidate {}: {error}",
+                    candidate.path.display()
+                ),
+            )
+        })?;
+    if !output.status.success() {
+        return Err(workspace_preflight_error(
+            issue,
+            format!(
+                "could not inspect workspace candidate {}: {}",
+                candidate.path.display(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        ));
+    }
+    let dirty = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !dirty.is_empty() {
+        return Err(workspace_preflight_error(
+            issue,
+            format!(
+                "workspace candidate {} is dirty: {}; stop before app-server launch and inspect it",
+                candidate.path.display(),
+                dirty.replace('\n', "; ")
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn workspace_preflight_error(issue: &TrackerIssue, reason: impl Into<String>) -> HandoffError {
+    HandoffError::WorkspacePreflightBlocked {
+        issue_ref: issue.identifier.clone(),
+        reason: reason.into(),
+    }
+}
+
+fn candidate_path_list(candidates: &[&IssueWorkspaceCandidate]) -> String {
+    candidates
+        .iter()
+        .map(|candidate| candidate.path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn candidate_evidence_summary(candidate: &IssueWorkspaceCandidate) -> String {
+    candidate
+        .evidence
+        .iter()
+        .map(|evidence| format!("{}:{}", evidence.source, evidence.detail.replace(' ', "_")))
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+fn workspace_namespace_label(path: &Path) -> &'static str {
+    if path
+        .components()
+        .any(|component| component.as_os_str() == ".jade-symphony")
+    {
+        "jade-symphony"
+    } else if path
+        .components()
+        .any(|component| component.as_os_str() == ".shea-symphony")
+    {
+        "shea-symphony"
+    } else {
+        "unknown"
+    }
 }
 
 fn recovery_workspace_key(

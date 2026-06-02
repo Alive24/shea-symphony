@@ -113,6 +113,8 @@ pub enum HandoffError {
         issue_ref: String,
         pull_request_url: String,
     },
+    #[error("issue {issue_ref} workspace preflight blocked Main launch: {reason}")]
+    WorkspacePreflightBlocked { issue_ref: String, reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

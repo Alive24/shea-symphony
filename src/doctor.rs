@@ -9,7 +9,9 @@ mod topology;
 
 use crate::model::{SessionStatusSnapshot, TrackerIssue};
 use crate::runtime_state::RuntimeState;
-use lane_claims::{audit_lane_claim_fields, claimed_main_agent};
+use lane_claims::{
+    audit_lane_claim_fields, audit_terminal_active_lane_claim_fields, claimed_main_agent,
+};
 use project_state::{
     audit_project_state_post_claims, audit_project_state_pre_claims, audit_terminal_state_mismatch,
 };
@@ -90,6 +92,7 @@ pub fn audit_project_issues_with_context(
     for issue in issues {
         let state = issue.normalized_state();
         audit_terminal_state_mismatch(issue, &state, &mut violations);
+        audit_terminal_active_lane_claim_fields(issue, &state, &mut violations);
 
         if state == "done" {
             continue;

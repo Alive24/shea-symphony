@@ -44,6 +44,167 @@ fn run_loop_handoff_plan_rejects_branch_for_different_issue() {
 }
 
 #[test]
+fn launch_workspace_preflight_ignores_missing_historical_jade_candidate() {
+    let mut config = test_config();
+    let temp = tempfile::tempdir().unwrap();
+    config.workspace.root = temp.path().join(".shea-symphony").join("worktrees");
+    let mut issue = tracker_issue("In Progress");
+    issue.linked_pull_requests.push(LinkedPullRequest {
+        head_ref_name: Some(
+            "feature/issue-29-wire-runtime-state-persistence-into-main-loop".into(),
+        ),
+        number: Some(29),
+        ..Default::default()
+    });
+    let mut handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+    let planned_path = handoff.workspace_path.clone();
+    let stale_path = temp
+        .path()
+        .join(".jade-symphony")
+        .join("worktrees")
+        .join("issue-29-old-main");
+    let report = workspace_report(
+        &issue,
+        vec![workspace_candidate(
+            stale_path,
+            Some("feature/issue-29-wire-runtime-state-persistence-into-main-loop"),
+            WorkspaceMatchStrength::Strong,
+            "session_registry",
+        )],
+    );
+
+    let preflight =
+        run_loop_apply_launch_workspace_report(&config, &issue, &mut handoff, &report).unwrap();
+
+    assert_eq!(handoff.workspace_path, planned_path);
+    assert!(preflight.evidence.iter().any(|line| {
+        line.contains("ignored_missing_workspace") && line.contains("namespace=jade-symphony")
+    }));
+    assert!(preflight
+        .evidence
+        .iter()
+        .any(|line| line.contains("workspace_preflight action=prepare")));
+}
+
+#[test]
+fn launch_workspace_preflight_reuses_single_clean_matching_worktree() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = test_config();
+    config.workspace.root = temp.path().join("worktrees");
+    std::fs::create_dir_all(&config.workspace.root).unwrap();
+    let issue = tracker_issue("In Progress");
+    let mut handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+    let worktree = config.workspace.root.join("manual-issue-29");
+    init_clean_git_workspace(&worktree);
+    git_ok(
+        &worktree,
+        &[
+            "checkout",
+            "-b",
+            "feature/issue-29-wire-runtime-state-persistence-into-main-loop",
+        ],
+    );
+    let report = workspace_report(
+        &issue,
+        vec![workspace_candidate(
+            worktree.clone(),
+            Some("feature/issue-29-wire-runtime-state-persistence-into-main-loop"),
+            WorkspaceMatchStrength::Strong,
+            "git_worktree",
+        )],
+    );
+
+    let preflight =
+        run_loop_apply_launch_workspace_report(&config, &issue, &mut handoff, &report).unwrap();
+
+    assert_eq!(handoff.workspace_path, worktree);
+    assert_eq!(handoff.workspace_key, "manual-issue-29");
+    assert!(preflight
+        .evidence
+        .iter()
+        .any(|line| line.contains("workspace_preflight action=reuse")));
+}
+
+#[test]
+fn launch_workspace_preflight_blocks_ambiguous_live_candidates() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = test_config();
+    config.workspace.root = temp.path().join("worktrees");
+    std::fs::create_dir_all(&config.workspace.root).unwrap();
+    let issue = tracker_issue("In Progress");
+    let mut handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+    let first = config.workspace.root.join("issue-29-a");
+    let second = config.workspace.root.join("issue-29-b");
+    std::fs::create_dir_all(&first).unwrap();
+    std::fs::create_dir_all(&second).unwrap();
+    let report = workspace_report(
+        &issue,
+        vec![
+            workspace_candidate(
+                first,
+                Some("feature/issue-29-a"),
+                WorkspaceMatchStrength::Strong,
+                "git_worktree",
+            ),
+            workspace_candidate(
+                second,
+                Some("feature/issue-29-b"),
+                WorkspaceMatchStrength::Strong,
+                "git_worktree",
+            ),
+        ],
+    );
+
+    let error =
+        run_loop_apply_launch_workspace_report(&config, &issue, &mut handoff, &report).unwrap_err();
+
+    assert!(matches!(
+        error,
+        HandoffError::WorkspacePreflightBlocked { reason, .. }
+            if reason.contains("multiple strong live workspace candidates")
+    ));
+}
+
+#[test]
+fn launch_workspace_preflight_blocks_dirty_candidate_before_runtime() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = test_config();
+    config.workspace.root = temp.path().join("worktrees");
+    std::fs::create_dir_all(&config.workspace.root).unwrap();
+    let issue = tracker_issue("In Progress");
+    let mut handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+    let worktree = config.workspace.root.join("dirty-issue-29");
+    init_clean_git_workspace(&worktree);
+    git_ok(
+        &worktree,
+        &[
+            "checkout",
+            "-b",
+            "feature/issue-29-wire-runtime-state-persistence-into-main-loop",
+        ],
+    );
+    std::fs::write(worktree.join("scratch.txt"), "dirty").unwrap();
+    let report = workspace_report(
+        &issue,
+        vec![workspace_candidate(
+            worktree,
+            Some("feature/issue-29-wire-runtime-state-persistence-into-main-loop"),
+            WorkspaceMatchStrength::Strong,
+            "git_worktree",
+        )],
+    );
+
+    let error =
+        run_loop_apply_launch_workspace_report(&config, &issue, &mut handoff, &report).unwrap_err();
+
+    assert!(matches!(
+        error,
+        HandoffError::WorkspacePreflightBlocked { reason, .. }
+            if reason.contains("dirty") && reason.contains("stop before app-server launch")
+    ));
+}
+
+#[test]
 fn run_loop_handoff_workpad_records_planned_pr_evidence() {
     let config = test_config();
     let issue = tracker_issue("In Progress");
@@ -108,6 +269,38 @@ fn run_loop_handoff_workpad_records_planned_pr_evidence() {
     assert!(workpad.contains("PR title: `#29: Wire runtime state persistence into main loop`"));
     assert!(workpad.contains("Handoff verification: `skipped:not_configured`"));
     assert!(workpad.contains("Live PR: `https://github.com/Alive24/shea-symphony/pull/45`"));
+}
+
+fn workspace_report(
+    issue: &TrackerIssue,
+    candidates: Vec<IssueWorkspaceCandidate>,
+) -> IssueWorkspaceReport {
+    IssueWorkspaceReport {
+        issue_ref: issue.identifier.clone(),
+        title: issue.title.clone(),
+        branch_hints: Vec::new(),
+        candidates,
+        canonical_index: None,
+        warnings: Vec::new(),
+    }
+}
+
+fn workspace_candidate(
+    path: PathBuf,
+    branch: Option<&str>,
+    strength: WorkspaceMatchStrength,
+    source: &str,
+) -> IssueWorkspaceCandidate {
+    IssueWorkspaceCandidate {
+        path,
+        branch: branch.map(str::to_string),
+        head: Some("abc123".into()),
+        strength,
+        evidence: vec![WorkspaceEvidence {
+            source: source.into(),
+            detail: "test evidence".into(),
+        }],
+    }
 }
 
 #[test]

@@ -648,6 +648,7 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
     let gemini_health_section = render_gemini_health_section(job);
 
     let usage_limit_section = review_usage_limit_pause(job)
+        .filter(|_| should_render_usage_limit_diagnostic(job))
         .map(|pause| {
             render_section(
                 "Usage Limit Diagnostic",
@@ -754,6 +755,14 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
             ("pass_evidence_section", pass_evidence_section),
         ],
     )
+}
+
+fn should_render_usage_limit_diagnostic(job: &ReviewJob) -> bool {
+    !matches!(job.state, ReviewJobState::Completed)
+        || !job
+            .report
+            .as_ref()
+            .is_some_and(AgentReviewReport::has_parsed_review_result)
 }
 
 fn review_pr_line(issue: &TrackerIssue) -> String {
@@ -2491,5 +2500,65 @@ mod tests {
         );
         assert!(workpad.contains("Usage-limit classifier: `rate_limit`"));
         assert!(workpad.contains("must not move to Human Review"));
+    }
+
+    #[test]
+    fn review_workpad_suppresses_stale_usage_limit_for_completed_pass() {
+        let mut job = completed_gemini_review(
+            "Review Result: PASS\n\nEvidence: implementation and verification are complete.",
+        );
+        job.report.as_mut().unwrap().stderr =
+            Some("warning: previous attempt hit rate limit exceeded; retry later".into());
+
+        let workpad = render_review_workpad(&issue(), &job);
+
+        assert_eq!(
+            review_usage_limit_pause(&job).unwrap().classifier,
+            "rate_limit"
+        );
+        assert!(workpad.contains("- Result: `PassedToHumanReview`"));
+        assert!(workpad.contains("Review pass evidence: `recorded`"));
+        assert!(!workpad.contains("### Usage Limit Diagnostic"));
+        assert!(!workpad.contains("Review did not pass"));
+    }
+
+    #[test]
+    fn review_workpad_suppresses_stale_usage_limit_for_completed_rework() {
+        let mut job = completed_gemini_review(
+            "Review Result: REWORK\n\n[Confirmed] Missing guard: The renderer still emits contradictory diagnostics.",
+        );
+        job.report.as_mut().unwrap().summary =
+            Some("quota exceeded appeared in an earlier streamed summary".into());
+
+        let workpad = render_review_workpad(&issue(), &job);
+
+        assert_eq!(
+            review_usage_limit_pause(&job).unwrap().classifier,
+            "quota_exceeded"
+        );
+        assert!(workpad.contains("- Result: `NeedsRework`"));
+        assert!(workpad.contains("Confirmed Agent Review findings require Rework."));
+        assert!(!workpad.contains("### Usage Limit Diagnostic"));
+        assert!(!workpad.contains("Review did not pass; unavailable"));
+    }
+
+    #[test]
+    fn review_workpad_suppresses_stale_usage_limit_for_completed_needs_context() {
+        let mut job = completed_gemini_review(
+            "Review Result: NEEDS_CONTEXT\n\nThe linked PR evidence could not be inspected.",
+        );
+        job.report.as_mut().unwrap().stderr =
+            Some("quota exceeded text from a stale backend warning".into());
+
+        let workpad = render_review_workpad(&issue(), &job);
+
+        assert_eq!(
+            review_usage_limit_pause(&job).unwrap().classifier,
+            "quota_exceeded"
+        );
+        assert!(workpad.contains("- Result: `InconclusiveNeedsRework`"));
+        assert!(workpad.contains("### Inconclusive Review Diagnostic"));
+        assert!(!workpad.contains("### Usage Limit Diagnostic"));
+        assert!(!workpad.contains("unavailable or inconclusive review must not move"));
     }
 }

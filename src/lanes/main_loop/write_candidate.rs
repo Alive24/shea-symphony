@@ -24,10 +24,10 @@ use super::{
     reconcile_pending_main_session, run_loop_apply_recovery_handoff,
     run_loop_assignee_ownership_decision, run_loop_assignee_ownership_workpad,
     run_loop_claim_action, run_loop_handoff_plan, run_loop_handoff_workpad,
-    run_loop_live_handoff_enabled, run_loop_ownership_workpad, run_loop_runtime_ownership,
-    run_loop_runtime_state_for_issue, run_loop_runtime_state_with_result,
-    selected_profile_github_login, AssigneeOwnershipDecision, MainSessionReconciliation,
-    RunLoopClaimAction, RunLoopOptions,
+    run_loop_live_handoff_enabled, run_loop_ownership_workpad, run_loop_preflight_launch_workspace,
+    run_loop_runtime_ownership, run_loop_runtime_state_for_issue,
+    run_loop_runtime_state_with_result, selected_profile_github_login, AssigneeOwnershipDecision,
+    MainSessionReconciliation, RunLoopClaimAction, RunLoopOptions,
 };
 use crate::commands::gate::evaluate_issue_for_current_source;
 use crate::lanes::claim::{
@@ -149,6 +149,20 @@ pub(crate) fn run_loop_dispatch_write_candidate(
                 );
             }
         }
+    }
+    let workspace_preflight =
+        match run_loop_preflight_launch_workspace(config, &latest, &mut handoff) {
+            Ok(preflight) => preflight,
+            Err(error) => {
+                handle_run_loop_handoff_failure(adapter, &latest, &error, options, config)?;
+                return Ok(RunLoopWorkerOutcome::Completed);
+            }
+        };
+    for evidence in &workspace_preflight.evidence {
+        println!(
+            "run_loop_action=workspace_preflight issue={} evidence={}",
+            latest.identifier, evidence
+        );
     }
 
     let ownership = run_loop_runtime_ownership(&latest, config, &handoff)?;

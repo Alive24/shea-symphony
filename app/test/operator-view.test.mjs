@@ -17,9 +17,13 @@ import {
   mergeReadSurface
 } from '../src/lib/operatorReadModel.ts';
 import {
+  defaultBackgroundReadSurfaces,
+  projectCooldownReadSurfaces
+} from '../src/lib/operatorOverviewStore.ts';
+import {
   buildLaneThroughputBoard
 } from '../src/lib/viewModel/laneThroughput.ts';
-import { defaultLoopState, laneWorkerFromAutoloop } from '../src/lib/tauriAutoloop.ts';
+import { appendAutoloopLine, defaultLoopState, laneWorkerFromAutoloop } from '../src/lib/tauriAutoloop.ts';
 
 test('browser fallback uses fixture data instead of a Node API bridge', async () => {
   const overview = await loadOverview(true, 'fast');
@@ -71,6 +75,51 @@ test('maps live autoloop lane snapshots into existing lane board worker rows', (
   assert.equal(laneWorkerFromAutoloop({ lane: 'main', status: 'running', selected: 'none', action: 'tick_started' }, 'main', state), null);
 });
 
+test('autoloop stdout log omits repeated inactive skipped issue details', () => {
+  const state = appendAutoloopLine(defaultLoopState(), {
+    atMs: Date.now(),
+    stream: 'stdout',
+    line: '- I_kwDOSZP6c88AAAABB2ahNQ #13 reason=state is not active',
+    event: {
+      event: 'autopilot_cli_line',
+      payload: {
+        kind: '-',
+        raw: '- I_kwDOSZP6c88AAAABB2ahNQ #13 reason=state is not active',
+        fields: {}
+      }
+    }
+  });
+
+  assert.equal(state.recentLines.length, 0);
+});
+
+test('autoloop stdout log omits child lane idle stop lines', () => {
+  const lines = [
+    'merge_once=stopped reason=no_merging_issue',
+    'merge_loop=stopped reason=no_merging_issue iterations=1 slot=1',
+    'review_loop=stopped reason=no_agent_review_issue iterations=1'
+  ];
+  let state = defaultLoopState();
+
+  for (const line of lines) {
+    state = appendAutoloopLine(state, {
+      atMs: Date.now(),
+      stream: 'stdout',
+      line,
+      event: {
+        event: 'autopilot_cli_line',
+        payload: {
+          kind: line.split('=')[0],
+          raw: line,
+          fields: {}
+        }
+      }
+    });
+  }
+
+  assert.equal(state.recentLines.length, 0);
+});
+
 test('lane throughput board keeps independent running and queued lane work visible', () => {
   const board = buildLaneThroughputBoard({
     queueIssues: [
@@ -109,6 +158,58 @@ test('lane throughput board keeps independent running and queued lane work visib
   assert.equal(merge.runningCount, 0);
   assert.equal(merge.queuedCount, 1);
   assert.deepEqual(merge.issues.map((issue) => issue.id), ['#430']);
+});
+
+test('project read cooldown preserves last stable review queue visibility', () => {
+  const view = buildViewModel({
+    generatedAt: new Date().toISOString(),
+    workflowPath: 'workflows/shea-symphony.md',
+    commands: {
+      githubQueue: {
+        ok: false,
+        skipped: true,
+        projectReadPaused: true,
+        rateLimitResetAtMs: Date.now() + 60_000,
+        signal: 'project-rate-limit-cooldown',
+        stderr: 'Project read paused after rate limit.'
+      }
+    },
+    githubQueue: {
+      source: 'project state · last stable during Project read cooldown',
+      projectReadPaused: true,
+      rateLimitResetAtMs: Date.now() + 60_000,
+      totalOpen: 1,
+      laneCounts: { main: 0, review: 1, merge: 0 },
+      stateCounts: { 'Agent Review': 1 },
+      issues: [
+        {
+          identifier: '#405',
+          title: 'Make autopilot lanes independently throughput-oriented',
+          state: 'Agent Review',
+          url: 'https://github.com/Alive24/shea-symphony/issues/405'
+        }
+      ]
+    },
+    healthy: true
+  });
+
+  const board = buildLaneThroughputBoard({ queueIssues: view.queueIssues });
+  const review = board.find((lane) => lane.laneKey === 'review');
+
+  assert.equal(view.dataSource.label, 'Project reads paused');
+  assert.match(view.dataSource.detail, /GitHub Project read paused until/);
+  assert.deepEqual(review.issues.map((issue) => [issue.id, issue.title]), [
+    ['#405', 'Make autopilot lanes independently throughput-oriented']
+  ]);
+  assert.equal(review.queuedCount, 1);
+});
+
+test('default background refresh defers doctor surface', () => {
+  assert.deepEqual(defaultBackgroundReadSurfaces, ['githubQueue', 'skills', 'sessions', 'local']);
+  assert.equal(defaultBackgroundReadSurfaces.includes('doctor'), false);
+  assert.equal(defaultBackgroundReadSurfaces.includes('autopilot'), false);
+  assert.equal(defaultBackgroundReadSurfaces.includes('review'), false);
+  assert.equal(projectCooldownReadSurfaces.includes('doctor'), true);
 });
 
 test('lane throughput board surfaces blocked idle and completed lane results', () => {

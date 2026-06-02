@@ -76,10 +76,21 @@ export function buildDataSource(overview: any, commands: LooseRecord, generatedA
   }
 
   const commandResults = Object.values(commands) as any[];
+  const cooldown = projectReadCooldown(overview, commands);
   const passed = commandResults.filter((result) => result?.ok).length;
   const pending = commandResults.filter((result) => result?.pending).length;
   const total = commandResults.length;
   const allPassed = total > 0 && passed === total;
+  if (cooldown) {
+    return {
+      mode: passed > 0 ? 'live' : 'degraded',
+      label: 'Project reads paused',
+      tone: 'warn',
+      freshness: generatedAt ? `Checked ${timeLabel(generatedAt)}` : 'Not checked',
+      trust: 'Using last stable Project queue for operator awareness only',
+      detail: `GitHub Project read paused until ${cooldownLabel(cooldown.untilMs)}.`
+    };
+  }
   return {
     mode: passed > 0 ? 'live' : 'degraded',
     label: allPassed ? 'Live tracker data' : pending > 0 ? 'Fast live data' : passed > 0 ? 'Partial live data' : 'No live data',
@@ -98,6 +109,7 @@ export function buildDataSource(overview: any, commands: LooseRecord, generatedA
 export function buildLiveSignals(overview: any, commands: LooseRecord) {
   const skills = overview?.skills;
   const githubQueue = overview?.githubQueue;
+  const cooldown = projectReadCooldown(overview, commands);
   const skillSummary = skills?.summary ?? {};
   const sessionsText = overview?.sessionsText ?? '';
   const sessionReadState = parseSessionReadState(sessionsText);
@@ -153,15 +165,19 @@ export function buildLiveSignals(overview: any, commands: LooseRecord) {
       id: 'slow',
       label: 'Queue',
       value: githubQueue?.totalOpen == null ? 'Read' : String(githubQueue.totalOpen),
-      shortDetail: githubQueue?.laneCounts
+      shortDetail: cooldown
+        ? `paused until ${cooldownLabel(cooldown.untilMs)}`
+        : githubQueue?.laneCounts
         ? `${githubQueue.laneCounts.main ?? 0}/${githubQueue.laneCounts.review ?? 0}/${githubQueue.laneCounts.merge ?? 0} lanes`
         : summarizeSlowReads(slowReads),
-      detail: githubQueue?.stateCounts
+      detail: cooldown
+        ? `GitHub Project reads are paused after rate limit. Last stable queue remains visible when available.`
+        : githubQueue?.stateCounts
         ? Object.entries(githubQueue.stateCounts).map(([state, count]) => `${state}: ${count}`).join(' · ')
         : slowReads.map((item) => `${item.label}: ${item.status}`).join(' · '),
       tone: commands.githubQueue?.ok
         ? 'success'
-        : slowReads.some((item) => item.status === 'timeout' || item.status === 'degraded')
+        : cooldown || slowReads.some((item) => item.status === 'timeout' || item.status === 'degraded')
           ? 'warn'
           : 'success'
     },
@@ -174,6 +190,34 @@ export function buildLiveSignals(overview: any, commands: LooseRecord) {
       tone: commands.local?.ok ? (overview?.localStatus?.dirtyCount > 0 ? 'warn' : 'success') : 'danger'
     }
   ];
+}
+
+function projectReadCooldown(overview: any, commands: LooseRecord) {
+  return cooldownFromParsed(overview?.githubQueue)
+    ?? cooldownFromCommand(commands.githubQueue)
+    ?? cooldownFromCommand(commands.autopilot)
+    ?? cooldownFromCommand(commands.doctor)
+    ?? cooldownFromCommand(commands.review);
+}
+
+function cooldownFromCommand(command: any) {
+  if (!command?.projectReadPaused && command?.signal !== 'project-rate-limit-cooldown') return null;
+  return cooldownShape(command.rateLimitResetAtMs);
+}
+
+function cooldownFromParsed(parsed: any) {
+  if (!parsed?.projectReadPaused && parsed?.failureKind !== 'rate_limit') return null;
+  return cooldownShape(parsed.rateLimitResetAtMs);
+}
+
+function cooldownShape(value: any) {
+  const untilMs = Number(value);
+  if (!Number.isFinite(untilMs) || untilMs <= 0) return { untilMs: Date.now() + 10 * 60 * 1000 };
+  return { untilMs };
+}
+
+function cooldownLabel(untilMs: number) {
+  return new Date(untilMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 function summarizeSlowReads(slowReads: any[]) {

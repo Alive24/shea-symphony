@@ -170,8 +170,9 @@ fn render_skipped(snapshot: &RuntimeSnapshot, lines: &mut Vec<String>) {
         return;
     }
 
-    lines.push("skipped issues:".into());
-    for entry in &snapshot.skipped {
+    let sample_limit = 5;
+    lines.push(format!("skipped issues: {}", snapshot.skipped.len()));
+    for entry in snapshot.skipped.iter().take(sample_limit) {
         lines.push(format!(
             "- {} {} reason={}",
             entry.issue_id, entry.identifier, entry.reason
@@ -179,6 +180,10 @@ fn render_skipped(snapshot: &RuntimeSnapshot, lines: &mut Vec<String>) {
         if let Some(gate) = &entry.gate {
             render_gate(gate, lines);
         }
+    }
+    let remaining = snapshot.skipped.len().saturating_sub(sample_limit);
+    if remaining > 0 {
+        lines.push(format!("- ... {} more skipped issue(s) omitted", remaining));
     }
 }
 

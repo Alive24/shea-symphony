@@ -6,8 +6,11 @@ import { mergeReadSurface } from './operatorReadModel.ts';
 import { buildViewModel } from './operatorViewModel.ts';
 import { refreshStatusStore } from './uiState.ts';
 
-const slowSurfaces = ['githubQueue', 'autopilot', 'doctor', 'review', 'skills', 'sessions', 'local'];
+const slowSurfaces = ['githubQueue', 'skills', 'sessions', 'local'];
 const projectReadSurfaces = new Set(['autopilot', 'doctor', 'review', 'githubQueue']);
+
+export const defaultBackgroundReadSurfaces = [...slowSurfaces];
+export const projectCooldownReadSurfaces = [...projectReadSurfaces];
 
 export const operatorOverviewStore = writable({
   view: buildViewModel(null),
@@ -21,6 +24,7 @@ export const operatorOverviewStore = writable({
 
 let readGeneration = 0;
 let initialized = false;
+let backgroundReadsInFlight = false;
 let projectReadCooldownUntilMs = 0;
 
 export function initializeOperatorOverview() {
@@ -63,13 +67,12 @@ export async function requestOperatorOverviewRefresh(
     const overview = applyStableProjectQueueIfPaused(await loadOverview(force, 'fast'), current.view.raw);
     operatorOverviewStore.update((state) => ({
       ...state,
-      view: buildViewModel(preserveLocalStatus(overview, state.view.raw)),
+      view: buildViewModel(preserveFastOverviewState(overview, state.view.raw)),
       projectReadCooldown: projectCooldownFromOverview(overview) ?? state.projectReadCooldown,
       loading: false
     }));
     if (!includeSlowReads) return;
-    backgroundReadsStarted = true;
-    startOperatorBackgroundReads(force, source, publishStatus);
+    backgroundReadsStarted = startOperatorBackgroundReads(force, source, publishStatus);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error ?? 'unknown error');
     operatorOverviewStore.update((state) => ({
@@ -91,7 +94,7 @@ export async function requestOperatorOverviewRefresh(
     operatorOverviewStore.update((state) => ({
       ...state,
       loading: false,
-      backgroundRefreshing: backgroundReadsStarted ? state.backgroundRefreshing : false
+      backgroundRefreshing: backgroundReadsStarted || backgroundReadsInFlight ? state.backgroundRefreshing : false
     }));
     if (!includeSlowReads && publishStatus) {
       refreshStatusStore.set({
@@ -162,6 +165,61 @@ export function requestOperatorLocalArtifactsRefresh(source = 'local-artifacts',
   }
 }
 
+export function requestOperatorDoctorRefresh(source = 'doctor', publishStatus = true) {
+  const generation = ++readGeneration;
+
+  if (publishStatus) {
+    refreshStatusStore.set({
+      running: true,
+      remaining: 1,
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      source,
+      detail: 'Refreshing doctor'
+    });
+  }
+
+  operatorOverviewStore.update((state) => ({
+    ...state,
+    liveError: '',
+    fullLoading: true,
+    backgroundRefreshing: true,
+    slowReadsRemaining: 1
+  }));
+
+  if (projectReadCooldownActive()) {
+    finishSkippedBackgroundSurface(generation, source, publishStatus);
+    return;
+  }
+
+  loadReadSurface('doctor', true)
+    .then((surface) => {
+      if (generation !== readGeneration) return;
+      const cooldown = projectCooldownFromSurface(surface);
+      if (cooldown) projectReadCooldownUntilMs = Math.max(projectReadCooldownUntilMs, cooldown.untilMs);
+      operatorOverviewStore.update((state) => ({
+        ...state,
+        view: buildViewModel(mergeReadSurface(state.view.raw, surface)),
+        projectReadCooldown: cooldown ?? state.projectReadCooldown
+      }));
+    })
+    .catch((error) => {
+      if (generation !== readGeneration) return;
+      const message = error instanceof Error ? error.message : String(error ?? 'unknown error');
+      operatorOverviewStore.update((state) => ({ ...state, liveError: message }));
+    })
+    .finally(() => {
+      finishLoadedBackgroundSurface(generation, publishStatus);
+    });
+}
+
+function preserveFastOverviewState(nextOverview: any, previousOverview: any) {
+  return preserveDeferredProjectStatus(
+    preserveDoctorStatus(preserveLocalStatus(nextOverview, previousOverview), previousOverview),
+    previousOverview
+  );
+}
+
 function preserveLocalStatus(nextOverview: any, previousOverview: any) {
   if (!nextOverview || nextOverview.localStatus) return nextOverview;
   const previousLocalStatus = previousOverview?.localStatus;
@@ -176,7 +234,43 @@ function preserveLocalStatus(nextOverview: any, previousOverview: any) {
   };
 }
 
+function preserveDoctorStatus(nextOverview: any, previousOverview: any) {
+  const nextDoctorCommand = nextOverview?.commands?.doctor;
+  const previousDoctorCommand = previousOverview?.commands?.doctor;
+  if (!nextOverview || !nextDoctorCommand?.pending || !previousDoctorCommand || previousDoctorCommand.pending) {
+    return nextOverview;
+  }
+  return {
+    ...nextOverview,
+    doctor: previousOverview?.doctor ?? nextOverview.doctor,
+    commands: {
+      ...(nextOverview.commands ?? {}),
+      doctor: previousDoctorCommand
+    }
+  };
+}
+
 function startOperatorBackgroundReads(force = false, source = 'manual', publishStatus = true) {
+  if (backgroundReadsInFlight) {
+    operatorOverviewStore.update((state) => ({
+      ...state,
+      backgroundRefreshing: true,
+      fullLoading: true
+    }));
+    if (publishStatus) {
+      refreshStatusStore.set({
+        running: false,
+        remaining: get(operatorOverviewStore).slowReadsRemaining,
+        startedAt: null,
+        finishedAt: new Date().toISOString(),
+        source,
+        detail: 'Background refresh already in progress'
+      });
+    }
+    return false;
+  }
+
+  backgroundReadsInFlight = true;
   const generation = ++readGeneration;
   operatorOverviewStore.update((state) => ({
     ...state,
@@ -194,7 +288,11 @@ function startOperatorBackgroundReads(force = false, source = 'manual', publishS
     }));
   }
 
-  void runBackgroundReadsSequentially(generation, force, source, publishStatus);
+  void runBackgroundReadsSequentially(generation, force, source, publishStatus)
+    .finally(() => {
+      backgroundReadsInFlight = false;
+    });
+  return true;
 }
 
 async function runBackgroundReadsSequentially(generation: number, force: boolean, source: string, publishStatus: boolean) {
@@ -230,6 +328,30 @@ async function runBackgroundReadsSequentially(generation: number, force: boolean
       finishLoadedBackgroundSurface(generation, publishStatus);
     }
   }
+}
+
+function preserveDeferredProjectStatus(nextOverview: any, previousOverview: any) {
+  let merged = nextOverview;
+  for (const name of ['autopilot', 'review']) {
+    merged = preserveDeferredSurfaceStatus(merged, previousOverview, name);
+  }
+  return merged;
+}
+
+function preserveDeferredSurfaceStatus(nextOverview: any, previousOverview: any, name: string) {
+  const nextCommand = nextOverview?.commands?.[name];
+  const previousCommand = previousOverview?.commands?.[name];
+  if (!nextOverview || !nextCommand?.pending || !previousCommand || previousCommand.pending) {
+    return nextOverview;
+  }
+  return {
+    ...nextOverview,
+    [name]: previousOverview?.[name] ?? nextOverview[name],
+    commands: {
+      ...(nextOverview.commands ?? {}),
+      [name]: previousCommand
+    }
+  };
 }
 
 function finishLoadedBackgroundSurface(generation: number, publishStatus: boolean) {

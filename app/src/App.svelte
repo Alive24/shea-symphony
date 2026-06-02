@@ -6,6 +6,7 @@
   import {
     initializeOperatorOverview,
     operatorOverviewStore,
+    requestOperatorDoctorRefresh,
     requestOperatorLocalArtifactsRefresh,
     requestOperatorOverviewRefresh
   } from './lib/operatorOverviewStore.ts';
@@ -50,6 +51,10 @@
       const detail = (event as CustomEvent).detail ?? {};
       if (detail.localOnly) {
         requestOperatorLocalArtifactsRefresh(detail.source ?? 'local-artifacts');
+        return;
+      }
+      if (detail.doctorOnly) {
+        requestOperatorDoctorRefresh(detail.source ?? 'doctor');
         return;
       }
       scheduleRefresh(detail.force ?? true, true, detail.source ?? 'manual');

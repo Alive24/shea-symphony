@@ -17,6 +17,10 @@ import {
   mergeReadSurface
 } from '../src/lib/operatorReadModel.ts';
 import {
+  defaultBackgroundReadSurfaces,
+  projectCooldownReadSurfaces
+} from '../src/lib/operatorOverviewStore.ts';
+import {
   buildLaneThroughputBoard
 } from '../src/lib/viewModel/laneThroughput.ts';
 import { defaultLoopState, laneWorkerFromAutoloop } from '../src/lib/tauriAutoloop.ts';
@@ -153,6 +157,14 @@ test('project read cooldown preserves last stable review queue visibility', () =
     ['#405', 'Make autopilot lanes independently throughput-oriented']
   ]);
   assert.equal(review.queuedCount, 1);
+});
+
+test('default background refresh defers doctor surface', () => {
+  assert.deepEqual(defaultBackgroundReadSurfaces, ['githubQueue', 'skills', 'sessions', 'local']);
+  assert.equal(defaultBackgroundReadSurfaces.includes('doctor'), false);
+  assert.equal(defaultBackgroundReadSurfaces.includes('autopilot'), false);
+  assert.equal(defaultBackgroundReadSurfaces.includes('review'), false);
+  assert.equal(projectCooldownReadSurfaces.includes('doctor'), true);
 });
 
 test('lane throughput board surfaces blocked idle and completed lane results', () => {

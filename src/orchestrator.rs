@@ -37,7 +37,6 @@ impl Orchestrator {
             let normalized = issue.normalized_state();
 
             if !active_states.contains(&normalized) || terminal_states.contains(&normalized) {
-                skipped.push(skip(&issue, "state is not active"));
                 continue;
             }
 
@@ -263,6 +262,20 @@ mod tests {
         assert_eq!(plan.selected.len(), 1);
         assert_eq!(plan.selected[0].identifier, "#1");
         assert_eq!(plan.snapshot.skipped.len(), 1);
+    }
+
+    #[test]
+    fn ignores_non_active_and_terminal_issues_before_skipped_candidates() {
+        let mut backlog = issue("2", 2);
+        backlog.state = "Backlog".into();
+        let mut done = issue("3", 3);
+        done.state = "Done".into();
+
+        let plan = Orchestrator::new(config()).plan_dispatch(vec![issue("1", 1), backlog, done]);
+
+        assert_eq!(plan.selected.len(), 1);
+        assert_eq!(plan.selected[0].identifier, "#1");
+        assert!(plan.snapshot.skipped.is_empty());
     }
 
     #[test]

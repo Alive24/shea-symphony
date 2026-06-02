@@ -23,7 +23,7 @@ import {
 import {
   buildLaneThroughputBoard
 } from '../src/lib/viewModel/laneThroughput.ts';
-import { defaultLoopState, laneWorkerFromAutoloop } from '../src/lib/tauriAutoloop.ts';
+import { appendAutoloopLine, defaultLoopState, laneWorkerFromAutoloop } from '../src/lib/tauriAutoloop.ts';
 
 test('browser fallback uses fixture data instead of a Node API bridge', async () => {
   const overview = await loadOverview(true, 'fast');
@@ -73,6 +73,24 @@ test('maps live autoloop lane snapshots into existing lane board worker rows', (
   assert.equal(laneWorkerFromAutoloop({ lane: 'main', status: 'completed' }, 'main', state), null);
   assert.equal(laneWorkerFromAutoloop({ lane: 'main', status: 'skipped', selected: '#421' }, 'main', state), null);
   assert.equal(laneWorkerFromAutoloop({ lane: 'main', status: 'running', selected: 'none', action: 'tick_started' }, 'main', state), null);
+});
+
+test('autoloop stdout log omits repeated inactive skipped issue details', () => {
+  const state = appendAutoloopLine(defaultLoopState(), {
+    atMs: Date.now(),
+    stream: 'stdout',
+    line: '- I_kwDOSZP6c88AAAABB2ahNQ #13 reason=state is not active',
+    event: {
+      event: 'autopilot_cli_line',
+      payload: {
+        kind: '-',
+        raw: '- I_kwDOSZP6c88AAAABB2ahNQ #13 reason=state is not active',
+        fields: {}
+      }
+    }
+  });
+
+  assert.equal(state.recentLines.length, 0);
 });
 
 test('lane throughput board keeps independent running and queued lane work visible', () => {

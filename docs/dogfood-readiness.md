@@ -48,6 +48,11 @@ directly. `autopilot plan` is read-only and must run before write-mode
 autopilot. `autopilot loop --write` is the normal bounded foreground all-lane
 entrypoint; `main loop`, `review loop`, and `merge loop` remain focused
 debugging, break-glass recovery, or intentionally lane-specific dogfood tools.
+Autopilot lane throughput is independent: the foreground supervisor lifetime is
+bounded by `--max-iterations`, while Main, Review, and Merge work-unit capacity
+is bounded by each lane's own concurrency flag and claim rules. Slow, blocked,
+idle, or busy lane evidence should stay visible without becoming a shared
+global iteration gate for ready work in another lane.
 
 The bootstrap completion audit is in `docs/bootstrap-parity-audit.md`. It
 separates landed mainline capability from open `Agent Review` coverage and

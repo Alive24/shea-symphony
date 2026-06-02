@@ -447,8 +447,8 @@ enum AutopilotCommandArgs {
     )]
     Plan(AutopilotPlanArgs),
     #[command(
-        about = "Run foreground Main, Review, and Merge lane ticks",
-        long_about = "`autopilot loop` is a foreground CLI supervisor, not a daemon, background service, or app-server. It composes Main, Review, and Merge lane ticks in order, prints status and parked queues, and runs with --once, --max-iterations, or --continuous. Mutations require --write; dry-run remains the default preview boundary."
+        about = "Run foreground Main, Review, and Merge lane loops",
+        long_about = "`autopilot loop` is a foreground CLI supervisor, not a daemon, background service, or app-server. It supervises independent Main, Review, and Merge lane loops, prints status and parked queues, and runs with --once, --max-iterations, or --continuous. Mutations require --write; dry-run remains the default preview boundary."
     )]
     Loop(AutopilotLoopArgs),
 }
@@ -491,7 +491,7 @@ struct AutopilotLoopArgs {
     #[arg(
         long = "dry-run",
         conflicts_with = "write",
-        help = "Preview the bounded all-lane tick without mutation"
+        help = "Preview bounded independent lane loops without mutation"
     )]
     dry_run: bool,
     #[arg(

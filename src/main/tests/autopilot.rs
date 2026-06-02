@@ -622,6 +622,86 @@ fn autopilot_loop_status_keeps_runtime_blocker_when_recover_disabled() {
 }
 
 #[test]
+fn autopilot_loop_status_keeps_ready_lanes_running_when_one_lane_is_blocked() {
+    let mut plan = test_autopilot_plan(Vec::new());
+    plan.readiness.status = "ready".into();
+    plan.readiness.reason = "At least one lane has useful work ready.".into();
+    plan.readiness.blockers = Vec::new();
+    plan.lanes = vec![
+        AutopilotLanePlan {
+            lane: "main".into(),
+            status: "ready".into(),
+            selected_issue: Some(AutopilotIssueSummary {
+                identifier: "#413".into(),
+                title: "Document and test independent autopilot lane throughput".into(),
+                state: "Todo".into(),
+                assignees: Vec::new(),
+                url: None,
+                priority: None,
+                pull_request: None,
+            }),
+            proposed_action: "claim_main_issue".into(),
+            target_state: Some("Agent Review".into()),
+            reason: "dispatchable_issue".into(),
+            evidence: vec!["source=main loop dry-run selection".into()],
+        },
+        AutopilotLanePlan {
+            lane: "review".into(),
+            status: "blocked".into(),
+            selected_issue: Some(AutopilotIssueSummary {
+                identifier: "#410".into(),
+                title: "Show independent lane throughput in Tauri".into(),
+                state: "Agent Review".into(),
+                assignees: Vec::new(),
+                url: None,
+                priority: None,
+                pull_request: Some("https://github.com/Alive24/shea-symphony/pull/410".into()),
+            }),
+            proposed_action: "skip".into(),
+            target_state: None,
+            reason: "invalid_handoff:draft_pr".into(),
+            evidence: vec!["source=review_run_eligibility".into()],
+        },
+        AutopilotLanePlan {
+            lane: "merge".into(),
+            status: "idle".into(),
+            selected_issue: None,
+            proposed_action: "idle".into(),
+            target_state: None,
+            reason: "no_merging_issue".into(),
+            evidence: vec!["source=merge loop dry-run selection".into()],
+        },
+    ];
+
+    let status = autopilot_loop_status_from_plan(
+        &plan,
+        AutopilotLoopSettings {
+            write: true,
+            dry_run: false,
+            recover: true,
+            poll_interval_ms: 5_000,
+            main_max_concurrent: 2,
+            review_max_concurrent: 1,
+            merge_max_concurrent: 3,
+        },
+        1,
+        Some(5_000),
+        &[],
+        false,
+    );
+
+    assert_eq!(status.phase, "running");
+    assert_eq!(status.counts.running, 1);
+    assert_eq!(status.counts.blocked, 1);
+    assert_eq!(status.counts.idle, 1);
+    assert_eq!(status.selected_issues[0].identifier, "#413");
+    assert_eq!(
+        status.blocked_reasons,
+        vec!["review:invalid_handoff:draft_pr"]
+    );
+}
+
+#[test]
 fn autopilot_plan_does_not_select_non_dispatchable_or_parked_states() {
     let mut dogfood = tracker_issue_with_ref("#330", "Dogfood session coordination", "Backlog");
     dogfood.labels.push("dogfood-session".into());

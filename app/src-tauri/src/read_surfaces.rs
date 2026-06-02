@@ -3,6 +3,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
+    sync::{Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -13,6 +14,9 @@ use crate::cli::{
     command_summary_value, parse_json_output, pending_result, run_shea_read, shea_command,
     timestamp_iso_like, CommandRun, DEFAULT_WORKFLOW_PATH,
 };
+
+const DEFAULT_PROJECT_RATE_LIMIT_COOLDOWN_MS: u128 = 10 * 60 * 1000;
+const PROJECT_READ_SURFACES: &[&str] = &["autopilot", "doctor", "review", "githubQueue"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,17 +54,37 @@ pub async fn get_operator_overview(options: Option<OverviewOptions>) -> Result<V
 }
 
 #[tauri::command]
-pub async fn get_read_surface(name: String, _force: Option<bool>) -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || build_read_surface(&name))
-        .await
-        .map_err(|error| format!("read surface task failed: {error}"))?
+pub async fn get_read_surface(
+    name: String,
+    _force: Option<bool>,
+    allow_project_fallback: Option<bool>,
+) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        build_read_surface(&name, allow_project_fallback.unwrap_or(false))
+    })
+    .await
+    .map_err(|error| format!("read surface task failed: {error}"))?
 }
 
-fn build_read_surface(name: &str) -> Result<Value, String> {
+fn build_read_surface(name: &str, allow_project_fallback: bool) -> Result<Value, String> {
     let args = read_surface_args(name).ok_or_else(|| format!("unknown read surface: {name}"))?;
-    let result = run_shea_read(&args);
+    let result = if project_backed_surface(name) {
+        match project_read_cooldown() {
+            Some(cooldown) => {
+                return Ok(surface_payload(
+                    name,
+                    skipped_project_read_command(&args, &cooldown),
+                    project_read_paused_payload(&cooldown),
+                    String::new(),
+                ));
+            }
+            None => run_project_read_surface(&args),
+        }
+    } else {
+        run_shea_read(&args)
+    };
     let parsed = if name == "local" {
-        runtime_status_summary(&result)
+        runtime_status_summary(&result, allow_project_fallback)
     } else {
         parse_json_output(&result.stdout)
     };
@@ -107,12 +131,13 @@ fn build_operator_overview(scope: &str) -> Result<Value, String> {
     }
 
     let runtime = run_shea_read(&read_surface_args("local").unwrap_or_default());
-    let autopilot = run_shea_read(&read_surface_args("autopilot").unwrap_or_default());
-    let doctor = run_shea_read(&read_surface_args("doctor").unwrap_or_default());
-    let review = run_shea_read(&read_surface_args("review").unwrap_or_default());
+    let autopilot =
+        run_project_read_surface_or_skip(&read_surface_args("autopilot").unwrap_or_default());
+    let doctor = run_project_read_surface_or_skip(&read_surface_args("doctor").unwrap_or_default());
+    let review = run_project_read_surface_or_skip(&read_surface_args("review").unwrap_or_default());
     let skills = run_shea_read(&read_surface_args("skills").unwrap_or_default());
     let sessions = run_shea_read(&read_surface_args("sessions").unwrap_or_default());
-    let github_queue = run_shea_read(&github_queue_args);
+    let github_queue = run_project_read_surface_or_skip(&github_queue_args);
     let healthy = [
         autopilot.summary.ok,
         doctor.summary.ok,
@@ -139,7 +164,7 @@ fn build_operator_overview(scope: &str) -> Result<Value, String> {
         "review": parse_json_output(&review.stdout),
         "skills": parse_json_output(&skills.stdout),
         "sessionsText": sessions.stdout.trim(),
-        "localStatus": runtime_status_summary(&runtime),
+        "localStatus": runtime_status_summary(&runtime, false),
         "githubQueue": parse_json_output(&github_queue.stdout),
         "healthy": healthy,
     }))
@@ -191,7 +216,7 @@ fn read_surface_args(name: &str) -> Option<Vec<String>> {
     }
 }
 
-fn runtime_status_summary(result: &CommandRun) -> Value {
+fn runtime_status_summary(result: &CommandRun, allow_project_fallback: bool) -> Value {
     let snapshot = parse_json_output(&result.stdout);
     if snapshot.is_null() {
         return Value::Null;
@@ -222,7 +247,11 @@ fn runtime_status_summary(result: &CommandRun) -> Value {
         .map(Vec::len)
         .unwrap_or(0);
     let issue_worktrees = git_worktree_issue_inventory();
-    let project_issues = project_issue_readbacks(&issue_worktrees, &snapshot);
+    let project_issues = if allow_project_fallback && project_read_cooldown().is_none() {
+        project_issue_readbacks(&issue_worktrees, &snapshot)
+    } else {
+        Value::Array(vec![])
+    };
     let completed_issue_worktrees =
         completed_issue_worktrees(&snapshot, &issue_worktrees, &project_issues);
     json!({
@@ -234,6 +263,8 @@ fn runtime_status_summary(result: &CommandRun) -> Value {
         "integrationGapCount": integration_gap_count,
         "issueWorktrees": issue_worktrees,
         "projectIssues": project_issues,
+        "projectFallbackAllowed": allow_project_fallback,
+        "projectFallbackPaused": project_read_cooldown().is_some(),
         "completedIssueWorktrees": completed_issue_worktrees,
         "eventLogPath": snapshot.get("event_log_path").cloned().unwrap_or(Value::Null),
         "snapshot": snapshot,
@@ -381,9 +412,16 @@ fn session_registry_issue_refs(snapshot: &Value) -> BTreeMap<String, Value> {
 }
 
 fn project_issue_readback(issue: &str) -> Option<Value> {
+    if project_read_cooldown().is_some() {
+        return None;
+    }
     let output = shea_command(&["project", "issue", "--json", DEFAULT_WORKFLOW_PATH, issue])
         .output()
         .ok()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if project_rate_limit_detected(&stderr) {
+        record_project_rate_limit_cooldown(&stderr);
+    }
     if !output.status.success() {
         return None;
     }
@@ -647,4 +685,191 @@ fn surface_payload(name: &str, command: Value, parsed: Value, text: String) -> V
         "parsed": parsed,
         "text": text,
     })
+}
+
+#[derive(Debug, Clone)]
+struct ProjectReadCooldown {
+    until_ms: u128,
+    reason: String,
+}
+
+fn project_cooldown_cell() -> &'static Mutex<Option<ProjectReadCooldown>> {
+    static CELL: OnceLock<Mutex<Option<ProjectReadCooldown>>> = OnceLock::new();
+    CELL.get_or_init(|| Mutex::new(None))
+}
+
+fn project_backed_surface(name: &str) -> bool {
+    PROJECT_READ_SURFACES.contains(&name)
+}
+
+fn run_project_read_surface_or_skip(args: &[String]) -> CommandRun {
+    if let Some(cooldown) = project_read_cooldown() {
+        return skipped_command_run(args, skipped_project_read_stderr(&cooldown));
+    }
+    run_project_read_surface(args)
+}
+
+fn run_project_read_surface(args: &[String]) -> CommandRun {
+    let result = run_shea_read(args);
+    if !result.summary.ok
+        && (project_rate_limit_detected(&result.summary.stderr)
+            || project_rate_limit_detected(&result.summary.stdout_preview)
+            || project_rate_limit_detected(&result.stdout))
+    {
+        record_project_rate_limit_cooldown(&result.summary.stderr);
+    }
+    result
+}
+
+fn project_read_cooldown() -> Option<ProjectReadCooldown> {
+    let now = timestamp_iso_like();
+    let mut guard = project_cooldown_cell().lock().ok()?;
+    if guard
+        .as_ref()
+        .is_some_and(|cooldown| cooldown.until_ms > now)
+    {
+        return guard.clone();
+    }
+    *guard = None;
+    None
+}
+
+fn record_project_rate_limit_cooldown(stderr: &str) -> ProjectReadCooldown {
+    let now = timestamp_iso_like();
+    let reset_ms = github_graphql_reset_ms()
+        .filter(|reset| *reset > now)
+        .unwrap_or(now + DEFAULT_PROJECT_RATE_LIMIT_COOLDOWN_MS);
+    let cooldown = ProjectReadCooldown {
+        until_ms: reset_ms,
+        reason: project_rate_limit_reason(stderr),
+    };
+    if let Ok(mut guard) = project_cooldown_cell().lock() {
+        *guard = Some(cooldown.clone());
+    }
+    cooldown
+}
+
+fn project_rate_limit_detected(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("failure_kind=rate_limit")
+        || lower.contains("kind=rate_limit")
+        || lower.contains("api rate limit already exceeded")
+        || lower.contains("api rate limit exceeded")
+        || lower.contains("graphql resource limit exceeded")
+}
+
+fn project_rate_limit_reason(stderr: &str) -> String {
+    let trimmed = stderr.trim();
+    if trimmed.is_empty() {
+        "GitHub Project GraphQL rate limit was reached.".into()
+    } else {
+        trimmed
+            .lines()
+            .next()
+            .unwrap_or(trimmed)
+            .chars()
+            .take(240)
+            .collect()
+    }
+}
+
+fn github_graphql_reset_ms() -> Option<u128> {
+    let output = Command::new("gh")
+        .args(["api", "rate_limit"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value: Value = serde_json::from_slice(&output.stdout).ok()?;
+    value
+        .pointer("/resources/graphql/reset")
+        .and_then(Value::as_u64)
+        .map(|seconds| u128::from(seconds) * 1000)
+}
+
+fn skipped_command_run(args: &[String], stderr: String) -> CommandRun {
+    CommandRun {
+        summary: crate::cli::CommandSummary {
+            ok: false,
+            args: args.to_vec(),
+            exit_code: None,
+            signal: Some("project-rate-limit-cooldown".into()),
+            timed_out: false,
+            duration_ms: 0,
+            stderr,
+            stdout_preview: String::new(),
+        },
+        stdout: String::new(),
+    }
+}
+
+fn skipped_project_read_stderr(cooldown: &ProjectReadCooldown) -> String {
+    format!(
+        "Project read paused until {} because GitHub Project GraphQL rate limit was reached: {}",
+        cooldown.until_ms, cooldown.reason
+    )
+}
+
+fn skipped_project_read_command(args: &[String], cooldown: &ProjectReadCooldown) -> Value {
+    json!({
+        "ok": false,
+        "skipped": true,
+        "projectReadPaused": true,
+        "rateLimitResetAtMs": cooldown.until_ms,
+        "args": args,
+        "exitCode": Value::Null,
+        "signal": "project-rate-limit-cooldown",
+        "timedOut": false,
+        "durationMs": 0,
+        "stderr": skipped_project_read_stderr(cooldown),
+        "stdoutPreview": "",
+    })
+}
+
+fn project_read_paused_payload(cooldown: &ProjectReadCooldown) -> Value {
+    json!({
+        "projectStateAccess": "paused",
+        "trusted": false,
+        "failureKind": "rate_limit",
+        "projectReadPaused": true,
+        "rateLimitResetAtMs": cooldown.until_ms,
+        "reason": cooldown.reason,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_project_rate_limit_messages() {
+        assert!(project_rate_limit_detected("failure_kind=rate_limit"));
+        assert!(project_rate_limit_detected(
+            "gh: API rate limit already exceeded for user ID 123"
+        ));
+        assert!(project_rate_limit_detected(
+            "GitHub GraphQL operation failed after 2 attempts kind=rate_limit"
+        ));
+        assert!(!project_rate_limit_detected("project_state_access=ok"));
+    }
+
+    #[test]
+    fn skipped_project_surface_reports_cooldown_payload() {
+        let cooldown = ProjectReadCooldown {
+            until_ms: 1_780_415_055_000,
+            reason: "rate limited".into(),
+        };
+        let args = vec!["project".into(), "state".into()];
+        let command = skipped_project_read_command(&args, &cooldown);
+        let parsed = project_read_paused_payload(&cooldown);
+
+        assert_eq!(command["projectReadPaused"], true);
+        assert_eq!(
+            command["rateLimitResetAtMs"].as_u64(),
+            Some(1_780_415_055_000)
+        );
+        assert_eq!(parsed["projectStateAccess"], "paused");
+        assert_eq!(parsed["failureKind"], "rate_limit");
+    }
 }

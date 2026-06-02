@@ -4,7 +4,16 @@ export type LaneSnapshot = {
   action?: string | null;
   selected?: string | null;
   target?: string | null;
+  workUnitCompleted?: boolean | null;
+  completedWorkUnits?: number | null;
+  issueRef?: string | null;
+  latestResult?: string | null;
   maxConcurrent?: number | null;
+  runningCount?: number | null;
+  queuedCount?: number | null;
+  blockedCount?: number | null;
+  idleCount?: number | null;
+  completedCount?: number | null;
   recover?: boolean | null;
   updatedAtMs?: number | null;
   latestLine?: string | null;
@@ -134,10 +143,10 @@ export async function getOperatorOverview(force = false, scope = 'full'): Promis
   return invoke<OperatorOverview>('get_operator_overview', { options: { force, scope } });
 }
 
-export async function getReadSurface(name: string, force = false): Promise<ReadSurface | null> {
+export async function getReadSurface(name: string, force = false, allowProjectFallback = false): Promise<ReadSurface | null> {
   if (!isTauriRuntime()) return null;
   const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<ReadSurface>('get_read_surface', { name, force });
+  return invoke<ReadSurface>('get_read_surface', { name, force, allowProjectFallback });
 }
 
 export async function startAutoloop(options: StartAutoloopOptions = {}): Promise<LoopStateSnapshot> {
@@ -252,7 +261,14 @@ function workerFromAutoloopLine(
     const issue = issueRefFromValue(recordValue(payload, 'selected_issue') ?? recordValue(payload, 'selected'));
     if (!issue) return null;
     const status = textFromValue(recordValue(payload, 'status'), 'running');
-    return liveWorker(issue, laneKey, state, textFromValue(recordValue(payload, 'action'), status), status);
+    const latestResult = textFromValue(recordValue(payload, 'latest_result') ?? recordValue(payload, 'latestResult'));
+    return liveWorker(
+      issue,
+      laneKey,
+      state,
+      latestResult || textFromValue(recordValue(payload, 'action'), status),
+      status
+    );
   }
 
   if (eventName !== 'autopilot_cli_line') return null;

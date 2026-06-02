@@ -41,7 +41,6 @@ pub fn render_snapshot(snapshot: &RuntimeSnapshot) -> String {
     render_sessions(snapshot, &mut lines);
     render_retrying(snapshot, &mut lines);
     render_skipped(snapshot, &mut lines);
-    render_integration_gaps(snapshot, &mut lines);
 
     lines.join("\n")
 }
@@ -197,17 +196,6 @@ fn render_gate(gate: &GateDecision, lines: &mut Vec<String>) {
     }
 }
 
-fn render_integration_gaps(snapshot: &RuntimeSnapshot, lines: &mut Vec<String>) {
-    if snapshot.integration_gaps.is_empty() {
-        return;
-    }
-
-    lines.push("integration gaps:".into());
-    for gap in &snapshot.integration_gaps {
-        lines.push(format!("- {gap}"));
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,7 +304,7 @@ mod tests {
         assert!(rendered.contains("retrying issues:"));
         assert!(rendered.contains("skipped issues:"));
         assert!(rendered.contains("gate=NeedToClarify"));
-        assert!(rendered.contains("integration gaps:"));
+        assert!(!rendered.contains("integration gaps:"));
         assert!(rendered.contains("event_log=/tmp/events.jsonl"));
     }
 

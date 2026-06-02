@@ -196,6 +196,7 @@ export function mergeLaneSnapshot(state: LoopStateSnapshot, lane: LaneSnapshot):
 export function appendAutoloopLine(state: LoopStateSnapshot, line: AutoloopLine): LoopStateSnapshot {
   if (isSkippedIssueDetailLine(line)) return state;
   if (isAutoloopLaneIdlePrimitiveLine(line)) return state;
+  if (isAutoloopRoutineStatusLine(line)) return state;
   return {
     ...state,
     recentLines: [...(state.recentLines ?? []), line].slice(-200)
@@ -220,6 +221,22 @@ function isAutoloopLaneIdlePrimitiveLine(line: AutoloopLine) {
   const raw = textFromValue(recordValue(payload, 'raw') ?? line.line);
   return /^(merge_once|merge_loop)=stopped reason=no_merging_issue\b/.test(raw)
     || /^review_loop=stopped reason=no_agent_review_issue\b/.test(raw);
+}
+
+function isAutoloopRoutineStatusLine(line: AutoloopLine) {
+  if (line.stream !== 'stdout') return false;
+  const eventName = textFromValue(recordValue(line.event, 'event'));
+  if (eventName !== 'autopilot_cli_line') return false;
+  const payload = recordFromValue(recordValue(line.event, 'payload'));
+  const kind = textFromValue(recordValue(payload, 'kind'));
+  const raw = textFromValue(recordValue(payload, 'raw') ?? line.line);
+  if (raw === 'SHEA SYMPHONY STATUS') return true;
+  if (raw === 'integration gaps:') return true;
+  if (kind === 'integration') return true;
+  if (/^-\s+GitHub Project v2\b/.test(raw)) return true;
+  if (/^canonical_checkout root=.*\bclean=true\b/.test(raw)) return true;
+  if (/^canonical_checkout_refresh=(already_current|ff_only|would_ff_only)\b/.test(raw)) return true;
+  return false;
 }
 
 export function laneWorkerFromAutoloop(

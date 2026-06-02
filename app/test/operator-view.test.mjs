@@ -120,6 +120,36 @@ test('autoloop stdout log omits child lane idle stop lines', () => {
   assert.equal(state.recentLines.length, 0);
 });
 
+test('autoloop stdout log omits routine status and clean checkout lines', () => {
+  const lines = [
+    'SHEA SYMPHONY STATUS',
+    'integration gaps:',
+    '- GitHub Project v2 PR linking still uses an issue comment/autolink strategy rather than a first-class relationship.',
+    '- GitHub Project v2 live write methods use `gh api graphql`; keep using `--write` for mutating CLI commands.',
+    'canonical_checkout_refresh=ff_only upstream=origin/main head_before=old upstream_head=new head_after=new',
+    'canonical_checkout root=/repo branch=main upstream=origin/main clean=true tracked_dirty=0 untracked=0 unclassified=0 migrated=0 quarantine=/repo/.tmp'
+  ];
+  let state = defaultLoopState();
+
+  for (const line of lines) {
+    state = appendAutoloopLine(state, {
+      atMs: Date.now(),
+      stream: 'stdout',
+      line,
+      event: {
+        event: 'autopilot_cli_line',
+        payload: {
+          kind: line.split(/[ :=]/)[0],
+          raw: line,
+          fields: {}
+        }
+      }
+    });
+  }
+
+  assert.equal(state.recentLines.length, 0);
+});
+
 test('lane throughput board keeps independent running and queued lane work visible', () => {
   const board = buildLaneThroughputBoard({
     queueIssues: [

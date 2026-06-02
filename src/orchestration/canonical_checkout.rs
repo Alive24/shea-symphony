@@ -2,8 +2,7 @@ use std::path::Path;
 use std::process::Command as ProcessCommand;
 
 use shea_symphony::canonical_checkout::{
-    canonical_checkout_refresh_status_line, canonical_checkout_status_line,
-    canonical_checkout_warning_lines, inspect_canonical_checkout,
+    canonical_checkout_status_line, canonical_checkout_warning_lines, inspect_canonical_checkout,
     refresh_canonical_checkout_before_write, CanonicalCheckoutRefreshMode,
 };
 use shea_symphony::config::RuntimeConfig;
@@ -35,8 +34,6 @@ pub(crate) fn enforce_canonical_checkout_before_write(
         CanonicalCheckoutRefreshMode::Apply,
     ) {
         Ok(refresh) => {
-            println!("{}", canonical_checkout_refresh_status_line(&refresh));
-            println!("{}", canonical_checkout_status_line(&refresh.checkout));
             for line in canonical_checkout_warning_lines(&refresh.checkout) {
                 println!("{command}_{line}");
             }
@@ -67,8 +64,6 @@ fn preview_canonical_checkout_before_dry_run(config: &RuntimeConfig, command: &s
         CanonicalCheckoutRefreshMode::DryRun,
     ) {
         Ok(refresh) => {
-            println!("{}", canonical_checkout_refresh_status_line(&refresh));
-            println!("{}", canonical_checkout_status_line(&refresh.checkout));
             for line in canonical_checkout_warning_lines(&refresh.checkout) {
                 println!("{command}_{line}");
             }

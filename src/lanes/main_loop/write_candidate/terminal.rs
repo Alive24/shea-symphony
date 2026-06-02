@@ -17,7 +17,7 @@ use super::super::{
     run_loop_agent_review_handoff_evidence, run_loop_runtime_state_with_transition,
     run_loop_usage_limit_pause_workpad, IssueExecutionResult,
 };
-use crate::lanes::claim::{write_lane_claim_state, WorkerLane};
+use crate::lanes::claim::{write_lane_claim_terminal_result, WorkerLane};
 use crate::orchestration::{
     append_tracker_mutation_audit, current_time_ms, latest_status_for_issue, print_latest_status,
     recovery_key, set_state_with_recovery, stable_recovery_hash, upsert_workpad_with_recovery,
@@ -107,13 +107,14 @@ fn complete_successful_run(
             "agent review handoff invariant failed",
         );
         upsert_runtime_state(config, &runtime_state)?;
-        write_lane_claim_state(
+        write_lane_claim_terminal_result(
             config,
             adapter,
             latest,
             WorkerLane::Main,
             main_claim,
             LaneClaimState::Failed,
+            "handoff_invariant_failed",
         )?;
         let state_outcome = set_state_with_recovery(
             adapter,
@@ -159,13 +160,14 @@ fn complete_successful_run(
     );
     mark_runtime_state_updated(&mut runtime_state, current_time_ms());
     upsert_runtime_state(config, &runtime_state)?;
-    write_lane_claim_state(
+    write_lane_claim_terminal_result(
         config,
         adapter,
         latest,
         WorkerLane::Main,
         main_claim,
         LaneClaimState::Done,
+        "agent_review_handoff",
     )?;
     let state_outcome = set_state_with_recovery(
         adapter,
@@ -296,13 +298,14 @@ fn complete_failed_run(
         );
         mark_runtime_state_updated(&mut runtime_state, current_time_ms());
         upsert_runtime_state(config, &runtime_state)?;
-        write_lane_claim_state(
+        write_lane_claim_terminal_result(
             config,
             adapter,
             latest,
             WorkerLane::Main,
             main_claim,
             LaneClaimState::Failed,
+            "handoff_pr_linkage_failed",
         )?;
         let state_outcome = set_state_with_recovery(
             adapter,
@@ -383,6 +386,15 @@ fn complete_failed_run(
     );
     mark_runtime_state_updated(&mut runtime_state, current_time_ms());
     upsert_runtime_state(config, &runtime_state)?;
+    write_lane_claim_terminal_result(
+        config,
+        adapter,
+        latest,
+        WorkerLane::Main,
+        main_claim,
+        LaneClaimState::Failed,
+        "backend_retry_limit",
+    )?;
     let state_outcome = set_state_with_recovery(
         adapter,
         &latest.identifier,

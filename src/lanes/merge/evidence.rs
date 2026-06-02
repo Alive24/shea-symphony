@@ -1,8 +1,10 @@
 use shea_symphony::config::RuntimeConfig;
+use shea_symphony::lane_claim::{LaneClaim, LaneClaimState};
 use shea_symphony::merge_lane::{MergeLaneDecision, MergeLaneDecisionKind};
 use shea_symphony::model::TrackerIssue;
 use shea_symphony::tracker::TrackerAdapter;
 
+use crate::lanes::claim::{write_lane_claim_terminal_result, WorkerLane};
 use crate::orchestration::{
     add_timeline_comment_with_recovery, append_tracker_mutation_audit, close_issue_with_recovery,
     merge_completion_recovery_key, merge_decision_recovery_key, set_state_with_recovery,
@@ -86,6 +88,7 @@ pub(crate) fn record_done_merge_lane_completion(
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
     issue: &TrackerIssue,
+    merge_claim: &LaneClaim,
     workpad: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let pr_url = issue
@@ -106,6 +109,15 @@ pub(crate) fn record_done_merge_lane_completion(
         &completion_decision,
         workpad,
         "merge completion evidence",
+    )?;
+    write_lane_claim_terminal_result(
+        config,
+        adapter,
+        issue,
+        WorkerLane::Merging,
+        merge_claim,
+        LaneClaimState::Done,
+        "merged",
     )?;
     set_merge_state_with_recovery(config, adapter, issue, "done", pr_url, "merge completed")?;
     close_completed_issue(config, adapter, &issue.identifier, Some(issue))?;

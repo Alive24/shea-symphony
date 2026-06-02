@@ -258,7 +258,12 @@ labels may contain spaces; the CLI stores those values with reversible quoting,
 such as `worker="Codex Manual Main"`, and validates the rendered pointer before
 writing Project fields. The Project field stores the compact pointer; the
 session registry and workpad store the durable paths, logs, and handoff evidence
-for the same `run=`.
+for the same `run=`. When a lane's authority ends, the owning field remains as
+terminal audit evidence instead of being cleared: Main handoff writes
+`state=done result=agent_review_handoff`, terminal Main blockers write
+`state=failed result=<reason>`, Review pass/reject/inconclusive paths write a
+terminal `Review Agent` claim with `result=passed|rejected|inconclusive|...`,
+and Merge completion writes `state=done result=merged`.
 
 Manual claim and session control are separate operations. Claim commands write
 the lane claim Project field, create a matching `codex-app-manual` registry

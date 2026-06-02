@@ -41,7 +41,8 @@ use super::commands::workspace::{
 };
 use super::lanes::claim::{
     pool_claim_eligibility, project_text_field, render_parseable_lane_claim,
-    select_pool_worker_issues, write_lane_claim_field, PoolClaimEligibility, WorkerLane,
+    select_pool_worker_issues, terminal_lane_claim_value, write_lane_claim_field,
+    PoolClaimEligibility, WorkerLane,
 };
 use super::lanes::main_loop::{
     apply_live_handoff_pr_link, execute_issue_once_with_workspace_key, main_app_server_smoke_gate,

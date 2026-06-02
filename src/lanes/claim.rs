@@ -187,16 +187,31 @@ pub(crate) fn write_lane_claim_field(
     Ok(())
 }
 
-pub(crate) fn write_lane_claim_state(
+pub(crate) fn terminal_lane_claim_value(
+    claim: &LaneClaim,
+    state: LaneClaimState,
+    result: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if result.trim().is_empty() || result.chars().any(char::is_whitespace) {
+        return Err("terminal lane claim result must be a non-empty compact token".into());
+    }
+    Ok(format!(
+        "{} result={}",
+        claim.with_state(state).render(),
+        result
+    ))
+}
+
+pub(crate) fn write_lane_claim_terminal_result(
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
     issue: &TrackerIssue,
     lane: WorkerLane,
     claim: &LaneClaim,
     state: LaneClaimState,
+    result: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let updated = claim.with_state(state);
-    let value = render_parseable_lane_claim(&updated)?;
+    let value = terminal_lane_claim_value(claim, state, result)?;
     let outcome = set_project_field_with_recovery(
         adapter,
         issue,
@@ -216,17 +231,18 @@ pub(crate) fn write_lane_claim_state(
                 target: Some(format!("{}={value}", lane.claim_field())),
                 from_state: Some(issue.state.clone()),
                 to_state: None,
-                reason: "lane worker claim state update",
+                reason: "lane worker terminal claim result",
             },
         );
     }
     println!(
-        "{}_pool_action=claim_field_state issue={} field={:?} run={} state={} outcome={}",
+        "{}_pool_action=claim_field_terminal issue={} field={:?} run={} state={} result={} outcome={}",
         lane.label(),
         issue.identifier,
         lane.claim_field(),
         claim.run,
         state.as_str(),
+        result,
         outcome.as_str()
     );
     Ok(())

@@ -212,17 +212,70 @@ fn merge_recover_selection_does_not_adopt_manual_claims() {
 fn merge_completion_closes_issue_after_workpad_and_done_state() {
     let adapter = RecordingAdapter::default();
     let issue = tracker_issue("Merging");
+    let claim = LaneClaim::active(
+        &issue.identifier,
+        LaneClaimLane::Merge,
+        LaneClaimActor::Codex,
+        LaneClaimSource::Loop,
+        1_779_000_000_000,
+    )
+    .with_worker("Shea Symphony Agent");
     let workpad = "## Shea Symphony Merge Run\n\n### Merge Action\n";
 
     let config = test_config();
-    record_done_merge_lane_completion(&config, &adapter, &issue, workpad).unwrap();
+    record_done_merge_lane_completion(&config, &adapter, &issue, &claim, workpad).unwrap();
 
     assert_eq!(
         adapter.operations(),
         vec![
             "comment:#29".to_string(),
+            format!(
+                "set_project_field:#29:Merging Agent={}",
+                terminal_lane_claim_value(&claim, LaneClaimState::Done, "merged").unwrap()
+            ),
             "set_state:#29:done".to_string(),
             "close_issue:#29".to_string()
         ]
+    );
+}
+
+#[test]
+fn merge_completion_preserves_terminal_claim_audit_pointer() {
+    let adapter = RecordingAdapter::default();
+    let issue = tracker_issue("Merging");
+    adapter
+        .issues
+        .borrow_mut()
+        .insert(issue.identifier.clone(), issue.clone());
+    let claim = LaneClaim::active(
+        &issue.identifier,
+        LaneClaimLane::Merge,
+        LaneClaimActor::Codex,
+        LaneClaimSource::Loop,
+        1_779_000_000_000,
+    )
+    .with_worker("Shea Symphony Agent");
+
+    record_done_merge_lane_completion(
+        &test_config(),
+        &adapter,
+        &issue,
+        &claim,
+        "## Shea Symphony Merge Run\n\n### Merge Action\n",
+    )
+    .unwrap();
+
+    let stored_issue = adapter
+        .issues
+        .borrow()
+        .get(&issue.identifier)
+        .unwrap()
+        .clone();
+    let stored_claim = project_text_field(&stored_issue, "Merging Agent").unwrap();
+    assert!(stored_claim.contains("state=done"));
+    assert!(stored_claim.contains("result=merged"));
+    assert_eq!(
+        LaneClaim::parse(&stored_claim).unwrap(),
+        claim.with_state(LaneClaimState::Done)
     );
 }

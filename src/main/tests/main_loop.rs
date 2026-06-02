@@ -572,6 +572,28 @@ fn resume_preflight_detects_stalled_active_state() {
 }
 
 #[test]
+fn main_handoff_terminal_claim_records_result_context() {
+    let claim = LaneClaim::active(
+        "#383",
+        LaneClaimLane::Main,
+        LaneClaimActor::Codex,
+        LaneClaimSource::Loop,
+        1_779_000_000_000,
+    )
+    .with_worker("Shea Symphony Agent");
+
+    let value =
+        terminal_lane_claim_value(&claim, LaneClaimState::Done, "agent_review_handoff").unwrap();
+
+    assert!(value.contains("state=done"));
+    assert!(value.contains("result=agent_review_handoff"));
+    assert_eq!(
+        LaneClaim::parse(&value).unwrap(),
+        claim.with_state(LaneClaimState::Done)
+    );
+}
+
+#[test]
 fn resume_preflight_archives_completed_tracker_state() {
     let config = test_config();
     let tracker = MemoryTracker::new(vec![tracker_issue("Agent Review")]);

@@ -610,6 +610,10 @@ fn discovers_pull_request_urls_from_workpad_text() {
     assert_eq!(prs[0].number, Some(98));
     assert_eq!(prs[0].state, None);
     assert_eq!(
+        prs[0].source,
+        crate::model::LinkedPullRequestSource::FallbackDiagnostic
+    );
+    assert_eq!(
         prs[1].url.as_deref(),
         Some("https://github.com/Alive24/shea-symphony/pull/100")
     );
@@ -632,6 +636,7 @@ fn merge_linked_pull_requests_deduplicates_by_url() {
         review_decision: None,
         base_ref_name: None,
         head_ref_name: None,
+        source: crate::model::LinkedPullRequestSource::GithubNative,
     };
     let discovered_duplicate =
         linked_pull_request_from_url("https://github.com/Alive24/shea-symphony/pull/98");
@@ -646,6 +651,10 @@ fn merge_linked_pull_requests_deduplicates_by_url() {
     assert_eq!(merged.len(), 2);
     assert_eq!(merged[0].id.as_deref(), Some("PR_98"));
     assert_eq!(merged[0].state.as_deref(), Some("OPEN"));
+    assert_eq!(
+        merged[0].source,
+        crate::model::LinkedPullRequestSource::GithubNative
+    );
     assert_eq!(
         merged[1].url.as_deref(),
         Some("https://github.com/Alive24/shea-symphony/pull/100")

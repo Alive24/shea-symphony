@@ -451,7 +451,7 @@ fn record_live_handoff_pr_link(
     let linked = adapter
         .list_linked_pull_requests(issue_ref)
         .map_err(|error| format!("handoff PR link verification failed: {error}"))?;
-    if linked_pull_requests_contain(&linked, &handoff.publication.pr_url) {
+    if native_linked_pull_requests_contain(&linked, &handoff.publication.pr_url) {
         return Ok(());
     }
 
@@ -463,12 +463,14 @@ fn record_live_handoff_pr_link(
         .list_linked_pull_requests(issue_ref)
         .map_err(|error| format!("handoff PR link verification failed: {error}"))?;
 
-    if linked_pull_requests_contain(&linked, &handoff.publication.pr_url) {
+    if native_linked_pull_requests_contain(&linked, &handoff.publication.pr_url) {
         Ok(())
     } else {
+        let fallback_visible = linked_pull_requests_contain(&linked, &handoff.publication.pr_url);
         Err(format!(
-            "handoff PR link was not Project-visible after repair attempt: {}",
-            handoff.publication.pr_url
+            "GitHub-native linked PR was not visible after repair attempt: {}; fallback_diagnostic_visible={}",
+            handoff.publication.pr_url,
+            fallback_visible
         ))
     }
 }
@@ -504,15 +506,29 @@ pub(crate) fn linked_pull_requests_contain(
     linked_pull_requests: &[LinkedPullRequest],
     pr_url: &str,
 ) -> bool {
+    linked_pull_requests
+        .iter()
+        .any(|linked| linked_pull_request_matches(linked, pr_url))
+}
+
+pub(crate) fn native_linked_pull_requests_contain(
+    linked_pull_requests: &[LinkedPullRequest],
+    pr_url: &str,
+) -> bool {
+    linked_pull_requests
+        .iter()
+        .filter(|linked| linked.is_github_native_linkage())
+        .any(|linked| linked_pull_request_matches(linked, pr_url))
+}
+
+fn linked_pull_request_matches(linked: &LinkedPullRequest, pr_url: &str) -> bool {
     let expected_url = pr_url.trim();
     let expected_number = pull_request_number_from_ref(expected_url);
-    linked_pull_requests.iter().any(|linked| {
-        linked
-            .url
-            .as_deref()
-            .is_some_and(|url| url.trim() == expected_url)
-            || expected_number.is_some() && linked.number == expected_number
-    })
+    linked
+        .url
+        .as_deref()
+        .is_some_and(|url| url.trim() == expected_url)
+        || expected_number.is_some() && linked.number == expected_number
 }
 
 fn pull_request_number_from_ref(reference: &str) -> Option<u64> {
@@ -585,7 +601,7 @@ pub(crate) fn run_loop_agent_review_handoff_evidence(
         .and_then(|handoff| handoff.project_pr_link_verified)
         .or_else(|| {
             let url = evidence.pull_request_url.as_deref()?;
-            Some(linked_pull_requests_contain(
+            Some(native_linked_pull_requests_contain(
                 &issue.linked_pull_requests,
                 url,
             ))

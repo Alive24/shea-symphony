@@ -344,8 +344,8 @@ runtime owner:
   Review or Need Human Input state transition path for one selected issue.
 - `src/lanes/main_loop/write_candidate/live_handoff.rs`: live Main handoff
   publish/link/readiness steps after a backend succeeds. It keeps commit,
-  verification, PR publication, Project PR link evidence, and draft-to-ready
-  handling together.
+  verification, PR publication, GitHub-native linked PR verification,
+  fallback-diagnostic PR evidence, and draft-to-ready handling together.
 - `src/lanes/main_loop/write_candidate/terminal.rs`: terminal Main write
   candidate transitions. It owns Agent Review handoff evidence, usage-limit
   pause recording, retry scheduling, PR-linkage invariant failures, and

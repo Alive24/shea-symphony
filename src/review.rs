@@ -623,7 +623,7 @@ fn terminal_review_failure_marker_matches(value: &str, worker_key: &str) -> bool
 }
 
 pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
-    let decision = review_gate_decision_for_actor(job, ReviewActor::IndependentReviewAgent);
+    let decision = review_gate_decision_for_issue(job, issue);
     let mut attempt_details = Vec::new();
     if let Some(error) = &job.error {
         attempt_details.push(render_attempt_error(error));
@@ -1722,6 +1722,63 @@ mod tests {
     }
 
     #[test]
+    fn review_agent_passed_native_subissue_with_none_exception_routes_to_merging() {
+        let backend = FakeReviewBackend::new(FakeReviewOutcome::Pass);
+        let temp = tempfile::tempdir().unwrap();
+        let request = review_request_with_temp_roots(&temp);
+        let job = backend.poll(backend.start(request).unwrap()).unwrap();
+        let mut issue = native_subissue(issue());
+        issue.description = Some(
+            "Related Parent Issue or Context: native subissue under #400.\nSubissue Human Review Exception: None."
+                .into(),
+        );
+        let decision = review_gate_decision_for_issue(&job, &issue);
+
+        assert_eq!(review_pass_target_state(&issue), "merging");
+        assert_eq!(decision.outcome, ReviewOutcome::PassedToMerging);
+        assert_eq!(decision.target_state, Some("merging"));
+    }
+
+    #[test]
+    fn review_agent_passed_native_subissue_with_negative_exception_values_routes_to_merging() {
+        for value in ["No", "False", "N/A", "na", "无", "没有", ""] {
+            let backend = FakeReviewBackend::new(FakeReviewOutcome::Pass);
+            let temp = tempfile::tempdir().unwrap();
+            let request = review_request_with_temp_roots(&temp);
+            let job = backend.poll(backend.start(request).unwrap()).unwrap();
+            let mut issue = native_subissue(issue());
+            issue.description = Some(format!("Subissue Human Review Exception: {value}"));
+            let decision = review_gate_decision_for_issue(&job, &issue);
+
+            assert_eq!(review_pass_target_state(&issue), "merging", "{value:?}");
+            assert_eq!(
+                decision.outcome,
+                ReviewOutcome::PassedToMerging,
+                "{value:?}"
+            );
+            assert_eq!(decision.target_state, Some("merging"), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn review_agent_passed_native_subissue_with_negative_project_field_routes_to_merging() {
+        let backend = FakeReviewBackend::new(FakeReviewOutcome::Pass);
+        let temp = tempfile::tempdir().unwrap();
+        let request = review_request_with_temp_roots(&temp);
+        let job = backend.poll(backend.start(request).unwrap()).unwrap();
+        let mut issue = native_subissue(issue());
+        issue.project_fields.insert(
+            "Subissue Human Review Exception".into(),
+            serde_json::json!("None."),
+        );
+        let decision = review_gate_decision_for_issue(&job, &issue);
+
+        assert_eq!(review_pass_target_state(&issue), "merging");
+        assert_eq!(decision.outcome, ReviewOutcome::PassedToMerging);
+        assert_eq!(decision.target_state, Some("merging"));
+    }
+
+    #[test]
     fn review_agent_passed_native_subissue_exception_routes_to_human_review() {
         let backend = FakeReviewBackend::new(FakeReviewOutcome::Pass);
         let temp = tempfile::tempdir().unwrap();
@@ -1734,6 +1791,25 @@ mod tests {
 
         assert_eq!(decision.outcome, ReviewOutcome::PassedToHumanReview);
         assert_eq!(decision.target_state, Some("human_review"));
+    }
+
+    #[test]
+    fn review_workpad_for_native_subissue_none_exception_records_merging_result() {
+        let mut issue = native_subissue(issue());
+        issue.description = Some("Subissue Human Review Exception: None.".into());
+        let job = completed_gemini_review("Review Result: PASS\n\nNo confirmed findings.");
+
+        let workpad = render_review_workpad(&issue, &job);
+
+        assert!(
+            workpad.contains("- Target state after review routing: `merging`"),
+            "{workpad}"
+        );
+        assert!(workpad.contains("- Result: `PassedToMerging`"), "{workpad}");
+        assert!(
+            workpad.contains("parent issue owns final Human Review and UAT"),
+            "{workpad}"
+        );
     }
 
     #[test]

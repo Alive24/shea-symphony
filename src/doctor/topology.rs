@@ -1,4 +1,4 @@
-use crate::model::{normalize_state, TrackerIssue};
+use crate::model::{native_subissue_human_review_exception, normalize_state, TrackerIssue};
 
 use super::{
     bool_project_field, find_issue_by_ref, issue_refs_match, string_project_field, violation,
@@ -58,6 +58,7 @@ pub(super) fn audit_parent_subissue_topology(
         let Some(parent_ref) = native_parent_ref(subissue) else {
             continue;
         };
+        audit_subissue_human_review_without_exception(subissue, violations);
         let Some(parent) = find_issue_by_ref(issues, &parent_ref) else {
             continue;
         };
@@ -75,6 +76,25 @@ pub(super) fn audit_parent_subissue_topology(
         audit_subissue_pr_target(subissue, parent_branch, violations);
         audit_subissue_done_merge_evidence(subissue, parent_branch, violations);
     }
+}
+
+fn audit_subissue_human_review_without_exception(
+    subissue: &TrackerIssue,
+    violations: &mut Vec<ProjectAuditViolation>,
+) {
+    if subissue.normalized_state() != "human review"
+        || native_subissue_human_review_exception(subissue)
+    {
+        return;
+    }
+
+    violations.push(violation(
+        subissue,
+        AuditSeverity::Blocker,
+        "subissue_human_review_without_exception",
+        "Native subissue is in Human Review without a real subissue Human Review exception.",
+        "Route routine native subissue Review PASS results to Merging; keep direct child Human Review only for a meaningful `Subissue Human Review Exception: <reason>`.",
+    ));
 }
 
 fn audit_body_only_parent_hierarchy(

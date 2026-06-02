@@ -37,6 +37,7 @@ fn parses_grouped_autopilot_loop_flags() {
         "--poll-interval-ms",
         "250",
         "--json",
+        "--verbose",
     ]) else {
         panic!("expected autopilot loop command");
     };
@@ -53,6 +54,7 @@ fn parses_grouped_autopilot_loop_flags() {
     assert_eq!(options.merge_max_concurrent, Some(1));
     assert_eq!(options.poll_interval_ms, Some(250));
     assert!(options.json);
+    assert!(options.verbose);
 }
 
 #[test]

@@ -32,6 +32,7 @@ pub(crate) struct MergeLoopOptions {
     pub(crate) write: bool,
     pub(crate) recover: bool,
     pub(crate) max_concurrent: Option<usize>,
+    pub(crate) quiet_idle: bool,
 }
 
 impl MergeLoopOptions {
@@ -54,7 +55,7 @@ pub(crate) fn merge_once(
     workflow_path: PathBuf,
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    merge_once_tick(workflow_path, write, false).map(|_| ())
+    merge_once_tick(workflow_path, write, false, false).map(|_| ())
 }
 
 pub(crate) fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
@@ -87,18 +88,23 @@ pub(crate) fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::e
                 options.workflow_path.clone(),
                 options.write,
                 options.recover,
+                options.quiet_idle,
             )? {
                 MergeOnceOutcome::NoMergingIssue => {
                     if limit.is_none() {
                         should_sleep = true;
-                        println!(
-                            "merge_loop_idle action=sleep reason=no_merging_issue delay_ms={} iterations={iteration} slot={slot}",
-                            config.polling.interval_ms
-                        );
+                        if !options.quiet_idle {
+                            println!(
+                                "merge_loop_idle action=sleep reason=no_merging_issue delay_ms={} iterations={iteration} slot={slot}",
+                                config.polling.interval_ms
+                            );
+                        }
                     } else {
-                        println!(
-                            "merge_loop=stopped reason=no_merging_issue iterations={iteration} slot={slot}"
-                        );
+                        if !options.quiet_idle {
+                            println!(
+                                "merge_loop=stopped reason=no_merging_issue iterations={iteration} slot={slot}"
+                            );
+                        }
                         stopped = true;
                     }
                     break;

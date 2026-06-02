@@ -45,6 +45,7 @@ pub(crate) struct AutopilotLoopOptions {
     pub(crate) display: DisplayMode,
     pub(crate) json: bool,
     pub(crate) event_json: bool,
+    pub(crate) verbose: bool,
 }
 
 impl AutopilotLoopOptions {
@@ -643,7 +644,7 @@ fn run_independent_autopilot_lane_supervisor(
                 iteration,
                 lane_plan,
             } => {
-                if !options.event_json {
+                if !options.event_json && options.verbose {
                     println!(
                         "autopilot_loop_lane_iteration lane={} iteration={} scheduler=independent",
                         lane.name(),
@@ -656,6 +657,7 @@ fn run_independent_autopilot_lane_supervisor(
                     lane.max_concurrent(&tick_settings),
                     lane.recover(&tick_settings),
                     options.event_json,
+                    options.verbose,
                 )?;
             }
             AutopilotLaneWorkerMessage::Finished(finished) => {
@@ -663,7 +665,7 @@ fn run_independent_autopilot_lane_supervisor(
                 let mut lane_result = finished.result;
                 completed_work_units.record_lane_result(&mut lane_result);
                 had_lane_error |= lane_result.status == "error";
-                print_autopilot_lane_result(&lane_result, options.event_json)?;
+                print_autopilot_lane_result(&lane_result, options.event_json, options.verbose)?;
                 let work_units_completed_this_cycle = completed_work_units
                     .total
                     .saturating_sub(cycle_start_work_units);
@@ -688,7 +690,10 @@ fn run_independent_autopilot_lane_supervisor(
                 } else if options.display == DisplayMode::Tui {
                     println!("{}", render_autopilot_loop_iteration_tui(&result));
                 } else {
-                    println!("{}", render_autopilot_loop_iteration_result(&result));
+                    println!(
+                        "{}",
+                        render_autopilot_loop_iteration_result(&result, options.verbose)
+                    );
                 }
                 print_autopilot_event(
                     options.event_json,
@@ -990,6 +995,7 @@ fn autopilot_review_tick(
         write: options.write,
         fake_outcome: None,
         max_concurrent: Some(settings.review_max_concurrent),
+        quiet_idle: !options.verbose,
     });
     autopilot_lane_result_from_execution(
         "review",
@@ -1013,6 +1019,7 @@ fn autopilot_merge_tick(
         write: options.write,
         recover: settings.recover,
         max_concurrent: Some(settings.merge_max_concurrent),
+        quiet_idle: !options.verbose,
     });
     autopilot_lane_result_from_execution(
         "merge",
@@ -1110,12 +1117,13 @@ fn print_autopilot_lane_running(
     max_concurrent: usize,
     recover: bool,
     event_json: bool,
+    verbose: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let selected = lane_plan
         .and_then(|plan| plan.selected_issue.as_ref())
         .map(|issue| issue.identifier.as_str())
         .unwrap_or("none");
-    if !event_json {
+    if !event_json && (verbose || selected != "none") {
         println!(
             "autopilot_loop_lane lane={} status=running action=tick_started selected={} target={} max_concurrent={} recover={}",
             lane,
@@ -1146,13 +1154,14 @@ fn print_autopilot_lane_running(
 fn print_autopilot_lane_result(
     lane: &AutopilotLoopLaneResult,
     event_json: bool,
+    verbose: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let selected = lane
         .selected_issue
         .as_ref()
         .map(|issue| issue.identifier.as_str())
         .unwrap_or("none");
-    if !event_json {
+    if !event_json && (verbose || !autopilot_lane_result_is_noop(lane)) {
         println!(
             "autopilot_loop_lane lane={} status={} action={} selected={} target={} max_concurrent={} recover={}",
             lane.lane,
@@ -1170,6 +1179,10 @@ fn print_autopilot_lane_result(
         serde_json::to_value(lane)?,
     )?;
     Ok(())
+}
+
+fn autopilot_lane_result_is_noop(lane: &AutopilotLoopLaneResult) -> bool {
+    lane.selected_issue.is_none() && lane.status == "skipped" && lane.action == "lane_tick_skipped"
 }
 
 #[cfg(test)]
@@ -1262,7 +1275,10 @@ fn autopilot_lane_result_from_execution(
     }
 }
 
-fn render_autopilot_loop_iteration_result(result: &AutopilotLoopIterationResult) -> String {
+fn render_autopilot_loop_iteration_result(
+    result: &AutopilotLoopIterationResult,
+    verbose: bool,
+) -> String {
     let mut lines = vec![format!(
             "autopilot_loop_result supervisor_cycle={} iteration={} mode={} work_units={} work_unit_limit={} order={} recover={} main_max_concurrent={} review_max_concurrent={} merge_max_concurrent={}",
             result.supervisor_cycle,
@@ -1280,6 +1296,9 @@ fn render_autopilot_loop_iteration_result(result: &AutopilotLoopIterationResult)
         result.settings.merge_max_concurrent
     )];
     for lane in &result.lanes {
+        if !verbose && autopilot_lane_result_is_noop(lane) {
+            continue;
+        }
         let selected = lane
             .selected_issue
             .as_ref()
@@ -1953,6 +1972,7 @@ mod tests {
             display: DisplayMode::Plain,
             json: false,
             event_json: false,
+            verbose: false,
         };
 
         let settings = AutopilotLoopTickSettings::from_options(&config, &options);
@@ -2051,7 +2071,7 @@ mod tests {
             parked_queues: Vec::new(),
         };
 
-        let rendered = render_autopilot_loop_iteration_result(&result);
+        let rendered = render_autopilot_loop_iteration_result(&result, true);
 
         assert!(rendered.contains(
             "autopilot_loop_result supervisor_cycle=7 iteration=7 mode=write work_units=2 work_unit_limit=9 order=main,review,merge recover=true main_max_concurrent=2 review_max_concurrent=1 merge_max_concurrent=3"
@@ -2064,6 +2084,11 @@ mod tests {
         ));
         assert!(rendered.contains(
             "autopilot_loop_lane lane=merge status=error action=tick_failed selected=#410 target=Done work_unit_completed=false completed_work_units=1 max_concurrent=3 recover=true"
+        ));
+
+        let quiet_rendered = render_autopilot_loop_iteration_result(&result, false);
+        assert!(!quiet_rendered.contains(
+            "autopilot_loop_lane lane=review status=skipped action=lane_tick_skipped selected=none"
         ));
     }
 

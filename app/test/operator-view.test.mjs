@@ -98,6 +98,40 @@ test('autoloop stdout log omits repeated inactive skipped issue details', () => 
   assert.equal(state.recentLines.length, 0);
 });
 
+test('autoloop log omits no-op lane heartbeat events', () => {
+  let state = defaultLoopState();
+  state = appendAutoloopLine(state, {
+    atMs: Date.now(),
+    stream: 'stdout',
+    line: 'autopilot_loop_lane lane=review status=running action=tick_started selected=none',
+    event: {
+      event: 'autopilot_loop_lane',
+      payload: {
+        lane: 'review',
+        status: 'running',
+        action: 'tick_started',
+        selected_issue: null
+      }
+    }
+  });
+  state = appendAutoloopLine(state, {
+    atMs: Date.now(),
+    stream: 'stdout',
+    line: 'autopilot_loop_lane lane=merge status=skipped action=lane_tick_skipped selected=none',
+    event: {
+      event: 'autopilot_loop_lane',
+      payload: {
+        lane: 'merge',
+        status: 'skipped',
+        action: 'lane_tick_skipped',
+        selected_issue: null
+      }
+    }
+  });
+
+  assert.equal(state.recentLines.length, 0);
+});
+
 test('autoloop stdout log omits child lane idle stop lines', () => {
   const lines = [
     'merge_once=stopped reason=no_merging_issue',

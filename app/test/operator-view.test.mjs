@@ -111,6 +111,50 @@ test('lane throughput board keeps independent running and queued lane work visib
   assert.deepEqual(merge.issues.map((issue) => issue.id), ['#430']);
 });
 
+test('project read cooldown preserves last stable review queue visibility', () => {
+  const view = buildViewModel({
+    generatedAt: new Date().toISOString(),
+    workflowPath: 'workflows/shea-symphony.md',
+    commands: {
+      githubQueue: {
+        ok: false,
+        skipped: true,
+        projectReadPaused: true,
+        rateLimitResetAtMs: Date.now() + 60_000,
+        signal: 'project-rate-limit-cooldown',
+        stderr: 'Project read paused after rate limit.'
+      }
+    },
+    githubQueue: {
+      source: 'project state · last stable during Project read cooldown',
+      projectReadPaused: true,
+      rateLimitResetAtMs: Date.now() + 60_000,
+      totalOpen: 1,
+      laneCounts: { main: 0, review: 1, merge: 0 },
+      stateCounts: { 'Agent Review': 1 },
+      issues: [
+        {
+          identifier: '#405',
+          title: 'Make autopilot lanes independently throughput-oriented',
+          state: 'Agent Review',
+          url: 'https://github.com/Alive24/shea-symphony/issues/405'
+        }
+      ]
+    },
+    healthy: true
+  });
+
+  const board = buildLaneThroughputBoard({ queueIssues: view.queueIssues });
+  const review = board.find((lane) => lane.laneKey === 'review');
+
+  assert.equal(view.dataSource.label, 'Project reads paused');
+  assert.match(view.dataSource.detail, /GitHub Project read paused until/);
+  assert.deepEqual(review.issues.map((issue) => [issue.id, issue.title]), [
+    ['#405', 'Make autopilot lanes independently throughput-oriented']
+  ]);
+  assert.equal(review.queuedCount, 1);
+});
+
 test('lane throughput board surfaces blocked idle and completed lane results', () => {
   const board = buildLaneThroughputBoard({
     laneSnapshots: {

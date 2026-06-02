@@ -57,7 +57,7 @@ export async function loadHealth() {
   };
 }
 
-export async function loadReadSurface(name, force = false) {
+export async function loadReadSurface(name, force = false, allowProjectFallback = false) {
   if (getDataMode() === 'fixture') return buildFixtureReadSurface(name, force);
   if (isTauriRuntime()) {
     const logId = recordCliLog({
@@ -68,7 +68,7 @@ export async function loadReadSurface(name, force = false) {
     });
     const startedAt = performance.now();
     try {
-      const surface = await getReadSurface(name, force);
+      const surface = await getReadSurface(name, force, allowProjectFallback);
       if (surface) {
         const command = (surface.command ?? {}) as any;
         updateCliLog(logId, {

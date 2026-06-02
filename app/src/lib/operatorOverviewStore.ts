@@ -6,7 +6,8 @@ import { mergeReadSurface } from './operatorReadModel.ts';
 import { buildViewModel } from './operatorViewModel.ts';
 import { refreshStatusStore } from './uiState.ts';
 
-const slowSurfaces = ['autopilot', 'doctor', 'review', 'skills', 'sessions', 'local'];
+const slowSurfaces = ['githubQueue', 'autopilot', 'doctor', 'review', 'skills', 'sessions', 'local'];
+const projectReadSurfaces = new Set(['autopilot', 'doctor', 'review', 'githubQueue']);
 
 export const operatorOverviewStore = writable({
   view: buildViewModel(null),
@@ -14,11 +15,13 @@ export const operatorOverviewStore = writable({
   fullLoading: false,
   backgroundRefreshing: false,
   slowReadsRemaining: 0,
-  liveError: ''
+  liveError: '',
+  projectReadCooldown: null
 });
 
 let readGeneration = 0;
 let initialized = false;
+let projectReadCooldownUntilMs = 0;
 
 export function initializeOperatorOverview() {
   if (initialized) return;
@@ -57,10 +60,11 @@ export async function requestOperatorOverviewRefresh(
   }
 
   try {
-    const overview = await loadOverview(force, 'fast');
+    const overview = applyStableProjectQueueIfPaused(await loadOverview(force, 'fast'), current.view.raw);
     operatorOverviewStore.update((state) => ({
       ...state,
       view: buildViewModel(preserveLocalStatus(overview, state.view.raw)),
+      projectReadCooldown: projectCooldownFromOverview(overview) ?? state.projectReadCooldown,
       loading: false
     }));
     if (!includeSlowReads) return;
@@ -124,12 +128,13 @@ export function requestOperatorLocalArtifactsRefresh(source = 'local-artifacts',
   }));
 
   for (const name of artifactSurfaces) {
-    loadReadSurface(name, true)
+    loadReadSurface(name, true, false)
       .then((surface) => {
         if (generation !== readGeneration) return;
         operatorOverviewStore.update((state) => ({
           ...state,
-          view: buildViewModel(mergeReadSurface(state.view.raw, surface))
+          view: buildViewModel(mergeReadSurface(state.view.raw, surface)),
+          projectReadCooldown: projectCooldownFromSurface(surface) ?? state.projectReadCooldown
         }));
       })
       .catch((error) => {
@@ -189,43 +194,143 @@ function startOperatorBackgroundReads(force = false, source = 'manual', publishS
     }));
   }
 
+  void runBackgroundReadsSequentially(generation, force, source, publishStatus);
+}
+
+async function runBackgroundReadsSequentially(generation: number, force: boolean, source: string, publishStatus: boolean) {
   for (const name of slowSurfaces) {
-    loadReadSurface(name, force)
-      .then((surface) => {
-        if (generation !== readGeneration) return;
-        operatorOverviewStore.update((state) => ({
-          ...state,
-          view: buildViewModel(mergeReadSurface(state.view.raw, surface))
-        }));
-      })
-      .catch((error) => {
-        if (generation !== readGeneration) return;
-        const message = error instanceof Error ? error.message : String(error ?? 'unknown error');
-        operatorOverviewStore.update((state) => ({
-          ...state,
-          liveError: message
-        }));
-      })
-      .finally(() => {
-        if (generation !== readGeneration) return;
-        const nextRemaining = Math.max(0, get(operatorOverviewStore).slowReadsRemaining - 1);
-        operatorOverviewStore.update((state) => ({
-          ...state,
-          slowReadsRemaining: nextRemaining,
-          fullLoading: nextRemaining > 0,
-          backgroundRefreshing: nextRemaining > 0
-        }));
-        if (publishStatus) {
-          refreshStatusStore.update((status) => ({
-            ...status,
-            running: nextRemaining > 0,
-            remaining: nextRemaining,
-            finishedAt: nextRemaining === 0 ? new Date().toISOString() : status.finishedAt,
-            detail: nextRemaining === 0
-              ? 'Refresh complete'
-              : `Loading ${nextRemaining} CLI surface${nextRemaining === 1 ? '' : 's'}`
-          }));
-        }
-      });
+    if (generation !== readGeneration) return;
+    if (projectReadSurfaces.has(name) && projectReadCooldownActive()) {
+      finishSkippedBackgroundSurface(generation, source, publishStatus);
+      continue;
+    }
+    try {
+      const surface = await loadReadSurface(name, force);
+      if (generation !== readGeneration) return;
+      const cooldown = projectCooldownFromSurface(surface);
+      if (cooldown) projectReadCooldownUntilMs = Math.max(projectReadCooldownUntilMs, cooldown.untilMs);
+      operatorOverviewStore.update((state) => ({
+        ...state,
+        view: buildViewModel(
+          applyStableProjectQueueIfPaused(
+            mergeReadSurface(state.view.raw, surface),
+            state.view.raw
+          )
+        ),
+        projectReadCooldown: cooldown ?? state.projectReadCooldown
+      }));
+    } catch (error) {
+      if (generation !== readGeneration) return;
+      const message = error instanceof Error ? error.message : String(error ?? 'unknown error');
+      operatorOverviewStore.update((state) => ({
+        ...state,
+        liveError: message
+      }));
+    } finally {
+      finishLoadedBackgroundSurface(generation, publishStatus);
+    }
   }
+}
+
+function finishLoadedBackgroundSurface(generation: number, publishStatus: boolean) {
+  if (generation !== readGeneration) return;
+  const nextRemaining = Math.max(0, get(operatorOverviewStore).slowReadsRemaining - 1);
+  operatorOverviewStore.update((state) => ({
+    ...state,
+    slowReadsRemaining: nextRemaining,
+    fullLoading: nextRemaining > 0,
+    backgroundRefreshing: nextRemaining > 0
+  }));
+  if (publishStatus) {
+    refreshStatusStore.update((status) => ({
+      ...status,
+      running: nextRemaining > 0,
+      remaining: nextRemaining,
+      finishedAt: nextRemaining === 0 ? new Date().toISOString() : status.finishedAt,
+      detail: nextRemaining === 0
+        ? 'Refresh complete'
+        : `Loading ${nextRemaining} CLI surface${nextRemaining === 1 ? '' : 's'}`
+    }));
+  }
+}
+
+function finishSkippedBackgroundSurface(generation: number, source: string, publishStatus: boolean) {
+  if (generation !== readGeneration) return;
+  const nextRemaining = Math.max(0, get(operatorOverviewStore).slowReadsRemaining - 1);
+  operatorOverviewStore.update((state) => ({
+    ...state,
+    slowReadsRemaining: nextRemaining,
+    fullLoading: nextRemaining > 0,
+    backgroundRefreshing: nextRemaining > 0
+  }));
+  if (publishStatus) {
+    refreshStatusStore.update((status) => ({
+      ...status,
+      running: nextRemaining > 0,
+      remaining: nextRemaining,
+      source,
+      finishedAt: nextRemaining === 0 ? new Date().toISOString() : status.finishedAt,
+      detail: nextRemaining === 0
+        ? 'Refresh complete'
+        : `Project read paused; loading ${nextRemaining} CLI surface${nextRemaining === 1 ? '' : 's'}`
+    }));
+  }
+}
+
+function projectReadCooldownActive() {
+  return projectReadCooldownUntilMs > Date.now();
+}
+
+function projectCooldownFromOverview(overview: any) {
+  return projectCooldownFromCommand(overview?.commands?.githubQueue)
+    ?? projectCooldownFromParsed(overview?.githubQueue)
+    ?? projectCooldownFromCommand(overview?.commands?.autopilot)
+    ?? projectCooldownFromCommand(overview?.commands?.doctor)
+    ?? projectCooldownFromCommand(overview?.commands?.review);
+}
+
+function projectCooldownFromSurface(surface: any) {
+  return projectCooldownFromCommand(surface?.command) ?? projectCooldownFromParsed(surface?.parsed);
+}
+
+function projectCooldownFromCommand(command: any) {
+  if (!command?.projectReadPaused && command?.signal !== 'project-rate-limit-cooldown') return null;
+  return normalizeProjectCooldown(command.rateLimitResetAtMs, command.stderr);
+}
+
+function projectCooldownFromParsed(parsed: any) {
+  if (!parsed?.projectReadPaused && parsed?.failureKind !== 'rate_limit') return null;
+  return normalizeProjectCooldown(parsed.rateLimitResetAtMs, parsed.reason);
+}
+
+function normalizeProjectCooldown(resetAtMs: any, reason: any) {
+  const untilMs = Number(resetAtMs);
+  const cooldown = {
+    untilMs: Number.isFinite(untilMs) && untilMs > 0 ? untilMs : Date.now() + 10 * 60 * 1000,
+    reason: String(reason ?? 'GitHub Project GraphQL read is paused after rate limit.')
+  };
+  projectReadCooldownUntilMs = Math.max(projectReadCooldownUntilMs, cooldown.untilMs);
+  return cooldown;
+}
+
+function applyStableProjectQueueIfPaused(nextOverview: any, previousOverview: any) {
+  if (!nextOverview) return nextOverview;
+  const cooldown = projectCooldownFromOverview(nextOverview);
+  if (!cooldown) return nextOverview;
+  const previousQueue = previousOverview?.githubQueue;
+  if (!previousQueue?.issues?.length) return nextOverview;
+  return {
+    ...nextOverview,
+    githubQueue: {
+      ...previousQueue,
+      projectReadPaused: true,
+      rateLimitResetAtMs: cooldown.untilMs,
+      reason: cooldown.reason,
+      source: `${previousQueue.source ?? 'project state'} · last stable during Project read cooldown`
+    },
+    commands: {
+      ...(nextOverview.commands ?? {}),
+      githubQueue: nextOverview.commands?.githubQueue ?? previousOverview?.commands?.githubQueue
+    }
+  };
 }

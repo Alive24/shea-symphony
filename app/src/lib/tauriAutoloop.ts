@@ -143,10 +143,10 @@ export async function getOperatorOverview(force = false, scope = 'full'): Promis
   return invoke<OperatorOverview>('get_operator_overview', { options: { force, scope } });
 }
 
-export async function getReadSurface(name: string, force = false): Promise<ReadSurface | null> {
+export async function getReadSurface(name: string, force = false, allowProjectFallback = false): Promise<ReadSurface | null> {
   if (!isTauriRuntime()) return null;
   const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<ReadSurface>('get_read_surface', { name, force });
+  return invoke<ReadSurface>('get_read_surface', { name, force, allowProjectFallback });
 }
 
 export async function startAutoloop(options: StartAutoloopOptions = {}): Promise<LoopStateSnapshot> {

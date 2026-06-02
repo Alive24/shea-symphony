@@ -93,6 +93,33 @@ test('autoloop stdout log omits repeated inactive skipped issue details', () => 
   assert.equal(state.recentLines.length, 0);
 });
 
+test('autoloop stdout log omits child lane idle stop lines', () => {
+  const lines = [
+    'merge_once=stopped reason=no_merging_issue',
+    'merge_loop=stopped reason=no_merging_issue iterations=1 slot=1',
+    'review_loop=stopped reason=no_agent_review_issue iterations=1'
+  ];
+  let state = defaultLoopState();
+
+  for (const line of lines) {
+    state = appendAutoloopLine(state, {
+      atMs: Date.now(),
+      stream: 'stdout',
+      line,
+      event: {
+        event: 'autopilot_cli_line',
+        payload: {
+          kind: line.split('=')[0],
+          raw: line,
+          fields: {}
+        }
+      }
+    });
+  }
+
+  assert.equal(state.recentLines.length, 0);
+});
+
 test('lane throughput board keeps independent running and queued lane work visible', () => {
   const board = buildLaneThroughputBoard({
     queueIssues: [

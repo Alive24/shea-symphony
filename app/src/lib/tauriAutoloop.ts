@@ -195,6 +195,7 @@ export function mergeLaneSnapshot(state: LoopStateSnapshot, lane: LaneSnapshot):
 
 export function appendAutoloopLine(state: LoopStateSnapshot, line: AutoloopLine): LoopStateSnapshot {
   if (isSkippedIssueDetailLine(line)) return state;
+  if (isAutoloopLaneIdlePrimitiveLine(line)) return state;
   return {
     ...state,
     recentLines: [...(state.recentLines ?? []), line].slice(-200)
@@ -209,6 +210,16 @@ function isSkippedIssueDetailLine(line: AutoloopLine) {
   const kind = textFromValue(recordValue(payload, 'kind'));
   const raw = textFromValue(recordValue(payload, 'raw') ?? line.line);
   return kind === '-' && /^-\s+\S+\s+#\d+\s+reason=state is not active\b/.test(raw);
+}
+
+function isAutoloopLaneIdlePrimitiveLine(line: AutoloopLine) {
+  if (line.stream !== 'stdout') return false;
+  const eventName = textFromValue(recordValue(line.event, 'event'));
+  if (eventName !== 'autopilot_cli_line') return false;
+  const payload = recordFromValue(recordValue(line.event, 'payload'));
+  const raw = textFromValue(recordValue(payload, 'raw') ?? line.line);
+  return /^(merge_once|merge_loop)=stopped reason=no_merging_issue\b/.test(raw)
+    || /^review_loop=stopped reason=no_agent_review_issue\b/.test(raw);
 }
 
 export function laneWorkerFromAutoloop(

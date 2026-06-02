@@ -280,11 +280,13 @@
       const status = stringField(payload, 'status') ?? 'unknown';
       const action = stringField(payload, 'action') ?? 'event';
       const selected = selectedIssueLabel(objectField(payload, 'selected_issue')) ?? stringField(payload, 'selected') ?? 'none';
+      const completed = numberField(payload, 'completed_work_units');
+      const workUnit = booleanField(payload, 'work_unit_completed');
       return {
         eventName,
         title: `${lane} ${status}`,
-        detail: `${action} · selected ${selected}`,
-        chips: [lane, status, action, maxConcurrentChip(payload)].filter(Boolean),
+        detail: `${action} · selected ${selected}${completed != null ? ` · work units ${completed}` : ''}`,
+        chips: [lane, status, action, workUnit ? 'work unit completed' : '', maxConcurrentChip(payload)].filter(Boolean),
         tone: runLogTone(status, 0)
       };
     }
@@ -301,7 +303,9 @@
       };
     }
     if (eventName === 'autopilot_loop_result') {
-      const iteration = numberField(payload, 'iteration');
+      const cycle = numberField(payload, 'supervisor_cycle') ?? numberField(payload, 'iteration');
+      const workUnits = numberField(payload, 'completed_work_units') ?? numberField(payload, 'work_units');
+      const limit = numberField(payload, 'work_unit_limit');
       const lanes = arrayField(payload, 'lanes') ?? [];
       const laneSummary = lanes
         .map((lane) => {
@@ -312,8 +316,8 @@
       const hasError = lanes.some((lane) => stringField(objectFromUnknown(lane), 'status') === 'error');
       return {
         eventName,
-        title: `Iteration ${iteration ?? '?'} result`,
-        detail: laneSummary || 'Loop iteration completed.',
+        title: `Work units ${workUnits ?? 0}${limit != null ? ` / ${limit}` : ''}`,
+        detail: laneSummary || `Supervisor cycle ${cycle ?? '?'} completed.`,
         chips: [
           ...concurrencyChips(objectField(payload, 'settings')),
           ...lanes.slice(0, 3).map((lane) => stringField(objectFromUnknown(lane), 'status') ?? 'unknown')
@@ -322,10 +326,12 @@
       };
     }
     if (eventName === 'autopilot_loop_stopped') {
+      const cycles = numberField(payload, 'supervisor_cycles') ?? numberField(payload, 'iterations');
+      const workUnits = numberField(payload, 'completed_work_units') ?? numberField(payload, 'work_units');
       return {
         eventName,
         title: 'Loop stopped',
-        detail: `reason ${stringField(payload, 'reason') ?? 'unknown'} · iterations ${numberField(payload, 'iterations') ?? '?'}`,
+        detail: `reason ${stringField(payload, 'reason') ?? 'unknown'} · work units ${workUnits ?? 0} · cycles ${cycles ?? '?'}`,
         chips: ['stopped'],
         tone: 'success'
       };
@@ -388,6 +394,11 @@
   function numberField(value: unknown, key: string): number | null {
     const next = objectFromUnknown(value)[key];
     return typeof next === 'number' && Number.isFinite(next) ? next : null;
+  }
+
+  function booleanField(value: unknown, key: string): boolean | null {
+    const next = objectFromUnknown(value)[key];
+    return typeof next === 'boolean' ? next : null;
   }
 
   function maxConcurrentChip(value: Record<string, unknown>) {

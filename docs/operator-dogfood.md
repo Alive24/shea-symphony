@@ -136,6 +136,18 @@ and Merge consumes only `Merging` work. The loop reports lane outcomes and
 parked operator queues, then returns control to the operator; it does not detach
 as a service.
 
+Treat the foreground loop as one operator-controlled supervisor over independent
+lane work units. `--max-iterations` limits how long the supervisor polls and
+runs lane ticks; it is not a shared cap on total completed Main, Review, and
+Merge items. `--main-max-concurrent`, `--review-max-concurrent`, and
+`--merge-max-concurrent` are lane-local worker limits. During a healthy
+iteration, Main can make progress while Review is idle, Review can make
+progress while Merge is blocked, and Merge can keep landing ready work while
+Main is waiting on a slow app-server turn. Blocked, idle, busy, and slow lanes
+must stay visible in the CLI/TUI/log evidence, but they should not hide ready
+work in another lane unless the status names a global readiness blocker such as
+Doctor, canonical checkout safety, or unrecoverable runtime ambiguity.
+
 The canonical workflow now uses the Codex app-server Main backend with
 `codex.approval_policy: never`, matching the local app-server schema. A write
 tick starts one app-server turn in the prepared issue worktree, records
@@ -235,6 +247,56 @@ app-server smoke remains deferred until a natural repair candidate exists.
 Backend, auth, quota, GitHub API, or schema failures must be classified in the
 workpad or timeline evidence. Treat them as blocked/retry guidance, not as a
 passing app-server smoke.
+
+## Parent #405 UAT Checklist
+
+Parent #405 owns final Human Review and UAT for independent autopilot lane
+throughput. Run this checklist from a clean canonical `main` checkout after the
+child slices are merged into the parent integration path or visible on `main`.
+
+1. Run CLI preflight and capture the readiness lines:
+
+```bash
+target/debug/shea-symphony project state workflows/shea-symphony.md
+target/debug/shea-symphony autopilot plan workflows/shea-symphony.md
+target/debug/shea-symphony doctor workflows/shea-symphony.md
+```
+
+2. Run one dry-run iteration with intentionally uneven lane limits and capture
+   stdout:
+
+```bash
+target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-iterations 1 --dry-run --main-max-concurrent 2 --review-max-concurrent 1 --merge-max-concurrent 3
+```
+
+   Verify the output includes `order=main,review,merge`, separate
+   `autopilot_loop_lane` rows, and lane-local `max_concurrent` values.
+
+3. Run the same dry-run through the TUI and inspect the Tauri app or terminal
+   panel view:
+
+```bash
+target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-iterations 1 --dry-run --display tui --main-max-concurrent 2 --review-max-concurrent 1 --merge-max-concurrent 3
+```
+
+   Verify Main, Review, and Merge cards remain separate, parked queues remain
+   visible, and a blocked/idle lane does not visually erase another ready lane.
+
+4. If live tracker state has safe ready work in more than one lane, run one
+   bounded write tick:
+
+```bash
+target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-iterations 1 --write --main-max-concurrent 2 --review-max-concurrent 1 --merge-max-concurrent 3
+```
+
+   Verify the CLI logs and Tauri run-log view show one foreground supervisor
+   result with independent lane work-unit outcomes. Do not leave the loop
+   running as a persistent service; rerun another bounded iteration only when
+   the operator intends another supervised pass.
+
+5. Save the parent UAT evidence in #405 Human Review notes: command lines,
+   readiness phase, lane rows/cards observed, any blocked lane reason, and the
+   conclusion that supervisor lifetime and lane throughput limits are distinct.
 
 ## Evidence Timeline
 

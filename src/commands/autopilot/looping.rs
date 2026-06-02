@@ -1727,7 +1727,8 @@ fn autopilot_loop_counts(
 fn autopilot_loop_phase(counts: &AutopilotLoopCounts, readiness_status: &str) -> String {
     if counts.retrying > 0 {
         "retrying".into()
-    } else if readiness_status.starts_with("blocked") || counts.blocked > 0 {
+    } else if readiness_status.starts_with("blocked") || (counts.blocked > 0 && counts.running == 0)
+    {
         "blocked".into()
     } else if counts.running > 0 {
         "running".into()
@@ -1925,6 +1926,145 @@ mod tests {
         assert!(result
             .evidence
             .contains(&"skip_reason=no_ready_selected_issue".into()));
+    }
+
+    #[test]
+    fn tick_settings_preserve_lane_specific_zero_concurrency() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nmain_lane:\n  max_concurrent_agents: 3\nreview_lane:\n  max_concurrent_workers: 2\nmerge_lane:\n  max_concurrent_workers: 4\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, std::path::Path::new("/tmp/WORKFLOW.md"))
+                .unwrap();
+        let options = AutopilotLoopOptions {
+            workflow_path: PathBuf::from("/tmp/WORKFLOW.md"),
+            max_iterations: Some(1),
+            once: false,
+            continuous: false,
+            write: true,
+            dry_run: false,
+            recover: true,
+            poll_interval_ms: None,
+            main_max_concurrent: Some(0),
+            review_max_concurrent: Some(5),
+            merge_max_concurrent: Some(0),
+            display: DisplayMode::Plain,
+            json: false,
+            event_json: false,
+        };
+
+        let settings = AutopilotLoopTickSettings::from_options(&config, &options);
+
+        assert_eq!(settings.main_max_concurrent, 0);
+        assert_eq!(settings.review_max_concurrent, 5);
+        assert_eq!(settings.merge_max_concurrent, 0);
+    }
+
+    #[test]
+    fn iteration_result_records_each_lane_work_unit_independently() {
+        let issue = AutopilotIssueSummary {
+            identifier: "#410".into(),
+            title: "Show independent lane throughput in Tauri".into(),
+            state: "Agent Review".into(),
+            assignees: Vec::new(),
+            url: None,
+            priority: None,
+            pull_request: Some("https://github.com/Alive24/shea-symphony/pull/410".into()),
+        };
+        let result = AutopilotLoopIterationResult {
+            schema_version: 1,
+            iteration: 7,
+            supervisor_cycle: 7,
+            mode: "write".into(),
+            work_unit_limit: Some(9),
+            completed_work_units: 2,
+            work_units_completed_this_cycle: 1,
+            lane_work_units: BTreeMap::from([("main".into(), 1), ("merge".into(), 1)]),
+            execution_order: vec!["main".into(), "review".into(), "merge".into()],
+            settings: AutopilotLoopTickSettings {
+                recover: true,
+                main_max_concurrent: 2,
+                review_max_concurrent: 1,
+                merge_max_concurrent: 3,
+            },
+            lanes: vec![
+                AutopilotLoopLaneResult {
+                    lane: "main".into(),
+                    status: "completed".into(),
+                    action: "lane_tick_completed".into(),
+                    work_unit_completed: true,
+                    completed_work_units: 1,
+                    issue_ref: Some("#410".into()),
+                    latest_result: AutopilotLaneLatestResult {
+                        status: "completed".into(),
+                        action: "lane_tick_completed".into(),
+                        issue_ref: Some("#410".into()),
+                        target_state: Some("Agent Review".into()),
+                    },
+                    selected_issue: Some(issue.clone()),
+                    target_state: Some("Agent Review".into()),
+                    max_concurrent: 2,
+                    recover: true,
+                    evidence: vec!["planned_status=ready".into()],
+                },
+                AutopilotLoopLaneResult {
+                    lane: "review".into(),
+                    status: "skipped".into(),
+                    action: "lane_tick_skipped".into(),
+                    work_unit_completed: false,
+                    completed_work_units: 0,
+                    issue_ref: None,
+                    latest_result: AutopilotLaneLatestResult {
+                        status: "skipped".into(),
+                        action: "lane_tick_skipped".into(),
+                        issue_ref: None,
+                        target_state: None,
+                    },
+                    selected_issue: None,
+                    target_state: None,
+                    max_concurrent: 1,
+                    recover: false,
+                    evidence: vec!["planned_status=idle".into()],
+                },
+                AutopilotLoopLaneResult {
+                    lane: "merge".into(),
+                    status: "error".into(),
+                    action: "tick_failed".into(),
+                    work_unit_completed: false,
+                    completed_work_units: 1,
+                    issue_ref: Some("#410".into()),
+                    latest_result: AutopilotLaneLatestResult {
+                        status: "error".into(),
+                        action: "tick_failed".into(),
+                        issue_ref: Some("#410".into()),
+                        target_state: Some("Done".into()),
+                    },
+                    selected_issue: Some(issue),
+                    target_state: Some("Done".into()),
+                    max_concurrent: 3,
+                    recover: true,
+                    evidence: vec!["error=simulated slow merge preflight".into()],
+                },
+            ],
+            parked_queues: Vec::new(),
+        };
+
+        let rendered = render_autopilot_loop_iteration_result(&result);
+
+        assert!(rendered.contains(
+            "autopilot_loop_result supervisor_cycle=7 iteration=7 mode=write work_units=2 work_unit_limit=9 order=main,review,merge recover=true main_max_concurrent=2 review_max_concurrent=1 merge_max_concurrent=3"
+        ));
+        assert!(rendered.contains(
+            "autopilot_loop_lane lane=main status=completed action=lane_tick_completed selected=#410 target=Agent Review work_unit_completed=true completed_work_units=1 max_concurrent=2 recover=true"
+        ));
+        assert!(rendered.contains(
+            "autopilot_loop_lane lane=review status=skipped action=lane_tick_skipped selected=none target=none work_unit_completed=false completed_work_units=0 max_concurrent=1 recover=false"
+        ));
+        assert!(rendered.contains(
+            "autopilot_loop_lane lane=merge status=error action=tick_failed selected=#410 target=Done work_unit_completed=false completed_work_units=1 max_concurrent=3 recover=true"
+        ));
     }
 
     #[test]

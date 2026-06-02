@@ -98,8 +98,15 @@ fn autopilot_dogfood_docs_prefer_foreground_loop() {
     }
 
     assert!(command_reference.contains("not a daemon"));
+    assert!(command_reference.contains("Lane throughput is independent"));
+    assert!(command_reference.contains("lane limit to `0`"));
     assert!(operator_dogfood.contains("not a daemon"));
+    assert!(operator_dogfood.contains("Parent #405 UAT Checklist"));
+    assert!(operator_dogfood.contains("one operator-controlled supervisor over independent"));
     assert!(supervised_runbook.contains("not a daemon"));
+    assert!(docs_readiness_contains_independent_lane_model(&repo_file(
+        "docs/dogfood-readiness.md"
+    )));
     assert!(suite_readme.contains("not a daemon"));
     assert!(suite_readme.contains("app-server"));
     assert!(command_reference.contains("debugging"));
@@ -108,4 +115,10 @@ fn autopilot_dogfood_docs_prefer_foreground_loop() {
     assert!(launcher.contains("autopilot loop"));
     assert!(!launcher.contains("run-loop"));
     assert!(!launcher.contains("project-state"));
+}
+
+fn docs_readiness_contains_independent_lane_model(document: &str) -> bool {
+    document.contains("Autopilot lane throughput is independent")
+        && document.contains("shared")
+        && document.contains("global iteration gate")
 }

@@ -435,6 +435,7 @@ impl TrackerAdapter for RecordingAdapter {
                     url: Some(pr_ref.to_string()),
                     state: Some("OPEN".into()),
                     is_draft: Some(false),
+                    source: shea_symphony::model::LinkedPullRequestSource::GithubNative,
                     ..Default::default()
                 });
         }

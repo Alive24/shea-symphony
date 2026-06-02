@@ -285,6 +285,7 @@ mod tests {
                     review_decision: None,
                     base_ref_name: None,
                     head_ref_name: None,
+                    source: crate::model::LinkedPullRequestSource::Unknown,
                 })
                 .into_iter()
                 .collect(),

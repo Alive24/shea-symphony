@@ -9,6 +9,7 @@
     refreshStatusStore
   } from './lib/uiState.ts';
   import { operatorOverviewStore, requestOperatorOverviewRefresh } from './lib/operatorOverviewStore.ts';
+  import { buildLaneThroughputBoard } from './lib/viewModel/laneThroughput.ts';
   import {
     appendAutoloopLine,
     defaultLoopState,
@@ -55,6 +56,12 @@
   $: autoloopStateStore.set(autoloopState);
   $: operatorSurfaceRefreshing = $refreshStatusStore.running;
   $: issueTitleById = buildIssueTitleMap(queueIssues);
+  $: liveWorkersByLane = ['main', 'review', 'merge'].reduce((lanes, laneKey) => {
+    const liveWorker = laneWorkerFromAutoloop(autoloopLanes[laneKey], laneKey, autoloopState);
+    const liveLogWorkers = laneWorkersFromAutoloopLines(autoloopState, laneKey);
+    lanes[laneKey] = [...(liveWorker ? [liveWorker] : []), ...liveLogWorkers];
+    return lanes;
+  }, {});
   $: humanTodoIssues = queueIssues
     .filter((issue) => isHumanTodoState(issue.state))
     .map((issue) => ({
@@ -63,45 +70,13 @@
       categoryDetail: humanTodoDetail(issue.state),
       categoryTone: humanTodoTone(issue.state)
     }));
-  $: currentLaneBoard = ['main', 'review', 'merge'].map((laneKey) => {
-    const label = titleCaseLane(laneKey);
-    const workers = view.laneWorkers?.[laneKey] ?? [];
-    const liveWorker = laneWorkerFromAutoloop(autoloopLanes[laneKey], laneKey, autoloopState);
-    const liveLogWorkers = laneWorkersFromAutoloopLines(autoloopState, laneKey);
-    const visibleWorkers = uniqueWorkers([...(liveWorker ? [liveWorker] : []), ...liveLogWorkers, ...workers]);
-    const queued = queueIssues.filter((issue) => issue.lane === label);
-    const workerIssues = visibleWorkers.map((worker, index) => {
-      const normalizedWorkerIssue = normalizeIssueRef(worker.issue);
-      return {
-        kind: 'picked',
-        id: normalizedWorkerIssue ?? worker.issue ?? `worker-${index + 1}`,
-        title: workerDisplayTitle(worker, issueTitleById),
-        meta: `${worker.action ?? 'Active'} · ${worker.backend ?? 'worker'} · ${worker.session ?? worker.elapsed ?? 'session'}`,
-        tone: 'success',
-        workerNumber: index + 1,
-        waiting: worker.waiting === true || worker.status === 'running'
-      };
-    });
-    const pickedIssueIds = new Set(workerIssues.map((issue) => normalizeIssueRef(issue.id)).filter(Boolean));
-    const waitingIssues = queued
-      .filter((issue) => !pickedIssueIds.has(normalizeIssueRef(issue.id)))
-      .map((issue) => ({
-        kind: 'queued',
-        id: issue.id,
-        title: issue.title,
-        meta: `${issue.state} · Next Skill: ${issue.nextSkill}`,
-        tone: issue.tone,
-        workerNumber: null
-      }));
-    return {
-      laneKey,
-      label,
-      issues: [...workerIssues, ...waitingIssues],
-      pickedCount: visibleWorkers.length,
-      queuedCount: waitingIssues.length,
-      maxConcurrent: autoloopLanes[laneKey]?.maxConcurrent ?? null,
-      tone: visibleWorkers.length ? 'success' : waitingIssues.length ? 'warn' : 'neutral'
-    };
+  $: currentLaneBoard = buildLaneThroughputBoard({
+    queueIssues,
+    laneWorkers: view.laneWorkers,
+    liveWorkersByLane,
+    laneSnapshots: autoloopLanes,
+    issueTitleById,
+    fullLoading
   });
   $: if (!operatorSurfaceRefreshing) {
     lastStableHumanTodoIssues = humanTodoIssues;
@@ -125,16 +100,6 @@
     }, 900);
   }
 
-  function uniqueWorkers(workers) {
-    const seen = new Set();
-    return (workers ?? []).filter((worker) => {
-      const key = normalizeIssueRef(worker.issue) ?? `${worker.lane ?? 'lane'}:${worker.issue ?? worker.action ?? ''}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }
-
   function buildIssueTitleMap(issues) {
     const titles = new Map();
     for (const issue of issues ?? []) {
@@ -142,15 +107,6 @@
       if (key && issue.title) titles.set(key, issue.title);
     }
     return titles;
-  }
-
-  function workerDisplayTitle(worker, titles) {
-    const issueRef = normalizeIssueRef(worker.issue);
-    const projectTitle = issueRef ? titles.get(issueRef) : null;
-    if (projectTitle) return projectTitle;
-    if (worker.title && normalizeIssueRef(worker.title) !== issueRef) return worker.title;
-    if (worker.action && worker.action !== 'tick_started') return worker.action;
-    return 'Waiting for agent response';
   }
 
   function isHumanTodoState(state) {
@@ -179,12 +135,6 @@
     if (!assignees.length) return 'Unassigned';
     if (assignees.length === 1) return assignees[0];
     return `${assignees[0]} +${assignees.length - 1}`;
-  }
-
-  function titleCaseLane(value) {
-    return String(value ?? '')
-      .replace(/[-_]/g, ' ')
-      .replace(/\b\w/g, (letter) => letter.toUpperCase());
   }
 
   function normalizeIssueRef(value) {
@@ -371,12 +321,12 @@
           <div class="lane-board-column-head">
             <strong>{lane.label}</strong>
             <small>
-              picked {lane.pickedCount}
+              {lane.statusText}
               {#if lane.maxConcurrent != null}
                 / max {lane.maxConcurrent}
               {/if}
-              · queued {lane.queuedCount}
             </small>
+            <em>{lane.latest}</em>
           </div>
 
           <div class="lane-board-issue-list">
@@ -389,7 +339,12 @@
                     <span class="worker-number placeholder" aria-hidden="true"></span>
                   {/if}
                   <strong>{issue.id}</strong>
-                  <span>{issue.title}</span>
+                  <span>
+                    {issue.title}
+                    {#if issue.meta}
+                      <small>{issue.meta}</small>
+                    {/if}
+                  </span>
                 </div>
               {/each}
             {:else}

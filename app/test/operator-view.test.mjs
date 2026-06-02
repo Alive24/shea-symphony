@@ -16,6 +16,9 @@ import {
 import {
   mergeReadSurface
 } from '../src/lib/operatorReadModel.ts';
+import {
+  buildLaneThroughputBoard
+} from '../src/lib/viewModel/laneThroughput.ts';
 import { defaultLoopState, laneWorkerFromAutoloop } from '../src/lib/tauriAutoloop.ts';
 
 test('browser fallback uses fixture data instead of a Node API bridge', async () => {
@@ -66,6 +69,68 @@ test('maps live autoloop lane snapshots into existing lane board worker rows', (
   assert.equal(laneWorkerFromAutoloop({ lane: 'main', status: 'completed' }, 'main', state), null);
   assert.equal(laneWorkerFromAutoloop({ lane: 'main', status: 'skipped', selected: '#421' }, 'main', state), null);
   assert.equal(laneWorkerFromAutoloop({ lane: 'main', status: 'running', selected: 'none', action: 'tick_started' }, 'main', state), null);
+});
+
+test('lane throughput board keeps independent running and queued lane work visible', () => {
+  const board = buildLaneThroughputBoard({
+    queueIssues: [
+      { id: '#410', title: 'Main active', lane: 'Main', state: 'In Progress', nextSkill: 'Manual Main', tone: 'success' },
+      { id: '#411', title: 'Main queued one', lane: 'Main', state: 'Todo', nextSkill: 'Manual Main', tone: 'neutral' },
+      { id: '#412', title: 'Main queued two', lane: 'Main', state: 'Todo', nextSkill: 'Manual Main', tone: 'neutral' },
+      { id: '#421', title: 'Review active', lane: 'Review', state: 'Agent Review', nextSkill: 'Manual Review', tone: 'success' },
+      { id: '#430', title: 'Merge queued', lane: 'Merge', state: 'Merging', nextSkill: 'Manual Merge', tone: 'success' }
+    ],
+    laneWorkers: {
+      main: [{ issue: '#410', title: '#410', action: 'implementing', backend: 'codex', session: 'run/main', status: 'running', waiting: true }],
+      review: [{ issue: '#421', title: '#421', action: 'reviewing', backend: 'gemini', session: 'run/review', status: 'running', waiting: true }],
+      merge: []
+    },
+    laneSnapshots: {
+      main: { lane: 'main', status: 'running', action: 'tick_started', maxConcurrent: 1 },
+      review: { lane: 'review', status: 'running', action: 'tick_started', maxConcurrent: 1 },
+      merge: { lane: 'merge', status: 'idle', maxConcurrent: 1 }
+    },
+    issueTitleById: new Map([
+      ['#410', 'Main active'],
+      ['#421', 'Review active']
+    ])
+  });
+
+  const main = board.find((lane) => lane.laneKey === 'main');
+  const review = board.find((lane) => lane.laneKey === 'review');
+  const merge = board.find((lane) => lane.laneKey === 'merge');
+
+  assert.equal(main.runningCount, 1);
+  assert.equal(main.queuedCount, 2);
+  assert.deepEqual(main.issues.map((issue) => issue.id), ['#410', '#411', '#412']);
+  assert.match(main.statusText, /running 1 · queued 2/);
+  assert.equal(review.runningCount, 1);
+  assert.equal(review.queuedCount, 0);
+  assert.equal(merge.runningCount, 0);
+  assert.equal(merge.queuedCount, 1);
+  assert.deepEqual(merge.issues.map((issue) => issue.id), ['#430']);
+});
+
+test('lane throughput board surfaces blocked idle and completed lane results', () => {
+  const board = buildLaneThroughputBoard({
+    laneSnapshots: {
+      main: { lane: 'main', status: 'blocked', action: 'readiness_blocked', blockedCount: 1 },
+      review: { lane: 'review', status: 'completed', action: 'lane_tick_completed', completedCount: 1 },
+      merge: { lane: 'merge', status: 'idle', idleCount: 1 }
+    }
+  });
+
+  const main = board.find((lane) => lane.laneKey === 'main');
+  const review = board.find((lane) => lane.laneKey === 'review');
+  const merge = board.find((lane) => lane.laneKey === 'merge');
+
+  assert.equal(main.blockedCount, 1);
+  assert.equal(main.tone, 'danger');
+  assert.deepEqual(main.issues.map((issue) => [issue.kind, issue.title]), [['blocked', 'readiness_blocked']]);
+  assert.equal(review.completedCount, 1);
+  assert.deepEqual(review.issues.map((issue) => issue.kind), ['completed']);
+  assert.equal(merge.idleCount, 1);
+  assert.deepEqual(merge.issues.map((issue) => issue.kind), ['idle']);
 });
 
 test('view model uses CLI autopilot parked queues for human todo issues', () => {

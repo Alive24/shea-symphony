@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { get } from 'svelte/store';
 
 import {
   buildFixtureOverview,
@@ -23,8 +24,15 @@ import {
 } from '../src/lib/viewModel/codexTranscript.ts';
 import {
   defaultBackgroundReadSurfaces,
-  projectCooldownReadSurfaces
+  operatorOverviewStore,
+  projectCooldownReadSurfaces,
+  requestOperatorLocalArtifactsRefresh
 } from '../src/lib/operatorOverviewStore.ts';
+import {
+  LOCAL_ARTIFACT_READ_SURFACES,
+  localArtifactRefreshEventDetail,
+  shouldRequestLaneOverviewLocalRefresh
+} from '../src/lib/localArtifactRefresh.ts';
 import {
   buildLaneThroughputBoard
 } from '../src/lib/viewModel/laneThroughput.ts';
@@ -404,6 +412,46 @@ test('default background refresh defers doctor surface', () => {
   assert.equal(projectCooldownReadSurfaces.includes('doctor'), true);
 });
 
+test('lane overview route local refresh is bounded to the overview route', () => {
+  assert.equal(shouldRequestLaneOverviewLocalRefresh('/lanes', 20_000, 0, 15_000), true);
+  assert.equal(shouldRequestLaneOverviewLocalRefresh('/lanes', 24_000, 20_000, 15_000), false);
+  assert.equal(shouldRequestLaneOverviewLocalRefresh('/lanes/408', 40_000, 0, 15_000), false);
+  assert.equal(shouldRequestLaneOverviewLocalRefresh('/doctor', 40_000, 0, 15_000), false);
+});
+
+test('button-triggered local artifact refresh emits a local-only request', () => {
+  assert.deepEqual(localArtifactRefreshEventDetail('lane-overview-local'), {
+    source: 'lane-overview-local',
+    force: true,
+    localOnly: true
+  });
+});
+
+test('local artifact refresh surfaces do not include Project or GitHub reads', () => {
+  assert.deepEqual(LOCAL_ARTIFACT_READ_SURFACES, ['sessions', 'status']);
+  assert.equal(LOCAL_ARTIFACT_READ_SURFACES.some((surface) => projectCooldownReadSurfaces.includes(surface)), false);
+  assert.equal(LOCAL_ARTIFACT_READ_SURFACES.includes('githubQueue'), false);
+  assert.equal(LOCAL_ARTIFACT_READ_SURFACES.includes('autopilot'), false);
+  assert.equal(LOCAL_ARTIFACT_READ_SURFACES.includes('doctor'), false);
+  assert.equal(LOCAL_ARTIFACT_READ_SURFACES.includes('review'), false);
+});
+
+test('local artifact refresh records in-flight and last-refreshed status', async () => {
+  requestOperatorLocalArtifactsRefresh('test-lane-overview-local', false);
+
+  assert.equal(get(operatorOverviewStore).localArtifactsRefresh.running, true);
+  assert.equal(get(operatorOverviewStore).localArtifactsRefresh.remaining, 2);
+
+  await waitFor(() => !get(operatorOverviewStore).localArtifactsRefresh.running);
+
+  const status = get(operatorOverviewStore).localArtifactsRefresh;
+  assert.equal(status.source, 'test-lane-overview-local');
+  assert.equal(status.error, '');
+  assert.equal(status.remaining, 0);
+  assert.match(status.lastRefreshedAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(get(operatorOverviewStore).liveError, '');
+});
+
 test('completed worktree progress display is unknown without durable progress evidence', () => {
   const display = completedProgressDisplay(
     {
@@ -739,3 +787,11 @@ test('offline fallback does not present fake Project or worker work', () => {
   assert.ok(view.attentionTasks.every((task) => task.type === 'Diagnostics'));
   assert.ok(view.laneSummaries.every((lane) => lane.active === 0));
 });
+
+async function waitFor(predicate, timeoutMs = 1000) {
+  const startedAt = Date.now();
+  while (!predicate()) {
+    if (Date.now() - startedAt > timeoutMs) throw new Error('Timed out waiting for condition.');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}

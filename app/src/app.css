@@ -2480,6 +2480,24 @@ a {
   font-size: var(--text-sm);
 }
 
+.lane-completed-head small {
+  max-width: 64ch;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.lane-completed-head small.error {
+  color: var(--danger);
+}
+
+.lane-completed-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
 .segmented-control {
   flex: none;
   display: inline-flex;
@@ -6175,6 +6193,11 @@ button[disabled] {
 
   .lane-completed-headsha {
     text-align: left;
+  }
+
+  .lane-completed-actions {
+    width: 100%;
+    flex-wrap: wrap;
   }
 
   .human-todo-head h2,

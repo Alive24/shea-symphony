@@ -1087,7 +1087,8 @@ fn autopilot_main_runtime_recovery_blocker(plan: &AutopilotPlanSnapshot, blocker
         return autopilot_runtime_active_issues_are_main_local(plan);
     }
     autopilot_session_attention_blocker(blocker)
-        && autopilot_runtime_active_issues_are_main_local(plan)
+        && (autopilot_runtime_active_issues_are_main_local(plan)
+            || autopilot_attention_sessions_are_main_local(plan))
 }
 
 fn autopilot_runtime_active_issues_are_main_local(plan: &AutopilotPlanSnapshot) -> bool {
@@ -1097,6 +1098,21 @@ fn autopilot_runtime_active_issues_are_main_local(plan: &AutopilotPlanSnapshot) 
             .active_issues
             .iter()
             .all(|issue| issue.lane.eq_ignore_ascii_case("main"))
+}
+
+fn autopilot_attention_sessions_are_main_local(plan: &AutopilotPlanSnapshot) -> bool {
+    let session_evidence = plan
+        .runtime
+        .evidence
+        .iter()
+        .filter(|line| line.starts_with("session="))
+        .collect::<Vec<_>>();
+    !session_evidence.is_empty()
+        && session_evidence.iter().all(|line| {
+            line.contains(" lane=main ")
+                && !line.ends_with(" issue=unknown")
+                && !line.contains(" issue=unknown ")
+        })
 }
 
 fn autopilot_main_parent_topology_can_tick(plan: &AutopilotPlanSnapshot) -> bool {

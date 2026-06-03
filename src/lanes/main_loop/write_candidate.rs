@@ -19,16 +19,16 @@ use live_handoff::apply_live_handoff_steps;
 use terminal::{apply_terminal_transition, TerminalTransitionContext};
 
 use super::{
-    append_runtime_supervision_event, current_gh_login, execute_issue_once_with_workspace_key,
-    handle_run_loop_gate_failure, handle_run_loop_handoff_failure, main_session_active_recoverable,
-    reconcile_pending_main_session, run_loop_apply_recovery_handoff,
-    run_loop_assignee_ownership_decision, run_loop_assignee_ownership_workpad,
-    run_loop_claim_action, run_loop_handoff_plan, run_loop_handoff_workpad,
-    run_loop_live_handoff_enabled, run_loop_ownership_workpad, run_loop_preflight_launch_workspace,
-    run_loop_recovery_preflight_launch_workspace, run_loop_runtime_ownership,
-    run_loop_runtime_state_for_issue, run_loop_runtime_state_with_result,
-    selected_profile_github_login, AssigneeOwnershipDecision, MainSessionReconciliation,
-    RunLoopClaimAction, RunLoopOptions,
+    append_runtime_supervision_event, codex_app_server_resume_thread_for_state, current_gh_login,
+    execute_issue_once_with_options, handle_run_loop_gate_failure, handle_run_loop_handoff_failure,
+    main_session_active_recoverable, reconcile_pending_main_session,
+    run_loop_apply_recovery_handoff, run_loop_assignee_ownership_decision,
+    run_loop_assignee_ownership_workpad, run_loop_claim_action, run_loop_handoff_plan,
+    run_loop_handoff_workpad, run_loop_live_handoff_enabled, run_loop_ownership_workpad,
+    run_loop_preflight_launch_workspace, run_loop_recovery_preflight_launch_workspace,
+    run_loop_runtime_ownership, run_loop_runtime_state_for_issue,
+    run_loop_runtime_state_with_result, selected_profile_github_login, AssigneeOwnershipDecision,
+    IssueExecutionOptions, MainSessionReconciliation, RunLoopClaimAction, RunLoopOptions,
 };
 use crate::commands::gate::evaluate_issue_for_current_source;
 use crate::lanes::claim::{
@@ -461,14 +461,39 @@ pub(crate) fn run_loop_dispatch_write_candidate(
     let mut result = match session_reconciliation {
         Some(MainSessionReconciliation::Terminal(result)) => *result,
         Some(MainSessionReconciliation::Active { .. }) => unreachable!(),
-        None => execute_issue_once_with_workspace_key(
-            workflow,
-            config,
-            &latest,
-            &handoff.workspace_key,
-            runtime_state.attempt_count,
-            Some(&main_claim),
-        )?,
+        None => {
+            let app_server_resume_thread_id = if recover {
+                codex_app_server_resume_thread_for_state(config, &runtime_state)?
+            } else {
+                None
+            };
+            if let Some(thread_id) = app_server_resume_thread_id.as_deref() {
+                println!(
+                    "run_loop_action=app_server_resume issue={} thread={} input=Continue",
+                    latest.identifier, thread_id
+                );
+                append_runtime_supervision_event(
+                    config,
+                    Some(&runtime_state),
+                    "CodexAppServerResume",
+                    &format!(
+                        "issue={} thread={} input=Continue",
+                        latest.identifier, thread_id
+                    ),
+                )?;
+            }
+            execute_issue_once_with_options(
+                workflow,
+                config,
+                &latest,
+                &handoff.workspace_key,
+                runtime_state.attempt_count,
+                Some(&main_claim),
+                IssueExecutionOptions {
+                    app_server_resume_thread_id,
+                },
+            )?
+        }
     };
     if result.success {
         apply_live_handoff_steps(

@@ -38,6 +38,8 @@ pub struct PreparedRun {
     pub sandbox: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_sandbox_policy: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_server_resume_thread_id: Option<String>,
     pub profile_id: Option<String>,
     pub instance_name: Option<String>,
     #[serde(default)]
@@ -125,6 +127,7 @@ impl AgentBackend for DryRunBackend {
             approval_policy: None,
             sandbox: None,
             turn_sandbox_policy: None,
+            app_server_resume_thread_id: None,
             profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
             instance_name: profile
                 .as_ref()
@@ -210,6 +213,7 @@ impl AgentBackend for CodexBackend {
             approval_policy: Some(config.codex.approval_policy.to_string()),
             sandbox: Some(config.codex.thread_sandbox.clone()),
             turn_sandbox_policy: config.codex.turn_sandbox_policy.clone(),
+            app_server_resume_thread_id: None,
             profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
             instance_name: profile
                 .as_ref()
@@ -278,6 +282,7 @@ impl AgentBackend for ClaudeCodeBackend {
             approval_policy: None,
             sandbox: None,
             turn_sandbox_policy: None,
+            app_server_resume_thread_id: None,
             profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
             instance_name: profile
                 .as_ref()
@@ -351,6 +356,7 @@ impl AgentBackend for TmuxBackend {
             approval_policy: None,
             sandbox: None,
             turn_sandbox_policy: None,
+            app_server_resume_thread_id: None,
             profile_id: profile.as_ref().map(|profile| profile.profile_id.clone()),
             instance_name: profile
                 .as_ref()
@@ -710,43 +716,62 @@ fn run_codex_app_server_protocol(
         protocol_log,
     )?;
 
-    let mut thread_params = serde_json::json!({
-        "approvalPolicy": app_server_approval_policy(prepared.approval_policy.as_deref()),
-        "sandbox": prepared.sandbox.as_deref().unwrap_or("workspace-write"),
-        "cwd": prepared.workspace.display().to_string(),
-        "dynamicTools": []
-    });
-    if let Some(model) = prepared
-        .model
+    let thread_id = match prepared
+        .app_server_resume_thread_id
         .as_deref()
-        .filter(|value| !value.trim().is_empty())
+        .filter(|thread_id| !thread_id.trim().is_empty())
     {
-        thread_params["model"] = serde_json::Value::String(model.to_string());
-    }
-    if let Some(reasoning_effort) = prepared
-        .reasoning_effort
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-    {
-        thread_params["reasoningEffort"] = serde_json::Value::String(reasoning_effort.to_string());
-    }
+        Some(thread_id) => thread_id.to_string(),
+        None => {
+            let mut thread_params = serde_json::json!({
+                "approvalPolicy": app_server_approval_policy(prepared.approval_policy.as_deref()),
+                "sandbox": prepared.sandbox.as_deref().unwrap_or("workspace-write"),
+                "cwd": prepared.workspace.display().to_string(),
+                "dynamicTools": []
+            });
+            if let Some(model) = prepared
+                .model
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
+                thread_params["model"] = serde_json::Value::String(model.to_string());
+            }
+            if let Some(reasoning_effort) = prepared
+                .reasoning_effort
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
+                thread_params["reasoningEffort"] =
+                    serde_json::Value::String(reasoning_effort.to_string());
+            }
 
-    let thread_start = serde_json::json!({
-        "method": "thread/start",
-        "id": 2,
-        "params": thread_params
-    });
-    send_app_server_message(stdin, &thread_start, protocol_log)?;
-    let thread_response =
-        await_app_server_response(child, stdout_rx, protocol_log, events, 2, None, timeout)?;
-    let thread_id = thread_response
-        .pointer("/result/thread/id")
-        .or_else(|| thread_response.pointer("/thread/id"))
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| {
-            format!("Codex app-server thread/start response missing thread id: {thread_response}")
-        })?
-        .to_string();
+            let thread_start = serde_json::json!({
+                "method": "thread/start",
+                "id": 2,
+                "params": thread_params
+            });
+            send_app_server_message(stdin, &thread_start, protocol_log)?;
+            let thread_response = await_app_server_response(
+                child,
+                stdout_rx,
+                protocol_log,
+                events,
+                2,
+                None,
+                timeout,
+            )?;
+            thread_response
+                .pointer("/result/thread/id")
+                .or_else(|| thread_response.pointer("/thread/id"))
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    format!(
+                        "Codex app-server thread/start response missing thread id: {thread_response}"
+                    )
+                })?
+                .to_string()
+        }
+    };
 
     let mut turn_params = serde_json::json!({
         "threadId": thread_id.clone(),
@@ -777,17 +802,29 @@ fn run_codex_app_server_protocol(
     if let Some(policy) = prepared.turn_sandbox_policy.clone() {
         turn_params["sandboxPolicy"] = policy;
     }
+    let turn_request_id = if prepared.app_server_resume_thread_id.is_some() {
+        2
+    } else {
+        3
+    };
     send_app_server_message(
         stdin,
         &serde_json::json!({
             "method": "turn/start",
-            "id": 3,
+            "id": turn_request_id,
             "params": turn_params
         }),
         protocol_log,
     )?;
-    let turn_response =
-        await_app_server_response(child, stdout_rx, protocol_log, events, 3, None, timeout)?;
+    let turn_response = await_app_server_response(
+        child,
+        stdout_rx,
+        protocol_log,
+        events,
+        turn_request_id,
+        None,
+        timeout,
+    )?;
     let turn_id = turn_response
         .pointer("/result/turn/id")
         .or_else(|| turn_response.pointer("/turn/id"))
@@ -2352,6 +2389,7 @@ mod tests {
             approval_policy: None,
             sandbox: None,
             turn_sandbox_policy: None,
+            app_server_resume_thread_id: None,
             profile_id: None,
             instance_name: None,
             env: BTreeMap::from([(
@@ -2676,7 +2714,34 @@ while IFS= read -r line; do
       # initialized notification; no response required
       ;;
     3)
-      printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-368"}}}'
+      if printf '%s\n' "$line" | grep -q '"method":"turn/start"'; then
+        printf '%s\n' '{"id":2,"result":{"turn":{"id":"turn-resume"}}}'
+        case "$mode" in
+          completed)
+            printf '%s\n' '{"method":"thread/tokenUsage/updated","params":{"inputTokens":4,"outputTokens":5,"totalTokens":9}}'
+            printf '%s\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+            exit 0
+            ;;
+          input_required)
+            printf '%s\n' '{"method":"turn/input_required","params":{"reason":"blocked"}}'
+            exit 0
+            ;;
+          tool_call)
+            printf '%s\n' '{"method":"item/tool/call","id":7,"params":{"name":"linear_graphql","arguments":{}}}'
+            exit 0
+            ;;
+          failed)
+            printf '%s\n' '{"method":"turn/failed","params":{"error":{"message":"boom"}}}'
+            exit 0
+            ;;
+          cancelled)
+            printf '%s\n' '{"method":"turn/cancelled","params":{"message":"operator stopped"}}'
+            exit 0
+            ;;
+        esac
+      else
+        printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-368"}}}'
+      fi
       ;;
     4)
       printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-368"}}}'
@@ -2839,6 +2904,43 @@ done
         assert!(trace.contains("\"approvalPolicy\":\"never\""));
         assert_eq!(trace.matches("\"reasoningEffort\":\"high\"").count(), 2);
         assert!(trace.contains("hello app-server"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_backend_resumes_existing_app_server_thread_with_continue_turn() {
+        let temp = tempfile::tempdir().unwrap();
+        let (codex, trace_path) = fake_codex_app_server(temp.path());
+        let workspace = temp.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let config = codex_config(&format!("{} app-server", codex.display()), 5_000);
+        let backend = CodexBackend;
+        let mut prepared = backend
+            .prepare(workspace, "Continue".into(), &config)
+            .unwrap();
+        prepared.prompt_artifact_path = Some(temp.path().join("logs/prompts/app-server.prompt.md"));
+        prepared.issue_identifier = Some("#368".into());
+        prepared.app_server_resume_thread_id = Some("thread-368".into());
+        prepared
+            .env
+            .insert("FAKE_CODEX_TRACE".into(), trace_path.display().to_string());
+        prepared
+            .env
+            .insert("FAKE_CODEX_MODE".into(), "completed".into());
+
+        let events = backend.run(prepared).unwrap();
+        let summary = backend.summarize(&events);
+        let trace = fs::read_to_string(trace_path).unwrap();
+
+        assert!(summary.success);
+        assert_eq!(
+            summary.session_id.as_deref(),
+            Some("thread-368-turn-resume")
+        );
+        assert!(!trace.contains("\"method\":\"thread/start\""));
+        assert!(trace.contains("\"method\":\"turn/start\""));
+        assert!(trace.contains("\"threadId\":\"thread-368\""));
+        assert!(trace.contains("\"text\":\"Continue\""));
     }
 
     #[test]

@@ -201,6 +201,7 @@ export function mergeLaneSnapshot(state: LoopStateSnapshot, lane: LaneSnapshot):
 
 export function appendAutoloopLine(state: LoopStateSnapshot, line: AutoloopLine): LoopStateSnapshot {
   if (isAutoloopLaneNoopEventLine(line)) return state;
+  if (isAutoloopResultNoopEventLine(line)) return state;
   if (isSkippedIssueDetailLine(line)) return state;
   if (isAutoloopLaneIdlePrimitiveLine(line)) return state;
   if (isAutoloopRoutineStatusLine(line)) return state;
@@ -217,9 +218,28 @@ function isAutoloopLaneNoopEventLine(line: AutoloopLine) {
   const action = textFromValue(recordValue(payload, 'action'));
   const status = textFromValue(recordValue(payload, 'status'));
   const selected = issueRefFromValue(recordValue(payload, 'selected_issue') ?? recordValue(payload, 'selected'));
+  const workUnitCompleted = recordValue(payload, 'work_unit_completed') === true;
   if (selected) return false;
+  if (workUnitCompleted) return false;
   return (status === 'running' && action === 'tick_started')
-    || (status === 'skipped' && action === 'lane_tick_skipped');
+    || (status === 'skipped' && action === 'lane_tick_skipped')
+    || status === 'completed';
+}
+
+function isAutoloopResultNoopEventLine(line: AutoloopLine) {
+  const eventName = textFromValue(recordValue(line.event, 'event'));
+  if (eventName !== 'autopilot_loop_result') return false;
+  const payload = recordFromValue(recordValue(line.event, 'payload'));
+  const completedThisCycle = numberFromValue(recordValue(payload, 'work_units_completed_this_cycle'));
+  const lanes = arrayFromValue(recordValue(payload, 'lanes'));
+  const hasActionableLane = lanes.some((lane) => {
+    const value = recordFromValue(lane);
+    const status = textFromValue(recordValue(value, 'status'));
+    const selected = issueRefFromValue(recordValue(value, 'selected_issue') ?? recordValue(value, 'selected'));
+    const workUnitCompleted = recordValue(value, 'work_unit_completed') === true;
+    return workUnitCompleted || Boolean(selected) || ['error', 'blocked', 'retrying'].includes(status);
+  });
+  return (completedThisCycle ?? 0) === 0 && !hasActionableLane;
 }
 
 function isSkippedIssueDetailLine(line: AutoloopLine) {
@@ -240,8 +260,10 @@ function isAutoloopLaneIdlePrimitiveLine(line: AutoloopLine) {
   const raw = textFromValue(recordValue(payload, 'raw') ?? line.line);
   return /^(merge_once|merge_loop)=stopped reason=no_merging_issue\b/.test(raw)
     || /^review_loop=stopped reason=no_agent_review_issue\b/.test(raw)
+    || /^(merge|review)_loop_iteration=\d+\b/.test(raw)
     || /^autopilot_loop_lane\b.*\bstatus=running\b.*\baction=tick_started\b.*\bselected=none\b/.test(raw)
-    || /^autopilot_loop_lane\b.*\bstatus=skipped\b.*\baction=lane_tick_skipped\b.*\bselected=none\b/.test(raw);
+    || /^autopilot_loop_lane\b.*\bstatus=skipped\b.*\baction=lane_tick_skipped\b.*\bselected=none\b/.test(raw)
+    || /^autopilot_loop_lane\b.*\bstatus=completed\b.*\bselected=none\b/.test(raw);
 }
 
 function isAutoloopRoutineStatusLine(line: AutoloopLine) {
@@ -372,6 +394,14 @@ function recordValue(value: unknown, key: string): unknown {
 
 function recordFromValue(value: unknown): Record<string, unknown> {
   return value != null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function arrayFromValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function numberFromValue(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function issueRefFromValue(value: unknown) {

@@ -131,6 +131,21 @@ test('autoloop log omits no-op lane heartbeat events', () => {
       }
     }
   });
+  state = appendAutoloopLine(state, {
+    atMs: Date.now(),
+    stream: 'stdout',
+    line: 'autopilot_loop_lane lane=merge status=completed action=lane_tick_completed selected=none',
+    event: {
+      event: 'autopilot_loop_lane',
+      payload: {
+        lane: 'merge',
+        status: 'completed',
+        action: 'lane_tick_completed',
+        selected_issue: null,
+        work_unit_completed: false
+      }
+    }
+  });
 
   assert.equal(state.recentLines.length, 0);
 });
@@ -139,7 +154,9 @@ test('autoloop stdout log omits child lane idle stop lines', () => {
   const lines = [
     'merge_once=stopped reason=no_merging_issue',
     'merge_loop=stopped reason=no_merging_issue iterations=1 slot=1',
-    'review_loop=stopped reason=no_agent_review_issue iterations=1'
+    'review_loop=stopped reason=no_agent_review_issue iterations=1',
+    'merge_loop_iteration=1 mode=write recover=true max_concurrent=3',
+    'review_loop_iteration=1 mode=write max_concurrent=2'
   ];
   let state = defaultLoopState();
 
@@ -160,6 +177,59 @@ test('autoloop stdout log omits child lane idle stop lines', () => {
   }
 
   assert.equal(state.recentLines.length, 0);
+});
+
+test('autoloop log omits no-op result but keeps issue work and blockers', () => {
+  let state = defaultLoopState();
+  state = appendAutoloopLine(state, {
+    atMs: Date.now(),
+    stream: 'stdout',
+    line: 'autopilot_loop_result',
+    event: {
+      event: 'autopilot_loop_result',
+      payload: {
+        work_units_completed_this_cycle: 0,
+        completed_work_units: 83,
+        lanes: [
+          { lane: 'merge', status: 'completed', action: 'lane_tick_completed', selected_issue: null, work_unit_completed: false }
+        ]
+      }
+    }
+  });
+  assert.equal(state.recentLines.length, 0);
+
+  state = appendAutoloopLine(state, {
+    atMs: Date.now(),
+    stream: 'stdout',
+    line: 'autopilot_loop_result',
+    event: {
+      event: 'autopilot_loop_result',
+      payload: {
+        work_units_completed_this_cycle: 1,
+        completed_work_units: 1,
+        lanes: [
+          { lane: 'main', status: 'completed', action: 'lane_tick_completed', selected_issue: { identifier: '#408' }, work_unit_completed: true }
+        ]
+      }
+    }
+  });
+  state = appendAutoloopLine(state, {
+    atMs: Date.now(),
+    stream: 'stdout',
+    line: 'autopilot_loop_result',
+    event: {
+      event: 'autopilot_loop_result',
+      payload: {
+        work_units_completed_this_cycle: 0,
+        completed_work_units: 1,
+        lanes: [
+          { lane: 'merge', status: 'error', action: 'tick_failed', selected_issue: { identifier: '#408' }, work_unit_completed: false }
+        ]
+      }
+    }
+  });
+
+  assert.equal(state.recentLines.length, 2);
 });
 
 test('autoloop stdout log omits routine status and clean checkout lines', () => {

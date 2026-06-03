@@ -689,7 +689,7 @@ fn run_independent_autopilot_lane_supervisor(
                     println!("{}", serde_json::to_string_pretty(&result)?);
                 } else if options.display == DisplayMode::Tui {
                     println!("{}", render_autopilot_loop_iteration_tui(&result));
-                } else {
+                } else if options.verbose || autopilot_iteration_result_is_visible(&result) {
                     println!(
                         "{}",
                         render_autopilot_loop_iteration_result(&result, options.verbose)
@@ -720,7 +720,9 @@ fn run_independent_autopilot_lane_supervisor(
                         "iterations": iterations,
                     }),
                 )?;
-                if !options.event_json {
+                if !options.event_json
+                    && (options.verbose || !autopilot_lane_stopped_is_noop(&reason))
+                {
                     println!(
                         "autopilot_loop_lane lane={} status=stopped reason={} iterations={}",
                         lane.name(),
@@ -943,7 +945,8 @@ impl AutopilotLoopProgress {
 
 impl AutopilotWorkUnitCounters {
     fn record_lane_result(&mut self, lane: &mut AutopilotLoopLaneResult) {
-        lane.work_unit_completed = lane.status == "completed";
+        lane.work_unit_completed = lane.status == "completed"
+            && (lane.selected_issue.is_some() || lane.issue_ref.is_some());
         if lane.work_unit_completed {
             self.total = self.total.saturating_add(1);
             *self.lanes.entry(lane.lane.clone()).or_default() += 1;
@@ -1182,7 +1185,24 @@ fn print_autopilot_lane_result(
 }
 
 fn autopilot_lane_result_is_noop(lane: &AutopilotLoopLaneResult) -> bool {
-    lane.selected_issue.is_none() && lane.status == "skipped" && lane.action == "lane_tick_skipped"
+    lane.selected_issue.is_none()
+        && !lane.work_unit_completed
+        && matches!(lane.status.as_str(), "running" | "skipped" | "completed")
+}
+
+fn autopilot_lane_stopped_is_noop(reason: &str) -> bool {
+    matches!(
+        reason,
+        "no_agent_review_issue" | "no_merging_issue" | "no_ready_issue"
+    )
+}
+
+fn autopilot_iteration_result_is_visible(result: &AutopilotLoopIterationResult) -> bool {
+    result.work_units_completed_this_cycle > 0
+        || result
+            .lanes
+            .iter()
+            .any(|lane| matches!(lane.status.as_str(), "error" | "blocked" | "retrying"))
 }
 
 #[cfg(test)]
@@ -1279,7 +1299,9 @@ fn render_autopilot_loop_iteration_result(
     result: &AutopilotLoopIterationResult,
     verbose: bool,
 ) -> String {
-    let mut lines = vec![format!(
+    let mut lines = Vec::new();
+    if verbose || autopilot_iteration_result_is_visible(result) {
+        lines.push(format!(
             "autopilot_loop_result supervisor_cycle={} iteration={} mode={} work_units={} work_unit_limit={} order={} recover={} main_max_concurrent={} review_max_concurrent={} merge_max_concurrent={}",
             result.supervisor_cycle,
             result.iteration,
@@ -1292,9 +1314,10 @@ fn render_autopilot_loop_iteration_result(
             result.execution_order.join(","),
             result.settings.recover,
             result.settings.main_max_concurrent,
-        result.settings.review_max_concurrent,
-        result.settings.merge_max_concurrent
-    )];
+            result.settings.review_max_concurrent,
+            result.settings.merge_max_concurrent
+        ));
+    }
     for lane in &result.lanes {
         if !verbose && autopilot_lane_result_is_noop(lane) {
             continue;
@@ -2149,9 +2172,20 @@ mod tests {
         let mut completed =
             autopilot_lane_result_from_execution("review", Some(&ready), 2, false, Ok(()));
         let mut skipped = autopilot_lane_result_from_skip("merge", Some(&idle), 1, true);
+        let mut no_issue_completed =
+            autopilot_lane_result_from_execution("merge", Some(&idle), 1, true, Ok(()));
+        let mut errored = autopilot_lane_result_from_execution(
+            "review",
+            Some(&ready),
+            2,
+            false,
+            Err("simulated failure".into()),
+        );
 
         counters.record_lane_result(&mut completed);
         counters.record_lane_result(&mut skipped);
+        counters.record_lane_result(&mut no_issue_completed);
+        counters.record_lane_result(&mut errored);
 
         assert_eq!(counters.total, 1);
         assert_eq!(counters.lanes.get("review").copied(), Some(1));
@@ -2161,6 +2195,58 @@ mod tests {
         assert_eq!(completed.issue_ref.as_deref(), Some("#412"));
         assert!(!skipped.work_unit_completed);
         assert_eq!(skipped.completed_work_units, 0);
+        assert!(!no_issue_completed.work_unit_completed);
+        assert_eq!(no_issue_completed.completed_work_units, 0);
+        assert!(!errored.work_unit_completed);
+        assert_eq!(errored.completed_work_units, 1);
+    }
+
+    #[test]
+    fn quiet_iteration_render_omits_noop_completed_tick() {
+        let result = AutopilotLoopIterationResult {
+            schema_version: 1,
+            iteration: 3,
+            supervisor_cycle: 3,
+            mode: "write".into(),
+            work_unit_limit: None,
+            completed_work_units: 0,
+            work_units_completed_this_cycle: 0,
+            lane_work_units: BTreeMap::new(),
+            execution_order: vec!["independent".into(), "merge".into()],
+            settings: AutopilotLoopTickSettings {
+                recover: true,
+                main_max_concurrent: 3,
+                review_max_concurrent: 2,
+                merge_max_concurrent: 3,
+            },
+            lanes: vec![AutopilotLoopLaneResult {
+                lane: "merge".into(),
+                status: "completed".into(),
+                action: "lane_tick_completed".into(),
+                work_unit_completed: false,
+                completed_work_units: 0,
+                issue_ref: None,
+                latest_result: AutopilotLaneLatestResult {
+                    status: "completed".into(),
+                    action: "lane_tick_completed".into(),
+                    issue_ref: None,
+                    target_state: None,
+                },
+                selected_issue: None,
+                target_state: None,
+                max_concurrent: 3,
+                recover: true,
+                evidence: vec!["planned_status=idle".into()],
+            }],
+            parked_queues: Vec::new(),
+        };
+
+        let quiet = render_autopilot_loop_iteration_result(&result, false);
+        let verbose = render_autopilot_loop_iteration_result(&result, true);
+
+        assert!(quiet.is_empty());
+        assert!(verbose.contains("autopilot_loop_result supervisor_cycle=3"));
+        assert!(verbose.contains("autopilot_loop_lane lane=merge status=completed"));
     }
 }
 

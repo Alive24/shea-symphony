@@ -95,7 +95,7 @@ fn build_read_surface(name: &str, allow_project_fallback: bool) -> Result<Value,
     } else {
         run_shea_read(&args)
     };
-    let parsed = if name == "local" {
+    let parsed = if name == "status" {
         runtime_status_summary(&result, allow_project_fallback)
     } else {
         parse_json_output(&result.stdout)
@@ -358,7 +358,7 @@ fn build_operator_overview(scope: &str) -> Result<Value, String> {
             "review": pending_result(&["review", "status", DEFAULT_WORKFLOW_PATH, "--json"], "Deferred to full overview."),
             "skills": pending_result(&["skills", "status", DEFAULT_WORKFLOW_PATH, "--json"], "Deferred to background read."),
             "sessions": pending_result(&["session", "list", DEFAULT_WORKFLOW_PATH], "Deferred to background read."),
-            "local": pending_result(&["status", "show", DEFAULT_WORKFLOW_PATH, "--json"], "Deferred to background read."),
+            "status": pending_result(&["status", "show", DEFAULT_WORKFLOW_PATH, "--json"], "Deferred to background read."),
             "githubQueue": pending_result(&["project", "state", DEFAULT_WORKFLOW_PATH, "--json"], "Deferred to background Project queue read."),
         });
         return Ok(json!({
@@ -377,7 +377,7 @@ fn build_operator_overview(scope: &str) -> Result<Value, String> {
         }));
     }
 
-    let runtime = run_shea_read(&read_surface_args("local").unwrap_or_default());
+    let runtime = run_shea_read(&read_surface_args("status").unwrap_or_default());
     let autopilot =
         run_project_read_surface_or_skip(&read_surface_args("autopilot").unwrap_or_default());
     let doctor = run_project_read_surface_or_skip(&read_surface_args("doctor").unwrap_or_default());
@@ -403,7 +403,7 @@ fn build_operator_overview(scope: &str) -> Result<Value, String> {
             "review": command_summary_value(&review.summary),
             "skills": command_summary_value(&skills.summary),
             "sessions": command_summary_value(&sessions.summary),
-            "local": command_summary_value(&runtime.summary),
+            "status": command_summary_value(&runtime.summary),
             "githubQueue": command_summary_value(&github_queue.summary),
         },
         "autopilot": parse_json_output(&autopilot.stdout),
@@ -447,7 +447,7 @@ fn read_surface_args(name: &str) -> Option<Vec<String>> {
             "list".into(),
             DEFAULT_WORKFLOW_PATH.into(),
         ]),
-        "local" => Some(vec![
+        "status" => Some(vec![
             "status".into(),
             "show".into(),
             DEFAULT_WORKFLOW_PATH.into(),

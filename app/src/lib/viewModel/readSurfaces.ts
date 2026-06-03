@@ -182,12 +182,12 @@ export function buildLiveSignals(overview: any, commands: LooseRecord) {
           : 'success'
     },
     {
-      id: 'local',
-      label: 'Local',
+      id: 'status',
+      label: 'Status',
       value: overview?.localStatus?.branch ?? 'Read',
-      shortDetail: localStatusShortDetail(overview?.localStatus, commands.local),
-      detail: localStatusDetail(overview?.localStatus, commands.local),
-      tone: commands.local?.ok ? (overview?.localStatus?.dirtyCount > 0 ? 'warn' : 'success') : 'danger'
+      shortDetail: localStatusShortDetail(overview?.localStatus, commands.status),
+      detail: localStatusDetail(overview?.localStatus, commands.status),
+      tone: commands.status?.ok ? (overview?.localStatus?.dirtyCount > 0 ? 'warn' : 'success') : 'danger'
     }
   ];
 }

@@ -2,10 +2,9 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use shea_symphony::config::RuntimeConfig;
+use shea_symphony::model::RuntimeSnapshot;
 use shea_symphony::observability_api::serve_once;
-use shea_symphony::orchestrator::Orchestrator;
 use shea_symphony::status_surface::render_snapshot;
-use shea_symphony::tracker::adapter_from_config;
 use shea_symphony::workflow::WorkflowDefinition;
 
 use crate::orchestration::{session_status_snapshots, warn_if_temporary_workflow_path};
@@ -44,9 +43,6 @@ fn build_plan_snapshot(
     let config = RuntimeConfig::from_workflow(&workflow, workflow_path)?;
     config.validate()?;
 
-    let adapter = adapter_from_config(&config);
-    let integration_gaps = adapter.integration_gaps();
-    let issues = adapter.list_project_summary_issues()?;
     let session_statuses = session_status_snapshots(&config);
     let event_log_path = config
         .observability
@@ -54,18 +50,17 @@ fn build_plan_snapshot(
         .join("shea-symphony.jsonl")
         .display()
         .to_string();
-    let orchestrator = Orchestrator::new(config);
-    let mut plan = orchestrator.plan_dispatch(issues);
-    plan.integration_gaps.extend(integration_gaps);
+    let mut snapshot = RuntimeSnapshot {
+        event_log_path: Some(event_log_path),
+        ..RuntimeSnapshot::default()
+    };
     match session_statuses {
-        Ok(sessions) => plan.snapshot.sessions = sessions,
-        Err(error) => plan
+        Ok(sessions) => snapshot.sessions = sessions,
+        Err(error) => snapshot
             .integration_gaps
             .push(format!("tmux session status unavailable: {error}")),
     }
-    plan.snapshot.integration_gaps = plan.integration_gaps.clone();
-    plan.snapshot.event_log_path = Some(event_log_path);
-    Ok(plan.snapshot)
+    Ok(snapshot)
 }
 
 pub(crate) fn render_plan_snapshot(
@@ -76,5 +71,34 @@ pub(crate) fn render_plan_snapshot(
         Ok(serde_json::to_string_pretty(snapshot)?)
     } else {
         Ok(render_snapshot(snapshot))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_snapshot_does_not_require_project_read() {
+        let temp = tempfile::tempdir().unwrap();
+        let workflow_path = temp.path().join("WORKFLOW.md");
+        let logs_root = temp.path().join("logs");
+        std::fs::write(
+            &workflow_path,
+            format!(
+                "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_number: 9\nobservability:\n  logs_root: {}\n---\nPrompt",
+                logs_root.display()
+            ),
+        )
+        .unwrap();
+
+        let snapshot = build_plan_snapshot(&workflow_path).unwrap();
+
+        assert!(snapshot.planned.is_empty());
+        assert!(snapshot.skipped.is_empty());
+        assert_eq!(
+            snapshot.event_log_path.as_deref(),
+            Some(logs_root.join("shea-symphony.jsonl").to_str().unwrap())
+        );
     }
 }

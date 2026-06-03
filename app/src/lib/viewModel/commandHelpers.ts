@@ -31,7 +31,7 @@ export function commandImpact(name: string, result: any) {
       review: 'Agent Review and Human Review evidence can be inspected.',
       skills: 'Installed Shea Skill coverage is observable.',
       sessions: 'Foreground agent session presence is observable.',
-      local: 'Local checkout, build, binary, and worktree posture are observable.',
+      status: 'Runtime sessions, local checkout, binary, and worktree posture are observable.',
       githubQueue: 'Open issue Project status counts are available for the first-screen lane pulse.'
     };
     return impacts[name] ?? 'This read surface is available.';
@@ -42,7 +42,7 @@ export function commandImpact(name: string, result: any) {
     review: 'Review freshness and Human Review evidence may be incomplete.',
     skills: 'Skill installation/readiness status may be hidden.',
     sessions: 'Active foreground sessions may be hidden.',
-    local: 'Local checkout posture may be hidden.',
+    status: 'Runtime and local status posture may be hidden.',
     githubQueue: 'First-screen lane pulse may be stale or rely on slower tracker reads.'
   };
   return impacts[name] ?? 'This read surface is degraded.';
@@ -63,7 +63,7 @@ export function labelForCommand(name: string) {
     review: 'Review status',
     skills: 'Skills status',
     sessions: 'Session list',
-    local: 'Local repo',
+    status: 'Status',
     githubQueue: 'GitHub queue'
   };
   return labels[name] ?? titleCase(name);

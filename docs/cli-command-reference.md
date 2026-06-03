@@ -31,7 +31,7 @@ workflows may still use an inline prompt body.
 | `plan` | Default dispatch/status plan for a workflow. | `cargo run -- plan examples/dry-run-workflow.md` |
 | `plan-dispatch` | Alias-style dispatch planning command. | `cargo run -- plan-dispatch examples/dry-run-workflow.md` |
 | `dry-run` | Compatibility alias for planning output. | `cargo run -- dry-run examples/dry-run-workflow.md` |
-| `status show` | Operator status view for planning output. | `cargo run -- status show examples/dry-run-workflow.md` |
+| `status show` | Local runtime/session status snapshot; use `autopilot plan` for Project-backed planning. | `cargo run -- status show examples/dry-run-workflow.md` |
 | `validate` | Validate workflow loading/configuration. | `cargo run -- validate examples/dry-run-workflow.md` |
 | `validate-workflow` | Compatibility alias for `validate`. | `cargo run -- validate-workflow examples/dry-run-workflow.md` |
 | `project state` | Diagnose whether the canonical Project read path is trustworthy. | `cargo run -- project state workflows/shea-symphony.md` |

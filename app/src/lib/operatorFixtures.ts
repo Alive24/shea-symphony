@@ -14,7 +14,7 @@ export function buildFixtureReadSurface(name: string, force = false) {
     name,
     generatedAt: fixture.generatedAt,
     command,
-    parsed: name === 'local' ? fixture.localStatus : fixture[name] ?? null,
+    parsed: name === 'status' ? fixture.localStatus : fixture[name] ?? null,
     text: name === 'sessions' ? fixture.sessionsText : ''
   };
 }
@@ -117,7 +117,7 @@ function baseFixtureOverview() {
       review: fixtureCommand(['review', 'status', workflowPath, '--json']),
       skills: fixtureCommand(['skills', 'status', workflowPath, '--json']),
       sessions: fixtureCommand(['session', 'list', workflowPath]),
-      local: fixtureCommand(['local', 'status']),
+      status: fixtureCommand(['status', 'show', workflowPath, '--json']),
       githubQueue: fixtureCommand(['autopilot', 'plan', workflowPath, '--json'])
     },
     autopilot: {

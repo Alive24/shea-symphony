@@ -12,7 +12,7 @@ export function mergeReadSurface(overview: any, surface: any) {
 
   if (surface.name === 'sessions') {
     next.sessionsText = surface.text ?? '';
-  } else if (surface.name === 'local') {
+  } else if (surface.name === 'status') {
     next.localStatus = mergeLocalStatus(overview.localStatus, surface.parsed);
   } else {
     next[surface.name] = surface.parsed ?? null;

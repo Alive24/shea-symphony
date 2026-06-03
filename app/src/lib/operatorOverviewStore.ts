@@ -6,7 +6,7 @@ import { mergeReadSurface } from './operatorReadModel.ts';
 import { buildViewModel } from './operatorViewModel.ts';
 import { refreshStatusStore } from './uiState.ts';
 
-const slowSurfaces = ['githubQueue', 'skills', 'sessions', 'local'];
+const slowSurfaces = ['githubQueue', 'skills', 'sessions', 'status'];
 const projectReadSurfaces = new Set(['autopilot', 'doctor', 'review', 'githubQueue']);
 
 export const defaultBackgroundReadSurfaces = [...slowSurfaces];
@@ -111,7 +111,7 @@ export async function requestOperatorOverviewRefresh(
 
 export function requestOperatorLocalArtifactsRefresh(source = 'local-artifacts', publishStatus = true) {
   const generation = ++readGeneration;
-  const artifactSurfaces = ['sessions', 'local'];
+  const artifactSurfaces = ['sessions', 'status'];
 
   if (publishStatus) {
     refreshStatusStore.set({
@@ -229,7 +229,7 @@ function preserveLocalStatus(nextOverview: any, previousOverview: any) {
     localStatus: previousLocalStatus,
     commands: {
       ...(nextOverview.commands ?? {}),
-      local: previousOverview?.commands?.local ?? nextOverview.commands?.local
+      status: previousOverview?.commands?.status ?? nextOverview.commands?.status
     }
   };
 }

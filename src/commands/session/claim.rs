@@ -234,6 +234,7 @@ pub(crate) fn record_manual_lane_claim_evidence(
         branch,
         backend: "codex-app-manual".into(),
         session_name,
+        process_id: None,
         pane_target: String::new(),
         prompt_artifact_path: PathBuf::new(),
         log_path: PathBuf::new(),

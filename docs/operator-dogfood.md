@@ -720,7 +720,11 @@ target/debug/shea-symphony main loop workflows/shea-symphony.md --max-iterations
 default without moving the issue to `Rework`, clearing dirty worktrees, or
 advancing to `Agent Review`. It reuses a tracker/runtime/discovery-backed git
 worktree under the configured workspace root and leaves normal handoff to a
-later successful Main result. A dirty worktree is acceptable only for a
+later successful Main result. Codex app-server session staleness defaults to
+30 minutes and can be tuned with `codex.session_stale_after_ms` in the workflow.
+When a registered Codex app-server session is stale and has recorded process
+evidence, recovery terminates that stale process before resuming the saved
+thread with a fresh `Continue` turn. A dirty worktree is acceptable only for a
 recoverable `In Progress` Main runtime when the branch or path still matches the
 same issue; detached, ambiguous, or mismatched dirty worktrees still require
 human inspection. Use `--no-recover` only for debugging or a deliberately

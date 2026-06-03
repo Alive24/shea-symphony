@@ -92,7 +92,7 @@ pub(crate) fn autopilot_doctor_report(
         runtime_states: runtime_states.to_vec(),
         sessions: sessions.to_vec(),
         now_ms: current_time_ms(),
-        stale_after_ms: 10_800_000,
+        stale_after_ms: config.codex.session_stale_after_ms,
     };
     let mut report = audit_project_issues_with_context(issues, Some(&context));
     report.integration_gaps = integration_gaps;

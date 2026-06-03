@@ -51,7 +51,10 @@ review handoff.
 Main-lane crash recovery is enabled by default for bounded `main loop --write`
 ticks. It restarts recoverable interrupted `In Progress` runtime slots as new
 attempts while preserving issue state, dirty worktrees, and existing claim
-evidence. Use `--no-recover` only for debugging or a deliberately conservative
+evidence. Codex app-server session staleness defaults to 30 minutes and can be
+configured with `codex.session_stale_after_ms`; stale registered app-server
+processes are terminated before recovery resumes the saved thread with
+`Continue`. Use `--no-recover` only for debugging or a deliberately conservative
 operator pass. Manual session recovery remains a two-step break-glass path: use
 `main claim`, `review claim`, or `merge claim` to write the matching Project
 claim field, print the structured `run=`, and record minimum non-tmux registry

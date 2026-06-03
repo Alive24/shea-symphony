@@ -589,8 +589,8 @@ struct DoctorArgs {
     interactive: bool,
     #[arg(long = "auto-fix")]
     auto_fix: bool,
-    #[arg(long = "stale-after-ms", default_value_t = 10_800_000)]
-    stale_after_ms: u64,
+    #[arg(long = "stale-after-ms")]
+    stale_after_ms: Option<u64>,
     #[arg(long = "dry-run")]
     _dry_run: bool,
     #[arg(long = "write")]

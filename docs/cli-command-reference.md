@@ -254,7 +254,10 @@ runtime slots. It treats stalled runtime entries, missing session-registry
 records, failed/stale app-server records, and unavailable tmux fallback panes as
 recoverable capacity instead of blocking the lane, then restarts the same `In Progress` issue as a new attempt while
 preserving the existing issue state, claim, workspace, dirty local changes, and
-runtime evidence. Use `--no-recover` only for debugging or a deliberately
+runtime evidence. Codex app-server session staleness defaults to 30 minutes and
+can be configured with `codex.session_stale_after_ms`; stale app-server records
+with process evidence are terminated before recovery resumes the recorded thread
+with `Continue`. Use `--no-recover` only for debugging or a deliberately
 conservative operator pass. Recovery does not route through `Rework` and does
 not advance to `Agent Review`; normal handoff still requires a later successful
 Main result.

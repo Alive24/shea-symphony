@@ -844,6 +844,7 @@ fn run_codex_app_server_protocol(
         registry_context.prompt_artifact_path,
         &thread_id,
         &session_id,
+        child.id(),
         SessionStatus::Running,
     )
     .map_err(|error| error.to_string())?;
@@ -1086,6 +1087,7 @@ fn save_app_server_session_record(
     prompt_artifact_path: &Path,
     thread_id: &str,
     session_id: &str,
+    process_id: u32,
     status: SessionStatus,
 ) -> Result<(), AgentError> {
     let Some(registry_path) = prepared.session_registry_path.as_deref() else {
@@ -1110,6 +1112,7 @@ fn save_app_server_session_record(
         branch: prepared.branch_name.clone(),
         backend: prepared.backend.clone(),
         session_name: session_id.to_string(),
+        process_id: Some(process_id),
         pane_target: String::new(),
         prompt_artifact_path: prompt_artifact_path.to_path_buf(),
         log_path: artifacts.events_path.clone(),
@@ -1288,6 +1291,7 @@ fn run_tmux_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError
             branch: prepared.branch_name.clone(),
             backend: prepared.backend.clone(),
             session_name: session_id.clone(),
+            process_id: None,
             pane_target: target.to_string(),
             prompt_artifact_path: prompt_artifact_path.clone(),
             log_path: log_path.clone(),
@@ -3008,6 +3012,7 @@ done
         assert_eq!(record.lane, "main");
         assert_eq!(record.thread.as_deref(), Some("thread-368"));
         assert_eq!(record.session_source.as_deref(), Some("codex-app-server"));
+        assert!(record.process_id.is_some());
         assert_eq!(record.status, SessionStatus::Completed);
         assert_eq!(record.worktree, workspace);
         assert!(record.attach_command.contains("not a tmux session"));

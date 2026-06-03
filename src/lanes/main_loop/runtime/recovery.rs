@@ -1,8 +1,12 @@
+use std::process::Command;
+
+use shea_symphony::codex_app_server;
 use shea_symphony::config::RuntimeConfig;
 use shea_symphony::model::{normalize_state, TrackerIssue};
 use shea_symphony::runtime_state::{detect_runtime_stall, RuntimeState};
 use shea_symphony::session_registry::{
-    load_session_registry, session_registry_path, SessionStatus, SessionStatusProbe,
+    load_session_registry, save_session_record, session_registry_path, unix_timestamp_ms,
+    AgentSessionRecord, SessionStatus, SessionStatusProbe,
 };
 use shea_symphony::tracker::TrackerAdapter;
 
@@ -92,12 +96,21 @@ pub(super) fn recover_registered_main_sessions(
                 else {
                     continue;
                 };
+                let termination = if matches!(probe.status, SessionStatus::Stale) {
+                    terminate_stale_codex_app_server_session(config, record)?
+                } else {
+                    None
+                };
                 let reason = format!(
-                    "registry_session_recoverable session={} status={} source={} evidence={}",
+                    "registry_session_recoverable session={} status={} source={} evidence={}{}",
                     record.session_name,
                     probe.status.as_str(),
                     probe.source.as_str(),
-                    compact_evidence(&probe.evidence)
+                    compact_evidence(&probe.evidence),
+                    termination
+                        .as_deref()
+                        .map(|evidence| format!(" {evidence}"))
+                        .unwrap_or_default()
                 );
                 recover_registered_session_candidate(
                     config,
@@ -141,6 +154,42 @@ pub(super) fn recover_registered_main_sessions(
         }
     }
     Ok(())
+}
+
+fn terminate_stale_codex_app_server_session(
+    config: &RuntimeConfig,
+    record: &AgentSessionRecord,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    if record.session_source.as_deref() != Some(codex_app_server::BACKEND_NAME) {
+        return Ok(None);
+    }
+    let Some(process_id) = record.process_id else {
+        return Ok(Some("terminate_process_id=missing".into()));
+    };
+
+    let output = Command::new("kill")
+        .arg("-TERM")
+        .arg(process_id.to_string())
+        .output();
+    let mut updated = record.clone();
+    updated.status = SessionStatus::Stale;
+    updated.updated_at_ms = unix_timestamp_ms();
+    save_session_record(&session_registry_path(config), updated)?;
+
+    match output {
+        Ok(output) if output.status.success() => Ok(Some(format!(
+            "terminated_process_id={process_id} signal=TERM"
+        ))),
+        Ok(output) => Ok(Some(format!(
+            "terminate_process_id={process_id} failed status={} stderr={}",
+            output.status,
+            compact_evidence(&String::from_utf8_lossy(&output.stderr))
+        ))),
+        Err(error) => Ok(Some(format!(
+            "terminate_process_id={process_id} failed error={}",
+            compact_evidence(&error.to_string())
+        ))),
+    }
 }
 
 fn recover_registry_issue_allows_active_retention(

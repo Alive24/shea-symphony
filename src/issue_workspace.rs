@@ -609,6 +609,7 @@ mod tests {
             branch: Some("feature/issue-253-worktree-discovery".into()),
             backend: "tmux".into(),
             session_name: "shea-main-253".into(),
+            process_id: None,
             pane_target: "shea:0.0".into(),
             prompt_artifact_path: PathBuf::from("/tmp/prompt"),
             log_path: PathBuf::from("/tmp/log"),

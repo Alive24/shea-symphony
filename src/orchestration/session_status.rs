@@ -6,7 +6,7 @@ use shea_symphony::session_registry::{
 };
 
 pub(crate) const DEFAULT_SESSION_STATUS_LINES: usize = 80;
-pub(crate) const DEFAULT_SESSION_STALE_AFTER_MS: u64 = 15 * 60 * 1000;
+pub(crate) const DEFAULT_SESSION_STALE_AFTER_MS: u64 = 30 * 60 * 1000;
 
 pub(crate) fn session_status_snapshots(
     config: &RuntimeConfig,
@@ -37,7 +37,7 @@ pub(crate) fn session_status_snapshots(
             pane_tail.as_deref(),
             log_tail.as_deref(),
             now_ms,
-            DEFAULT_SESSION_STALE_AFTER_MS,
+            config.codex.session_stale_after_ms,
         );
         snapshots.push(SessionStatusSnapshot {
             session_id: record.session_name.clone(),

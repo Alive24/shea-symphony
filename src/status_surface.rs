@@ -182,7 +182,7 @@ fn render_skipped(snapshot: &RuntimeSnapshot, lines: &mut Vec<String>) {
     }
     let remaining = snapshot.skipped.len().saturating_sub(sample_limit);
     if remaining > 0 {
-        lines.push(format!("- ... {} more skipped issue(s) omitted", remaining));
+        lines.push(format!("- ... {remaining} more skipped issue(s) omitted"));
     }
 }
 

@@ -41,6 +41,12 @@ Canonical decision note template:
 workflows/template/workpad/human-review.md
 ```
 
+Canonical parent-batch briefing template:
+
+```bash
+workflows/template/workpad/parent-batch-human-review-brief.md
+```
+
 ## Core Boundary
 
 - Do not modify implementation code, except for the narrow PR branch freshness
@@ -126,6 +132,17 @@ Inspect the issue body and workpad for:
 - Review Agent pass evidence and any explicitly unchecked review items;
 - linked PR identity, readiness, base branch, and check/review state;
 - missing evidence, stale assumptions, or blockers that should prevent approval.
+
+For native parent issues, also read the current parent/subissue evidence before
+briefing:
+
+- native child issue list and each child's current Project state;
+- child PR identity, target branch, and merge evidence into the parent
+  integration branch;
+- parent integration branch and parent final PR base/head evidence;
+- parent Review Agent PASS evidence and any explicitly missing review evidence;
+- remaining parent UAT checklist items that still need Human Review-owned
+  pass/fail/deferred notes.
 
 Do not drown the operator in raw JSON. Summarize the decision-relevant facts and
 include exact issue and PR references.
@@ -229,6 +246,42 @@ Available decisions: Approve for Merging / Request Rework / Need Human Input / D
 For parent issues with native subissues, explicitly summarize the parent/child
 shape: which child issues are Done, which child PRs landed, which parent PR is
 being accepted, and what combined behavior the parent UAT is meant to validate.
+
+## Parent-Batch Brief
+
+For native parent issues, the first Human Review action is to prepare a compact
+parent-batch evidence brief from current readbacks before any UAT command,
+freshness repair, decision-note drafting, timeline comment, or Project state
+mutation.
+
+Use `workflows/template/workpad/parent-batch-human-review-brief.md` as the
+reusable brief shape. Keep it separate from
+`workflows/template/workpad/human-review.md`; the parent-batch brief is not the
+final Human Review decision note and must not replace or weaken the explicit
+operator-confirmation boundary.
+
+The parent-batch brief is read-only and advisory. Do not write tracker comments,
+decision notes, Project state, PR state, issue bodies, workpads, or child
+evidence while preparing it.
+
+Build the brief in this order:
+
+1. remaining parent UAT;
+2. parent PR and readiness;
+3. child batch table;
+4. Review Agent evidence;
+5. risks, stale assumptions, or missing evidence.
+
+The brief must distinguish evidence already checked by Main, Review, and Merge
+lanes from Human Review-owned UAT and acceptance. Child `Done`, child PR merge
+evidence, and parent Review Agent PASS are inputs to Human Review; they are not
+proof that parent UAT passed and they do not authorize approval without the
+operator's explicit decision.
+
+For the #400 evidence shape, the brief should be able to show remaining parent
+UAT, parent PR #421 readiness, child #399/#383/#384 status and child PR merge
+evidence, parent Review PASS evidence, and any risks or missing evidence before
+asking the operator to run or confirm parent UAT.
 
 If the issue is not in `Human Review`, or if Review Agent pass evidence or a
 reliable linked PR is missing, stop before UAT and recommend the smallest safe

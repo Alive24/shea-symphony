@@ -50,6 +50,10 @@ fn skill_suite_documents_app_server_first_manual_boundaries() {
 
     assert!(human_review.contains("Match the operator-facing language"));
     assert!(human_review.contains("Do not force English"));
+    assert!(human_review.contains("run the freshness check automatically"));
+    assert!(human_review.contains("not an operator-owned UAT"));
+    assert!(human_review.contains("decision. After the orientation brief"));
+    assert!(human_review.contains("Do not ask for operator permission"));
     assert!(manual_main.contains("cargo run -- project state workflows/shea-symphony.md"));
     assert!(manual_main.contains("main_lane.backend: codex"));
     assert!(manual_main.contains("codex.command: codex app-server -c 'service_tier=\"fast\"'"));
@@ -70,6 +74,52 @@ fn human_review_template_supports_all_decisions() {
     assert!(template.contains("Need Human Input"));
     assert!(template.contains("Defer"));
     assert!(template.contains("Target state after explicit confirmation"));
+}
+
+#[test]
+fn parent_batch_human_review_brief_preserves_order_and_boundaries() {
+    let skill = repo_file("skills/shea-symphony/suite/shea-symphony-human-review/SKILL.md");
+    let brief = repo_file("workflows/template/workpad/parent-batch-human-review-brief.md");
+    let decision = repo_file("workflows/template/workpad/human-review.md");
+
+    assert!(skill.contains("first Human Review action is to prepare a compact"));
+    assert!(skill.contains("parent-batch evidence brief from current readbacks"));
+    assert!(skill.contains("workflows/template/workpad/parent-batch-human-review-brief.md"));
+    assert!(skill.contains("read-only and advisory"));
+    assert!(skill.contains("Do not write tracker comments"));
+    assert!(skill.contains("Child `Done`, child PR merge"));
+    assert!(skill.contains("parent Review Agent PASS are inputs to Human Review"));
+    assert!(skill.contains("proof that parent UAT passed"));
+    assert!(skill.contains("operator's explicit decision"));
+    assert!(skill.contains("parent PR #421"));
+    assert!(skill.contains("child #399/#383/#384"));
+
+    assert!(brief.contains("## Shea Symphony Parent-Batch Human Review Brief"));
+    assert!(brief.contains("This brief is read-only and advisory"));
+    assert!(brief.contains("not a Human Review decision note"));
+    assert!(brief.contains("must not write tracker comments"));
+    assert!(brief.contains("Human Review-owned"));
+    assert!(brief.contains("does not prove parent acceptance"));
+    assert!(brief.contains("parent PR #421"));
+
+    let required_order = [
+        "### 1. Remaining Parent UAT",
+        "### 2. Parent PR And Readiness",
+        "### 3. Child Batch Table",
+        "### 4. Review Agent Evidence",
+        "### 5. Risks, Stale Assumptions, Or Missing Evidence",
+    ];
+    let mut last_index = 0;
+    for heading in required_order {
+        let index = brief
+            .find(heading)
+            .unwrap_or_else(|| panic!("missing parent-batch heading {heading}"));
+        assert!(index >= last_index, "heading out of order: {heading}");
+        last_index = index;
+    }
+
+    assert!(decision.contains("## Shea Symphony Human Review Decision"));
+    assert!(!decision.contains("## Shea Symphony Parent-Batch Human Review Brief"));
 }
 
 #[test]

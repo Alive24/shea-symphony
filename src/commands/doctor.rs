@@ -40,7 +40,7 @@ pub(crate) struct DoctorOptions {
     pub(crate) interactive: bool,
     pub(crate) auto_fix: bool,
     pub(crate) write: bool,
-    pub(crate) stale_after_ms: u64,
+    pub(crate) stale_after_ms: Option<u64>,
     pub(crate) action: Option<DoctorAction>,
 }
 
@@ -161,7 +161,9 @@ pub(crate) fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::E
         runtime_states,
         sessions,
         now_ms: current_time_ms(),
-        stale_after_ms: options.stale_after_ms,
+        stale_after_ms: options
+            .stale_after_ms
+            .unwrap_or(config.codex.session_stale_after_ms),
     };
     let mut report = audit_project_issues_with_context(&issues, Some(&context));
     report.integration_gaps = integration_gaps;

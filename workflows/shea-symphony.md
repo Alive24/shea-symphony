@@ -59,6 +59,8 @@ codex:
   command: codex app-server -c 'service_tier="fast"'
   reasoning_effort: high
   approval_policy: never
+  stall_timeout_ms: 300000
+  session_stale_after_ms: 1800000
 claude:
   command: claude
 review_lane:

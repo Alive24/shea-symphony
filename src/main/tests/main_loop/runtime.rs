@@ -382,6 +382,57 @@ fn resume_preflight_many_recovers_registry_only_failed_app_server_session() {
 
 #[cfg(unix)]
 #[test]
+fn resume_preflight_many_terminates_stale_codex_app_server_process_before_recovery() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = test_config();
+    config.artifacts.root = temp.path().join("artifacts");
+    config.observability.logs_root = temp.path().join("logs");
+    config.codex.session_stale_after_ms = 1_000;
+    let tracker = MemoryTracker::new(vec![tracker_issue("In Progress")]);
+    let mut child = ProcessCommand::new("sleep").arg("30").spawn().unwrap();
+    let mut record = main_tmux_session_record("#29", SessionStatus::Running);
+    record.backend = "codex".into();
+    record.session_source = Some("codex-app-server".into());
+    record.session_name = "thread-29-turn-stale".into();
+    record.process_id = Some(child.id());
+    record.pane_target = String::new();
+    record.attach_command =
+        "not a tmux session; inspect app-server artifacts for recovery evidence".into();
+    record.log_path = temp.path().join("logs/app-server/29.events.json");
+    record.updated_at_ms = 1_000;
+    save_session_registry(
+        &session_registry_path(&config),
+        &shea_symphony::session_registry::SessionRegistry {
+            sessions: vec![record],
+        },
+    )
+    .unwrap();
+
+    let summary = run_loop_resume_preflight_many(&tracker, &config, &[], 3_000, true).unwrap();
+
+    assert_eq!(summary.active_main_workers, 0);
+    assert_eq!(summary.blocked, None);
+    assert_eq!(summary.recoverable_states.len(), 1);
+    assert!(summary.recoverable_states[0]
+        .reason
+        .contains("terminated_process_id="));
+    let mut exited = false;
+    for _ in 0..20 {
+        if child.try_wait().unwrap().is_some() {
+            exited = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    if !exited {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    assert!(exited, "stale app-server process should be terminated");
+}
+
+#[cfg(unix)]
+#[test]
 fn resume_preflight_registry_active_session_does_not_require_live_issue_read() {
     let temp = tempfile::tempdir().unwrap();
     let mut config = test_config();

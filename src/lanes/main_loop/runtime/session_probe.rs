@@ -8,7 +8,7 @@ use shea_symphony::session_registry::{
 };
 
 use crate::lanes::main_loop::compact_evidence;
-use crate::orchestration::{DEFAULT_SESSION_STALE_AFTER_MS, DEFAULT_SESSION_STATUS_LINES};
+use crate::orchestration::DEFAULT_SESSION_STATUS_LINES;
 
 pub(super) fn registered_main_runtime_session(record: &AgentSessionRecord) -> bool {
     record.lane.eq_ignore_ascii_case("main") && record.backend != "codex-app-manual"
@@ -109,7 +109,7 @@ pub(super) fn runtime_session_probe_from_record(
         pane_tail.as_deref(),
         log_tail.as_deref(),
         now_ms,
-        DEFAULT_SESSION_STALE_AFTER_MS,
+        config.codex.session_stale_after_ms,
     ))
 }
 

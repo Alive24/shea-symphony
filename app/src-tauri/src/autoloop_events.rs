@@ -25,6 +25,9 @@ pub fn parse_autoloop_text_event(stream: &str, line: &str) -> Option<Value> {
     if line.trim().is_empty() {
         return None;
     }
+    if let Some(signal) = parse_autoloop_stdout_signal(stream, line) {
+        return Some(signal);
+    }
     Some(json!({
         "schema_version": 1,
         "source": "shea-symphony",
@@ -36,6 +39,87 @@ pub fn parse_autoloop_text_event(stream: &str, line: &str) -> Option<Value> {
             "fields": parse_cli_line_fields(line),
         }
     }))
+}
+
+fn parse_autoloop_stdout_signal(stream: &str, line: &str) -> Option<Value> {
+    if stream != "stdout" {
+        return None;
+    }
+    let trimmed = line.trim();
+    if trimmed.starts_with("Latest:") {
+        return Some(signal_from_latest_line(trimmed));
+    }
+    for prefix in ["polling:", "activity:", "tokens:", "event_log="] {
+        if trimmed.starts_with(prefix) {
+            return Some(json!({
+                "schema_version": 1,
+                "source": "shea-symphony",
+                "event": "autopilot_signal",
+                "payload": {
+                    "visibility": "telemetry",
+                    "scope": "runtime",
+                    "kind": prefix.trim_end_matches([':', '=']),
+                    "message": trimmed,
+                    "raw": line,
+                    "stream": stream,
+                    "fields": parse_cli_line_fields(line),
+                }
+            }));
+        }
+    }
+    None
+}
+
+fn signal_from_latest_line(line: &str) -> Value {
+    let fields = parse_latest_line(line);
+    let lane = fields
+        .get("lane")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let issue = fields
+        .get("issue")
+        .and_then(Value::as_str)
+        .unwrap_or("no-issue");
+    let status = fields
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let action = fields
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("event");
+    let has_issue = issue != "no-issue" && !issue.trim().is_empty();
+    let visibility = if has_issue && status != "idle" {
+        "operator"
+    } else {
+        "debug"
+    };
+    json!({
+        "schema_version": 1,
+        "source": "shea-symphony",
+        "event": "autopilot_signal",
+        "payload": {
+            "visibility": visibility,
+            "scope": "lane",
+            "lane": lane,
+            "issue": has_issue.then_some(issue),
+            "status": status,
+            "action": action,
+            "kind": "latest",
+            "message": latest_signal_message(lane, has_issue.then_some(issue), status, action),
+            "raw": line,
+            "stream": "stdout",
+            "fields": fields,
+        }
+    })
+}
+
+fn latest_signal_message(lane: &str, issue: Option<&str>, status: &str, action: &str) -> String {
+    if let Some(issue) = issue {
+        format!("{issue} {lane} {status} {action}")
+    } else {
+        format!("{lane} {status} {action}")
+    }
 }
 
 pub fn parse_autoloop_lane_event(event: Option<&Value>, at_ms: u128) -> Option<LaneSnapshot> {
@@ -589,11 +673,36 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(event["event"], "autopilot_cli_line");
-        assert_eq!(event["payload"]["kind"], "latest");
+        assert_eq!(event["event"], "autopilot_signal");
+        assert_eq!(event["payload"]["visibility"], "operator");
+        assert_eq!(event["payload"]["scope"], "lane");
+        assert_eq!(event["payload"]["lane"], "main");
+        assert_eq!(event["payload"]["issue"], "#364");
+        assert_eq!(event["payload"]["status"], "running");
+        assert_eq!(event["payload"]["action"], "backend");
         assert_eq!(event["payload"]["fields"]["issue"], "#364");
-        assert_eq!(event["payload"]["fields"]["action"], "backend");
         assert_eq!(event["payload"]["fields"]["next"], "save result");
+    }
+
+    #[test]
+    fn wraps_idle_latest_and_polling_as_non_operator_signals() {
+        let idle = parse_autoloop_text_event(
+            "stdout",
+            "Latest: main | no-issue | idle | no_dispatchable_issue | next=wait",
+        )
+        .unwrap();
+        let polling = parse_autoloop_text_event(
+            "stdout",
+            "polling: checking=false interval_ms=5000 next_poll_in_ms=5000",
+        )
+        .unwrap();
+
+        assert_eq!(idle["event"], "autopilot_signal");
+        assert_eq!(idle["payload"]["visibility"], "debug");
+        assert_eq!(idle["payload"]["scope"], "lane");
+        assert_eq!(polling["event"], "autopilot_signal");
+        assert_eq!(polling["payload"]["visibility"], "telemetry");
+        assert_eq!(polling["payload"]["kind"], "polling");
     }
 
     #[test]

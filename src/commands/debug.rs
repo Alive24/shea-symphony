@@ -64,7 +64,7 @@ pub(crate) fn debug_report(workflow_path: PathBuf) -> Result<(), Box<dyn std::er
         runtime_states,
         sessions: sessions.clone(),
         now_ms: current_time_ms(),
-        stale_after_ms: 10_800_000,
+        stale_after_ms: config.codex.session_stale_after_ms,
     };
     let mut doctor_report = audit_project_issues_with_context(&doctor_issues, Some(&context));
     doctor_report.integration_gaps = report_gaps.clone();

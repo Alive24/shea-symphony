@@ -33,6 +33,11 @@ Each app-server run records:
 - normalized event JSON;
 - final process exit status when available.
 
+After a turn starts, the transport enforces `codex.stall_timeout_ms` as a
+protocol-event inactivity timeout. This is separate from the full
+`codex.turn_timeout_ms`: long-running turns may continue as long as events keep
+arriving, while silent turns are killed and recorded as backend failures.
+
 The final `AgentEvent::Message` contains `prompt_artifact=`, `protocol_artifact=`, `stderr_artifact=`, `normalized_events_artifact=`, and `exit_status=` fields so status, runtime-state, Doctor, and workpad surfaces can point to durable evidence.
 
 ## Non-Goals

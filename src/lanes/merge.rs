@@ -18,11 +18,13 @@ pub(crate) use evidence::record_done_merge_lane_completion;
 #[cfg(test)]
 pub(crate) use repair::{
     finish_merge_agent_repaired_branch, merge_agent_reports_repaired,
-    merge_agent_requests_human_input,
+    merge_agent_requests_human_input, stage_resolved_merge_agent_changes, MergeAgentStageFailure,
 };
 #[cfg(test)]
 pub(crate) use selection::select_merge_worker_issues;
-pub(crate) use tick::{merge_once_tick, merge_preflight_status, MergeOnceOutcome};
+pub(crate) use tick::{
+    merge_once_tick, merge_preflight_status, MergeOnceOutcome, MergeTickOutputScope,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MergeLoopOptions {
@@ -55,7 +57,14 @@ pub(crate) fn merge_once(
     workflow_path: PathBuf,
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    merge_once_tick(workflow_path, write, false, false).map(|_| ())
+    merge_once_tick(
+        workflow_path,
+        write,
+        false,
+        false,
+        MergeTickOutputScope::Direct,
+    )
+    .map(|_| ())
 }
 
 pub(crate) fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
@@ -70,7 +79,9 @@ pub(crate) fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::e
     loop {
         if let Some(max) = limit {
             if iteration >= max {
-                println!("merge_loop=stopped reason=max_iterations iterations={iteration}");
+                if !options.quiet_idle {
+                    println!("merge_loop=stopped reason=max_iterations iterations={iteration}");
+                }
                 break;
             }
         }
@@ -91,6 +102,7 @@ pub(crate) fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::e
                 options.write,
                 options.recover,
                 options.quiet_idle,
+                MergeTickOutputScope::Loop,
             )? {
                 MergeOnceOutcome::NoMergingIssue => {
                     if limit.is_none() {
@@ -112,14 +124,20 @@ pub(crate) fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::e
                     break;
                 }
                 MergeOnceOutcome::DryRun if !options.write => {
-                    println!("merge_loop_action=dry_run_tick iterations={iteration} slot={slot}");
+                    if !options.quiet_idle {
+                        println!(
+                            "merge_loop_action=dry_run_tick iterations={iteration} slot={slot}"
+                        );
+                    }
                     if limit.is_none() {
                         should_sleep = true;
                         break;
                     } else if max_concurrent > 1 {
-                        println!(
-                            "merge_loop=stopped reason=dry_run_would_repeat_without_mutation iterations={iteration}"
-                        );
+                        if !options.quiet_idle {
+                            println!(
+                                "merge_loop=stopped reason=dry_run_would_repeat_without_mutation iterations={iteration}"
+                            );
+                        }
                         stopped = true;
                         break;
                     }
@@ -134,7 +152,9 @@ pub(crate) fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::e
                     println!("merge_loop_action=routed iterations={iteration} slot={slot}");
                 }
                 MergeOnceOutcome::Skipped => {
-                    println!("merge_loop_action=skipped iterations={iteration} slot={slot}");
+                    if !options.quiet_idle {
+                        println!("merge_loop_action=skipped iterations={iteration} slot={slot}");
+                    }
                 }
                 MergeOnceOutcome::DryRun => {}
             }

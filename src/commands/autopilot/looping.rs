@@ -124,6 +124,7 @@ fn autopilot_loop_with_cancellation(
                 options.json,
                 options.display,
                 options.event_json,
+                options.verbose,
             )?;
             print_autopilot_stopped(
                 options.event_json,
@@ -147,6 +148,7 @@ fn autopilot_loop_with_cancellation(
             options.json,
             options.display,
             options.event_json,
+            options.verbose,
         )?;
         warn_if_temporary_workflow_path(&options.workflow_path);
 
@@ -165,6 +167,7 @@ fn autopilot_loop_with_cancellation(
                     options.json,
                     options.display,
                     options.event_json,
+                    options.verbose,
                 )?;
                 if autopilot_should_continue(iteration, work_unit_limit)
                     && autopilot_sleep_or_cancel(status.settings.poll_interval_ms, &cancellation)
@@ -180,6 +183,7 @@ fn autopilot_loop_with_cancellation(
                         options.json,
                         options.display,
                         options.event_json,
+                        options.verbose,
                     )?;
                     print_autopilot_stopped(
                         options.event_json,
@@ -215,6 +219,7 @@ fn autopilot_loop_with_cancellation(
                     options.json,
                     options.display,
                     options.event_json,
+                    options.verbose,
                 )?;
                 if autopilot_should_continue(iteration, work_unit_limit)
                     && autopilot_sleep_or_cancel(status.settings.poll_interval_ms, &cancellation)
@@ -230,6 +235,7 @@ fn autopilot_loop_with_cancellation(
                         options.json,
                         options.display,
                         options.event_json,
+                        options.verbose,
                     )?;
                     print_autopilot_stopped(
                         options.event_json,
@@ -279,6 +285,7 @@ fn autopilot_loop_with_cancellation(
                         options.json,
                         options.display,
                         options.event_json,
+                        options.verbose,
                     )?;
                     if autopilot_should_continue(iteration, work_unit_limit)
                         && autopilot_sleep_or_cancel(retry_delay_ms, &cancellation)
@@ -297,6 +304,7 @@ fn autopilot_loop_with_cancellation(
                             options.json,
                             options.display,
                             options.event_json,
+                            options.verbose,
                         )?;
                         print_autopilot_stopped(
                             options.event_json,
@@ -332,6 +340,7 @@ fn autopilot_loop_with_cancellation(
                     options.json,
                     options.display,
                     options.event_json,
+                    options.verbose,
                 )?;
                 if autopilot_should_continue(iteration, work_unit_limit)
                     && autopilot_sleep_or_cancel(settings.poll_interval_ms, &cancellation)
@@ -347,6 +356,7 @@ fn autopilot_loop_with_cancellation(
                         options.json,
                         options.display,
                         options.event_json,
+                        options.verbose,
                     )?;
                     print_autopilot_stopped(
                         options.event_json,
@@ -373,7 +383,13 @@ fn autopilot_loop_with_cancellation(
             &recent_transient_failures,
             cancellation.load(Ordering::SeqCst),
         );
-        print_autopilot_loop_status(&status, options.json, options.display, options.event_json)?;
+        print_autopilot_loop_status(
+            &status,
+            options.json,
+            options.display,
+            options.event_json,
+            options.verbose,
+        )?;
         if status.phase == "blocked" {
             if autopilot_should_continue(iteration, work_unit_limit)
                 && autopilot_sleep_or_cancel(settings.poll_interval_ms, &cancellation)
@@ -392,6 +408,7 @@ fn autopilot_loop_with_cancellation(
                     options.json,
                     options.display,
                     options.event_json,
+                    options.verbose,
                 )?;
                 print_autopilot_stopped(
                     options.event_json,
@@ -422,6 +439,7 @@ fn autopilot_loop_with_cancellation(
                 options.json,
                 options.display,
                 options.event_json,
+                options.verbose,
             )?;
             print_autopilot_stopped(
                 options.event_json,
@@ -587,7 +605,7 @@ fn run_independent_autopilot_lane_supervisor(
         });
     }
 
-    if !options.event_json {
+    if !options.event_json && options.verbose {
         println!(
             "autopilot_loop_supervisor mode={} scheduler=independent lanes={} recover={} main_max_concurrent={} review_max_concurrent={} merge_max_concurrent={}",
             if options.write { "write" } else { "dry-run" },
@@ -975,6 +993,7 @@ fn autopilot_main_tick(
         recover: settings.recover,
         max_concurrent: Some(settings.main_max_concurrent),
         display: DisplayMode::Plain,
+        quiet_idle: !options.verbose,
     });
     autopilot_lane_result_from_execution(
         "main",
@@ -1061,6 +1080,16 @@ fn autopilot_main_recovery_can_tick(
             || autopilot_main_parent_topology_can_tick(plan))
 }
 
+fn autopilot_merge_recovery_can_tick(
+    plan: &AutopilotPlanSnapshot,
+    settings: AutopilotLoopSettings,
+) -> bool {
+    settings.write
+        && settings.recover
+        && settings.merge_max_concurrent > 0
+        && autopilot_merge_recovery_blocker_is_lane_local(plan)
+}
+
 fn autopilot_main_recovery_blocker_is_lane_local(plan: &AutopilotPlanSnapshot) -> bool {
     !plan.readiness.blockers.is_empty()
         && plan
@@ -1072,6 +1101,45 @@ fn autopilot_main_recovery_blocker_is_lane_local(plan: &AutopilotPlanSnapshot) -
             .lanes
             .iter()
             .all(|lane| !lane.status.eq_ignore_ascii_case("blocked"))
+}
+
+fn autopilot_merge_recovery_blocker_is_lane_local(plan: &AutopilotPlanSnapshot) -> bool {
+    let Some(merge_lane) = autopilot_plan_lane(Some(plan), "merge") else {
+        return false;
+    };
+    let Some(selected_issue) = merge_lane.selected_issue.as_ref() else {
+        return false;
+    };
+    if !autopilot_merge_lane_plan_can_recover(merge_lane) {
+        return false;
+    }
+    if plan
+        .lanes
+        .iter()
+        .any(|lane| lane.lane != "merge" && lane.status.eq_ignore_ascii_case("blocked"))
+    {
+        return false;
+    }
+    !plan.readiness.blockers.is_empty()
+        && plan
+            .readiness
+            .blockers
+            .iter()
+            .all(|blocker| autopilot_merge_runtime_recovery_blocker(plan, blocker, selected_issue))
+}
+
+fn autopilot_merge_lane_plan_can_recover(lane: &AutopilotLanePlan) -> bool {
+    if lane.selected_issue.is_none() {
+        return false;
+    }
+    matches!(lane.status.as_str(), "ready" | "waiting")
+        || matches!(
+            lane.proposed_action.as_str(),
+            "attempt_safe_conflict_repair"
+                | "update_pr_branch"
+                | "merge_pull_request"
+                | "mark_done"
+        )
 }
 
 fn autopilot_active_runtime_blocker(blocker: &str) -> bool {
@@ -1091,13 +1159,32 @@ fn autopilot_main_runtime_recovery_blocker(plan: &AutopilotPlanSnapshot, blocker
             || autopilot_attention_sessions_are_main_local(plan))
 }
 
+fn autopilot_merge_runtime_recovery_blocker(
+    plan: &AutopilotPlanSnapshot,
+    blocker: &str,
+    selected_issue: &AutopilotIssueSummary,
+) -> bool {
+    if autopilot_active_runtime_blocker(blocker) {
+        return autopilot_runtime_active_issues_are_lane_local(plan, "merge");
+    }
+    autopilot_session_attention_blocker(blocker)
+        && autopilot_attention_sessions_are_issue_local_to_merge(plan, &selected_issue.identifier)
+}
+
 fn autopilot_runtime_active_issues_are_main_local(plan: &AutopilotPlanSnapshot) -> bool {
+    autopilot_runtime_active_issues_are_lane_local(plan, "main")
+}
+
+fn autopilot_runtime_active_issues_are_lane_local(
+    plan: &AutopilotPlanSnapshot,
+    lane_name: &str,
+) -> bool {
     !plan.runtime.active_issues.is_empty()
         && plan
             .runtime
             .active_issues
             .iter()
-            .all(|issue| issue.lane.eq_ignore_ascii_case("main"))
+            .all(|issue| issue.lane.eq_ignore_ascii_case(lane_name))
 }
 
 fn autopilot_attention_sessions_are_main_local(plan: &AutopilotPlanSnapshot) -> bool {
@@ -1109,10 +1196,36 @@ fn autopilot_attention_sessions_are_main_local(plan: &AutopilotPlanSnapshot) -> 
         .collect::<Vec<_>>();
     !session_evidence.is_empty()
         && session_evidence.iter().all(|line| {
-            line.contains(" lane=main ")
-                && !line.ends_with(" issue=unknown")
-                && !line.contains(" issue=unknown ")
+            autopilot_evidence_field_equals(line, "lane", "main")
+                && !autopilot_evidence_field_equals(line, "issue", "unknown")
         })
+}
+
+fn autopilot_attention_sessions_are_issue_local_to_merge(
+    plan: &AutopilotPlanSnapshot,
+    selected_issue: &str,
+) -> bool {
+    let session_evidence = plan
+        .runtime
+        .evidence
+        .iter()
+        .filter(|line| line.starts_with("session="))
+        .collect::<Vec<_>>();
+    !session_evidence.is_empty()
+        && session_evidence.iter().all(|line| {
+            let merge_or_historical_main = autopilot_evidence_field_equals(line, "lane", "merge")
+                || autopilot_evidence_field_equals(line, "lane", "main");
+            merge_or_historical_main
+                && autopilot_evidence_field_equals(line, "issue", selected_issue)
+                && !autopilot_evidence_field_equals(line, "issue", "unknown")
+        })
+}
+
+fn autopilot_evidence_field_equals(line: &str, key: &str, expected: &str) -> bool {
+    let prefix = format!("{key}=");
+    line.split_whitespace()
+        .find_map(|token| token.strip_prefix(&prefix))
+        .is_some_and(|value| value == expected)
 }
 
 fn autopilot_main_parent_topology_can_tick(plan: &AutopilotPlanSnapshot) -> bool {
@@ -1128,6 +1241,19 @@ fn autopilot_readiness_blocker_is_main_recoverable(
 ) -> bool {
     autopilot_main_runtime_recovery_blocker(plan, blocker)
         || (blocker == "doctor_blockers=1" && autopilot_main_parent_topology_can_tick(plan))
+}
+
+fn autopilot_readiness_blocker_is_merge_recoverable(
+    plan: &AutopilotPlanSnapshot,
+    blocker: &str,
+) -> bool {
+    let Some(merge_lane) = autopilot_plan_lane(Some(plan), "merge") else {
+        return false;
+    };
+    let Some(selected_issue) = merge_lane.selected_issue.as_ref() else {
+        return false;
+    };
+    autopilot_merge_runtime_recovery_blocker(plan, blocker, selected_issue)
 }
 
 fn print_autopilot_lane_running(
@@ -1547,11 +1673,17 @@ pub(crate) fn autopilot_loop_status_from_plan_with_work_units(
         .filter_map(|lane| lane.selected_issue.clone())
         .collect::<Vec<_>>();
     let main_recovery_can_tick = autopilot_main_recovery_can_tick(plan, settings);
-    let effective_readiness_blockers = if main_recovery_can_tick {
+    let merge_recovery_can_tick = autopilot_merge_recovery_can_tick(plan, settings);
+    let effective_readiness_blockers = if main_recovery_can_tick || merge_recovery_can_tick {
         plan.readiness
             .blockers
             .iter()
-            .filter(|blocker| !autopilot_readiness_blocker_is_main_recoverable(plan, blocker))
+            .filter(|blocker| {
+                !(main_recovery_can_tick
+                    && autopilot_readiness_blocker_is_main_recoverable(plan, blocker))
+                    && !(merge_recovery_can_tick
+                        && autopilot_readiness_blocker_is_merge_recoverable(plan, blocker))
+            })
             .cloned()
             .collect::<Vec<_>>()
     } else {
@@ -1562,7 +1694,12 @@ pub(crate) fn autopilot_loop_status_from_plan_with_work_units(
     blocked_reasons.extend(
         plan.lanes
             .iter()
-            .filter(|lane| lane.status == "blocked")
+            .filter(|lane| {
+                lane.status == "blocked"
+                    && !(merge_recovery_can_tick
+                        && lane.lane == "merge"
+                        && autopilot_merge_lane_plan_can_recover(lane))
+            })
             .map(|lane| format!("{}:{}", lane.lane, lane.reason)),
     );
     let mut retrying = plan.runtime.retrying.clone();
@@ -1576,10 +1713,12 @@ pub(crate) fn autopilot_loop_status_from_plan_with_work_units(
             .retrying_count
             .saturating_add(recent_transient_failures.len()),
     );
-    if main_recovery_can_tick && counts.running == 0 {
+    if (main_recovery_can_tick || merge_recovery_can_tick) && counts.running == 0 {
         counts.running = 1;
     }
-    let readiness_status = if main_recovery_can_tick && effective_readiness_blockers.is_empty() {
+    let readiness_status = if (main_recovery_can_tick || merge_recovery_can_tick)
+        && effective_readiness_blockers.is_empty()
+    {
         "ready"
     } else {
         plan.readiness.status.as_str()
@@ -1987,6 +2126,57 @@ mod tests {
     }
 
     #[test]
+    fn plain_status_visibility_is_operator_scoped() {
+        let options = AutopilotLoopOptions {
+            workflow_path: PathBuf::from("/tmp/WORKFLOW.md"),
+            max_iterations: Some(1),
+            once: false,
+            continuous: false,
+            write: true,
+            dry_run: false,
+            recover: true,
+            poll_interval_ms: None,
+            main_max_concurrent: Some(1),
+            review_max_concurrent: Some(1),
+            merge_max_concurrent: Some(1),
+            display: DisplayMode::Plain,
+            json: false,
+            event_json: false,
+            verbose: false,
+        };
+        let checking = autopilot_loop_checking_status(
+            &options,
+            1,
+            AutopilotLoopProgress::new(None, AutopilotWorkUnitCounters::default()),
+            &[],
+        );
+        let mut running = checking.clone();
+        running.phase = "running".into();
+        running.counts.running = 1;
+        let mut blocked = checking.clone();
+        blocked.phase = "blocked".into();
+        blocked.counts.blocked = 1;
+        blocked.blocked_reasons = vec!["main:preflight".into()];
+        let mut retrying = checking.clone();
+        retrying.phase = "retrying".into();
+        retrying.recent_transient_failures = vec![AutopilotTransientFailure {
+            at_ms: 1,
+            attempt: 1,
+            delay_ms: 5_000,
+            error: "rate limit".into(),
+            recovery_policy: "retry_with_backoff".into(),
+        }];
+        let mut cancelled = checking.clone();
+        cancelled.phase = "cancelled".into();
+
+        assert!(!autopilot_loop_status_is_operator_visible(&checking));
+        assert!(!autopilot_loop_status_is_operator_visible(&running));
+        assert!(autopilot_loop_status_is_operator_visible(&blocked));
+        assert!(autopilot_loop_status_is_operator_visible(&retrying));
+        assert!(autopilot_loop_status_is_operator_visible(&cancelled));
+    }
+
+    #[test]
     fn tick_settings_preserve_lane_specific_zero_concurrency() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
@@ -2271,6 +2461,7 @@ fn print_autopilot_loop_status(
     json: bool,
     display: DisplayMode,
     event_json: bool,
+    verbose: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     print_autopilot_event(
         event_json,
@@ -2284,10 +2475,19 @@ fn print_autopilot_loop_status(
         println!("{}", serde_json::to_string_pretty(status)?);
     } else if display == DisplayMode::Tui {
         println!("{}", render_autopilot_loop_status_tui(status));
-    } else {
+    } else if verbose || autopilot_loop_status_is_operator_visible(status) {
         println!("{}", render_autopilot_loop_status_human(status));
     }
     Ok(())
+}
+
+fn autopilot_loop_status_is_operator_visible(status: &AutopilotLoopStatusSnapshot) -> bool {
+    matches!(
+        status.phase.as_str(),
+        "blocked" | "error" | "failed" | "retrying" | "cancelled"
+    ) || !status.blocked_reasons.is_empty()
+        || status.counts.blocked > 0
+        || !status.recent_transient_failures.is_empty()
 }
 
 pub(crate) fn render_autopilot_loop_status_human(status: &AutopilotLoopStatusSnapshot) -> String {

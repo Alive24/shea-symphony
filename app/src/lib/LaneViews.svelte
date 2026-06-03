@@ -1,6 +1,11 @@
 <script lang="ts">
   import JsonLogView from './shell/JsonLogView.svelte';
   import { autoloopStateStore, REFRESH_REQUEST_EVENT } from './uiState.ts';
+  import { operatorOverviewStore } from './operatorOverviewStore.ts';
+  import {
+    localArtifactRefreshEventDetail,
+    localRefreshStatusLabel
+  } from './localArtifactRefresh.ts';
   import { getCodexTranscript } from './tauriAutoloop.ts';
   import {
     classifyHeartbeat,
@@ -40,9 +45,12 @@
   $: completedLocalIssues = buildCompletedLocalIssues(view, issueRows);
   $: filteredCompletedLocalIssues = filterCompletedByWindow(completedLocalIssues, completedWindowHours);
   $: selectedIssue = selectedIssueRef ? findIssueForDetail(selectedIssueRef, issueRows, completedLocalIssues, view) : null;
+  $: localArtifactsRefresh = $operatorOverviewStore.localArtifactsRefresh;
+  $: localArtifactsRefreshLabel = localRefreshStatusLabel(localArtifactsRefresh, formatTime);
   $: lifecycleEvents = selectedIssue ? buildLifecycleEvents(selectedIssue, view) : [];
   $: selectedLaneKey = laneKeyForIssue(selectedIssue);
-  $: heartbeatSummary = selectedIssue ? classifyHeartbeat($autoloopStateStore, selectedLaneKey) : null;
+  $: heartbeatSummary = selectedIssue ? classifyHeartbeat($autoloopStateStore, selectedLaneKey, selectedIssue.id) : null;
+  $: eventLogPath = localEventLogPath(view);
   $: transcriptParsed = parseCodexTranscriptJsonl(transcriptResponse?.content ?? '');
   $: transcriptStatusLabel = transcriptResponse?.status === 'available'
     ? `${transcriptParsed.status} · ${transcriptParsed.events.length} events`
@@ -294,6 +302,13 @@
     return 'No runtime metadata attached to this issue.';
   }
 
+  function localEventLogPath(model: any) {
+    return model?.raw?.localStatus?.eventLogPath ??
+      model?.raw?.localStatus?.snapshot?.event_log_path ??
+      model?.raw?.localStatus?.snapshot?.eventLogPath ??
+      null;
+  }
+
   function workpadCategoryForIssue(issue: any) {
     const state = normalizeState(issue.state);
     if (state === 'Human Review') return 'Human decision note';
@@ -329,7 +344,7 @@
 
   function refreshLocalArtifacts() {
     window.dispatchEvent(new CustomEvent(REFRESH_REQUEST_EVENT, {
-      detail: { source: 'local-artifacts', force: true, localOnly: true }
+      detail: localArtifactRefreshEventDetail('lane-overview-local')
     }));
     reloadTranscript();
   }
@@ -485,7 +500,9 @@
 
     <div class="pagination">
       <span class="section-note">{view?.generatedAtLabel ?? 'not checked'}</span>
-      <button class="btn btn-ghost" type="button" on:click={refreshLocalArtifacts}>Refresh local artifacts</button>
+      <button class="btn btn-ghost" type="button" on:click={refreshLocalArtifacts} disabled={localArtifactsRefresh?.running}>
+        {localArtifactsRefresh?.running ? 'Refreshing local artifacts' : 'Refresh local artifacts'}
+      </button>
       <a class="btn btn-ghost" href="/lanes" on:click={(event) => navigate(event, '/lanes')}>Back</a>
     </div>
   </section>
@@ -536,12 +553,17 @@
         <div>
           <span>Latest lane event</span>
           <strong>{heartbeatSummary?.latestLaneEvent ?? 'No lane event visible.'}</strong>
-          <small>Filtered autoloop signal</small>
+          <small>{heartbeatSummary?.issue ? `${heartbeatSummary.lane} · ${heartbeatSummary.issue}` : `${heartbeatSummary?.lane ?? selectedLaneKey} lane`}</small>
         </div>
         <div>
           <span>Transcript</span>
           <strong>{transcriptLoading ? 'Loading local file' : transcriptStatusLabel}</strong>
           <small>{transcriptResponse?.path ?? 'Local-only diagnostic surface'}</small>
+        </div>
+        <div>
+          <span>Event log</span>
+          <strong>{eventLogPath ? 'Local JSONL available' : 'Unavailable locally'}</strong>
+          <small>{eventLogPath ?? 'Refresh local artifacts to read runtime log path.'}</small>
         </div>
       </div>
     </section>
@@ -685,17 +707,23 @@
       <div>
         <span class="mini-label">Local worktrees</span>
         <strong>{filteredCompletedLocalIssues.length} visible</strong>
+        <small class:error={localArtifactsRefresh?.error}>{localArtifactsRefreshLabel}</small>
       </div>
-      <div class="segmented-control compact" role="group" aria-label="Local worktree time window">
-        {#each completedWindows as window}
-          <button
-            class:active={completedWindowHours === window.hours}
-            type="button"
-            on:click={() => completedWindowHours = window.hours}
-          >
-            {window.label}
-          </button>
-        {/each}
+      <div class="lane-completed-actions">
+        <button class="btn btn-ghost" type="button" on:click={refreshLocalArtifacts} disabled={localArtifactsRefresh?.running}>
+          {localArtifactsRefresh?.running ? 'Refreshing' : 'Refresh local'}
+        </button>
+        <div class="segmented-control compact" role="group" aria-label="Local worktree time window">
+          {#each completedWindows as window}
+            <button
+              class:active={completedWindowHours === window.hours}
+              type="button"
+              on:click={() => completedWindowHours = window.hours}
+            >
+              {window.label}
+            </button>
+          {/each}
+        </div>
       </div>
     </div>
 

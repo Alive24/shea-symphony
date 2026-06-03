@@ -22,11 +22,13 @@ pub(crate) use agent_contract::{merge_agent_reports_repaired, merge_agent_reques
 pub(crate) use outcome::finish_merge_agent_repaired_branch;
 use outcome::{
     merge_agent_repair_backend_failed, merge_agent_repair_blocked,
-    merge_agent_repair_semantic_uncertainty, merge_agent_repair_verification_failed,
+    merge_agent_repair_retryable_verification_failed, merge_agent_repair_semantic_uncertainty,
+    merge_agent_repair_verification_failed,
 };
 
 pub(crate) struct MergeAgentConflictRepairOutcome {
     pub(crate) repaired: bool,
+    pub(crate) retryable: bool,
     pub(super) output: CommandOutput,
     pub(crate) evidence: MergeRepairEvidence,
     pub(super) reason: String,
@@ -255,66 +257,13 @@ pub(super) fn run_merge_agent_conflict_repair(
         ));
     }
 
-    let unresolved = runner.run(
-        "git",
-        &[
-            "diff".into(),
-            "--name-only".into(),
-            "--diff-filter=U".into(),
-        ],
-        worktree_path,
-    )?;
-    if unresolved.status != 0 || !unresolved.stdout.trim().is_empty() {
+    if let Err(reason) = stage_resolved_merge_agent_changes(runner, worktree_path) {
+        abort_merge_repair_if_active(runner, worktree_path);
         return Ok(merge_agent_repair_verification_failed(
             &summary.backend,
             summary.session_id.clone(),
             &conflict_summary,
-            format!(
-                "unresolved conflict files remain: `{}`",
-                single_line(&unresolved.stdout)
-            ),
-        ));
-    }
-
-    let diff_check = runner.run("git", &["diff".into(), "--check".into()], worktree_path)?;
-    if diff_check.status != 0 {
-        return Ok(merge_agent_repair_verification_failed(
-            &summary.backend,
-            summary.session_id.clone(),
-            &conflict_summary,
-            format!(
-                "`git diff --check` failed: stdout=`{}` stderr=`{}`",
-                single_line(&diff_check.stdout),
-                single_line(&diff_check.stderr)
-            ),
-        ));
-    }
-
-    let pre_commit_status = runner.run(
-        "git",
-        &["status".into(), "--porcelain".into()],
-        worktree_path,
-    )?;
-    if pre_commit_status
-        .stdout
-        .lines()
-        .any(|line| line.starts_with("??"))
-    {
-        return Ok(merge_agent_repair_verification_failed(
-            &summary.backend,
-            summary.session_id.clone(),
-            &conflict_summary,
-            "merge-agent left untracked files in the PR worktree".into(),
-        ));
-    }
-
-    let add = runner.run("git", &["add".into(), "-A".into()], worktree_path)?;
-    if add.status != 0 {
-        return Ok(merge_agent_repair_verification_failed(
-            &summary.backend,
-            summary.session_id.clone(),
-            &conflict_summary,
-            "`git add -A` failed after conflict resolution".into(),
+            reason.to_string(),
         ));
     }
     let merge_head = runner.run(
@@ -330,7 +279,8 @@ pub(super) fn run_merge_agent_conflict_repair(
     if merge_head.status == 0 {
         let commit = runner.run("git", &["commit".into(), "--no-edit".into()], worktree_path)?;
         if commit.status != 0 {
-            return Ok(merge_agent_repair_verification_failed(
+            abort_merge_repair_if_active(runner, worktree_path);
+            return Ok(merge_agent_repair_retryable_verification_failed(
                 &summary.backend,
                 summary.session_id.clone(),
                 &conflict_summary,
@@ -367,4 +317,101 @@ pub(super) fn run_merge_agent_conflict_repair(
         summary.backend,
         summary.session_id,
     )
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum MergeAgentStageFailure {
+    Retryable(String),
+    Unsafe(String),
+}
+
+impl std::fmt::Display for MergeAgentStageFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Retryable(reason) | Self::Unsafe(reason) => formatter.write_str(reason),
+        }
+    }
+}
+
+pub(crate) fn stage_resolved_merge_agent_changes(
+    runner: &dyn HandoffCommandRunner,
+    worktree_path: &std::path::Path,
+) -> Result<(), MergeAgentStageFailure> {
+    let diff_check = runner
+        .run("git", &["diff".into(), "--check".into()], worktree_path)
+        .map_err(|error| MergeAgentStageFailure::Retryable(error.to_string()))?;
+    if diff_check.status != 0 {
+        return Err(MergeAgentStageFailure::Retryable(format!(
+            "`git diff --check` failed: stdout=`{}` stderr=`{}`",
+            single_line(&diff_check.stdout),
+            single_line(&diff_check.stderr)
+        )));
+    }
+
+    let pre_commit_status = runner
+        .run(
+            "git",
+            &["status".into(), "--porcelain".into()],
+            worktree_path,
+        )
+        .map_err(|error| MergeAgentStageFailure::Retryable(error.to_string()))?;
+    if pre_commit_status
+        .stdout
+        .lines()
+        .any(|line| line.starts_with("??"))
+    {
+        return Err(MergeAgentStageFailure::Unsafe(
+            "merge-agent left untracked files in the PR worktree".into(),
+        ));
+    }
+
+    let add = runner
+        .run("git", &["add".into(), "-A".into()], worktree_path)
+        .map_err(|error| MergeAgentStageFailure::Retryable(error.to_string()))?;
+    if add.status != 0 {
+        return Err(MergeAgentStageFailure::Unsafe(format!(
+            "`git add -A` failed after merge-agent reported repair: stdout=`{}` stderr=`{}`",
+            single_line(&add.stdout),
+            single_line(&add.stderr)
+        )));
+    }
+
+    let unresolved = runner
+        .run(
+            "git",
+            &[
+                "diff".into(),
+                "--name-only".into(),
+                "--diff-filter=U".into(),
+            ],
+            worktree_path,
+        )
+        .map_err(|error| MergeAgentStageFailure::Retryable(error.to_string()))?;
+    if unresolved.status != 0 || !unresolved.stdout.trim().is_empty() {
+        return Err(MergeAgentStageFailure::Retryable(format!(
+            "unresolved conflict files remain after staging: `{}`",
+            single_line(&unresolved.stdout)
+        )));
+    }
+
+    Ok(())
+}
+
+fn abort_merge_repair_if_active(
+    runner: &dyn HandoffCommandRunner,
+    worktree_path: &std::path::Path,
+) {
+    let merge_head = runner.run(
+        "git",
+        &[
+            "rev-parse".into(),
+            "-q".into(),
+            "--verify".into(),
+            "MERGE_HEAD".into(),
+        ],
+        worktree_path,
+    );
+    if merge_head.as_ref().is_ok_and(|output| output.status == 0) {
+        let _ = runner.run("git", &["merge".into(), "--abort".into()], worktree_path);
+    }
 }

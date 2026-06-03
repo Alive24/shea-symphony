@@ -113,6 +113,8 @@ pub struct MergeRepairEvidence {
     pub next_state_rationale: String,
 }
 
+const MERGE_WORKPAD_FIELD_LIMIT: usize = 2_000;
+
 pub fn merge_lane_decision(
     issue: &TrackerIssue,
     expected_merging_state: &str,
@@ -541,6 +543,24 @@ pub fn repair_dirty_pull_request(
     )?;
     require_success("git", &status)?;
     if !status.stdout.trim().is_empty() {
+        if abort_interrupted_merge_repair(runner, &worktree_path)? {
+            let recovered_status = runner.run(
+                "git",
+                &["status".into(), "--porcelain".into()],
+                &worktree_path,
+            )?;
+            require_success("git", &recovered_status)?;
+            if recovered_status.stdout.trim().is_empty() {
+                return repair_dirty_pull_request(
+                    pr_ref,
+                    Some(head_ref_name),
+                    expected_base_branch,
+                    runner,
+                    cwd,
+                    fixture_mode,
+                );
+            }
+        }
         return Ok(MergeConflictRepairOutcome {
             repaired: false,
             worktree_path: Some(worktree_path),
@@ -618,6 +638,39 @@ pub fn repair_dirty_pull_request(
         ),
         failure_kind: None,
     })
+}
+
+fn abort_interrupted_merge_repair(
+    runner: &dyn HandoffCommandRunner,
+    worktree_path: &Path,
+) -> Result<bool, MergeLaneError> {
+    let merge_head = runner.run(
+        "git",
+        &[
+            "rev-parse".into(),
+            "-q".into(),
+            "--verify".into(),
+            "MERGE_HEAD".into(),
+        ],
+        worktree_path,
+    )?;
+    let unmerged = runner.run(
+        "git",
+        &[
+            "diff".into(),
+            "--name-only".into(),
+            "--diff-filter=U".into(),
+        ],
+        worktree_path,
+    )?;
+    let has_interrupted_merge = merge_head.status == 0 || !unmerged.stdout.trim().is_empty();
+    if !has_interrupted_merge {
+        return Ok(false);
+    }
+
+    let abort = runner.run("git", &["merge".into(), "--abort".into()], worktree_path)?;
+    require_success("git", &abort)?;
+    Ok(true)
 }
 
 pub fn fixture_merge_output(pr_ref: &str) -> CommandOutput {
@@ -701,8 +754,14 @@ pub fn merge_lane_workpad_with_repair_evidence(
             String::new(),
             "### Merge Command Evidence".to_string(),
             format!("- Exit status: `{}`", output.status),
-            format!("- Stdout: `{}`", single_line(&output.stdout)),
-            format!("- Stderr: `{}`", single_line(&output.stderr)),
+            format!(
+                "- Stdout: `{}`",
+                compact_merge_workpad_field(&output.stdout)
+            ),
+            format!(
+                "- Stderr: `{}`",
+                compact_merge_workpad_field(&output.stderr)
+            ),
         ]);
     }
 
@@ -710,13 +769,34 @@ pub fn merge_lane_workpad_with_repair_evidence(
         lines.extend([
             String::new(),
             "### Merge Repair Evidence".to_string(),
-            format!("- Method: `{}`", evidence.method),
-            format!("- Conflict summary: {}", evidence.conflict_summary),
-            format!("- Resolution summary: {}", evidence.resolution_summary),
-            format!("- Semantic safety: {}", evidence.semantic_safety),
-            format!("- Verification: {}", evidence.verification),
-            format!("- Push evidence: {}", evidence.push_evidence),
-            format!("- Next-state rationale: {}", evidence.next_state_rationale),
+            format!(
+                "- Method: `{}`",
+                compact_merge_workpad_field(&evidence.method)
+            ),
+            format!(
+                "- Conflict summary: {}",
+                compact_merge_workpad_field(&evidence.conflict_summary)
+            ),
+            format!(
+                "- Resolution summary: {}",
+                compact_merge_workpad_field(&evidence.resolution_summary)
+            ),
+            format!(
+                "- Semantic safety: {}",
+                compact_merge_workpad_field(&evidence.semantic_safety)
+            ),
+            format!(
+                "- Verification: {}",
+                compact_merge_workpad_field(&evidence.verification)
+            ),
+            format!(
+                "- Push evidence: {}",
+                compact_merge_workpad_field(&evidence.push_evidence)
+            ),
+            format!(
+                "- Next-state rationale: {}",
+                compact_merge_workpad_field(&evidence.next_state_rationale)
+            ),
         ]);
     }
 
@@ -989,6 +1069,22 @@ fn require_success(program: &str, output: &CommandOutput) -> Result<(), MergeLan
 
 fn single_line(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn compact_merge_workpad_field(value: &str) -> String {
+    let compact = single_line(value);
+    let truncated = compact
+        .chars()
+        .take(MERGE_WORKPAD_FIELD_LIMIT)
+        .collect::<String>();
+    if truncated.len() < compact.len() {
+        format!(
+            "{truncated}... [truncated; original_chars={}]",
+            compact.chars().count()
+        )
+    } else {
+        compact
+    }
 }
 
 #[cfg(test)]
@@ -1494,6 +1590,44 @@ branch refs/heads/feature/issue-60
         assert!(workpad.contains("- Method: `merge_agent`"));
         assert!(workpad.contains("reviewed intent preserved"));
         assert!(workpad.contains("stay in Merging for reread"));
+    }
+
+    #[test]
+    fn merge_workpad_truncates_oversized_command_and_repair_evidence() {
+        let issue = issue("Merging", vec![pr()]);
+        let decision = MergeLaneDecision {
+            kind: MergeLaneDecisionKind::MergeDirty,
+            issue_ref: issue.identifier.clone(),
+            pr_url: Some("https://github.com/Alive24/shea-symphony/pull/60".into()),
+            target_state: Some("need_human_input"),
+            reason: "merge-agent verification failed".into(),
+        };
+        let long = "models-response ".repeat(10_000);
+        let output = CommandOutput {
+            status: 1,
+            stdout: long.clone(),
+            stderr: long.clone(),
+        };
+        let evidence = MergeRepairEvidence {
+            method: "merge_agent_verification_failed".into(),
+            conflict_summary: long.clone(),
+            resolution_summary: long.clone(),
+            semantic_safety: long.clone(),
+            verification: long.clone(),
+            push_evidence: long.clone(),
+            next_state_rationale: long,
+        };
+
+        let workpad = merge_lane_workpad_with_repair_evidence(
+            &issue,
+            &decision,
+            Some(&output),
+            Some(&evidence),
+        );
+
+        assert!(workpad.len() < 65_536, "workpad len={}", workpad.len());
+        assert!(workpad.contains("[truncated; original_chars="));
+        assert!(!workpad.contains(&"models-response ".repeat(1_000)));
     }
 
     #[test]

@@ -11,6 +11,8 @@ use crate::orchestration::{
     TrackerMutationAudit, TrackerMutationOutcome,
 };
 
+use super::tick::MergeTickOutputScope;
+
 pub(super) fn record_merge_timeline_comment_with_recovery(
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
@@ -90,6 +92,7 @@ pub(crate) fn record_done_merge_lane_completion(
     issue: &TrackerIssue,
     merge_claim: &LaneClaim,
     workpad: &str,
+    output_scope: MergeTickOutputScope,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let pr_url = issue
         .linked_pull_requests
@@ -120,7 +123,13 @@ pub(crate) fn record_done_merge_lane_completion(
         "merged",
     )?;
     set_merge_state_with_recovery(config, adapter, issue, "done", pr_url, "merge completed")?;
-    close_completed_issue(config, adapter, &issue.identifier, Some(issue))?;
+    close_completed_issue(
+        config,
+        adapter,
+        &issue.identifier,
+        Some(issue),
+        output_scope,
+    )?;
     Ok(())
 }
 
@@ -129,6 +138,7 @@ pub(super) fn close_completed_issue(
     adapter: &dyn TrackerAdapter,
     issue_ref: &str,
     initial_issue: Option<&TrackerIssue>,
+    output_scope: MergeTickOutputScope,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let outcome = close_issue_with_recovery(adapter, issue_ref, initial_issue)?;
     if outcome.should_record_audit() {
@@ -146,7 +156,8 @@ pub(super) fn close_completed_issue(
         );
     }
     println!(
-        "merge_once_action=closed_issue issue={} outcome={}",
+        "{}=closed_issue issue={} outcome={}",
+        output_scope.action_prefix(),
         issue_ref,
         outcome.as_str()
     );

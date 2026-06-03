@@ -131,6 +131,7 @@ pub struct CodexConfig {
     pub turn_timeout_ms: u64,
     pub read_timeout_ms: u64,
     pub stall_timeout_ms: u64,
+    pub session_stale_after_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -335,6 +336,8 @@ impl RuntimeConfig {
             turn_timeout_ms: get_u64(root.get("codex"), "turn_timeout_ms").unwrap_or(3_600_000),
             read_timeout_ms: get_u64(root.get("codex"), "read_timeout_ms").unwrap_or(5_000),
             stall_timeout_ms: get_u64(root.get("codex"), "stall_timeout_ms").unwrap_or(300_000),
+            session_stale_after_ms: get_u64(root.get("codex"), "session_stale_after_ms")
+                .unwrap_or(30 * 60 * 1000),
         };
         let claude = ClaudeConfig {
             command: get_string(root.get("claude"), "command")
@@ -968,7 +971,7 @@ mod tests {
     fn codex_model_and_reasoning_effort_are_configurable() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\ntracker:\n  kind: memory\ncodex:\n  model: gpt-5.5\n  reasoning_effort: high\n---\nPrompt",
+            "---\ntracker:\n  kind: memory\ncodex:\n  model: gpt-5.5\n  reasoning_effort: high\n  stall_timeout_ms: 60000\n  session_stale_after_ms: 120000\n---\nPrompt",
         )
         .unwrap();
         let config =
@@ -976,6 +979,21 @@ mod tests {
 
         assert_eq!(config.codex.model.as_deref(), Some("gpt-5.5"));
         assert_eq!(config.codex.reasoning_effort, "high");
+        assert_eq!(config.codex.stall_timeout_ms, 60_000);
+        assert_eq!(config.codex.session_stale_after_ms, 120_000);
+    }
+
+    #[test]
+    fn codex_session_stale_after_defaults_to_thirty_minutes() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.codex.session_stale_after_ms, 30 * 60 * 1000);
     }
 
     #[test]

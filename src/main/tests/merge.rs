@@ -40,9 +40,38 @@ fn clean_merge_tick_does_not_require_merge_agent_backend() {
         )
         .unwrap();
 
-    let outcome = merge_once_tick(workflow_path, false, false, false).unwrap();
+    let outcome = merge_once_tick(
+        workflow_path,
+        false,
+        false,
+        false,
+        MergeTickOutputScope::Direct,
+    )
+    .unwrap();
 
     assert_eq!(outcome, MergeOnceOutcome::NoMergingIssue);
+}
+
+#[test]
+fn merge_tick_output_scope_keeps_loop_output_at_loop_level() {
+    assert_eq!(
+        MergeTickOutputScope::Direct.action_prefix(),
+        "merge_once_action"
+    );
+    assert_eq!(MergeTickOutputScope::Direct.stop_prefix(), "merge_once");
+    assert_eq!(
+        MergeTickOutputScope::Direct.dry_run_prefix(),
+        "merge_once_dry_run"
+    );
+    assert_eq!(
+        MergeTickOutputScope::Loop.action_prefix(),
+        "merge_loop_action"
+    );
+    assert_eq!(MergeTickOutputScope::Loop.stop_prefix(), "merge_loop");
+    assert_eq!(
+        MergeTickOutputScope::Loop.dry_run_prefix(),
+        "merge_loop_dry_run"
+    );
 }
 
 #[test]
@@ -91,6 +120,70 @@ fn successful_merge_agent_repair_records_merging_retry_rationale() {
 }
 
 #[test]
+fn dirty_repair_aborts_interrupted_merge_state_before_retrying() {
+    let runner = InterruptedMergeRepairRunner::new();
+
+    let outcome = repair_dirty_pull_request(
+        "https://github.com/Alive24/shea-symphony/pull/390",
+        Some("feature/issue-390"),
+        "main",
+        &runner,
+        Path::new("."),
+        false,
+    )
+    .unwrap();
+
+    assert!(outcome.repaired);
+    assert_eq!(outcome.failure_kind, None);
+    let calls = runner.calls.borrow();
+    assert!(calls.iter().any(|call| call == "git merge --abort"));
+    assert!(calls
+        .iter()
+        .any(|call| call == "git merge --no-edit origin/main"));
+    assert!(calls
+        .iter()
+        .any(|call| call == "git push origin feature/issue-390"));
+}
+
+#[test]
+fn merge_agent_stage_closes_resolved_unmerged_index() {
+    let runner = ResolvedUnmergedIndexRunner::new();
+
+    stage_resolved_merge_agent_changes(&runner, Path::new(".")).unwrap();
+
+    let calls = runner.calls.borrow();
+    assert_eq!(
+        calls.as_slice(),
+        [
+            "git diff --check",
+            "git status --porcelain",
+            "git add -A",
+            "git diff --name-only --diff-filter=U"
+        ]
+    );
+}
+
+#[test]
+fn merge_agent_stage_add_failure_is_not_retryable_loop() {
+    let runner = GitAddFailureRunner::new();
+
+    let error = stage_resolved_merge_agent_changes(&runner, Path::new(".")).unwrap_err();
+
+    assert_eq!(
+        error,
+        MergeAgentStageFailure::Unsafe(
+            "`git add -A` failed after merge-agent reported repair: stdout=`` stderr=`fatal: Unable to create index.lock`"
+                .into()
+        )
+    );
+    let calls = runner.calls.borrow();
+    assert_eq!(
+        calls.as_slice(),
+        ["git diff --check", "git status --porcelain", "git add -A"]
+    );
+}
+
+#[test]
 fn merge_agent_semantic_uncertainty_marker_requires_human_input() {
     let text = "\
 RESOLUTION_SUMMARY: conflict needs product choice
@@ -99,6 +192,202 @@ MERGE_AGENT_DECISION: needs_human_input";
 
     assert!(merge_agent_requests_human_input(text));
     assert!(!merge_agent_reports_repaired(text));
+}
+
+struct InterruptedMergeRepairRunner {
+    calls: std::cell::RefCell<Vec<String>>,
+    aborted: std::cell::RefCell<bool>,
+}
+
+impl InterruptedMergeRepairRunner {
+    fn new() -> Self {
+        Self {
+            calls: std::cell::RefCell::new(Vec::new()),
+            aborted: std::cell::RefCell::new(false),
+        }
+    }
+}
+
+impl HandoffCommandRunner for InterruptedMergeRepairRunner {
+    fn run(
+        &self,
+        program: &str,
+        args: &[String],
+        _cwd: &Path,
+    ) -> Result<CommandOutput, shea_symphony::git_handoff::GitHandoffError> {
+        let command = format!("{program} {}", args.join(" "));
+        self.calls.borrow_mut().push(command.clone());
+        let aborted = *self.aborted.borrow();
+        match command.as_str() {
+            "git worktree list --porcelain" => Ok(CommandOutput {
+                status: 0,
+                stdout:
+                    "worktree /tmp/issue-390\nHEAD abc123\nbranch refs/heads/feature/issue-390\n\n"
+                        .into(),
+                stderr: String::new(),
+            }),
+            "git status --porcelain" if !aborted => Ok(CommandOutput {
+                status: 0,
+                stdout: "UU app/test/operator-view.test.mjs\n".into(),
+                stderr: String::new(),
+            }),
+            "git status --porcelain" => Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+            "git rev-parse -q --verify MERGE_HEAD" if !aborted => Ok(CommandOutput {
+                status: 0,
+                stdout: "abc123\n".into(),
+                stderr: String::new(),
+            }),
+            "git rev-parse -q --verify MERGE_HEAD" => Ok(CommandOutput {
+                status: 1,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+            "git diff --name-only --diff-filter=U" if !aborted => Ok(CommandOutput {
+                status: 0,
+                stdout: "app/test/operator-view.test.mjs\n".into(),
+                stderr: String::new(),
+            }),
+            "git diff --name-only --diff-filter=U" => Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+            "git merge --abort" => {
+                *self.aborted.borrow_mut() = true;
+                Ok(CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+            }
+            "git fetch origin main" | "git merge --no-edit origin/main" => Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+            "git push origin feature/issue-390" => Ok(CommandOutput {
+                status: 0,
+                stdout: "pushed\n".into(),
+                stderr: String::new(),
+            }),
+            _ => Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+        }
+    }
+}
+
+struct ResolvedUnmergedIndexRunner {
+    calls: std::cell::RefCell<Vec<String>>,
+    staged: std::cell::RefCell<bool>,
+}
+
+impl ResolvedUnmergedIndexRunner {
+    fn new() -> Self {
+        Self {
+            calls: std::cell::RefCell::new(Vec::new()),
+            staged: std::cell::RefCell::new(false),
+        }
+    }
+}
+
+impl HandoffCommandRunner for ResolvedUnmergedIndexRunner {
+    fn run(
+        &self,
+        program: &str,
+        args: &[String],
+        _cwd: &Path,
+    ) -> Result<CommandOutput, shea_symphony::git_handoff::GitHandoffError> {
+        let command = format!("{program} {}", args.join(" "));
+        self.calls.borrow_mut().push(command.clone());
+        match command.as_str() {
+            "git diff --check" => Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+            "git status --porcelain" => Ok(CommandOutput {
+                status: 0,
+                stdout: "UU app/test/operator-view.test.mjs\n".into(),
+                stderr: String::new(),
+            }),
+            "git add -A" => {
+                *self.staged.borrow_mut() = true;
+                Ok(CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+            }
+            "git diff --name-only --diff-filter=U" if *self.staged.borrow() => Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+            "git diff --name-only --diff-filter=U" => Ok(CommandOutput {
+                status: 0,
+                stdout: "app/test/operator-view.test.mjs\n".into(),
+                stderr: String::new(),
+            }),
+            _ => Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+        }
+    }
+}
+
+struct GitAddFailureRunner {
+    calls: std::cell::RefCell<Vec<String>>,
+}
+
+impl GitAddFailureRunner {
+    fn new() -> Self {
+        Self {
+            calls: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+}
+
+impl HandoffCommandRunner for GitAddFailureRunner {
+    fn run(
+        &self,
+        program: &str,
+        args: &[String],
+        _cwd: &Path,
+    ) -> Result<CommandOutput, shea_symphony::git_handoff::GitHandoffError> {
+        let command = format!("{program} {}", args.join(" "));
+        self.calls.borrow_mut().push(command.clone());
+        match command.as_str() {
+            "git diff --check" => Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+            "git status --porcelain" => Ok(CommandOutput {
+                status: 0,
+                stdout: "UU app/test/operator-view.test.mjs\n".into(),
+                stderr: String::new(),
+            }),
+            "git add -A" => Ok(CommandOutput {
+                status: 128,
+                stdout: String::new(),
+                stderr: "fatal: Unable to create index.lock\n".into(),
+            }),
+            _ => Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+        }
+    }
 }
 
 #[test]
@@ -223,7 +512,15 @@ fn merge_completion_closes_issue_after_workpad_and_done_state() {
     let workpad = "## Shea Symphony Merge Run\n\n### Merge Action\n";
 
     let config = test_config();
-    record_done_merge_lane_completion(&config, &adapter, &issue, &claim, workpad).unwrap();
+    record_done_merge_lane_completion(
+        &config,
+        &adapter,
+        &issue,
+        &claim,
+        workpad,
+        MergeTickOutputScope::Direct,
+    )
+    .unwrap();
 
     assert_eq!(
         adapter.operations(),
@@ -262,6 +559,7 @@ fn merge_completion_preserves_terminal_claim_audit_pointer() {
         &issue,
         &claim,
         "## Shea Symphony Merge Run\n\n### Merge Action\n",
+        MergeTickOutputScope::Direct,
     )
     .unwrap();
 

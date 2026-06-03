@@ -720,7 +720,14 @@ target/debug/shea-symphony main loop workflows/shea-symphony.md --max-iterations
 default without moving the issue to `Rework`, clearing dirty worktrees, or
 advancing to `Agent Review`. It reuses a tracker/runtime/discovery-backed git
 worktree under the configured workspace root and leaves normal handoff to a
-later successful Main result. A dirty worktree is acceptable only for a
+later successful Main result. Codex app-server session staleness defaults to
+30 minutes and can be tuned with `codex.session_stale_after_ms` in the workflow.
+Codex app-server turn inactivity defaults to 5 minutes and can be tuned with
+`codex.stall_timeout_ms`; a turn that starts but produces no further protocol
+events is terminated and retried rather than waiting for the full turn timeout.
+When a registered Codex app-server session is stale and has recorded process
+evidence, recovery terminates that stale process before resuming the saved
+thread with a fresh `Continue` turn. A dirty worktree is acceptable only for a
 recoverable `In Progress` Main runtime when the branch or path still matches the
 same issue; detached, ambiguous, or mismatched dirty worktrees still require
 human inspection. Use `--no-recover` only for debugging or a deliberately
@@ -774,7 +781,9 @@ lane continues. An uncertain write prints `recoverable_tracker_mutation_uncertai
 with the mutation type, issue or PR, failure kind, and next safe action; rerun
 the same lane command after waiting or inspect with `project issue`. Do not
 clear lane claims to recover uncertainty, and do not send merge transport
-failures to `Rework`.
+failures to `Rework`. Already-applied recovery checks are intentionally quiet in
+default output; use issue readback, event logs, or verbose diagnostics when you
+need to inspect idempotent reruns.
 For supervised merge terminals, use `merge claim WORKFLOW '#issue' --worker
 <worker> --write` on a `Merging` issue; the claim records truthful non-tmux
 manual evidence for the `run=`. Then use `session start WORKFLOW '#issue'
@@ -782,10 +791,14 @@ manual evidence for the `run=`. Then use `session start WORKFLOW '#issue'
 Session startup validates the `Merging Agent` field and writes attach/log
 evidence without merging the PR or closing the issue.
 
-Operator commands also print compact `Latest:` lines for the current lane,
-issue, category, action, actor, workspace/branch when known, and next expected
-step. Treat these as the glanceable status bar; detailed line logs and JSONL
-events remain the durable audit trail.
+Operator commands print compact issue-scoped `Latest:` lines for the current
+lane, issue, category, action, actor, workspace/branch when known, and next
+expected step. Treat these as the glanceable status bar; no-issue idle ticks and
+runtime telemetry belong to JSON/status details, while JSONL events remain the
+durable audit trail. Autopilot invokes lane ticks in quiet mode by default, so
+iteration counters, selected-none stops, already-queued skips, and bare
+`reason=` / `pull_request=` diagnostics do not enter the operator stream unless
+you opt into verbose diagnostics.
 
 ```bash
 target/debug/shea-symphony main loop workflows/shea-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run

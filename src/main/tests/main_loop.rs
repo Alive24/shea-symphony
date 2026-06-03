@@ -50,6 +50,7 @@ fn main_tmux_session_record(issue_identifier: &str, status: SessionStatus) -> Ag
         branch: Some("feature/issue-338".into()),
         backend: "tmux".into(),
         session_name: "shea-main-338-attempt-1-reconcile".into(),
+        process_id: None,
         pane_target: "shea-main-338-attempt-1-reconcile".into(),
         prompt_artifact_path: PathBuf::from("/tmp/prompt.md"),
         log_path: PathBuf::from("/tmp/session.log"),
@@ -268,6 +269,7 @@ done
         recover: true,
         max_concurrent: Some(2),
         display: DisplayMode::Plain,
+        quiet_idle: false,
     };
 
     run_loop_dispatch_write_candidates(
@@ -830,6 +832,7 @@ fn main_loop_reconciles_completed_pending_session_without_relaunching_backend() 
             branch: Some(handoff.branch_name.clone()),
             backend: "codex".into(),
             session_name: "shea-main-29".into(),
+            process_id: None,
             pane_target: String::new(),
             prompt_artifact_path: temp.path().join("prompt.md"),
             log_path: temp.path().join("shea-main-29.log"),
@@ -894,6 +897,7 @@ fn no_dispatch_sleeps_without_iteration_limit() {
         write: false,
         recover: false,
         display: DisplayMode::Plain,
+        quiet_idle: false,
     };
 
     assert_eq!(
@@ -926,6 +930,7 @@ fn run_loop_write_mode_rejects_dry_run_backend_before_runtime_writes() {
         write: true,
         recover: false,
         display: DisplayMode::Plain,
+        quiet_idle: false,
     })
     .unwrap_err()
     .to_string();
@@ -964,6 +969,7 @@ fn run_loop_dry_run_preview_allows_dry_run_backend() {
         write: false,
         recover: false,
         display: DisplayMode::Plain,
+        quiet_idle: false,
     })
     .unwrap();
 }
@@ -978,6 +984,7 @@ fn no_dispatch_stops_for_bounded_write_loop() {
         write: true,
         recover: false,
         display: DisplayMode::Plain,
+        quiet_idle: false,
     };
 
     assert_eq!(
@@ -998,6 +1005,7 @@ fn no_dispatch_sleeps_for_unbounded_write_loop() {
         write: true,
         recover: false,
         display: DisplayMode::Plain,
+        quiet_idle: false,
     };
 
     assert_eq!(

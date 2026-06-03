@@ -180,7 +180,7 @@ fn clap_parser_keeps_operator_command_aliases() {
                 interactive: false,
                 auto_fix: false,
                 write: false,
-                stale_after_ms: 10_800_000,
+                stale_after_ms: None,
                 action: None,
             }
         }
@@ -379,7 +379,7 @@ fn parses_doctor_json_and_strict_flags() {
                 interactive: false,
                 auto_fix: false,
                 write: false,
-                stale_after_ms: 10_800_000,
+                stale_after_ms: None,
                 action: None,
             }
         }
@@ -399,7 +399,7 @@ fn parses_short_doctor_commands() {
                 interactive: true,
                 auto_fix: false,
                 write: false,
-                stale_after_ms: 10_800_000,
+                stale_after_ms: None,
                 action: None,
             }
         }
@@ -415,7 +415,7 @@ fn parses_short_doctor_commands() {
                 interactive: false,
                 auto_fix: true,
                 write: false,
-                stale_after_ms: 10_800_000,
+                stale_after_ms: None,
                 action: None,
             }
         }
@@ -431,7 +431,7 @@ fn parses_short_doctor_commands() {
                 interactive: false,
                 auto_fix: false,
                 write: false,
-                stale_after_ms: 10_800_000,
+                stale_after_ms: None,
                 action: Some(DoctorAction::Repair(DoctorRepairIssueOptions {
                     issue_ref: "194".into(),
                     write: false,

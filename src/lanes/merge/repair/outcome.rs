@@ -61,6 +61,7 @@ pub(crate) fn finish_merge_agent_repaired_branch(
     }
     Ok(MergeAgentConflictRepairOutcome {
         repaired: true,
+        retryable: false,
         output: CommandOutput {
             status: 0,
             stdout: format!(
@@ -94,6 +95,7 @@ pub(super) fn merge_agent_repair_blocked(
 ) -> MergeAgentConflictRepairOutcome {
     MergeAgentConflictRepairOutcome {
         repaired: false,
+        retryable: false,
         output: mechanical_repair.output.clone(),
         evidence: MergeRepairEvidence {
             method: "merge_agent_not_started".into(),
@@ -117,6 +119,7 @@ pub(super) fn merge_agent_repair_backend_failed(
 ) -> MergeAgentConflictRepairOutcome {
     MergeAgentConflictRepairOutcome {
         repaired: false,
+        retryable: true,
         output: CommandOutput {
             status: 1,
             stdout: String::new(),
@@ -130,7 +133,7 @@ pub(super) fn merge_agent_repair_backend_failed(
             verification: "No completed repair verification.".into(),
             push_evidence: "No push attempted.".into(),
             next_state_rationale:
-                "Route to `Need Human Input` because the repair backend could not complete safely."
+                "Keep the issue in `Merging` for retry because the repair backend did not reach a semantic decision."
                     .into(),
         },
         reason,
@@ -147,6 +150,7 @@ pub(super) fn merge_agent_repair_semantic_uncertainty(
 ) -> MergeAgentConflictRepairOutcome {
     MergeAgentConflictRepairOutcome {
         repaired: false,
+        retryable: false,
         output: CommandOutput {
             status: 1,
             stdout: reason.into(),
@@ -179,6 +183,7 @@ pub(super) fn merge_agent_repair_verification_failed(
 ) -> MergeAgentConflictRepairOutcome {
     MergeAgentConflictRepairOutcome {
         repaired: false,
+        retryable: false,
         output: CommandOutput {
             status: 1,
             stdout: String::new(),
@@ -192,6 +197,37 @@ pub(super) fn merge_agent_repair_verification_failed(
             verification: reason.clone(),
             push_evidence: "No push attempted.".into(),
             next_state_rationale: "Route to `Need Human Input` because the repaired branch was not clean and verified.".into(),
+        },
+        reason,
+        backend: backend.into(),
+        session_id,
+    }
+}
+
+pub(super) fn merge_agent_repair_retryable_verification_failed(
+    backend: &str,
+    session_id: Option<String>,
+    conflict_summary: &str,
+    reason: String,
+) -> MergeAgentConflictRepairOutcome {
+    MergeAgentConflictRepairOutcome {
+        repaired: false,
+        retryable: true,
+        output: CommandOutput {
+            status: 1,
+            stdout: String::new(),
+            stderr: reason.clone(),
+        },
+        evidence: MergeRepairEvidence {
+            method: "merge_agent_retryable_verification_failed".into(),
+            conflict_summary: conflict_summary.into(),
+            resolution_summary: reason.clone(),
+            semantic_safety:
+                "The merge lane cleaned up the interrupted repair attempt before retrying."
+                    .into(),
+            verification: reason.clone(),
+            push_evidence: "No push attempted.".into(),
+            next_state_rationale: "Keep the issue in `Merging` because the failed repair attempt was cleaned up and can be retried automatically.".into(),
         },
         reason,
         backend: backend.into(),

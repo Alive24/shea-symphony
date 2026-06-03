@@ -51,7 +51,13 @@ review handoff.
 Main-lane crash recovery is enabled by default for bounded `main loop --write`
 ticks. It restarts recoverable interrupted `In Progress` runtime slots as new
 attempts while preserving issue state, dirty worktrees, and existing claim
-evidence. Use `--no-recover` only for debugging or a deliberately conservative
+evidence. Codex app-server session staleness defaults to 30 minutes and can be
+configured with `codex.session_stale_after_ms`; stale registered app-server
+processes are terminated before recovery resumes the saved thread with
+`Continue`. Codex app-server turn inactivity defaults to 5 minutes and can be
+configured with `codex.stall_timeout_ms`; a turn that starts but emits no further
+protocol events is terminated and treated as retryable lane backend failure.
+Use `--no-recover` only for debugging or a deliberately conservative
 operator pass. Manual session recovery remains a two-step break-glass path: use
 `main claim`, `review claim`, or `merge claim` to write the matching Project
 claim field, print the structured `run=`, and record minimum non-tmux registry
@@ -65,9 +71,12 @@ supervised fallback while automatic Review uses Gemini headless.
 Clean `merge once` / `merge loop` remains direct CLI merge behavior and does not
 launch a merge-agent runtime. Dirty PRs still try the mechanical direct-CLI
 repair first; only content conflicts in a trusted clean PR worktree launch the
-configured merge-agent backend. Session commands validate the existing claim and
-write runtime evidence without approving reviews, merging PRs, or closing
-issues.
+configured merge-agent backend. Interrupted conflict-repair attempts are
+aborted back to a clean PR-branch baseline on the next tick before retrying, and
+retryable backend or verification failures stay in `Merging` instead of asking
+for human input when no semantic decision is required. Session commands validate
+the existing claim and write runtime evidence without approving reviews, merging
+PRs, or closing issues.
 
 Merge-lane crash recovery is enabled by default for bounded
 `merge loop --write` ticks. It adopts interrupted structured merge-loop/goal

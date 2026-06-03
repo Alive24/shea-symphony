@@ -251,10 +251,6 @@ pub(crate) fn set_project_field_with_recovery(
     mutation_type: &str,
 ) -> Result<TrackerMutationOutcome, Box<dyn std::error::Error>> {
     if issue_project_field_matches(issue, &assignment.name, &assignment.value) {
-        println!(
-            "tracker_recovery action=already_applied mutation_type={} issue={} field={:?}",
-            mutation_type, issue.identifier, assignment.name
-        );
         return Ok(TrackerMutationOutcome::AlreadyApplied);
     }
 
@@ -278,9 +274,6 @@ pub(crate) fn set_state_with_recovery(
     mutation_type: &str,
 ) -> Result<TrackerMutationOutcome, Box<dyn std::error::Error>> {
     if initial_issue.is_some_and(|issue| issue_state_matches(issue, normalized_state)) {
-        println!(
-            "tracker_recovery action=already_applied mutation_type={mutation_type} issue={issue_ref} state={normalized_state}"
-        );
         return Ok(TrackerMutationOutcome::AlreadyApplied);
     }
 
@@ -302,11 +295,6 @@ pub(crate) fn upsert_workpad_with_recovery(
     key: &str,
 ) -> Result<TrackerMutationOutcome, Box<dyn std::error::Error>> {
     if initial_issue.is_some_and(|issue| issue_has_recovery_marker(issue, key)) {
-        println!(
-            "tracker_recovery action=already_applied mutation_type=workpad_write issue={} key={}",
-            issue_ref,
-            recovery_key_component(key)
-        );
         return Ok(TrackerMutationOutcome::AlreadyApplied);
     }
 
@@ -330,12 +318,6 @@ pub(crate) fn add_timeline_comment_with_recovery(
     mutation_type: &str,
 ) -> Result<TrackerMutationOutcome, Box<dyn std::error::Error>> {
     if initial_issue.is_some_and(|issue| issue_has_recovery_marker(issue, key)) {
-        println!(
-            "tracker_recovery action=already_applied mutation_type={} issue={} key={}",
-            mutation_type,
-            issue_ref,
-            recovery_key_component(key)
-        );
         return Ok(TrackerMutationOutcome::AlreadyApplied);
     }
 
@@ -356,9 +338,6 @@ pub(crate) fn close_issue_with_recovery(
     initial_issue: Option<&TrackerIssue>,
 ) -> Result<TrackerMutationOutcome, Box<dyn std::error::Error>> {
     if initial_issue.is_some_and(issue_is_closed) {
-        println!(
-            "tracker_recovery action=already_applied mutation_type=issue_close issue={issue_ref}"
-        );
         return Ok(TrackerMutationOutcome::AlreadyApplied);
     }
 

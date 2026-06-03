@@ -2530,6 +2530,11 @@ a {
   font-size: var(--text-xs);
 }
 
+.lane-completed-age.unknown {
+  color: color-mix(in oklab, var(--warn), var(--muted) 46%);
+  font-weight: 700;
+}
+
 .lane-completed-row code {
   display: block;
   padding: 2px 0;

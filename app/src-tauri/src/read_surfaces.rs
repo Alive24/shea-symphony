@@ -550,25 +550,59 @@ fn completed_issue_worktrees(
             let Some(worktree) = worktrees_by_issue.get(&issue) else {
                 continue;
             };
-            let updated_at = session.get("updated_at_ms").cloned().unwrap_or(Value::Null);
+            let session_source = session
+                .get("session_source")
+                .and_then(Value::as_str)
+                .unwrap_or("session_registry");
+            let is_project_readback_cache = session_source == "project_readback_cache";
+            let updated_at = if is_project_readback_cache {
+                Value::Null
+            } else {
+                session.get("updated_at_ms").cloned().unwrap_or(Value::Null)
+            };
+            let title = session.get("issue_title").cloned().unwrap_or(Value::Null);
+            let state = if is_project_readback_cache {
+                session.get("project_state").cloned().unwrap_or(Value::Null)
+            } else {
+                Value::String("Done".into())
+            };
+            let url = session.get("project_url").cloned().unwrap_or(Value::Null);
+            let last_progress_source = if updated_at.is_null() {
+                Value::String("unavailable".into())
+            } else {
+                Value::String("session_registry.updated_at_ms".into())
+            };
             completed.insert(
                 issue.clone(),
                 json!({
                     "issue": issue,
-                    "title": session.get("issue_title").cloned().unwrap_or(Value::Null),
-                    "state": "Done",
+                    "title": title,
+                    "state": state,
                     "lane": session.get("lane").cloned().unwrap_or(Value::Null),
+                    "url": url,
                     "completedAt": updated_at,
                     "createdAt": session.get("started_at_ms").cloned().unwrap_or_else(|| worktree.get("createdAt").cloned().unwrap_or(Value::Null)),
-                    "lastProgressAt": session.get("updated_at_ms").cloned().unwrap_or(Value::Null),
+                    "lastProgressAt": updated_at,
+                    "lastProgressSource": last_progress_source,
                     "path": worktree.get("path").cloned().unwrap_or(Value::Null),
                     "branch": worktree.get("branch").cloned().unwrap_or(Value::Null),
                     "head": worktree.get("head").cloned().unwrap_or(Value::Null),
                     "lastModified": worktree.get("lastModified").cloned().unwrap_or(Value::Null),
+                    "lastModifiedSource": "git_worktree_filesystem",
                     "treeState": worktree.get("treeState").cloned().unwrap_or(Value::Null),
                     "diskBytes": worktree.get("diskBytes").cloned().unwrap_or(Value::Null),
                     "evidence": session.get("evidence").cloned().unwrap_or(Value::Null),
-                    "artifactSource": "session_registry",
+                    "artifactSource": if is_project_readback_cache { "project_readback_cache" } else { "session_registry" },
+                    "timestampSources": {
+                        "lastProgress": {
+                            "source": if is_project_readback_cache { "unavailable" } else { "session_registry.updated_at_ms" },
+                            "meaning": if is_project_readback_cache { "No durable handoff progress evidence is available from the local read surface." } else { "Session registry lane progress timestamp." }
+                        },
+                        "lastModified": {
+                            "source": "git_worktree_filesystem",
+                            "meaning": "Latest counted local worktree file modification time."
+                        }
+                    },
                 }),
             );
         }
@@ -582,6 +616,19 @@ fn completed_issue_worktrees(
             continue;
         };
         let previous = completed.get(issue);
+        let last_progress_at = previous
+            .and_then(|entry| entry.get("lastProgressAt"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let last_progress_source = previous
+            .and_then(|entry| entry.get("lastProgressSource"))
+            .cloned()
+            .unwrap_or_else(|| Value::String("unavailable".into()));
+        let project_updated_at = project_issue
+            .get("updatedAt")
+            .or_else(|| project_issue.get("updated_at"))
+            .cloned()
+            .unwrap_or(Value::Null);
         completed.insert(
             issue.to_string(),
             json!({
@@ -590,17 +637,41 @@ fn completed_issue_worktrees(
                 "state": project_issue.get("state").cloned().unwrap_or(Value::Null),
                 "lane": previous.and_then(|entry| entry.get("lane")).cloned().unwrap_or(Value::Null),
                 "url": project_issue.get("url").cloned().unwrap_or(Value::Null),
-                "completedAt": previous.and_then(|entry| entry.get("completedAt")).cloned().unwrap_or_else(|| worktree.get("lastModified").cloned().unwrap_or(Value::Null)),
+                "completedAt": previous.and_then(|entry| entry.get("completedAt")).cloned().unwrap_or(Value::Null),
                 "createdAt": previous.and_then(|entry| entry.get("createdAt")).cloned().unwrap_or_else(|| worktree.get("createdAt").cloned().unwrap_or(Value::Null)),
-                "lastProgressAt": previous.and_then(|entry| entry.get("lastProgressAt")).cloned().unwrap_or_else(|| project_issue.get("updatedAt").or_else(|| project_issue.get("updated_at")).cloned().unwrap_or(Value::Null)),
+                "lastProgressAt": last_progress_at,
+                "lastProgressSource": last_progress_source,
+                "projectUpdatedAt": project_updated_at,
+                "projectUpdatedAtSource": "github_project_issue.updatedAt",
                 "path": worktree.get("path").cloned().unwrap_or(Value::Null),
                 "branch": worktree.get("branch").cloned().unwrap_or(Value::Null),
                 "head": worktree.get("head").cloned().unwrap_or(Value::Null),
                 "lastModified": worktree.get("lastModified").cloned().unwrap_or(Value::Null),
+                "lastModifiedSource": "git_worktree_filesystem",
                 "treeState": worktree.get("treeState").cloned().unwrap_or(Value::Null),
                 "diskBytes": worktree.get("diskBytes").cloned().unwrap_or(Value::Null),
-                "evidence": previous.and_then(|entry| entry.get("evidence")).cloned().unwrap_or_else(|| Value::String("project issue readback + git worktree".into())),
-                "artifactSource": previous.and_then(|entry| entry.get("artifactSource")).cloned().unwrap_or_else(|| Value::String("project_issue".into())),
+                "evidence": previous.and_then(|entry| entry.get("evidence")).cloned().unwrap_or_else(|| Value::String("project issue readback supplies title/state/url; no handoff progress evidence found".into())),
+                "artifactSource": previous.and_then(|entry| entry.get("artifactSource")).cloned().unwrap_or_else(|| Value::String("project_issue_readback".into())),
+                "timestampSources": {
+                    "lastProgress": {
+                        "source": previous
+                            .and_then(|entry| entry.pointer("/timestampSources/lastProgress/source"))
+                            .cloned()
+                            .unwrap_or_else(|| Value::String("unavailable".into())),
+                        "meaning": previous
+                            .and_then(|entry| entry.pointer("/timestampSources/lastProgress/meaning"))
+                            .cloned()
+                            .unwrap_or_else(|| Value::String("No durable handoff progress evidence is available from the local read surface.".into()))
+                    },
+                    "lastModified": {
+                        "source": "git_worktree_filesystem",
+                        "meaning": "Latest counted local worktree file modification time."
+                    },
+                    "projectUpdatedAt": {
+                        "source": "github_project_issue.updatedAt",
+                        "meaning": "Broad Project/GitHub issue readback timestamp retained as metadata only; it must not drive Last Progress."
+                    }
+                },
             }),
         );
     }
@@ -1118,6 +1189,134 @@ mod tests {
         );
         assert_eq!(parsed["projectStateAccess"], "paused");
         assert_eq!(parsed["failureKind"], "rate_limit");
+    }
+
+    #[test]
+    fn project_updated_at_does_not_populate_completed_worktree_progress() {
+        let snapshot = json!({ "sessions": [] });
+        let issue_worktrees = json!([
+            {
+                "issue": "#244",
+                "path": "/tmp/issue-244",
+                "branch": "feature/issue-244",
+                "head": "abc1234",
+                "createdAt": 1_000,
+                "lastModified": 2_000,
+                "treeState": "clean",
+                "diskBytes": 128
+            }
+        ]);
+        let project_issues = json!([
+            {
+                "identifier": "#244",
+                "title": "Old completed issue",
+                "state": "Done",
+                "url": "https://github.com/Alive24/shea-symphony/issues/244",
+                "updatedAt": "2026-06-03T09:00:00Z"
+            }
+        ]);
+
+        let completed = completed_issue_worktrees(&snapshot, &issue_worktrees, &project_issues);
+        let rows = completed.as_array().unwrap();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["state"], "Done");
+        assert!(rows[0]["lastProgressAt"].is_null());
+        assert_eq!(rows[0]["lastProgressSource"], "unavailable");
+        assert_eq!(rows[0]["projectUpdatedAt"], "2026-06-03T09:00:00Z");
+        assert_eq!(rows[0]["lastModified"], 2_000);
+        assert_eq!(
+            rows[0]["timestampSources"]["projectUpdatedAt"]["meaning"],
+            "Broad Project/GitHub issue readback timestamp retained as metadata only; it must not drive Last Progress."
+        );
+    }
+
+    #[test]
+    fn session_registry_progress_takes_precedence_over_project_readback_metadata() {
+        let snapshot = json!({
+            "sessions": [
+                {
+                    "status": "completed",
+                    "issue_identifier": "#251",
+                    "issue_title": "Session-backed completed issue",
+                    "lane": "main",
+                    "started_at_ms": 900,
+                    "updated_at_ms": 1_500,
+                    "evidence": "Main handoff evidence"
+                }
+            ]
+        });
+        let issue_worktrees = json!([
+            {
+                "issue": "#251",
+                "path": "/tmp/issue-251",
+                "branch": "feature/issue-251",
+                "head": "def5678",
+                "createdAt": 1_000,
+                "lastModified": 3_000,
+                "treeState": "dirty",
+                "diskBytes": 256
+            }
+        ]);
+        let project_issues = json!([
+            {
+                "identifier": "#251",
+                "title": "Project title",
+                "state": "Done",
+                "url": "https://github.com/Alive24/shea-symphony/issues/251",
+                "updatedAt": "2026-06-03T09:00:00Z"
+            }
+        ]);
+
+        let completed = completed_issue_worktrees(&snapshot, &issue_worktrees, &project_issues);
+        let rows = completed.as_array().unwrap();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["lastProgressAt"], 1_500);
+        assert_eq!(rows[0]["lastProgressSource"], "session_registry.updated_at_ms");
+        assert_eq!(rows[0]["projectUpdatedAt"], "2026-06-03T09:00:00Z");
+        assert_eq!(rows[0]["lastModified"], 3_000);
+    }
+
+    #[test]
+    fn project_readback_cache_does_not_create_handoff_progress() {
+        let snapshot = json!({
+            "sessions": [
+                {
+                    "status": "recorded",
+                    "session_source": "project_readback_cache",
+                    "issue_identifier": "#248",
+                    "issue_title": "Cached project readback",
+                    "project_state": "Done",
+                    "project_url": "https://github.com/Alive24/shea-symphony/issues/248",
+                    "lane": "project",
+                    "started_at_ms": 4_000,
+                    "updated_at_ms": 5_000
+                }
+            ]
+        });
+        let issue_worktrees = json!([
+            {
+                "issue": "#248",
+                "path": "/tmp/issue-248",
+                "branch": "feature/issue-248",
+                "head": "feed248",
+                "createdAt": 1_000,
+                "lastModified": 2_000,
+                "treeState": "clean",
+                "diskBytes": 512
+            }
+        ]);
+
+        let completed = completed_issue_worktrees(&snapshot, &issue_worktrees, &json!([]));
+        let rows = completed.as_array().unwrap();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["state"], "Done");
+        assert!(rows[0]["lastProgressAt"].is_null());
+        assert_eq!(rows[0]["lastProgressSource"], "unavailable");
+        assert_eq!(rows[0]["artifactSource"], "project_readback_cache");
+        assert_eq!(rows[0]["lastModified"], 2_000);
     }
 
     #[test]

@@ -28,6 +28,9 @@ import {
 import {
   buildLaneThroughputBoard
 } from '../src/lib/viewModel/laneThroughput.ts';
+import {
+  completedProgressDisplay
+} from '../src/lib/viewModel/completedWorktrees.ts';
 import { appendAutoloopLine, defaultLoopState, laneWorkerFromAutoloop } from '../src/lib/tauriAutoloop.ts';
 
 test('browser fallback uses fixture data instead of a Node API bridge', async () => {
@@ -326,6 +329,44 @@ test('default background refresh defers doctor surface', () => {
   assert.equal(defaultBackgroundReadSurfaces.includes('autopilot'), false);
   assert.equal(defaultBackgroundReadSurfaces.includes('review'), false);
   assert.equal(projectCooldownReadSurfaces.includes('doctor'), true);
+});
+
+test('completed worktree progress display is unknown without durable progress evidence', () => {
+  const display = completedProgressDisplay(
+    {
+      state: 'Done',
+      updatedAt: '2026-06-03T09:00:00Z',
+      projectUpdatedAt: '2026-06-03T09:00:00Z',
+      worktree: {
+        lastProgressAt: null,
+        lastProgressSource: 'unavailable',
+        lastModified: 1_780_000_000_000
+      }
+    },
+    () => 'fresh-looking'
+  );
+
+  assert.equal(display.label, 'Unknown');
+  assert.equal(display.known, false);
+  assert.match(display.title, /No durable handoff progress evidence/);
+});
+
+test('completed worktree progress display uses session provenance when present', () => {
+  const display = completedProgressDisplay(
+    {
+      state: 'Done',
+      worktree: {
+        lastProgressAt: 1_780_000_000_000,
+        lastProgressSource: 'session_registry.updated_at_ms',
+        lastModified: 1_780_000_050_000
+      }
+    },
+    (value) => `age:${value}`
+  );
+
+  assert.equal(display.label, 'age:1780000000000');
+  assert.equal(display.known, true);
+  assert.match(display.title, /session_registry\.updated_at_ms/);
 });
 
 test('lane throughput board surfaces blocked idle and completed lane results', () => {

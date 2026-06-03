@@ -7,6 +7,9 @@
     parseCodexTranscriptJsonl,
     transcriptUnavailable
   } from './viewModel/codexTranscript.ts';
+  import {
+    completedProgressDisplay
+  } from './viewModel/completedWorktrees.ts';
 
   export let view: any;
   export let route = '/lanes';
@@ -148,29 +151,39 @@
         byId.set(id, normalizeCompletedEntry({ ...entry, state: row?.state, completedAt: entry.lastModified }, rows, model));
       }
     }
-    return [...byId.values()].sort((left, right) => dateMs(right.completedAt ?? right.updatedAt) - dateMs(left.completedAt ?? left.updatedAt));
+    return [...byId.values()].sort((left, right) => completedLocalSortMs(right) - completedLocalSortMs(left));
   }
 
   function normalizeCompletedEntry(entry: any, rows: any[], model: any) {
     const id = normalizeIssueRef(entry.issue ?? entry.issueRef ?? entry.id);
     const row = rows.find((issue) => issue.id === id) ?? (model?.issueIndex ?? []).find((issue: any) => normalizeIssueRef(issue.id ?? issue.identifier) === id);
     const issueUrl = entry.url ?? row?.url ?? githubIssueUrl(id);
-    const completedAt = entry.completedAt ?? entry.lastProgressAt ?? entry.updatedAt ?? entry.lastModified ?? row?.updatedAt ?? model?.generatedAt;
+    const lastProgressAt = entry.lastProgressAt ?? null;
+    const completedAt = entry.completedAt ?? lastProgressAt ?? null;
+    const lastModified = entry.lastModified ?? null;
+    const timestampSources = entry.timestampSources ?? {};
+    const lastProgressSource = entry.lastProgressSource ??
+      timestampSources?.lastProgress?.source ??
+      (lastProgressAt ? 'read_surface.lastProgressAt' : 'unavailable');
     return {
       id,
       title: entry.title ?? row?.title ?? 'Project read unavailable',
-      state: entry.state ?? row?.state ?? 'Unknown',
+      state: entry.state ?? row?.state ?? 'Done',
       lane: entry.lane ?? row?.lane ?? 'Merge',
       url: issueUrl,
       completedAt,
-      updatedAt: entry.updatedAt ?? completedAt,
+      updatedAt: entry.updatedAt ?? entry.projectUpdatedAt ?? row?.updatedAt,
+      projectUpdatedAt: entry.projectUpdatedAt ?? entry.updatedAt,
       worktree: {
         path: entry.path ?? entry.worktreePath,
         branch: entry.branch,
         head: entry.head,
         createdAt: entry.createdAt,
-        lastProgressAt: entry.lastProgressAt ?? entry.updatedAt ?? completedAt,
-        lastModified: entry.lastModified ?? completedAt,
+        lastProgressAt,
+        lastProgressSource,
+        lastModified,
+        lastModifiedSource: entry.lastModifiedSource ?? timestampSources?.lastModified?.source,
+        timestampSources,
         treeState: entry.treeState ?? 'unknown',
         diskBytes: entry.diskBytes,
         evidence: entry.evidence
@@ -182,9 +195,13 @@
     if (hours == null) return issues;
     const cutoff = Date.now() - hours * 60 * 60 * 1000;
     return issues.filter((issue) => {
-      const timestamp = dateMs(issue.completedAt ?? issue.updatedAt);
+      const timestamp = completedLocalSortMs(issue);
       return timestamp && timestamp >= cutoff;
     });
+  }
+
+  function completedLocalSortMs(issue: any) {
+    return dateMs(issue.completedAt) || dateMs(issue.worktree?.lastModified);
   }
 
   function findIssueForDetail(issueRef: string, rows: any[], completedIssues: any[], model: any) {
@@ -417,6 +434,10 @@
     return `${Math.round(hours / 24)}d ago`;
   }
 
+  function progressAge(issue: any) {
+    return completedProgressDisplay(issue, relativeAge);
+  }
+
   function formatMsTime(value: unknown) {
     const ms = typeof value === 'number' ? value : Number(value);
     if (!Number.isFinite(ms)) return 'unknown';
@@ -482,7 +503,7 @@
       </div>
       <div>
         <span class="mini-label">Last event</span>
-        <strong>{formatTime(selectedIssue.completedAt ?? selectedIssue.updatedAt)}</strong>
+        <strong>{formatTime(selectedIssue.worktree?.lastProgressAt ?? selectedIssue.worktree?.lastModified ?? selectedIssue.completedAt)}</strong>
       </div>
       <div>
         <span class="mini-label">Disk size</span>
@@ -700,7 +721,11 @@
             <span class="issue-tag">{issue.id}</span>
             <strong class="lane-completed-title">{issue.title}</strong>
             <span>{formatTime(issue.worktree?.createdAt)}</span>
-            <span class="lane-completed-age">{relativeAge(issue.worktree?.lastProgressAt ?? issue.completedAt ?? issue.updatedAt)}</span>
+            <span
+              class:unknown={!progressAge(issue).known}
+              class="lane-completed-age"
+              title={progressAge(issue).title}
+            >{progressAge(issue).label}</span>
             <span class="lane-completed-age">{relativeAge(issue.worktree?.lastModified)}</span>
             <span class:dirty={treeStateLabel(issue.worktree?.treeState) === 'Dirty'} class="lane-tree-state">{treeStateLabel(issue.worktree?.treeState)}</span>
             <code class="lane-completed-branch">{issue.worktree?.branch ?? 'branch unknown'}</code>

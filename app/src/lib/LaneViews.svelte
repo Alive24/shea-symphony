@@ -1,6 +1,11 @@
 <script lang="ts">
   import JsonLogView from './shell/JsonLogView.svelte';
   import { autoloopStateStore, REFRESH_REQUEST_EVENT } from './uiState.ts';
+  import { operatorOverviewStore } from './operatorOverviewStore.ts';
+  import {
+    localArtifactRefreshEventDetail,
+    localRefreshStatusLabel
+  } from './localArtifactRefresh.ts';
   import { getCodexTranscript } from './tauriAutoloop.ts';
   import {
     classifyHeartbeat,
@@ -40,6 +45,8 @@
   $: completedLocalIssues = buildCompletedLocalIssues(view, issueRows);
   $: filteredCompletedLocalIssues = filterCompletedByWindow(completedLocalIssues, completedWindowHours);
   $: selectedIssue = selectedIssueRef ? findIssueForDetail(selectedIssueRef, issueRows, completedLocalIssues, view) : null;
+  $: localArtifactsRefresh = $operatorOverviewStore.localArtifactsRefresh;
+  $: localArtifactsRefreshLabel = localRefreshStatusLabel(localArtifactsRefresh, formatTime);
   $: lifecycleEvents = selectedIssue ? buildLifecycleEvents(selectedIssue, view) : [];
   $: selectedLaneKey = laneKeyForIssue(selectedIssue);
   $: heartbeatSummary = selectedIssue ? classifyHeartbeat($autoloopStateStore, selectedLaneKey) : null;
@@ -330,7 +337,7 @@
 
   function refreshLocalArtifacts() {
     window.dispatchEvent(new CustomEvent(REFRESH_REQUEST_EVENT, {
-      detail: { source: 'local-artifacts', force: true, localOnly: true }
+      detail: localArtifactRefreshEventDetail('lane-overview-local')
     }));
     reloadTranscript();
   }
@@ -486,7 +493,9 @@
 
     <div class="pagination">
       <span class="section-note">{view?.generatedAtLabel ?? 'not checked'}</span>
-      <button class="btn btn-ghost" type="button" on:click={refreshLocalArtifacts}>Refresh local artifacts</button>
+      <button class="btn btn-ghost" type="button" on:click={refreshLocalArtifacts} disabled={localArtifactsRefresh?.running}>
+        {localArtifactsRefresh?.running ? 'Refreshing local artifacts' : 'Refresh local artifacts'}
+      </button>
       <a class="btn btn-ghost" href="/lanes" on:click={(event) => navigate(event, '/lanes')}>Back</a>
     </div>
   </section>
@@ -686,17 +695,23 @@
       <div>
         <span class="mini-label">Local worktrees</span>
         <strong>{filteredCompletedLocalIssues.length} visible</strong>
+        <small class:error={localArtifactsRefresh?.error}>{localArtifactsRefreshLabel}</small>
       </div>
-      <div class="segmented-control compact" role="group" aria-label="Local worktree time window">
-        {#each completedWindows as window}
-          <button
-            class:active={completedWindowHours === window.hours}
-            type="button"
-            on:click={() => completedWindowHours = window.hours}
-          >
-            {window.label}
-          </button>
-        {/each}
+      <div class="lane-completed-actions">
+        <button class="btn btn-ghost" type="button" on:click={refreshLocalArtifacts} disabled={localArtifactsRefresh?.running}>
+          {localArtifactsRefresh?.running ? 'Refreshing' : 'Refresh local'}
+        </button>
+        <div class="segmented-control compact" role="group" aria-label="Local worktree time window">
+          {#each completedWindows as window}
+            <button
+              class:active={completedWindowHours === window.hours}
+              type="button"
+              on:click={() => completedWindowHours = window.hours}
+            >
+              {window.label}
+            </button>
+          {/each}
+        </div>
       </div>
     </div>
 

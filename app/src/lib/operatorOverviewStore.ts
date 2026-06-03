@@ -4,6 +4,10 @@ import { writable } from 'svelte/store';
 import { loadOverview, loadReadSurface } from './operatorReads.ts';
 import { mergeReadSurface } from './operatorReadModel.ts';
 import { buildViewModel } from './operatorViewModel.ts';
+import {
+  LOCAL_ARTIFACT_READ_SURFACES,
+  type LocalArtifactRefreshStatus
+} from './localArtifactRefresh.ts';
 import { refreshStatusStore } from './uiState.ts';
 
 const slowSurfaces = ['githubQueue', 'skills', 'sessions', 'status'];
@@ -12,6 +16,15 @@ const projectReadSurfaces = new Set(['autopilot', 'doctor', 'review', 'githubQue
 export const defaultBackgroundReadSurfaces = [...slowSurfaces];
 export const projectCooldownReadSurfaces = [...projectReadSurfaces];
 
+const idleLocalArtifactsRefresh: LocalArtifactRefreshStatus = {
+  running: false,
+  remaining: 0,
+  startedAt: null,
+  lastRefreshedAt: null,
+  error: '',
+  source: 'idle'
+};
+
 export const operatorOverviewStore = writable({
   view: buildViewModel(null),
   loading: true,
@@ -19,10 +32,12 @@ export const operatorOverviewStore = writable({
   backgroundRefreshing: false,
   slowReadsRemaining: 0,
   liveError: '',
+  localArtifactsRefresh: idleLocalArtifactsRefresh,
   projectReadCooldown: null
 });
 
 let readGeneration = 0;
+let localArtifactsGeneration = 0;
 let initialized = false;
 let backgroundReadsInFlight = false;
 let projectReadCooldownUntilMs = 0;
@@ -110,14 +125,15 @@ export async function requestOperatorOverviewRefresh(
 }
 
 export function requestOperatorLocalArtifactsRefresh(source = 'local-artifacts', publishStatus = true) {
-  const generation = ++readGeneration;
-  const artifactSurfaces = ['sessions', 'status'];
+  const generation = ++localArtifactsGeneration;
+  const artifactSurfaces = [...LOCAL_ARTIFACT_READ_SURFACES];
+  const startedAt = new Date().toISOString();
 
   if (publishStatus) {
     refreshStatusStore.set({
       running: true,
       remaining: artifactSurfaces.length,
-      startedAt: new Date().toISOString(),
+      startedAt,
       finishedAt: null,
       source,
       detail: 'Refreshing local artifacts'
@@ -127,13 +143,20 @@ export function requestOperatorLocalArtifactsRefresh(source = 'local-artifacts',
   operatorOverviewStore.update((state) => ({
     ...state,
     liveError: '',
-    slowReadsRemaining: artifactSurfaces.length
+    localArtifactsRefresh: {
+      running: true,
+      remaining: artifactSurfaces.length,
+      startedAt,
+      lastRefreshedAt: state.localArtifactsRefresh?.lastRefreshedAt ?? null,
+      error: '',
+      source
+    }
   }));
 
   for (const name of artifactSurfaces) {
     loadReadSurface(name, true, false)
       .then((surface) => {
-        if (generation !== readGeneration) return;
+        if (generation !== localArtifactsGeneration) return;
         operatorOverviewStore.update((state) => ({
           ...state,
           view: buildViewModel(mergeReadSurface(state.view.raw, surface)),
@@ -141,23 +164,46 @@ export function requestOperatorLocalArtifactsRefresh(source = 'local-artifacts',
         }));
       })
       .catch((error) => {
-        if (generation !== readGeneration) return;
+        if (generation !== localArtifactsGeneration) return;
         const message = error instanceof Error ? error.message : String(error ?? 'unknown error');
-        operatorOverviewStore.update((state) => ({ ...state, liveError: message }));
-      })
-      .finally(() => {
-        if (generation !== readGeneration) return;
-        const nextRemaining = Math.max(0, get(operatorOverviewStore).slowReadsRemaining - 1);
         operatorOverviewStore.update((state) => ({
           ...state,
-          slowReadsRemaining: nextRemaining
+          localArtifactsRefresh: {
+            ...(state.localArtifactsRefresh ?? {}),
+            running: false,
+            remaining: state.localArtifactsRefresh?.remaining ?? 0,
+            startedAt: state.localArtifactsRefresh?.startedAt ?? null,
+            lastRefreshedAt: state.localArtifactsRefresh?.lastRefreshedAt ?? null,
+            error: message,
+            source
+          }
+        }));
+      })
+      .finally(() => {
+        if (generation !== localArtifactsGeneration) return;
+        const currentLocalStatus = get(operatorOverviewStore).localArtifactsRefresh;
+        const nextRemaining = Math.max(0, Number(currentLocalStatus?.remaining ?? 0) - 1);
+        const finishedAt = nextRemaining === 0 ? new Date().toISOString() : null;
+        operatorOverviewStore.update((state) => ({
+          ...state,
+          localArtifactsRefresh: {
+            ...(state.localArtifactsRefresh ?? {}),
+            running: nextRemaining > 0,
+            remaining: nextRemaining,
+            startedAt: state.localArtifactsRefresh?.startedAt ?? null,
+            lastRefreshedAt: finishedAt && !state.localArtifactsRefresh?.error
+              ? finishedAt
+              : state.localArtifactsRefresh?.lastRefreshedAt ?? null,
+            error: state.localArtifactsRefresh?.error ?? '',
+            source
+          }
         }));
         if (publishStatus) {
           refreshStatusStore.update((status) => ({
             ...status,
             running: nextRemaining > 0,
             remaining: nextRemaining,
-            finishedAt: nextRemaining === 0 ? new Date().toISOString() : status.finishedAt,
+            finishedAt: finishedAt ?? status.finishedAt,
             detail: nextRemaining === 0 ? 'Local artifacts refreshed' : `Loading ${nextRemaining} local surface${nextRemaining === 1 ? '' : 's'}`
           }));
         }

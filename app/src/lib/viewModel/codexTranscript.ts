@@ -128,6 +128,9 @@ export function transcriptUnavailable(reason: string) {
 }
 
 function transcriptEventFromRecord(record: any, index: number): TranscriptEvent | null {
+  const protocol = protocolMessage(record);
+  if (protocol) return transcriptEventFromProtocol(protocol, index, record);
+
   const item = record?.item ?? record?.payload?.item ?? record?.message ?? record;
   const type = text(record?.type ?? item?.type ?? record?.event ?? record?.kind);
   const role = text(item?.role ?? record?.role);
@@ -163,6 +166,67 @@ function transcriptEventFromRecord(record: any, index: number): TranscriptEvent 
   }
   if (usage) {
     return event(index, 'usage', 'Token usage', usageSummary(usage), 'neutral', undefined, record);
+  }
+  return null;
+}
+
+function protocolMessage(record: any) {
+  if (!record?.direction || !record?.line) return null;
+  try {
+    const message = JSON.parse(String(record.line));
+    return {
+      direction: text(record.direction),
+      method: text(message?.method),
+      id: message?.id,
+      params: message?.params,
+      result: message?.result,
+      error: message?.error
+    };
+  } catch {
+    return {
+      direction: text(record.direction),
+      method: 'protocol.raw',
+      params: { line: record.line },
+      result: null,
+      error: null
+    };
+  }
+}
+
+function transcriptEventFromProtocol(protocol: any, index: number, raw: unknown): TranscriptEvent | null {
+  const method = text(protocol.method);
+  const params = protocol.params ?? {};
+  const item = params.item ?? {};
+
+  if (protocol.error) {
+    return event(index, 'diagnostic', method || 'Protocol error', previewText(protocol.error), 'danger', protocol.direction, raw);
+  }
+  if (method === 'turn/start') {
+    const input = Array.isArray(params.input)
+      ? params.input.map((entry: any) => text(entry?.text ?? entry?.content ?? entry)).filter(Boolean).join('\n\n')
+      : contentText(params.input);
+    return input ? event(index, 'user', 'User', input, 'neutral', 'turn/start', raw) : null;
+  }
+  if (method === 'item/started' && item.type === 'commandExecution') {
+    return event(index, 'tool_call', item.command || 'Command execution', summarizeArguments({ cwd: item.cwd, command: item.command }), 'neutral', item.status || 'started', raw);
+  }
+  if (method === 'item/completed' && item.type === 'commandExecution') {
+    return event(index, 'tool_output', item.command || 'Command output', previewText(item.aggregatedOutput ?? item.output ?? item.exitCode), item.status === 'failed' || item.exitCode ? 'danger' : 'neutral', item.status || 'completed', raw);
+  }
+  if (method === 'item/completed' && item.type === 'agentMessage') {
+    const phase = text(item.phase);
+    const final = phase === 'final_answer';
+    return event(index, final ? 'final' : 'assistant', final ? 'Final answer' : 'Assistant', previewText(item.text), final ? 'success' : 'neutral', phase || 'agentMessage', raw);
+  }
+  if (method === 'thread/tokenUsage/updated') {
+    const usage = params.tokenUsage?.total ?? params.tokenUsage?.last ?? params.tokenUsage;
+    return event(index, 'usage', 'Token usage', usageSummary(usage), 'neutral', undefined, raw);
+  }
+  if (method === 'configWarning') {
+    return event(index, 'diagnostic', 'Config warning', previewText(params.summary ?? params.details ?? params), 'warn', method, raw);
+  }
+  if (/input|required|cancel|error|failed/.test(`${method} ${previewText(params, 120)}`)) {
+    return event(index, 'diagnostic', diagnosticTitle(method, ''), previewText(params), /error|failed/.test(method) ? 'danger' : 'warn', method, raw);
   }
   return null;
 }
@@ -243,9 +307,9 @@ function summarizeObject(value: any) {
 }
 
 function usageSummary(usage: any) {
-  const input = usage?.input_tokens ?? usage?.prompt_tokens;
-  const output = usage?.output_tokens ?? usage?.completion_tokens;
-  const total = usage?.total_tokens ?? (Number(input) || 0) + (Number(output) || 0);
+  const input = usage?.input_tokens ?? usage?.inputTokens ?? usage?.prompt_tokens;
+  const output = usage?.output_tokens ?? usage?.outputTokens ?? usage?.completion_tokens;
+  const total = usage?.total_tokens ?? usage?.totalTokens ?? (Number(input) || 0) + (Number(output) || 0);
   return [
     input != null ? `input ${input}` : null,
     output != null ? `output ${output}` : null,

@@ -255,6 +255,78 @@ test('Codex transcript parser renders conversation turns, tool calls, outputs, f
   assert.match(parsed.events.find((event) => event.kind === 'tool_output').body, /modified file|## branch/);
 });
 
+test('Codex transcript parser renders app-server protocol JSONL without token delta noise', () => {
+  const protocol = [
+    JSON.stringify({
+      direction: 'stdin',
+      line: JSON.stringify({
+        id: 3,
+        method: 'turn/start',
+        params: { input: [{ text: 'Please implement #414.' }] }
+      })
+    }),
+    JSON.stringify({
+      direction: 'stdout',
+      line: JSON.stringify({
+        method: 'item/agentMessage/delta',
+        params: { itemId: 'msg_1', delta: 'tiny' }
+      })
+    }),
+    JSON.stringify({
+      direction: 'stdout',
+      line: JSON.stringify({
+        method: 'item/completed',
+        params: {
+          item: {
+            type: 'agentMessage',
+            text: 'I found the transcript candidate.',
+            phase: 'commentary'
+          }
+        }
+      })
+    }),
+    JSON.stringify({
+      direction: 'stdout',
+      line: JSON.stringify({
+        method: 'item/started',
+        params: {
+          item: {
+            type: 'commandExecution',
+            command: 'rg transcript app/src',
+            cwd: '/tmp/worktree',
+            status: 'inProgress'
+          }
+        }
+      })
+    }),
+    JSON.stringify({
+      direction: 'stdout',
+      line: JSON.stringify({
+        method: 'item/completed',
+        params: {
+          item: {
+            type: 'commandExecution',
+            command: 'rg transcript app/src',
+            aggregatedOutput: 'app/src/lib/LaneViews.svelte:350',
+            status: 'completed',
+            exitCode: 0
+          }
+        }
+      })
+    })
+  ].join('\n');
+
+  const parsed = parseCodexTranscriptJsonl(protocol);
+
+  assert.equal(parsed.status, 'available');
+  assert.equal(parsed.summary.userTurns, 1);
+  assert.equal(parsed.summary.assistantTurns, 1);
+  assert.equal(parsed.summary.toolCalls, 1);
+  assert.equal(parsed.events.some((event) => event.body === 'tiny'), false);
+  assert.equal(parsed.events.find((event) => event.kind === 'tool_call').title, 'rg transcript app/src');
+  assert.match(parsed.events.find((event) => event.kind === 'tool_output').body, /LaneViews/);
+});
+
 test('Codex transcript parser marks malformed still-growing JSONL as partial', () => {
   const parsed = parseCodexTranscriptJsonl(`${JSON.stringify({ type: 'message', item: { role: 'user', content: 'hi' } })}\n{"type":`);
 

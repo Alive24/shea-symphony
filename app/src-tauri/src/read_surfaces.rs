@@ -168,6 +168,7 @@ fn transcript_candidates(
 ) -> Vec<Value> {
     let mut candidates = Vec::new();
     push_registry_transcript_candidates(&mut candidates, snapshot, issue_ref, session_id);
+    push_app_server_protocol_candidates(&mut candidates, snapshot, issue_ref);
     if let Some(session_id) = session_id {
         push_session_store_candidates(&mut candidates, session_id, "runtime_session_id");
     }
@@ -251,6 +252,50 @@ fn push_registry_transcript_candidates(
                 }));
             }
         }
+        if let Some(path) = session
+            .get("log_path")
+            .and_then(Value::as_str)
+            .filter(|path| path.ends_with(".events.json"))
+        {
+            let protocol_path =
+                path.trim_end_matches(".events.json").to_string() + ".protocol.jsonl";
+            candidates.push(json!({
+                "source": "session_registry.log_path_protocol_sibling",
+                "path": protocol_path,
+                "session": session.get("session_name").or_else(|| session.get("run_id")).cloned().unwrap_or(Value::Null),
+                "issue": session_issue,
+            }));
+        }
+    }
+}
+
+fn push_app_server_protocol_candidates(
+    candidates: &mut Vec<Value>,
+    snapshot: &Value,
+    issue_ref: Option<&str>,
+) {
+    let Some(issue_ref) = issue_ref else {
+        return;
+    };
+    let Some(issue_number) = normalize_issue_ref(issue_ref)
+        .and_then(|issue| issue.strip_prefix('#').map(str::to_string))
+    else {
+        return;
+    };
+    let Some(event_log_path) = snapshot.get("event_log_path").and_then(Value::as_str) else {
+        return;
+    };
+    let Some(logs_root) = Path::new(event_log_path).parent() else {
+        return;
+    };
+    let app_server_root = logs_root.join("app-server");
+    let prefix = format!("{issue_number}-");
+    for path in find_app_server_protocol_jsonl(&app_server_root, &prefix, 20) {
+        candidates.push(json!({
+            "source": "app_server_protocol_issue_fallback",
+            "path": path.display().to_string(),
+            "issue": format!("#{issue_number}"),
+        }));
     }
 }
 
@@ -258,17 +303,78 @@ fn push_session_store_candidates(candidates: &mut Vec<Value>, needle: &str, sour
     let Some(root) = codex_sessions_root() else {
         return;
     };
+    for needle in session_store_needles(needle) {
+        for path in find_rollout_jsonl(&root, &needle, 40) {
+            candidates.push(json!({
+                "source": source,
+                "path": path.display().to_string(),
+                "session": needle,
+            }));
+        }
+    }
+}
+
+fn session_store_needles(needle: &str) -> Vec<String> {
     let needle = needle.trim();
     if needle.is_empty() {
-        return;
+        return Vec::new();
     }
-    for path in find_rollout_jsonl(&root, needle, 40) {
-        candidates.push(json!({
-            "source": source,
-            "path": path.display().to_string(),
-            "session": needle,
-        }));
+    let mut needles = vec![needle.to_string()];
+    for part in uuid_like_parts(needle) {
+        if !needles.iter().any(|existing| existing == &part) {
+            needles.push(part);
+        }
     }
+    needles
+}
+
+fn uuid_like_parts(value: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    for index in value.char_indices().map(|(index, _)| index) {
+        let Some(candidate) = value.get(index..index.saturating_add(36)) else {
+            continue;
+        };
+        if candidate.len() != 36 {
+            continue;
+        }
+        let bytes = candidate.as_bytes();
+        let valid = [8, 13, 18, 23]
+            .iter()
+            .all(|position| bytes[*position] == b'-')
+            && bytes.iter().enumerate().all(|(position, byte)| {
+                [8, 13, 18, 23].contains(&position) || byte.is_ascii_hexdigit()
+            });
+        if valid {
+            parts.push(candidate.to_string());
+        }
+    }
+    parts
+}
+
+fn find_app_server_protocol_jsonl(root: &Path, issue_prefix: &str, limit: usize) -> Vec<PathBuf> {
+    let mut matches = Vec::new();
+    let Ok(entries) = fs::read_dir(root) else {
+        return matches;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with(issue_prefix) && name.ends_with(".protocol.jsonl"))
+        {
+            matches.push(path);
+        }
+    }
+    matches.sort_by_key(|path| {
+        fs::metadata(path)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| std::cmp::Reverse(duration.as_millis()))
+    });
+    matches.truncate(limit);
+    matches
 }
 
 fn find_rollout_jsonl(root: &Path, needle: &str, limit: usize) -> Vec<PathBuf> {
@@ -1273,7 +1379,10 @@ mod tests {
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["lastProgressAt"], 1_500);
-        assert_eq!(rows[0]["lastProgressSource"], "session_registry.updated_at_ms");
+        assert_eq!(
+            rows[0]["lastProgressSource"],
+            "session_registry.updated_at_ms"
+        );
         assert_eq!(rows[0]["projectUpdatedAt"], "2026-06-03T09:00:00Z");
         assert_eq!(rows[0]["lastModified"], 3_000);
     }
@@ -1333,6 +1442,46 @@ mod tests {
         let matches = find_rollout_jsonl(&root, "019f-session-match", 10);
 
         assert_eq!(matches, vec![wanted]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn splits_app_server_thread_id_from_composite_session_id() {
+        let needles = session_store_needles(
+            "019e8963-d029-7a91-b144-63ee3fbe71a9-019e8963-d0df-7451-bc85-19cacf85d5a9",
+        );
+
+        assert!(needles.contains(&"019e8963-d029-7a91-b144-63ee3fbe71a9".to_string()));
+        assert!(needles.contains(&"019e8963-d0df-7451-bc85-19cacf85d5a9".to_string()));
+    }
+
+    #[test]
+    fn transcript_candidates_include_app_server_protocol_fallback_by_issue() {
+        let root =
+            std::env::temp_dir().join(format!("shea-transcript-test-{}", unix_timestamp_ms()));
+        let logs_root = root.join("logs");
+        let app_server_root = logs_root.join("app-server");
+        fs::create_dir_all(&app_server_root).unwrap();
+        let protocol = app_server_root.join("414-1780421480389.protocol.jsonl");
+        fs::write(&protocol, "{}\n").unwrap();
+        let snapshot = json!({
+            "event_log_path": logs_root.join("shea-symphony.jsonl").display().to_string(),
+            "sessions": [
+                {
+                    "issue_identifier": "#414",
+                    "session_id": "019e8963-d029-7a91-b144-63ee3fbe71a9-019e8963-d0df-7451-bc85-19cacf85d5a9",
+                    "run_id": "20260602T1730Z-issue414-main-fddb",
+                    "log_path": null
+                }
+            ]
+        });
+
+        let candidates = transcript_candidates(&snapshot, Some("#414"), None);
+        let expected_path = protocol.display().to_string();
+
+        assert!(candidates.iter().any(|candidate| {
+            candidate.get("path").and_then(Value::as_str) == Some(expected_path.as_str())
+        }));
         let _ = fs::remove_dir_all(root);
     }
 }

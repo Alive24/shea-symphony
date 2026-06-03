@@ -22,7 +22,8 @@
     running: false,
     mode: 'dry-run',
     workflowPath: 'workflows/shea-symphony.md',
-    latestLine: 'No recent autoloop result'
+    latestLine: 'No recent autoloop result',
+    laneMaxSummary: ''
   };
   let countMenuOpen: AutoloopLaneTarget | '' = '';
   let countByTarget: Record<AutoloopLaneTarget, number> = {
@@ -175,6 +176,9 @@
         ? `${autoloopControl.mode} · ${autoloopControl.workflowPath}`
         : 'Open in Shea Symphony App desktop shell for live loop control.'}
     </p>
+    {#if autoloopControl.laneMaxSummary}
+      <p class="developer-tool-note">{autoloopControl.laneMaxSummary}</p>
+    {/if}
     <p class="developer-tool-note">{autoloopControl.latestLine}</p>
   </div>
 </aside>

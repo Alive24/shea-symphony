@@ -36,7 +36,7 @@ export function buildLaneThroughputBoard({
         workerNumber: null,
         waiting: false
       }));
-    const laneResult = laneStatusRow(snapshot, workerIssues.length + waitingIssues.length);
+    const laneResult = laneStatusRow(snapshot);
     const runningCount = countFromSnapshot(snapshot, 'runningCount', workerIssues.filter((issue) => issue.kind === 'picked').length);
     const queuedCount = countFromSnapshot(snapshot, 'queuedCount', waitingIssues.length);
     const blockedCount = countFromSnapshot(snapshot, 'blockedCount', laneResult?.kind === 'blocked' ? 1 : 0);
@@ -51,17 +51,12 @@ export function buildLaneThroughputBoard({
       runningCount || queuedCount || blockedCount || completedCount ? 0 : 1
     );
     const issues = [...workerIssues, ...waitingIssues, ...(laneResult ? [laneResult] : [])];
-    const statusText = [
-      `running ${runningCount}`,
-      `queued ${queuedCount}`,
-      `blocked ${blockedCount}`,
-      `idle ${idleCount}`,
-      `done ${completedCount}`
-    ].join(' · ');
+    const status = laneHeaderStatus({ runningCount, queuedCount, blockedCount, completedCount });
     return {
       laneKey,
       label,
       issues,
+      status,
       runningCount,
       pickedCount: runningCount,
       queuedCount,
@@ -70,7 +65,6 @@ export function buildLaneThroughputBoard({
       completedCount,
       maxConcurrent: snapshot?.maxConcurrent ?? null,
       latest: laneLatest(snapshot, fullLoading),
-      statusText,
       tone: laneTone({ runningCount, queuedCount, blockedCount, completedCount, idleCount })
     };
   });
@@ -111,16 +105,10 @@ function workerDisplayTitle(worker: any, titles: Map<string, string>) {
   return 'Waiting for agent response';
 }
 
-function laneStatusRow(snapshot: any, visibleIssueCount: number) {
+function laneStatusRow(snapshot: any) {
   const status = String(snapshot?.status ?? '').toLowerCase();
   if (status === 'blocked' || status === 'error' || status === 'failed') {
     return statusEventRow(snapshot, 'blocked', 'danger', 'Lane blocked');
-  }
-  if (status === 'completed') {
-    return statusEventRow(snapshot, 'completed', 'success', 'Latest lane result completed');
-  }
-  if (status === 'idle' && visibleIssueCount === 0) {
-    return statusEventRow(snapshot, 'idle', 'neutral', 'Lane idle');
   }
   return null;
 }
@@ -147,6 +135,24 @@ function laneLatest(snapshot: any, fullLoading: boolean) {
     return [snapshot.action, snapshot.status].filter(Boolean).join(' · ');
   }
   return fullLoading ? 'Loading CLI readback...' : 'No recent lane event.';
+}
+
+function laneHeaderStatus({
+  runningCount,
+  queuedCount,
+  blockedCount,
+  completedCount
+}: {
+  runningCount: number;
+  queuedCount: number;
+  blockedCount: number;
+  completedCount: number;
+}) {
+  if (blockedCount) return 'blocked';
+  if (runningCount) return 'running';
+  if (queuedCount) return 'queued';
+  if (completedCount) return 'complete';
+  return 'idle';
 }
 
 function laneTone({

@@ -22,11 +22,13 @@ pub(crate) use agent_contract::{merge_agent_reports_repaired, merge_agent_reques
 pub(crate) use outcome::finish_merge_agent_repaired_branch;
 use outcome::{
     merge_agent_repair_backend_failed, merge_agent_repair_blocked,
-    merge_agent_repair_semantic_uncertainty, merge_agent_repair_verification_failed,
+    merge_agent_repair_retryable_verification_failed, merge_agent_repair_semantic_uncertainty,
+    merge_agent_repair_verification_failed,
 };
 
 pub(crate) struct MergeAgentConflictRepairOutcome {
     pub(crate) repaired: bool,
+    pub(crate) retryable: bool,
     pub(super) output: CommandOutput,
     pub(crate) evidence: MergeRepairEvidence,
     pub(super) reason: String,
@@ -265,7 +267,8 @@ pub(super) fn run_merge_agent_conflict_repair(
         worktree_path,
     )?;
     if unresolved.status != 0 || !unresolved.stdout.trim().is_empty() {
-        return Ok(merge_agent_repair_verification_failed(
+        abort_merge_repair_if_active(runner, worktree_path);
+        return Ok(merge_agent_repair_retryable_verification_failed(
             &summary.backend,
             summary.session_id.clone(),
             &conflict_summary,
@@ -278,7 +281,8 @@ pub(super) fn run_merge_agent_conflict_repair(
 
     let diff_check = runner.run("git", &["diff".into(), "--check".into()], worktree_path)?;
     if diff_check.status != 0 {
-        return Ok(merge_agent_repair_verification_failed(
+        abort_merge_repair_if_active(runner, worktree_path);
+        return Ok(merge_agent_repair_retryable_verification_failed(
             &summary.backend,
             summary.session_id.clone(),
             &conflict_summary,
@@ -300,6 +304,7 @@ pub(super) fn run_merge_agent_conflict_repair(
         .lines()
         .any(|line| line.starts_with("??"))
     {
+        abort_merge_repair_if_active(runner, worktree_path);
         return Ok(merge_agent_repair_verification_failed(
             &summary.backend,
             summary.session_id.clone(),
@@ -310,7 +315,8 @@ pub(super) fn run_merge_agent_conflict_repair(
 
     let add = runner.run("git", &["add".into(), "-A".into()], worktree_path)?;
     if add.status != 0 {
-        return Ok(merge_agent_repair_verification_failed(
+        abort_merge_repair_if_active(runner, worktree_path);
+        return Ok(merge_agent_repair_retryable_verification_failed(
             &summary.backend,
             summary.session_id.clone(),
             &conflict_summary,
@@ -330,7 +336,8 @@ pub(super) fn run_merge_agent_conflict_repair(
     if merge_head.status == 0 {
         let commit = runner.run("git", &["commit".into(), "--no-edit".into()], worktree_path)?;
         if commit.status != 0 {
-            return Ok(merge_agent_repair_verification_failed(
+            abort_merge_repair_if_active(runner, worktree_path);
+            return Ok(merge_agent_repair_retryable_verification_failed(
                 &summary.backend,
                 summary.session_id.clone(),
                 &conflict_summary,
@@ -367,4 +374,23 @@ pub(super) fn run_merge_agent_conflict_repair(
         summary.backend,
         summary.session_id,
     )
+}
+
+fn abort_merge_repair_if_active(
+    runner: &dyn HandoffCommandRunner,
+    worktree_path: &std::path::Path,
+) {
+    let merge_head = runner.run(
+        "git",
+        &[
+            "rev-parse".into(),
+            "-q".into(),
+            "--verify".into(),
+            "MERGE_HEAD".into(),
+        ],
+        worktree_path,
+    );
+    if merge_head.as_ref().is_ok_and(|output| output.status == 0) {
+        let _ = runner.run("git", &["merge".into(), "--abort".into()], worktree_path);
+    }
 }

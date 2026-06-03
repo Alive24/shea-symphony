@@ -90,7 +90,7 @@ pub(super) fn handle_dirty_merge(
         )?;
         let mut agent_decision = decision.clone();
         agent_decision.reason = agent_repair.reason.clone();
-        agent_decision.target_state = if agent_repair.repaired {
+        agent_decision.target_state = if agent_repair.repaired || agent_repair.retryable {
             None
         } else {
             Some("need_human_input")
@@ -116,6 +116,15 @@ pub(super) fn handle_dirty_merge(
         if agent_repair.repaired {
             println!(
                 "merge_once_action=merge_agent_conflict_repaired issue={} target_state=merging backend={} session={}",
+                issue.identifier,
+                agent_repair.backend,
+                agent_repair.session_id.as_deref().unwrap_or("n/a")
+            );
+            return Ok(MergeOnceOutcome::Skipped);
+        }
+        if agent_repair.retryable {
+            println!(
+                "merge_once_action=merge_agent_conflict_retryable issue={} target_state=merging backend={} session={}",
                 issue.identifier,
                 agent_repair.backend,
                 agent_repair.session_id.as_deref().unwrap_or("n/a")

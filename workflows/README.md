@@ -68,9 +68,12 @@ supervised fallback while automatic Review uses Gemini headless.
 Clean `merge once` / `merge loop` remains direct CLI merge behavior and does not
 launch a merge-agent runtime. Dirty PRs still try the mechanical direct-CLI
 repair first; only content conflicts in a trusted clean PR worktree launch the
-configured merge-agent backend. Session commands validate the existing claim and
-write runtime evidence without approving reviews, merging PRs, or closing
-issues.
+configured merge-agent backend. Interrupted conflict-repair attempts are
+aborted back to a clean PR-branch baseline on the next tick before retrying, and
+retryable backend or verification failures stay in `Merging` instead of asking
+for human input when no semantic decision is required. Session commands validate
+the existing claim and write runtime evidence without approving reviews, merging
+PRs, or closing issues.
 
 Merge-lane crash recovery is enabled by default for bounded
 `merge loop --write` ticks. It adopts interrupted structured merge-loop/goal

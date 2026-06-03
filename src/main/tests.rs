@@ -101,6 +101,7 @@ use shea_symphony::issue_workspace::{
 use shea_symphony::lane_claim::{
     LaneClaim, LaneClaimActor, LaneClaimLane, LaneClaimSource, LaneClaimState,
 };
+use shea_symphony::merge_lane::repair_dirty_pull_request;
 use shea_symphony::model::SessionStatusSnapshot;
 use shea_symphony::model::TrackerIssue;
 use shea_symphony::model::{normalize_state, LinkedPullRequest};

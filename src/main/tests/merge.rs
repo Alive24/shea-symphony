@@ -91,6 +91,32 @@ fn successful_merge_agent_repair_records_merging_retry_rationale() {
 }
 
 #[test]
+fn dirty_repair_aborts_interrupted_merge_state_before_retrying() {
+    let runner = InterruptedMergeRepairRunner::new();
+
+    let outcome = repair_dirty_pull_request(
+        "https://github.com/Alive24/shea-symphony/pull/390",
+        Some("feature/issue-390"),
+        "main",
+        &runner,
+        Path::new("."),
+        false,
+    )
+    .unwrap();
+
+    assert!(outcome.repaired);
+    assert_eq!(outcome.failure_kind, None);
+    let calls = runner.calls.borrow();
+    assert!(calls.iter().any(|call| call == "git merge --abort"));
+    assert!(calls
+        .iter()
+        .any(|call| call == "git merge --no-edit origin/main"));
+    assert!(calls
+        .iter()
+        .any(|call| call == "git push origin feature/issue-390"));
+}
+
+#[test]
 fn merge_agent_semantic_uncertainty_marker_requires_human_input() {
     let text = "\
 RESOLUTION_SUMMARY: conflict needs product choice
@@ -99,6 +125,95 @@ MERGE_AGENT_DECISION: needs_human_input";
 
     assert!(merge_agent_requests_human_input(text));
     assert!(!merge_agent_reports_repaired(text));
+}
+
+struct InterruptedMergeRepairRunner {
+    calls: std::cell::RefCell<Vec<String>>,
+    aborted: std::cell::RefCell<bool>,
+}
+
+impl InterruptedMergeRepairRunner {
+    fn new() -> Self {
+        Self {
+            calls: std::cell::RefCell::new(Vec::new()),
+            aborted: std::cell::RefCell::new(false),
+        }
+    }
+}
+
+impl HandoffCommandRunner for InterruptedMergeRepairRunner {
+    fn run(
+        &self,
+        program: &str,
+        args: &[String],
+        _cwd: &Path,
+    ) -> Result<CommandOutput, shea_symphony::git_handoff::GitHandoffError> {
+        let command = format!("{program} {}", args.join(" "));
+        self.calls.borrow_mut().push(command.clone());
+        let aborted = *self.aborted.borrow();
+        match command.as_str() {
+            "git worktree list --porcelain" => Ok(CommandOutput {
+                status: 0,
+                stdout:
+                    "worktree /tmp/issue-390\nHEAD abc123\nbranch refs/heads/feature/issue-390\n\n"
+                        .into(),
+                stderr: String::new(),
+            }),
+            "git status --porcelain" if !aborted => Ok(CommandOutput {
+                status: 0,
+                stdout: "UU app/test/operator-view.test.mjs\n".into(),
+                stderr: String::new(),
+            }),
+            "git status --porcelain" => Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+            "git rev-parse -q --verify MERGE_HEAD" if !aborted => Ok(CommandOutput {
+                status: 0,
+                stdout: "abc123\n".into(),
+                stderr: String::new(),
+            }),
+            "git rev-parse -q --verify MERGE_HEAD" => Ok(CommandOutput {
+                status: 1,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+            "git diff --name-only --diff-filter=U" if !aborted => Ok(CommandOutput {
+                status: 0,
+                stdout: "app/test/operator-view.test.mjs\n".into(),
+                stderr: String::new(),
+            }),
+            "git diff --name-only --diff-filter=U" => Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+            "git merge --abort" => {
+                *self.aborted.borrow_mut() = true;
+                Ok(CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+            }
+            "git fetch origin main" | "git merge --no-edit origin/main" => Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+            "git push origin feature/issue-390" => Ok(CommandOutput {
+                status: 0,
+                stdout: "pushed\n".into(),
+                stderr: String::new(),
+            }),
+            _ => Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+        }
+    }
 }
 
 #[test]

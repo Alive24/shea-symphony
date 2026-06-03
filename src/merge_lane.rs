@@ -541,6 +541,24 @@ pub fn repair_dirty_pull_request(
     )?;
     require_success("git", &status)?;
     if !status.stdout.trim().is_empty() {
+        if abort_interrupted_merge_repair(runner, &worktree_path)? {
+            let recovered_status = runner.run(
+                "git",
+                &["status".into(), "--porcelain".into()],
+                &worktree_path,
+            )?;
+            require_success("git", &recovered_status)?;
+            if recovered_status.stdout.trim().is_empty() {
+                return repair_dirty_pull_request(
+                    pr_ref,
+                    Some(head_ref_name),
+                    expected_base_branch,
+                    runner,
+                    cwd,
+                    fixture_mode,
+                );
+            }
+        }
         return Ok(MergeConflictRepairOutcome {
             repaired: false,
             worktree_path: Some(worktree_path),
@@ -618,6 +636,39 @@ pub fn repair_dirty_pull_request(
         ),
         failure_kind: None,
     })
+}
+
+fn abort_interrupted_merge_repair(
+    runner: &dyn HandoffCommandRunner,
+    worktree_path: &Path,
+) -> Result<bool, MergeLaneError> {
+    let merge_head = runner.run(
+        "git",
+        &[
+            "rev-parse".into(),
+            "-q".into(),
+            "--verify".into(),
+            "MERGE_HEAD".into(),
+        ],
+        worktree_path,
+    )?;
+    let unmerged = runner.run(
+        "git",
+        &[
+            "diff".into(),
+            "--name-only".into(),
+            "--diff-filter=U".into(),
+        ],
+        worktree_path,
+    )?;
+    let has_interrupted_merge = merge_head.status == 0 || !unmerged.stdout.trim().is_empty();
+    if !has_interrupted_merge {
+        return Ok(false);
+    }
+
+    let abort = runner.run("git", &["merge".into(), "--abort".into()], worktree_path)?;
+    require_success("git", &abort)?;
+    Ok(true)
 }
 
 pub fn fixture_merge_output(pr_ref: &str) -> CommandOutput {

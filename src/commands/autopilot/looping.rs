@@ -1156,7 +1156,8 @@ fn autopilot_main_runtime_recovery_blocker(plan: &AutopilotPlanSnapshot, blocker
     }
     autopilot_session_attention_blocker(blocker)
         && (autopilot_runtime_active_issues_are_main_local(plan)
-            || autopilot_attention_sessions_are_main_local(plan))
+            || autopilot_attention_sessions_are_main_local(plan)
+            || autopilot_attention_sessions_are_terminal_history_with_ready_main(plan))
 }
 
 fn autopilot_merge_runtime_recovery_blocker(
@@ -1218,6 +1219,28 @@ fn autopilot_attention_sessions_are_issue_local_to_merge(
             merge_or_historical_main
                 && autopilot_evidence_field_equals(line, "issue", selected_issue)
                 && !autopilot_evidence_field_equals(line, "issue", "unknown")
+        })
+}
+
+fn autopilot_attention_sessions_are_terminal_history_with_ready_main(
+    plan: &AutopilotPlanSnapshot,
+) -> bool {
+    if !plan.runtime.active_issues.is_empty()
+        || !autopilot_lane_plan_should_tick(autopilot_plan_lane(Some(plan), "main"))
+    {
+        return false;
+    }
+    let session_evidence = plan
+        .runtime
+        .evidence
+        .iter()
+        .filter(|line| line.starts_with("session="))
+        .collect::<Vec<_>>();
+    !session_evidence.is_empty()
+        && session_evidence.iter().all(|line| {
+            !autopilot_evidence_field_equals(line, "issue", "unknown")
+                && (autopilot_evidence_field_equals(line, "status", "failed")
+                    || autopilot_evidence_field_equals(line, "status", "stale"))
         })
 }
 

@@ -123,6 +123,7 @@ pub(crate) fn autopilot_readiness(
 ) -> AutopilotReadiness {
     let mut blockers = Vec::new();
     let mut warnings = Vec::new();
+    let runtime_blockers = autopilot_effective_runtime_blockers(lanes, runtime);
 
     if doctor.blockers > 0 {
         blockers.push(format!("doctor_blockers={}", doctor.blockers));
@@ -136,7 +137,7 @@ pub(crate) fn autopilot_readiness(
                 .unwrap_or("not safe for future write-mode autopilot")
         ));
     }
-    blockers.extend(runtime.blockers.iter().cloned());
+    blockers.extend(runtime_blockers.iter().cloned());
     warnings.extend(doctor.evidence.iter().take(5).cloned());
     warnings.extend(
         integration_gaps
@@ -152,7 +153,7 @@ pub(crate) fn autopilot_readiness(
             "blocked_by_doctor_or_canonical_checkout",
             "Doctor blockers or canonical checkout safety must be resolved before write-mode autopilot.",
         )
-    } else if !runtime.blockers.is_empty() {
+    } else if !runtime_blockers.is_empty() {
         (
             "blocked_by_ambiguous_lane_or_runtime_state",
             "Runtime/session state needs operator attention before write-mode autopilot.",
@@ -175,6 +176,52 @@ pub(crate) fn autopilot_readiness(
         blockers,
         warnings,
     }
+}
+
+fn autopilot_effective_runtime_blockers(
+    lanes: &[AutopilotLanePlan],
+    runtime: &AutopilotRuntimeSummary,
+) -> Vec<String> {
+    runtime
+        .blockers
+        .iter()
+        .filter(|blocker| {
+            !(blocker.starts_with("session_attention=")
+                && autopilot_terminal_session_history_should_not_block_ready_main(lanes, runtime))
+        })
+        .cloned()
+        .collect()
+}
+
+fn autopilot_terminal_session_history_should_not_block_ready_main(
+    lanes: &[AutopilotLanePlan],
+    runtime: &AutopilotRuntimeSummary,
+) -> bool {
+    if !runtime.active_issues.is_empty()
+        || !lanes.iter().any(|lane| {
+            lane.lane == "main" && lane.status == "ready" && lane.selected_issue.is_some()
+        })
+    {
+        return false;
+    }
+    let session_evidence = runtime
+        .evidence
+        .iter()
+        .filter(|line| line.starts_with("session="))
+        .collect::<Vec<_>>();
+    !session_evidence.is_empty()
+        && session_evidence.iter().all(|line| {
+            !autopilot_readiness_evidence_field_equals(line, "issue", "unknown")
+                && (autopilot_readiness_evidence_field_equals(line, "status", "failed")
+                    || autopilot_readiness_evidence_field_equals(line, "status", "stale"))
+        })
+}
+
+fn autopilot_readiness_evidence_field_equals(line: &str, key: &str, expected: &str) -> bool {
+    let prefix = format!("{key}=");
+    line.split_whitespace()
+        .find_map(|token| token.strip_prefix(&prefix))
+        .is_some_and(|value| value == expected)
 }
 
 impl AutopilotDoctorSummary {

@@ -387,6 +387,133 @@ fn autopilot_loop_status_allows_registry_only_main_session_attention_recovery() 
 }
 
 #[test]
+fn autopilot_loop_status_allows_ready_main_with_terminal_historical_session_attention() {
+    let mut ready_issue = tracker_issue_with_ref(
+        "#428",
+        "Fix Codex rollout transcript rendering with timestamps and pagination",
+        "Todo",
+    );
+    ready_issue.description = Some(forge_contract());
+    let mut plan = test_autopilot_plan(vec![ready_issue]);
+    let mut runtime = clean_autopilot_runtime();
+    runtime.session_attention_count = 5;
+    runtime.blockers = vec!["session_attention=5".into()];
+    runtime.evidence = vec![
+        "session=thread-415-main lane=main status=failed issue=#415".into(),
+        "session=thread-415-merge-1 lane=merge status=stale issue=#415".into(),
+        "session=thread-415-merge-2 lane=merge status=stale issue=#415".into(),
+        "session=thread-415-merge-3 lane=merge status=stale issue=#415".into(),
+        "session=thread-415-merge-4 lane=merge status=stale issue=#415".into(),
+    ];
+    plan.runtime = runtime;
+    plan.readiness.status = "blocked_by_ambiguous_lane_or_runtime_state".into();
+    plan.readiness.reason =
+        "Runtime/session state needs operator attention before write-mode autopilot.".into();
+    plan.readiness.blockers = vec!["session_attention=5".into()];
+
+    let status = autopilot_loop_status_from_plan(
+        &plan,
+        AutopilotLoopSettings {
+            write: true,
+            dry_run: false,
+            recover: true,
+            poll_interval_ms: 5_000,
+            main_max_concurrent: 3,
+            review_max_concurrent: 2,
+            merge_max_concurrent: 3,
+        },
+        1,
+        Some(5_000),
+        &[],
+        false,
+    );
+
+    assert_eq!(status.phase, "running");
+    assert_eq!(status.counts.blocked, 0);
+    assert_eq!(status.counts.running, 1);
+    assert!(status.blocked_reasons.is_empty());
+    assert_eq!(status.selected_issues[0].identifier, "#428");
+}
+
+#[test]
+fn autopilot_loop_status_keeps_ready_main_blocked_on_human_session_attention() {
+    let mut ready_issue = tracker_issue_with_ref("#428", "Ready work", "Todo");
+    ready_issue.description = Some(forge_contract());
+    let mut plan = test_autopilot_plan(vec![ready_issue]);
+    let mut runtime = clean_autopilot_runtime();
+    runtime.session_attention_count = 1;
+    runtime.blockers = vec!["session_attention=1".into()];
+    runtime.evidence = vec![
+        "session=thread-415-human lane=merge status=waiting_for_human_input issue=#415".into(),
+    ];
+    plan.runtime = runtime;
+    plan.readiness.status = "blocked_by_ambiguous_lane_or_runtime_state".into();
+    plan.readiness.reason =
+        "Runtime/session state needs operator attention before write-mode autopilot.".into();
+    plan.readiness.blockers = vec!["session_attention=1".into()];
+
+    let status = autopilot_loop_status_from_plan(
+        &plan,
+        AutopilotLoopSettings {
+            write: true,
+            dry_run: false,
+            recover: true,
+            poll_interval_ms: 5_000,
+            main_max_concurrent: 3,
+            review_max_concurrent: 2,
+            merge_max_concurrent: 3,
+        },
+        1,
+        Some(5_000),
+        &[],
+        false,
+    );
+
+    assert_eq!(status.phase, "blocked");
+    assert_eq!(status.blocked_reasons, vec!["session_attention=1"]);
+}
+
+#[test]
+fn autopilot_plan_readiness_allows_ready_main_with_terminal_historical_session_attention() {
+    let config = main_loop_test_config();
+    let mut ready_issue = tracker_issue_with_ref("#428", "Ready work", "Todo");
+    ready_issue.description = Some(forge_contract());
+    let issues = vec![ready_issue];
+    let adapter = shea_symphony::tracker::MemoryTracker::new(issues.clone());
+    let mut runtime = clean_autopilot_runtime();
+    runtime.session_attention_count = 2;
+    runtime.blockers = vec!["session_attention=2".into()];
+    runtime.evidence = vec![
+        "session=thread-415-main lane=main status=failed issue=#415".into(),
+        "session=thread-415-merge lane=merge status=stale issue=#415".into(),
+    ];
+
+    let plan = build_autopilot_plan_from_parts(AutopilotPlanInputs {
+        workflow_path: Path::new("/tmp/WORKFLOW.md"),
+        config: &config,
+        adapter: &adapter,
+        issues,
+        doctor_report: clean_autopilot_doctor(1),
+        canonical_checkout: clean_autopilot_canonical(),
+        runtime,
+        integration_gaps: Vec::new(),
+    })
+    .unwrap();
+
+    assert_eq!(plan.readiness.status, "ready");
+    assert!(plan.readiness.blockers.is_empty());
+    assert_eq!(
+        plan.lanes
+            .iter()
+            .find(|lane| lane.lane == "main")
+            .and_then(|lane| lane.selected_issue.as_ref())
+            .map(|issue| issue.identifier.as_str()),
+        Some("#428")
+    );
+    assert_eq!(plan.runtime.session_attention_count, 2);
+}
+
+#[test]
 fn autopilot_loop_status_keeps_main_session_attention_blocked_when_recover_disabled() {
     let mut plan = test_autopilot_plan(Vec::new());
     let mut runtime = clean_autopilot_runtime();

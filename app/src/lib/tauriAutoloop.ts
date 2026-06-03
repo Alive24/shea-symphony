@@ -200,15 +200,30 @@ export function mergeLaneSnapshot(state: LoopStateSnapshot, lane: LaneSnapshot):
 }
 
 export function appendAutoloopLine(state: LoopStateSnapshot, line: AutoloopLine): LoopStateSnapshot {
-  if (isAutoloopLaneNoopEventLine(line)) return state;
-  if (isAutoloopResultNoopEventLine(line)) return state;
-  if (isSkippedIssueDetailLine(line)) return state;
-  if (isAutoloopLaneIdlePrimitiveLine(line)) return state;
-  if (isAutoloopRoutineStatusLine(line)) return state;
+  if (!isOperatorVisibleAutoloopLine(line)) return state;
   return {
     ...state,
     recentLines: [...(state.recentLines ?? []), line].slice(-200)
   };
+}
+
+export function operatorRunLogLines(state: LoopStateSnapshot, lines: AutoloopLine[] = state.recentLines ?? []) {
+  const startedAt = Number(state.startedAtMs);
+  const lowerBound = Number.isFinite(startedAt) ? startedAt - 1000 : null;
+  return lines.filter((entry) =>
+    entry.stream === 'stdout'
+      && (lowerBound == null || entry.atMs >= lowerBound)
+      && isOperatorVisibleAutoloopLine(entry)
+  );
+}
+
+export function isOperatorVisibleAutoloopLine(line: AutoloopLine) {
+  if (isAutoloopLaneNoopEventLine(line)) return false;
+  if (isAutoloopResultNoopEventLine(line)) return false;
+  if (isSkippedIssueDetailLine(line)) return false;
+  if (isAutoloopLaneIdlePrimitiveLine(line)) return false;
+  if (isAutoloopRoutineStatusLine(line)) return false;
+  return true;
 }
 
 function isAutoloopLaneNoopEventLine(line: AutoloopLine) {
@@ -218,7 +233,7 @@ function isAutoloopLaneNoopEventLine(line: AutoloopLine) {
   const action = textFromValue(recordValue(payload, 'action'));
   const status = textFromValue(recordValue(payload, 'status'));
   const selected = issueRefFromValue(recordValue(payload, 'selected_issue') ?? recordValue(payload, 'selected'));
-  const workUnitCompleted = recordValue(payload, 'work_unit_completed') === true;
+  const workUnitCompleted = booleanFromRecord(payload, 'work_unit_completed');
   if (selected) return false;
   if (workUnitCompleted) return false;
   return (status === 'running' && action === 'tick_started')
@@ -236,7 +251,7 @@ function isAutoloopResultNoopEventLine(line: AutoloopLine) {
     const value = recordFromValue(lane);
     const status = textFromValue(recordValue(value, 'status'));
     const selected = issueRefFromValue(recordValue(value, 'selected_issue') ?? recordValue(value, 'selected'));
-    const workUnitCompleted = recordValue(value, 'work_unit_completed') === true;
+    const workUnitCompleted = booleanFromRecord(value, 'work_unit_completed');
     return workUnitCompleted || Boolean(selected) || ['error', 'blocked', 'retrying'].includes(status);
   });
   return (completedThisCycle ?? 0) === 0 && !hasActionableLane;
@@ -402,6 +417,14 @@ function arrayFromValue(value: unknown): unknown[] {
 
 function numberFromValue(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function booleanFromRecord(value: Record<string, unknown>, key: string) {
+  return recordValue(value, key) === true || recordValue(value, snakeToCamel(key)) === true;
+}
+
+function snakeToCamel(value: string) {
+  return value.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
 }
 
 function issueRefFromValue(value: unknown) {

@@ -31,7 +31,12 @@ import {
 import {
   completedProgressDisplay
 } from '../src/lib/viewModel/completedWorktrees.ts';
-import { appendAutoloopLine, defaultLoopState, laneWorkerFromAutoloop } from '../src/lib/tauriAutoloop.ts';
+import {
+  appendAutoloopLine,
+  defaultLoopState,
+  laneWorkerFromAutoloop,
+  operatorRunLogLines
+} from '../src/lib/tauriAutoloop.ts';
 
 test('browser fallback uses fixture data instead of a Node API bridge', async () => {
   const overview = await loadOverview(true, 'fast');
@@ -230,6 +235,72 @@ test('autoloop log omits no-op result but keeps issue work and blockers', () => 
   });
 
   assert.equal(state.recentLines.length, 2);
+});
+
+test('autoloop running logs filter raw snapshot heartbeat lines', () => {
+  const now = Date.now();
+  const state = {
+    ...defaultLoopState(),
+    running: true,
+    startedAtMs: now - 100,
+    recentLines: [
+      {
+        atMs: now,
+        stream: 'stdout',
+        line: 'autopilot_loop_lane',
+        event: {
+          event: 'autopilot_loop_lane',
+          payload: {
+            lane: 'review',
+            status: 'completed',
+            action: 'lane_tick_completed',
+            selected_issue: null,
+            work_unit_completed: false
+          }
+        }
+      },
+      {
+        atMs: now + 1,
+        stream: 'stdout',
+        line: 'autopilot_loop_result',
+        event: {
+          event: 'autopilot_loop_result',
+          payload: {
+            work_units_completed_this_cycle: 0,
+            completed_work_units: 0,
+            lanes: [
+              { lane: 'review', status: 'completed', action: 'lane_tick_completed', selected_issue: null, work_unit_completed: false }
+            ],
+            settings: {
+              main_max_concurrent: 3,
+              review_max_concurrent: 2,
+              merge_max_concurrent: 3
+            }
+          }
+        }
+      },
+      {
+        atMs: now + 2,
+        stream: 'stdout',
+        line: 'autopilot_loop_lane',
+        event: {
+          event: 'autopilot_loop_lane',
+          payload: {
+            lane: 'main',
+            status: 'completed',
+            action: 'lane_tick_completed',
+            selected_issue: { identifier: '#408' },
+            work_unit_completed: true
+          }
+        }
+      }
+    ]
+  };
+
+  const visible = operatorRunLogLines(state);
+
+  assert.equal(visible.length, 1);
+  assert.equal(visible[0].event.payload.selected_issue.identifier, '#408');
 });
 
 test('autoloop stdout log omits routine status and clean checkout lines', () => {

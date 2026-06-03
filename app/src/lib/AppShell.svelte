@@ -28,6 +28,7 @@
     getLoopState,
     isTauriRuntime,
     mergeLaneSnapshot,
+    operatorRunLogLines,
     startAutoloop,
     stopAutoloop,
     subscribeAutoloopEvents,
@@ -224,9 +225,7 @@
   }
 
   function latestAutoloopStdout(state: LoopStateSnapshot, lines: AutoloopLine[]) {
-    const startedAt = Number(state.startedAtMs);
-    const lowerBound = Number.isFinite(startedAt) ? startedAt - 1000 : null;
-    return lines.filter((entry) => entry.stream === 'stdout' && (lowerBound == null || entry.atMs >= lowerBound));
+    return operatorRunLogLines(state, lines);
   }
 
   function laneMaxSummary(lanes: Record<string, LaneSnapshot> | undefined) {

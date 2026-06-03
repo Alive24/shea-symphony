@@ -446,7 +446,6 @@ fn recovery_handoff_reuses_dirty_existing_issue_worktree() {
     config.workspace.root = temp.path().join("worktrees");
     std::fs::create_dir_all(&config.workspace.root).unwrap();
     let issue = tracker_issue("In Progress");
-    let mut handoff = run_loop_handoff_plan(&config, &issue).unwrap();
     let worktree = config.workspace.root.join("_29-main-agent");
     init_clean_git_workspace(&worktree);
     git_ok(
@@ -454,22 +453,26 @@ fn recovery_handoff_reuses_dirty_existing_issue_worktree() {
         &["checkout", "-b", "feature/issue-29-runtime-state-main-loop"],
     );
     std::fs::write(worktree.join("scratch.txt"), "dirty recovery work").unwrap();
-    let mut state = active_runtime_state("#29");
-    state.last_event = Some("SessionRunning".into());
-    state.workspace_path = Some(worktree.clone());
+    for event in ["SessionRunning", "Resumed"] {
+        let mut handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+        let mut state = active_runtime_state("#29");
+        state.last_event = Some(event.into());
+        state.workspace_path = Some(worktree.clone());
 
-    let evidence = run_loop_apply_recovery_handoff(&config, &issue, &mut handoff, &state).unwrap();
+        let evidence =
+            run_loop_apply_recovery_handoff(&config, &issue, &mut handoff, &state).unwrap();
 
-    assert!(evidence
-        .as_deref()
-        .unwrap()
-        .contains("source=runtime_state"));
-    assert_eq!(handoff.workspace_path, worktree);
-    assert_eq!(handoff.workspace_key, "_29-main-agent");
-    assert_eq!(
-        handoff.branch_name,
-        "feature/issue-29-runtime-state-main-loop"
-    );
+        assert!(evidence
+            .as_deref()
+            .unwrap()
+            .contains("source=runtime_state"));
+        assert_eq!(handoff.workspace_path, worktree);
+        assert_eq!(handoff.workspace_key, "_29-main-agent");
+        assert_eq!(
+            handoff.branch_name,
+            "feature/issue-29-runtime-state-main-loop"
+        );
+    }
 }
 
 #[test]

@@ -1,4 +1,4 @@
-import { normalizeIssueRef, normalizeStateName } from './issueState.ts';
+import { normalizeIssueRef } from './issueState.ts';
 import { normalizeSessionLane } from './sessionParsers.ts';
 import { issueRefFromValue } from './issueState.ts';
 import { textFromValue, titleCase } from './text.ts';
@@ -33,8 +33,7 @@ export function annotateQueueIssuesWithWorkers(
         ? 'Worker session surface is unavailable; match status is unknown.'
         : workerCount
           ? `${workerCount} worker${workerCount === 1 ? '' : 's'} visible for this Project item.`
-          : 'Project is waiting in this lane; no current worker session is visible.',
-      nextSkill: skillForQueueIssue(issue)
+          : 'Project is waiting in this lane; no current worker session is visible.'
     };
   });
 }
@@ -50,7 +49,6 @@ export function buildCurrentFocus(queueIssues: any[] = [], projectWorkerMatch: a
       label: projectWorkerMatch?.label ?? 'No lane work visible',
       title: 'No active Project lane item',
       detail: projectWorkerMatch?.detail ?? 'Project queue and worker session reads have no active lane work.',
-      nextSkill: 'Observe',
       tone: projectWorkerMatch?.tone ?? 'neutral'
     };
   }
@@ -60,7 +58,6 @@ export function buildCurrentFocus(queueIssues: any[] = [], projectWorkerMatch: a
     label: `${issue.state} · ${issue.lane}`,
     title: issue.title,
     detail: issue.workerDetail,
-    nextSkill: issue.nextSkill,
     tone: issue.workerTone ?? issue.tone ?? 'neutral',
     url: issue.url
   };
@@ -208,13 +205,4 @@ export function workersForLane(autopilot: any, lane: string) {
     }));
 
   return active;
-}
-
-function skillForQueueIssue(issue: any) {
-  const state = normalizeStateName(issue.state);
-  if (state === 'Agent Review') return 'Manual Review';
-  if (state === 'Human Review') return 'Human Review';
-  if (state === 'Merging') return 'Manual Merge';
-  if (state === 'Need Human Input') return 'Doctor';
-  return 'Manual Main';
 }

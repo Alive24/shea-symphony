@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { get } from 'svelte/store';
 
 import {
@@ -497,6 +498,75 @@ test('lane throughput board keeps independent running and queued lane work visib
   assert.deepEqual(merge.issues.map((issue) => issue.id), ['#430']);
 });
 
+test('lane throughput board keeps issue identity ahead of transient worker labels', () => {
+  const board = buildLaneThroughputBoard({
+    queueIssues: [
+      { id: '#415', title: 'Separate lane board issue identity from transient worker status', lane: 'Main', state: 'In Progress', tone: 'success' },
+      { id: '#416', title: 'Last-known issue title', lane: 'Review', state: 'Agent Review', workerStatus: 'No worker visible', tone: 'neutral' },
+      { id: '#417', title: 'tick_started', lane: 'Merge', state: 'Merging', workerStatus: 'Waiting for agent response', tone: 'warn' }
+    ],
+    laneWorkers: {
+      main: [
+        {
+          issue: '#415',
+          title: 'Waiting for agent response',
+          action: 'tick_started',
+          backend: 'codex',
+          session: 'run/main',
+          status: 'running',
+          waiting: true
+        }
+      ],
+      review: [
+        {
+          issue: '#416',
+          title: 'reviewing',
+          action: 'reviewing',
+          backend: 'gemini',
+          session: 'run/review',
+          status: 'running',
+          waiting: true
+        }
+      ],
+      merge: []
+    },
+    issueTitleById: new Map([
+      ['#415', 'Project issue title wins'],
+      ['#416', 'Last-known issue title']
+    ])
+  });
+
+  const mainIssue = board.find((lane) => lane.laneKey === 'main').issues.find((issue) => issue.id === '#415');
+  const reviewIssue = board.find((lane) => lane.laneKey === 'review').issues.find((issue) => issue.id === '#416');
+  const mergeIssue = board.find((lane) => lane.laneKey === 'merge').issues.find((issue) => issue.id === '#417');
+
+  assert.equal(mainIssue.title, 'Project issue title wins');
+  assert.match(mainIssue.meta, /tick_started/);
+  assert.equal(reviewIssue.title, 'Last-known issue title');
+  assert.match(reviewIssue.meta, /reviewing/);
+  assert.equal(mergeIssue.title, '#417');
+  assert.match(mergeIssue.meta, /Waiting for agent response/);
+});
+
+test('lane board rendering omits handoff actions and manual skill labels', () => {
+  const operatorDesk = readFileSync(new URL('../src/OperatorDesk.svelte', import.meta.url), 'utf8');
+  const laneBoardSection = operatorDesk.slice(
+    operatorDesk.indexOf('aria-label="Worker pickup and queue by lane"'),
+    operatorDesk.indexOf('</section>', operatorDesk.indexOf('aria-label="Worker pickup and queue by lane"'))
+  );
+  const humanTodoSection = operatorDesk.slice(
+    operatorDesk.indexOf('aria-label="Human operator issue queue"'),
+    operatorDesk.indexOf('aria-label="Worker pickup and queue by lane"')
+  );
+  const laneDetail = readFileSync(new URL('../src/lib/LaneDetail.svelte', import.meta.url), 'utf8');
+
+  assert.doesNotMatch(laneBoardSection, /handoff-actions|Copy Handoff Prompt|Next Skill|Manual Main|Manual Review|Manual Merge/);
+  assert.doesNotMatch(laneDetail, /Next Skill|Manual Main|Manual Review|Manual Merge/);
+  assert.match(humanTodoSection, /handoff-actions/);
+  assert.match(humanTodoSection, /Open in/);
+  assert.match(humanTodoSection, /Copy Handoff Prompt/);
+});
+
 test('Codex transcript parser renders conversation turns, tool calls, outputs, final answers, and usage', () => {
   const transcript = [
     JSON.stringify({ type: 'message', item: { role: 'user', content: [{ text: 'Please inspect status.' }] } }),
@@ -861,8 +931,42 @@ test('human review project state does not appear in the review lane board queue'
   const issue = view.queueIssues.find((item) => item.id === '#364');
   assert.equal(issue.state, 'Human Review');
   assert.equal(issue.lane, 'Human');
-  assert.equal(issue.nextSkill, 'Human Review');
+  assert.equal(Object.hasOwn(issue, 'nextSkill'), false);
   assert.equal(view.projectWorkerMatch.lanes.find((lane) => lane.lane === 'Review').project, 0);
+});
+
+test('view model keeps lane queue rows observational without next skill metadata', () => {
+  const view = buildViewModel({
+    generatedAt: new Date().toISOString(),
+    workflowPath: 'workflows/shea-symphony.md',
+    commands: {
+      githubQueue: {
+        ok: true,
+        args: ['project', 'state', 'workflows/shea-symphony.md', '--json'],
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        durationMs: 12,
+        stderr: '',
+        stdoutPreview: '{}'
+      }
+    },
+    githubQueue: {
+      source: 'GitHub Project',
+      issues: [
+        { identifier: '#415', title: 'Stable Project title', state: 'In Progress' },
+        { identifier: '#421', title: 'Review evidence', state: 'Agent Review' },
+        { identifier: '#430', title: 'Merge approved PR', state: 'Merging' }
+      ]
+    },
+    healthy: true
+  });
+
+  assert.equal(view.queueIssues.length, 3);
+  assert.ok(view.queueIssues.every((issue) => !Object.hasOwn(issue, 'nextSkill')));
+  assert.ok(view.laneProjectIssues.main.every((issue) => !Object.hasOwn(issue, 'nextSkill')));
+  assert.ok(view.laneProjectIssues.review.every((issue) => !Object.hasOwn(issue, 'nextSkill')));
+  assert.ok(view.laneProjectIssues.merge.every((issue) => !Object.hasOwn(issue, 'nextSkill')));
 });
 
 test('fixture overview feeds first-screen human todo and lane board data', () => {

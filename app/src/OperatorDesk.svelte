@@ -8,7 +8,7 @@
     getDefaultHandoffTarget,
     refreshStatusStore
   } from './lib/uiState.ts';
-  import { operatorOverviewStore, requestOperatorOverviewRefresh } from './lib/operatorOverviewStore.ts';
+  import { operatorOverviewStore, requestOperatorLocalArtifactsRefresh } from './lib/operatorOverviewStore.ts';
   import { buildLaneThroughputBoard } from './lib/viewModel/laneThroughput.ts';
   import {
     appendAutoloopLine,
@@ -51,7 +51,8 @@
     running: autoloopState.running,
     mode: autoloopState.mode,
     workflowPath: autoloopState.workflowPath,
-    latestLine: latestAutoloopLine
+    latestLine: latestAutoloopLine,
+    laneMaxSummary: laneMaxSummary(autoloopLanes)
   });
   $: autoloopStateStore.set(autoloopState);
   $: operatorSurfaceRefreshing = $refreshStatusStore.running;
@@ -91,12 +92,12 @@
       ? lastStableLaneBoard.map((lane) => ({ ...lane, refreshing: true }))
       : currentLaneBoard.map((lane) => ({ ...lane, refreshing: operatorSurfaceRefreshing }));
 
-  function scheduleAutoloopRefresh(source = 'autoloop') {
+  function scheduleAutoloopLocalRefresh(source = 'autoloop') {
     if ($refreshStatusStore.running) return;
     if (autoloopRefreshTimer) window.clearTimeout(autoloopRefreshTimer);
     autoloopRefreshTimer = window.setTimeout(() => {
       autoloopRefreshTimer = null;
-      requestOperatorOverviewRefresh(true, true, source, false);
+      requestOperatorLocalArtifactsRefresh(source, false);
     }, 900);
   }
 
@@ -107,6 +108,16 @@
       if (key && issue.title) titles.set(key, issue.title);
     }
     return titles;
+  }
+
+  function laneMaxSummary(lanes) {
+    const parts = ['main', 'review', 'merge']
+      .map((laneKey) => {
+        const value = Number(lanes?.[laneKey]?.maxConcurrent);
+        return Number.isFinite(value) ? `${laneKey} ${value}` : null;
+      })
+      .filter(Boolean);
+    return parts.length ? `max · ${parts.join(' · ')}` : '';
   }
 
   function isHumanTodoState(state) {
@@ -203,12 +214,12 @@
         autoloopState = appendAutoloopLine(autoloopState, event.payload);
       } else if (event.type === 'lane') {
         autoloopState = mergeLaneSnapshot(autoloopState, event.payload);
-        scheduleAutoloopRefresh('autoloop-lane');
+        scheduleAutoloopLocalRefresh('autoloop-lane');
       } else if (event.type === 'snapshot') {
         autoloopState = event.payload;
       } else if (event.type === 'started' || event.type === 'stopped' || event.type === 'error') {
         refreshAutoloopState();
-        if (event.type !== 'started') scheduleAutoloopRefresh(`autoloop-${event.type}`);
+        if (event.type !== 'started') scheduleAutoloopLocalRefresh(`autoloop-${event.type}`);
       }
     }).then((unlisten) => {
       unlistenAutoloop = unlisten;
@@ -231,7 +242,8 @@
         running: false,
         mode: 'dry-run',
         workflowPath: 'workflows/shea-symphony.md',
-        latestLine: 'No recent autoloop result'
+        latestLine: 'No recent autoloop result',
+        laneMaxSummary: ''
       });
       window.clearInterval(handoffRefresh);
       if (autoloopRefreshTimer) window.clearTimeout(autoloopRefreshTimer);
@@ -318,15 +330,26 @@
     <div class="lane-board-grid">
       {#each laneBoard as lane}
         <article class="lane-board-column {lane.tone}">
-          <div class="lane-board-column-head">
+          <div class="lane-board-column-head compact">
             <strong>{lane.label}</strong>
-            <small>
-              {lane.statusText}
-              {#if lane.maxConcurrent != null}
-                / max {lane.maxConcurrent}
+            <span
+              class="lane-board-state-slot {lane.refreshing || (fullLoading && !lastStableLaneBoard.length) ? 'loading' : lane.status}"
+              aria-label={lane.refreshing || (fullLoading && !lastStableLaneBoard.length)
+                ? `${lane.label} loading`
+                : lane.status === 'complete'
+                ? `${lane.label} complete`
+                : `${lane.label} ${lane.status}`}
+            >
+              {#if lane.refreshing || (fullLoading && !lastStableLaneBoard.length)}
+                <span class="lane-board-spinner" aria-hidden="true"></span>
+              {:else if lane.status === 'complete'}
+                <span aria-hidden="true">✓</span>
+              {:else if lane.status === 'blocked'}
+                <span aria-hidden="true">!</span>
+              {:else}
+                <span aria-hidden="true"></span>
               {/if}
-            </small>
-            <em>{lane.latest}</em>
+            </span>
           </div>
 
           <div class="lane-board-issue-list">
@@ -348,7 +371,7 @@
                 </div>
               {/each}
             {:else}
-              <div class="lane-board-empty">{fullLoading ? 'Loading CLI readback...' : 'No issue visible.'}</div>
+              <div class="lane-board-empty">{fullLoading && !lane.refreshing && !lastStableLaneBoard.length ? 'Loading CLI readback...' : 'No issue visible.'}</div>
             {/if}
           </div>
         </article>

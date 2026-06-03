@@ -2203,6 +2203,15 @@ a {
   gap: 2px;
 }
 
+.lane-board-column-head.compact {
+  display: grid;
+  grid-template-columns: minmax(0, auto) 18px;
+  justify-content: center;
+  align-items: center;
+  min-height: 28px;
+  column-gap: var(--space-2);
+}
+
 .lane-board-grid {
   min-height: 0;
   display: grid;
@@ -2257,6 +2266,40 @@ a {
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.lane-board-state-slot {
+  width: 18px;
+  height: 18px;
+  display: inline-grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.lane-board-state-slot.complete {
+  color: var(--success);
+}
+
+.lane-board-state-slot.blocked {
+  color: var(--danger);
+}
+
+.lane-board-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in oklab, var(--muted), transparent 70%);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: lane-board-spin 850ms linear infinite;
+}
+
+@keyframes lane-board-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .lane-board-issue-list {

@@ -113,7 +113,7 @@ fn build_read_surface(name: &str, allow_project_fallback: bool) -> Result<Value,
 }
 
 fn build_codex_transcript(issue_ref: &str, session_id: Option<&str>) -> Result<Value, String> {
-    let local_status = run_shea_read(&read_surface_args("local").unwrap_or_default());
+    let local_status = run_shea_read(&read_surface_args("status").unwrap_or_default());
     let snapshot = parse_json_output(&local_status.stdout);
     let normalized_issue = normalize_issue_ref(issue_ref);
     let candidates = transcript_candidates(&snapshot, normalized_issue.as_deref(), session_id);

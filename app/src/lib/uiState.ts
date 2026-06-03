@@ -37,7 +37,8 @@ export const autoloopControlStore = writable({
   running: false,
   mode: 'dry-run',
   workflowPath: 'workflows/shea-symphony.md',
-  latestLine: 'No recent autoloop result'
+  latestLine: 'No recent autoloop result',
+  laneMaxSummary: ''
 });
 export const refreshStatusStore = writable({
   running: false,

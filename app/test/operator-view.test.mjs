@@ -224,11 +224,12 @@ test('lane throughput board keeps independent running and queued lane work visib
   assert.equal(main.runningCount, 1);
   assert.equal(main.queuedCount, 2);
   assert.deepEqual(main.issues.map((issue) => issue.id), ['#410', '#411', '#412']);
-  assert.match(main.statusText, /running 1 · queued 2/);
+  assert.equal(main.status, 'running');
   assert.equal(review.runningCount, 1);
   assert.equal(review.queuedCount, 0);
   assert.equal(merge.runningCount, 0);
   assert.equal(merge.queuedCount, 1);
+  assert.equal(merge.status, 'queued');
   assert.deepEqual(merge.issues.map((issue) => issue.id), ['#430']);
 });
 
@@ -369,7 +370,7 @@ test('completed worktree progress display uses session provenance when present',
   assert.match(display.title, /session_registry\.updated_at_ms/);
 });
 
-test('lane throughput board surfaces blocked idle and completed lane results', () => {
+test('lane throughput board keeps blocked rows but summarizes idle and completed in the header', () => {
   const board = buildLaneThroughputBoard({
     laneSnapshots: {
       main: { lane: 'main', status: 'blocked', action: 'readiness_blocked', blockedCount: 1 },
@@ -386,9 +387,11 @@ test('lane throughput board surfaces blocked idle and completed lane results', (
   assert.equal(main.tone, 'danger');
   assert.deepEqual(main.issues.map((issue) => [issue.kind, issue.title]), [['blocked', 'readiness_blocked']]);
   assert.equal(review.completedCount, 1);
-  assert.deepEqual(review.issues.map((issue) => issue.kind), ['completed']);
+  assert.equal(review.status, 'complete');
+  assert.deepEqual(review.issues.map((issue) => issue.kind), []);
   assert.equal(merge.idleCount, 1);
-  assert.deepEqual(merge.issues.map((issue) => issue.kind), ['idle']);
+  assert.equal(merge.status, 'idle');
+  assert.deepEqual(merge.issues.map((issue) => issue.kind), []);
 });
 
 test('view model uses CLI autopilot parked queues for human todo issues', () => {

@@ -32,6 +32,7 @@
     stopAutoloop,
     subscribeAutoloopEvents,
     type AutoloopLine,
+    type LaneSnapshot,
     type LoopStateSnapshot,
     type GitHubUserSnapshot
   } from './tauriAutoloop.ts';
@@ -99,7 +100,8 @@
     running: autoloopState.running,
     mode: autoloopState.mode,
     workflowPath: autoloopState.workflowPath,
-    latestLine: latestAutoloopLine
+    latestLine: latestAutoloopLine,
+    laneMaxSummary: laneMaxSummary(autoloopState?.lanes)
   });
   $: autoloopStateStore.set(autoloopState);
   $: refreshRunning = $refreshStatusStore.running;
@@ -225,6 +227,16 @@
     const startedAt = Number(state.startedAtMs);
     const lowerBound = Number.isFinite(startedAt) ? startedAt - 1000 : null;
     return lines.filter((entry) => entry.stream === 'stdout' && (lowerBound == null || entry.atMs >= lowerBound));
+  }
+
+  function laneMaxSummary(lanes: Record<string, LaneSnapshot> | undefined) {
+    const parts = ['main', 'review', 'merge']
+      .map((laneKey) => {
+        const value = Number(lanes?.[laneKey]?.maxConcurrent);
+        return Number.isFinite(value) ? `${laneKey} ${value}` : null;
+      })
+      .filter(Boolean);
+    return parts.length ? `max · ${parts.join(' · ')}` : '';
   }
 
   function formatAutoloopTime(value: unknown) {

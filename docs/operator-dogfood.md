@@ -722,6 +722,9 @@ advancing to `Agent Review`. It reuses a tracker/runtime/discovery-backed git
 worktree under the configured workspace root and leaves normal handoff to a
 later successful Main result. Codex app-server session staleness defaults to
 30 minutes and can be tuned with `codex.session_stale_after_ms` in the workflow.
+Codex app-server turn inactivity defaults to 5 minutes and can be tuned with
+`codex.stall_timeout_ms`; a turn that starts but produces no further protocol
+events is terminated and retried rather than waiting for the full turn timeout.
 When a registered Codex app-server session is stale and has recorded process
 evidence, recovery terminates that stale process before resuming the saved
 thread with a fresh `Continue` turn. A dirty worktree is acceptable only for a

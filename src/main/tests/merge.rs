@@ -117,6 +117,24 @@ fn dirty_repair_aborts_interrupted_merge_state_before_retrying() {
 }
 
 #[test]
+fn merge_agent_stage_closes_resolved_unmerged_index() {
+    let runner = ResolvedUnmergedIndexRunner::new();
+
+    stage_resolved_merge_agent_changes(&runner, Path::new(".")).unwrap();
+
+    let calls = runner.calls.borrow();
+    assert_eq!(
+        calls.as_slice(),
+        [
+            "git diff --check",
+            "git status --porcelain",
+            "git add -A",
+            "git diff --name-only --diff-filter=U"
+        ]
+    );
+}
+
+#[test]
 fn merge_agent_semantic_uncertainty_marker_requires_human_input() {
     let text = "\
 RESOLUTION_SUMMARY: conflict needs product choice
@@ -205,6 +223,67 @@ impl HandoffCommandRunner for InterruptedMergeRepairRunner {
             "git push origin feature/issue-390" => Ok(CommandOutput {
                 status: 0,
                 stdout: "pushed\n".into(),
+                stderr: String::new(),
+            }),
+            _ => Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+        }
+    }
+}
+
+struct ResolvedUnmergedIndexRunner {
+    calls: std::cell::RefCell<Vec<String>>,
+    staged: std::cell::RefCell<bool>,
+}
+
+impl ResolvedUnmergedIndexRunner {
+    fn new() -> Self {
+        Self {
+            calls: std::cell::RefCell::new(Vec::new()),
+            staged: std::cell::RefCell::new(false),
+        }
+    }
+}
+
+impl HandoffCommandRunner for ResolvedUnmergedIndexRunner {
+    fn run(
+        &self,
+        program: &str,
+        args: &[String],
+        _cwd: &Path,
+    ) -> Result<CommandOutput, shea_symphony::git_handoff::GitHandoffError> {
+        let command = format!("{program} {}", args.join(" "));
+        self.calls.borrow_mut().push(command.clone());
+        match command.as_str() {
+            "git diff --check" => Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+            "git status --porcelain" => Ok(CommandOutput {
+                status: 0,
+                stdout: "UU app/test/operator-view.test.mjs\n".into(),
+                stderr: String::new(),
+            }),
+            "git add -A" => {
+                *self.staged.borrow_mut() = true;
+                Ok(CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+            }
+            "git diff --name-only --diff-filter=U" if *self.staged.borrow() => Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+            "git diff --name-only --diff-filter=U" => Ok(CommandOutput {
+                status: 0,
+                stdout: "app/test/operator-view.test.mjs\n".into(),
                 stderr: String::new(),
             }),
             _ => Ok(CommandOutput {

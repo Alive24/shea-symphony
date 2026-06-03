@@ -54,7 +54,10 @@ attempts while preserving issue state, dirty worktrees, and existing claim
 evidence. Codex app-server session staleness defaults to 30 minutes and can be
 configured with `codex.session_stale_after_ms`; stale registered app-server
 processes are terminated before recovery resumes the saved thread with
-`Continue`. Use `--no-recover` only for debugging or a deliberately conservative
+`Continue`. Codex app-server turn inactivity defaults to 5 minutes and can be
+configured with `codex.stall_timeout_ms`; a turn that starts but emits no further
+protocol events is terminated and treated as retryable lane backend failure.
+Use `--no-recover` only for debugging or a deliberately conservative
 operator pass. Manual session recovery remains a two-step break-glass path: use
 `main claim`, `review claim`, or `merge claim` to write the matching Project
 claim field, print the structured `run=`, and record minimum non-tmux registry

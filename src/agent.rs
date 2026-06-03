@@ -30,6 +30,8 @@ pub struct PreparedRun {
     pub prompt_artifact_path: Option<PathBuf>,
     pub command: Option<String>,
     pub timeout_ms: u64,
+    #[serde(default)]
+    pub stall_timeout_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -122,6 +124,7 @@ impl AgentBackend for DryRunBackend {
             prompt_artifact_path: None,
             command: None,
             timeout_ms: 0,
+            stall_timeout_ms: 0,
             model: None,
             reasoning_effort: None,
             approval_policy: None,
@@ -208,6 +211,7 @@ impl AgentBackend for CodexBackend {
             prompt_artifact_path: None,
             command: Some(config.codex.command.clone()),
             timeout_ms: config.codex.turn_timeout_ms,
+            stall_timeout_ms: config.codex.stall_timeout_ms,
             model: config.codex.model.clone(),
             reasoning_effort: Some(config.codex.reasoning_effort.clone()),
             approval_policy: Some(config.codex.approval_policy.to_string()),
@@ -277,6 +281,7 @@ impl AgentBackend for ClaudeCodeBackend {
             prompt_artifact_path: None,
             command: Some(config.claude.command.clone()),
             timeout_ms: config.claude.turn_timeout_ms,
+            stall_timeout_ms: 0,
             model: None,
             reasoning_effort: None,
             approval_policy: None,
@@ -351,6 +356,7 @@ impl AgentBackend for TmuxBackend {
             prompt_artifact_path: None,
             command: Some(config.tmux.agent_command.clone()),
             timeout_ms: 0,
+            stall_timeout_ms: 0,
             model: None,
             reasoning_effort: None,
             approval_policy: None,
@@ -893,7 +899,20 @@ fn run_codex_app_server_protocol(
     )
     .map_err(|error| error.to_string())?;
 
-    await_app_server_terminal_event(child, stdout_rx, protocol_log, events, &session_id, timeout)
+    let stall_timeout = if prepared.stall_timeout_ms == 0 {
+        timeout
+    } else {
+        Duration::from_millis(prepared.stall_timeout_ms)
+    };
+    await_app_server_terminal_event(
+        child,
+        stdout_rx,
+        protocol_log,
+        events,
+        &session_id,
+        timeout,
+        stall_timeout,
+    )
 }
 
 fn send_app_server_message(
@@ -922,7 +941,13 @@ fn await_app_server_response(
 ) -> Result<serde_json::Value, String> {
     let deadline = Instant::now() + timeout;
     loop {
-        let Some(line) = next_app_server_stdout_line(child, stdout_rx, deadline)? else {
+        let Some(line) = next_app_server_stdout_line(
+            child,
+            stdout_rx,
+            deadline,
+            "Codex app-server timed out waiting for protocol output",
+        )?
+        else {
             return Err(format!(
                 "Codex app-server exited before response id {expected_id}"
             ));
@@ -959,12 +984,23 @@ fn await_app_server_terminal_event(
     events: &mut Vec<AgentEvent>,
     session_id: &str,
     timeout: Duration,
+    stall_timeout: Duration,
 ) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
+    let mut idle_deadline = Instant::now() + stall_timeout.min(timeout);
     loop {
-        let Some(line) = next_app_server_stdout_line(child, stdout_rx, deadline)? else {
+        let next_deadline = deadline.min(idle_deadline);
+        let timeout_message = if next_deadline == deadline {
+            "Codex app-server timed out waiting for protocol output"
+        } else {
+            "Codex app-server stalled waiting for turn event"
+        };
+        let Some(line) =
+            next_app_server_stdout_line(child, stdout_rx, next_deadline, timeout_message)?
+        else {
             return Err("Codex app-server exited before a terminal turn event".into());
         };
+        idle_deadline = Instant::now() + stall_timeout;
         append_protocol_record(protocol_log, "stdout", line.trim_end());
         let event = normalize_json_rpc_line(line.trim_end(), Some(session_id));
         let kind = event.event;
@@ -984,13 +1020,14 @@ fn next_app_server_stdout_line(
     child: &mut Child,
     stdout_rx: &Receiver<Result<String, String>>,
     deadline: Instant,
+    timeout_message: &str,
 ) -> Result<Option<String>, String> {
     loop {
         let now = Instant::now();
         if now >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            return Err("Codex app-server timed out waiting for protocol output".into());
+            return Err(timeout_message.into());
         }
         let remaining = deadline.saturating_duration_since(now);
         match stdout_rx.recv_timeout(remaining.min(Duration::from_millis(50))) {
@@ -2432,6 +2469,7 @@ mod tests {
             prompt_artifact_path: None,
             command: Some("codex".into()),
             timeout_ms: 0,
+            stall_timeout_ms: 0,
             model: None,
             reasoning_effort: None,
             approval_policy: None,
@@ -2709,6 +2747,21 @@ exit 0
         RuntimeConfig::from_workflow(&workflow, std::path::Path::new("/tmp/WORKFLOW.md")).unwrap()
     }
 
+    fn codex_config_with_stall(
+        command: &str,
+        timeout_ms: u64,
+        stall_timeout_ms: u64,
+    ) -> RuntimeConfig {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            &format!(
+                "---\nagent:\n  backend: codex\ncodex:\n  command: {command:?}\n  turn_timeout_ms: {timeout_ms}\n  stall_timeout_ms: {stall_timeout_ms}\n---\nPrompt"
+            ),
+        )
+        .unwrap();
+        RuntimeConfig::from_workflow(&workflow, std::path::Path::new("/tmp/WORKFLOW.md")).unwrap()
+    }
+
     fn claude_config(command: &str, timeout_ms: u64) -> RuntimeConfig {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
@@ -2794,6 +2847,10 @@ while IFS= read -r line; do
           ;;
         cancelled)
           printf '%s\n' '{"method":"turn/cancelled","params":{"message":"operator stopped"}}'
+          exit 0
+          ;;
+        silent_after_turn_start)
+          sleep 5
           exit 0
           ;;
         partial_malformed)
@@ -3109,6 +3166,37 @@ done
             assert!(summary.message.contains(expected), "{mode}: {summary:?}");
             assert!(message_field(&events, "exit_status=").is_some());
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_backend_app_server_fails_fast_when_turn_stalls_after_start() {
+        let temp = tempfile::tempdir().unwrap();
+        let (codex, trace_path) = fake_codex_app_server(temp.path());
+        let workspace = temp.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let config = codex_config_with_stall(&format!("{} app-server", codex.display()), 5_000, 50);
+        let backend = CodexBackend;
+        let mut prepared = backend
+            .prepare(workspace, "silent turn".into(), &config)
+            .unwrap();
+        prepared.prompt_artifact_path = Some(temp.path().join("logs/prompts/app-server.prompt.md"));
+        prepared
+            .env
+            .insert("FAKE_CODEX_TRACE".into(), trace_path.display().to_string());
+        prepared
+            .env
+            .insert("FAKE_CODEX_MODE".into(), "silent_after_turn_start".into());
+
+        let events = backend.run(prepared).unwrap();
+        let summary = backend.summarize(&events);
+
+        assert!(!summary.success);
+        assert!(summary.message.contains("stalled waiting for turn event"));
+        let protocol_path = message_field(&events, "protocol_artifact=").unwrap();
+        let protocol = fs::read_to_string(protocol_path).unwrap();
+        assert!(protocol.contains("turn/start"));
+        assert!(!protocol.contains("turn/completed"));
     }
 
     #[cfg(unix)]

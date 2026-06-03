@@ -18,7 +18,7 @@ pub(crate) use evidence::record_done_merge_lane_completion;
 #[cfg(test)]
 pub(crate) use repair::{
     finish_merge_agent_repaired_branch, merge_agent_reports_repaired,
-    merge_agent_requests_human_input,
+    merge_agent_requests_human_input, stage_resolved_merge_agent_changes,
 };
 #[cfg(test)]
 pub(crate) use selection::select_merge_worker_issues;

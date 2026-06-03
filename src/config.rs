@@ -971,7 +971,7 @@ mod tests {
     fn codex_model_and_reasoning_effort_are_configurable() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\ntracker:\n  kind: memory\ncodex:\n  model: gpt-5.5\n  reasoning_effort: high\n  session_stale_after_ms: 120000\n---\nPrompt",
+            "---\ntracker:\n  kind: memory\ncodex:\n  model: gpt-5.5\n  reasoning_effort: high\n  stall_timeout_ms: 60000\n  session_stale_after_ms: 120000\n---\nPrompt",
         )
         .unwrap();
         let config =
@@ -979,6 +979,7 @@ mod tests {
 
         assert_eq!(config.codex.model.as_deref(), Some("gpt-5.5"));
         assert_eq!(config.codex.reasoning_effort, "high");
+        assert_eq!(config.codex.stall_timeout_ms, 60_000);
         assert_eq!(config.codex.session_stale_after_ms, 120_000);
     }
 

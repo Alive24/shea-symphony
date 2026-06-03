@@ -257,7 +257,10 @@ preserving the existing issue state, claim, workspace, dirty local changes, and
 runtime evidence. Codex app-server session staleness defaults to 30 minutes and
 can be configured with `codex.session_stale_after_ms`; stale app-server records
 with process evidence are terminated before recovery resumes the recorded thread
-with `Continue`. Use `--no-recover` only for debugging or a deliberately
+with `Continue`. Codex app-server turn inactivity defaults to 5 minutes and can
+be configured with `codex.stall_timeout_ms`; silent turns are terminated and
+left retryable instead of waiting for the full turn timeout. Use `--no-recover`
+only for debugging or a deliberately
 conservative operator pass. Recovery does not route through `Rework` and does
 not advance to `Agent Review`; normal handoff still requires a later successful
 Main result.

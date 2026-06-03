@@ -302,7 +302,7 @@ pub(crate) fn run_loop_apply_recovery_handoff(
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
     if !matches!(
         state.last_event.as_deref(),
-        Some("SessionRunning" | "SessionTerminal")
+        Some("SessionRunning" | "SessionTerminal" | "Resumed")
     ) {
         return Ok(None);
     }

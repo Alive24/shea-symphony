@@ -30,8 +30,8 @@ export function buildLaneThroughputBoard({
       .map((issue) => ({
         kind: 'queued',
         id: issue.id,
-        title: issue.title,
-        meta: `${issue.state} · Next Skill: ${issue.nextSkill}`,
+        title: issueTitle(issue, issueTitleById),
+        meta: issueMeta(issue),
         tone: issue.tone,
         workerNumber: null,
         waiting: false
@@ -100,9 +100,49 @@ function workerDisplayTitle(worker: any, titles: Map<string, string>) {
   const issueRef = normalizeIssueRef(worker.issue);
   const projectTitle = issueRef ? titles.get(issueRef) : null;
   if (projectTitle) return projectTitle;
-  if (worker.title && normalizeIssueRef(worker.title) !== issueRef) return worker.title;
-  if (worker.action && worker.action !== 'tick_started') return worker.action;
-  return 'Waiting for agent response';
+  const workerTitle = nonTransientTitle(worker.title, issueRef);
+  if (workerTitle) return workerTitle;
+  return issueRef ?? 'Worker session';
+}
+
+function issueTitle(issue: any, titles: Map<string, string>) {
+  const issueRef = normalizeIssueRef(issue.id);
+  const projectTitle = issueRef ? titles.get(issueRef) : null;
+  if (projectTitle) return projectTitle;
+  const title = nonTransientTitle(issue.title, issueRef);
+  if (title) return title;
+  return issueRef ?? 'Issue';
+}
+
+function nonTransientTitle(value: any, issueRef: string | null) {
+  if (typeof value !== 'string') return null;
+  const title = value.trim();
+  if (!title || normalizeIssueRef(title) === issueRef || transientTitleLabels.has(title.toLowerCase())) return null;
+  return title;
+}
+
+const transientTitleLabels = new Set([
+  'waiting for agent response',
+  'tick_started',
+  'reviewing',
+  'lane_tick_completed',
+  'lane_tick_started',
+  'readiness_blocked',
+  'blocked',
+  'running',
+  'completed',
+  'failed',
+  'error'
+]);
+
+function issueMeta(issue: any) {
+  return [
+    issue.state,
+    issue.workerStatus,
+    issue.workerDetail,
+    issue.evidence,
+    issue.recommended
+  ].filter(Boolean).join(' · ');
 }
 
 function laneStatusRow(snapshot: any) {

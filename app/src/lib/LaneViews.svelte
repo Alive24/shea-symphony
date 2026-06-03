@@ -112,7 +112,6 @@
       evidence: issue.evidence,
       recommended: issue.recommended,
       workerStatus: issue.workerStatus,
-      nextSkill: issue.nextSkill,
       runtimeCategory: completed ? 'Recent completion' : runtimeCategoryForIssue(issue),
       runtimeTone: completed ? 'success' : issue.workerStatus === 'Worker read unavailable' ? 'warn' : humanStates.has(normalizeState(state)) ? 'warn' : 'neutral',
       runtimeDetail: completed

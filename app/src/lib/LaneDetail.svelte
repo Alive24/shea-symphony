@@ -91,11 +91,11 @@
     {:else if primaryProjectItem}
       <strong>{primaryProjectItem.id}</strong>
       <p>{primaryProjectItem.recommended}</p>
-      <small>{primaryProjectItem.workerDetail} Next Skill: {primaryProjectItem.nextSkill}</small>
+      <small>{primaryProjectItem.workerDetail}</small>
     {:else}
       <strong>Idle</strong>
       <p>No selected issue is visible for this lane.</p>
-      <small>Refresh overview or run the lane Skill from chat.</small>
+      <small>Refresh overview for the latest Project and worker readback.</small>
     {/if}
   </article>
 
@@ -123,7 +123,7 @@
       {#each projectItems.slice(0, 4) as item}
         <div>
           <span>{item.id}</span>
-          <p>{item.state} · {item.workerStatus} · {item.nextSkill}</p>
+          <p>{item.state} · {item.workerStatus}</p>
         </div>
       {/each}
     {:else}
@@ -156,7 +156,7 @@
           <span>{item.state} · {item.source}</span>
           <strong class="{item.workerTone}">{item.workerStatus}</strong>
         </div>
-        <small>{item.workerDetail} Next Skill: {item.nextSkill}</small>
+        <small>{item.workerDetail}</small>
         {#if item.url}
           <a class="queue-link" href={item.url} target="_blank" rel="noreferrer">Open issue</a>
         {/if}

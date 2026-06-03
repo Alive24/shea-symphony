@@ -73,9 +73,9 @@ export function buildCapabilityMap(commands: LooseRecord) {
       tone: commands.doctor?.ok ? 'success' : 'warn'
     },
     {
-      label: 'Local checkout',
-      state: commands.local?.ok ? 'Observed' : 'Pending read',
-      tone: commands.local?.ok ? 'success' : 'warn'
+      label: 'Status',
+      state: commands.status?.ok ? 'Observed' : 'Pending read',
+      tone: commands.status?.ok ? 'success' : 'warn'
     },
     {
       label: 'Operator queue',

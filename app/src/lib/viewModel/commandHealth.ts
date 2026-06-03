@@ -9,7 +9,7 @@ import {
 type LooseRecord = Record<string, any>;
 
 export function buildCommandHealth(commands: LooseRecord) {
-  return ['githubQueue', 'autopilot', 'doctor', 'review', 'skills', 'sessions', 'local'].map((name) => {
+  return ['githubQueue', 'autopilot', 'doctor', 'review', 'skills', 'sessions', 'status'].map((name) => {
     const result = commands[name];
     const status = result ? (result.ok ? 'Passed' : result.pending ? 'Pending' : 'Failed') : 'Not checked';
     const detail = result ? commandDetail(result) : 'No result captured from this overview command.';
@@ -75,10 +75,10 @@ export function buildReadPathMap(commandHealth: any[]) {
       role: 'Session list',
       detail: 'Feeds active agent session presence.'
     }),
-    readPathNode(byId.get('local'), {
-      id: 'local',
-      label: 'Local Checkout',
-      role: 'Git and build status',
+    readPathNode(byId.get('status'), {
+      id: 'status',
+      label: 'Status',
+      role: 'Runtime/session status',
       detail: 'Feeds branch, dirty count, worktree count, build, and binary readiness.'
     })
   ];

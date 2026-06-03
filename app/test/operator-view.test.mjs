@@ -269,7 +269,7 @@ test('project read cooldown preserves last stable review queue visibility', () =
 });
 
 test('default background refresh defers doctor surface', () => {
-  assert.deepEqual(defaultBackgroundReadSurfaces, ['githubQueue', 'skills', 'sessions', 'local']);
+  assert.deepEqual(defaultBackgroundReadSurfaces, ['githubQueue', 'skills', 'sessions', 'status']);
   assert.equal(defaultBackgroundReadSurfaces.includes('doctor'), false);
   assert.equal(defaultBackgroundReadSurfaces.includes('autopilot'), false);
   assert.equal(defaultBackgroundReadSurfaces.includes('review'), false);

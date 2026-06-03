@@ -40,6 +40,8 @@ export type HeartbeatSummary = {
   lastHeartbeatMs: number | null;
   lastHeartbeatAge: string;
   latestLaneEvent: string;
+  lane: string;
+  issue: string | null;
 };
 
 const staleAfterMs = 2 * 60 * 1000;
@@ -47,26 +49,27 @@ const staleAfterMs = 2 * 60 * 1000;
 export function classifyHeartbeat(
   loopState: any,
   laneKey: string,
+  issueRef: string | null = null,
   nowMs = Date.now()
 ): HeartbeatSummary {
   const lane = loopState?.lanes?.[laneKey];
   const lastHeartbeatMs = numberOrNull(lane?.updatedAtMs ?? latestLineAt(loopState));
   const ageMs = lastHeartbeatMs == null ? null : Math.max(0, nowMs - lastHeartbeatMs);
-  const latestLaneEvent = usefulLaneEvent(loopState, laneKey) ?? lane?.latestLine ?? lane?.action ?? 'No lane event visible.';
+  const latestLaneEvent = usefulLaneEvent(loopState, laneKey, issueRef) ?? lane?.latestLine ?? lane?.action ?? 'No lane event visible.';
 
   if (!loopState) {
-    return heartbeat('unavailable', null, 'unavailable', 'Autoloop state is unavailable.', latestLaneEvent);
+    return heartbeat('unavailable', null, 'unavailable', 'Autoloop state is unavailable.', latestLaneEvent, laneKey, issueRef);
   }
   if (!loopState.running) {
-    return heartbeat('stopped', lastHeartbeatMs, ageLabel(ageMs), 'Loop stopped', latestLaneEvent);
+    return heartbeat('stopped', lastHeartbeatMs, ageLabel(ageMs), 'Loop stopped', latestLaneEvent, laneKey, issueRef);
   }
   if (lastHeartbeatMs == null) {
-    return heartbeat('unavailable', null, 'unavailable', 'Heartbeat unavailable', latestLaneEvent);
+    return heartbeat('unavailable', null, 'unavailable', 'Heartbeat unavailable', latestLaneEvent, laneKey, issueRef);
   }
   if (ageMs != null && ageMs > staleAfterMs) {
-    return heartbeat('stale', lastHeartbeatMs, ageLabel(ageMs), 'Heartbeat stale', latestLaneEvent);
+    return heartbeat('stale', lastHeartbeatMs, ageLabel(ageMs), 'Heartbeat stale', latestLaneEvent, laneKey, issueRef);
   }
-  return heartbeat('running', lastHeartbeatMs, ageLabel(ageMs), 'Loop running', latestLaneEvent);
+  return heartbeat('running', lastHeartbeatMs, ageLabel(ageMs), 'Loop running', latestLaneEvent, laneKey, issueRef);
 }
 
 export function parseCodexTranscriptJsonl(text: unknown): TranscriptParseResult {
@@ -243,12 +246,20 @@ function event(index: number, kind: TranscriptEventKind, title: string, body: st
   };
 }
 
-function heartbeat(state: HeartbeatSummary['state'], lastHeartbeatMs: number | null, lastHeartbeatAge: string, label: string, latestLaneEvent: string): HeartbeatSummary {
+function heartbeat(
+  state: HeartbeatSummary['state'],
+  lastHeartbeatMs: number | null,
+  lastHeartbeatAge: string,
+  label: string,
+  latestLaneEvent: string,
+  lane: string,
+  issue: string | null
+): HeartbeatSummary {
   const tone = state === 'running' ? 'success' : state === 'stale' ? 'warn' : state === 'stopped' ? 'neutral' : 'warn';
-  return { state, tone, label, lastHeartbeatMs, lastHeartbeatAge, latestLaneEvent };
+  return { state, tone, label, lastHeartbeatMs, lastHeartbeatAge, latestLaneEvent, lane, issue };
 }
 
-function usefulLaneEvent(loopState: any, laneKey: string) {
+function usefulLaneEvent(loopState: any, laneKey: string, issueRef: string | null) {
   const lines = [...(loopState?.recentLines ?? [])].reverse();
   for (const entry of lines) {
     const event = entry?.event;
@@ -256,7 +267,10 @@ function usefulLaneEvent(loopState: any, laneKey: string) {
     const raw = text(payload.raw ?? entry.line);
     const lane = text(payload.lane ?? payload.fields?.lane ?? event?.lane);
     if (lane && lane !== laneKey) continue;
+    const issue = normalizeIssueRef(payload.issue ?? payload.fields?.issue ?? payload.selected_issue ?? payload.selected);
+    if (issueRef && issue && issue !== normalizeIssueRef(issueRef)) continue;
     if (isNoisyLine(raw)) continue;
+    if (event?.event === 'autopilot_signal' && payload.message) return text(payload.message);
     if (raw) return raw;
   }
   return null;
@@ -272,8 +286,22 @@ function isNoisyLine(raw: string) {
     || raw === 'integration gaps:'
     || /^-\s+GitHub Project v2\b/.test(raw)
     || /^canonical_checkout/.test(raw)
+    || /^polling:/.test(raw)
+    || /^activity:/.test(raw)
+    || /^tokens:/.test(raw)
+    || /^event_log=/.test(raw)
     || /reason=state is not active\b/.test(raw)
-    || /reason=no_(merging|agent_review)_issue\b/.test(raw);
+    || /reason=no_(merging|agent_review|dispatchable)_issue\b/.test(raw);
+}
+
+function normalizeIssueRef(value: unknown) {
+  if (value == null || value === '' || value === 'none' || value === 'no-issue') return null;
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return normalizeIssueRef(record.identifier ?? record.issue ?? record.id ?? record.number ?? record.title);
+  }
+  const match = String(value).match(/#?(\d+)/);
+  return match ? `#${match[1]}` : String(value);
 }
 
 function contentText(value: any): string {

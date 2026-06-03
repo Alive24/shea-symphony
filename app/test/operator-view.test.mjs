@@ -43,6 +43,7 @@ import {
   appendAutoloopLine,
   defaultLoopState,
   laneWorkerFromAutoloop,
+  laneWorkersFromAutoloopLines,
   operatorRunLogLines
 } from '../src/lib/tauriAutoloop.ts';
 
@@ -94,6 +95,27 @@ test('maps live autoloop lane snapshots into existing lane board worker rows', (
   assert.equal(laneWorkerFromAutoloop({ lane: 'main', status: 'completed' }, 'main', state), null);
   assert.equal(laneWorkerFromAutoloop({ lane: 'main', status: 'skipped', selected: '#421' }, 'main', state), null);
   assert.equal(laneWorkerFromAutoloop({ lane: 'main', status: 'running', selected: 'none', action: 'tick_started' }, 'main', state), null);
+  assert.deepEqual(laneWorkersFromAutoloopLines({
+    ...state,
+    startedAtMs: Date.now() - 100,
+    recentLines: [{
+      atMs: Date.now(),
+      stream: 'stdout',
+      line: 'Latest: review | #421 | waiting | review_agent',
+      event: {
+        event: 'autopilot_signal',
+        payload: {
+          visibility: 'operator',
+          scope: 'lane',
+          lane: 'review',
+          issue: '#421',
+          status: 'waiting',
+          action: 'review_agent',
+          message: '#421 review waiting review_agent'
+        }
+      }
+    }]
+  }, 'review').map((entry) => entry.issue), ['#421']);
 });
 
 test('autoloop stdout log omits repeated inactive skipped issue details', () => {
@@ -169,7 +191,15 @@ test('autoloop stdout log omits child lane idle stop lines', () => {
     'merge_loop=stopped reason=no_merging_issue iterations=1 slot=1',
     'review_loop=stopped reason=no_agent_review_issue iterations=1',
     'merge_loop_iteration=1 mode=write recover=true max_concurrent=3',
-    'review_loop_iteration=1 mode=write max_concurrent=2'
+    'review_loop_iteration=1 mode=write max_concurrent=2',
+    'polling: checking=false interval_ms=5000 next_poll_in_ms=5000',
+    'activity: planned=0 running=0 retrying=0 skipped=0',
+    'tokens: input=0 output=0 total=0 seconds_running=0',
+    'event_log=/Users/example/.shea-symphony/logs/shea-symphony.jsonl',
+    'Latest: merge | no-issue | idle | no_dispatchable_issue',
+    'tracker_recovery action=already_applied mutation_type=set_state issue=#415 state=merging',
+    'reason=pull request merge state is `DIRTY`',
+    'pull_request=https://github.com/Alive24/shea-symphony/pull/427'
   ];
   let state = defaultLoopState();
 
@@ -192,7 +222,7 @@ test('autoloop stdout log omits child lane idle stop lines', () => {
   assert.equal(state.recentLines.length, 0);
 });
 
-test('autoloop log omits no-op result but keeps issue work and blockers', () => {
+test('autoloop log omits result summaries but keeps operator lane work and blockers', () => {
   let state = defaultLoopState();
   state = appendAutoloopLine(state, {
     atMs: Date.now(),
@@ -214,35 +244,63 @@ test('autoloop log omits no-op result but keeps issue work and blockers', () => 
   state = appendAutoloopLine(state, {
     atMs: Date.now(),
     stream: 'stdout',
-    line: 'autopilot_loop_result',
+    line: 'autopilot_loop_lane',
     event: {
-      event: 'autopilot_loop_result',
+      event: 'autopilot_loop_lane',
       payload: {
-        work_units_completed_this_cycle: 1,
-        completed_work_units: 1,
-        lanes: [
-          { lane: 'main', status: 'completed', action: 'lane_tick_completed', selected_issue: { identifier: '#408' }, work_unit_completed: true }
-        ]
+        lane: 'main',
+        status: 'completed',
+        action: 'lane_tick_completed',
+        selected_issue: { identifier: '#408' },
+        work_unit_completed: true
       }
     }
   });
   state = appendAutoloopLine(state, {
     atMs: Date.now(),
     stream: 'stdout',
-    line: 'autopilot_loop_result',
+    line: 'autopilot_loop_lane',
     event: {
-      event: 'autopilot_loop_result',
+      event: 'autopilot_loop_lane',
       payload: {
-        work_units_completed_this_cycle: 0,
-        completed_work_units: 1,
-        lanes: [
-          { lane: 'merge', status: 'error', action: 'tick_failed', selected_issue: { identifier: '#408' }, work_unit_completed: false }
-        ]
+        lane: 'merge',
+        status: 'error',
+        action: 'tick_failed',
+        selected_issue: { identifier: '#408' },
+        work_unit_completed: false
       }
     }
   });
 
   assert.equal(state.recentLines.length, 2);
+});
+
+test('autoloop run logs only admit operator signals from legacy stdout', () => {
+  let state = defaultLoopState();
+  for (const [line, event] of [
+    [
+      'polling: checking=false interval_ms=5000 next_poll_in_ms=5000',
+      { event: 'autopilot_signal', payload: { visibility: 'telemetry', scope: 'runtime', kind: 'polling', message: 'polling: checking=false interval_ms=5000 next_poll_in_ms=5000' } }
+    ],
+    [
+      'Latest: main | no-issue | idle | no_dispatchable_issue | next=wait',
+      { event: 'autopilot_signal', payload: { visibility: 'debug', scope: 'lane', lane: 'main', status: 'idle', action: 'no_dispatchable_issue', message: 'main idle no_dispatchable_issue' } }
+    ],
+    [
+      'Latest: merge | #415 | waiting | merge_decision | Issue | next=repair',
+      { event: 'autopilot_signal', payload: { visibility: 'operator', scope: 'lane', lane: 'merge', issue: '#415', status: 'waiting', action: 'merge_decision', message: '#415 merge waiting merge_decision' } }
+    ]
+  ]) {
+    state = appendAutoloopLine(state, {
+      atMs: Date.now(),
+      stream: 'stdout',
+      line,
+      event
+    });
+  }
+
+  assert.equal(state.recentLines.length, 1);
+  assert.equal(state.recentLines[0].event.payload.issue, '#415');
 });
 
 test('autoloop running logs filter raw snapshot heartbeat lines', () => {
@@ -339,6 +397,63 @@ test('autoloop stdout log omits routine status and clean checkout lines', () => 
   }
 
   assert.equal(state.recentLines.length, 0);
+});
+
+test('autoloop run logs omit supervisor and non-actionable status events', () => {
+  const now = Date.now();
+  let state = defaultLoopState();
+  for (const event of [
+    {
+      event: 'autopilot_loop_supervisor',
+      payload: { scheduler: 'independent', lanes: ['main', 'review', 'merge'] }
+    },
+    {
+      event: 'autopilot_loop_status',
+      payload: {
+        phase: 'checking',
+        message: 'checking Project, lane state, runtime state, and readiness',
+        counts: { running: 0, blocked: 0 },
+        blocked_reasons: []
+      }
+    },
+    {
+      event: 'autopilot_loop_status',
+      payload: {
+        phase: 'running',
+        message: 'one or more lanes have useful work ready',
+        counts: { running: 1, blocked: 0 },
+        selected_issues: [{ identifier: '#415' }],
+        blocked_reasons: []
+      }
+    }
+  ]) {
+    state = appendAutoloopLine(state, {
+      atMs: now,
+      stream: 'stdout',
+      line: event.event,
+      event
+    });
+  }
+
+  assert.equal(state.recentLines.length, 0);
+
+  state = appendAutoloopLine(state, {
+    atMs: now + 1,
+    stream: 'stdout',
+    line: 'autopilot_loop_status',
+    event: {
+      event: 'autopilot_loop_status',
+      payload: {
+        phase: 'blocked',
+        message: 'blocked state is visible and non-mutating',
+        counts: { running: 0, blocked: 1 },
+        blocked_reasons: ['main:preflight']
+      }
+    }
+  });
+
+  assert.equal(state.recentLines.length, 1);
+  assert.equal(state.recentLines[0].event.payload.phase, 'blocked');
 });
 
 test('lane throughput board keeps independent running and queued lane work visible', () => {
@@ -495,10 +610,10 @@ test('missing transcript state is local-only and explicit', () => {
 test('heartbeat classifier separates running, stale, stopped, and unavailable states', () => {
   const now = 10_000;
 
-  assert.equal(classifyHeartbeat({ running: true, lanes: { main: { updatedAtMs: now - 15_000 } } }, 'main', now).state, 'running');
-  assert.equal(classifyHeartbeat({ running: true, lanes: { main: { updatedAtMs: now - 180_000 } } }, 'main', now).state, 'stale');
-  assert.equal(classifyHeartbeat({ running: false, lanes: { main: { updatedAtMs: now - 180_000 } } }, 'main', now).state, 'stopped');
-  assert.equal(classifyHeartbeat(null, 'main', now).state, 'unavailable');
+  assert.equal(classifyHeartbeat({ running: true, lanes: { main: { updatedAtMs: now - 15_000 } } }, 'main', null, now).state, 'running');
+  assert.equal(classifyHeartbeat({ running: true, lanes: { main: { updatedAtMs: now - 180_000 } } }, 'main', null, now).state, 'stale');
+  assert.equal(classifyHeartbeat({ running: false, lanes: { main: { updatedAtMs: now - 180_000 } } }, 'main', null, now).state, 'stopped');
+  assert.equal(classifyHeartbeat(null, 'main', null, now).state, 'unavailable');
 });
 
 test('project read cooldown preserves last stable review queue visibility', () => {

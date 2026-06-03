@@ -269,6 +269,7 @@ done
         recover: true,
         max_concurrent: Some(2),
         display: DisplayMode::Plain,
+        quiet_idle: false,
     };
 
     run_loop_dispatch_write_candidates(
@@ -896,6 +897,7 @@ fn no_dispatch_sleeps_without_iteration_limit() {
         write: false,
         recover: false,
         display: DisplayMode::Plain,
+        quiet_idle: false,
     };
 
     assert_eq!(
@@ -928,6 +930,7 @@ fn run_loop_write_mode_rejects_dry_run_backend_before_runtime_writes() {
         write: true,
         recover: false,
         display: DisplayMode::Plain,
+        quiet_idle: false,
     })
     .unwrap_err()
     .to_string();
@@ -966,6 +969,7 @@ fn run_loop_dry_run_preview_allows_dry_run_backend() {
         write: false,
         recover: false,
         display: DisplayMode::Plain,
+        quiet_idle: false,
     })
     .unwrap();
 }
@@ -980,6 +984,7 @@ fn no_dispatch_stops_for_bounded_write_loop() {
         write: true,
         recover: false,
         display: DisplayMode::Plain,
+        quiet_idle: false,
     };
 
     assert_eq!(
@@ -1000,6 +1005,7 @@ fn no_dispatch_sleeps_for_unbounded_write_loop() {
         write: true,
         recover: false,
         display: DisplayMode::Plain,
+        quiet_idle: false,
     };
 
     assert_eq!(

@@ -124,6 +124,7 @@ fn autopilot_loop_with_cancellation(
                 options.json,
                 options.display,
                 options.event_json,
+                options.verbose,
             )?;
             print_autopilot_stopped(
                 options.event_json,
@@ -147,6 +148,7 @@ fn autopilot_loop_with_cancellation(
             options.json,
             options.display,
             options.event_json,
+            options.verbose,
         )?;
         warn_if_temporary_workflow_path(&options.workflow_path);
 
@@ -165,6 +167,7 @@ fn autopilot_loop_with_cancellation(
                     options.json,
                     options.display,
                     options.event_json,
+                    options.verbose,
                 )?;
                 if autopilot_should_continue(iteration, work_unit_limit)
                     && autopilot_sleep_or_cancel(status.settings.poll_interval_ms, &cancellation)
@@ -180,6 +183,7 @@ fn autopilot_loop_with_cancellation(
                         options.json,
                         options.display,
                         options.event_json,
+                        options.verbose,
                     )?;
                     print_autopilot_stopped(
                         options.event_json,
@@ -215,6 +219,7 @@ fn autopilot_loop_with_cancellation(
                     options.json,
                     options.display,
                     options.event_json,
+                    options.verbose,
                 )?;
                 if autopilot_should_continue(iteration, work_unit_limit)
                     && autopilot_sleep_or_cancel(status.settings.poll_interval_ms, &cancellation)
@@ -230,6 +235,7 @@ fn autopilot_loop_with_cancellation(
                         options.json,
                         options.display,
                         options.event_json,
+                        options.verbose,
                     )?;
                     print_autopilot_stopped(
                         options.event_json,
@@ -279,6 +285,7 @@ fn autopilot_loop_with_cancellation(
                         options.json,
                         options.display,
                         options.event_json,
+                        options.verbose,
                     )?;
                     if autopilot_should_continue(iteration, work_unit_limit)
                         && autopilot_sleep_or_cancel(retry_delay_ms, &cancellation)
@@ -297,6 +304,7 @@ fn autopilot_loop_with_cancellation(
                             options.json,
                             options.display,
                             options.event_json,
+                            options.verbose,
                         )?;
                         print_autopilot_stopped(
                             options.event_json,
@@ -332,6 +340,7 @@ fn autopilot_loop_with_cancellation(
                     options.json,
                     options.display,
                     options.event_json,
+                    options.verbose,
                 )?;
                 if autopilot_should_continue(iteration, work_unit_limit)
                     && autopilot_sleep_or_cancel(settings.poll_interval_ms, &cancellation)
@@ -347,6 +356,7 @@ fn autopilot_loop_with_cancellation(
                         options.json,
                         options.display,
                         options.event_json,
+                        options.verbose,
                     )?;
                     print_autopilot_stopped(
                         options.event_json,
@@ -373,7 +383,13 @@ fn autopilot_loop_with_cancellation(
             &recent_transient_failures,
             cancellation.load(Ordering::SeqCst),
         );
-        print_autopilot_loop_status(&status, options.json, options.display, options.event_json)?;
+        print_autopilot_loop_status(
+            &status,
+            options.json,
+            options.display,
+            options.event_json,
+            options.verbose,
+        )?;
         if status.phase == "blocked" {
             if autopilot_should_continue(iteration, work_unit_limit)
                 && autopilot_sleep_or_cancel(settings.poll_interval_ms, &cancellation)
@@ -392,6 +408,7 @@ fn autopilot_loop_with_cancellation(
                     options.json,
                     options.display,
                     options.event_json,
+                    options.verbose,
                 )?;
                 print_autopilot_stopped(
                     options.event_json,
@@ -422,6 +439,7 @@ fn autopilot_loop_with_cancellation(
                 options.json,
                 options.display,
                 options.event_json,
+                options.verbose,
             )?;
             print_autopilot_stopped(
                 options.event_json,
@@ -587,7 +605,7 @@ fn run_independent_autopilot_lane_supervisor(
         });
     }
 
-    if !options.event_json {
+    if !options.event_json && options.verbose {
         println!(
             "autopilot_loop_supervisor mode={} scheduler=independent lanes={} recover={} main_max_concurrent={} review_max_concurrent={} merge_max_concurrent={}",
             if options.write { "write" } else { "dry-run" },
@@ -975,6 +993,7 @@ fn autopilot_main_tick(
         recover: settings.recover,
         max_concurrent: Some(settings.main_max_concurrent),
         display: DisplayMode::Plain,
+        quiet_idle: !options.verbose,
     });
     autopilot_lane_result_from_execution(
         "main",
@@ -2107,6 +2126,57 @@ mod tests {
     }
 
     #[test]
+    fn plain_status_visibility_is_operator_scoped() {
+        let options = AutopilotLoopOptions {
+            workflow_path: PathBuf::from("/tmp/WORKFLOW.md"),
+            max_iterations: Some(1),
+            once: false,
+            continuous: false,
+            write: true,
+            dry_run: false,
+            recover: true,
+            poll_interval_ms: None,
+            main_max_concurrent: Some(1),
+            review_max_concurrent: Some(1),
+            merge_max_concurrent: Some(1),
+            display: DisplayMode::Plain,
+            json: false,
+            event_json: false,
+            verbose: false,
+        };
+        let checking = autopilot_loop_checking_status(
+            &options,
+            1,
+            AutopilotLoopProgress::new(None, AutopilotWorkUnitCounters::default()),
+            &[],
+        );
+        let mut running = checking.clone();
+        running.phase = "running".into();
+        running.counts.running = 1;
+        let mut blocked = checking.clone();
+        blocked.phase = "blocked".into();
+        blocked.counts.blocked = 1;
+        blocked.blocked_reasons = vec!["main:preflight".into()];
+        let mut retrying = checking.clone();
+        retrying.phase = "retrying".into();
+        retrying.recent_transient_failures = vec![AutopilotTransientFailure {
+            at_ms: 1,
+            attempt: 1,
+            delay_ms: 5_000,
+            error: "rate limit".into(),
+            recovery_policy: "retry_with_backoff".into(),
+        }];
+        let mut cancelled = checking.clone();
+        cancelled.phase = "cancelled".into();
+
+        assert!(!autopilot_loop_status_is_operator_visible(&checking));
+        assert!(!autopilot_loop_status_is_operator_visible(&running));
+        assert!(autopilot_loop_status_is_operator_visible(&blocked));
+        assert!(autopilot_loop_status_is_operator_visible(&retrying));
+        assert!(autopilot_loop_status_is_operator_visible(&cancelled));
+    }
+
+    #[test]
     fn tick_settings_preserve_lane_specific_zero_concurrency() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
@@ -2391,6 +2461,7 @@ fn print_autopilot_loop_status(
     json: bool,
     display: DisplayMode,
     event_json: bool,
+    verbose: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     print_autopilot_event(
         event_json,
@@ -2404,10 +2475,19 @@ fn print_autopilot_loop_status(
         println!("{}", serde_json::to_string_pretty(status)?);
     } else if display == DisplayMode::Tui {
         println!("{}", render_autopilot_loop_status_tui(status));
-    } else {
+    } else if verbose || autopilot_loop_status_is_operator_visible(status) {
         println!("{}", render_autopilot_loop_status_human(status));
     }
     Ok(())
+}
+
+fn autopilot_loop_status_is_operator_visible(status: &AutopilotLoopStatusSnapshot) -> bool {
+    matches!(
+        status.phase.as_str(),
+        "blocked" | "error" | "failed" | "retrying" | "cancelled"
+    ) || !status.blocked_reasons.is_empty()
+        || status.counts.blocked > 0
+        || !status.recent_transient_failures.is_empty()
 }
 
 pub(crate) fn render_autopilot_loop_status_human(status: &AutopilotLoopStatusSnapshot) -> String {

@@ -3,37 +3,11 @@ use crate::model::{GateDecision, LatestStatus, RuntimeSnapshot};
 pub fn render_snapshot(snapshot: &RuntimeSnapshot) -> String {
     let mut lines = Vec::new();
     lines.push("SHEA SYMPHONY STATUS".to_string());
-    lines.push(format!(
-        "polling: checking={} interval_ms={} next_poll_in_ms={}",
-        snapshot.polling.checking,
-        snapshot.polling.poll_interval_ms,
-        snapshot
-            .polling
-            .next_poll_in_ms
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "n/a".into())
-    ));
-    lines.push(format!(
-        "activity: planned={} running={} retrying={} skipped={}",
-        snapshot.planned.len(),
-        snapshot.running.len(),
-        snapshot.retrying.len(),
-        snapshot.skipped.len(),
-    ));
-    lines.push(format!(
-        "tokens: input={} output={} total={} seconds_running={}",
-        snapshot.codex_totals.input_tokens,
-        snapshot.codex_totals.output_tokens,
-        snapshot.codex_totals.total_tokens,
-        snapshot.codex_totals.seconds_running,
-    ));
 
     if let Some(status) = &snapshot.latest_status {
-        lines.push(render_latest_status_bar(status));
-    }
-
-    if let Some(path) = &snapshot.event_log_path {
-        lines.push(format!("event_log={path}"));
+        if latest_status_is_operator_visible(status) {
+            lines.push(render_latest_status_bar(status));
+        }
     }
 
     render_planned(snapshot, &mut lines);
@@ -43,6 +17,10 @@ pub fn render_snapshot(snapshot: &RuntimeSnapshot) -> String {
     render_skipped(snapshot, &mut lines);
 
     lines.join("\n")
+}
+
+fn latest_status_is_operator_visible(status: &LatestStatus) -> bool {
+    status.issue_identifier.is_some() && status.category != "idle"
 }
 
 pub fn render_latest_status_bar(status: &LatestStatus) -> String {
@@ -208,8 +186,9 @@ mod tests {
     fn renders_operator_readable_snapshot() {
         let rendered = render_snapshot(&RuntimeSnapshot::default());
         assert!(rendered.contains("SHEA SYMPHONY STATUS"));
-        assert!(rendered.contains("activity: planned=0 running=0"));
-        assert!(rendered.contains("tokens: input=0"));
+        assert!(!rendered.contains("activity:"));
+        assert!(!rendered.contains("tokens:"));
+        assert!(!rendered.contains("polling:"));
     }
 
     #[test]
@@ -305,7 +284,7 @@ mod tests {
         assert!(rendered.contains("skipped issues:"));
         assert!(rendered.contains("gate=NeedToClarify"));
         assert!(!rendered.contains("integration gaps:"));
-        assert!(rendered.contains("event_log=/tmp/events.jsonl"));
+        assert!(!rendered.contains("event_log=/tmp/events.jsonl"));
     }
 
     #[test]
@@ -327,5 +306,28 @@ mod tests {
             rendered,
             "Latest: merge | no-issue | idle | no_merging_issue | next=wait"
         );
+    }
+
+    #[test]
+    fn snapshot_omits_idle_no_issue_latest_status() {
+        let rendered = render_snapshot(&RuntimeSnapshot {
+            latest_status: Some(LatestStatus {
+                lane: "merge".into(),
+                category: "idle".into(),
+                action: "no_merging_issue".into(),
+                issue_identifier: None,
+                issue_title: None,
+                actor_label: None,
+                workspace: None,
+                branch: None,
+                session_id: None,
+                next: Some("wait".into()),
+            }),
+            event_log_path: Some("/tmp/events.jsonl".into()),
+            ..RuntimeSnapshot::default()
+        });
+
+        assert!(!rendered.contains("Latest:"));
+        assert!(!rendered.contains("event_log="));
     }
 }

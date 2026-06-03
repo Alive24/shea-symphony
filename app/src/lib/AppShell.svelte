@@ -268,6 +268,22 @@
 
     const eventName = stringField(event, 'event') ?? 'event';
     const payload = objectField(event, 'payload') ?? {};
+    if (eventName === 'autopilot_signal') {
+      const status = stringField(payload, 'status') ?? stringField(payload, 'kind') ?? 'event';
+      const lane = stringField(payload, 'lane');
+      const issue = stringField(payload, 'issue');
+      const action = stringField(payload, 'action');
+      const title = issue
+        ? `${issue} ${status}`
+        : stringField(payload, 'message') ?? status;
+      return {
+        eventName,
+        title,
+        detail: stringField(payload, 'message') ?? ([lane, action].filter(Boolean).join(' · ') || compactRunLine(entry.line)),
+        chips: [lane, status, action, stringField(payload, 'visibility')].filter(Boolean),
+        tone: runLogTone(status, 0)
+      };
+    }
     if (eventName === 'autopilot_loop_status') {
       const phase = stringField(payload, 'phase') ?? 'unknown';
       const counts = objectField(payload, 'counts') ?? {};

@@ -65,7 +65,7 @@ use super::lanes::merge::{
     finish_merge_agent_repaired_branch, merge_agent_reports_repaired,
     merge_agent_requests_human_input, merge_once_tick, record_done_merge_lane_completion,
     select_merge_worker_issues, stage_resolved_merge_agent_changes, MergeAgentStageFailure,
-    MergeOnceOutcome,
+    MergeOnceOutcome, MergeTickOutputScope,
 };
 use super::lanes::review::{
     apply_review_result, canonical_issue_body_without_workpad,

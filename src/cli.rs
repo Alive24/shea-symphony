@@ -1596,6 +1596,7 @@ fn run_loop_command(args: RunLoopArgs) -> Result<Command, String> {
             recover: loop_recover_enabled(args.write, args.recover, args.no_recover),
             max_concurrent: args.max_concurrent,
             display: args.display.into(),
+            quiet_idle: false,
         },
     })
 }

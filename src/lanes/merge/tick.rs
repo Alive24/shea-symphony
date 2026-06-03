@@ -44,11 +44,41 @@ pub(crate) enum MergeOnceOutcome {
     Skipped,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MergeTickOutputScope {
+    Direct,
+    Loop,
+}
+
+impl MergeTickOutputScope {
+    pub(crate) fn action_prefix(self) -> &'static str {
+        match self {
+            Self::Direct => "merge_once_action",
+            Self::Loop => "merge_loop_action",
+        }
+    }
+
+    pub(crate) fn stop_prefix(self) -> &'static str {
+        match self {
+            Self::Direct => "merge_once",
+            Self::Loop => "merge_loop",
+        }
+    }
+
+    pub(crate) fn dry_run_prefix(self) -> &'static str {
+        match self {
+            Self::Direct => "merge_once_dry_run",
+            Self::Loop => "merge_loop_dry_run",
+        }
+    }
+}
+
 pub(crate) fn merge_once_tick(
     workflow_path: PathBuf,
     write: bool,
     recover: bool,
     quiet_idle: bool,
+    output_scope: MergeTickOutputScope,
 ) -> Result<MergeOnceOutcome, Box<dyn std::error::Error>> {
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
@@ -68,7 +98,10 @@ pub(crate) fn merge_once_tick(
     )?;
     if issues.is_empty() {
         if !quiet_idle {
-            println!("merge_once=stopped reason=no_merging_issue");
+            println!(
+                "{}=stopped reason=no_merging_issue",
+                output_scope.stop_prefix()
+            );
         }
         return Ok(MergeOnceOutcome::NoMergingIssue);
     }
@@ -80,7 +113,10 @@ pub(crate) fn merge_once_tick(
         .next()
     else {
         if !quiet_idle {
-            println!("merge_once=stopped reason=no_unclaimed_merging_issue");
+            println!(
+                "{}=stopped reason=no_unclaimed_merging_issue",
+                output_scope.stop_prefix()
+            );
         }
         return Ok(MergeOnceOutcome::NoMergingIssue);
     };
@@ -104,18 +140,23 @@ pub(crate) fn merge_once_tick(
         }
     };
     if let Some(reason) = recovery_reason.as_deref() {
-        println!(
-            "merge_loop_recovery_candidate issue={} reason={}",
-            issue.identifier, reason
-        );
+        if !quiet_idle {
+            println!(
+                "merge_loop_recovery_candidate issue={} reason={}",
+                issue.identifier, reason
+            );
+        }
     }
     let eligibility = pool_claim_eligibility(&issue, WorkerLane::Merging, &worker_id, &config);
     if !eligibility.is_claimable() && recovery_reason.is_none() {
-        println!(
-            "merge_once_action=skipped issue={} reason={}",
-            issue.identifier,
-            eligibility.skip_reason()
-        );
+        if !quiet_idle {
+            println!(
+                "{}=skipped issue={} reason={}",
+                output_scope.action_prefix(),
+                issue.identifier,
+                eligibility.skip_reason()
+            );
+        }
         return Ok(MergeOnceOutcome::Skipped);
     }
     let merge_claim = lane_claim_for_issue(
@@ -155,13 +196,15 @@ pub(crate) fn merge_once_tick(
         status.as_ref(),
     );
 
-    println!(
-        "merge_once issue={} decision={:?} target_state={} write={}",
-        issue.identifier,
-        decision.kind,
-        decision.target_state.unwrap_or("none"),
-        write
-    );
+    if !quiet_idle && output_scope == MergeTickOutputScope::Direct {
+        println!(
+            "merge_once issue={} decision={:?} target_state={} write={}",
+            issue.identifier,
+            decision.kind,
+            decision.target_state.unwrap_or("none"),
+            write
+        );
+    }
     print_latest_status(&latest_status_for_issue(
         &config,
         &issue,
@@ -174,15 +217,17 @@ pub(crate) fn merge_once_tick(
             "waiting"
         },
         "merge_decision",
-        decision.target_state.map(str::to_string),
+        Some(merge_decision_next(&decision)),
     ));
-    println!("reason={}", decision.reason);
-    if let Some(pr_url) = decision.pr_url.as_deref() {
-        println!("pull_request={pr_url}");
+    if !quiet_idle {
+        println!("reason={}", decision.reason);
+        if let Some(pr_url) = decision.pr_url.as_deref() {
+            println!("pull_request={pr_url}");
+        }
     }
 
     if !write {
-        print_merge_dry_run_actions(&decision);
+        print_merge_dry_run_actions(&decision, output_scope);
         return Ok(MergeOnceOutcome::DryRun);
     }
 
@@ -203,7 +248,8 @@ pub(crate) fn merge_once_tick(
                 "merge lane stale branch update evidence",
             )?;
             println!(
-                "merge_once_action=stale_branch_updated issue={} target_state=merging evidence={}",
+                "{}=stale_branch_updated issue={} target_state=merging evidence={}",
+                output_scope.action_prefix(),
                 issue.identifier,
                 comment_outcome.as_str()
             );
@@ -237,7 +283,8 @@ pub(crate) fn merge_once_tick(
             "merge lane stale branch update failed",
         )?;
         println!(
-            "merge_once_action=routed issue={} target_state=need_human_input outcome={}",
+            "{}=routed issue={} target_state=need_human_input outcome={}",
+            output_scope.action_prefix(),
             issue.identifier,
             state_outcome.as_str()
         );
@@ -256,6 +303,7 @@ pub(crate) fn merge_once_tick(
             &linked_pull_requests,
             &expected_base,
             &runner,
+            output_scope,
         );
     }
 
@@ -270,7 +318,8 @@ pub(crate) fn merge_once_tick(
             let (output, merge_outcome) =
                 merge_pull_request_with_recovery(pr_ref, &runner, &std::env::current_dir()?)?;
             println!(
-                "merge_once_action=merge_command issue={} pr={} outcome={}",
+                "{}=merge_command issue={} pr={} outcome={}",
+                output_scope.action_prefix(),
                 issue.identifier,
                 pr_ref,
                 merge_outcome.as_str()
@@ -284,9 +333,11 @@ pub(crate) fn merge_once_tick(
             &issue,
             &merge_claim,
             &workpad,
+            output_scope,
         )?;
         println!(
-            "merge_once_action=merged issue={} target_state=done",
+            "{}=merged issue={} target_state=done",
+            output_scope.action_prefix(),
             issue.identifier
         );
         return Ok(MergeOnceOutcome::Merged);
@@ -313,19 +364,49 @@ pub(crate) fn merge_once_tick(
         if decision.kind == MergeLaneDecisionKind::AlreadyMerged
             && normalize_state(target_state) == "done"
         {
-            close_completed_issue(&config, adapter.as_ref(), &issue.identifier, Some(&issue))?;
+            close_completed_issue(
+                &config,
+                adapter.as_ref(),
+                &issue.identifier,
+                Some(&issue),
+                output_scope,
+            )?;
         }
         println!(
-            "merge_once_action=routed issue={} target_state={target_state} outcome={}",
+            "{}=routed issue={} target_state={target_state} outcome={}",
+            output_scope.action_prefix(),
             issue.identifier,
             state_outcome.as_str()
         );
         return Ok(MergeOnceOutcome::Routed);
     } else {
-        println!("merge_once_action=skipped issue={}", issue.identifier);
+        println!(
+            "{}=skipped issue={}",
+            output_scope.action_prefix(),
+            issue.identifier
+        );
     }
 
     Ok(MergeOnceOutcome::Skipped)
+}
+
+fn merge_decision_next(decision: &MergeLaneDecision) -> String {
+    let mut parts = Vec::new();
+    if let Some(target_state) = decision.target_state {
+        parts.push(format!("target={target_state}"));
+    }
+    if let Some(pr_url) = decision.pr_url.as_deref() {
+        parts.push(format!("pr={pr_url}"));
+    }
+    let reason = single_line(&decision.reason);
+    if !reason.is_empty() {
+        parts.push(format!("reason={reason}"));
+    }
+    if parts.is_empty() {
+        "continue".into()
+    } else {
+        parts.join(" ")
+    }
 }
 
 pub(crate) fn merge_preflight_status(
@@ -361,34 +442,35 @@ pub(super) fn merge_rehearsal_mode(config: &RuntimeConfig, issue: &TrackerIssue)
     config.tracker.fixture_path.is_some() || issue.tracker_kind == "memory"
 }
 
-fn print_merge_dry_run_actions(decision: &MergeLaneDecision) {
+fn print_merge_dry_run_actions(decision: &MergeLaneDecision, output_scope: MergeTickOutputScope) {
+    let prefix = output_scope.dry_run_prefix();
     match decision.kind {
         MergeLaneDecisionKind::ReadyToMerge => {
-            println!("merge_once_dry_run action=merge");
-            println!("merge_once_dry_run action=timeline_comment evidence=merge_result");
-            println!("merge_once_dry_run action=set_state target_state=done");
-            println!("merge_once_dry_run action=close_issue");
+            println!("{prefix} action=merge");
+            println!("{prefix} action=timeline_comment evidence=merge_result");
+            println!("{prefix} action=set_state target_state=done");
+            println!("{prefix} action=close_issue");
         }
         MergeLaneDecisionKind::AlreadyMerged => {
-            println!("merge_once_dry_run action=timeline_comment evidence=already_merged");
-            println!("merge_once_dry_run action=set_state target_state=done");
-            println!("merge_once_dry_run action=close_issue");
+            println!("{prefix} action=timeline_comment evidence=already_merged");
+            println!("{prefix} action=set_state target_state=done");
+            println!("{prefix} action=close_issue");
         }
         MergeLaneDecisionKind::StaleBranch => {
-            println!("merge_once_dry_run action=update_pr_branch");
-            println!("merge_once_dry_run action=timeline_comment evidence=stale_branch_update");
-            println!("merge_once_dry_run action=keep_state target_state=merging");
+            println!("{prefix} action=update_pr_branch");
+            println!("{prefix} action=timeline_comment evidence=stale_branch_update");
+            println!("{prefix} action=keep_state target_state=merging");
         }
         MergeLaneDecisionKind::MergeDirty => {
-            println!("merge_once_dry_run action=attempt_safe_conflict_repair");
-            println!("merge_once_dry_run fallback=attempt_merge_agent_conflict_repair");
-            println!("merge_once_dry_run action=timeline_comment evidence=conflict_repair_result");
-            println!("merge_once_dry_run fallback=set_state target_state=need_human_input");
+            println!("{prefix} action=attempt_safe_conflict_repair");
+            println!("{prefix} fallback=attempt_merge_agent_conflict_repair");
+            println!("{prefix} action=timeline_comment evidence=conflict_repair_result");
+            println!("{prefix} fallback=set_state target_state=need_human_input");
         }
         _ => {
-            println!("merge_once_dry_run action=timeline_comment evidence=preflight_blocker");
+            println!("{prefix} action=timeline_comment evidence=preflight_blocker");
             if let Some(target_state) = decision.target_state {
-                println!("merge_once_dry_run action=set_state target_state={target_state}");
+                println!("{prefix} action=set_state target_state={target_state}");
             }
         }
     }

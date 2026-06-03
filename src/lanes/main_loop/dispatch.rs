@@ -35,6 +35,7 @@ pub(crate) fn run_loop_dispatch_write_candidates(
         print_run_loop_write_selection(
             config,
             &issue,
+            options,
             iterations,
             max_concurrent,
             selected_count,
@@ -84,6 +85,7 @@ pub(crate) fn run_loop_dispatch_write_candidates(
 fn print_run_loop_write_selection(
     config: &RuntimeConfig,
     issue: &TrackerIssue,
+    options: &RunLoopOptions,
     iterations: usize,
     max_concurrent: usize,
     selected_count: usize,
@@ -98,20 +100,24 @@ fn print_run_loop_write_selection(
         Some("claim or resume".into()),
     ));
     if slot_index == 0 {
-        println!(
-            "run_loop_iteration={} issue={} title={:?} mode=write max_concurrent={} selected_count={}",
-            iterations, issue.identifier, issue.title, max_concurrent, selected_count
-        );
+        if !options.quiet_idle {
+            println!(
+                "run_loop_iteration={} issue={} title={:?} mode=write max_concurrent={} selected_count={}",
+                iterations, issue.identifier, issue.title, max_concurrent, selected_count
+            );
+        }
     } else {
-        println!(
-            "run_loop_iteration={} issue={} title={:?} mode=write max_concurrent={} selected_count={} slot={}",
-            iterations,
-            issue.identifier,
-            issue.title,
-            max_concurrent,
-            selected_count,
-            slot_index + 1
-        );
+        if !options.quiet_idle {
+            println!(
+                "run_loop_iteration={} issue={} title={:?} mode=write max_concurrent={} selected_count={} slot={}",
+                iterations,
+                issue.identifier,
+                issue.title,
+                max_concurrent,
+                selected_count,
+                slot_index + 1
+            );
+        }
     }
     let smoke_gate = main_app_server_smoke_gate(config);
     println!(

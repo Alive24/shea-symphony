@@ -232,7 +232,9 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
     loop {
         if let Some(max) = limit {
             if iterations >= max {
-                println!("review_loop=stopped reason=max_iterations iterations={iterations}");
+                if !options.quiet_idle {
+                    println!("review_loop=stopped reason=max_iterations iterations={iterations}");
+                }
                 break;
             }
         }
@@ -294,16 +296,20 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
                     &backend_kind,
                 ) {
                     ReviewRunEligibility::AlreadyQueued { worker_key } => {
-                        println!(
-                            "review_loop_action=skip issue={} reason=review_worker_exists worker_key={worker_key}",
-                            issue.identifier
-                        );
+                        if !options.quiet_idle {
+                            println!(
+                                "review_loop_action=skip issue={} reason=review_worker_exists worker_key={worker_key}",
+                                issue.identifier
+                            );
+                        }
                     }
                     ReviewRunEligibility::NotInAgentReview { current_state } => {
-                        println!(
-                            "review_loop_action=skip issue={} reason=state_changed current_state={current_state:?}",
-                            issue.identifier
-                        );
+                        if !options.quiet_idle {
+                            println!(
+                                "review_loop_action=skip issue={} reason=state_changed current_state={current_state:?}",
+                                issue.identifier
+                            );
+                        }
                     }
                     ReviewRunEligibility::InvalidHandoff { reason } => {
                         println!(
@@ -322,9 +328,11 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
                 }
             }
             if let Some(delay_ms) = unbounded_loop_sleep_ms(limit, config.polling.interval_ms) {
-                println!(
-                    "review_loop_idle action=sleep reason=no_available_review_worker delay_ms={delay_ms} iterations={iterations}"
-                );
+                if !options.quiet_idle {
+                    println!(
+                        "review_loop_idle action=sleep reason=no_available_review_worker delay_ms={delay_ms} iterations={iterations}"
+                    );
+                }
                 thread::sleep(Duration::from_millis(delay_ms));
             }
             continue;
@@ -353,11 +361,13 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
                         "review_selected",
                         Some("write review timeline and reconcile".into()),
                     ));
-                    println!(
-                    "review_loop_iteration={iterations} worker_slot={worker_slot} issue={} worker_key={worker_key} mode={}",
-                    selected_issue.identifier,
-                    if options.write { "write" } else { "dry-run" }
-                );
+                    if !options.quiet_idle {
+                        println!(
+                        "review_loop_iteration={iterations} worker_slot={worker_slot} issue={} worker_key={worker_key} mode={}",
+                        selected_issue.identifier,
+                        if options.write { "write" } else { "dry-run" }
+                    );
+                    }
                     if !options.write {
                         println!(
                             "review_loop_dry_run action=start issue={} backend={backend_kind} mode={}",
@@ -447,16 +457,20 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
                             pending_review_jobs.push((worker_slot, latest, claim, handle));
                         }
                         ReviewRunEligibility::AlreadyQueued { worker_key } => {
-                            println!(
-                            "review_loop_action=skip issue={} reason=review_worker_exists worker_key={worker_key}",
-                            latest.identifier
-                        );
+                            if !options.quiet_idle {
+                                println!(
+                                "review_loop_action=skip issue={} reason=review_worker_exists worker_key={worker_key}",
+                                latest.identifier
+                            );
+                            }
                         }
                         ReviewRunEligibility::NotInAgentReview { current_state } => {
-                            println!(
-                            "review_loop_action=skip issue={} reason=state_changed current_state={current_state:?}",
-                            latest.identifier
-                        );
+                            if !options.quiet_idle {
+                                println!(
+                                "review_loop_action=skip issue={} reason=state_changed current_state={current_state:?}",
+                                latest.identifier
+                            );
+                            }
                         }
                         ReviewRunEligibility::InvalidHandoff { reason } => {
                             println!(
@@ -474,16 +488,20 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
                     }
                 }
                 ReviewRunEligibility::AlreadyQueued { worker_key } => {
-                    println!(
-                    "review_loop_action=skip issue={} reason=review_worker_exists worker_key={worker_key}",
-                    selected_issue.identifier
-                );
+                    if !options.quiet_idle {
+                        println!(
+                        "review_loop_action=skip issue={} reason=review_worker_exists worker_key={worker_key}",
+                        selected_issue.identifier
+                    );
+                    }
                 }
                 ReviewRunEligibility::NotInAgentReview { current_state } => {
-                    println!(
-                    "review_loop_action=skip issue={} reason=state_changed current_state={current_state:?}",
-                    selected_issue.identifier
-                );
+                    if !options.quiet_idle {
+                        println!(
+                        "review_loop_action=skip issue={} reason=state_changed current_state={current_state:?}",
+                        selected_issue.identifier
+                    );
+                    }
                 }
                 ReviewRunEligibility::InvalidHandoff { reason } => {
                     println!(
@@ -575,9 +593,11 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
             let Some(delay_ms) = unbounded_loop_sleep_ms(limit, config.polling.interval_ms) else {
                 continue;
             };
-            println!(
-                "review_loop_idle action=sleep reason=dry_run_would_repeat_without_mutation delay_ms={delay_ms} iterations={iterations}"
-            );
+            if !options.quiet_idle {
+                println!(
+                    "review_loop_idle action=sleep reason=dry_run_would_repeat_without_mutation delay_ms={delay_ms} iterations={iterations}"
+                );
+            }
             thread::sleep(Duration::from_millis(delay_ms));
         }
     }

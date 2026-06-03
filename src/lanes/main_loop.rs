@@ -87,6 +87,7 @@ pub(crate) struct RunLoopOptions {
     pub(crate) recover: bool,
     pub(crate) max_concurrent: Option<usize>,
     pub(crate) display: DisplayMode,
+    pub(crate) quiet_idle: bool,
 }
 
 impl RunLoopOptions {
@@ -153,7 +154,9 @@ pub(crate) fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error
     loop {
         if let Some(max) = limit {
             if iterations >= max {
-                println!("run_loop=stopped reason=max_iterations iterations={iterations}");
+                if !options.quiet_idle {
+                    println!("run_loop=stopped reason=max_iterations iterations={iterations}");
+                }
                 break;
             }
         }
@@ -214,15 +217,19 @@ pub(crate) fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error
         };
         if options.write && available_slots == 0 {
             if let Some(delay_ms) = unbounded_loop_sleep_ms(limit, config.polling.interval_ms) {
-                println!(
-                    "run_loop_idle action=sleep reason=max_concurrent_reached active_workers={active_main_workers} max_concurrent={max_concurrent} delay_ms={delay_ms} iterations={iterations}"
-                );
+                if !options.quiet_idle {
+                    println!(
+                        "run_loop_idle action=sleep reason=max_concurrent_reached active_workers={active_main_workers} max_concurrent={max_concurrent} delay_ms={delay_ms} iterations={iterations}"
+                    );
+                }
                 thread::sleep(Duration::from_millis(delay_ms));
                 continue;
             } else {
-                println!(
-                    "run_loop=stopped reason=max_concurrent_reached active_workers={active_main_workers} max_concurrent={max_concurrent}"
-                );
+                if !options.quiet_idle {
+                    println!(
+                        "run_loop=stopped reason=max_concurrent_reached active_workers={active_main_workers} max_concurrent={max_concurrent}"
+                    );
+                }
                 break;
             }
         }
@@ -265,18 +272,22 @@ pub(crate) fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error
                         selected_count: 0,
                     })
                 );
-            } else {
+            } else if !options.quiet_idle {
                 println!("{}", render_snapshot(&plan.snapshot));
             }
             match no_dispatch_action(limit, config.polling.interval_ms) {
                 NoDispatchAction::Stop { reason } => {
-                    println!("run_loop=stopped reason={reason} iterations={iterations}");
+                    if !options.quiet_idle {
+                        println!("run_loop=stopped reason={reason} iterations={iterations}");
+                    }
                     break;
                 }
                 NoDispatchAction::SleepAndContinue { delay_ms } => {
-                    println!(
-                        "run_loop_idle action=sleep delay_ms={delay_ms} iterations={iterations}"
-                    );
+                    if !options.quiet_idle {
+                        println!(
+                            "run_loop_idle action=sleep delay_ms={delay_ms} iterations={iterations}"
+                        );
+                    }
                     thread::sleep(Duration::from_millis(delay_ms));
                     continue;
                 }
@@ -337,15 +348,17 @@ pub(crate) fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error
                 "would claim and hand off to Agent Review".into()
             }),
         ));
-        println!(
-            "run_loop_iteration={} issue={} title={:?} mode={} max_concurrent={} selected_count={}",
-            iterations,
-            issue.identifier,
-            issue.title,
-            if options.write { "write" } else { "dry-run" },
-            max_concurrent,
-            selected.len()
-        );
+        if !options.quiet_idle {
+            println!(
+                "run_loop_iteration={} issue={} title={:?} mode={} max_concurrent={} selected_count={}",
+                iterations,
+                issue.identifier,
+                issue.title,
+                if options.write { "write" } else { "dry-run" },
+                max_concurrent,
+                selected.len()
+            );
+        }
 
         let handoff = match run_loop_handoff_plan(&config, &issue) {
             Ok(handoff) => handoff,
@@ -408,9 +421,11 @@ pub(crate) fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error
             }
             print_run_loop_dry_run_actions(&issue, &handoff, &config)?;
             if let Some(delay_ms) = unbounded_loop_sleep_ms(limit, config.polling.interval_ms) {
-                println!(
-                    "run_loop_idle action=sleep reason=dry_run_would_repeat_without_mutation delay_ms={delay_ms} iterations={iterations}"
-                );
+                if !options.quiet_idle {
+                    println!(
+                        "run_loop_idle action=sleep reason=dry_run_would_repeat_without_mutation delay_ms={delay_ms} iterations={iterations}"
+                    );
+                }
                 thread::sleep(Duration::from_millis(delay_ms));
             }
             continue;

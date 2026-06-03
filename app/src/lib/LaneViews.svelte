@@ -49,7 +49,8 @@
   $: localArtifactsRefreshLabel = localRefreshStatusLabel(localArtifactsRefresh, formatTime);
   $: lifecycleEvents = selectedIssue ? buildLifecycleEvents(selectedIssue, view) : [];
   $: selectedLaneKey = laneKeyForIssue(selectedIssue);
-  $: heartbeatSummary = selectedIssue ? classifyHeartbeat($autoloopStateStore, selectedLaneKey) : null;
+  $: heartbeatSummary = selectedIssue ? classifyHeartbeat($autoloopStateStore, selectedLaneKey, selectedIssue.id) : null;
+  $: eventLogPath = localEventLogPath(view);
   $: transcriptParsed = parseCodexTranscriptJsonl(transcriptResponse?.content ?? '');
   $: transcriptStatusLabel = transcriptResponse?.status === 'available'
     ? `${transcriptParsed.status} · ${transcriptParsed.events.length} events`
@@ -302,6 +303,13 @@
     return 'No runtime metadata attached to this issue.';
   }
 
+  function localEventLogPath(model: any) {
+    return model?.raw?.localStatus?.eventLogPath ??
+      model?.raw?.localStatus?.snapshot?.event_log_path ??
+      model?.raw?.localStatus?.snapshot?.eventLogPath ??
+      null;
+  }
+
   function workpadCategoryForIssue(issue: any) {
     const state = normalizeState(issue.state);
     if (state === 'Human Review') return 'Human decision note';
@@ -546,12 +554,17 @@
         <div>
           <span>Latest lane event</span>
           <strong>{heartbeatSummary?.latestLaneEvent ?? 'No lane event visible.'}</strong>
-          <small>Filtered autoloop signal</small>
+          <small>{heartbeatSummary?.issue ? `${heartbeatSummary.lane} · ${heartbeatSummary.issue}` : `${heartbeatSummary?.lane ?? selectedLaneKey} lane`}</small>
         </div>
         <div>
           <span>Transcript</span>
           <strong>{transcriptLoading ? 'Loading local file' : transcriptStatusLabel}</strong>
           <small>{transcriptResponse?.path ?? 'Local-only diagnostic surface'}</small>
+        </div>
+        <div>
+          <span>Event log</span>
+          <strong>{eventLogPath ? 'Local JSONL available' : 'Unavailable locally'}</strong>
+          <small>{eventLogPath ?? 'Refresh local artifacts to read runtime log path.'}</small>
         </div>
       </div>
     </section>

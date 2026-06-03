@@ -269,8 +269,9 @@ workers do not create false `runtime_active_issue_disagrees` warnings while
 still surfacing missing, stale, or conflicting ownership. Planned claimable work
 is reported separately from real active sessions; a Todo candidate is not
 `running` until a backend session or runtime record exists. `main loop`, `review
-loop`, and `merge once` print compact `Latest:` status bars in addition to their
-detailed line logs.
+loop`, and `merge once` print compact issue-scoped `Latest:` status bars for
+real lane work; no-issue idle status and runtime telemetry stay in debug/JSON
+surfaces instead of the default operator log stream.
 Write-mode lane/control commands first run a guarded canonical checkout refresh
 before the first tracker mutation. From a clean attached `main` checkout, the
 CLI fetches the upstream branch and fast-forwards with `git merge --ff-only`
@@ -463,7 +464,8 @@ mutation landed. If readback cannot prove the outcome, the command fails with
 lane command after waiting or read back the issue through `project issue`.
 Append-only lane evidence carries a hidden recovery marker, so rerunning the
 same lane/run skips already-recorded evidence instead of posting a duplicate
-large comment.
+large comment. Already-applied recovery checks are quiet by default because
+they are idempotence confirmations rather than operator actions.
 
 Examples:
 
@@ -725,6 +727,10 @@ cargo run -- merge loop workflows/shea-symphony.md --max-iterations 2 --max-conc
 only consume issues already in `Merging`. `Rework` remains a Main/Review repair
 lane unless an operator explicitly chooses a historical merge-lane recovery
 path.
+`merge once` is the direct single-tick primitive; `merge loop` and `autopilot
+loop` may call that primitive internally, but their operator-visible output is
+reported at the `merge_loop` / `autopilot` layer rather than leaking
+`merge_once*` implementation names.
 `merge loop --write` uses recover-first handling by default for interrupted
 in-process merge runs. Because merge work has no long-lived tmux session to
 probe, recovery is tracker-first: it only adopts structured active merge claims

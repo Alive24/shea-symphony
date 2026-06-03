@@ -40,9 +40,38 @@ fn clean_merge_tick_does_not_require_merge_agent_backend() {
         )
         .unwrap();
 
-    let outcome = merge_once_tick(workflow_path, false, false, false).unwrap();
+    let outcome = merge_once_tick(
+        workflow_path,
+        false,
+        false,
+        false,
+        MergeTickOutputScope::Direct,
+    )
+    .unwrap();
 
     assert_eq!(outcome, MergeOnceOutcome::NoMergingIssue);
+}
+
+#[test]
+fn merge_tick_output_scope_keeps_loop_output_at_loop_level() {
+    assert_eq!(
+        MergeTickOutputScope::Direct.action_prefix(),
+        "merge_once_action"
+    );
+    assert_eq!(MergeTickOutputScope::Direct.stop_prefix(), "merge_once");
+    assert_eq!(
+        MergeTickOutputScope::Direct.dry_run_prefix(),
+        "merge_once_dry_run"
+    );
+    assert_eq!(
+        MergeTickOutputScope::Loop.action_prefix(),
+        "merge_loop_action"
+    );
+    assert_eq!(MergeTickOutputScope::Loop.stop_prefix(), "merge_loop");
+    assert_eq!(
+        MergeTickOutputScope::Loop.dry_run_prefix(),
+        "merge_loop_dry_run"
+    );
 }
 
 #[test]
@@ -483,7 +512,15 @@ fn merge_completion_closes_issue_after_workpad_and_done_state() {
     let workpad = "## Shea Symphony Merge Run\n\n### Merge Action\n";
 
     let config = test_config();
-    record_done_merge_lane_completion(&config, &adapter, &issue, &claim, workpad).unwrap();
+    record_done_merge_lane_completion(
+        &config,
+        &adapter,
+        &issue,
+        &claim,
+        workpad,
+        MergeTickOutputScope::Direct,
+    )
+    .unwrap();
 
     assert_eq!(
         adapter.operations(),
@@ -522,6 +559,7 @@ fn merge_completion_preserves_terminal_claim_audit_pointer() {
         &issue,
         &claim,
         "## Shea Symphony Merge Run\n\n### Merge Action\n",
+        MergeTickOutputScope::Direct,
     )
     .unwrap();
 

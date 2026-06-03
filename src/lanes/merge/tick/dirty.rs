@@ -16,7 +16,7 @@ use super::super::repair::{
     ineligible_merge_agent_repair_evidence, mechanical_merge_repair_evidence,
     run_merge_agent_conflict_repair,
 };
-use super::{merge_rehearsal_mode, MergeOnceOutcome};
+use super::{merge_rehearsal_mode, MergeOnceOutcome, MergeTickOutputScope};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn handle_dirty_merge(
@@ -30,6 +30,7 @@ pub(super) fn handle_dirty_merge(
     linked_pull_requests: &[LinkedPullRequest],
     expected_base: &str,
     runner: &ProcessHandoffCommandRunner,
+    output_scope: MergeTickOutputScope,
 ) -> Result<MergeOnceOutcome, Box<dyn std::error::Error>> {
     let pr_ref = decision
         .pr_url
@@ -69,7 +70,8 @@ pub(super) fn handle_dirty_merge(
             "merge lane safe conflict repair evidence",
         )?;
         println!(
-            "merge_once_action=safe_conflict_repaired issue={} target_state=merging evidence={}",
+            "{}=safe_conflict_repaired issue={} target_state=merging evidence={}",
+            output_scope.action_prefix(),
             issue.identifier,
             comment_outcome.as_str()
         );
@@ -115,7 +117,8 @@ pub(super) fn handle_dirty_merge(
         )?;
         if agent_repair.repaired {
             println!(
-                "merge_once_action=merge_agent_conflict_repaired issue={} target_state=merging backend={} session={}",
+                "{}=merge_agent_conflict_repaired issue={} target_state=merging backend={} session={}",
+                output_scope.action_prefix(),
                 issue.identifier,
                 agent_repair.backend,
                 agent_repair.session_id.as_deref().unwrap_or("n/a")
@@ -124,7 +127,8 @@ pub(super) fn handle_dirty_merge(
         }
         if agent_repair.retryable {
             println!(
-                "merge_once_action=merge_agent_conflict_retryable issue={} target_state=merging backend={} session={}",
+                "{}=merge_agent_conflict_retryable issue={} target_state=merging backend={} session={}",
+                output_scope.action_prefix(),
                 issue.identifier,
                 agent_repair.backend,
                 agent_repair.session_id.as_deref().unwrap_or("n/a")
@@ -141,7 +145,8 @@ pub(super) fn handle_dirty_merge(
             "merge-agent conflict repair needs human input",
         )?;
         println!(
-            "merge_once_action=routed issue={} target_state=need_human_input outcome={}",
+            "{}=routed issue={} target_state=need_human_input outcome={}",
+            output_scope.action_prefix(),
             issue.identifier,
             state_outcome.as_str()
         );
@@ -175,7 +180,8 @@ pub(super) fn handle_dirty_merge(
         "merge lane conflict repair needs human input",
     )?;
     println!(
-        "merge_once_action=routed issue={} target_state=need_human_input outcome={}",
+        "{}=routed issue={} target_state=need_human_input outcome={}",
+        output_scope.action_prefix(),
         issue.identifier,
         state_outcome.as_str()
     );

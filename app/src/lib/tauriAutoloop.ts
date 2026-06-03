@@ -218,12 +218,35 @@ export function operatorRunLogLines(state: LoopStateSnapshot, lines: AutoloopLin
 }
 
 export function isOperatorVisibleAutoloopLine(line: AutoloopLine) {
-  if (isAutoloopLaneNoopEventLine(line)) return false;
-  if (isAutoloopResultNoopEventLine(line)) return false;
-  if (isSkippedIssueDetailLine(line)) return false;
-  if (isAutoloopLaneIdlePrimitiveLine(line)) return false;
-  if (isAutoloopRoutineStatusLine(line)) return false;
-  return true;
+  const eventName = textFromValue(recordValue(line.event, 'event'));
+  if (eventName === 'autopilot_signal') {
+    const payload = recordFromValue(recordValue(line.event, 'payload'));
+    return textFromValue(recordValue(payload, 'visibility')) === 'operator';
+  }
+  if (eventName === 'autopilot_loop_lane') {
+    return isOperatorLaneEventLine(line);
+  }
+  if (eventName === 'autopilot_loop_status') {
+    return isOperatorLoopStatusLine(line);
+  }
+  return false;
+}
+
+function isOperatorLaneEventLine(line: AutoloopLine) {
+  const payload = recordFromValue(recordValue(line.event, 'payload'));
+  const status = textFromValue(recordValue(payload, 'status'));
+  const selected = issueRefFromValue(recordValue(payload, 'selected_issue') ?? recordValue(payload, 'selected'));
+  const workUnitCompleted = booleanFromRecord(payload, 'work_unit_completed');
+  if (workUnitCompleted) return true;
+  if (!selected) return false;
+  return ['running', 'blocked', 'error', 'retrying', 'waiting'].includes(status);
+}
+
+function isOperatorLoopStatusLine(line: AutoloopLine) {
+  const payload = recordFromValue(recordValue(line.event, 'payload'));
+  const phase = textFromValue(recordValue(payload, 'phase'));
+  const blockers = arrayFromValue(recordValue(payload, 'blocked_reasons'));
+  return ['blocked', 'error', 'failed'].includes(phase) || blockers.length > 0;
 }
 
 function isAutoloopLaneNoopEventLine(line: AutoloopLine) {
@@ -366,6 +389,17 @@ function workerFromAutoloopLine(
       latestResult || textFromValue(recordValue(payload, 'action'), status),
       status
     );
+  }
+
+  if (eventName === 'autopilot_signal') {
+    const lane = textFromValue(recordValue(payload, 'lane'));
+    if (lane !== laneKey) return null;
+    const issue = issueRefFromValue(recordValue(payload, 'issue'));
+    if (!issue) return null;
+    const status = textFromValue(recordValue(payload, 'status'), 'running');
+    const action = textFromValue(recordValue(payload, 'action'), status);
+    if (status === 'idle' || action === 'skip') return null;
+    return liveWorker(issue, laneKey, state, action, status);
   }
 
   if (eventName !== 'autopilot_cli_line') return null;

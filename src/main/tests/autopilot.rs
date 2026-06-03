@@ -50,6 +50,26 @@ fn test_autopilot_plan(issues: Vec<TrackerIssue>) -> AutopilotPlanSnapshot {
     .unwrap()
 }
 
+fn merge_lane_plan_for_issue(identifier: &str, status: &str, action: &str) -> AutopilotLanePlan {
+    AutopilotLanePlan {
+        lane: "merge".into(),
+        status: status.into(),
+        selected_issue: Some(AutopilotIssueSummary {
+            identifier: identifier.into(),
+            title: "Merge recovery issue".into(),
+            state: "Merging".into(),
+            assignees: Vec::new(),
+            url: None,
+            priority: None,
+            pull_request: Some("https://github.com/Alive24/shea-symphony/pull/415".into()),
+        }),
+        proposed_action: action.into(),
+        target_state: None,
+        reason: "recoverable_merge_lane_work".into(),
+        evidence: vec!["source=merge_lane_decision".into()],
+    }
+}
+
 #[test]
 fn autopilot_plan_reports_all_lanes_idle() {
     let plan = test_autopilot_plan(Vec::new());
@@ -515,6 +535,95 @@ fn autopilot_loop_status_keeps_non_main_session_attention_blocked() {
     assert_eq!(
         status.blocked_reasons,
         vec!["active_runtime_states=1", "session_attention=1"]
+    );
+}
+
+#[test]
+fn autopilot_loop_status_allows_merge_recovery_with_issue_scoped_session_attention() {
+    let mut plan = test_autopilot_plan(Vec::new());
+    let mut runtime = clean_autopilot_runtime();
+    runtime.session_attention_count = 3;
+    runtime.blockers = vec!["session_attention=3".into()];
+    runtime.evidence = vec![
+        "session=thread-415-main lane=main status=failed issue=#415".into(),
+        "session=thread-415-merge-1 lane=merge status=stale issue=#415".into(),
+        "session=thread-415-merge-2 lane=merge status=stale issue=#415".into(),
+    ];
+    plan.runtime = runtime;
+    plan.readiness.status = "blocked_by_ambiguous_lane_or_runtime_state".into();
+    plan.readiness.reason =
+        "Runtime/session state needs operator attention before write-mode autopilot.".into();
+    plan.readiness.blockers = vec!["session_attention=3".into()];
+    let merge = plan
+        .lanes
+        .iter_mut()
+        .find(|lane| lane.lane == "merge")
+        .unwrap();
+    *merge = merge_lane_plan_for_issue("#415", "blocked", "attempt_safe_conflict_repair");
+
+    let status = autopilot_loop_status_from_plan(
+        &plan,
+        AutopilotLoopSettings {
+            write: true,
+            dry_run: false,
+            recover: true,
+            poll_interval_ms: 5_000,
+            main_max_concurrent: 3,
+            review_max_concurrent: 2,
+            merge_max_concurrent: 3,
+        },
+        6,
+        Some(5_000),
+        &[],
+        false,
+    );
+
+    assert_eq!(status.phase, "running");
+    assert_eq!(status.counts.running, 1);
+    assert!(status.blocked_reasons.is_empty());
+    assert_eq!(status.selected_issues[0].identifier, "#415");
+}
+
+#[test]
+fn autopilot_loop_status_keeps_merge_session_attention_blocked_on_issue_mismatch() {
+    let mut plan = test_autopilot_plan(Vec::new());
+    let mut runtime = clean_autopilot_runtime();
+    runtime.session_attention_count = 1;
+    runtime.blockers = vec!["session_attention=1".into()];
+    runtime.evidence = vec!["session=thread-406-merge lane=merge status=stale issue=#406".into()];
+    plan.runtime = runtime;
+    plan.readiness.status = "blocked_by_ambiguous_lane_or_runtime_state".into();
+    plan.readiness.reason =
+        "Runtime/session state needs operator attention before write-mode autopilot.".into();
+    plan.readiness.blockers = vec!["session_attention=1".into()];
+    let merge = plan
+        .lanes
+        .iter_mut()
+        .find(|lane| lane.lane == "merge")
+        .unwrap();
+    *merge = merge_lane_plan_for_issue("#415", "blocked", "attempt_safe_conflict_repair");
+
+    let status = autopilot_loop_status_from_plan(
+        &plan,
+        AutopilotLoopSettings {
+            write: true,
+            dry_run: false,
+            recover: true,
+            poll_interval_ms: 5_000,
+            main_max_concurrent: 3,
+            review_max_concurrent: 2,
+            merge_max_concurrent: 3,
+        },
+        6,
+        Some(5_000),
+        &[],
+        false,
+    );
+
+    assert_eq!(status.phase, "blocked");
+    assert_eq!(
+        status.blocked_reasons,
+        vec!["session_attention=1", "merge:recoverable_merge_lane_work"]
     );
 }
 

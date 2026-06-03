@@ -492,17 +492,17 @@ fn branch_matches_issue(issue: &TrackerIssue, branch: &str) -> bool {
 }
 
 fn workpad_workspace_hints(description: &str, marker: &str) -> Vec<PathBuf> {
-    let workpad = description
-        .find(marker)
-        .map(|index| &description[index..])
-        .unwrap_or(description);
+    let Some(index) = description.find(marker) else {
+        return Vec::new();
+    };
+    let workpad = &description[index..];
     let mut paths = BTreeSet::new();
     for line in workpad.lines() {
         if line.trim_start().starts_with("<!--") {
             continue;
         }
         let lower = line.to_ascii_lowercase();
-        if !(lower.contains("workspace") || lower.contains("worktree") || lower.contains("path")) {
+        if !is_workspace_path_hint_line(&lower) {
             continue;
         }
         for token in line.split(['`', ' ', '\t', ',', ')', '(']) {
@@ -513,6 +513,13 @@ fn workpad_workspace_hints(description: &str, marker: &str) -> Vec<PathBuf> {
         }
     }
     paths.into_iter().collect()
+}
+
+fn is_workspace_path_hint_line(lower_line: &str) -> bool {
+    lower_line.contains("workspace path:")
+        || lower_line.contains("worktree path:")
+        || lower_line.trim_start().starts_with("- path:")
+        || lower_line.trim_start().starts_with("path:")
 }
 
 fn replace_or_append_block(content: &str, start: &str, end: &str, block: &str) -> String {
@@ -775,6 +782,26 @@ mod tests {
     fn workpad_hints_ignore_html_marker_lines() {
         let paths = workpad_workspace_hints(
             "<!-- shea-symphony-workpad -->\n<!-- shea-symphony-workspace-adoption -->\n- Path: `/tmp/issue-253`\n<!-- /shea-symphony-workspace-adoption -->",
+            "<!-- shea-symphony-workpad -->",
+        );
+
+        assert_eq!(paths, vec![PathBuf::from("/tmp/issue-253")]);
+    }
+
+    #[test]
+    fn workpad_hints_do_not_scan_plain_issue_body_paths() {
+        let paths = workpad_workspace_hints(
+            "- Reuse the existing `requestOperatorLocalArtifactsRefresh` / `REFRESH_REQUEST_EVENT` local-only path.\n- Open the `/lanes` route.",
+            "<!-- shea-symphony-workpad -->",
+        );
+
+        assert!(paths.is_empty());
+    }
+
+    #[test]
+    fn workpad_hints_only_accept_explicit_workspace_path_lines() {
+        let paths = workpad_workspace_hints(
+            "<!-- shea-symphony-workpad -->\n- Reuse the existing `requestOperatorLocalArtifactsRefresh` / `REFRESH_REQUEST_EVENT` local-only path.\n- Workspace path: `/tmp/issue-253`",
             "<!-- shea-symphony-workpad -->",
         );
 

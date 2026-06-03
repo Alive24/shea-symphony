@@ -70,6 +70,72 @@ fn merge_lane_plan_for_issue(identifier: &str, status: &str, action: &str) -> Au
     }
 }
 
+fn autopilot_session_record(issue_identifier: &str, status: SessionStatus) -> AgentSessionRecord {
+    AgentSessionRecord {
+        issue_id: Some(format!(
+            "ISSUE_{}",
+            issue_identifier.trim_start_matches('#')
+        )),
+        issue_identifier: Some(issue_identifier.into()),
+        issue_title: Some("Historical session".into()),
+        lane: "main".into(),
+        run_id: Some(format!(
+            "20260603T2100Z-issue{}-main",
+            issue_identifier.trim_start_matches('#')
+        )),
+        thread: None,
+        session_source: Some("loop".into()),
+        claim_value: None,
+        actor_role: Some("codex".into()),
+        actor_label: Some("Codex".into()),
+        git_author: None,
+        profile_id: None,
+        instance_name: None,
+        worktree: PathBuf::from(format!(
+            "/tmp/issue-{}",
+            issue_identifier.trim_start_matches('#')
+        )),
+        branch: Some(format!(
+            "feature/issue-{}",
+            issue_identifier.trim_start_matches('#')
+        )),
+        backend: "codex-app-server".into(),
+        session_name: format!(
+            "shea-main-{}-historical",
+            issue_identifier.trim_start_matches('#')
+        ),
+        process_id: None,
+        pane_target: "none".into(),
+        prompt_artifact_path: PathBuf::from("/tmp/prompt.md"),
+        log_path: PathBuf::from("/tmp/session.log"),
+        attach_command: "codex resume".into(),
+        attempt: 1,
+        status,
+        started_at_ms: 1_000,
+        updated_at_ms: 1_000,
+    }
+}
+
+fn autopilot_session_snapshot(issue_identifier: &str, status: &str) -> SessionStatusSnapshot {
+    SessionStatusSnapshot {
+        session_id: format!("session-{}", issue_identifier.trim_start_matches('#')),
+        lane: "main".into(),
+        backend: "codex-app-server".into(),
+        run_id: Some(format!(
+            "20260603T2100Z-issue{}-main",
+            issue_identifier.trim_start_matches('#')
+        )),
+        status: status.into(),
+        evidence_source: "registry".into(),
+        evidence: "historical session".into(),
+        issue_identifier: Some(issue_identifier.into()),
+        issue_title: Some("Historical session".into()),
+        attach_command: None,
+        log_path: None,
+        updated_at_ms: 1_000,
+    }
+}
+
 #[test]
 fn autopilot_plan_reports_all_lanes_idle() {
     let plan = test_autopilot_plan(Vec::new());
@@ -511,6 +577,63 @@ fn autopilot_plan_readiness_allows_ready_main_with_terminal_historical_session_a
         Some("#428")
     );
     assert_eq!(plan.runtime.session_attention_count, 2);
+}
+
+#[test]
+fn autopilot_runtime_summary_ignores_attention_sessions_for_terminal_issues() {
+    let done_issue = tracker_issue_with_ref("#415", "Completed work", "Done");
+    let active_issue = tracker_issue_with_ref("#428", "Ready work", "Todo");
+    let sessions = vec![
+        autopilot_session_snapshot("#415", "stale"),
+        autopilot_session_snapshot("#428", "stale"),
+    ];
+
+    let runtime = AutopilotRuntimeSummary::from_parts(
+        &[],
+        &sessions,
+        &[done_issue, active_issue],
+        None,
+        None,
+    );
+
+    assert_eq!(runtime.session_count, 2);
+    assert_eq!(runtime.session_attention_count, 1);
+    assert_eq!(runtime.blockers, vec!["session_attention=1"]);
+    assert_eq!(
+        runtime.evidence,
+        vec!["session=session-428 lane=main status=stale issue=#428"]
+    );
+}
+
+#[test]
+fn autopilot_reconciles_terminal_issue_sessions_in_local_registry() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = main_loop_test_config();
+    config.artifacts.root = temp.path().into();
+    let done_issue = tracker_issue_with_ref("#415", "Completed work", "Done");
+    let active_issue = tracker_issue_with_ref("#428", "Ready work", "Todo");
+    let registry_path = session_registry_path(&config);
+    save_session_registry(
+        &registry_path,
+        &shea_symphony::session_registry::SessionRegistry {
+            sessions: vec![
+                autopilot_session_record("#415", SessionStatus::Stale),
+                autopilot_session_record("#428", SessionStatus::Stale),
+            ],
+        },
+    )
+    .unwrap();
+
+    let reconciled = crate::orchestration::reconcile_terminal_issue_sessions(
+        &config,
+        &[done_issue, active_issue],
+    )
+    .unwrap();
+    let registry = load_session_registry(&registry_path).unwrap();
+
+    assert_eq!(reconciled, 1);
+    assert_eq!(registry.sessions[0].status, SessionStatus::Recorded);
+    assert_eq!(registry.sessions[1].status, SessionStatus::Stale);
 }
 
 #[test]

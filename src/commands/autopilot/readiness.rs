@@ -9,7 +9,7 @@ use shea_symphony::doctor::{
     append_local_skill_install_doctor_violations, audit_project_issues_with_context,
     default_shea_symphony_skill_targets, AuditSeverity, ProjectAuditReport, ProjectDoctorContext,
 };
-use shea_symphony::model::{SessionStatusSnapshot, TrackerIssue};
+use shea_symphony::model::{normalize_state, SessionStatusSnapshot, TrackerIssue};
 use shea_symphony::runtime_state::RuntimeState;
 use shea_symphony::skill_status::{doctor_skill_readiness_summary, SkillStatusInput};
 
@@ -336,12 +336,16 @@ impl AutopilotRuntimeSummary {
     pub(crate) fn from_parts(
         runtime_states: &[RuntimeState],
         sessions: &[SessionStatusSnapshot],
+        issues: &[TrackerIssue],
         runtime_load_error: Option<String>,
         session_load_error: Option<String>,
     ) -> Self {
         let attention_sessions = sessions
             .iter()
-            .filter(|session| session_needs_autopilot_attention(session))
+            .filter(|session| {
+                session_needs_autopilot_attention(session)
+                    && !session_points_at_terminal_issue(session, issues)
+            })
             .collect::<Vec<_>>();
         let mut blockers = Vec::new();
         if let Some(error) = runtime_load_error {
@@ -434,4 +438,30 @@ fn session_needs_autopilot_attention(session: &SessionStatusSnapshot) -> bool {
             | "failed"
             | "stale"
     )
+}
+
+fn session_points_at_terminal_issue(
+    session: &SessionStatusSnapshot,
+    issues: &[TrackerIssue],
+) -> bool {
+    let Some(session_issue) = session.issue_identifier.as_deref() else {
+        return false;
+    };
+    issues.iter().any(|issue| {
+        issue_refs_match(&issue.identifier, session_issue)
+            && (matches!(normalize_state(&issue.state).as_str(), "done" | "closed")
+                || issue
+                    .project_fields
+                    .get("GitHub Issue State")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|state| normalize_state(state) == "closed"))
+    })
+}
+
+fn issue_refs_match(left: &str, right: &str) -> bool {
+    normalize_issue_ref(left) == normalize_issue_ref(right)
+}
+
+fn normalize_issue_ref(value: &str) -> String {
+    value.trim().trim_start_matches('#').to_string()
 }

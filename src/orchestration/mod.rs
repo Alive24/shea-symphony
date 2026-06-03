@@ -26,7 +26,8 @@ pub(crate) use lane_status::{
 };
 pub(crate) use progress::{progress_spec_for_config, progress_spec_with_event_log};
 pub(crate) use session_status::{
-    session_status_snapshots, DEFAULT_SESSION_STALE_AFTER_MS, DEFAULT_SESSION_STATUS_LINES,
+    reconcile_terminal_issue_sessions, session_status_snapshots, DEFAULT_SESSION_STALE_AFTER_MS,
+    DEFAULT_SESSION_STATUS_LINES,
 };
 pub(crate) use text::{shell_quote_display, single_line};
 pub(crate) use time::{current_gmt_timestamp, current_time_ms};

@@ -11,8 +11,8 @@ use shea_symphony::workflow::WorkflowDefinition;
 use crate::commands::doctor::hydrate_issues_for_doctor;
 use crate::commands::project::render_state_summary;
 use crate::orchestration::{
-    all_mapped_tracker_states, session_status_snapshots, single_line,
-    warn_if_temporary_workflow_path,
+    all_mapped_tracker_states, reconcile_terminal_issue_sessions, session_status_snapshots,
+    single_line, warn_if_temporary_workflow_path,
 };
 
 mod dashboard;
@@ -99,6 +99,8 @@ fn build_autopilot_plan(
     let issues = adapter.fetch_issues_by_states(&all_mapped_tracker_states(&config))?;
     let issues = hydrate_issues_for_doctor(adapter.as_ref(), issues)?;
 
+    let terminal_session_reconcile_error =
+        reconcile_terminal_issue_sessions(&config, &issues).err();
     let (runtime_states, runtime_load_error) = match load_runtime_states(&config) {
         Ok(states) => (states, None),
         Err(error) => (Vec::new(), Some(error.to_string())),
@@ -113,6 +115,9 @@ fn build_autopilot_plan(
     if let Some(error) = &session_load_error {
         integration_gaps.push(format!("tmux_session_status_unavailable: {error}"));
     }
+    if let Some(error) = &terminal_session_reconcile_error {
+        integration_gaps.push(format!("session_terminal_reconcile_error: {error}"));
+    }
 
     let canonical_checkout = AutopilotCanonicalCheckout::read_current(&config);
     let doctor = autopilot_doctor_report(
@@ -123,6 +128,13 @@ fn build_autopilot_plan(
         &sessions,
         integration_gaps.clone(),
     );
+    let runtime = AutopilotRuntimeSummary::from_parts(
+        &runtime_states,
+        &sessions,
+        &issues,
+        runtime_load_error,
+        session_load_error,
+    );
     build_autopilot_plan_from_parts(AutopilotPlanInputs {
         workflow_path,
         config: &config,
@@ -130,12 +142,7 @@ fn build_autopilot_plan(
         issues,
         doctor_report: doctor,
         canonical_checkout,
-        runtime: AutopilotRuntimeSummary::from_parts(
-            &runtime_states,
-            &sessions,
-            runtime_load_error,
-            session_load_error,
-        ),
+        runtime,
         integration_gaps,
     })
 }

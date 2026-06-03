@@ -134,7 +134,10 @@ test('autoloop stdout log omits repeated inactive skipped issue details', () => 
     }
   });
 
-  assert.equal(state.recentLines.length, 0);
+  assert.equal(state.recentLines.length, 1);
+  assert.equal(operatorRunLogLines(state, state.recentLines, 'focus').length, 0);
+  assert.equal(operatorRunLogLines(state, state.recentLines, 'normal').length, 0);
+  assert.equal(operatorRunLogLines(state, state.recentLines, 'verbose').length, 1);
 });
 
 test('autoloop log omits no-op lane heartbeat events', () => {
@@ -183,10 +186,13 @@ test('autoloop log omits no-op lane heartbeat events', () => {
     }
   });
 
-  assert.equal(state.recentLines.length, 0);
+  assert.equal(state.recentLines.length, 3);
+  assert.equal(operatorRunLogLines(state, state.recentLines, 'focus').length, 0);
+  assert.equal(operatorRunLogLines(state, state.recentLines, 'normal').length, 0);
+  assert.equal(operatorRunLogLines(state, state.recentLines, 'verbose').length, 3);
 });
 
-test('autoloop stdout log omits child lane idle stop lines', () => {
+test('autoloop stdout log omits idle stop lines but keeps issue diagnostics in normal mode', () => {
   const lines = [
     'merge_once=stopped reason=no_merging_issue',
     'merge_loop=stopped reason=no_merging_issue iterations=1 slot=1',
@@ -220,7 +226,16 @@ test('autoloop stdout log omits child lane idle stop lines', () => {
     });
   }
 
-  assert.equal(state.recentLines.length, 0);
+  assert.equal(operatorRunLogLines(state, state.recentLines, 'focus').length, 0);
+  assert.deepEqual(
+    operatorRunLogLines(state, state.recentLines, 'normal').map((entry) => entry.line),
+    [
+      'tracker_recovery action=already_applied mutation_type=set_state issue=#415 state=merging',
+      'reason=pull request merge state is `DIRTY`',
+      'pull_request=https://github.com/Alive24/shea-symphony/pull/427'
+    ]
+  );
+  assert.equal(operatorRunLogLines(state, state.recentLines, 'verbose').length, lines.length);
 });
 
 test('autoloop log omits result summaries but keeps operator lane work and blockers', () => {
@@ -240,7 +255,7 @@ test('autoloop log omits result summaries but keeps operator lane work and block
       }
     }
   });
-  assert.equal(state.recentLines.length, 0);
+  assert.equal(operatorRunLogLines(state, state.recentLines, 'normal').length, 0);
 
   state = appendAutoloopLine(state, {
     atMs: Date.now(),
@@ -273,7 +288,8 @@ test('autoloop log omits result summaries but keeps operator lane work and block
     }
   });
 
-  assert.equal(state.recentLines.length, 2);
+  assert.equal(state.recentLines.length, 3);
+  assert.equal(operatorRunLogLines(state, state.recentLines, 'normal').length, 2);
 });
 
 test('autoloop run logs only admit operator signals from legacy stdout', () => {
@@ -300,8 +316,10 @@ test('autoloop run logs only admit operator signals from legacy stdout', () => {
     });
   }
 
-  assert.equal(state.recentLines.length, 1);
-  assert.equal(state.recentLines[0].event.payload.issue, '#415');
+  assert.equal(state.recentLines.length, 3);
+  const visible = operatorRunLogLines(state, state.recentLines, 'focus');
+  assert.equal(visible.length, 1);
+  assert.equal(visible[0].event.payload.issue, '#415');
 });
 
 test('autoloop running logs filter raw snapshot heartbeat lines', () => {
@@ -364,7 +382,7 @@ test('autoloop running logs filter raw snapshot heartbeat lines', () => {
     ]
   };
 
-  const visible = operatorRunLogLines(state);
+  const visible = operatorRunLogLines(state, state.recentLines, 'focus');
 
   assert.equal(visible.length, 1);
   assert.equal(visible[0].event.payload.selected_issue.identifier, '#408');
@@ -397,10 +415,11 @@ test('autoloop stdout log omits routine status and clean checkout lines', () => 
     });
   }
 
-  assert.equal(state.recentLines.length, 0);
+  assert.equal(operatorRunLogLines(state, state.recentLines, 'normal').length, 0);
+  assert.equal(operatorRunLogLines(state, state.recentLines, 'verbose').length, lines.length);
 });
 
-test('autoloop run logs omit supervisor and non-actionable status events', () => {
+test('autoloop run logs control supervisor and lifecycle visibility by verbosity', () => {
   const now = Date.now();
   let state = defaultLoopState();
   for (const event of [
@@ -436,7 +455,11 @@ test('autoloop run logs omit supervisor and non-actionable status events', () =>
     });
   }
 
-  assert.equal(state.recentLines.length, 0);
+  assert.equal(operatorRunLogLines(state, state.recentLines, 'focus').length, 0);
+  const normal = operatorRunLogLines(state, state.recentLines, 'normal');
+  assert.equal(normal.length, 1);
+  assert.equal(normal[0].event.payload.phase, 'running');
+  assert.equal(operatorRunLogLines(state, state.recentLines, 'verbose').length, 3);
 
   state = appendAutoloopLine(state, {
     atMs: now + 1,
@@ -453,8 +476,51 @@ test('autoloop run logs omit supervisor and non-actionable status events', () =>
     }
   });
 
-  assert.equal(state.recentLines.length, 1);
-  assert.equal(state.recentLines[0].event.payload.phase, 'blocked');
+  const focus = operatorRunLogLines(state, state.recentLines, 'focus');
+  assert.equal(focus.length, 1);
+  assert.equal(focus[0].event.payload.phase, 'blocked');
+});
+
+test('autoloop normal run logs keep issue diagnostics without routine heartbeats', () => {
+  const now = Date.now();
+  const state = {
+    ...defaultLoopState(),
+    running: true,
+    startedAtMs: now - 100,
+    recentLines: [
+      {
+        atMs: now,
+        stream: 'stdout',
+        line: 'polling: checking=false interval_ms=5000 next_poll_in_ms=5000',
+        event: {
+          event: 'autopilot_cli_line',
+          payload: {
+            kind: 'polling',
+            raw: 'polling: checking=false interval_ms=5000 next_poll_in_ms=5000',
+            fields: {}
+          }
+        }
+      },
+      {
+        atMs: now + 1,
+        stream: 'stdout',
+        line: 'reason=Codex app-server stalled waiting for turn event issue=#428',
+        event: {
+          event: 'autopilot_cli_line',
+          payload: {
+            kind: 'reason',
+            raw: 'reason=Codex app-server stalled waiting for turn event issue=#428',
+            fields: { issue: '#428', reason: 'Codex app-server stalled waiting for turn event' }
+          }
+        }
+      }
+    ]
+  };
+
+  const normal = operatorRunLogLines(state, state.recentLines, 'normal');
+  assert.equal(normal.length, 1);
+  assert.equal(normal[0].event.payload.fields.issue, '#428');
+  assert.equal(operatorRunLogLines(state, state.recentLines, 'verbose').length, 2);
 });
 
 test('lane throughput board keeps independent running and queued lane work visible', () => {

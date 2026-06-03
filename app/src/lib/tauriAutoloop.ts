@@ -26,6 +26,8 @@ export type AutoloopLine = {
   event?: Record<string, unknown> | null;
 };
 
+export type RunLogVerbosity = 'focus' | 'normal' | 'verbose';
+
 export type LoopStateSnapshot = {
   running: boolean;
   stopping: boolean;
@@ -200,21 +202,30 @@ export function mergeLaneSnapshot(state: LoopStateSnapshot, lane: LaneSnapshot):
 }
 
 export function appendAutoloopLine(state: LoopStateSnapshot, line: AutoloopLine): LoopStateSnapshot {
-  if (!isOperatorVisibleAutoloopLine(line)) return state;
   return {
     ...state,
-    recentLines: [...(state.recentLines ?? []), line].slice(-200)
+    recentLines: [...(state.recentLines ?? []), line].slice(-300)
   };
 }
 
-export function operatorRunLogLines(state: LoopStateSnapshot, lines: AutoloopLine[] = state.recentLines ?? []) {
+export function operatorRunLogLines(
+  state: LoopStateSnapshot,
+  lines: AutoloopLine[] = state.recentLines ?? [],
+  verbosity: RunLogVerbosity = 'normal'
+) {
   const startedAt = Number(state.startedAtMs);
   const lowerBound = Number.isFinite(startedAt) ? startedAt - 1000 : null;
   return lines.filter((entry) =>
-    entry.stream === 'stdout'
+    (verbosity === 'verbose' || entry.stream === 'stdout')
       && (lowerBound == null || entry.atMs >= lowerBound)
-      && isOperatorVisibleAutoloopLine(entry)
+      && isAutoloopLineVisibleAtVerbosity(entry, verbosity)
   );
+}
+
+export function isAutoloopLineVisibleAtVerbosity(line: AutoloopLine, verbosity: RunLogVerbosity) {
+  if (verbosity === 'verbose') return true;
+  if (verbosity === 'focus') return isOperatorVisibleAutoloopLine(line);
+  return isNormalRunLogLine(line);
 }
 
 export function isOperatorVisibleAutoloopLine(line: AutoloopLine) {
@@ -228,6 +239,26 @@ export function isOperatorVisibleAutoloopLine(line: AutoloopLine) {
   }
   if (eventName === 'autopilot_loop_status') {
     return isOperatorLoopStatusLine(line);
+  }
+  return false;
+}
+
+function isNormalRunLogLine(line: AutoloopLine) {
+  if (isOperatorVisibleAutoloopLine(line)) return true;
+  const eventName = textFromValue(recordValue(line.event, 'event'));
+  if (eventName === 'autopilot_loop_status') {
+    const payload = recordFromValue(recordValue(line.event, 'payload'));
+    const phase = textFromValue(recordValue(payload, 'phase'));
+    const selected = arrayFromValue(recordValue(payload, 'selected_issues'));
+    const active = arrayFromValue(recordValue(payload, 'active_issues'));
+    const retrying = arrayFromValue(recordValue(payload, 'retrying'));
+    return phase === 'running' && (selected.length > 0 || active.length > 0 || retrying.length > 0);
+  }
+  if (eventName === 'autopilot_loop_result') {
+    return !isAutoloopResultNoopEventLine(line);
+  }
+  if (eventName === 'autopilot_cli_line') {
+    return isActionableCliDiagnosticLine(line);
   }
   return false;
 }
@@ -318,6 +349,25 @@ function isAutoloopRoutineStatusLine(line: AutoloopLine) {
   if (/^canonical_checkout root=.*\bclean=true\b/.test(raw)) return true;
   if (/^canonical_checkout_refresh=(already_current|ff_only|would_ff_only)\b/.test(raw)) return true;
   return false;
+}
+
+function isActionableCliDiagnosticLine(line: AutoloopLine) {
+  if (line.stream !== 'stdout') return false;
+  const payload = recordFromValue(recordValue(line.event, 'payload'));
+  const kind = textFromValue(recordValue(payload, 'kind'));
+  const raw = textFromValue(recordValue(payload, 'raw') ?? line.line);
+  if (!raw) return false;
+  if (isAutoloopRoutineStatusLine(line)) return false;
+  if (isAutoloopLaneIdlePrimitiveLine(line)) return false;
+  if (isSkippedIssueDetailLine(line)) return false;
+  if (/^(polling|activity|tokens):\s/.test(raw)) return false;
+  if (/^event_log=/.test(raw)) return false;
+  if (/^Latest:\s+\w+\s+\|\s+no-issue\s+\|\s+idle\b/.test(raw)) return false;
+  if (/^run_loop=stopped reason=no_dispatchable_issue\b/.test(raw)) return false;
+  if (kind === 'latest' && /no-issue\s+·\s+idle/.test(raw)) return false;
+  return /#\d+/.test(raw)
+    || /(^|\s)(reason|error|failure_kind|target_state|pull_request|run_loop_action|tracker_recovery|handoff|blocked)=/.test(raw)
+    || /\b(waiting_for_human_input|need_human_input|failed|blocked|stalled|usage_limited)\b/i.test(raw);
 }
 
 export function laneWorkerFromAutoloop(

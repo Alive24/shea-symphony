@@ -50,6 +50,10 @@ fn skill_suite_documents_app_server_first_manual_boundaries() {
 
     assert!(human_review.contains("Match the operator-facing language"));
     assert!(human_review.contains("Do not force English"));
+    assert!(human_review.contains("run the freshness check automatically"));
+    assert!(human_review.contains("not an operator-owned UAT"));
+    assert!(human_review.contains("decision. After the orientation brief"));
+    assert!(human_review.contains("Do not ask for operator permission"));
     assert!(manual_main.contains("cargo run -- project state workflows/shea-symphony.md"));
     assert!(manual_main.contains("main_lane.backend: codex"));
     assert!(manual_main.contains("codex.command: codex app-server -c 'service_tier=\"fast\"'"));

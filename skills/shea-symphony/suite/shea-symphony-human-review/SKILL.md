@@ -153,6 +153,14 @@ Before any PR-specific UAT, verify that the reviewed PR branch contains the
 latest `origin/main`. Run this only from the linked PR/issue worktree, never
 from the canonical `main` checkout.
 
+This gate is a required Human Review preflight, not an operator-owned UAT
+decision. After the orientation brief, run the freshness check automatically
+from the PR worktree before asking the operator to run or accept PR-specific
+UAT. Do not ask for operator permission merely to run `git fetch`, the
+`merge-base` check, or the safe mechanical repair path described below.
+Operator confirmation is still required before final decision evidence or
+Project state mutation.
+
 Shea Symphony write-mode lane commands may now fast-forward the canonical
 checkout before tracker mutation. That is separate control-surface
 synchronization and is not evidence that the reviewed PR branch is fresh.
@@ -185,8 +193,10 @@ that is not obviously mechanical, stop before UAT and recommend `Request Rework`
 with the smallest actionable finding.
 
 If the PR worktree cannot be found, do not run the freshness check from the
-canonical `main` checkout. First select or create a PR branch worktree. If that
-cannot be done safely, record the missing worktree as a UAT blocker.
+canonical `main` checkout. First try to select an existing PR branch worktree.
+If no safe worktree can be selected or created from existing issue/PR evidence,
+record the missing worktree as a UAT blocker and ask the operator for the
+smallest missing workspace choice.
 
 If `gh pr view` reports a non-clean merge state, treat that as corroborating
 freshness or mergeability risk. The local `merge-base` check is still required
@@ -195,9 +205,11 @@ unknown.
 
 ## Brief The Operator
 
-Before any UAT command, freshness repair, decision-note drafting, or state
-mutation, start with a plain-language orientation brief. The operator should be
-able to understand what they are reviewing without opening GitHub first.
+Before any freshness repair, operator-owned UAT command, decision-note drafting,
+or state mutation, start with a plain-language orientation brief. The operator
+should be able to understand what they are reviewing without opening GitHub
+first. After that brief, required PR freshness checks run automatically under
+the PR Freshness Repair Gate; they are not confirmation prompts.
 
 Give a concise Human Review brief with:
 
@@ -287,11 +299,17 @@ After the briefing, guide the operator one step at a time.
 
 - Do not dump the whole UAT checklist as a single todo list unless the operator
   explicitly asks for the full list.
+- For an unmerged PR, automatically complete the PR Freshness Repair Gate from
+  the PR worktree before presenting the first operator-owned UAT action.
+- Report the freshness result succinctly before UAT: fresh, mechanically
+  refreshed, blocked by missing worktree, or blocked by non-mechanical
+  conflict/verification failure.
 - Give exactly one next action, explain why it is the next action, and tell the
   operator what feedback to provide after running it.
 - Tell the operator which directory to run the action from. For PR UAT, this is
   normally the reviewed PR/issue worktree, not the canonical `main` checkout.
-- Wait for the operator's result before moving to the next UAT action.
+- Wait for the operator's result before moving to the next operator-owned UAT
+  action.
 - After each operator result, classify it as `pass`, `fail`, `deferred`, or
   `needs clarification`, then choose the next action.
 - Keep a running Human Review note draft in the conversation so the final
@@ -326,8 +344,9 @@ First resolve the correct execution directory.
   run from the linked PR/issue worktree or another checkout of that PR branch.
 - Do not ask the operator to run PR-specific UAT from the canonical `main`
   checkout unless the PR has already been merged into `main`.
-- Before PR-specific UAT, apply the PR Freshness Repair Gate. Do not stop only
-  because the PR branch is stale; first try the safe refresh/small-repair path.
+- Before PR-specific UAT, apply the PR Freshness Repair Gate automatically. Do
+  not stop only because the PR branch is stale; first try the safe
+  refresh/small-repair path.
 - Prefer the worktree recorded in the issue workpad or `project issue` readback.
   If no usable worktree is available, ask the operator whether to create or
   select one before continuing.

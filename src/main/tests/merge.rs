@@ -135,6 +135,26 @@ fn merge_agent_stage_closes_resolved_unmerged_index() {
 }
 
 #[test]
+fn merge_agent_stage_add_failure_is_not_retryable_loop() {
+    let runner = GitAddFailureRunner::new();
+
+    let error = stage_resolved_merge_agent_changes(&runner, Path::new(".")).unwrap_err();
+
+    assert_eq!(
+        error,
+        MergeAgentStageFailure::Unsafe(
+            "`git add -A` failed after merge-agent reported repair: stdout=`` stderr=`fatal: Unable to create index.lock`"
+                .into()
+        )
+    );
+    let calls = runner.calls.borrow();
+    assert_eq!(
+        calls.as_slice(),
+        ["git diff --check", "git status --porcelain", "git add -A"]
+    );
+}
+
+#[test]
 fn merge_agent_semantic_uncertainty_marker_requires_human_input() {
     let text = "\
 RESOLUTION_SUMMARY: conflict needs product choice
@@ -285,6 +305,52 @@ impl HandoffCommandRunner for ResolvedUnmergedIndexRunner {
                 status: 0,
                 stdout: "app/test/operator-view.test.mjs\n".into(),
                 stderr: String::new(),
+            }),
+            _ => Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+        }
+    }
+}
+
+struct GitAddFailureRunner {
+    calls: std::cell::RefCell<Vec<String>>,
+}
+
+impl GitAddFailureRunner {
+    fn new() -> Self {
+        Self {
+            calls: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+}
+
+impl HandoffCommandRunner for GitAddFailureRunner {
+    fn run(
+        &self,
+        program: &str,
+        args: &[String],
+        _cwd: &Path,
+    ) -> Result<CommandOutput, shea_symphony::git_handoff::GitHandoffError> {
+        let command = format!("{program} {}", args.join(" "));
+        self.calls.borrow_mut().push(command.clone());
+        match command.as_str() {
+            "git diff --check" => Ok(CommandOutput {
+                status: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
+            "git status --porcelain" => Ok(CommandOutput {
+                status: 0,
+                stdout: "UU app/test/operator-view.test.mjs\n".into(),
+                stderr: String::new(),
+            }),
+            "git add -A" => Ok(CommandOutput {
+                status: 128,
+                stdout: String::new(),
+                stderr: "fatal: Unable to create index.lock\n".into(),
             }),
             _ => Ok(CommandOutput {
                 status: 0,

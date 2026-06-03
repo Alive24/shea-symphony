@@ -259,23 +259,12 @@ pub(super) fn run_merge_agent_conflict_repair(
 
     if let Err(reason) = stage_resolved_merge_agent_changes(runner, worktree_path) {
         abort_merge_repair_if_active(runner, worktree_path);
-        let outcome = match reason {
-            MergeAgentStageFailure::Unsafe(reason) => merge_agent_repair_verification_failed(
-                &summary.backend,
-                summary.session_id.clone(),
-                &conflict_summary,
-                reason,
-            ),
-            MergeAgentStageFailure::Retryable(reason) => {
-                merge_agent_repair_retryable_verification_failed(
-                    &summary.backend,
-                    summary.session_id.clone(),
-                    &conflict_summary,
-                    reason,
-                )
-            }
-        };
-        return Ok(outcome);
+        return Ok(merge_agent_repair_verification_failed(
+            &summary.backend,
+            summary.session_id.clone(),
+            &conflict_summary,
+            reason.to_string(),
+        ));
     }
     let merge_head = runner.run(
         "git",
@@ -336,6 +325,14 @@ pub(crate) enum MergeAgentStageFailure {
     Unsafe(String),
 }
 
+impl std::fmt::Display for MergeAgentStageFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Retryable(reason) | Self::Unsafe(reason) => formatter.write_str(reason),
+        }
+    }
+}
+
 pub(crate) fn stage_resolved_merge_agent_changes(
     runner: &dyn HandoffCommandRunner,
     worktree_path: &std::path::Path,
@@ -372,9 +369,11 @@ pub(crate) fn stage_resolved_merge_agent_changes(
         .run("git", &["add".into(), "-A".into()], worktree_path)
         .map_err(|error| MergeAgentStageFailure::Retryable(error.to_string()))?;
     if add.status != 0 {
-        return Err(MergeAgentStageFailure::Retryable(
-            "`git add -A` failed after conflict resolution".into(),
-        ));
+        return Err(MergeAgentStageFailure::Unsafe(format!(
+            "`git add -A` failed after merge-agent reported repair: stdout=`{}` stderr=`{}`",
+            single_line(&add.stdout),
+            single_line(&add.stderr)
+        )));
     }
 
     let unresolved = runner

@@ -9,6 +9,7 @@ The harness launches the configured `codex.command` in the prepared issue worksp
 - `initialize` with experimental API capability metadata.
 - `initialized` notification after the initialize response.
 - `thread/start` with approval policy, thread sandbox, workspace `cwd`, and an empty `dynamicTools` list.
+- `thread/resume` with the recorded thread id, approval policy, thread sandbox, and workspace `cwd` before continuation turns for recovered app-server sessions.
 - `turn/start` with text input, workspace `cwd`, issue title when available, approval policy, and configured `turn_sandbox_policy` when present.
 
 The harness reads line-delimited JSON-RPC output and normalizes:

@@ -721,7 +721,55 @@ fn run_codex_app_server_protocol(
         .as_deref()
         .filter(|thread_id| !thread_id.trim().is_empty())
     {
-        Some(thread_id) => thread_id.to_string(),
+        Some(thread_id) => {
+            let mut thread_params = serde_json::json!({
+                "threadId": thread_id,
+                "approvalPolicy": app_server_approval_policy(prepared.approval_policy.as_deref()),
+                "cwd": prepared.workspace.display().to_string(),
+                "sandbox": prepared.sandbox.as_deref().unwrap_or("workspace-write")
+            });
+            if let Some(model) = prepared
+                .model
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
+                thread_params["model"] = serde_json::Value::String(model.to_string());
+            }
+            if let Some(reasoning_effort) = prepared
+                .reasoning_effort
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
+                thread_params["reasoningEffort"] =
+                    serde_json::Value::String(reasoning_effort.to_string());
+            }
+
+            let thread_resume = serde_json::json!({
+                "method": "thread/resume",
+                "id": 2,
+                "params": thread_params
+            });
+            send_app_server_message(stdin, &thread_resume, protocol_log)?;
+            let thread_response = await_app_server_response(
+                child,
+                stdout_rx,
+                protocol_log,
+                events,
+                2,
+                None,
+                timeout,
+            )?;
+            thread_response
+                .pointer("/result/thread/id")
+                .or_else(|| thread_response.pointer("/thread/id"))
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    format!(
+                        "Codex app-server thread/resume response missing thread id: {thread_response}"
+                    )
+                })?
+                .to_string()
+        }
         None => {
             let mut thread_params = serde_json::json!({
                 "approvalPolicy": app_server_approval_policy(prepared.approval_policy.as_deref()),
@@ -802,11 +850,7 @@ fn run_codex_app_server_protocol(
     if let Some(policy) = prepared.turn_sandbox_policy.clone() {
         turn_params["sandboxPolicy"] = policy;
     }
-    let turn_request_id = if prepared.app_server_resume_thread_id.is_some() {
-        2
-    } else {
-        3
-    };
+    let turn_request_id = 3;
     send_app_server_message(
         stdin,
         &serde_json::json!({
@@ -2714,37 +2758,18 @@ while IFS= read -r line; do
       # initialized notification; no response required
       ;;
     3)
-      if printf '%s\n' "$line" | grep -q '"method":"turn/start"'; then
-        printf '%s\n' '{"id":2,"result":{"turn":{"id":"turn-resume"}}}'
-        case "$mode" in
-          completed)
-            printf '%s\n' '{"method":"thread/tokenUsage/updated","params":{"inputTokens":4,"outputTokens":5,"totalTokens":9}}'
-            printf '%s\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
-            exit 0
-            ;;
-          input_required)
-            printf '%s\n' '{"method":"turn/input_required","params":{"reason":"blocked"}}'
-            exit 0
-            ;;
-          tool_call)
-            printf '%s\n' '{"method":"item/tool/call","id":7,"params":{"name":"linear_graphql","arguments":{}}}'
-            exit 0
-            ;;
-          failed)
-            printf '%s\n' '{"method":"turn/failed","params":{"error":{"message":"boom"}}}'
-            exit 0
-            ;;
-          cancelled)
-            printf '%s\n' '{"method":"turn/cancelled","params":{"message":"operator stopped"}}'
-            exit 0
-            ;;
-        esac
+      if printf '%s\n' "$line" | grep -q '"method":"thread/resume"'; then
+        printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-368"}}}'
       else
         printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-368"}}}'
       fi
       ;;
     4)
-      printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-368"}}}'
+      if printf '%s\n' "$line" | grep -q '"text":"Continue"'; then
+        printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-resume"}}}'
+      else
+        printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-368"}}}'
+      fi
       case "$mode" in
         completed)
           printf '%s\n' '{"method":"thread/tokenUsage/updated","params":{"inputTokens":4,"outputTokens":5,"totalTokens":9}}'
@@ -2938,6 +2963,7 @@ done
             Some("thread-368-turn-resume")
         );
         assert!(!trace.contains("\"method\":\"thread/start\""));
+        assert!(trace.contains("\"method\":\"thread/resume\""));
         assert!(trace.contains("\"method\":\"turn/start\""));
         assert!(trace.contains("\"threadId\":\"thread-368\""));
         assert!(trace.contains("\"text\":\"Continue\""));

@@ -37,20 +37,26 @@ mod supervision;
 mod write_candidate;
 pub(crate) use dispatch::run_loop_dispatch_write_candidates;
 pub(crate) use dry_run::print_run_loop_dry_run_actions;
+#[cfg(test)]
+pub(crate) use execution::execute_issue_once_with_workspace_key;
 pub(crate) use execution::{
-    execute_issue_once, execute_issue_once_with_workspace_key, IssueExecutionResult,
+    execute_issue_once, execute_issue_once_with_options, IssueExecutionOptions,
+    IssueExecutionResult,
 };
 pub(crate) use failure::{handle_run_loop_gate_failure, handle_run_loop_handoff_failure};
 #[cfg(test)]
 pub(crate) use handoff::run_loop_apply_launch_workspace_report;
+#[cfg(test)]
+pub(crate) use handoff::run_loop_apply_recovery_workspace_report;
 pub(crate) use handoff::{
     apply_live_handoff_pr_link, compact_evidence, linked_pull_requests_contain,
     native_linked_pull_requests_contain, pull_request_number_from_url, run_handoff_verification,
     run_loop_agent_review_handoff_evidence, run_loop_apply_recovery_handoff,
     run_loop_assignee_ownership_workpad, run_loop_handoff_failure_workpad, run_loop_handoff_plan,
     run_loop_handoff_workpad, run_loop_live_handoff_enabled, run_loop_ownership_workpad,
-    run_loop_preflight_launch_workspace, run_loop_runtime_ownership,
-    run_loop_usage_limit_pause_workpad, HandoffVerification, RunLoopLiveHandoff,
+    run_loop_preflight_launch_workspace, run_loop_recovery_preflight_launch_workspace,
+    run_loop_runtime_ownership, run_loop_usage_limit_pause_workpad, HandoffVerification,
+    RunLoopLiveHandoff,
 };
 pub(crate) use preflight::{ensure_write_mode_main_agent_backend, main_app_server_smoke_gate};
 #[cfg(test)]
@@ -63,6 +69,7 @@ pub(crate) use selection::{
     run_loop_claim_action, select_main_run_loop_issues, selected_profile_github_login,
     AssigneeOwnershipDecision, NoDispatchAction, RunLoopClaimAction,
 };
+pub(crate) use session::codex_app_server_resume_thread_for_state;
 pub(crate) use session::{
     main_session_active_recoverable, reconcile_main_handoff_runtime_state,
     reconcile_pending_main_session, run_loop_runtime_state_for_issue,

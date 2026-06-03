@@ -77,12 +77,14 @@ pub(crate) fn merge_loop(options: MergeLoopOptions) -> Result<(), Box<dyn std::e
 
         iteration += 1;
         let mut should_sleep = false;
-        println!(
-            "merge_loop_iteration={} mode={} recover={} max_concurrent={max_concurrent}",
-            iteration,
-            if options.write { "write" } else { "dry-run" },
-            options.recover
-        );
+        if !options.quiet_idle {
+            println!(
+                "merge_loop_iteration={} mode={} recover={} max_concurrent={max_concurrent}",
+                iteration,
+                if options.write { "write" } else { "dry-run" },
+                options.recover
+            );
+        }
         for slot in 1..=max_concurrent {
             match merge_once_tick(
                 options.workflow_path.clone(),

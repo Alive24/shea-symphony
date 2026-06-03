@@ -73,6 +73,52 @@ fn human_review_template_supports_all_decisions() {
 }
 
 #[test]
+fn parent_batch_human_review_brief_preserves_order_and_boundaries() {
+    let skill = repo_file("skills/shea-symphony/suite/shea-symphony-human-review/SKILL.md");
+    let brief = repo_file("workflows/template/workpad/parent-batch-human-review-brief.md");
+    let decision = repo_file("workflows/template/workpad/human-review.md");
+
+    assert!(skill.contains("first Human Review action is to prepare a compact"));
+    assert!(skill.contains("parent-batch evidence brief from current readbacks"));
+    assert!(skill.contains("workflows/template/workpad/parent-batch-human-review-brief.md"));
+    assert!(skill.contains("read-only and advisory"));
+    assert!(skill.contains("Do not write tracker comments"));
+    assert!(skill.contains("Child `Done`, child PR merge"));
+    assert!(skill.contains("parent Review Agent PASS are inputs to Human Review"));
+    assert!(skill.contains("proof that parent UAT passed"));
+    assert!(skill.contains("operator's explicit decision"));
+    assert!(skill.contains("parent PR #421"));
+    assert!(skill.contains("child #399/#383/#384"));
+
+    assert!(brief.contains("## Shea Symphony Parent-Batch Human Review Brief"));
+    assert!(brief.contains("This brief is read-only and advisory"));
+    assert!(brief.contains("not a Human Review decision note"));
+    assert!(brief.contains("must not write tracker comments"));
+    assert!(brief.contains("Human Review-owned"));
+    assert!(brief.contains("does not prove parent acceptance"));
+    assert!(brief.contains("parent PR #421"));
+
+    let required_order = [
+        "### 1. Remaining Parent UAT",
+        "### 2. Parent PR And Readiness",
+        "### 3. Child Batch Table",
+        "### 4. Review Agent Evidence",
+        "### 5. Risks, Stale Assumptions, Or Missing Evidence",
+    ];
+    let mut last_index = 0;
+    for heading in required_order {
+        let index = brief
+            .find(heading)
+            .unwrap_or_else(|| panic!("missing parent-batch heading {heading}"));
+        assert!(index >= last_index, "heading out of order: {heading}");
+        last_index = index;
+    }
+
+    assert!(decision.contains("## Shea Symphony Human Review Decision"));
+    assert!(!decision.contains("## Shea Symphony Parent-Batch Human Review Brief"));
+}
+
+#[test]
 fn autopilot_dogfood_docs_prefer_foreground_loop() {
     let command_reference = repo_file("docs/cli-command-reference.md");
     let operator_dogfood = repo_file("docs/operator-dogfood.md");

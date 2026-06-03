@@ -78,10 +78,16 @@ pub(crate) fn run_loop_runtime_state_for_issue(
             .filter(|state| {
                 runtime_state_issue_identifier(state) == Some(issue.identifier.as_str())
             })
-            .filter(|state| state.last_event.as_deref() == Some("SessionTerminal"))
+            .filter(|state| {
+                state.last_event.as_deref() == Some("SessionTerminal")
+                    || (state.backend == "codex" && state.backend_session_id.is_some())
+            })
         {
             let mut state = existing.clone();
             state.run_id.get_or_insert_with(|| claim.run.clone());
+            if state.last_event.as_deref() != Some("SessionTerminal") {
+                state.attempt_count = state.attempt_count.saturating_add(1);
+            }
             return state;
         }
     }

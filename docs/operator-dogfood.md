@@ -720,8 +720,11 @@ target/debug/shea-symphony main loop workflows/shea-symphony.md --max-iterations
 default without moving the issue to `Rework`, clearing dirty worktrees, or
 advancing to `Agent Review`. It reuses a tracker/runtime/discovery-backed git
 worktree under the configured workspace root and leaves normal handoff to a
-later successful Main result. Use `--no-recover` only for debugging or a
-deliberately conservative operator pass.
+later successful Main result. A dirty worktree is acceptable only for a
+recoverable `In Progress` Main runtime when the branch or path still matches the
+same issue; detached, ambiguous, or mismatched dirty worktrees still require
+human inspection. Use `--no-recover` only for debugging or a deliberately
+conservative operator pass.
 5. For focused Merge-lane loop work where the issue is still `Merging`, run
    a bounded recovery tick:
 

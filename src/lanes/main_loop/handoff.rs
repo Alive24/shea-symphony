@@ -43,6 +43,12 @@ pub(crate) struct MainLaunchWorkspacePreflight {
     pub(crate) evidence: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MainLaunchWorkspaceMode {
+    Fresh,
+    Recovery,
+}
+
 pub(crate) fn run_loop_handoff_plan(
     config: &RuntimeConfig,
     issue: &TrackerIssue,
@@ -81,6 +87,33 @@ pub(crate) fn run_loop_preflight_launch_workspace(
     issue: &TrackerIssue,
     handoff: &mut IssueHandoffPlan,
 ) -> Result<MainLaunchWorkspacePreflight, HandoffError> {
+    run_loop_preflight_launch_workspace_with_mode(
+        config,
+        issue,
+        handoff,
+        MainLaunchWorkspaceMode::Fresh,
+    )
+}
+
+pub(crate) fn run_loop_recovery_preflight_launch_workspace(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    handoff: &mut IssueHandoffPlan,
+) -> Result<MainLaunchWorkspacePreflight, HandoffError> {
+    run_loop_preflight_launch_workspace_with_mode(
+        config,
+        issue,
+        handoff,
+        MainLaunchWorkspaceMode::Recovery,
+    )
+}
+
+fn run_loop_preflight_launch_workspace_with_mode(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    handoff: &mut IssueHandoffPlan,
+    mode: MainLaunchWorkspaceMode,
+) -> Result<MainLaunchWorkspacePreflight, HandoffError> {
     if config.tracker.kind != "github_project_v2" {
         return Ok(MainLaunchWorkspacePreflight {
             evidence: vec![format!(
@@ -101,14 +134,47 @@ pub(crate) fn run_loop_preflight_launch_workspace(
             reason: error.to_string(),
         }
     })?;
-    run_loop_apply_launch_workspace_report(config, issue, handoff, &report)
+    run_loop_apply_launch_workspace_report_with_mode(config, issue, handoff, &report, mode)
 }
 
+#[cfg(test)]
 pub(crate) fn run_loop_apply_launch_workspace_report(
     config: &RuntimeConfig,
     issue: &TrackerIssue,
     handoff: &mut IssueHandoffPlan,
     report: &IssueWorkspaceReport,
+) -> Result<MainLaunchWorkspacePreflight, HandoffError> {
+    run_loop_apply_launch_workspace_report_with_mode(
+        config,
+        issue,
+        handoff,
+        report,
+        MainLaunchWorkspaceMode::Fresh,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn run_loop_apply_recovery_workspace_report(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    handoff: &mut IssueHandoffPlan,
+    report: &IssueWorkspaceReport,
+) -> Result<MainLaunchWorkspacePreflight, HandoffError> {
+    run_loop_apply_launch_workspace_report_with_mode(
+        config,
+        issue,
+        handoff,
+        report,
+        MainLaunchWorkspaceMode::Recovery,
+    )
+}
+
+fn run_loop_apply_launch_workspace_report_with_mode(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    handoff: &mut IssueHandoffPlan,
+    report: &IssueWorkspaceReport,
+    mode: MainLaunchWorkspaceMode,
 ) -> Result<MainLaunchWorkspacePreflight, HandoffError> {
     let mut evidence = Vec::new();
     for warning in &report.warnings {
@@ -157,7 +223,6 @@ pub(crate) fn run_loop_apply_launch_workspace_report(
     };
 
     if let Some(candidate) = selected {
-        validate_launch_candidate_clean(issue, candidate)?;
         let branch = candidate.branch.as_deref().ok_or_else(|| {
             workspace_preflight_error(
                 issue,
@@ -167,6 +232,15 @@ pub(crate) fn run_loop_apply_launch_workspace_report(
                 ),
             )
         })?;
+        let dirty = match mode {
+            MainLaunchWorkspaceMode::Fresh => {
+                validate_launch_candidate_clean(issue, candidate)?;
+                None
+            }
+            MainLaunchWorkspaceMode::Recovery => {
+                validate_recovery_launch_candidate(issue, candidate)?
+            }
+        };
         let inferred_issue = infer_issue_ref_from_branch_or_path(Some(branch), &candidate.path);
         if inferred_issue.as_deref() != Some(issue.identifier.as_str())
             && branch != handoff.branch_name
@@ -183,12 +257,31 @@ pub(crate) fn run_loop_apply_launch_workspace_report(
         }
         apply_recovery_worktree_to_handoff(config, issue, handoff, &candidate.path, branch)
             .map_err(|error| workspace_preflight_error(issue, error.to_string()))?;
-        evidence.push(format!(
-            "workspace_preflight action=reuse path={} branch={} evidence={}",
-            candidate.path.display(),
-            branch,
-            candidate_evidence_summary(candidate)
-        ));
+        if let Some(dirty) = dirty {
+            if dirty.is_empty() {
+                evidence.push(format!(
+                    "workspace_preflight action=reuse_recovery path={} branch={} evidence={}",
+                    candidate.path.display(),
+                    branch,
+                    candidate_evidence_summary(candidate)
+                ));
+            } else {
+                evidence.push(format!(
+                    "workspace_preflight action=reuse_dirty_recovery path={} branch={} dirty={} evidence={}",
+                    candidate.path.display(),
+                    branch,
+                    dirty.replace('\n', "; "),
+                    candidate_evidence_summary(candidate)
+                ));
+            }
+        } else {
+            evidence.push(format!(
+                "workspace_preflight action=reuse path={} branch={} evidence={}",
+                candidate.path.display(),
+                branch,
+                candidate_evidence_summary(candidate)
+            ));
+        }
     } else {
         evidence.push(format!(
             "workspace_preflight action=prepare path={} branch={} next=`workspace ensure {}`",
@@ -284,6 +377,40 @@ fn validate_launch_candidate_clean(
             ),
         ));
     }
+    let dirty = git_status_porcelain(issue, candidate)?;
+    if !dirty.is_empty() {
+        return Err(workspace_preflight_error(
+            issue,
+            format!(
+                "workspace candidate {} is dirty: {}; stop before app-server launch and inspect it",
+                candidate.path.display(),
+                dirty.replace('\n', "; ")
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_recovery_launch_candidate(
+    issue: &TrackerIssue,
+    candidate: &IssueWorkspaceCandidate,
+) -> Result<Option<String>, HandoffError> {
+    if candidate.branch.is_none() {
+        return Err(workspace_preflight_error(
+            issue,
+            format!(
+                "workspace candidate {} is detached and cannot be launched safely",
+                candidate.path.display()
+            ),
+        ));
+    }
+    git_status_porcelain(issue, candidate).map(Some)
+}
+
+fn git_status_porcelain(
+    issue: &TrackerIssue,
+    candidate: &IssueWorkspaceCandidate,
+) -> Result<String, HandoffError> {
     let output = std::process::Command::new("git")
         .args(["status", "--porcelain"])
         .current_dir(&candidate.path)
@@ -307,18 +434,7 @@ fn validate_launch_candidate_clean(
             ),
         ));
     }
-    let dirty = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if !dirty.is_empty() {
-        return Err(workspace_preflight_error(
-            issue,
-            format!(
-                "workspace candidate {} is dirty: {}; stop before app-server launch and inspect it",
-                candidate.path.display(),
-                dirty.replace('\n', "; ")
-            ),
-        ));
-    }
-    Ok(())
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 fn workspace_preflight_error(issue: &TrackerIssue, reason: impl Into<String>) -> HandoffError {

@@ -1,4 +1,5 @@
 use super::*;
+use crate::lanes::main_loop::run_loop_apply_recovery_workspace_report;
 
 #[test]
 fn run_loop_handoff_plan_uses_issue_workspace_and_branch_plan() {
@@ -201,6 +202,111 @@ fn launch_workspace_preflight_blocks_dirty_candidate_before_runtime() {
         error,
         HandoffError::WorkspacePreflightBlocked { reason, .. }
             if reason.contains("dirty") && reason.contains("stop before app-server launch")
+    ));
+}
+
+#[test]
+fn recovery_workspace_preflight_reuses_dirty_matching_worktree() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = test_config();
+    config.workspace.root = temp.path().join("worktrees");
+    std::fs::create_dir_all(&config.workspace.root).unwrap();
+    let issue = tracker_issue("In Progress");
+    let mut handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+    let worktree = config.workspace.root.join("dirty-issue-29");
+    init_clean_git_workspace(&worktree);
+    git_ok(
+        &worktree,
+        &[
+            "checkout",
+            "-b",
+            "feature/issue-29-wire-runtime-state-persistence-into-main-loop",
+        ],
+    );
+    std::fs::write(worktree.join("scratch.txt"), "dirty").unwrap();
+    let report = workspace_report(
+        &issue,
+        vec![workspace_candidate(
+            worktree.clone(),
+            Some("feature/issue-29-wire-runtime-state-persistence-into-main-loop"),
+            WorkspaceMatchStrength::Strong,
+            "runtime_state",
+        )],
+    );
+
+    let preflight =
+        run_loop_apply_recovery_workspace_report(&config, &issue, &mut handoff, &report).unwrap();
+
+    assert_eq!(handoff.workspace_path, worktree);
+    assert!(preflight.evidence.iter().any(|line| {
+        line.contains("workspace_preflight action=reuse_dirty_recovery")
+            && line.contains("scratch.txt")
+            && line.contains("runtime_state")
+    }));
+}
+
+#[test]
+fn recovery_workspace_preflight_blocks_detached_candidate() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = test_config();
+    config.workspace.root = temp.path().join("worktrees");
+    std::fs::create_dir_all(&config.workspace.root).unwrap();
+    let issue = tracker_issue("In Progress");
+    let mut handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+    let worktree = config.workspace.root.join("detached-issue-29");
+    init_clean_git_workspace(&worktree);
+    let report = workspace_report(
+        &issue,
+        vec![workspace_candidate(
+            worktree,
+            None,
+            WorkspaceMatchStrength::Strong,
+            "runtime_state",
+        )],
+    );
+
+    let error = run_loop_apply_recovery_workspace_report(&config, &issue, &mut handoff, &report)
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        HandoffError::WorkspacePreflightBlocked { reason, .. }
+            if reason.contains("detached") && reason.contains("workspace adopt")
+    ));
+}
+
+#[test]
+fn recovery_workspace_preflight_blocks_issue_mismatch() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = test_config();
+    config.workspace.root = temp.path().join("worktrees");
+    std::fs::create_dir_all(&config.workspace.root).unwrap();
+    let issue = tracker_issue("In Progress");
+    let mut handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+    let worktree = config.workspace.root.join("dirty-issue-99");
+    init_clean_git_workspace(&worktree);
+    git_ok(
+        &worktree,
+        &["checkout", "-b", "feature/issue-99-other-work"],
+    );
+    std::fs::write(worktree.join("scratch.txt"), "dirty").unwrap();
+    let report = workspace_report(
+        &issue,
+        vec![workspace_candidate(
+            worktree,
+            Some("feature/issue-99-other-work"),
+            WorkspaceMatchStrength::Strong,
+            "runtime_state",
+        )],
+    );
+
+    let error = run_loop_apply_recovery_workspace_report(&config, &issue, &mut handoff, &report)
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        HandoffError::WorkspacePreflightBlocked { reason, .. }
+            if reason.contains("does not match issue #29")
     ));
 }
 

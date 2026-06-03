@@ -327,6 +327,46 @@ fn autopilot_loop_status_allows_main_recovery_with_session_attention() {
 }
 
 #[test]
+fn autopilot_loop_status_allows_registry_only_main_session_attention_recovery() {
+    let mut plan = test_autopilot_plan(Vec::new());
+    let mut runtime = clean_autopilot_runtime();
+    runtime.session_attention_count = 2;
+    runtime.blockers = vec!["session_attention=2".into()];
+    runtime.evidence = vec![
+        "session=thread-408-turn-1 lane=main status=stale issue=#408".into(),
+        "session=thread-415-turn-1 lane=main status=stale issue=#415".into(),
+    ];
+    plan.runtime = runtime;
+    plan.readiness.status = "blocked_by_ambiguous_lane_or_runtime_state".into();
+    plan.readiness.reason =
+        "Runtime/session state needs operator attention before write-mode autopilot.".into();
+    plan.readiness.blockers = vec!["session_attention=2".into()];
+
+    let status = autopilot_loop_status_from_plan(
+        &plan,
+        AutopilotLoopSettings {
+            write: true,
+            dry_run: false,
+            recover: true,
+            poll_interval_ms: 5_000,
+            main_max_concurrent: 3,
+            review_max_concurrent: 2,
+            merge_max_concurrent: 3,
+        },
+        6,
+        Some(5_000),
+        &[],
+        false,
+    );
+
+    assert_eq!(status.phase, "running");
+    assert_eq!(status.counts.blocked, 0);
+    assert_eq!(status.counts.running, 1);
+    assert!(status.blocked_reasons.is_empty());
+    assert!(status.active_issues.is_empty());
+}
+
+#[test]
 fn autopilot_loop_status_keeps_main_session_attention_blocked_when_recover_disabled() {
     let mut plan = test_autopilot_plan(Vec::new());
     let mut runtime = clean_autopilot_runtime();

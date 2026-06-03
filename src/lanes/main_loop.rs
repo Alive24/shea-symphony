@@ -37,8 +37,11 @@ mod supervision;
 mod write_candidate;
 pub(crate) use dispatch::run_loop_dispatch_write_candidates;
 pub(crate) use dry_run::print_run_loop_dry_run_actions;
+#[cfg(test)]
+pub(crate) use execution::execute_issue_once_with_workspace_key;
 pub(crate) use execution::{
-    execute_issue_once, execute_issue_once_with_workspace_key, IssueExecutionResult,
+    execute_issue_once, execute_issue_once_with_options, IssueExecutionOptions,
+    IssueExecutionResult,
 };
 pub(crate) use failure::{handle_run_loop_gate_failure, handle_run_loop_handoff_failure};
 #[cfg(test)]
@@ -66,6 +69,7 @@ pub(crate) use selection::{
     run_loop_claim_action, select_main_run_loop_issues, selected_profile_github_login,
     AssigneeOwnershipDecision, NoDispatchAction, RunLoopClaimAction,
 };
+pub(crate) use session::codex_app_server_resume_thread_for_state;
 pub(crate) use session::{
     main_session_active_recoverable, reconcile_main_handoff_runtime_state,
     reconcile_pending_main_session, run_loop_runtime_state_for_issue,

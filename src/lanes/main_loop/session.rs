@@ -1,4 +1,5 @@
 use shea_symphony::agent::UsageLimitPause;
+use shea_symphony::codex_app_server::BACKEND_NAME as CODEX_APP_SERVER_BACKEND_NAME;
 use shea_symphony::config::RuntimeConfig;
 use shea_symphony::handoff::IssueHandoffPlan;
 use shea_symphony::lane_claim::LaneClaim;
@@ -42,6 +43,29 @@ pub(crate) fn main_session_active_recoverable(status: &str, evidence: &str) -> b
                 || evidence.contains("unavailable")))
 }
 
+pub(crate) fn codex_app_server_resume_thread_for_state(
+    config: &RuntimeConfig,
+    state: &RuntimeState,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    if state.backend != "codex" {
+        return Ok(None);
+    }
+    let Some(session_id) = state.backend_session_id.as_deref() else {
+        return Ok(None);
+    };
+    let registry = load_session_registry(&session_registry_path(config))?;
+    Ok(registry
+        .sessions
+        .iter()
+        .rev()
+        .find(|record| {
+            record.session_name == session_id
+                && record.session_source.as_deref() == Some(CODEX_APP_SERVER_BACKEND_NAME)
+        })
+        .and_then(|record| record.thread.clone())
+        .filter(|thread_id| !thread_id.trim().is_empty()))
+}
+
 pub(crate) fn run_loop_runtime_state_for_issue(
     existing: Option<&RuntimeState>,
     issue: &TrackerIssue,
@@ -54,10 +78,16 @@ pub(crate) fn run_loop_runtime_state_for_issue(
             .filter(|state| {
                 runtime_state_issue_identifier(state) == Some(issue.identifier.as_str())
             })
-            .filter(|state| state.last_event.as_deref() == Some("SessionTerminal"))
+            .filter(|state| {
+                state.last_event.as_deref() == Some("SessionTerminal")
+                    || (state.backend == "codex" && state.backend_session_id.is_some())
+            })
         {
             let mut state = existing.clone();
             state.run_id.get_or_insert_with(|| claim.run.clone());
+            if state.last_event.as_deref() != Some("SessionTerminal") {
+                state.attempt_count = state.attempt_count.saturating_add(1);
+            }
             return state;
         }
     }

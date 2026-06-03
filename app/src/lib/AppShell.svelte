@@ -28,6 +28,7 @@
     getLoopState,
     isTauriRuntime,
     mergeLaneSnapshot,
+    operatorRunLogLines,
     startAutoloop,
     stopAutoloop,
     subscribeAutoloopEvents,
@@ -224,9 +225,7 @@
   }
 
   function latestAutoloopStdout(state: LoopStateSnapshot, lines: AutoloopLine[]) {
-    const startedAt = Number(state.startedAtMs);
-    const lowerBound = Number.isFinite(startedAt) ? startedAt - 1000 : null;
-    return lines.filter((entry) => entry.stream === 'stdout' && (lowerBound == null || entry.atMs >= lowerBound));
+    return operatorRunLogLines(state, lines);
   }
 
   function laneMaxSummary(lanes: Record<string, LaneSnapshot> | undefined) {
@@ -292,13 +291,15 @@
       const status = stringField(payload, 'status') ?? 'unknown';
       const action = stringField(payload, 'action') ?? 'event';
       const selected = selectedIssueLabel(objectField(payload, 'selected_issue')) ?? stringField(payload, 'selected') ?? 'none';
-      const completed = numberField(payload, 'completed_work_units');
       const workUnit = booleanField(payload, 'work_unit_completed');
+      const detail = workUnit && selected !== 'none'
+        ? `handled ${selected}`
+        : `${action} · selected ${selected}`;
       return {
         eventName,
         title: `${lane} ${status}`,
-        detail: `${action} · selected ${selected}${completed != null ? ` · work units ${completed}` : ''}`,
-        chips: [lane, status, action, workUnit ? 'work unit completed' : '', maxConcurrentChip(payload)].filter(Boolean),
+        detail,
+        chips: [lane, status, action, workUnit ? 'issue handled' : '', maxConcurrentChip(payload)].filter(Boolean),
         tone: runLogTone(status, 0)
       };
     }
@@ -317,6 +318,7 @@
     if (eventName === 'autopilot_loop_result') {
       const cycle = numberField(payload, 'supervisor_cycle') ?? numberField(payload, 'iteration');
       const workUnits = numberField(payload, 'completed_work_units') ?? numberField(payload, 'work_units');
+      const completedThisCycle = numberField(payload, 'work_units_completed_this_cycle') ?? 0;
       const limit = numberField(payload, 'work_unit_limit');
       const lanes = arrayField(payload, 'lanes') ?? [];
       const laneSummary = lanes
@@ -326,9 +328,14 @@
         })
         .join('  ');
       const hasError = lanes.some((lane) => stringField(objectFromUnknown(lane), 'status') === 'error');
+      const handledLabel = limit != null
+        ? `Issues handled ${workUnits ?? 0} / ${limit}`
+        : completedThisCycle > 0
+          ? `Issues handled +${completedThisCycle}`
+          : 'Loop result';
       return {
         eventName,
-        title: `Work units ${workUnits ?? 0}${limit != null ? ` / ${limit}` : ''}`,
+        title: handledLabel,
         detail: laneSummary || `Supervisor cycle ${cycle ?? '?'} completed.`,
         chips: [
           ...concurrencyChips(objectField(payload, 'settings')),
@@ -340,10 +347,12 @@
     if (eventName === 'autopilot_loop_stopped') {
       const cycles = numberField(payload, 'supervisor_cycles') ?? numberField(payload, 'iterations');
       const workUnits = numberField(payload, 'completed_work_units') ?? numberField(payload, 'work_units');
+      const limit = numberField(payload, 'work_unit_limit');
+      const progress = limit != null ? ` · issues handled ${workUnits ?? 0} / ${limit}` : '';
       return {
         eventName,
         title: 'Loop stopped',
-        detail: `reason ${stringField(payload, 'reason') ?? 'unknown'} · work units ${workUnits ?? 0} · cycles ${cycles ?? '?'}`,
+        detail: `reason ${stringField(payload, 'reason') ?? 'unknown'} · cycles ${cycles ?? '?'}${progress}`,
         chips: ['stopped'],
         tone: 'success'
       };

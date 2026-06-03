@@ -27,6 +27,7 @@ Leave a concise terminal summary of changed files, verification commands, and \
 any blocker. The outer Shea Symphony CLI will commit eligible worktree changes, \
 publish or update the PR, write durable workpad evidence, verify linked PR \
 readback, and perform the final `Agent Review` handoff.\n";
+const CODEX_APP_SERVER_CONTINUE_PROMPT: &str = "Continue";
 
 use super::RunLoopLiveHandoff;
 
@@ -53,6 +54,11 @@ pub(crate) struct IssueExecutionResult {
     pub(crate) handoff_verification: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct IssueExecutionOptions {
+    pub(crate) app_server_resume_thread_id: Option<String>,
+}
+
 pub(crate) fn execute_issue_once(
     workflow: &WorkflowDefinition,
     config: &RuntimeConfig,
@@ -77,7 +83,28 @@ pub(crate) fn execute_issue_once_with_workspace_key(
     claim: Option<&LaneClaim>,
 ) -> Result<IssueExecutionResult, Box<dyn std::error::Error>> {
     let workspace = prepare_workspace(&config.workspace.root, workspace_key, &config.hooks)?;
-    execute_issue_once_in_workspace(workflow, config, issue, workspace, attempt, claim)
+    execute_issue_once_in_workspace(
+        workflow,
+        config,
+        issue,
+        workspace,
+        attempt,
+        claim,
+        IssueExecutionOptions::default(),
+    )
+}
+
+pub(crate) fn execute_issue_once_with_options(
+    workflow: &WorkflowDefinition,
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    workspace_key: &str,
+    attempt: u32,
+    claim: Option<&LaneClaim>,
+    options: IssueExecutionOptions,
+) -> Result<IssueExecutionResult, Box<dyn std::error::Error>> {
+    let workspace = prepare_workspace(&config.workspace.root, workspace_key, &config.hooks)?;
+    execute_issue_once_in_workspace(workflow, config, issue, workspace, attempt, claim, options)
 }
 
 fn execute_issue_once_in_workspace(
@@ -87,6 +114,7 @@ fn execute_issue_once_in_workspace(
     workspace: Workspace,
     attempt: u32,
     claim: Option<&LaneClaim>,
+    options: IssueExecutionOptions,
 ) -> Result<IssueExecutionResult, Box<dyn std::error::Error>> {
     let profile = selected_execution_profile(&config.profiles)?;
     let git_identity = apply_local_git_identity(&workspace.path, &config.identity.git)?;
@@ -101,8 +129,12 @@ fn execute_issue_once_in_workspace(
     if config.backend.kind == "codex" && config.codex.command.contains("app-server") {
         prompt.push_str(CODEX_APP_SERVER_HANDOFF_BOUNDARY);
     }
+    if options.app_server_resume_thread_id.is_some() {
+        prompt = CODEX_APP_SERVER_CONTINUE_PROMPT.into();
+    }
     let backend = backend_from_config(config);
     let mut prepared = backend.prepare(workspace.path.clone(), prompt, config)?;
+    prepared.app_server_resume_thread_id = options.app_server_resume_thread_id.clone();
     prepared.prompt_artifact_path = Some(rendered_prompt_artifact_path(
         config,
         issue,

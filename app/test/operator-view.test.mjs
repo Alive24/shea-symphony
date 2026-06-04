@@ -937,14 +937,15 @@ test('Codex transcript parser marks malformed still-growing JSONL as partial', (
   assert.equal(parsed.events.some((event) => event.title === 'Malformed JSONL line'), true);
 });
 
-test('Codex transcript conversation source includes timestamps, counts, and final-page pagination', () => {
+test('Codex conversation surface uses a deep link summary instead of transcript rendering', () => {
   const laneViews = readFileSync(new URL('../src/lib/LaneViews.svelte', import.meta.url), 'utf8');
 
-  assert.match(laneViews, /transcriptPage = pageCount/);
-  assert.match(laneViews, /summary\.rawRecords/);
-  assert.match(laneViews, /summary\.unsupportedRecords/);
-  assert.match(laneViews, /event\.timestamp/);
-  assert.match(laneViews, /transcriptPageEvents/);
+  assert.match(laneViews, /Open in Codex/);
+  assert.match(laneViews, /transcriptDeepLink/);
+  assert.match(laneViews, /lastUserMessageAt/);
+  assert.match(laneViews, /lastAssistantMessageAt/);
+  assert.doesNotMatch(laneViews, /JsonLogView/);
+  assert.doesNotMatch(laneViews, /transcriptPageEvents/);
 });
 
 test('missing transcript state is local-only and explicit', () => {

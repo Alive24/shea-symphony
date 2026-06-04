@@ -134,12 +134,19 @@ fn build_codex_transcript(issue_ref: &str, session_id: Option<&str>) -> Result<V
             .map(|duration| duration.as_millis() as u64);
         let content = fs::read_to_string(&path)
             .map_err(|error| format!("failed to read local Codex transcript: {error}"))?;
+        let summary = codex_conversation_summary(&content, &path);
         return Ok(json!({
             "status": "available",
             "localOnly": true,
             "path": path.display().to_string(),
-            "content": content,
+            "content": "",
             "candidates": candidates,
+            "threadId": summary.get("threadId").cloned().unwrap_or(Value::Null),
+            "turnId": summary.get("turnId").cloned().unwrap_or(Value::Null),
+            "deepLink": summary.get("deepLink").cloned().unwrap_or(Value::Null),
+            "lastUserMessageAt": summary.get("lastUserMessageAt").cloned().unwrap_or(Value::Null),
+            "lastAssistantMessageAt": summary.get("lastAssistantMessageAt").cloned().unwrap_or(Value::Null),
+            "messageCounts": summary.get("messageCounts").cloned().unwrap_or_else(|| json!({})),
             "metadata": {
                 "bytes": metadata.map(|metadata| metadata.len()).unwrap_or(0),
                 "modifiedAtMs": modified_at_ms,
@@ -157,8 +164,247 @@ fn build_codex_transcript(issue_ref: &str, session_id: Option<&str>) -> Result<V
         },
         "path": Value::Null,
         "content": "",
+        "threadId": Value::Null,
+        "turnId": Value::Null,
+        "deepLink": Value::Null,
+        "lastUserMessageAt": Value::Null,
+        "lastAssistantMessageAt": Value::Null,
+        "messageCounts": {
+            "user": 0,
+            "assistant": 0,
+        },
         "candidates": candidates,
     }))
+}
+
+fn codex_conversation_summary(content: &str, path: &Path) -> Value {
+    let mut thread_id: Option<String> = None;
+    let mut turn_id: Option<String> = None;
+    let mut last_user_message_at = Value::Null;
+    let mut last_assistant_message_at = Value::Null;
+    let mut user_messages = 0_u64;
+    let mut assistant_messages = 0_u64;
+
+    for line in content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        let Ok(record) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+
+        if let Some(protocol) = protocol_message_from_record(&record) {
+            collect_protocol_summary(
+                &protocol,
+                &mut thread_id,
+                &mut turn_id,
+                &mut last_user_message_at,
+                &mut last_assistant_message_at,
+                &mut user_messages,
+                &mut assistant_messages,
+            );
+            continue;
+        }
+
+        collect_rollout_summary(
+            &record,
+            &mut thread_id,
+            &mut turn_id,
+            &mut last_user_message_at,
+            &mut last_assistant_message_at,
+            &mut user_messages,
+            &mut assistant_messages,
+        );
+    }
+
+    if thread_id.is_none() {
+        thread_id = uuid_like_parts(&path.display().to_string())
+            .into_iter()
+            .next();
+    }
+
+    json!({
+        "threadId": thread_id.clone(),
+        "turnId": turn_id,
+        "deepLink": thread_id.map(|id| format!("codex://threads/{id}")),
+        "lastUserMessageAt": last_user_message_at,
+        "lastAssistantMessageAt": last_assistant_message_at,
+        "messageCounts": {
+            "user": user_messages,
+            "assistant": assistant_messages,
+        },
+    })
+}
+
+fn protocol_message_from_record(record: &Value) -> Option<Value> {
+    if record.get("direction").and_then(Value::as_str).is_none() {
+        return None;
+    }
+    let line = record.get("line").and_then(Value::as_str)?;
+    serde_json::from_str::<Value>(line).ok()
+}
+
+fn collect_protocol_summary(
+    message: &Value,
+    thread_id: &mut Option<String>,
+    turn_id: &mut Option<String>,
+    last_user_message_at: &mut Value,
+    last_assistant_message_at: &mut Value,
+    user_messages: &mut u64,
+    assistant_messages: &mut u64,
+) {
+    capture_string(thread_id, message.get("threadId"));
+    capture_string(turn_id, message.get("turnId"));
+
+    let method = message
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let params = message.get("params").unwrap_or(&Value::Null);
+
+    if method == "thread/start" {
+        if let Some(thread) = message
+            .get("result")
+            .and_then(|result| result.get("thread"))
+        {
+            capture_string(thread_id, thread.get("id"));
+            capture_string(thread_id, thread.get("sessionId"));
+        }
+    }
+
+    if method == "turn/started" {
+        capture_string(thread_id, params.get("threadId"));
+        if let Some(turn) = params.get("turn") {
+            capture_string(turn_id, turn.get("id"));
+            if let Some(timestamp) = timestamp_value(
+                turn.get("startedAt")
+                    .or_else(|| turn.get("startedAtMs"))
+                    .or_else(|| params.get("startedAtMs")),
+            ) {
+                *last_user_message_at = timestamp;
+            }
+        }
+    } else if method == "turn/start" {
+        if let Some(timestamp) = timestamp_value(message.get("completedAtMs")) {
+            *last_user_message_at = timestamp;
+        }
+        *user_messages = user_messages.saturating_add(1);
+    }
+
+    if method == "item/completed" {
+        let item = params.get("item").unwrap_or(&Value::Null);
+        if item.get("type").and_then(Value::as_str) == Some("agentMessage") {
+            if let Some(timestamp) = timestamp_value(
+                params
+                    .get("completedAtMs")
+                    .or_else(|| item.get("completedAtMs"))
+                    .or_else(|| message.get("completedAtMs")),
+            ) {
+                *last_assistant_message_at = timestamp;
+            }
+            *assistant_messages = assistant_messages.saturating_add(1);
+        }
+    }
+}
+
+fn collect_rollout_summary(
+    record: &Value,
+    thread_id: &mut Option<String>,
+    turn_id: &mut Option<String>,
+    last_user_message_at: &mut Value,
+    last_assistant_message_at: &mut Value,
+    user_messages: &mut u64,
+    assistant_messages: &mut u64,
+) {
+    let wrapper_type = record
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let payload = record.get("payload").unwrap_or(&Value::Null);
+    let item = record
+        .get("item")
+        .or_else(|| payload.get("item"))
+        .unwrap_or(payload);
+    let item_type = item
+        .get("type")
+        .or_else(|| record.get("event"))
+        .or_else(|| record.get("kind"))
+        .or_else(|| record.get("type"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let role = item.get("role").and_then(Value::as_str).unwrap_or_default();
+    let timestamp = timestamp_value(record.get("timestamp"));
+
+    if wrapper_type == "session_meta" {
+        capture_string(thread_id, payload.get("id"));
+        capture_string(thread_id, item.get("id"));
+        return;
+    }
+    capture_string(
+        thread_id,
+        record.get("threadId").or_else(|| payload.get("threadId")),
+    );
+    capture_string(
+        turn_id,
+        record.get("turnId").or_else(|| payload.get("turnId")),
+    );
+
+    if item_type == "user_message" || role == "user" {
+        if let Some(timestamp) = timestamp {
+            *last_user_message_at = timestamp;
+        }
+        *user_messages = user_messages.saturating_add(1);
+        return;
+    }
+    if item_type == "agent_message"
+        || item_type == "assistant_message"
+        || role == "assistant"
+        || item_type == "final_answer"
+    {
+        if let Some(timestamp) = timestamp {
+            *last_assistant_message_at = timestamp;
+        }
+        *assistant_messages = assistant_messages.saturating_add(1);
+    }
+}
+
+fn capture_string(target: &mut Option<String>, value: Option<&Value>) {
+    if target.is_some() {
+        return;
+    }
+    if let Some(value) = value.and_then(Value::as_str).map(str::trim) {
+        if !value.is_empty() {
+            *target = Some(value.to_string());
+        }
+    }
+}
+
+fn timestamp_value(value: Option<&Value>) -> Option<Value> {
+    match value? {
+        Value::Number(number) => {
+            let raw = number
+                .as_u64()
+                .or_else(|| number.as_i64().and_then(|value| u64::try_from(value).ok()))?;
+            if raw == 0 {
+                return None;
+            }
+            Some(json!(if raw < 100_000_000_000 {
+                raw * 1000
+            } else {
+                raw
+            }))
+        }
+        Value::String(value) => {
+            let value = value.trim();
+            if value.is_empty() {
+                None
+            } else {
+                Some(json!(value))
+            }
+        }
+        _ => None,
+    }
 }
 
 fn transcript_candidates(
@@ -1483,5 +1729,133 @@ mod tests {
             candidate.get("path").and_then(Value::as_str) == Some(expected_path.as_str())
         }));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn codex_conversation_summary_extracts_app_server_deep_link_and_message_times() {
+        let path = PathBuf::from("/tmp/430-1780519230584.protocol.jsonl");
+        let content = [
+            json!({
+                "direction": "stdout",
+                "line": json!({
+                    "id": 2,
+                    "method": "thread/start",
+                    "result": {
+                        "thread": {
+                            "id": "019e8f37-5cab-74f3-9933-93e3809396e5",
+                            "sessionId": "019e8f37-5cab-74f3-9933-93e3809396e5"
+                        }
+                    }
+                }).to_string()
+            })
+            .to_string(),
+            json!({
+                "direction": "stdin",
+                "line": json!({
+                    "method": "turn/start",
+                    "threadId": "019e8f37-5cab-74f3-9933-93e3809396e5",
+                    "turnId": "019e8f37-5ddf-70a3-a616-85983455519c",
+                    "completedAtMs": 1_780_519_235_370_u64,
+                    "params": {
+                        "input": [{ "text": "Implement #430." }]
+                    }
+                }).to_string()
+            })
+            .to_string(),
+            json!({
+                "direction": "stdout",
+                "line": json!({
+                    "method": "turn/started",
+                    "params": {
+                        "threadId": "019e8f37-5cab-74f3-9933-93e3809396e5",
+                        "turn": {
+                            "id": "019e8f37-5ddf-70a3-a616-85983455519c",
+                            "startedAt": 1_780_519_230_u64
+                        }
+                    }
+                }).to_string()
+            })
+            .to_string(),
+            json!({
+                "direction": "stdout",
+                "line": json!({
+                    "method": "item/completed",
+                    "params": {
+                        "threadId": "019e8f37-5cab-74f3-9933-93e3809396e5",
+                        "turnId": "019e8f37-5ddf-70a3-a616-85983455519c",
+                        "completedAtMs": 1_780_519_567_265_u64,
+                        "item": {
+                            "type": "agentMessage",
+                            "text": "Done.",
+                            "phase": "final_answer"
+                        }
+                    }
+                }).to_string()
+            })
+            .to_string(),
+        ]
+        .join("\n");
+
+        let summary = codex_conversation_summary(&content, &path);
+
+        assert_eq!(summary["threadId"], "019e8f37-5cab-74f3-9933-93e3809396e5");
+        assert_eq!(summary["turnId"], "019e8f37-5ddf-70a3-a616-85983455519c");
+        assert_eq!(
+            summary["deepLink"],
+            "codex://threads/019e8f37-5cab-74f3-9933-93e3809396e5"
+        );
+        assert_eq!(summary["lastUserMessageAt"], 1_780_519_230_000_u64);
+        assert_eq!(summary["lastAssistantMessageAt"], 1_780_519_567_265_u64);
+        assert_eq!(summary["messageCounts"]["user"], 1);
+        assert_eq!(summary["messageCounts"]["assistant"], 1);
+    }
+
+    #[test]
+    fn codex_conversation_summary_extracts_rollout_timestamps() {
+        let path = PathBuf::from(
+            "/tmp/rollout-2026-06-03T21-40-30-019e8f37-5cab-74f3-9933-93e3809396e5.jsonl",
+        );
+        let content = [
+            json!({
+                "timestamp": "2026-06-03T20:40:30.000Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "019e8f37-5cab-74f3-9933-93e3809396e5"
+                }
+            })
+            .to_string(),
+            json!({
+                "timestamp": "2026-06-03T20:40:35.000Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "user_message",
+                    "message": "Implement #430."
+                }
+            })
+            .to_string(),
+            json!({
+                "timestamp": "2026-06-03T20:46:07.000Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "agent_message",
+                    "phase": "final_answer",
+                    "message": "Done."
+                }
+            })
+            .to_string(),
+        ]
+        .join("\n");
+
+        let summary = codex_conversation_summary(&content, &path);
+
+        assert_eq!(
+            summary["deepLink"],
+            "codex://threads/019e8f37-5cab-74f3-9933-93e3809396e5"
+        );
+        assert_eq!(summary["lastUserMessageAt"], "2026-06-03T20:40:35.000Z");
+        assert_eq!(
+            summary["lastAssistantMessageAt"],
+            "2026-06-03T20:46:07.000Z"
+        );
     }
 }

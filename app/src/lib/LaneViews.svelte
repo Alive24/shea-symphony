@@ -1,5 +1,4 @@
 <script lang="ts">
-  import JsonLogView from './shell/JsonLogView.svelte';
   import { autoloopStateStore, REFRESH_REQUEST_EVENT } from './uiState.ts';
   import { operatorOverviewStore } from './operatorOverviewStore.ts';
   import {
@@ -9,7 +8,6 @@
   import { getCodexTranscript } from './tauriAutoloop.ts';
   import {
     classifyHeartbeat,
-    parseCodexTranscriptJsonl,
     transcriptUnavailable
   } from './viewModel/codexTranscript.ts';
   import {
@@ -32,14 +30,10 @@
   ];
 
   let completedWindowHours = null;
-  let transcriptMode = 'conversation';
   let transcriptLoading = false;
   let transcriptError = '';
   let transcriptResponse: any = transcriptUnavailable('Transcript has not been loaded yet.');
   let transcriptLoadKey = '';
-  let transcriptPage = 1;
-  let transcriptPaginationKey = '';
-  const transcriptPageSize = 25;
 
   $: laneWorkers = view?.laneWorkers ?? {};
   $: queueIssues = view?.queueIssues ?? [];
@@ -54,14 +48,10 @@
   $: selectedLaneKey = laneKeyForIssue(selectedIssue);
   $: heartbeatSummary = selectedIssue ? classifyHeartbeat($autoloopStateStore, selectedLaneKey, selectedIssue.id, Date.now(), laneEventEvidence(selectedIssue, view)) : null;
   $: eventLogPath = localEventLogPath(view);
-  $: transcriptParsed = parseCodexTranscriptJsonl(transcriptResponse?.content ?? '');
-  $: transcriptPageCount = Math.max(1, Math.ceil(transcriptParsed.events.length / transcriptPageSize));
-  $: updateTranscriptPagination(`${transcriptResponse?.path ?? 'none'}:${transcriptParsed.summary.rawRecords}:${transcriptParsed.summary.readableEvents}`, transcriptPageCount);
-  $: transcriptPageStart = (transcriptPage - 1) * transcriptPageSize;
-  $: transcriptPageEvents = transcriptParsed.events.slice(transcriptPageStart, transcriptPageStart + transcriptPageSize);
   $: transcriptStatusLabel = transcriptResponse?.status === 'available'
-    ? `${transcriptParsed.status} · ${transcriptParsed.summary.readableEvents} events`
+    ? transcriptResponse?.deepLink ? 'Codex App link ready' : 'Conversation found locally'
     : transcriptResponse?.reason ?? 'Transcript unavailable';
+  $: transcriptDeepLink = transcriptResponse?.deepLink ?? null;
   $: maybeLoadTranscript(selectedIssue);
   $: laneColumns = laneOrder.map((lane) => {
     const issues = lane === 'Human Todo'
@@ -414,6 +404,12 @@
     maybeLoadTranscript(selectedIssue);
   }
 
+  function openCodexTranscript() {
+    if (!transcriptDeepLink) return;
+    const opened = window.open(transcriptDeepLink, '_blank');
+    if (!opened) window.location.href = transcriptDeepLink;
+  }
+
   function sessionIdForIssue(issue: any) {
     return issue?.worker?.session ?? issue?.worktree?.session ?? issue?.session ?? null;
   }
@@ -473,20 +469,6 @@
     const ms = dateMs(value);
     if (!ms) return 'unknown';
     return new Date(ms).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-  }
-
-  function updateTranscriptPagination(key: string, pageCount: number) {
-    if (key !== transcriptPaginationKey) {
-      transcriptPaginationKey = key;
-      transcriptPage = pageCount;
-      return;
-    }
-    if (transcriptPage > pageCount) transcriptPage = pageCount;
-    if (transcriptPage < 1) transcriptPage = 1;
-  }
-
-  function setTranscriptPage(page: number) {
-    transcriptPage = Math.min(transcriptPageCount, Math.max(1, page));
   }
 
   function relativeAge(value: unknown) {
@@ -613,7 +595,7 @@
           </small>
         </div>
         <div>
-          <span>Transcript</span>
+          <span>Codex conversation</span>
           <strong>{transcriptLoading ? 'Loading local file' : transcriptStatusLabel}</strong>
           <small>{transcriptResponse?.path ?? 'Local-only diagnostic surface'}</small>
         </div>
@@ -625,17 +607,13 @@
       </div>
     </section>
 
-    <section class="transcript-panel" aria-label={`${selectedIssue.id} Codex transcript`}>
+    <section class="transcript-panel" aria-label={`${selectedIssue.id} Codex conversation`}>
       <div class="transcript-panel-head">
         <div>
-          <span class="mini-label">Codex transcript</span>
-          <h3>{transcriptResponse?.status === 'available' ? 'Conversation timeline' : 'Unavailable locally'}</h3>
+          <span class="mini-label">Codex conversation</span>
+          <h3>{transcriptResponse?.status === 'available' ? 'Open in Codex App' : 'Unavailable locally'}</h3>
         </div>
         <div class="transcript-actions">
-          <div class="segmented-control compact" role="group" aria-label="Transcript view">
-            <button class:active={transcriptMode === 'conversation'} type="button" on:click={() => transcriptMode = 'conversation'}>Conversation</button>
-            <button class:active={transcriptMode === 'raw'} type="button" on:click={() => transcriptMode = 'raw'}>Raw</button>
-          </div>
           <button class="btn btn-ghost" type="button" on:click={reloadTranscript} disabled={transcriptLoading}>
             {transcriptLoading ? 'Reloading' : 'Reload'}
           </button>
@@ -649,59 +627,26 @@
         </div>
       {:else if transcriptResponse?.status !== 'available'}
         <div class="inline-empty compact-empty">
-          <strong>No readable local transcript</strong>
+          <strong>No local Codex conversation link</strong>
           <p>{transcriptResponse?.reason ?? 'No local Codex transcript candidate was found.'}</p>
         </div>
-      {:else if transcriptMode === 'raw'}
-        <JsonLogView value={transcriptResponse?.content} fallbackLabel="Codex transcript JSONL" />
       {:else}
-        <div class="transcript-summary">
-          <span>{transcriptParsed.summary.rawRecords} raw records</span>
-          <span>{transcriptParsed.summary.readableEvents} readable</span>
-          <span>{transcriptParsed.summary.unsupportedRecords} unsupported</span>
-          <span>{transcriptParsed.summary.userTurns} user</span>
-          <span>{transcriptParsed.summary.assistantTurns} assistant</span>
-          <span>{transcriptParsed.summary.toolCalls} tool calls</span>
-          <span>{transcriptParsed.summary.diagnostics} diagnostics</span>
-          {#if transcriptParsed.summary.tokenUsage}
-            <span>{transcriptParsed.summary.tokenUsage}</span>
-          {/if}
-        </div>
-
-        {#if transcriptParsed.events.length > transcriptPageSize}
-          <div class="transcript-pagination" aria-label="Transcript pagination">
-            <span>Page {transcriptPage} of {transcriptPageCount}</span>
+        <div class="codex-link-summary">
+          <button class="btn btn-primary" type="button" on:click={openCodexTranscript} disabled={!transcriptDeepLink}>
+            Open in Codex
+          </button>
+          <div class="codex-link-times" aria-label="Codex conversation message times">
             <div>
-              <button class="btn btn-ghost" type="button" on:click={() => setTranscriptPage(transcriptPage - 1)} disabled={transcriptPage <= 1}>Previous</button>
-              <button class="btn btn-ghost" type="button" on:click={() => setTranscriptPage(transcriptPage + 1)} disabled={transcriptPage >= transcriptPageCount}>Next</button>
+              <span>Last sent</span>
+              <strong>{formatTime(transcriptResponse?.lastUserMessageAt)}</strong>
+            </div>
+            <div>
+              <span>Last returned</span>
+              <strong>{formatTime(transcriptResponse?.lastAssistantMessageAt)}</strong>
             </div>
           </div>
-        {/if}
-
-        <div class="transcript-timeline">
-          {#if transcriptParsed.events.length}
-            {#each transcriptPageEvents as event}
-              <article class="transcript-event {event.kind} {event.tone}">
-                <div class="transcript-event-meta">
-                  <span>{event.kind.replace('_', ' ')}</span>
-                  {#if event.timestamp}
-                    <time>{formatTime(event.timestamp)}</time>
-                  {/if}
-                  {#if event.detail}
-                    <small>{event.detail}</small>
-                  {/if}
-                </div>
-                <div class="transcript-event-body">
-                  <strong>{event.title}</strong>
-                  <p>{event.body}</p>
-                </div>
-              </article>
-            {/each}
-          {:else}
-            <div class="inline-empty compact-empty">
-              <strong>Transcript has no readable conversation events</strong>
-              <p>{transcriptParsed.status === 'empty' ? 'The local JSONL file is empty or still growing.' : 'Open Raw view for parser diagnostics.'}</p>
-            </div>
+          {#if transcriptResponse?.threadId}
+            <code>{transcriptResponse.threadId}</code>
           {/if}
         </div>
       {/if}

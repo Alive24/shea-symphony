@@ -139,6 +139,12 @@ export async function getGitHubUser(): Promise<GitHubUserSnapshot> {
   return invoke<GitHubUserSnapshot>('get_github_user');
 }
 
+export async function getIssueTimeline(issueRef: string): Promise<Record<string, unknown> | null> {
+  if (!isTauriRuntime()) return null;
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<Record<string, unknown>>('get_issue_timeline', { issueRef });
+}
+
 export async function getOperatorOverview(force = false, scope = 'full'): Promise<OperatorOverview | null> {
   if (!isTauriRuntime()) return null;
   const { invoke } = await import('@tauri-apps/api/core');
@@ -164,6 +170,15 @@ export async function openCodexThread(deepLink: string): Promise<void> {
   }
   const { invoke } = await import('@tauri-apps/api/core');
   await invoke('open_codex_thread', { deepLink });
+}
+
+export async function openGitHubSource(url: string): Promise<void> {
+  if (!isTauriRuntime()) {
+    window.open(url, '_blank', 'noopener,noreferrer');
+    return;
+  }
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('open_github_source', { url });
 }
 
 export async function startAutoloop(options: StartAutoloopOptions = {}): Promise<LoopStateSnapshot> {

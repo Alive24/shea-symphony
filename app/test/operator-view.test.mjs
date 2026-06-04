@@ -41,6 +41,9 @@ import {
   completedProgressDisplay
 } from '../src/lib/viewModel/completedWorktrees.ts';
 import {
+  buildIssueCommentLifecycleEvents
+} from '../src/lib/viewModel/githubIssueTimeline.ts';
+import {
   appendAutoloopLine,
   defaultLoopState,
   laneWorkerFromAutoloop,
@@ -946,10 +949,13 @@ test('Codex conversation surface uses a deep link summary instead of transcript 
   assert.match(laneViews, /lastUserMessageAt/);
   assert.match(laneViews, /lastAssistantMessageAt/);
   assert.match(laneViews, /openCodexThread\(transcriptDeepLink\)/);
+  assert.match(laneViews, /openSourceLink\(event\.url\)/);
   assert.match(tauriAutoloop, /open_codex_thread/);
+  assert.match(tauriAutoloop, /open_github_source/);
   assert.doesNotMatch(laneViews, /JsonLogView/);
   assert.doesNotMatch(laneViews, /transcriptPageEvents/);
   assert.doesNotMatch(laneViews, /window\.open\(transcriptDeepLink/);
+  assert.doesNotMatch(laneViews, /target="_blank" rel="noreferrer">Source/);
 });
 
 test('missing transcript state is local-only and explicit', () => {
@@ -1156,6 +1162,84 @@ test('completed worktree progress display uses session provenance when present',
   assert.equal(display.label, 'age:1780000000000');
   assert.equal(display.known, true);
   assert.match(display.title, /session_registry\.updated_at_ms/);
+});
+
+test('lane detail lifecycle does not reuse tracker updatedAt as phase time', () => {
+  const laneViews = readFileSync(new URL('../src/lib/LaneViews.svelte', import.meta.url), 'utf8');
+  const tauriAutoloop = readFileSync(new URL('../src/lib/tauriAutoloop.ts', import.meta.url), 'utf8');
+  const inferLifecycleEvents = laneViews.match(/function inferLifecycleEvents[\s\S]*?function phaseFromText/)?.[0] ?? '';
+
+  assert.match(inferLifecycleEvents, /time: issue\.createdAt \?\? null/);
+  assert.match(inferLifecycleEvents, /time: issue\.promotedAt \?\? promotionTimeFromRemote\(remoteEvents\) \?\? null/);
+  assert.match(laneViews, /maybeLoadIssueTimeline\(selectedIssue\)/);
+  assert.match(laneViews, /buildIssueCommentLifecycleEvents\(issueTimelineResponse, selectedIssue\)/);
+  assert.match(laneViews, /if \(!hasRemotePhase\(remoteEvents, 'Backlog'\)\)/);
+  assert.match(laneViews, /promotionTimeFromRemote\(remoteEvents\)/);
+  assert.match(laneViews, /formatTimeWithRelative\(transcriptResponse\?\.lastUserMessageAt\)/);
+  assert.match(laneViews, /formatTimeWithRelative\(transcriptResponse\?\.lastAssistantMessageAt\)/);
+  assert.match(tauriAutoloop, /get_issue_timeline/);
+  assert.doesNotMatch(inferLifecycleEvents, /issue\.updatedAt/);
+  assert.doesNotMatch(inferLifecycleEvents, /model\?\.generatedAt/);
+  assert.doesNotMatch(laneViews, /completedAt: row\.updatedAt/);
+});
+
+test('GitHub issue comments become lane detail lifecycle events', () => {
+  const events = buildIssueCommentLifecycleEvents(
+    {
+      available: true,
+      issue: {
+        title: 'Lifecycle issue',
+        state: 'CLOSED',
+        url: 'https://github.com/Alive24/shea-symphony/issues/430',
+        createdAt: '2026-06-01T10:00:00Z',
+        closedAt: '2026-06-01T11:59:59Z'
+      },
+      timelineEvents: [
+        {
+          event: 'project_v2_item_status_changed',
+          createdAt: '2026-06-01T12:10:00Z'
+        }
+      ],
+      comments: [
+        {
+          createdAt: '2026-06-01T11:00:00Z',
+          url: 'https://github.com/Alive24/shea-symphony/issues/430#issuecomment-1',
+          body: '## Shea Symphony Workpad\n\n### Agent Review Handoff\n- Pull request: https://github.com/Alive24/shea-symphony/pull/431'
+        },
+        {
+          createdAt: '2026-06-01T11:30:00Z',
+          url: 'https://github.com/Alive24/shea-symphony/issues/430#issuecomment-2',
+          body: '## Shea Symphony Agent Review Run\n\n- Generated at: `2026-06-01 11:29:58 GMT`\n- Issue: #430 Lifecycle issue\n- Decision: Independent Agent Review passed.\n- Result: PASS'
+        },
+        {
+          createdAt: '2026-06-01T12:00:00Z',
+          url: 'https://github.com/Alive24/shea-symphony/issues/430#issuecomment-3',
+          body: '## Shea Symphony Merge Run\n\n- Generated at: `2026-06-01 11:59:58 GMT`\n- Issue: #430 Lifecycle issue\n- Decision: ReadyToMerge\n- Result: merged_or_done'
+        },
+        {
+          createdAt: '2026-06-01T12:30:00Z',
+          url: 'https://github.com/Alive24/shea-symphony/issues/430#issuecomment-4',
+          body: '## Shea Symphony Doctor Triage\n\n- Finding: runtime state was Need Human Input while Agent Review evidence was missing.'
+        },
+        {
+          createdAt: '2026-06-01T13:00:00Z',
+          url: 'https://github.com/Alive24/shea-symphony/issues/430#issuecomment-5',
+          body: 'Ordinary comment'
+        }
+      ]
+    },
+    { id: '#430', title: 'Lifecycle issue' }
+  );
+
+  assert.deepEqual(events.map((event) => event.phase), ['Backlog', 'Main', 'Agent Review', 'Merge', 'Doctor', 'Need Human Input', 'Done']);
+  assert.equal(events[1].label, 'Shea Symphony Workpad');
+  assert.equal(events[2].detail, 'Decision: Independent Agent Review passed.');
+  assert.equal(events[3].detail, 'Decision: ReadyToMerge');
+  assert.equal(events[4].label, 'Shea Symphony Doctor Triage');
+  assert.equal(events[5].label, 'Moved to Need Human Input');
+  assert.equal(events[5].time, '2026-06-01T12:10:00Z');
+  assert.equal(events[6].time, '2026-06-01T11:59:59Z');
+  assert.equal(events[6].sortTime, Date.parse('2026-06-01T12:00:00Z') + 1);
 });
 
 test('lane throughput board keeps blocked rows but summarizes idle and completed in the header', () => {

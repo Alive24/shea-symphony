@@ -20,7 +20,9 @@ fn main() {
             read_surfaces::get_operator_overview,
             read_surfaces::get_read_surface,
             read_surfaces::get_codex_transcript,
-            external_links::open_codex_thread
+            github::get_issue_timeline,
+            external_links::open_codex_thread,
+            external_links::open_github_source
         ])
         .run(tauri::generate_context!())
         .expect("error while running Shea Symphony App");

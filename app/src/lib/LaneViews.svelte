@@ -5,7 +5,7 @@
     localArtifactRefreshEventDetail,
     localRefreshStatusLabel
   } from './localArtifactRefresh.ts';
-  import { getCodexTranscript, openCodexThread } from './tauriAutoloop.ts';
+  import { getCodexTranscript, getIssueTimeline, openCodexThread, openGitHubSource } from './tauriAutoloop.ts';
   import {
     classifyHeartbeat,
     transcriptUnavailable
@@ -13,6 +13,9 @@
   import {
     completedProgressDisplay
   } from './viewModel/completedWorktrees.ts';
+  import {
+    buildIssueCommentLifecycleEvents
+  } from './viewModel/githubIssueTimeline.ts';
 
   export let view: any;
   export let route = '/lanes';
@@ -34,6 +37,11 @@
   let transcriptError = '';
   let transcriptResponse: any = transcriptUnavailable('Transcript has not been loaded yet.');
   let transcriptLoadKey = '';
+  let issueTimelineLoading = false;
+  let issueTimelineError = '';
+  let issueTimelineResponse: any = null;
+  let issueTimelineLoadKey = '';
+  let sourceLinkError = '';
 
   $: laneWorkers = view?.laneWorkers ?? {};
   $: queueIssues = view?.queueIssues ?? [];
@@ -44,14 +52,16 @@
   $: selectedIssue = selectedIssueRef ? findIssueForDetail(selectedIssueRef, issueRows, completedLocalIssues, view) : null;
   $: localArtifactsRefresh = $operatorOverviewStore.localArtifactsRefresh;
   $: localArtifactsRefreshLabel = localRefreshStatusLabel(localArtifactsRefresh, formatTime);
-  $: lifecycleEvents = selectedIssue ? buildLifecycleEvents(selectedIssue, view) : [];
+  $: remoteLifecycleEvents = selectedIssue ? buildIssueCommentLifecycleEvents(issueTimelineResponse, selectedIssue) : [];
+  $: lifecycleEvents = selectedIssue ? buildLifecycleEvents(selectedIssue, view, remoteLifecycleEvents) : [];
   $: selectedLaneKey = laneKeyForIssue(selectedIssue);
-  $: heartbeatSummary = selectedIssue ? classifyHeartbeat($autoloopStateStore, selectedLaneKey, selectedIssue.id, Date.now(), laneEventEvidence(selectedIssue, view)) : null;
+  $: heartbeatSummary = selectedIssue ? classifyHeartbeat($autoloopStateStore, selectedLaneKey, selectedIssue.id, Date.now(), laneEventEvidence(selectedIssue, view, remoteLifecycleEvents)) : null;
   $: eventLogPath = localEventLogPath(view);
   $: transcriptStatusLabel = transcriptResponse?.status === 'available'
     ? transcriptResponse?.deepLink ? 'Codex App link ready' : 'Conversation found locally'
     : transcriptResponse?.reason ?? 'Transcript unavailable';
   $: transcriptDeepLink = transcriptResponse?.deepLink ?? null;
+  $: maybeLoadIssueTimeline(selectedIssue);
   $: maybeLoadTranscript(selectedIssue);
   $: laneColumns = laneOrder.map((lane) => {
     const issues = lane === 'Human Todo'
@@ -112,6 +122,7 @@
       title: issue.title ?? 'Untitled issue',
       lane: humanStates.has(normalizeState(state)) ? 'Human Todo' : issue.lane ?? stateToLane(state),
       state,
+      createdAt: issue.createdAt ?? issue.created_at,
       url: issue.url ?? issue.htmlUrl,
       updatedAt: issue.updatedAt ?? issue.updated_at,
       evidence: issue.evidence,
@@ -150,7 +161,7 @@
       if (existing) {
         byId.set(id, { ...existing, worktree: { ...existing.worktree, ...entry } });
       } else if (row && isCompletedIssue(row)) {
-        byId.set(id, normalizeCompletedEntry({ ...entry, completedAt: row.updatedAt }, rows, model));
+        byId.set(id, normalizeCompletedEntry(entry, rows, model));
       } else if (!row || row.runtimeCategory !== 'Active runtime') {
         byId.set(id, normalizeCompletedEntry({ ...entry, state: row?.state, completedAt: entry.lastModified }, rows, model));
       }
@@ -174,6 +185,7 @@
       title: entry.title ?? row?.title ?? 'Project read unavailable',
       state: entry.state ?? row?.state ?? 'Done',
       lane: entry.lane ?? row?.lane ?? 'Merge',
+      createdAt: entry.createdAt ?? row?.createdAt,
       url: issueUrl,
       completedAt,
       updatedAt: entry.updatedAt ?? entry.projectUpdatedAt ?? row?.updatedAt,
@@ -216,19 +228,21 @@
       { id: normalized, title: 'Issue', state: 'Unknown', url: githubIssueUrl(normalized) };
   }
 
-  function buildLifecycleEvents(issue: any, model: any) {
+  function buildLifecycleEvents(issue: any, model: any, remoteEvents: any[] = []) {
     const fixtureEvents = (model?.raw?.localStatus?.issueLifecycle?.[issue.id] ?? model?.raw?.localStatus?.issueLifecycle?.[issue.id?.replace('#', '')] ?? []).map((event: any) => ({
       label: event.label ?? event.phase ?? 'Lifecycle event',
       phase: event.phase ?? event.label ?? 'Timeline',
       time: event.time ?? event.at,
       detail: event.detail ?? '',
-      url: event.url ?? issue.url
+      url: event.url ?? issue.url,
+      source: event.source ?? 'localStatus.issueLifecycle'
     }));
-    const events = fixtureEvents.length ? fixtureEvents : inferLifecycleEvents(issue, model);
-    return dedupeEvents(events).sort((left, right) => dateMs(left.time) - dateMs(right.time));
+    const baseEvents = fixtureEvents.length ? fixtureEvents : inferLifecycleEvents(issue, model, remoteEvents);
+    const events = [...baseEvents, ...(remoteEvents ?? [])];
+    return dedupeEvents(events).sort((left, right) => eventSortMs(left) - eventSortMs(right));
   }
 
-  function laneEventEvidence(issue: any, model: any) {
+  function laneEventEvidence(issue: any, model: any, remoteEvents: any[] = []) {
     const localLifecycle = model?.raw?.localStatus?.issueLifecycle ?? {};
     const persistedEvents = localLifecycle?.[issue?.id] ?? localLifecycle?.[issue?.id?.replace('#', '')] ?? [];
     const issueEvents = (persistedEvents ?? []).map((event: any) => ({
@@ -247,7 +261,7 @@
         label: event.title ?? event.label,
         source: event.source ?? 'operator.fullEvents'
       }));
-    return [...issueEvents, ...fullEvents];
+    return [...issueEvents, ...fullEvents, ...(remoteEvents ?? [])];
   }
 
   function eventMentionsIssue(event: any, issueRef: string) {
@@ -258,13 +272,14 @@
     return text.includes(issueRef);
   }
 
-  function inferLifecycleEvents(issue: any, model: any) {
+  function inferLifecycleEvents(issue: any, model: any, remoteEvents: any[] = []) {
     const events: any[] = [];
     const issueUrl = issue.url ?? githubIssueUrl(issue.id);
-    const updatedAt = issue.completedAt ?? issue.updatedAt ?? model?.generatedAt;
-    events.push({ phase: 'Backlog', label: 'Issue visible in tracker', time: updatedAt, detail: 'Tracker issue readback is available.', url: issueUrl });
+    if (!hasRemotePhase(remoteEvents, 'Backlog')) {
+      events.push({ phase: 'Backlog', label: 'Issue visible in tracker', time: issue.createdAt ?? null, detail: 'Tracker issue readback is available.', url: issueUrl });
+    }
     if (issue.lane && issue.lane !== 'Unknown') {
-      events.push({ phase: 'Promoted', label: `Promoted into ${issue.lane}`, time: updatedAt, detail: issue.state ?? 'Lane state visible.', url: issueUrl });
+      events.push({ phase: 'Promoted', label: `Promoted into ${issue.lane}`, time: issue.promotedAt ?? promotionTimeFromRemote(remoteEvents) ?? null, detail: issue.state ?? 'Lane state visible.', url: issueUrl });
     }
     for (const event of model?.fullEvents ?? []) {
       const text = `${event.title ?? ''} ${event.detail ?? ''}`;
@@ -272,15 +287,37 @@
       events.push({
         phase: phaseFromText(text, event.lane),
         label: event.title ?? 'Timeline event',
-        time: event.timestamp ?? event.time ?? updatedAt,
+        time: event.timestamp ?? event.time ?? event.at ?? null,
         detail: event.detail ?? '',
         url: event.url ?? issueUrl
       });
     }
-    if (isCompletedIssue(issue)) {
-      events.push({ phase: 'Done', label: 'Completed locally', time: issue.completedAt ?? updatedAt, detail: issue.worktree?.path ? 'Local worktree is still present.' : 'Completion is visible in tracker readback.', url: issueUrl });
+    if (isCompletedIssue(issue) && !(remoteEvents ?? []).some((event) => event.phase === 'Done')) {
+      events.push({ phase: 'Done', label: 'Completed locally', time: issue.completedAt ?? null, detail: issue.worktree?.path ? 'Local worktree is still present.' : 'Completion is visible in tracker readback.', url: issueUrl });
     }
     return events;
+  }
+
+  function promotionTimeFromRemote(events: any[] = []) {
+    return firstEventTime(events, ['Promoted', 'Main', 'Handoff']);
+  }
+
+  function hasRemotePhase(events: any[] = [], phase: string) {
+    return events.some((event) => event.phase === phase && String(event.source ?? '').startsWith('github.'));
+  }
+
+  function firstEventTime(events: any[] = [], phases: string[]) {
+    let winner: any = null;
+    let winnerMs = Number.POSITIVE_INFINITY;
+    for (const event of events) {
+      if (!phases.includes(event.phase)) continue;
+      const ms = eventSortMs(event);
+      if (ms && ms < winnerMs) {
+        winner = event.time;
+        winnerMs = ms;
+      }
+    }
+    return winner;
   }
 
   function phaseFromText(text: string, lane: string) {
@@ -383,6 +420,30 @@
     loadTranscript(issue);
   }
 
+  function maybeLoadIssueTimeline(issue: any) {
+    const key = issue?.id ?? '';
+    if (!key || key === issueTimelineLoadKey) return;
+    issueTimelineLoadKey = key;
+    loadIssueTimeline(issue);
+  }
+
+  async function loadIssueTimeline(issue: any) {
+    issueTimelineLoading = true;
+    issueTimelineError = '';
+    issueTimelineResponse = null;
+    try {
+      issueTimelineResponse = await getIssueTimeline(issue.id);
+      if (issueTimelineResponse?.available === false) {
+        issueTimelineError = issueTimelineResponse?.error ?? 'GitHub issue comments are unavailable.';
+      }
+    } catch (error) {
+      issueTimelineError = error instanceof Error ? error.message : String(error);
+      issueTimelineResponse = null;
+    } finally {
+      issueTimelineLoading = false;
+    }
+  }
+
   async function loadTranscript(issue: any) {
     transcriptLoading = true;
     transcriptError = '';
@@ -411,6 +472,15 @@
       await openCodexThread(transcriptDeepLink);
     } catch (error) {
       transcriptError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  async function openSourceLink(url: string) {
+    sourceLinkError = '';
+    try {
+      await openGitHubSource(url);
+    } catch (error) {
+      sourceLinkError = error instanceof Error ? error.message : String(error);
     }
   }
 
@@ -469,10 +539,20 @@
     return Number.isNaN(parsed) ? 0 : parsed;
   }
 
+  function eventSortMs(event: any) {
+    return dateMs(event?.sortTime ?? event?.time);
+  }
+
   function formatTime(value: unknown) {
     const ms = dateMs(value);
     if (!ms) return 'unknown';
     return new Date(ms).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function formatTimeWithRelative(value: unknown) {
+    const label = formatTime(value);
+    if (label === 'unknown') return label;
+    return `${label} (${relativeAge(value)})`;
   }
 
   function relativeAge(value: unknown) {
@@ -642,11 +722,11 @@
           <div class="codex-link-times" aria-label="Codex conversation message times">
             <div>
               <span>Last sent</span>
-              <strong>{formatTime(transcriptResponse?.lastUserMessageAt)}</strong>
+              <strong>{formatTimeWithRelative(transcriptResponse?.lastUserMessageAt)}</strong>
             </div>
             <div>
               <span>Last returned</span>
-              <strong>{formatTime(transcriptResponse?.lastAssistantMessageAt)}</strong>
+              <strong>{formatTimeWithRelative(transcriptResponse?.lastAssistantMessageAt)}</strong>
             </div>
           </div>
           {#if transcriptResponse?.threadId}
@@ -657,6 +737,14 @@
     </section>
 
     <div class="lane-lifecycle-list">
+      {#if issueTimelineLoading}
+        <p class="section-note">Loading GitHub issue comments...</p>
+      {:else if issueTimelineError}
+        <p class="section-note">GitHub issue comments unavailable: {issueTimelineError}</p>
+      {/if}
+      {#if sourceLinkError}
+        <p class="section-note">Source link failed: {sourceLinkError}</p>
+      {/if}
       {#if lifecycleEvents.length}
         {#each lifecycleEvents as event}
           <article class="lane-lifecycle-row">
@@ -669,7 +757,7 @@
               {/if}
             </div>
             {#if event.url}
-              <a class="queue-link" href={event.url} target="_blank" rel="noreferrer">Source</a>
+              <button class="queue-link source-link-button" type="button" on:click={() => openSourceLink(event.url)}>Source</button>
             {/if}
           </article>
         {/each}

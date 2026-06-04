@@ -6,6 +6,12 @@ pub fn open_codex_thread(deep_link: String) -> Result<(), String> {
     open_external_url(&deep_link)
 }
 
+#[tauri::command]
+pub fn open_github_source(url: String) -> Result<(), String> {
+    validate_github_source_url(&url)?;
+    open_external_url(&url)
+}
+
 fn validate_codex_thread_link(deep_link: &str) -> Result<(), String> {
     let thread_id = deep_link
         .strip_prefix("codex://threads/")
@@ -14,6 +20,28 @@ fn validate_codex_thread_link(deep_link: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err("Codex thread link must end with a thread UUID.".to_string())
+    }
+}
+
+fn validate_github_source_url(url: &str) -> Result<(), String> {
+    let path = url
+        .strip_prefix("https://github.com/Alive24/shea-symphony/")
+        .ok_or_else(|| "Only Shea Symphony GitHub source links can be opened.".to_string())?;
+    if is_allowed_github_source_path(path) {
+        Ok(())
+    } else {
+        Err("Only Shea Symphony issue, issue comment, and pull request links can be opened.".into())
+    }
+}
+
+fn is_allowed_github_source_path(path: &str) -> bool {
+    let mut parts = path.split('/');
+    match (parts.next(), parts.next()) {
+        (Some("issues"), Some(number)) | (Some("pull"), Some(number)) => {
+            let number = number.split(['#', '?']).next().unwrap_or_default();
+            number.chars().all(|ch| ch.is_ascii_digit()) && !number.is_empty()
+        }
+        _ => false,
     }
 }
 
@@ -91,5 +119,29 @@ mod tests {
             "codex://threads/019e8f37-5cab-74f3-9933-93e3809396e5/turn/1"
         )
         .is_err());
+    }
+
+    #[test]
+    fn validates_shea_github_source_links() {
+        assert!(
+            validate_github_source_url("https://github.com/Alive24/shea-symphony/issues/430")
+                .is_ok()
+        );
+        assert!(validate_github_source_url(
+            "https://github.com/Alive24/shea-symphony/issues/430#issuecomment-4621294699"
+        )
+        .is_ok());
+        assert!(
+            validate_github_source_url("https://github.com/Alive24/shea-symphony/pull/433").is_ok()
+        );
+    }
+
+    #[test]
+    fn rejects_non_shea_github_source_links() {
+        assert!(validate_github_source_url("https://example.com").is_err());
+        assert!(
+            validate_github_source_url("https://github.com/Alive24/shea-symphony/actions").is_err()
+        );
+        assert!(validate_github_source_url("https://github.com/other/repo/issues/430").is_err());
     }
 }

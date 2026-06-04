@@ -1,10 +1,13 @@
 use shea_symphony::git_handoff::CommandOutput;
 use shea_symphony::lane_claim::LaneClaim;
 use shea_symphony::model::{AgentEvent, TrackerIssue};
+use shea_symphony::prompt_runtime::{
+    render_merge_conflict_repair_task_envelope, MergeConflictRepairEnvelope,
+    MERGE_REQUIRED_OUTPUT_MARKER_ENVELOPE_TEXT,
+};
 use shea_symphony::workflow::{AgentLane, WorkflowDefinition};
 
 use crate::lanes::claim::render_prompt_with_claim;
-use crate::orchestration::single_line;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn merge_agent_conflict_repair_prompt(
@@ -23,25 +26,16 @@ pub(super) fn merge_agent_conflict_repair_prompt(
         None,
         Some(claim),
     )?;
-    prompt.push_str(
-        "\n\n## Merge-Agent Conflict Repair Task\n\n\
-You are repairing the existing approved PR branch in place. Preserve the intent that already passed Agent Review and Human Review. Resolve only conflicts caused by merging the target base into this PR branch. Do not create a replacement PR, do not switch workspaces, and do not route through Rework.\n\n",
-    );
-    prompt.push_str(&format!("- Pull request: `{pr_ref}`\n"));
-    prompt.push_str(&format!("- Head branch: `{head_ref_name}`\n"));
-    prompt.push_str(&format!("- Expected base: `{expected_base}`\n"));
-    prompt.push_str(&format!("- Conflict summary: {conflict_summary}\n"));
-    prompt.push_str(&format!(
-        "- Mechanical merge stderr: `{}`\n",
-        single_line(&mechanical_output.stderr)
+    prompt.push_str(&render_merge_conflict_repair_task_envelope(
+        MergeConflictRepairEnvelope {
+            pr_ref,
+            head_ref_name,
+            expected_base,
+            conflict_summary,
+            mechanical_stderr: &mechanical_output.stderr,
+        },
     ));
-    prompt.push_str(
-        "\n### Required Output Marker\n\n\
-End your final response with one of these exact markers:\n\
-- `MERGE_AGENT_DECISION: repaired` only if the resolution preserves reviewed intent and verification can proceed.\n\
-- `MERGE_AGENT_DECISION: needs_human_input` if there is semantic uncertainty, unrelated drift, unsafe branch/worktree state, or missing verification confidence.\n\n\
-Also include `RESOLUTION_SUMMARY:` and `SEMANTIC_SAFETY:` lines. Leave the merge resolution staged or ready for `git add -A`; the merge lane will commit, verify cleanliness, push, and keep the issue in `Merging` for the next tick.\n",
-    );
+    prompt.push_str(MERGE_REQUIRED_OUTPUT_MARKER_ENVELOPE_TEXT);
     Ok(prompt)
 }
 

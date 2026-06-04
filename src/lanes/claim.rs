@@ -4,6 +4,7 @@ use shea_symphony::lane_claim::{
 };
 use shea_symphony::model::{native_subissue_gate_blocker, normalize_state, TrackerIssue};
 use shea_symphony::prompt::{render_prompt, PromptError};
+use shea_symphony::prompt_runtime::render_assigned_lane_claim_envelope;
 use shea_symphony::tracker::{ProjectFieldAssignment, TrackerAdapter};
 
 use crate::orchestration::{
@@ -125,11 +126,7 @@ pub(crate) fn render_prompt_with_claim(
 ) -> Result<String, PromptError> {
     let mut prompt = render_prompt(template, issue, attempt)?;
     if let Some(claim) = claim {
-        prompt.push_str("\n\n## Assigned Lane Claim\n\n");
-        prompt.push_str("- Preserve this `run=` value in handoff evidence and summaries.\n");
-        prompt.push_str(&format!("- Run: `{}`\n", claim.run));
-        prompt.push_str(&format!("- Claim: `{}`\n", claim.render()));
-        prompt.push_str(&format!("- Registry pointer: `{}`\n", claim.registry));
+        prompt.push_str(&render_assigned_lane_claim_envelope(claim));
     }
     Ok(prompt)
 }

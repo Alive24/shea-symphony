@@ -9,6 +9,9 @@ use shea_symphony::lane_claim::LaneClaim;
 use shea_symphony::model::TrackerIssue;
 use shea_symphony::profiles::selected_execution_profile;
 use shea_symphony::progress::run_with_progress_heartbeat;
+use shea_symphony::prompt_runtime::{
+    CODEX_APP_SERVER_CONTINUE_PROMPT, CODEX_APP_SERVER_HANDOFF_BOUNDARY,
+};
 use shea_symphony::workflow::{AgentLane, WorkflowDefinition};
 use shea_symphony::workspace::{
     apply_local_git_identity, prepare_workspace, profile_scoped_identifier, run_after_run,
@@ -17,17 +20,6 @@ use shea_symphony::workspace::{
 
 use crate::lanes::claim::render_prompt_with_claim;
 use crate::orchestration::{current_git_branch, current_time_ms, progress_spec_with_event_log};
-
-const CODEX_APP_SERVER_HANDOFF_BOUNDARY: &str = "\n\n## Codex App-Server Runtime Boundary\n\n\
-This run is executing inside the Codex app-server backend. Treat the app-server \
-turn as the implementation and local-verification worker only. Do not run \
-GitHub Project reads or mutations, do not create or update pull requests, and \
-do not attempt final Project state transitions from inside this child turn. \
-Leave a concise terminal summary of changed files, verification commands, and \
-any blocker. The outer Shea Symphony CLI will commit eligible worktree changes, \
-publish or update the PR, write durable workpad evidence, verify linked PR \
-readback, and perform the final `Agent Review` handoff.\n";
-const CODEX_APP_SERVER_CONTINUE_PROMPT: &str = "Continue";
 
 use super::RunLoopLiveHandoff;
 

@@ -16,6 +16,9 @@
   import {
     buildIssueCommentLifecycleEvents
   } from './viewModel/githubIssueTimeline.ts';
+  import {
+    issueIdentityTitle
+  } from './viewModel/issueTitles.ts';
 
   export let view: any;
   export let route = '/lanes';
@@ -92,7 +95,7 @@
         byId.set(id, {
           ...existing,
           lane: humanStates.has(normalizeState(existing.state)) ? 'Human Todo' : existing.lane || titleCase(laneKey),
-          title: worker.title || existing.title,
+          title: issueIdentityTitle(id, [existing.title, worker.title], 'Issue'),
           worker,
           runtimeCategory: 'Active runtime',
           runtimeTone: 'success',
@@ -119,7 +122,7 @@
     return {
       id,
       number: issue.number ?? issueNumber(id),
-      title: issue.title ?? 'Untitled issue',
+      title: issueIdentityTitle(id, [issue.title], 'Issue'),
       lane: humanStates.has(normalizeState(state)) ? 'Human Todo' : issue.lane ?? stateToLane(state),
       state,
       createdAt: issue.createdAt ?? issue.created_at,
@@ -182,7 +185,7 @@
       (lastProgressAt ? 'read_surface.lastProgressAt' : 'unavailable');
     return {
       id,
-      title: entry.title ?? row?.title ?? 'Project read unavailable',
+      title: issueIdentityTitle(id, [entry.title, row?.title], 'Issue'),
       state: entry.state ?? row?.state ?? 'Done',
       lane: entry.lane ?? row?.lane ?? 'Merge',
       createdAt: entry.createdAt ?? row?.createdAt,

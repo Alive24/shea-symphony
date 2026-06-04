@@ -1074,7 +1074,7 @@ fn session_registry_issue_refs(snapshot: &Value) -> BTreeMap<String, Value> {
             .get("project_state")
             .and_then(Value::as_str)
             .is_some();
-        if status == "completed" || (has_title && has_project_state) {
+        if has_title && (status == "completed" || has_project_state) {
             issues.insert(issue.to_string(), session.clone());
         }
     }
@@ -1085,7 +1085,7 @@ fn project_issue_readback(issue: &str) -> Option<Value> {
     if project_read_cooldown().is_some() {
         return None;
     }
-    let output = shea_command(&["project", "issue", "--json", DEFAULT_WORKFLOW_PATH, issue])
+    let output = shea_command(&["project", "issue", DEFAULT_WORKFLOW_PATH, issue, "--json"])
         .output()
         .ok()?;
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1581,6 +1581,35 @@ mod tests {
             rows[0]["timestampSources"]["projectUpdatedAt"]["meaning"],
             "Broad Project/GitHub issue readback timestamp retained as metadata only; it must not drive Last Progress."
         );
+    }
+
+    #[test]
+    fn completed_session_without_title_still_needs_project_readback() {
+        let snapshot = json!({
+            "sessions": [
+                {
+                    "status": "completed",
+                    "issue_identifier": "#326",
+                    "issue_title": null,
+                    "lane": "main",
+                    "started_at_ms": 900,
+                    "updated_at_ms": 1_500
+                },
+                {
+                    "status": "completed",
+                    "issue_identifier": "#327",
+                    "issue_title": "Known completed issue",
+                    "lane": "main",
+                    "started_at_ms": 900,
+                    "updated_at_ms": 1_500
+                }
+            ]
+        });
+
+        let registry_issues = session_registry_issue_refs(&snapshot);
+
+        assert!(!registry_issues.contains_key("#326"));
+        assert!(registry_issues.contains_key("#327"));
     }
 
     #[test]

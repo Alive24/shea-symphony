@@ -1,4 +1,5 @@
 import { normalizeIssueRef } from './issueState.ts';
+import { issueIdentityTitle } from './issueTitles.ts';
 import { titleCase } from './text.ts';
 
 const LANE_KEYS = ['main', 'review', 'merge'];
@@ -99,41 +100,14 @@ function workerIssueRow(worker: any, index: number, issueTitleById: Map<string, 
 function workerDisplayTitle(worker: any, titles: Map<string, string>) {
   const issueRef = normalizeIssueRef(worker.issue);
   const projectTitle = issueRef ? titles.get(issueRef) : null;
-  if (projectTitle) return projectTitle;
-  const workerTitle = nonTransientTitle(worker.title, issueRef);
-  if (workerTitle) return workerTitle;
-  return issueRef ?? 'Worker session';
+  return issueIdentityTitle(issueRef, [projectTitle, worker.title], 'Worker session');
 }
 
 function issueTitle(issue: any, titles: Map<string, string>) {
   const issueRef = normalizeIssueRef(issue.id);
   const projectTitle = issueRef ? titles.get(issueRef) : null;
-  if (projectTitle) return projectTitle;
-  const title = nonTransientTitle(issue.title, issueRef);
-  if (title) return title;
-  return issueRef ?? 'Issue';
+  return issueIdentityTitle(issueRef, [projectTitle, issue.title], 'Issue');
 }
-
-function nonTransientTitle(value: any, issueRef: string | null) {
-  if (typeof value !== 'string') return null;
-  const title = value.trim();
-  if (!title || normalizeIssueRef(title) === issueRef || transientTitleLabels.has(title.toLowerCase())) return null;
-  return title;
-}
-
-const transientTitleLabels = new Set([
-  'waiting for agent response',
-  'tick_started',
-  'reviewing',
-  'lane_tick_completed',
-  'lane_tick_started',
-  'readiness_blocked',
-  'blocked',
-  'running',
-  'completed',
-  'failed',
-  'error'
-]);
 
 function issueMeta(issue: any) {
   const state = cleanMetaPart(issue.state);

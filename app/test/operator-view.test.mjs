@@ -41,6 +41,9 @@ import {
   completedProgressDisplay
 } from '../src/lib/viewModel/completedWorktrees.ts';
 import {
+  issueIdentityTitle
+} from '../src/lib/viewModel/issueTitles.ts';
+import {
   buildIssueCommentLifecycleEvents
 } from '../src/lib/viewModel/githubIssueTimeline.ts';
 import {
@@ -739,6 +742,15 @@ test('lane throughput board keeps issue identity ahead of transient worker label
   assert.match(reviewIssue.meta, /reviewing/);
   assert.equal(mergeIssue.title, '#417');
   assert.match(mergeIssue.meta, /Waiting for agent response/);
+});
+
+test('issue identity titles reject transient and unavailable placeholders', () => {
+  assert.equal(issueIdentityTitle('#326', ['#326', 'tick_started']), '#326');
+  assert.equal(issueIdentityTitle('#385', ['Project read unavailable', 'Unknown']), '#385');
+  assert.equal(
+    issueIdentityTitle('#407', ['Project read unavailable', 'Separate handoff progress from local worktree modification times']),
+    'Separate handoff progress from local worktree modification times'
+  );
 });
 
 test('lane board rendering omits handoff actions and manual skill labels', () => {

@@ -37,6 +37,9 @@
   let transcriptError = '';
   let transcriptResponse: any = transcriptUnavailable('Transcript has not been loaded yet.');
   let transcriptLoadKey = '';
+  let transcriptPage = 1;
+  let transcriptPaginationKey = '';
+  const transcriptPageSize = 25;
 
   $: laneWorkers = view?.laneWorkers ?? {};
   $: queueIssues = view?.queueIssues ?? [];
@@ -52,8 +55,12 @@
   $: heartbeatSummary = selectedIssue ? classifyHeartbeat($autoloopStateStore, selectedLaneKey, selectedIssue.id) : null;
   $: eventLogPath = localEventLogPath(view);
   $: transcriptParsed = parseCodexTranscriptJsonl(transcriptResponse?.content ?? '');
+  $: transcriptPageCount = Math.max(1, Math.ceil(transcriptParsed.events.length / transcriptPageSize));
+  $: updateTranscriptPagination(`${transcriptResponse?.path ?? 'none'}:${transcriptParsed.summary.rawRecords}:${transcriptParsed.summary.readableEvents}`, transcriptPageCount);
+  $: transcriptPageStart = (transcriptPage - 1) * transcriptPageSize;
+  $: transcriptPageEvents = transcriptParsed.events.slice(transcriptPageStart, transcriptPageStart + transcriptPageSize);
   $: transcriptStatusLabel = transcriptResponse?.status === 'available'
-    ? `${transcriptParsed.status} · ${transcriptParsed.events.length} events`
+    ? `${transcriptParsed.status} · ${transcriptParsed.summary.readableEvents} events`
     : transcriptResponse?.reason ?? 'Transcript unavailable';
   $: maybeLoadTranscript(selectedIssue);
   $: laneColumns = laneOrder.map((lane) => {
@@ -438,6 +445,20 @@
     return new Date(ms).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' });
   }
 
+  function updateTranscriptPagination(key: string, pageCount: number) {
+    if (key !== transcriptPaginationKey) {
+      transcriptPaginationKey = key;
+      transcriptPage = pageCount;
+      return;
+    }
+    if (transcriptPage > pageCount) transcriptPage = pageCount;
+    if (transcriptPage < 1) transcriptPage = 1;
+  }
+
+  function setTranscriptPage(page: number) {
+    transcriptPage = Math.min(transcriptPageCount, Math.max(1, page));
+  }
+
   function relativeAge(value: unknown) {
     const ms = dateMs(value);
     if (!ms) return 'unknown';
@@ -599,6 +620,9 @@
         <JsonLogView value={transcriptResponse?.content} fallbackLabel="Codex transcript JSONL" />
       {:else}
         <div class="transcript-summary">
+          <span>{transcriptParsed.summary.rawRecords} raw records</span>
+          <span>{transcriptParsed.summary.readableEvents} readable</span>
+          <span>{transcriptParsed.summary.unsupportedRecords} unsupported</span>
           <span>{transcriptParsed.summary.userTurns} user</span>
           <span>{transcriptParsed.summary.assistantTurns} assistant</span>
           <span>{transcriptParsed.summary.toolCalls} tool calls</span>
@@ -608,12 +632,25 @@
           {/if}
         </div>
 
+        {#if transcriptParsed.events.length > transcriptPageSize}
+          <div class="transcript-pagination" aria-label="Transcript pagination">
+            <span>Page {transcriptPage} of {transcriptPageCount}</span>
+            <div>
+              <button class="btn btn-ghost" type="button" on:click={() => setTranscriptPage(transcriptPage - 1)} disabled={transcriptPage <= 1}>Previous</button>
+              <button class="btn btn-ghost" type="button" on:click={() => setTranscriptPage(transcriptPage + 1)} disabled={transcriptPage >= transcriptPageCount}>Next</button>
+            </div>
+          </div>
+        {/if}
+
         <div class="transcript-timeline">
           {#if transcriptParsed.events.length}
-            {#each transcriptParsed.events as event}
+            {#each transcriptPageEvents as event}
               <article class="transcript-event {event.kind} {event.tone}">
                 <div class="transcript-event-meta">
                   <span>{event.kind.replace('_', ' ')}</span>
+                  {#if event.timestamp}
+                    <time>{formatTime(event.timestamp)}</time>
+                  {/if}
                   {#if event.detail}
                     <small>{event.detail}</small>
                   {/if}

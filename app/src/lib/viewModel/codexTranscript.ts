@@ -44,22 +44,44 @@ export type HeartbeatSummary = {
   lastHeartbeatMs: number | null;
   lastHeartbeatAge: string;
   latestLaneEvent: string;
+  latestLaneEventAtMs: number | null;
+  latestLaneEventAge: string;
+  latestLaneEventSource: string | null;
   lane: string;
   issue: string | null;
 };
 
+export type LaneEventEvidence = {
+  label?: unknown;
+  detail?: unknown;
+  phase?: unknown;
+  title?: unknown;
+  time?: unknown;
+  timestamp?: unknown;
+  at?: unknown;
+  lane?: unknown;
+  issue?: unknown;
+  issueRef?: unknown;
+  identifier?: unknown;
+  source?: unknown;
+};
+
 const staleAfterMs = 2 * 60 * 1000;
+const minimumRealTimestampMs = Date.UTC(2020, 0, 1);
 
 export function classifyHeartbeat(
   loopState: any,
   laneKey: string,
   issueRef: string | null = null,
-  nowMs = Date.now()
+  nowMs = Date.now(),
+  durableEvents: LaneEventEvidence[] = []
 ): HeartbeatSummary {
   const lane = loopState?.lanes?.[laneKey];
-  const lastHeartbeatMs = numberOrNull(lane?.updatedAtMs ?? latestLineAt(loopState));
+  const lastHeartbeatMs = validTimestampMs(lane?.updatedAtMs) ?? validTimestampMs(latestLineAt(loopState));
   const ageMs = lastHeartbeatMs == null ? null : Math.max(0, nowMs - lastHeartbeatMs);
-  const latestLaneEvent = usefulLaneEvent(loopState, laneKey, issueRef) ?? lane?.latestLine ?? lane?.action ?? 'No lane event visible.';
+  const latestLaneEvent = usefulLaneEvent(loopState, laneKey, issueRef, nowMs) ??
+    usefulDurableLaneEvent(durableEvents, laneKey, issueRef, nowMs) ??
+    fallbackLaneEvent(lane, nowMs);
 
   if (!loopState) {
     return heartbeat('unavailable', null, 'unavailable', 'Autoloop state is unavailable.', latestLaneEvent, laneKey, issueRef);
@@ -299,15 +321,34 @@ function heartbeat(
   lastHeartbeatMs: number | null,
   lastHeartbeatAge: string,
   label: string,
-  latestLaneEvent: string,
+  latestLaneEvent: LaneEventSummary,
   lane: string,
   issue: string | null
 ): HeartbeatSummary {
   const tone = state === 'running' ? 'success' : state === 'stale' ? 'warn' : state === 'stopped' ? 'neutral' : 'warn';
-  return { state, tone, label, lastHeartbeatMs, lastHeartbeatAge, latestLaneEvent, lane, issue };
+  return {
+    state,
+    tone,
+    label,
+    lastHeartbeatMs,
+    lastHeartbeatAge,
+    latestLaneEvent: latestLaneEvent.text,
+    latestLaneEventAtMs: latestLaneEvent.atMs,
+    latestLaneEventAge: latestLaneEvent.age,
+    latestLaneEventSource: latestLaneEvent.source,
+    lane,
+    issue
+  };
 }
 
-function usefulLaneEvent(loopState: any, laneKey: string, issueRef: string | null) {
+type LaneEventSummary = {
+  text: string;
+  atMs: number | null;
+  age: string;
+  source: string | null;
+};
+
+function usefulLaneEvent(loopState: any, laneKey: string, issueRef: string | null, nowMs: number): LaneEventSummary | null {
   const lines = [...(loopState?.recentLines ?? [])].reverse();
   for (const entry of lines) {
     const event = entry?.event;
@@ -318,15 +359,62 @@ function usefulLaneEvent(loopState: any, laneKey: string, issueRef: string | nul
     const issue = normalizeIssueRef(payload.issue ?? payload.fields?.issue ?? payload.selected_issue ?? payload.selected);
     if (issueRef && issue && issue !== normalizeIssueRef(issueRef)) continue;
     if (isNoisyLine(raw)) continue;
-    if (event?.event === 'autopilot_signal' && payload.message) return text(payload.message);
-    if (raw) return raw;
+    const atMs = validTimestampMs(entry?.atMs);
+    if (event?.event === 'autopilot_signal' && payload.message) {
+      return laneEvent(text(payload.message), atMs, nowMs, 'recentLines.autopilot_signal');
+    }
+    if (raw) return laneEvent(raw, atMs, nowMs, 'recentLines');
   }
   return null;
+}
+
+function usefulDurableLaneEvent(events: LaneEventEvidence[], laneKey: string, issueRef: string | null, nowMs: number): LaneEventSummary | null {
+  const normalizedIssue = normalizeIssueRef(issueRef);
+  const candidates = (events ?? [])
+    .map((event) => durableLaneEventCandidate(event, laneKey, normalizedIssue, nowMs))
+    .filter(Boolean) as LaneEventSummary[];
+  return candidates.sort((left, right) => (right.atMs ?? 0) - (left.atMs ?? 0))[0] ?? null;
+}
+
+function durableLaneEventCandidate(event: LaneEventEvidence, laneKey: string, issueRef: string | null, nowMs: number): LaneEventSummary | null {
+  const lane = text(event?.lane);
+  if (lane && lane.toLowerCase() !== laneKey.toLowerCase()) return null;
+  const issue = normalizeIssueRef(event?.issue ?? event?.issueRef ?? event?.identifier);
+  if (issueRef && issue && issue !== issueRef) return null;
+  const atMs = validTimestampMs(event?.time) ?? validTimestampMs(event?.timestamp) ?? validTimestampMs(event?.at);
+  if (atMs == null) return null;
+  const label = text(event?.label ?? event?.title ?? event?.phase);
+  const detail = text(event?.detail);
+  const value = [label, detail].filter(Boolean).join(' · ');
+  if (!value || isNoisyLine(value)) return null;
+  return laneEvent(value, atMs, nowMs, text(event?.source) || 'localStatus.issueLifecycle');
+}
+
+function fallbackLaneEvent(lane: any, nowMs: number): LaneEventSummary {
+  const textValue = text(lane?.latestLine ?? lane?.action) || 'No lane event visible.';
+  return laneEvent(textValue, null, nowMs, null);
+}
+
+function laneEvent(value: string, atMs: number | null, nowMs: number, source: string | null): LaneEventSummary {
+  const ageMs = atMs == null ? null : Math.max(0, nowMs - atMs);
+  return {
+    text: value || 'No lane event visible.',
+    atMs,
+    age: ageLabel(ageMs),
+    source
+  };
 }
 
 function latestLineAt(loopState: any) {
   const lines = loopState?.recentLines ?? [];
   return lines.length ? lines[lines.length - 1]?.atMs : null;
+}
+
+function validTimestampMs(value: unknown): number | null {
+  const numeric = numberOrNull(value);
+  const ms = numeric ?? (typeof value === 'string' ? Date.parse(value) : null);
+  if (ms == null || !Number.isFinite(ms) || ms < minimumRealTimestampMs) return null;
+  return ms;
 }
 
 function isNoisyLine(raw: string) {

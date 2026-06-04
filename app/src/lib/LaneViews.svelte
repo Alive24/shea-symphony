@@ -52,7 +52,7 @@
   $: localArtifactsRefreshLabel = localRefreshStatusLabel(localArtifactsRefresh, formatTime);
   $: lifecycleEvents = selectedIssue ? buildLifecycleEvents(selectedIssue, view) : [];
   $: selectedLaneKey = laneKeyForIssue(selectedIssue);
-  $: heartbeatSummary = selectedIssue ? classifyHeartbeat($autoloopStateStore, selectedLaneKey, selectedIssue.id) : null;
+  $: heartbeatSummary = selectedIssue ? classifyHeartbeat($autoloopStateStore, selectedLaneKey, selectedIssue.id, Date.now(), laneEventEvidence(selectedIssue, view)) : null;
   $: eventLogPath = localEventLogPath(view);
   $: transcriptParsed = parseCodexTranscriptJsonl(transcriptResponse?.content ?? '');
   $: transcriptPageCount = Math.max(1, Math.ceil(transcriptParsed.events.length / transcriptPageSize));
@@ -236,6 +236,36 @@
     }));
     const events = fixtureEvents.length ? fixtureEvents : inferLifecycleEvents(issue, model);
     return dedupeEvents(events).sort((left, right) => dateMs(left.time) - dateMs(right.time));
+  }
+
+  function laneEventEvidence(issue: any, model: any) {
+    const localLifecycle = model?.raw?.localStatus?.issueLifecycle ?? {};
+    const persistedEvents = localLifecycle?.[issue?.id] ?? localLifecycle?.[issue?.id?.replace('#', '')] ?? [];
+    const issueEvents = (persistedEvents ?? []).map((event: any) => ({
+      ...event,
+      issue: issue?.id,
+      lane: laneKeyForIssue(issue),
+      source: event.source ?? 'localStatus.issueLifecycle'
+    }));
+    const fullEvents = (model?.fullEvents ?? [])
+      .filter((event: any) => eventMentionsIssue(event, issue?.id))
+      .map((event: any) => ({
+        ...event,
+        issue: event.issue ?? event.issueRef ?? issue?.id,
+        lane: event.lane ?? laneKeyForIssue(issue),
+        time: event.timestamp ?? event.time ?? event.at,
+        label: event.title ?? event.label,
+        source: event.source ?? 'operator.fullEvents'
+      }));
+    return [...issueEvents, ...fullEvents];
+  }
+
+  function eventMentionsIssue(event: any, issueRef: string) {
+    if (!issueRef) return false;
+    const normalized = normalizeIssueRef(event?.issue ?? event?.issueRef ?? event?.identifier);
+    if (normalized === issueRef) return true;
+    const text = `${event?.title ?? ''} ${event?.label ?? ''} ${event?.detail ?? ''}`;
+    return text.includes(issueRef);
   }
 
   function inferLifecycleEvents(issue: any, model: any) {
@@ -475,7 +505,7 @@
 
   function formatMsTime(value: unknown) {
     const ms = typeof value === 'number' ? value : Number(value);
-    if (!Number.isFinite(ms)) return 'unknown';
+    if (!Number.isFinite(ms) || ms < Date.UTC(2020, 0, 1)) return 'unknown';
     return new Date(ms).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' });
   }
 
@@ -574,7 +604,13 @@
         <div>
           <span>Latest lane event</span>
           <strong>{heartbeatSummary?.latestLaneEvent ?? 'No lane event visible.'}</strong>
-          <small>{heartbeatSummary?.issue ? `${heartbeatSummary.lane} · ${heartbeatSummary.issue}` : `${heartbeatSummary?.lane ?? selectedLaneKey} lane`}</small>
+          <small>
+            {heartbeatSummary?.latestLaneEventAtMs
+              ? `${formatMsTime(heartbeatSummary.latestLaneEventAtMs)} · ${heartbeatSummary.latestLaneEventAge}`
+              : heartbeatSummary?.latestLaneEventAge ?? 'unknown'}
+            {' · '}
+            {heartbeatSummary?.issue ? `${heartbeatSummary.lane} · ${heartbeatSummary.issue}` : `${heartbeatSummary?.lane ?? selectedLaneKey} lane`}
+          </small>
         </div>
         <div>
           <span>Transcript</span>

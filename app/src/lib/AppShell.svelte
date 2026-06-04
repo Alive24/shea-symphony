@@ -35,6 +35,7 @@
     type AutoloopLine,
     type LaneSnapshot,
     type LoopStateSnapshot,
+    type RunLogVerbosity,
     type GitHubUserSnapshot
   } from './tauriAutoloop.ts';
   import BrandRefreshStatus from './shell/BrandRefreshStatus.svelte';
@@ -72,6 +73,7 @@
   let refreshTimer: number | undefined;
   let logsOpen = false;
   let runLogsOpen = false;
+  let runLogVerbosity: RunLogVerbosity = 'normal';
   let expandedRunLogRows = new Set<string>();
   let autoloopBusy = false;
   let tauriAvailable = false;
@@ -225,7 +227,7 @@
   }
 
   function latestAutoloopStdout(state: LoopStateSnapshot, lines: AutoloopLine[]) {
-    return operatorRunLogLines(state, lines);
+    return operatorRunLogLines(state, lines, runLogVerbosity);
   }
 
   function laneMaxSummary(lanes: Record<string, LaneSnapshot> | undefined) {
@@ -252,6 +254,12 @@
       nextRows.add(id);
     }
     expandedRunLogRows = nextRows;
+  }
+
+  function setRunLogVerbosity(level: string) {
+    if (level === 'focus' || level === 'normal' || level === 'verbose') {
+      runLogVerbosity = level;
+    }
   }
 
   function runLogSummary(entry: AutoloopLine): RunLogSummary {
@@ -823,7 +831,21 @@
           <h2 id="autoloop-log-title">Run Logs</h2>
           <span>{autoloopState.mode} · {autoloopState.workflowPath}</span>
         </div>
-        <button class="btn btn-ghost" type="button" onclick={() => (runLogsOpen = false)}>Close</button>
+        <div class="run-log-header-actions">
+          <div class="segmented-control run-log-verbosity" aria-label="Run log verbosity">
+            {#each ['focus', 'normal', 'verbose'] as level}
+              <button
+                type="button"
+                class:active={runLogVerbosity === level}
+                aria-pressed={runLogVerbosity === level}
+                onclick={() => setRunLogVerbosity(level)}
+              >
+                {level}
+              </button>
+            {/each}
+          </div>
+          <button class="btn btn-ghost" type="button" onclick={() => (runLogsOpen = false)}>Close</button>
+        </div>
       </header>
 
       {#if autoloopStdoutLines.length}

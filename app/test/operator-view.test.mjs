@@ -119,6 +119,55 @@ test('maps live autoloop lane snapshots into existing lane board worker rows', (
   }, 'review').map((entry) => entry.issue), ['#421']);
 });
 
+test('autoloop lane workers clear issue after merge terminal events', () => {
+  const now = Date.now();
+  const state = {
+    ...defaultLoopState(),
+    running: true,
+    startedAtMs: now - 100,
+    recentLines: [
+      {
+        atMs: now,
+        stream: 'stdout',
+        line: 'Latest: merge | #428 | waiting | merge_decision',
+        event: {
+          event: 'autopilot_signal',
+          payload: {
+            visibility: 'operator',
+            scope: 'lane',
+            lane: 'merge',
+            issue: '#428',
+            status: 'waiting',
+            action: 'merge_decision',
+            message: '#428 merge waiting merge_decision'
+          }
+        }
+      },
+      {
+        atMs: now + 1,
+        stream: 'stdout',
+        line: 'merging_pool_action=claim_field_terminal issue=#428 state=done result=merged outcome=applied',
+        event: {
+          event: 'autopilot_cli_line',
+          payload: {
+            kind: 'merging_pool_action',
+            raw: 'merging_pool_action=claim_field_terminal issue=#428 state=done result=merged outcome=applied',
+            fields: {
+              issue: '#428',
+              merging_pool_action: 'claim_field_terminal',
+              state: 'done',
+              result: 'merged',
+              outcome: 'applied'
+            }
+          }
+        }
+      }
+    ]
+  };
+
+  assert.deepEqual(laneWorkersFromAutoloopLines(state, 'merge'), []);
+});
+
 test('autoloop stdout log omits repeated inactive skipped issue details', () => {
   const state = appendAutoloopLine(defaultLoopState(), {
     atMs: Date.now(),

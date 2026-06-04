@@ -408,11 +408,40 @@ export function laneWorkersFromAutoloopLines(
 
   for (const line of state.recentLines ?? []) {
     if (lowerBound != null && line.atMs < lowerBound) continue;
+    const terminalIssue = terminalIssueFromAutoloopLine(line);
+    if (terminalIssue) {
+      workers.delete(terminalIssue);
+      continue;
+    }
     const candidate = workerFromAutoloopLine(line, laneKey, state);
     if (candidate) workers.set(candidate.issue, candidate);
   }
 
   return [...workers.values()];
+}
+
+function terminalIssueFromAutoloopLine(line: AutoloopLine) {
+  const eventName = textFromValue(recordValue(line.event, 'event'));
+  if (eventName === 'autopilot_loop_lane') {
+    const payload = recordFromValue(recordValue(line.event, 'payload'));
+    const issue = issueRefFromValue(recordValue(payload, 'selected_issue') ?? recordValue(payload, 'selected'));
+    const status = textFromValue(recordValue(payload, 'status'));
+    const workUnitCompleted = booleanFromRecord(payload, 'work_unit_completed');
+    if (issue && workUnitCompleted && status === 'completed') return issue;
+  }
+  if (eventName !== 'autopilot_cli_line') return null;
+  const payload = recordFromValue(recordValue(line.event, 'payload'));
+  const fields = recordFromValue(recordValue(payload, 'fields'));
+  const issue = issueRefFromValue(recordValue(fields, 'issue'));
+  if (!issue) return null;
+  const state = textFromValue(recordValue(fields, 'state')).toLowerCase();
+  const result = textFromValue(recordValue(fields, 'result')).toLowerCase();
+  const outcome = textFromValue(recordValue(fields, 'outcome')).toLowerCase();
+  const mergeAction = textFromValue(recordValue(fields, 'merge_loop_action') ?? recordValue(fields, 'merging_pool_action'));
+  if (['done', 'closed'].includes(state)) return issue;
+  if (['merged', 'closed'].includes(result) && outcome === 'applied') return issue;
+  if (mergeAction === 'closed_issue' && outcome === 'applied') return issue;
+  return null;
 }
 
 function workerFromAutoloopLine(

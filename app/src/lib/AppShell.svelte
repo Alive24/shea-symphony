@@ -96,6 +96,7 @@
   $: latestLog = $cliLogStore[0];
   $: autoloopLogLines = autoloopState?.recentLines ?? [];
   $: autoloopStdoutLines = latestAutoloopStdout(autoloopState, autoloopLogLines);
+  $: visibleRunLogLines = autoloopStdoutLines.slice(-runLogDisplayLimit(runLogVerbosity));
   $: latestAutoloopLine = autoloopStdoutLines.slice(-1)[0]?.line ?? (autoloopState.running ? 'Loop is running' : 'No recent autoloop result');
   $: autoloopControlStore.set({
     tauriAvailable,
@@ -259,7 +260,14 @@
   function setRunLogVerbosity(level: string) {
     if (level === 'focus' || level === 'normal' || level === 'verbose') {
       runLogVerbosity = level;
+      expandedRunLogRows = new Set();
     }
+  }
+
+  function runLogDisplayLimit(level: RunLogVerbosity) {
+    if (level === 'verbose') return 180;
+    if (level === 'normal') return 120;
+    return 80;
   }
 
   function runLogSummary(entry: AutoloopLine): RunLogSummary {
@@ -387,6 +395,19 @@
       const issue = stringField(fields, 'issue');
       const status = stringField(fields, 'status');
       const action = stringField(fields, 'action');
+      const mergeAction = stringField(fields, 'merge_loop_action') ?? stringField(fields, 'merging_pool_action');
+      if (kind === 'merging_pool_action' || kind === 'merge_loop_action') {
+        const terminal = mergeTerminalSummary(issue, mergeAction, fields);
+        if (terminal) {
+          return {
+            eventName,
+            title: terminal.title,
+            detail: terminal.detail,
+            chips: terminal.chips,
+            tone: terminal.tone
+          };
+        }
+      }
       return {
         eventName,
         title: kind === 'latest' ? 'Latest lane update' : kind,
@@ -411,6 +432,35 @@
     if (value.includes('blocked') || blockers > 0) return 'warn';
     if (value.includes('completed') || value.includes('success') || value.includes('stopped')) return 'success';
     return 'info';
+  }
+
+  function mergeTerminalSummary(issue: string | null, action: string | null, fields: Record<string, unknown>) {
+    const state = stringField(fields, 'state');
+    const result = stringField(fields, 'result');
+    const outcome = stringField(fields, 'outcome');
+    if (action === 'claim_field_terminal') {
+      return {
+        title: `${issue ?? 'Issue'} marked ${state ?? 'terminal'}`,
+        detail: `Merge lane recorded terminal claim${result ? ` after ${result}` : ''}${outcome ? ` · ${outcome}` : ''}.`,
+        chips: ['merge', state, result, outcome].filter(Boolean),
+        tone: 'success' as const
+      };
+    }
+    if (action === 'closed_issue') {
+      return {
+        title: `${issue ?? 'Issue'} closed`,
+        detail: `Merge lane closed the GitHub issue${outcome ? ` · ${outcome}` : ''}.`,
+        chips: ['merge', 'closed', outcome].filter(Boolean),
+        tone: 'success' as const
+      };
+    }
+    if (!action) return null;
+    return {
+      title: `${issue ?? 'Issue'} merge action`,
+      detail: `${action}${outcome ? ` · ${outcome}` : ''}`,
+      chips: ['merge', action, outcome].filter(Boolean),
+      tone: outcome === 'applied' ? 'success' as const : 'info' as const
+    };
   }
 
   function compactRunLine(value: string) {
@@ -848,9 +898,9 @@
         </div>
       </header>
 
-      {#if autoloopStdoutLines.length}
+      {#if visibleRunLogLines.length}
         <div class="autoloop-stdout-list" aria-label="Run logs">
-          {#each autoloopStdoutLines as entry, index}
+          {#each visibleRunLogLines as entry, index}
             {@const summary = runLogSummary(entry)}
             <div class="autoloop-stdout-line">
               <time>{formatAutoloopTime(entry.atMs)}</time>

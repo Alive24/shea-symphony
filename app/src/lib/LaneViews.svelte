@@ -5,7 +5,7 @@
     localArtifactRefreshEventDetail,
     localRefreshStatusLabel
   } from './localArtifactRefresh.ts';
-  import { getCodexTranscript } from './tauriAutoloop.ts';
+  import { getCodexTranscript, openCodexThread } from './tauriAutoloop.ts';
   import {
     classifyHeartbeat,
     transcriptUnavailable
@@ -404,10 +404,14 @@
     maybeLoadTranscript(selectedIssue);
   }
 
-  function openCodexTranscript() {
+  async function openCodexTranscript() {
     if (!transcriptDeepLink) return;
-    const opened = window.open(transcriptDeepLink, '_blank');
-    if (!opened) window.location.href = transcriptDeepLink;
+    transcriptError = '';
+    try {
+      await openCodexThread(transcriptDeepLink);
+    } catch (error) {
+      transcriptError = error instanceof Error ? error.message : String(error);
+    }
   }
 
   function sessionIdForIssue(issue: any) {

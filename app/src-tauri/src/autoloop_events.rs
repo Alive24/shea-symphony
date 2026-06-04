@@ -474,7 +474,9 @@ fn optional_field(fields: &BTreeMap<String, String>, key: &str) -> Option<String
 }
 
 fn count_field(fields: &BTreeMap<String, String>, key: &str) -> Option<usize> {
-    fields.get(key).and_then(|value| value.parse::<usize>().ok())
+    fields
+        .get(key)
+        .and_then(|value| value.parse::<usize>().ok())
 }
 
 fn string_json_field(payload: &Value, key: &str) -> Option<String> {

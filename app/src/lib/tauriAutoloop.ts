@@ -157,6 +157,15 @@ export async function getCodexTranscript(issueRef: string, sessionId: string | n
   return invoke<Record<string, unknown>>('get_codex_transcript', { issueRef, sessionId });
 }
 
+export async function openCodexThread(deepLink: string): Promise<void> {
+  if (!isTauriRuntime()) {
+    window.location.href = deepLink;
+    return;
+  }
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('open_codex_thread', { deepLink });
+}
+
 export async function startAutoloop(options: StartAutoloopOptions = {}): Promise<LoopStateSnapshot> {
   if (!isTauriRuntime()) {
     throw new Error('Tauri runtime is unavailable; open Shea Symphony App in the desktop shell.');

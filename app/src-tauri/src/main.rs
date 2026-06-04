@@ -2,6 +2,7 @@ mod autoloop;
 mod autoloop_events;
 mod autoloop_state;
 mod cli;
+mod external_links;
 mod github;
 mod read_surfaces;
 
@@ -18,7 +19,8 @@ fn main() {
             github::get_github_user,
             read_surfaces::get_operator_overview,
             read_surfaces::get_read_surface,
-            read_surfaces::get_codex_transcript
+            read_surfaces::get_codex_transcript,
+            external_links::open_codex_thread
         ])
         .run(tauri::generate_context!())
         .expect("error while running Shea Symphony App");

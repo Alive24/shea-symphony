@@ -939,13 +939,17 @@ test('Codex transcript parser marks malformed still-growing JSONL as partial', (
 
 test('Codex conversation surface uses a deep link summary instead of transcript rendering', () => {
   const laneViews = readFileSync(new URL('../src/lib/LaneViews.svelte', import.meta.url), 'utf8');
+  const tauriAutoloop = readFileSync(new URL('../src/lib/tauriAutoloop.ts', import.meta.url), 'utf8');
 
   assert.match(laneViews, /Open in Codex/);
   assert.match(laneViews, /transcriptDeepLink/);
   assert.match(laneViews, /lastUserMessageAt/);
   assert.match(laneViews, /lastAssistantMessageAt/);
+  assert.match(laneViews, /openCodexThread\(transcriptDeepLink\)/);
+  assert.match(tauriAutoloop, /open_codex_thread/);
   assert.doesNotMatch(laneViews, /JsonLogView/);
   assert.doesNotMatch(laneViews, /transcriptPageEvents/);
+  assert.doesNotMatch(laneViews, /window\.open\(transcriptDeepLink/);
 });
 
 test('missing transcript state is local-only and explicit', () => {

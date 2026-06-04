@@ -136,14 +136,75 @@ const transientTitleLabels = new Set([
 ]);
 
 function issueMeta(issue: any) {
-  return [
-    issue.state,
-    issue.workerStatus,
-    issue.workerDetail,
-    issue.evidence,
-    issue.recommended
-  ].filter(Boolean).join(' · ');
+  const state = cleanMetaPart(issue.state);
+  const workerStatus = cleanMetaPart(issue.workerStatus);
+  const workerDetail = cleanMetaPart(issue.workerDetail);
+  const recommended = cleanMetaPart(issue.recommended);
+  const evidenceParts = evidenceMetaParts(issue.evidence, state);
+  const parts = [
+    quietDefaultState(state) ? null : state,
+    quietDefaultWorkerStatus(workerStatus) ? null : workerStatus,
+    quietDefaultWorkerDetail(workerDetail) ? null : workerDetail,
+    ...evidenceParts,
+    quietDefaultRecommendation(recommended, state) ? null : recommended
+  ].filter(Boolean);
+  return dedupeMetaParts(parts).join(' · ');
 }
+
+function cleanMetaPart(value: any) {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  return text ? text : null;
+}
+
+function evidenceMetaParts(value: any, state: string | null) {
+  const text = cleanMetaPart(value);
+  if (!text) return [];
+  const parts = text.split(' · ').map((part) => part.trim()).filter(Boolean);
+  const filtered = parts.filter((part) => {
+    if (sameMeta(part, state)) return false;
+    return !defaultEvidenceSourceLabels.has(part.toLowerCase());
+  });
+  return filtered.length ? filtered : [];
+}
+
+function quietDefaultState(state: string | null) {
+  return sameMeta(state, 'Todo');
+}
+
+function quietDefaultWorkerStatus(status: string | null) {
+  return sameMeta(status, 'No worker visible');
+}
+
+function quietDefaultWorkerDetail(detail: string | null) {
+  return sameMeta(detail, 'Project is waiting in this lane; no current worker session is visible.');
+}
+
+function quietDefaultRecommendation(recommended: string | null, state: string | null) {
+  return sameMeta(state, 'Todo') && sameMeta(recommended, 'Run Issue Quality Gate before dispatch.');
+}
+
+function dedupeMetaParts(parts: (string | null)[]) {
+  const seen = new Set();
+  return parts.filter((part) => {
+    if (!part) return false;
+    const key = part.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function sameMeta(left: string | null, right: string | null) {
+  return String(left ?? '').trim().toLowerCase() === String(right ?? '').trim().toLowerCase();
+}
+
+const defaultEvidenceSourceLabels = new Set([
+  'github queue',
+  'project state',
+  'runtime state',
+  'autopilot plan'
+]);
 
 function laneStatusRow(snapshot: any) {
   const status = String(snapshot?.status ?? '').toLowerCase();

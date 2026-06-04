@@ -564,6 +564,81 @@ test('lane throughput board keeps independent running and queued lane work visib
   assert.deepEqual(merge.issues.map((issue) => issue.id), ['#430']);
 });
 
+test('lane throughput board suppresses default queued Todo metadata', () => {
+  const board = buildLaneThroughputBoard({
+    queueIssues: [
+      {
+        id: '#428',
+        title: 'Fix Codex transcript rendering with timestamps and pagination',
+        lane: 'Main',
+        state: 'Todo',
+        workerStatus: 'No worker visible',
+        workerDetail: 'Project is waiting in this lane; no current worker session is visible.',
+        evidence: 'project state · Todo',
+        recommended: 'Run Issue Quality Gate before dispatch.',
+        tone: 'neutral'
+      }
+    ]
+  });
+
+  const mainIssue = board.find((lane) => lane.laneKey === 'main').issues.find((issue) => issue.id === '#428');
+
+  assert.equal(mainIssue.title, 'Fix Codex transcript rendering with timestamps and pagination');
+  assert.equal(mainIssue.meta, '');
+});
+
+test('lane throughput board keeps concise queued exception metadata visible', () => {
+  const board = buildLaneThroughputBoard({
+    queueIssues: [
+      {
+        id: '#431',
+        title: 'Repair review finding',
+        lane: 'Main',
+        state: 'Rework',
+        workerStatus: 'No worker visible',
+        workerDetail: 'Project is waiting in this lane; no current worker session is visible.',
+        evidence: 'project state · Rework',
+        recommended: 'Main lane can resume after checking rework evidence.',
+        tone: 'warn'
+      },
+      {
+        id: '#432',
+        title: 'Investigate blocked dispatch',
+        lane: 'Main',
+        state: 'Blocked',
+        workerStatus: 'Worker read unavailable',
+        workerDetail: 'Worker session surface is unavailable; match status is unknown.',
+        evidence: 'project state · Blocked · stale session',
+        recommended: 'Inspect issue and diagnostics before choosing a lane.',
+        tone: 'danger'
+      },
+      {
+        id: '#433',
+        title: 'Recover parked run',
+        lane: 'Main',
+        state: 'Todo',
+        workerStatus: 'No worker visible',
+        workerDetail: 'Recovered lane event needs operator attention.',
+        evidence: 'project state · Todo · Recovered',
+        recommended: 'Inspect recovered run evidence.',
+        tone: 'warn'
+      }
+    ]
+  });
+
+  const main = board.find((lane) => lane.laneKey === 'main');
+  const rework = main.issues.find((issue) => issue.id === '#431');
+  const blocked = main.issues.find((issue) => issue.id === '#432');
+  const recovered = main.issues.find((issue) => issue.id === '#433');
+
+  assert.equal(rework.meta, 'Rework · Main lane can resume after checking rework evidence.');
+  assert.equal(
+    blocked.meta,
+    'Blocked · Worker read unavailable · Worker session surface is unavailable; match status is unknown. · stale session · Inspect issue and diagnostics before choosing a lane.'
+  );
+  assert.equal(recovered.meta, 'Recovered lane event needs operator attention. · Recovered · Inspect recovered run evidence.');
+});
+
 test('lane throughput board keeps issue identity ahead of transient worker labels', () => {
   const board = buildLaneThroughputBoard({
     queueIssues: [

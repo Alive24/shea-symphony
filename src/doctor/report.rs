@@ -1,6 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::model::TrackerIssue;
+use crate::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 
 use super::{
     claimed_main_agent, issue_refs_match,
@@ -15,61 +16,59 @@ pub fn render_doctor_repair_workpad(
     action: &str,
 ) -> String {
     let related = related_violations(report, &issue.identifier);
-    let mut lines = vec![
-        "## Shea Symphony Doctor Triage".to_string(),
-        String::new(),
-        format!("- Generated at: `{}`", current_gmt_timestamp()),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        "- Lane: `doctor`".to_string(),
-        "- Actor role: `doctor`".to_string(),
-        "- Actor: `shea-symphony doctor`".to_string(),
-        "- Run ID: `doctor-repair`".to_string(),
-        format!("- Input state: `{}`", issue.state),
-        format!(
-            "- Target state after repair: `{}`",
-            doctor_target_state(action)
-        ),
-        format!("- Result: `{}`", doctor_result(action)),
-        format!("- Requested action: `{action}`"),
-    ];
+    let mut extra_lines = Vec::new();
 
     if let Some(main_agent) = claimed_main_agent(issue) {
-        lines.push(format!("- Main Agent: `{main_agent}`"));
+        extra_lines.push(format!("- Main Agent: `{main_agent}`"));
     }
     if let Some(branch) = issue.branch_name.as_deref() {
-        lines.push(format!("- Tracker branch: `{branch}`"));
+        extra_lines.push(format!("- Tracker branch: `{branch}`"));
     }
     if has_pr_url(issue) {
         let targets = reliable_pr_targets(issue).join(", ");
-        lines.push(format!("- PR evidence: `{targets}`"));
+        extra_lines.push(format!("- PR evidence: `{targets}`"));
     } else {
-        lines.push("- PR evidence: `not recorded`".into());
-    }
-    lines.push(format!(
-        "- Evidence summary: {} issue-specific doctor finding(s) captured before repair.",
-        related.len()
-    ));
-
-    lines.extend([String::new(), "### Doctor Findings".to_string()]);
-    if related.is_empty() {
-        lines.push("- No issue-specific doctor violations were found.".to_string());
-    } else {
-        for violation in related {
-            lines.push(format!(
-                "- `{}` ({:?}): {}",
-                violation.code, violation.severity, violation.message
-            ));
-        }
+        extra_lines.push("- PR evidence: `not recorded`".into());
     }
 
-    lines.extend([
-        String::new(),
-        "### State Boundary".to_string(),
-        "- Doctor repair records evidence before any tracker mutation.".to_string(),
-        "- This repair does not delete worktrees, discard local work, or bypass review/merge lane authority.".to_string(),
-    ]);
+    let doctor_findings = if related.is_empty() {
+        "- No issue-specific doctor violations were found.".to_string()
+    } else {
+        related
+            .iter()
+            .map(|violation| {
+                format!(
+                    "- `{}` ({:?}): {}",
+                    violation.code, violation.severity, violation.message
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
 
-    lines.join("\n")
+    render_workpad_template(
+        None,
+        WorkpadTemplateId::DoctorTriage,
+        &[
+            ("generated_at", current_gmt_timestamp()),
+            ("issue_ref", issue.identifier.clone()),
+            ("issue_title", issue.title.clone()),
+            ("run_id", "doctor-repair".into()),
+            ("input_state", issue.state.clone()),
+            ("target_state", doctor_target_state(action).into()),
+            ("result", doctor_result(action).into()),
+            ("action", action.into()),
+            ("extra_lines", extra_lines.join("\n")),
+            (
+                "evidence_summary",
+                format!(
+                    "{} issue-specific doctor finding(s) captured before repair.",
+                    related.len()
+                ),
+            ),
+            ("doctor_findings", doctor_findings),
+        ],
+    )
 }
 
 pub fn render_project_audit_report(report: &ProjectAuditReport) -> String {
@@ -129,30 +128,19 @@ pub fn draft_pr_repair_candidates(report: &ProjectAuditReport) -> Vec<&ProjectAu
 }
 
 pub fn render_human_review_repair_workpad(violation: &ProjectAuditViolation) -> String {
-    [
-        "## Shea Symphony Doctor Triage".to_string(),
-        String::new(),
-        format!("- Generated at: `{}`", current_gmt_timestamp()),
-        format!("- Issue: {} {}", violation.issue_ref, violation.title),
-        "- Lane: `doctor`".into(),
-        "- Actor role: `doctor`".into(),
-        "- Actor: `shea-symphony doctor`".into(),
-        "- Run ID: `doctor-human-review-repair`".into(),
-        format!("- Input state: `{}`", violation.state),
-        "- Target state after repair: `Agent Review`".into(),
-        "- Result: `repair_recorded`".into(),
-        "- PR evidence: `not recorded`".into(),
-        format!("- Violation: `{}`", violation.code),
-        format!("- Previous state: `{}`", violation.state),
-        format!("- Message: {}", violation.message),
-        format!("- Repair: {}", violation.suggestion),
-        "- Evidence summary: invalid Human Review boundary repair evidence recorded before tracker mutation.".to_string(),
-        String::new(),
-        "### State Boundary".to_string(),
-        "- Main implementation agent is moving this issue back to `Agent Review`.".to_string(),
-        "- This repair does not set `Human Review`; that state requires independent Review Agent pass evidence.".to_string(),
-    ]
-    .join("\n")
+    render_workpad_template(
+        None,
+        WorkpadTemplateId::HumanReviewRepair,
+        &[
+            ("generated_at", current_gmt_timestamp()),
+            ("issue_ref", violation.issue_ref.clone()),
+            ("issue_title", violation.title.clone()),
+            ("input_state", violation.state.clone()),
+            ("violation_code", violation.code.clone()),
+            ("message", violation.message.clone()),
+            ("repair", violation.suggestion.clone()),
+        ],
+    )
 }
 
 pub fn render_project_audit_report_json(

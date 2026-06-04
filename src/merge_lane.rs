@@ -9,6 +9,7 @@ use crate::git_handoff::{CommandOutput, GitHandoffError, HandoffCommandRunner};
 use crate::handoff::branch_target_evidence;
 use crate::lane_claim::LaneClaim;
 use crate::model::{normalize_state, LinkedPullRequest, TrackerIssue};
+use crate::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PullRequestMergeStatus {
@@ -695,64 +696,34 @@ pub fn merge_lane_workpad_with_repair_evidence(
     merge_output: Option<&CommandOutput>,
     repair_evidence: Option<&MergeRepairEvidence>,
 ) -> String {
-    let mut lines = vec![
-        "## Shea Symphony Merge Run".to_string(),
-        String::new(),
-        format!("- Generated at: `{}`", current_gmt_timestamp()),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        "- Lane: `merge`".to_string(),
-        "- Actor role: `merge_agent`".to_string(),
+    let branch_target = branch_target_evidence(issue, expected_merge_base_branch_for_workpad());
+    let mut preflight = vec![
+        "- This lane only consumes issues already in `Merging`.".to_string(),
+        "- It must not move work into `Human Review`.".to_string(),
+        "- It records diagnostics before any tracker state transition.".to_string(),
         format!("- Actor: `{}`", merge_actor(issue)),
         format!("- Run ID: `{}`", merge_run_id(issue)),
         "- Source: `shea-symphony merge once`".to_string(),
         "- Input state: `Merging`".to_string(),
-        format!("- Decision: `{:?}`", decision.kind),
-        format!("- Result: `{}`", merge_result(decision)),
         format!("- Reason: {}", decision.reason),
+        "### Branch Target Evidence".to_string(),
+        format!("- Role: `{:?}`", branch_target.role),
         format!(
-            "- Pull request: `{}`",
-            decision.pr_url.as_deref().unwrap_or("missing")
+            "- Expected PR base branch: `{}`",
+            branch_target.pull_request_base_branch
         ),
-        format!(
-            "- Target state after merge routing: `{}`",
-            decision.target_state.unwrap_or("none")
-        ),
-        format!(
-            "- Evidence summary: merge decision `{}`; command evidence `{}`.",
-            merge_result(decision),
-            if merge_output.is_some() {
-                "recorded"
-            } else {
-                "not recorded"
-            }
-        ),
-        String::new(),
-        "### Authority Boundary".to_string(),
-        "- This lane only consumes issues already in `Merging`.".to_string(),
-        "- It must not move work into `Human Review`.".to_string(),
-        "- It records diagnostics before any tracker state transition.".to_string(),
     ];
-    let branch_target = branch_target_evidence(issue, expected_merge_base_branch_for_workpad());
-    lines.push(String::new());
-    lines.push("### Branch Target Evidence".to_string());
-    lines.push(format!("- Role: `{:?}`", branch_target.role));
-    lines.push(format!(
-        "- Expected PR base branch: `{}`",
-        branch_target.pull_request_base_branch
-    ));
     if let Some(parent_issue) = branch_target.parent_issue {
-        lines.push(format!("- Native parent issue: `{parent_issue}`"));
+        preflight.push(format!("- Native parent issue: `{parent_issue}`"));
     }
     if let Some(parent_integration_branch) = branch_target.parent_integration_branch {
-        lines.push(format!(
+        preflight.push(format!(
             "- Parent integration branch: `{parent_integration_branch}`"
         ));
     }
 
-    if let Some(output) = merge_output {
-        lines.extend([
-            String::new(),
-            "### Merge Command Evidence".to_string(),
+    let merge_action = if let Some(output) = merge_output {
+        [
             format!("- Exit status: `{}`", output.status),
             format!(
                 "- Stdout: `{}`",
@@ -762,13 +733,14 @@ pub fn merge_lane_workpad_with_repair_evidence(
                 "- Stderr: `{}`",
                 compact_merge_workpad_field(&output.stderr)
             ),
-        ]);
-    }
+        ]
+        .join("\n")
+    } else {
+        "- Merge command evidence: `not recorded`".into()
+    };
 
-    if let Some(evidence) = repair_evidence {
-        lines.extend([
-            String::new(),
-            "### Merge Repair Evidence".to_string(),
+    let merge_repair_evidence = if let Some(evidence) = repair_evidence {
+        [
             format!(
                 "- Method: `{}`",
                 compact_merge_workpad_field(&evidence.method)
@@ -797,14 +769,52 @@ pub fn merge_lane_workpad_with_repair_evidence(
                 "- Next-state rationale: {}",
                 compact_merge_workpad_field(&evidence.next_state_rationale)
             ),
-        ]);
-    }
+        ]
+        .join("\n")
+    } else {
+        "- Merge repair evidence: `not recorded`".into()
+    };
+    let post_merge_readback = "- Post-merge readback is recorded by the surrounding merge lane transition and tracker readback paths.".to_string();
 
-    if decision.target_state == Some("need_human_input") {
-        lines.extend(required_human_input_section(decision));
-    }
+    let required_human_input = if decision.target_state == Some("need_human_input") {
+        required_human_input_section(decision).join("\n")
+    } else {
+        String::new()
+    };
 
-    lines.join("\n")
+    render_workpad_template(
+        None,
+        WorkpadTemplateId::MergeRun,
+        &[
+            ("generated_at", current_gmt_timestamp()),
+            ("issue_ref", issue.identifier.clone()),
+            ("issue_title", issue.title.clone()),
+            ("result", merge_result(decision).into()),
+            (
+                "target_state",
+                decision.target_state.unwrap_or("none").into(),
+            ),
+            ("pr", decision.pr_url.as_deref().unwrap_or("missing").into()),
+            ("decision", format!("{:?}", decision.kind)),
+            (
+                "evidence_summary",
+                format!(
+                    "merge decision `{}`; command evidence `{}`.",
+                    merge_result(decision),
+                    if merge_output.is_some() {
+                        "recorded"
+                    } else {
+                        "not recorded"
+                    }
+                ),
+            ),
+            ("preflight", preflight.join("\n")),
+            ("merge_action", merge_action),
+            ("post_merge_readback", post_merge_readback),
+            ("merge_repair_evidence", merge_repair_evidence),
+            ("required_human_input", required_human_input),
+        ],
+    )
 }
 
 fn merge_actor(issue: &TrackerIssue) -> String {

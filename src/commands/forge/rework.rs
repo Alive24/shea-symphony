@@ -4,6 +4,7 @@ use shea_symphony::config::RuntimeConfig;
 use shea_symphony::lane_claim::{LaneClaim, LaneClaimLane};
 use shea_symphony::model::{normalize_state, TrackerIssue};
 use shea_symphony::tracker::{adapter_from_config, TrackerAdapter};
+use shea_symphony::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 
 use crate::cli::ForgeStatusArg;
 use crate::commands::session::timeline_pr_summary;
@@ -303,70 +304,37 @@ fn render_forge_rework_workpad(
     evidence: &str,
     generated_readbacks: &[String],
 ) -> String {
-    let mut lines = vec![
-        "## Shea Symphony Rework Run".to_string(),
-        String::new(),
-        format!("- Generated at: `{}`", current_gmt_timestamp()),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        "- Lane: `main`".into(),
-        "- Actor role: `human_review_revision`".into(),
-        "- Actor: `operator`".into(),
-        "- Run ID: `forge-rework`".into(),
-        "- Run type: `human_review_rework_revision`".into(),
-        "- Input state: `Human Review`".into(),
-        "- Target state after run: `Rework`".into(),
-        "- Result: `rework_revision_recorded`".into(),
-        format!("- PR: `{}`", timeline_pr_summary(issue)),
-        format!("- Replacement Rework title/status: `{rework_title}` / `Rework`"),
-        format!("- Operator confirmation: {operator_confirmation:?}"),
-        "- Evidence summary: operator confirmation, replacement contract, and readback evidence recorded.".into(),
-        "- Source state validated as `Human Review` before mutation.".into(),
-        "- Terminal lane claims, when present, were preserved as audit pointers.".into(),
-        "- Active lane claims in `Human Review` are rejected before content or status writes."
-            .into(),
-        "- Replacement body was written and read back before the final Project status mutation."
-            .into(),
-        "- Final Project status mutation is `Rework`.".into(),
-        String::new(),
-        "### Rework Direction".into(),
-        String::new(),
-        evidence.trim().to_string(),
-        String::new(),
-        "### Verification Readback".into(),
-        String::new(),
-    ];
-    push_markdown_bullets(&mut lines, generated_readbacks);
-    lines.extend([
-        String::new(),
-        "### Role Boundary".into(),
-        String::new(),
-        "- Main Agent may claim `Rework`, repair the revised contract, and stop at `Agent Review`."
-            .into(),
-        "- `Human Review` remains reserved for independent Review Agent pass evidence.".into(),
-    ]);
-    lines.join("\n")
+    let mut readback_lines = Vec::new();
+    push_markdown_bullets(&mut readback_lines, generated_readbacks);
+    render_workpad_template(
+        None,
+        WorkpadTemplateId::ForgeReworkRun,
+        &[
+            ("generated_at", current_gmt_timestamp()),
+            ("issue_ref", issue.identifier.clone()),
+            ("issue_title", issue.title.clone()),
+            ("pr", timeline_pr_summary(issue)),
+            ("rework_title", rework_title.into()),
+            (
+                "operator_confirmation",
+                format!("{operator_confirmation:?}"),
+            ),
+            ("evidence", evidence.trim().into()),
+            ("readbacks", readback_lines.join("\n")),
+        ],
+    )
 }
 
 fn render_forge_rework_blocked_workpad(issue: &TrackerIssue, reason: &str) -> String {
-    [
-        "## Shea Symphony Rework Run".to_string(),
-        String::new(),
-        format!("- Generated at: `{}`", current_gmt_timestamp()),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        "- Lane: `main`".into(),
-        "- Actor role: `human_review_revision`".into(),
-        "- Actor: `operator`".into(),
-        "- Run ID: `forge-rework`".into(),
-        "- Run type: `human_review_rework_revision`".into(),
-        "- Source state: `Human Review`".into(),
-        "- Target state after run: `unchanged`".into(),
-        "- Result: `blocked`".into(),
-        format!("- PR: `{}`", timeline_pr_summary(issue)),
-        format!("- Blocker: {reason}"),
-        "- Evidence summary: blocked rework revision recorded before any state mutation.".into(),
-        "- No replacement body was written.".into(),
-        "- Project status was not changed to `Rework`.".into(),
-        "- Resolve or supersede the active lane claim before retrying `forge rework`.".into(),
-    ]
-    .join("\n")
+    render_workpad_template(
+        None,
+        WorkpadTemplateId::ForgeReworkBlocked,
+        &[
+            ("generated_at", current_gmt_timestamp()),
+            ("issue_ref", issue.identifier.clone()),
+            ("issue_title", issue.title.clone()),
+            ("pr", timeline_pr_summary(issue)),
+            ("reason", reason.into()),
+        ],
+    )
 }

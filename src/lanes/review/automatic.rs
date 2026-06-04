@@ -14,12 +14,12 @@ use shea_symphony::prompt::render_prompt;
 use shea_symphony::prompt_runtime::AUTOMATIC_HEADLESS_REVIEW_BOUNDARY;
 use shea_symphony::review::{
     gemini_cli_headless_args, gemini_prelaunch_health_diagnostic, gemini_review_health_diagnostic,
-    poll_review_job_until_terminal, render_repeated_review_failure_workpad, render_review_workpad,
-    review_failure_signature, review_gate_decision_for_issue, review_run_eligibility,
-    review_worker_key, transition_allowed_for_review_agent, write_review_job_ledger_record,
-    FakeReviewBackend, FakeReviewOutcome, GeminiCliReviewBackend, GeminiReviewRecoveryPolicy,
-    ReviewBackend, ReviewGateDecision, ReviewJob, ReviewJobState, ReviewOutcome,
-    ReviewRepeatedFailureEvidence, ReviewRequest, ReviewRunEligibility,
+    poll_review_job_until_terminal, render_repeated_review_failure_workpad,
+    render_review_workpad_with_workflow, review_failure_signature, review_gate_decision_for_issue,
+    review_run_eligibility, review_worker_key, transition_allowed_for_review_agent,
+    write_review_job_ledger_record, FakeReviewBackend, FakeReviewOutcome, GeminiCliReviewBackend,
+    GeminiReviewRecoveryPolicy, ReviewBackend, ReviewGateDecision, ReviewJob, ReviewJobState,
+    ReviewOutcome, ReviewRepeatedFailureEvidence, ReviewRequest, ReviewRunEligibility,
 };
 use shea_symphony::rework::rework_transition_expected;
 #[cfg(test)]
@@ -67,6 +67,7 @@ pub(crate) fn review_fake(
     let backend = FakeReviewBackend::new(outcome);
     let job = backend.poll(backend.start(request)?)?;
     apply_review_result(
+        Some(&workflow),
         &config,
         adapter.as_ref(),
         &issue_ref,
@@ -136,6 +137,7 @@ pub(crate) fn review_once(
         }
     };
     apply_review_result(
+        Some(&workflow),
         &config,
         adapter.as_ref(),
         &issue_ref,
@@ -535,6 +537,7 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
             let repeat_evidence =
                 review_loop_repeated_failure_evidence(&mut failure_memory, &latest, &job);
             apply_review_result(
+                Some(&workflow),
                 &config,
                 adapter.as_ref(),
                 &latest.identifier,
@@ -898,6 +901,7 @@ impl ReviewLoopOptions {
 }
 
 pub(crate) fn apply_review_result(
+    workflow: Option<&WorkflowDefinition>,
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
     issue_ref: &str,
@@ -930,14 +934,14 @@ pub(crate) fn apply_review_result(
             return Err("review agent transition is not allowed for this review decision".into());
         }
         if rework_transition_expected(&decision) {
-            transition_review_issue_to_rework_with_workpad(config, adapter, issue, job)?;
+            transition_review_issue_to_rework_with_workpad(workflow, config, adapter, issue, job)?;
             return Ok(());
         }
     }
 
     let workpad = repeat_evidence
         .map(|evidence| render_repeated_review_failure_workpad(issue, job, evidence))
-        .unwrap_or_else(|| render_review_workpad(issue, job));
+        .unwrap_or_else(|| render_review_workpad_with_workflow(workflow, issue, job));
     let evidence_key = recovery_key(
         "review-result",
         issue_ref,
@@ -1177,12 +1181,13 @@ pub(crate) fn transition_issue_to_rework_with_diagnostic(
 }
 
 fn transition_review_issue_to_rework_with_workpad(
+    workflow: Option<&WorkflowDefinition>,
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
     issue: &TrackerIssue,
     job: &ReviewJob,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let workpad = render_review_workpad(issue, job);
+    let workpad = render_review_workpad_with_workflow(workflow, issue, job);
     let evidence_key = recovery_key(
         "review-rework",
         &issue.identifier,

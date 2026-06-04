@@ -8,6 +8,7 @@ use shea_symphony::model::{normalize_state, TrackerIssue};
 use shea_symphony::progress::run_with_progress_heartbeat;
 use shea_symphony::review::review_pass_target_state;
 use shea_symphony::tracker::{adapter_from_config, ProjectFieldAssignment, TrackerAdapter};
+use shea_symphony::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 
 use crate::commands::session::{
     record_manual_lane_claim_evidence, timeline_claim_actor, timeline_claim_run,
@@ -400,52 +401,41 @@ pub(crate) fn render_manual_review_workpad(
     current_claim_value: &str,
     terminal_claim_value: &str,
 ) -> String {
-    let mut lines = vec![
-        "## Shea Symphony Agent Review Run".to_string(),
-        String::new(),
-        format!("- Generated at: `{}`", current_gmt_timestamp()),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        "- Lane: `review`".into(),
-        "- Actor role: `review_agent`".into(),
-        format!(
-            "- Actor: `{}`",
-            timeline_claim_actor(current_claim_value).unwrap_or("manual-operator".into())
-        ),
-        format!(
-            "- Run ID: `{}`",
-            timeline_claim_run(current_claim_value).unwrap_or("not recorded".into())
-        ),
-        "- Input state: `Agent Review`".into(),
-        "- Reviewer backend: manual-operator".into(),
-        format!("- Decision: Manual independent review {decision}."),
-        format!("- Target state after review routing: `{target_state}`"),
-        format!("- Result: `{}`", if pass { "passed" } else { "rework" }),
-        format!("- PR: `{}`", timeline_pr_summary(issue)),
-        format!("- Review Agent claim: `{current_claim_value}`"),
-        format!("- Terminal Review Agent claim: `{terminal_claim_value}`"),
-        "- Evidence summary: manual review evidence captured below.".into(),
-        String::new(),
-        "### Manual Review Evidence".into(),
-        "````md".into(),
-    ];
-    lines.extend(evidence.trim().lines().map(str::to_string));
-    lines.push("````".into());
-    if pass {
-        lines.push(String::new());
-        lines.push("- Review pass evidence: `recorded`".into());
+    let result_note = if pass {
         if normalize_state(target_state) == "merging" {
-            lines.push("Evidence recorded. Independent Review Agent may move this native subissue directly to Merging; final Human Review and UAT remain owned by the parent issue.".into());
+            "- Review pass evidence: `recorded`\nEvidence recorded. Independent Review Agent may move this native subissue directly to Merging; final Human Review and UAT remain owned by the parent issue.".into()
         } else {
-            lines.push("Evidence recorded. Independent Review Agent may move this issue to Human Review; the main implementation agent must not.".into());
+            "- Review pass evidence: `recorded`\nEvidence recorded. Independent Review Agent may move this issue to Human Review; the main implementation agent must not.".into()
         }
     } else {
-        lines.push(String::new());
-        lines.push(
-            "- Review did not pass; unavailable or inconclusive review must not move to Human Review."
-                .into(),
-        );
-    }
-    lines.join("\n")
+        "- Review did not pass; unavailable or inconclusive review must not move to Human Review."
+            .into()
+    };
+    render_workpad_template(
+        None,
+        WorkpadTemplateId::ManualReview,
+        &[
+            ("generated_at", current_gmt_timestamp()),
+            ("issue_ref", issue.identifier.clone()),
+            ("issue_title", issue.title.clone()),
+            (
+                "actor",
+                timeline_claim_actor(current_claim_value).unwrap_or("manual-operator".into()),
+            ),
+            (
+                "run_id",
+                timeline_claim_run(current_claim_value).unwrap_or("not recorded".into()),
+            ),
+            ("decision", decision.into()),
+            ("target_state", target_state.into()),
+            ("result", if pass { "passed" } else { "rework" }.into()),
+            ("pr", timeline_pr_summary(issue)),
+            ("current_claim", current_claim_value.into()),
+            ("terminal_claim", terminal_claim_value.into()),
+            ("evidence", evidence.trim().into()),
+            ("result_note", result_note),
+        ],
+    )
 }
 
 pub(crate) fn validate_manual_review_pass_claim(

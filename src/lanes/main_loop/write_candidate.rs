@@ -10,6 +10,7 @@ use shea_symphony::runtime_state::{
 };
 use shea_symphony::tracker::TrackerAdapter;
 use shea_symphony::workflow::WorkflowDefinition;
+use shea_symphony::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 
 use super::dispatch::RunLoopWorkerOutcome;
 mod live_handoff;
@@ -729,22 +730,19 @@ fn run_loop_parent_topology_workpad(
         .parent_final_base_branch
         .as_deref()
         .unwrap_or("n/a");
-    [
-        "## Shea Symphony Workpad".to_string(),
-        String::new(),
-        "### Parent Topology".to_string(),
-        format!(
-            "- Parent issue: {} {}",
-            parent_issue.identifier, parent_issue.title
-        ),
-        format!(
-            "- First observed subissue: {} {}",
-            issue.identifier, issue.title
-        ),
-        format!("- Parent integration branch: `{parent_integration_branch}`"),
-        format!("- Parent final base branch: `{parent_final_base_branch}`"),
-        "- Source: `shea-symphony main loop parent topology ensure`".to_string(),
-        "- Purpose: durable branch evidence before native subissue PR handoff.".to_string(),
-    ]
-    .join("\n")
+    render_workpad_template(
+        None,
+        WorkpadTemplateId::ParentTopology,
+        &[
+            ("parent_issue_ref", parent_issue.identifier.clone()),
+            ("parent_issue_title", parent_issue.title.clone()),
+            ("issue_ref", issue.identifier.clone()),
+            ("issue_title", issue.title.clone()),
+            (
+                "parent_integration_branch",
+                parent_integration_branch.into(),
+            ),
+            ("parent_final_base_branch", parent_final_base_branch.into()),
+        ],
+    )
 }

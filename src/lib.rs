@@ -31,6 +31,7 @@ pub mod skill_status;
 pub mod status_surface;
 pub mod tracker;
 pub mod workflow;
+pub mod workpad_templates;
 pub mod workspace;
 
 pub use config::RuntimeConfig;

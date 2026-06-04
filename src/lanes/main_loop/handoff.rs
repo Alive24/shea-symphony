@@ -18,6 +18,7 @@ use shea_symphony::ownership::{render_runtime_ownership_marker, RuntimeOwnership
 use shea_symphony::profiles::selected_execution_profile;
 use shea_symphony::runtime_state::RuntimeState;
 use shea_symphony::tracker::TrackerAdapter;
+use shea_symphony::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 use shea_symphony::workspace::run_workspace_command;
 
 use super::IssueExecutionResult;
@@ -530,20 +531,21 @@ pub(crate) fn run_loop_ownership_workpad(
     event: &str,
     claim: &LaneClaim,
 ) -> String {
-    [
-        "## Shea Symphony Workpad".to_string(),
-        String::new(),
-        "### Runtime Ownership".to_string(),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        format!("- Event: `{event}`"),
-        format!("- Run: `{}`", claim.run),
-        format!("- Claim: `{}`", claim.render()),
-        "- This marker is advisory tracker-visible ownership for active `In Progress` work.".into(),
-        "- Another main loop profile should not resume this issue when the marker differs.".into(),
-        String::new(),
-        render_runtime_ownership_marker(ownership),
-    ]
-    .join("\n")
+    render_workpad_template(
+        None,
+        WorkpadTemplateId::MainRuntimeOwnership,
+        &[
+            ("issue_ref", issue.identifier.clone()),
+            ("issue_title", issue.title.clone()),
+            ("event", event.into()),
+            ("run", claim.run.clone()),
+            ("claim", claim.render()),
+            (
+                "runtime_ownership_marker",
+                render_runtime_ownership_marker(ownership),
+            ),
+        ],
+    )
 }
 
 pub(crate) fn run_loop_live_handoff_enabled(config: &RuntimeConfig) -> bool {
@@ -609,33 +611,7 @@ pub(crate) fn run_loop_handoff_workpad(
     handoff: &IssueHandoffPlan,
     ownership: Option<&RuntimeOwnershipMarker>,
 ) -> String {
-    let mut lines = vec![
-        "## Shea Symphony Workpad".to_string(),
-        String::new(),
-        "### Context".to_string(),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        "- Source: `shea-symphony main loop`".to_string(),
-        String::new(),
-        "### Plan".to_string(),
-        "- [x] Read the issue contract, Project state, Main Workpad, and timeline evidence."
-            .to_string(),
-        "- [x] Prepare or resume the isolated issue workspace and branch.".to_string(),
-        "- [x] Run the configured Main Agent backend for the implementation slice.".to_string(),
-        "- [x] Verify handoff evidence and prepare the PR for Agent Review.".to_string(),
-        String::new(),
-        "### Work Log".to_string(),
-        format!(
-            "- Run `{}` executed with backend `{}`.",
-            result.run_id.as_deref().unwrap_or("n/a"),
-            result.backend
-        ),
-        format!(
-            "- Workspace `{}` was used for implementation evidence.",
-            result.workspace_path.display()
-        ),
-        format!("- Backend message: {}", result.message),
-        String::new(),
-        "### Run Evidence".to_string(),
+    let run_evidence = [
         format!("- Run: `{}`", result.run_id.as_deref().unwrap_or("n/a")),
         format!("- Workspace: `{}`", result.workspace_path.display()),
         format!("- Backend: `{}`", result.backend),
@@ -680,8 +656,9 @@ pub(crate) fn run_loop_handoff_workpad(
                 .unwrap_or_else(|| "n/a".into())
         ),
         format!("- Message: {}", result.message),
-        String::new(),
-        "### Planned Handoff".to_string(),
+    ]
+    .join("\n");
+    let planned_handoff = [
         format!("- Workspace key: `{}`", handoff.workspace_key),
         format!("- Workspace path: `{}`", handoff.workspace_path.display()),
         format!("- Branch: `{}`", handoff.branch_name),
@@ -692,18 +669,32 @@ pub(crate) fn run_loop_handoff_workpad(
         rework_continuation_workpad_line(handoff),
         handoff_verification_workpad_line(result),
         live_handoff_workpad_line(result),
-        String::new(),
-        "### Main-Agent Boundary".to_string(),
-        "- Locally complete main-agent work stops at `Agent Review`.".to_string(),
-        "- `Human Review` is reserved for independent Review Agent pass evidence.".to_string(),
-    ];
+    ]
+    .join("\n");
 
-    if let Some(ownership) = ownership {
-        lines.push(String::new());
-        lines.push(render_runtime_ownership_marker(ownership));
-    }
-
-    lines.join("\n")
+    render_workpad_template(
+        None,
+        WorkpadTemplateId::MainHandoff,
+        &[
+            ("issue_ref", issue.identifier.clone()),
+            ("issue_title", issue.title.clone()),
+            ("run_id", result.run_id.as_deref().unwrap_or("n/a").into()),
+            ("backend", result.backend.clone()),
+            (
+                "workspace_path",
+                result.workspace_path.display().to_string(),
+            ),
+            ("message", result.message.clone()),
+            ("run_evidence", run_evidence),
+            ("planned_handoff", planned_handoff),
+            (
+                "runtime_ownership_marker",
+                ownership
+                    .map(render_runtime_ownership_marker)
+                    .unwrap_or_default(),
+            ),
+        ],
+    )
 }
 
 fn branch_target_workpad_line(handoff: &IssueHandoffPlan) -> String {
@@ -955,37 +946,28 @@ pub(crate) fn run_loop_handoff_failure_workpad(
     issue: &TrackerIssue,
     error: &HandoffError,
 ) -> String {
-    [
-        "## Shea Symphony Workpad".to_string(),
-        String::new(),
-        "### Context".to_string(),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        "- Source: `shea-symphony main loop`".to_string(),
-        String::new(),
-        "### Handoff Planning Blocker".to_string(),
-        format!("- Error: `{error}`"),
-        "- Backend execution was skipped before claim/run to avoid mixing issue scope.".to_string(),
-        String::new(),
-        "### Required Human Decision".to_string(),
-        "- Confirm the correct branch/workspace ownership before retrying.".to_string(),
-    ]
-    .join("\n")
+    render_workpad_template(
+        None,
+        WorkpadTemplateId::MainHandoffFailure,
+        &[
+            ("issue_ref", issue.identifier.clone()),
+            ("issue_title", issue.title.clone()),
+            ("error", error.to_string()),
+        ],
+    )
 }
 
 pub(crate) fn run_loop_assignee_ownership_workpad(issue: &TrackerIssue, reason: &str) -> String {
-    [
-        "## Shea Symphony Workpad".to_string(),
-        String::new(),
-        "### Assignee Ownership Blocker".to_string(),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        format!("- Reason: {reason}"),
-        format!("- Issue assignees: `{}`", issue.assignees.join(", ")),
-        String::new(),
-        "### Boundary".to_string(),
-        "- Shea Symphony did not claim this issue or move it to `In Progress`.".to_string(),
-        "- Assign the issue to the active GitHub identity or selected execution profile before retrying.".to_string(),
-    ]
-    .join("\n")
+    render_workpad_template(
+        None,
+        WorkpadTemplateId::MainAssigneeOwnership,
+        &[
+            ("issue_ref", issue.identifier.clone()),
+            ("issue_title", issue.title.clone()),
+            ("reason", reason.into()),
+            ("assignees", issue.assignees.join(", ")),
+        ],
+    )
 }
 
 pub(crate) fn run_loop_usage_limit_pause_workpad(
@@ -994,22 +976,16 @@ pub(crate) fn run_loop_usage_limit_pause_workpad(
     pause: &UsageLimitPause,
     retry_delay_ms: u64,
 ) -> String {
-    [
-        "## Shea Symphony Workpad".to_string(),
-        String::new(),
-        "### Usage-Limit Pause".to_string(),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        "- Source: `shea-symphony main loop`".to_string(),
-        format!("- Backend: `{}`", result.backend),
-        format!("- Classifier: `{}`", pause.classifier),
-        format!("- Evidence: {}", pause.evidence),
-        format!("- Retry backoff: `{retry_delay_ms}ms`"),
-        String::new(),
-        "### State Safety".to_string(),
-        "- Tracker state was not advanced to `Agent Review`.".to_string(),
-        "- Runtime state keeps the active issue and next retry time.".to_string(),
-        "- The main loop will skip this issue until retry backoff expires or an operator intervenes."
-            .to_string(),
-    ]
-    .join("\n")
+    render_workpad_template(
+        None,
+        WorkpadTemplateId::MainUsageLimitPause,
+        &[
+            ("issue_ref", issue.identifier.clone()),
+            ("issue_title", issue.title.clone()),
+            ("backend", result.backend.clone()),
+            ("classifier", pause.classifier.clone()),
+            ("evidence", pause.evidence.clone()),
+            ("retry_delay_ms", retry_delay_ms.to_string()),
+        ],
+    )
 }

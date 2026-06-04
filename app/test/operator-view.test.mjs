@@ -51,6 +51,7 @@ import {
   defaultLoopState,
   laneWorkerFromAutoloop,
   laneWorkersFromAutoloopLines,
+  operatorLoopStatusDetail,
   operatorRunLogLines
 } from '../src/lib/tauriAutoloop.ts';
 
@@ -91,8 +92,11 @@ test('maps live autoloop lane snapshots into existing lane board worker rows', (
     issue: '#421',
     title: '#421',
     action: 'reviewing',
-    backend: 'Tauri dry-run',
-    session: 'pid 4242',
+    backend: 'Codex app-server',
+    session: 'session pending',
+    sessionId: null,
+    pid: 4242,
+    updatedAtMs: 1234,
     elapsed: 'Human Review',
     lane: 'review',
     status: 'running',
@@ -118,11 +122,14 @@ test('maps live autoloop lane snapshots into existing lane board worker rows', (
           issue: '#421',
           status: 'waiting',
           action: 'review_agent',
+          session_id: 'thread-421-turn-1',
           message: '#421 review waiting review_agent'
         }
       }
     }]
-  }, 'review').map((entry) => entry.issue), ['#421']);
+  }, 'review').map((entry) => [entry.issue, entry.backend, entry.pid, entry.session]), [
+    ['#421', 'Codex app-server', 4242, 'thread-421-turn-1']
+  ]);
 });
 
 test('autoloop lane workers clear issue after merge terminal events', () => {
@@ -536,6 +543,24 @@ test('autoloop run logs control supervisor and lifecycle visibility by verbosity
   assert.equal(focus[0].event.payload.phase, 'blocked');
 });
 
+test('autoloop blocked status summary surfaces blocker reasons', () => {
+  assert.equal(
+    operatorLoopStatusDetail({
+      phase: 'blocked',
+      message: 'blocked state is visible and non-mutating',
+      blocked_reasons: ['main:preflight', 'review:session_attention=1']
+    }),
+    'Blocked: main:preflight; review:session_attention=1'
+  );
+  assert.equal(
+    operatorLoopStatusDetail({
+      phase: 'running',
+      message: 'checking readiness'
+    }),
+    'checking readiness'
+  );
+});
+
 test('autoloop normal run logs keep issue diagnostics without routine heartbeats', () => {
   const now = Date.now();
   const state = {
@@ -751,6 +776,84 @@ test('issue identity titles reject transient and unavailable placeholders', () =
     issueIdentityTitle('#407', ['Project read unavailable', 'Separate handoff progress from local worktree modification times']),
     'Separate handoff progress from local worktree modification times'
   );
+});
+
+test('lane throughput board shows useful Codex app-server runtime identity', () => {
+  const board = buildLaneThroughputBoard({
+    queueIssues: [
+      { id: '#435', title: 'Make all workpad content workflow-configurable', lane: 'Main', state: 'In Progress', tone: 'success' }
+    ],
+    laneWorkers: {
+      main: [
+        {
+          issue: '#435',
+          title: '#435',
+          action: 'backend',
+          backend: 'Codex app-server',
+          session: 'thread-435-turn-1',
+          sessionId: 'thread-435-turn-1',
+          pid: 83222,
+          status: 'running',
+          waiting: true
+        }
+      ],
+      review: [],
+      merge: []
+    }
+  });
+
+  const issue = board.find((lane) => lane.laneKey === 'main').issues.find((row) => row.id === '#435');
+  assert.equal(issue.meta, 'Codex app-server · PID 83222 · session thread-435-turn-1');
+});
+
+test('lane throughput board reconciles the same issue moving between lanes', () => {
+  const board = buildLaneThroughputBoard({
+    queueIssues: [
+      { id: '#435', title: 'Make all workpad content workflow-configurable', lane: 'Main', state: 'In Progress', tone: 'success' }
+    ],
+    liveWorkersByLane: {
+      main: [
+        {
+          issue: '#435',
+          title: '#435',
+          action: 'agent_review',
+          backend: 'Codex app-server',
+          session: 'main-session',
+          sessionId: 'main-session',
+          pid: 83222,
+          updatedAtMs: 100,
+          status: 'running',
+          waiting: true
+        }
+      ],
+      review: [
+        {
+          issue: '#435',
+          title: '#435',
+          action: 'review_selected',
+          backend: 'Codex app-server',
+          session: 'review-session',
+          sessionId: 'review-session',
+          pid: 83222,
+          updatedAtMs: 200,
+          status: 'running',
+          waiting: true
+        }
+      ],
+      merge: []
+    },
+    laneSnapshots: {
+      main: { lane: 'main', status: 'running', runningCount: 1 },
+      review: { lane: 'review', status: 'running', runningCount: 1 }
+    }
+  });
+
+  const main = board.find((lane) => lane.laneKey === 'main');
+  const review = board.find((lane) => lane.laneKey === 'review');
+  assert.deepEqual(main.issues.map((issue) => issue.id), []);
+  assert.equal(main.runningCount, 0);
+  assert.deepEqual(review.issues.map((issue) => issue.id), ['#435']);
+  assert.equal(review.issues[0].meta, 'Codex app-server · PID 83222 · session review-session');
 });
 
 test('lane board rendering omits handoff actions and manual skill labels', () => {

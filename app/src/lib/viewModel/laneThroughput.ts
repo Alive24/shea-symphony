@@ -19,15 +19,22 @@ export function buildLaneThroughputBoard({
   issueTitleById?: Map<string, string>;
   fullLoading?: boolean;
 } = {}) {
+  const workersByLane = reconcileWorkersByIssue(liveWorkersByLane, laneWorkers);
+  const activeIssueIds = new Set(
+    Object.values(workersByLane).flat().map((worker) => normalizeIssueRef(worker.issue)).filter(Boolean)
+  );
   return LANE_KEYS.map((laneKey) => {
     const label = titleCase(laneKey);
     const snapshot = laneSnapshots?.[laneKey] ?? {};
-    const workers = uniqueWorkers([...(liveWorkersByLane?.[laneKey] ?? []), ...(laneWorkers?.[laneKey] ?? [])]);
+    const workers = workersByLane[laneKey] ?? [];
     const queued = (queueIssues ?? []).filter((issue) => issue.lane === label);
     const workerIssues = workers.map((worker, index) => workerIssueRow(worker, index, issueTitleById));
     const pickedIssueIds = new Set(workerIssues.map((issue) => normalizeIssueRef(issue.id)).filter(Boolean));
     const waitingIssues = queued
-      .filter((issue) => !pickedIssueIds.has(normalizeIssueRef(issue.id)))
+      .filter((issue) => {
+        const id = normalizeIssueRef(issue.id);
+        return !pickedIssueIds.has(id) && !activeIssueIds.has(id);
+      })
       .map((issue) => ({
         kind: 'queued',
         id: issue.id,
@@ -38,7 +45,7 @@ export function buildLaneThroughputBoard({
         waiting: false
       }));
     const laneResult = laneStatusRow(snapshot);
-    const runningCount = countFromSnapshot(snapshot, 'runningCount', workerIssues.filter((issue) => issue.kind === 'picked').length);
+    const runningCount = workerIssues.filter((issue) => issue.kind === 'picked').length;
     const queuedCount = countFromSnapshot(snapshot, 'queuedCount', waitingIssues.length);
     const blockedCount = countFromSnapshot(snapshot, 'blockedCount', laneResult?.kind === 'blocked' ? 1 : 0);
     const completedCount = countFromSnapshot(
@@ -71,6 +78,47 @@ export function buildLaneThroughputBoard({
   });
 }
 
+function reconcileWorkersByIssue(liveWorkersByLane: Record<string, any[]> = {}, laneWorkers: Record<string, any[]> = {}) {
+  const byIssue = new Map();
+  let order = 0;
+  for (const [sourcePriority, source] of [[1, laneWorkers], [2, liveWorkersByLane]] as [number, Record<string, any[]>][]) {
+    for (const laneKey of LANE_KEYS) {
+      for (const worker of source?.[laneKey] ?? []) {
+        const issue = normalizeIssueRef(worker.issue);
+        const key = issue ?? `${laneKey}:${worker.issue ?? worker.action ?? order}`;
+        const timestamp = Number(worker.updatedAtMs ?? worker.atMs);
+        const score = Number.isFinite(timestamp) ? timestamp : 0;
+        const candidate = {
+          laneKey,
+          worker: { ...worker, lane: worker.lane ?? laneKey },
+          score,
+          sourcePriority,
+          order: order++
+        };
+        const existing = byIssue.get(key);
+        if (
+          !existing
+          || candidate.score > existing.score
+          || (candidate.score === existing.score && candidate.sourcePriority > existing.sourcePriority)
+          || (
+            candidate.score === existing.score
+            && candidate.sourcePriority === existing.sourcePriority
+            && candidate.order > existing.order
+          )
+        ) {
+          byIssue.set(key, candidate);
+        }
+      }
+    }
+  }
+
+  const lanes = Object.fromEntries(LANE_KEYS.map((laneKey) => [laneKey, []]));
+  for (const { laneKey, worker } of byIssue.values()) {
+    lanes[laneKey].push(worker);
+  }
+  return Object.fromEntries(Object.entries(lanes).map(([laneKey, workers]) => [laneKey, uniqueWorkers(workers)]));
+}
+
 function uniqueWorkers(workers: any[]) {
   const seen = new Set();
   return (workers ?? []).filter((worker) => {
@@ -90,11 +138,24 @@ function workerIssueRow(worker: any, index: number, issueTitleById: Map<string, 
     kind: completed ? 'completed' : blocked ? 'blocked' : 'picked',
     id: normalizedWorkerIssue ?? worker.issue ?? `worker-${index + 1}`,
     title: workerDisplayTitle(worker, issueTitleById),
-    meta: `${worker.action ?? 'Active'} · ${worker.backend ?? 'worker'} · ${worker.session ?? worker.elapsed ?? 'session'}`,
+    meta: workerRuntimeMeta(worker),
     tone: blocked ? 'danger' : completed ? 'success' : 'success',
     workerNumber: index + 1,
     waiting: worker.waiting === true || status === 'running'
   };
+}
+
+function workerRuntimeMeta(worker: any) {
+  const backend = worker.backend ?? 'worker';
+  if (backend === 'Codex app-server') {
+    const session = worker.sessionId ?? (worker.session === 'session pending' ? null : worker.session);
+    return [
+      backend,
+      worker.pid ? `PID ${worker.pid}` : null,
+      session ? `session ${session}` : 'session pending'
+    ].filter(Boolean).join(' · ');
+  }
+  return `${worker.action ?? 'Active'} · ${backend} · ${worker.session ?? worker.elapsed ?? 'session'}`;
 }
 
 function workerDisplayTitle(worker: any, titles: Map<string, string>) {

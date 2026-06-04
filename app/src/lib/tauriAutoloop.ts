@@ -3,6 +3,7 @@ export type LaneSnapshot = {
   status: string;
   action?: string | null;
   selected?: string | null;
+  sessionId?: string | null;
   target?: string | null;
   workUnitCompleted?: boolean | null;
   completedWorkUnits?: number | null;
@@ -59,6 +60,9 @@ export type LaneWorker = {
   action: string;
   backend: string;
   session: string;
+  sessionId?: string | null;
+  pid?: number | null;
+  updatedAtMs?: number | null;
   elapsed: string;
   lane: string;
   status?: string | null;
@@ -252,6 +256,16 @@ export function isAutoloopLineVisibleAtVerbosity(line: AutoloopLine, verbosity: 
   return isNormalRunLogLine(line);
 }
 
+export function operatorLoopStatusDetail(payload: Record<string, unknown>) {
+  const reasons = arrayFromValue(
+    recordValue(payload, 'blocked_reasons') ?? recordValue(payload, 'blockedReasons')
+  )
+    .map((reason) => textFromValue(reason))
+    .filter(Boolean);
+  if (reasons.length > 0) return `Blocked: ${reasons.join('; ')}`;
+  return textFromValue(recordValue(payload, 'message'), 'Loop status updated.');
+}
+
 export function isOperatorVisibleAutoloopLine(line: AutoloopLine) {
   const eventName = textFromValue(recordValue(line.event, 'event'));
   if (eventName === 'autopilot_signal') {
@@ -408,12 +422,16 @@ export function laneWorkerFromAutoloop(
   const action = textFromValue(lane.action, lane.status);
   const target = textFromValue(lane.target, lane.status);
   const waiting = lane.status === 'running' || action === 'tick_started' || action === 'backend';
+  const sessionId = workerSessionId(lane, null);
   return {
     issue: selected,
     title: selected,
     action,
-    backend: `Tauri ${state.mode}`,
-    session: state.pid ? `pid ${state.pid}` : 'autoloop',
+    backend: 'Codex app-server',
+    session: sessionId ?? 'session pending',
+    sessionId,
+    pid: state.pid ?? null,
+    updatedAtMs: lane.updatedAtMs ?? null,
     elapsed: target,
     lane: laneKey,
     status: lane.status,
@@ -490,7 +508,9 @@ function workerFromAutoloopLine(
       laneKey,
       state,
       latestResult || textFromValue(recordValue(payload, 'action'), status),
-      status
+      status,
+      payload,
+      line.atMs
     );
   }
 
@@ -502,7 +522,7 @@ function workerFromAutoloopLine(
     const status = textFromValue(recordValue(payload, 'status'), 'running');
     const action = textFromValue(recordValue(payload, 'action'), status);
     if (status === 'idle' || action === 'skip') return null;
-    return liveWorker(issue, laneKey, state, action, status);
+    return liveWorker(issue, laneKey, state, action, status, payload, line.atMs);
   }
 
   if (eventName !== 'autopilot_cli_line') return null;
@@ -517,7 +537,7 @@ function workerFromAutoloopLine(
   const status = textFromValue(recordValue(fields, 'status'), 'running');
   const action = textFromValue(recordValue(fields, 'action'), textFromValue(recordValue(fields, 'run_loop_action'), kind || status));
   if (status === 'idle' || action === 'skip') return null;
-  return liveWorker(issue, laneKey, state, action, status);
+  return liveWorker(issue, laneKey, state, action, status, fields, line.atMs);
 }
 
 function liveWorker(
@@ -525,19 +545,38 @@ function liveWorker(
   laneKey: string,
   state: LoopStateSnapshot,
   action: string,
-  status: string
+  status: string,
+  sessionSource: Record<string, unknown> = {},
+  updatedAtMs: number | null = null
 ): LaneWorker {
+  const sessionId = workerSessionId(sessionSource, null);
   return {
     issue,
     title: issue,
     action,
-    backend: `Tauri ${state.mode}`,
-    session: state.pid ? `pid ${state.pid}` : 'autoloop',
+    backend: 'Codex app-server',
+    session: sessionId ?? 'session pending',
+    sessionId,
+    pid: state.pid ?? null,
+    updatedAtMs,
     elapsed: status,
     lane: laneKey,
     status,
     waiting: true
   };
+}
+
+function workerSessionId(source: Record<string, unknown>, fallback: string | null) {
+  const session = textFromValue(
+    recordValue(source, 'session_id')
+      ?? recordValue(source, 'sessionId')
+      ?? recordValue(source, 'backend_session_id')
+      ?? recordValue(source, 'backendSessionId')
+      ?? recordValue(source, 'session')
+      ?? recordValue(source, 'run_id')
+      ?? recordValue(source, 'runId')
+  );
+  return session || fallback;
 }
 
 function recordValue(value: unknown, key: string): unknown {

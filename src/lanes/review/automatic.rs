@@ -11,6 +11,7 @@ use shea_symphony::lane_claim::{
 use shea_symphony::model::TrackerIssue;
 use shea_symphony::progress::{run_with_progress_heartbeat, ProgressHeartbeatSpec};
 use shea_symphony::prompt::render_prompt;
+use shea_symphony::prompt_runtime::AUTOMATIC_HEADLESS_REVIEW_BOUNDARY;
 use shea_symphony::review::{
     gemini_cli_headless_args, gemini_prelaunch_health_diagnostic, gemini_review_health_diagnostic,
     poll_review_job_until_terminal, render_repeated_review_failure_workpad, render_review_workpad,
@@ -865,29 +866,7 @@ pub(crate) fn render_automatic_review_prompt(
         issue,
         None,
     )?;
-    prompt.push_str(
-        "\n\n## Automatic Headless Review Boundary\n\n\
-This Gemini process is running under Shea Symphony automatic `review loop` or `review once`.\n\
-Shea Symphony CLI has already claimed or will own any Review Agent claim, timeline comment write,\n\
-issue body update, and Project state transition outside this process.\n\n\
-Do not run mutating Shea Symphony or GitHub commands, including `review claim`, `review pass`,\n\
-`review reject`, `project set-state`, `project workpad`, `forge`, `gh issue edit`, `gh issue comment`, raw\n\
-Project GraphQL mutations, or Project UI changes. Do not activate or follow any manual review\n\
-skill that tells you to mutate Project state.\n\n\
-Return review evidence in stdout only. Start with exactly one line: `Review Result: PASS`,\n\
-`Review Result: REWORK`, or `Review Result: NEEDS_CONTEXT`. Use `PASS` only when there are no\n\
-blocking findings. Use `REWORK` only when confirmed implementation defects require Main Agent\n\
-changes. Use `NEEDS_CONTEXT` when missing evidence or ambiguity prevents an independent decision.\n\n\
-UAT is Human Review-owned unless this issue explicitly asks the Main Agent to implement a UAT\n\
-harness, fixture, rehearsal path, or workflow capability. Missing Human-owned UAT execution is\n\
-not a confirmed implementation defect and must not by itself produce `Review Result: REWORK`.\n\
-Report UAT readiness or Human Review follow-up separately under `Evidence`.\n\n\
-Only use `[Confirmed]`, `[Plausible]`, `[Rejected]`, or `[Needs Context]` for actual review\n\
-findings. Do not use those bracketed finding tags for positive verification evidence, checklist\n\
-items, or things that were implemented correctly; put positive observations under an `Evidence`\n\
-heading with plain bullets instead. Leave routing and evidence persistence to the Shea Symphony\n\
-wrapper after this process exits.\n",
-    );
+    prompt.push_str(AUTOMATIC_HEADLESS_REVIEW_BOUNDARY);
     Ok(prompt)
 }
 

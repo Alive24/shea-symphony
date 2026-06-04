@@ -11,6 +11,7 @@ pub struct WorkflowDefinition {
     pub workflow_index: String,
     pub prompt_template: String,
     pub lane_prompts: LanePromptTemplates,
+    pub lane_prompt_sources: LanePromptSources,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,6 +19,25 @@ pub struct LanePromptTemplates {
     pub main_agent: String,
     pub review_agent: String,
     pub merge_agent: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LanePromptSources {
+    pub main_agent: PromptTemplateSource,
+    pub review_agent: PromptTemplateSource,
+    pub merge_agent: PromptTemplateSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromptTemplateSource {
+    pub kind: PromptTemplateSourceKind,
+    pub path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptTemplateSourceKind {
+    WorkflowPromptFile,
+    InlineWorkflowFallback,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,14 +90,15 @@ impl WorkflowDefinition {
         let (front_matter, prompt) = split_front_matter(content);
         let config = parse_front_matter(&front_matter)?;
         let workflow_index = prompt.trim().to_string();
-        let lane_prompts = load_lane_prompts(path.as_ref(), &config, &workflow_index)?;
+        let lane_prompt_bundle = load_lane_prompts(path.as_ref(), &config, &workflow_index)?;
 
         Ok(Self {
             path: path.as_ref().to_path_buf(),
             config,
-            prompt_template: lane_prompts.main_agent.clone(),
+            prompt_template: lane_prompt_bundle.templates.main_agent.clone(),
             workflow_index,
-            lane_prompts,
+            lane_prompts: lane_prompt_bundle.templates,
+            lane_prompt_sources: lane_prompt_bundle.sources,
         })
     }
 
@@ -88,6 +109,39 @@ impl WorkflowDefinition {
             AgentLane::MergeAgent => &self.lane_prompts.merge_agent,
         }
     }
+
+    pub fn prompt_source_for_lane(&self, lane: AgentLane) -> &PromptTemplateSource {
+        match lane {
+            AgentLane::MainAgent => &self.lane_prompt_sources.main_agent,
+            AgentLane::ReviewAgent => &self.lane_prompt_sources.review_agent,
+            AgentLane::MergeAgent => &self.lane_prompt_sources.merge_agent,
+        }
+    }
+}
+
+impl AgentLane {
+    pub fn config_key(self) -> &'static str {
+        match self {
+            Self::MainAgent => "main_agent",
+            Self::ReviewAgent => "review_agent",
+            Self::MergeAgent => "merge_agent",
+        }
+    }
+}
+
+impl PromptTemplateSourceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::WorkflowPromptFile => "workflow_prompt_file",
+            Self::InlineWorkflowFallback => "inline_workflow_fallback",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LanePromptBundle {
+    templates: LanePromptTemplates,
+    sources: LanePromptSources,
 }
 
 impl WorkflowStore {
@@ -172,12 +226,23 @@ fn load_lane_prompts(
     workflow_path: &Path,
     config: &Value,
     inline_prompt: &str,
-) -> Result<LanePromptTemplates, WorkflowError> {
+) -> Result<LanePromptBundle, WorkflowError> {
     let Some(prompt_config) = config.get("prompts") else {
-        return Ok(LanePromptTemplates {
-            main_agent: inline_prompt.to_string(),
-            review_agent: inline_prompt.to_string(),
-            merge_agent: inline_prompt.to_string(),
+        let source = PromptTemplateSource {
+            kind: PromptTemplateSourceKind::InlineWorkflowFallback,
+            path: Some(workflow_path.to_path_buf()),
+        };
+        return Ok(LanePromptBundle {
+            templates: LanePromptTemplates {
+                main_agent: inline_prompt.to_string(),
+                review_agent: inline_prompt.to_string(),
+                merge_agent: inline_prompt.to_string(),
+            },
+            sources: LanePromptSources {
+                main_agent: source.clone(),
+                review_agent: source.clone(),
+                merge_agent: source,
+            },
         });
     };
 
@@ -185,18 +250,35 @@ fn load_lane_prompts(
         WorkflowError::InvalidLanePromptConfig("prompts must be a map/object".into())
     })?;
 
-    Ok(LanePromptTemplates {
-        main_agent: read_lane_prompt(workflow_path, prompt_config, "main_agent")?,
-        review_agent: read_lane_prompt(workflow_path, prompt_config, "review_agent")?,
-        merge_agent: read_lane_prompt(workflow_path, prompt_config, "merge_agent")?,
+    let main_agent = read_lane_prompt(workflow_path, prompt_config, "main_agent")?;
+    let review_agent = read_lane_prompt(workflow_path, prompt_config, "review_agent")?;
+    let merge_agent = read_lane_prompt(workflow_path, prompt_config, "merge_agent")?;
+
+    Ok(LanePromptBundle {
+        templates: LanePromptTemplates {
+            main_agent: main_agent.template,
+            review_agent: review_agent.template,
+            merge_agent: merge_agent.template,
+        },
+        sources: LanePromptSources {
+            main_agent: main_agent.source,
+            review_agent: review_agent.source,
+            merge_agent: merge_agent.source,
+        },
     })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LoadedLanePrompt {
+    template: String,
+    source: PromptTemplateSource,
 }
 
 fn read_lane_prompt(
     workflow_path: &Path,
     prompt_config: &serde_json::Map<String, Value>,
     lane: &'static str,
-) -> Result<String, WorkflowError> {
+) -> Result<LoadedLanePrompt, WorkflowError> {
     let relative_path = prompt_config
         .get(lane)
         .and_then(Value::as_str)
@@ -209,6 +291,13 @@ fn read_lane_prompt(
     let path = resolve_workflow_relative_path(workflow_path, relative_path);
     fs::read_to_string(&path)
         .map(|content| content.trim().to_string())
+        .map(|template| LoadedLanePrompt {
+            template,
+            source: PromptTemplateSource {
+                kind: PromptTemplateSourceKind::WorkflowPromptFile,
+                path: Some(path.clone()),
+            },
+        })
         .map_err(|source| WorkflowError::MissingLanePrompt { lane, path, source })
 }
 
@@ -259,6 +348,13 @@ mod tests {
             workflow.prompt_for_lane(AgentLane::MergeAgent),
             "Only prompt"
         );
+        assert_eq!(
+            workflow
+                .prompt_source_for_lane(AgentLane::MainAgent)
+                .kind
+                .as_str(),
+            "inline_workflow_fallback"
+        );
     }
 
     #[test]
@@ -302,6 +398,21 @@ mod tests {
             "Merge {{ issue.identifier }}"
         );
         assert_eq!(workflow.prompt_template, "Main {{ issue.identifier }}");
+        assert_eq!(
+            workflow
+                .prompt_source_for_lane(AgentLane::MainAgent)
+                .kind
+                .as_str(),
+            "workflow_prompt_file"
+        );
+        assert_eq!(
+            workflow
+                .prompt_source_for_lane(AgentLane::ReviewAgent)
+                .path
+                .as_ref()
+                .unwrap(),
+            &temp.path().join("prompts/review.md")
+        );
     }
 
     #[test]

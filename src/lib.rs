@@ -20,6 +20,7 @@ pub mod presentation;
 pub mod profiles;
 pub mod progress;
 pub mod prompt;
+pub mod prompt_runtime;
 pub mod quality_gate;
 pub mod review;
 pub mod review_status;

@@ -2,8 +2,9 @@ use std::path::PathBuf;
 
 use shea_symphony::config::RuntimeConfig;
 use shea_symphony::progress::run_with_progress_heartbeat;
+use shea_symphony::prompt_runtime::{PROMPT_RENDERER_MODE, RUNTIME_ENVELOPES};
 use shea_symphony::tracker::adapter_from_config;
-use shea_symphony::workflow::WorkflowDefinition;
+use shea_symphony::workflow::{AgentLane, WorkflowDefinition};
 
 use crate::commands::gate::evaluate_issue_for_current_source;
 use crate::commands::project::{filter_issues_by_state, render_state_summary};
@@ -22,6 +23,32 @@ pub(crate) fn validate(workflow_path: PathBuf) -> Result<(), Box<dyn std::error:
     println!("backend={}", config.backend.kind);
     println!("workspace_root={}", config.workspace.root.display());
     println!("prompt_template_bytes={}", workflow.prompt_template.len());
+    println!("prompt_renderer={PROMPT_RENDERER_MODE}");
+    for lane in [
+        AgentLane::MainAgent,
+        AgentLane::ReviewAgent,
+        AgentLane::MergeAgent,
+    ] {
+        let source = workflow.prompt_source_for_lane(lane);
+        let path = source
+            .path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "<none>".into());
+        println!(
+            "prompt_source.{}={} path={} bytes={}",
+            lane.config_key(),
+            source.kind.as_str(),
+            path,
+            workflow.prompt_for_lane(lane).len()
+        );
+    }
+    for envelope in RUNTIME_ENVELOPES {
+        println!(
+            "runtime_envelope={} lane={} backend={} path={} purpose={}",
+            envelope.id, envelope.lane, envelope.backend, envelope.path, envelope.purpose
+        );
+    }
     println!("status=valid");
     Ok(())
 }

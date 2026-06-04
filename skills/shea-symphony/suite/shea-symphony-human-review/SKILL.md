@@ -3,7 +3,7 @@ name: shea-symphony-human-review
 description: Use when briefing a Shea Symphony operator for Human Review after independent Review Agent pass evidence, guiding UAT, recording a structured decision note, and routing only after explicit operator confirmation.
 metadata:
   short-description: Shea Symphony Human Review briefing
-  suite-version: 2026.05.23
+  suite-version: 2026.05.24
 ---
 
 # Shea Symphony Human Review
@@ -75,6 +75,9 @@ workflows/template/workpad/parent-batch-human-review-brief.md
 - Do not force English for Human Review briefings, UAT guidance, summaries,
   back-and-forth discussion, or confirmation prompts when the operator is using
   another language.
+- If the operator invokes the skill or discusses the review in Chinese, the
+  live briefing, preflight readback, UAT request, and final confirmation prompt
+  must be in Chinese by default.
 - Durable written artifacts must be in English, even when the live conversation
   uses another language. This includes Human Review decision notes, issue
   bodies, timeline comments, workpad evidence, PR comments, and issue comments.
@@ -203,6 +206,42 @@ freshness or mergeability risk. The local `merge-base` check is still required
 before PR-specific UAT because GitHub mergeability can lag or be temporarily
 unknown.
 
+## Live Output Contract
+
+Human Review is an operator decision packet, not a freshness report. Freshness
+and verification preflight are required, but they must stay subordinate to the
+issue/PR briefing and the operator-owned UAT decision.
+
+Use this live sequence:
+
+1. Read the decision surfaces.
+2. Give a plain-language orientation brief in the operator-facing language.
+3. Run the automatic PR Freshness Repair Gate.
+4. If the branch was refreshed or repaired, rerun the relevant verification.
+5. Before asking for `pass`, `fail`, or `deferred`, present a post-preflight
+   review packet that includes the issue purpose, what changed, Review Agent
+   evidence, preflight result, remaining human-owned UAT, and decision boundary.
+6. Ask for exactly one operator-owned UAT result.
+7. Wait for the operator's result before drafting or writing the Human Review
+   decision note.
+
+The post-preflight review packet is mandatory whenever preflight work happened
+after the initial orientation brief. Do not end a turn with only a freshness or
+verification summary plus a bare `pass`/`fail`/`deferred` prompt.
+
+Keep the freshness result compact:
+
+- say whether the branch was fresh, mechanically refreshed, or blocked;
+- include verification command outcomes when they changed confidence;
+- mention GitHub mergeability recomputation only as a risk note;
+- do not let stale-branch repair become the main story unless it blocks UAT.
+
+Always include a short running Human Review note draft in the conversation after
+non-trivial preflight work. The draft must separate Review Agent evidence,
+automatic preflight/repair evidence, and operator-owned UAT still awaiting
+feedback. This is live conversation state only; do not write it to the tracker
+until the operator gives the explicit confirmation phrase.
+
 ## Brief The Operator
 
 Before any freshness repair, operator-owned UAT command, decision-note drafting,
@@ -241,6 +280,28 @@ Review Agent already checked: <short evidence summary>
 Human-owned part: <UAT or acceptance decision still needed>
 Risks / things to watch: <none / concise list>
 Available decisions: Approve for Merging / Request Rework / Need Human Input / Defer
+```
+
+Recommended post-preflight shape:
+
+```text
+## Human Review Packet
+
+Issue: #<issue> <title>
+PR: #<pr> <title or URL>
+State: Human Review
+
+What this is about: <one-sentence issue purpose>
+What changed: <2-4 bullets summarizing the behavior being accepted>
+Review Agent already checked: <short evidence summary>
+Preflight status: <fresh / mechanically refreshed / blocked> plus verification summary
+Human-owned UAT now: <one concrete inspection or command result needed>
+Decision boundary: <pass/fail/deferred records UAT only; explicit confirmation is still required before note/state mutation>
+
+Note draft so far:
+- Review evidence: <short>
+- Preflight: <short>
+- Awaiting operator UAT: <short>
 ```
 
 For parent issues with native subissues, explicitly summarize the parent/child
@@ -304,6 +365,8 @@ After the briefing, guide the operator one step at a time.
 - Report the freshness result succinctly before UAT: fresh, mechanically
   refreshed, blocked by missing worktree, or blocked by non-mechanical
   conflict/verification failure.
+- After any non-trivial freshness repair, re-present the post-preflight review
+  packet before asking for `pass`, `fail`, or `deferred`.
 - Give exactly one next action, explain why it is the next action, and tell the
   operator what feedback to provide after running it.
 - Tell the operator which directory to run the action from. For PR UAT, this is
@@ -324,8 +387,10 @@ Recommended step format:
 
 ```text
 Next action: <one command or inspection>
-Why: <one sentence>
-Please reply with: pass/fail/deferred plus the key output lines, or paste the error.
+Why: <one sentence tied to the issue purpose>
+Please reply with: pass/fail/deferred plus the observation or key output lines.
+Reminder: this records UAT only; final routing still needs an explicit phrase
+like `confirm approve to Merging`.
 ```
 
 ## Guide UAT

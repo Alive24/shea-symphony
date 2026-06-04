@@ -1,3 +1,3 @@
 display_name: Shea Symphony Human Review
 short_description: Brief the operator for Shea Symphony Human Review, guide UAT, and route only after explicit confirmation.
-default_prompt: Brief one Shea Symphony Human Review issue, inspect Review Agent evidence and PR state, guide operator-owned UAT, prepare a Human Review Decision Note, and wait for explicit confirmation before any state change.
+default_prompt: Brief one Shea Symphony Human Review issue in the operator's session language, inspect Review Agent evidence and PR state, run required freshness preflight, then present a post-preflight review packet before asking for operator-owned UAT; prepare a Human Review Decision Note and wait for explicit confirmation before any state change.

@@ -1259,6 +1259,18 @@ a {
   width: min(980px, calc(100vw - 48px));
 }
 
+.run-log-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.run-log-verbosity button {
+  text-transform: capitalize;
+}
+
 .settings-modal {
   width: min(620px, calc(100vw - 48px));
   grid-template-rows: auto;

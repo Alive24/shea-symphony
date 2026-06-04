@@ -2772,6 +2772,22 @@ a {
   background: var(--subtle-bg);
 }
 
+.transcript-pagination {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 800;
+}
+
+.transcript-pagination > div {
+  display: flex;
+  gap: var(--space-2);
+}
+
 .transcript-timeline {
   display: grid;
   gap: var(--space-2);
@@ -2821,6 +2837,13 @@ a {
 
 .transcript-event-meta small {
   color: var(--muted);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.transcript-event-meta time {
+  color: var(--fg-2);
+  font-family: var(--font-mono);
   font-size: var(--text-xs);
   overflow-wrap: anywhere;
 }

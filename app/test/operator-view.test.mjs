@@ -725,9 +725,87 @@ test('Codex transcript parser renders conversation turns, tool calls, outputs, f
   assert.equal(parsed.summary.assistantTurns, 2);
   assert.equal(parsed.summary.toolCalls, 1);
   assert.equal(parsed.summary.tokenUsage, 'input 10 · output 5 · total 15');
+  assert.equal(parsed.summary.rawRecords, 6);
+  assert.equal(parsed.summary.unsupportedRecords, 0);
+  assert.equal(parsed.events[0].timestamp, undefined);
   assert.equal(parsed.events.find((event) => event.kind === 'tool_call').title, 'functions.exec_command');
   assert.match(parsed.events.find((event) => event.kind === 'tool_call').body, /cmd: git status --short/);
   assert.match(parsed.events.find((event) => event.kind === 'tool_output').body, /modified file|## branch/);
+});
+
+test('Codex transcript parser renders rollout payload wrapper records with timestamps and unsupported counts', () => {
+  const transcript = [
+    JSON.stringify({
+      timestamp: '2026-06-02T11:34:36.243Z',
+      type: 'session_meta',
+      payload: {
+        id: '019e881d-344f-7cb2-bfbd-8c13b39f2a92',
+        cwd: '/tmp/issue-410',
+        cli_version: '0.0.0',
+        source: 'codex',
+        model_provider: 'openai'
+      }
+    }),
+    JSON.stringify({
+      timestamp: '2026-06-02T11:34:38.860Z',
+      type: 'response_item',
+      payload: { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'hidden instructions' }] }
+    }),
+    JSON.stringify({
+      timestamp: '2026-06-02T11:34:38.863Z',
+      type: 'event_msg',
+      payload: { type: 'user_message', message: 'You are working on Shea Symphony issue #410.' }
+    }),
+    JSON.stringify({
+      timestamp: '2026-06-02T11:34:49.527Z',
+      type: 'event_msg',
+      payload: { type: 'agent_message', phase: 'commentary', message: 'I am inspecting the transcript parser.' }
+    }),
+    JSON.stringify({
+      timestamp: '2026-06-02T11:34:49.566Z',
+      type: 'response_item',
+      payload: { type: 'function_call', name: 'functions.exec_command', arguments: JSON.stringify({ cmd: 'rg transcript app/src' }), call_id: 'call_1' }
+    }),
+    JSON.stringify({
+      timestamp: '2026-06-02T11:34:49.642Z',
+      type: 'response_item',
+      payload: { type: 'function_call_output', call_id: 'call_1', output: 'app/src/lib/viewModel/codexTranscript.ts' }
+    }),
+    JSON.stringify({
+      timestamp: '2026-06-02T11:34:49.643Z',
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        info: {
+          total_token_usage: { input_tokens: 100, output_tokens: 25, total_tokens: 125 }
+        }
+      }
+    }),
+    JSON.stringify({
+      timestamp: '2026-06-02T11:34:50.000Z',
+      type: 'turn_context',
+      payload: { cwd: '/tmp/issue-410', model: 'gpt-5' }
+    }),
+    JSON.stringify({
+      timestamp: '2026-06-02T11:42:09.799Z',
+      type: 'event_msg',
+      payload: { type: 'agent_message', phase: 'final_answer', message: 'Implemented locally.' }
+    })
+  ].join('\n');
+
+  const parsed = parseCodexTranscriptJsonl(transcript);
+
+  assert.equal(parsed.status, 'available');
+  assert.equal(parsed.summary.rawRecords, 9);
+  assert.equal(parsed.summary.readableEvents, 7);
+  assert.equal(parsed.summary.unsupportedRecords, 2);
+  assert.equal(parsed.summary.userTurns, 1);
+  assert.equal(parsed.summary.assistantTurns, 2);
+  assert.equal(parsed.summary.toolCalls, 1);
+  assert.equal(parsed.summary.tokenUsage, 'input 100 · output 25 · total 125');
+  assert.equal(parsed.events.find((event) => event.kind === 'assistant').timestamp, '2026-06-02T11:34:49.527Z');
+  assert.equal(parsed.events.find((event) => event.kind === 'final').title, 'Final answer');
+  assert.equal(parsed.events.some((event) => /hidden instructions/.test(event.body)), false);
 });
 
 test('Codex transcript parser renders app-server protocol JSONL without token delta noise', () => {
@@ -808,6 +886,16 @@ test('Codex transcript parser marks malformed still-growing JSONL as partial', (
   assert.equal(parsed.status, 'partial');
   assert.equal(parsed.malformedLines, 1);
   assert.equal(parsed.events.some((event) => event.title === 'Malformed JSONL line'), true);
+});
+
+test('Codex transcript conversation source includes timestamps, counts, and final-page pagination', () => {
+  const laneViews = readFileSync(new URL('../src/lib/LaneViews.svelte', import.meta.url), 'utf8');
+
+  assert.match(laneViews, /transcriptPage = pageCount/);
+  assert.match(laneViews, /summary\.rawRecords/);
+  assert.match(laneViews, /summary\.unsupportedRecords/);
+  assert.match(laneViews, /event\.timestamp/);
+  assert.match(laneViews, /transcriptPageEvents/);
 });
 
 test('missing transcript state is local-only and explicit', () => {

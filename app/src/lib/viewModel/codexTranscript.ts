@@ -15,6 +15,7 @@ export type TranscriptEvent = {
   title: string;
   body: string;
   detail?: string;
+  timestamp?: string;
   tone: TranscriptTone;
   raw?: unknown;
 };
@@ -30,6 +31,9 @@ export type TranscriptParseResult = {
     toolCalls: number;
     diagnostics: number;
     tokenUsage: string | null;
+    rawRecords: number;
+    readableEvents: number;
+    unsupportedRecords: number;
   };
 };
 
@@ -121,7 +125,7 @@ export function parseCodexTranscriptJsonl(text: unknown): TranscriptParseResult 
     }
 
     const mapped = transcriptEventFromRecord(record, index);
-    if (mapped) events.push(mapped);
+    if (mapped && !isDuplicateEvent(events[events.length - 1], mapped)) events.push(mapped);
   });
 
   const summary = {
@@ -129,7 +133,10 @@ export function parseCodexTranscriptJsonl(text: unknown): TranscriptParseResult 
     assistantTurns: events.filter((event) => event.kind === 'assistant' || event.kind === 'final').length,
     toolCalls: events.filter((event) => event.kind === 'tool_call').length,
     diagnostics: events.filter((event) => event.kind === 'diagnostic').length,
-    tokenUsage: latestUsage(events)
+    tokenUsage: latestUsage(events),
+    rawRecords: rawRecords.length,
+    readableEvents: events.length,
+    unsupportedRecords: Math.max(0, rawRecords.length - events.length)
   };
   const status = !lines.length
     ? 'empty'
@@ -156,41 +163,75 @@ function transcriptEventFromRecord(record: any, index: number): TranscriptEvent 
   const protocol = protocolMessage(record);
   if (protocol) return transcriptEventFromProtocol(protocol, index, record);
 
-  const item = record?.item ?? record?.payload?.item ?? record?.message ?? record;
-  const type = text(record?.type ?? item?.type ?? record?.event ?? record?.kind);
+  const wrapper = text(record?.type);
+  const payload = record?.payload;
+  const item = record?.item ?? payload?.item ?? payload ?? record?.message ?? record;
+  const type = text(item?.type ?? record?.event ?? record?.kind ?? record?.type);
   const role = text(item?.role ?? record?.role);
   const status = text(item?.status ?? record?.status);
   const name = text(item?.name ?? item?.tool_name ?? record?.name ?? record?.tool_name);
-  const usage = record?.usage ?? record?.token_usage ?? record?.response?.usage;
+  const timestamp = eventTimestamp(record);
+  const usage = item?.usage ?? item?.response?.usage ?? record?.usage ?? record?.token_usage ?? record?.response?.usage ?? item?.info?.total_token_usage ?? item?.info?.last_token_usage;
+
+  if (wrapper === 'session_meta') {
+    return event(index, 'diagnostic', 'Session metadata', summarizeObject({
+      id: item?.id,
+      cwd: item?.cwd,
+      model: item?.model ?? item?.model_provider,
+      source: item?.source,
+      cli: item?.cli_version
+    }), 'neutral', 'session_meta', record, timestamp);
+  }
+  if (wrapper === 'turn_context') return null;
+  if (wrapper === 'event_msg') {
+    if (type === 'user_message') {
+      return event(index, 'user', 'User', previewText(item?.message), 'neutral', type, record, timestamp);
+    }
+    if (type === 'agent_message') {
+      const phase = text(item?.phase);
+      const final = phase === 'final_answer';
+      return event(index, final ? 'final' : 'assistant', final ? 'Final answer' : 'Assistant', previewText(item?.message), final ? 'success' : 'neutral', phase || type, record, timestamp);
+    }
+    if (type === 'token_count') {
+      const tokenUsage = item?.info?.total_token_usage ?? item?.info?.last_token_usage ?? item?.info;
+      return event(index, 'usage', 'Token usage', usageSummary(tokenUsage), 'neutral', type, record, timestamp);
+    }
+    if (/error|cancel|interrupt|input|required|failed|task_started/.test(`${type} ${status}`)) {
+      const title = type === 'task_started' ? 'Task started' : diagnosticTitle(type, status);
+      return event(index, 'diagnostic', title, previewText(item?.message ?? item?.error ?? item), /error|failed/.test(`${type} ${status}`) ? 'danger' : 'warn', type || status || undefined, record, timestamp);
+    }
+    return null;
+  }
 
   if (usage && !role && !item?.content && !record?.content) {
-    return event(index, 'usage', 'Token usage', usageSummary(usage), 'neutral', undefined, record);
+    return event(index, 'usage', 'Token usage', usageSummary(usage), 'neutral', undefined, record, timestamp);
   }
+  if (role && role !== 'user' && role !== 'assistant') return null;
 
   if (role === 'user' || type === 'user_message') {
-    return event(index, 'user', 'User', contentText(item || record), 'neutral', type || undefined, record);
+    return event(index, 'user', 'User', contentText(item || record), 'neutral', type || undefined, record, timestamp);
   }
-  if (role === 'assistant' || type === 'assistant_message' || type === 'message') {
+  if (role === 'assistant' || type === 'assistant_message' || (type === 'message' && !role)) {
     const body = contentText(item || record);
     const final = /final|answer/i.test(type) || record?.is_final === true;
-    return event(index, final ? 'final' : 'assistant', final ? 'Final answer' : 'Assistant', body, final ? 'success' : 'neutral', status || undefined, record);
+    return event(index, final ? 'final' : 'assistant', final ? 'Final answer' : 'Assistant', body, final ? 'success' : 'neutral', status || undefined, record, timestamp);
   }
   if (/final|response\.completed/.test(type)) {
     const body = contentText(item || record) || text(record?.response?.output_text);
-    if (body) return event(index, 'final', 'Final answer', body, 'success', status || undefined, record);
+    if (body) return event(index, 'final', 'Final answer', body, 'success', status || undefined, record, timestamp);
   }
   if (type.includes('function_call_output') || type.includes('tool_output') || item?.output) {
-    return event(index, 'tool_output', name || 'Tool output', previewText(item?.output ?? record?.output ?? record?.result), status === 'failed' ? 'danger' : 'neutral', status || undefined, record);
+    return event(index, 'tool_output', name || 'Tool output', previewText(item?.output ?? record?.output ?? record?.result), status === 'failed' ? 'danger' : 'neutral', status || undefined, record, timestamp);
   }
   if (type.includes('function_call') || type.includes('tool_call') || item?.arguments || item?.input) {
     const args = item?.arguments ?? item?.input ?? record?.arguments ?? record?.input;
-    return event(index, 'tool_call', name || 'Tool call', summarizeArguments(args), 'neutral', status || 'started', record);
+    return event(index, 'tool_call', name || 'Tool call', summarizeArguments(args), 'neutral', status || 'started', record, timestamp);
   }
   if (/error|cancel|interrupt|input|required|failed/.test(`${type} ${status}`)) {
-    return event(index, 'diagnostic', diagnosticTitle(type, status), previewText(record?.error ?? record?.message ?? record), /error|failed/.test(`${type} ${status}`) ? 'danger' : 'warn', status || undefined, record);
+    return event(index, 'diagnostic', diagnosticTitle(type, status), previewText(record?.error ?? record?.message ?? record), /error|failed/.test(`${type} ${status}`) ? 'danger' : 'warn', status || undefined, record, timestamp);
   }
   if (usage) {
-    return event(index, 'usage', 'Token usage', usageSummary(usage), 'neutral', undefined, record);
+    return event(index, 'usage', 'Token usage', usageSummary(usage), 'neutral', undefined, record, timestamp);
   }
   return null;
 }
@@ -224,48 +265,55 @@ function transcriptEventFromProtocol(protocol: any, index: number, raw: unknown)
   const item = params.item ?? {};
 
   if (protocol.error) {
-    return event(index, 'diagnostic', method || 'Protocol error', previewText(protocol.error), 'danger', protocol.direction, raw);
+    return event(index, 'diagnostic', method || 'Protocol error', previewText(protocol.error), 'danger', protocol.direction, raw, eventTimestamp(raw));
   }
   if (method === 'turn/start') {
     const input = Array.isArray(params.input)
       ? params.input.map((entry: any) => text(entry?.text ?? entry?.content ?? entry)).filter(Boolean).join('\n\n')
       : contentText(params.input);
-    return input ? event(index, 'user', 'User', input, 'neutral', 'turn/start', raw) : null;
+    return input ? event(index, 'user', 'User', input, 'neutral', 'turn/start', raw, eventTimestamp(raw)) : null;
   }
   if (method === 'item/started' && item.type === 'commandExecution') {
-    return event(index, 'tool_call', item.command || 'Command execution', summarizeArguments({ cwd: item.cwd, command: item.command }), 'neutral', item.status || 'started', raw);
+    return event(index, 'tool_call', item.command || 'Command execution', summarizeArguments({ cwd: item.cwd, command: item.command }), 'neutral', item.status || 'started', raw, eventTimestamp(raw));
   }
   if (method === 'item/completed' && item.type === 'commandExecution') {
-    return event(index, 'tool_output', item.command || 'Command output', previewText(item.aggregatedOutput ?? item.output ?? item.exitCode), item.status === 'failed' || item.exitCode ? 'danger' : 'neutral', item.status || 'completed', raw);
+    return event(index, 'tool_output', item.command || 'Command output', previewText(item.aggregatedOutput ?? item.output ?? item.exitCode), item.status === 'failed' || item.exitCode ? 'danger' : 'neutral', item.status || 'completed', raw, eventTimestamp(raw));
   }
   if (method === 'item/completed' && item.type === 'agentMessage') {
     const phase = text(item.phase);
     const final = phase === 'final_answer';
-    return event(index, final ? 'final' : 'assistant', final ? 'Final answer' : 'Assistant', previewText(item.text), final ? 'success' : 'neutral', phase || 'agentMessage', raw);
+    return event(index, final ? 'final' : 'assistant', final ? 'Final answer' : 'Assistant', previewText(item.text), final ? 'success' : 'neutral', phase || 'agentMessage', raw, eventTimestamp(raw));
   }
   if (method === 'thread/tokenUsage/updated') {
     const usage = params.tokenUsage?.total ?? params.tokenUsage?.last ?? params.tokenUsage;
-    return event(index, 'usage', 'Token usage', usageSummary(usage), 'neutral', undefined, raw);
+    return event(index, 'usage', 'Token usage', usageSummary(usage), 'neutral', undefined, raw, eventTimestamp(raw));
   }
   if (method === 'configWarning') {
-    return event(index, 'diagnostic', 'Config warning', previewText(params.summary ?? params.details ?? params), 'warn', method, raw);
+    return event(index, 'diagnostic', 'Config warning', previewText(params.summary ?? params.details ?? params), 'warn', method, raw, eventTimestamp(raw));
   }
   if (/input|required|cancel|error|failed/.test(`${method} ${previewText(params, 120)}`)) {
-    return event(index, 'diagnostic', diagnosticTitle(method, ''), previewText(params), /error|failed/.test(method) ? 'danger' : 'warn', method, raw);
+    return event(index, 'diagnostic', diagnosticTitle(method, ''), previewText(params), /error|failed/.test(method) ? 'danger' : 'warn', method, raw, eventTimestamp(raw));
   }
   return null;
 }
 
-function event(index: number, kind: TranscriptEventKind, title: string, body: string, tone: TranscriptTone, detail?: string, raw?: unknown): TranscriptEvent {
+function event(index: number, kind: TranscriptEventKind, title: string, body: string, tone: TranscriptTone, detail?: string, raw?: unknown, timestamp?: string): TranscriptEvent {
   return {
     id: `${kind}-${index}`,
     kind,
     title,
     body: body || '(empty)',
     detail,
+    timestamp,
     tone,
     raw
   };
+}
+
+function isDuplicateEvent(previous: TranscriptEvent | undefined, next: TranscriptEvent) {
+  return previous?.kind === next.kind
+    && previous?.timestamp === next.timestamp
+    && previous?.body === next.body;
 }
 
 function heartbeat(
@@ -431,6 +479,12 @@ function usageSummary(usage: any) {
     output != null ? `output ${output}` : null,
     total ? `total ${total}` : null
   ].filter(Boolean).join(' · ') || previewText(usage);
+}
+
+function eventTimestamp(record: unknown) {
+  if (!record || typeof record !== 'object') return undefined;
+  const value = (record as any).timestamp ?? (record as any).time ?? (record as any).created_at ?? (record as any).payload?.timestamp ?? (record as any).payload?.started_at;
+  return text(value) || undefined;
 }
 
 function latestUsage(events: TranscriptEvent[]) {

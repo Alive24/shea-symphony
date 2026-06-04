@@ -819,12 +819,71 @@ test('missing transcript state is local-only and explicit', () => {
 });
 
 test('heartbeat classifier separates running, stale, stopped, and unavailable states', () => {
-  const now = 10_000;
+  const now = 1_700_000_600_000;
 
   assert.equal(classifyHeartbeat({ running: true, lanes: { main: { updatedAtMs: now - 15_000 } } }, 'main', null, now).state, 'running');
   assert.equal(classifyHeartbeat({ running: true, lanes: { main: { updatedAtMs: now - 180_000 } } }, 'main', null, now).state, 'stale');
   assert.equal(classifyHeartbeat({ running: false, lanes: { main: { updatedAtMs: now - 180_000 } } }, 'main', null, now).state, 'stopped');
   assert.equal(classifyHeartbeat(null, 'main', null, now).state, 'unavailable');
+});
+
+test('heartbeat classifier treats zero, invalid, and missing timestamps as unavailable', () => {
+  const now = 1_700_000_600_000;
+
+  for (const updatedAtMs of [0, -1, Number.NaN, 'not-a-date', null, undefined]) {
+    const summary = classifyHeartbeat({ running: true, lanes: { main: { updatedAtMs } }, recentLines: [] }, 'main', '#429', now);
+    assert.equal(summary.state, 'unavailable');
+    assert.equal(summary.lastHeartbeatMs, null);
+    assert.equal(summary.lastHeartbeatAge, 'unavailable');
+  }
+});
+
+test('latest lane event includes volatile event timestamp metadata', () => {
+  const now = 1_700_000_600_000;
+  const summary = classifyHeartbeat({
+    running: true,
+    lanes: { main: { updatedAtMs: now - 10_000 } },
+    recentLines: [
+      {
+        atMs: now - 45_000,
+        stream: 'stdout',
+        line: 'Latest: main | #429 | running | implementation',
+        event: {
+          event: 'autopilot_signal',
+          payload: {
+            visibility: 'operator',
+            lane: 'main',
+            issue: '#429',
+            message: '#429 implementation in progress'
+          }
+        }
+      }
+    ]
+  }, 'main', '#429', now);
+
+  assert.equal(summary.latestLaneEvent, '#429 implementation in progress');
+  assert.equal(summary.latestLaneEventAtMs, now - 45_000);
+  assert.equal(summary.latestLaneEventAge, '45s ago');
+  assert.equal(summary.latestLaneEventSource, 'recentLines.autopilot_signal');
+});
+
+test('latest lane event falls back to persisted local lifecycle evidence when memory is empty', () => {
+  const now = 1_700_000_600_000;
+  const persistedAt = now - 15 * 60_000;
+  const summary = classifyHeartbeat({
+    running: true,
+    lanes: { main: { updatedAtMs: 0 } },
+    recentLines: []
+  }, 'main', '#429', now, [
+    { issue: '#428', lane: 'main', label: 'Different issue', time: new Date(now - 1000).toISOString() },
+    { issue: '#429', lane: 'main', label: 'Main lane recorded handoff', detail: 'local event log', time: new Date(persistedAt).toISOString() }
+  ]);
+
+  assert.equal(summary.state, 'unavailable');
+  assert.equal(summary.latestLaneEvent, 'Main lane recorded handoff · local event log');
+  assert.equal(summary.latestLaneEventAtMs, persistedAt);
+  assert.equal(summary.latestLaneEventAge, '15m ago');
+  assert.equal(summary.latestLaneEventSource, 'localStatus.issueLifecycle');
 });
 
 test('project read cooldown preserves last stable review queue visibility', () => {

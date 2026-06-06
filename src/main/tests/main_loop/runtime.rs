@@ -68,6 +68,58 @@ fn resume_preflight_blocks_non_active_state_with_dirty_worktree() {
 }
 
 #[test]
+fn resume_preflight_archives_need_human_input_with_dirty_worktree() {
+    let config = test_config();
+    let tracker = MemoryTracker::new(vec![tracker_issue("Need Human Input")]);
+    let temp = tempfile::tempdir().unwrap();
+    init_clean_git_workspace(temp.path());
+    std::fs::write(temp.path().join("scratch.txt"), "operator evidence").unwrap();
+    let mut state = active_runtime_state("#29");
+    state.workspace_path = Some(temp.path().to_path_buf());
+
+    let action = run_loop_resume_preflight(&tracker, &config, Some(&state), 2_000).unwrap();
+
+    assert_eq!(
+        action,
+        ResumePreflightAction::ArchiveStale {
+            issue_identifier: "#29".into(),
+            tracker_state: "Need Human Input".into(),
+            archive_reason: "tracker_state_need_human_input".into(),
+        }
+    );
+}
+
+#[test]
+fn resume_preflight_many_clears_need_human_input_dirty_runtime_slot() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = test_config();
+    config.artifacts.root = temp.path().join("artifacts");
+    config.observability.logs_root = temp.path().join("logs");
+    let tracker = MemoryTracker::new(vec![
+        tracker_issue_with_ref("#29", "Needs operator", "Need Human Input"),
+        tracker_issue_with_ref("#30", "Still active", "In Progress"),
+    ]);
+    let dirty_workspace = temp.path().join("dirty-issue-29");
+    std::fs::create_dir_all(&dirty_workspace).unwrap();
+    init_clean_git_workspace(&dirty_workspace);
+    std::fs::write(dirty_workspace.join("scratch.txt"), "operator evidence").unwrap();
+    let mut stale = active_runtime_state("#29");
+    stale.workspace_path = Some(dirty_workspace);
+    let active = active_runtime_state("#30");
+
+    let summary =
+        run_loop_resume_preflight_many(&tracker, &config, &[stale, active], 2_000, true).unwrap();
+
+    assert_eq!(summary.blocked, None);
+    assert_eq!(summary.active_main_workers, 1);
+    assert_eq!(summary.retained_states.len(), 1);
+    assert_eq!(
+        runtime_state_issue_identifier(&summary.retained_states[0]),
+        Some("#30")
+    );
+}
+
+#[test]
 fn resume_preflight_archive_allows_unrelated_todo_selection() {
     let config = main_loop_test_config();
     let stale = tracker_issue_with_ref("#29", "Needs clarification", "Need to Clarify");

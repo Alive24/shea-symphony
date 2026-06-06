@@ -8,6 +8,7 @@ use shea_symphony::quality_gate::{
     evaluate_issue_with_source_alignment, LlmGateMode, LlmGateOptions,
 };
 use shea_symphony::tracker::adapter_from_config;
+use shea_symphony::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 
 use crate::orchestration::{
     append_tracker_mutation_audit, live_github_tracker, load_config, progress_spec_for_config,
@@ -141,45 +142,39 @@ fn expected_target_repository(config: &RuntimeConfig) -> Option<String> {
 }
 
 pub(crate) fn gate_workpad(issue: &TrackerIssue, decision: &GateDecision) -> String {
-    let mut lines = vec![
-        "## Shea Symphony Workpad".to_string(),
-        String::new(),
-        "### Context".to_string(),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        format!("- Current state: {}", issue.state),
-        String::new(),
-        "### Decisions / Assumptions".to_string(),
-    ];
-
-    if decision.assumptions.is_empty() {
-        lines.push("- None recorded.".into());
+    let assumptions = if decision.assumptions.is_empty() {
+        "- None recorded.".into()
     } else {
-        lines.extend(decision.assumptions.iter().map(|item| format!("- {item}")));
-    }
+        decision
+            .assumptions
+            .iter()
+            .map(|item| format!("- {item}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let missing = (!decision.missing.is_empty())
+        .then(|| format!("- Missing: {}", decision.missing.join(", ")))
+        .unwrap_or_default();
+    let notes = decision
+        .notes
+        .iter()
+        .map(|item| format!("- Note: {item}"))
+        .collect::<Vec<_>>()
+        .join("\n");
 
-    lines.extend([
-        String::new(),
-        "### Quality Gate".to_string(),
-        format!("- Decision: {:?}", decision.kind),
-    ]);
-
-    if !decision.missing.is_empty() {
-        lines.push(format!("- Missing: {}", decision.missing.join(", ")));
-    }
-    if !decision.notes.is_empty() {
-        lines.extend(decision.notes.iter().map(|item| format!("- Note: {item}")));
-    }
-
-    lines.extend([
-        String::new(),
-        "### Plan".to_string(),
-        "- [ ] Resolve quality-gate findings before dispatch.".to_string(),
-        String::new(),
-        "### Validation".to_string(),
-        "- [ ] Re-run `shea-symphony forge validate --issue` after issue updates.".to_string(),
-    ]);
-
-    lines.join("\n")
+    render_workpad_template(
+        None,
+        WorkpadTemplateId::MainQualityGate,
+        &[
+            ("issue_ref", issue.identifier.clone()),
+            ("issue_title", issue.title.clone()),
+            ("current_state", issue.state.clone()),
+            ("assumptions", assumptions),
+            ("decision", format!("{:?}", decision.kind)),
+            ("missing", missing),
+            ("notes", notes),
+        ],
+    )
 }
 
 pub(crate) fn gate_target_state(decision: &GateDecision) -> &'static str {

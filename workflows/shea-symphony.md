@@ -38,6 +38,14 @@ prompts:
   main_agent: prompts/main-agent.md
   review_agent: prompts/review-agent.md
   merge_agent: prompts/merge-agent.md
+workpad_templates:
+  agent_review_run: template/workpad/agent-review.md
+  doctor_triage: template/workpad/doctor-triage.md
+  human_review_repair: template/workpad/doctor-triage.md
+  merge_run: template/workpad/merge-run.md
+  merge_repair: template/workpad/merge-run.md
+  forge_rework_run: template/workpad/rework-run.md
+  forge_rework_blocked: template/workpad/rework-run.md
 polling:
   interval_ms: 5000
 artifacts:

@@ -434,7 +434,7 @@ fn review_pass_updates_issue_body_checkboxes_before_human_review_transition() {
         error: None,
     };
 
-    apply_review_result(&config, &adapter, "#67", &issue, &job, None, None).unwrap();
+    apply_review_result(None, &config, &adapter, "#67", &issue, &job, None, None).unwrap();
 
     let updated = adapter
         .issues

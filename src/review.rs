@@ -10,6 +10,8 @@ use serde::Deserialize;
 
 use crate::lane_claim::{LaneClaim, LaneClaimState};
 use crate::model::{normalize_state, TrackerIssue};
+use crate::workflow::WorkflowDefinition;
+use crate::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 
 mod decision;
 mod freshness;
@@ -41,8 +43,6 @@ pub use report::{classify_findings, AgentReviewReport, ReviewFinding, ReviewFind
 use gemini_health::diagnose_gemini_spawn_failure;
 use job::review_job_id;
 
-const AGENT_REVIEW_WORKPAD_TEMPLATE: &str =
-    include_str!("../workflows/template/workpad/agent-review.md");
 const LOG_BLOCK_LIMIT: usize = 2_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -623,6 +623,14 @@ fn terminal_review_failure_marker_matches(value: &str, worker_key: &str) -> bool
 }
 
 pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
+    render_review_workpad_with_workflow(None, issue, job)
+}
+
+pub fn render_review_workpad_with_workflow(
+    workflow: Option<&WorkflowDefinition>,
+    issue: &TrackerIssue,
+    job: &ReviewJob,
+) -> String {
     let decision = review_gate_decision_for_issue(job, issue);
     let mut attempt_details = Vec::new();
     if let Some(error) = &job.error {
@@ -710,8 +718,9 @@ pub fn render_review_workpad(issue: &TrackerIssue, job: &ReviewJob) -> String {
         String::new()
     };
 
-    render_template(
-        AGENT_REVIEW_WORKPAD_TEMPLATE,
+    render_workpad_template(
+        workflow,
+        WorkpadTemplateId::AgentReviewRun,
         &[
             ("generated_at", current_gmt_timestamp()),
             ("issue_ref", issue.identifier.clone()),
@@ -827,14 +836,6 @@ fn render_parsed_findings_section(
     };
 
     render_section("Findings", &findings)
-}
-
-fn render_template(template: &str, replacements: &[(&str, String)]) -> String {
-    let mut rendered = template.to_string();
-    for (key, value) in replacements {
-        rendered = rendered.replace(&format!("{{{{{key}}}}}"), value);
-    }
-    rendered.trim_end().to_string()
 }
 
 fn render_section(title: &str, body: &str) -> String {

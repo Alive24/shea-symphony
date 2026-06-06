@@ -5,6 +5,7 @@ use shea_symphony::progress::run_with_progress_heartbeat;
 use shea_symphony::prompt_runtime::{PROMPT_RENDERER_MODE, RUNTIME_ENVELOPES};
 use shea_symphony::tracker::adapter_from_config;
 use shea_symphony::workflow::{AgentLane, WorkflowDefinition};
+use shea_symphony::workpad_templates::workpad_template_readback;
 
 use crate::commands::gate::evaluate_issue_for_current_source;
 use crate::commands::project::{filter_issues_by_state, render_state_summary};
@@ -47,6 +48,21 @@ pub(crate) fn validate(workflow_path: PathBuf) -> Result<(), Box<dyn std::error:
         println!(
             "runtime_envelope={} lane={} backend={} path={} purpose={}",
             envelope.id, envelope.lane, envelope.backend, envelope.path, envelope.purpose
+        );
+    }
+    for template in workpad_template_readback(&workflow) {
+        let diagnostic = template
+            .source
+            .diagnostic()
+            .map(|diagnostic| format!(" diagnostic={diagnostic}"))
+            .unwrap_or_default();
+        println!(
+            "workpad_template.{}={} path={} bytes={}{}",
+            template.id.key(),
+            template.source.kind(),
+            template.source.path_display(),
+            template.body.len(),
+            diagnostic
         );
     }
     println!("status=valid");

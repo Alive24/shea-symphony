@@ -450,6 +450,10 @@ export function laneWorkersFromAutoloopLines(
 
   for (const line of state.recentLines ?? []) {
     if (lowerBound != null && line.atMs < lowerBound) continue;
+    if (lineClearsLaneWorkers(line, laneKey)) {
+      workers.clear();
+      continue;
+    }
     const terminalIssue = terminalIssueFromAutoloopLine(line);
     if (terminalIssue) {
       workers.delete(terminalIssue);
@@ -460,6 +464,18 @@ export function laneWorkersFromAutoloopLines(
   }
 
   return [...workers.values()];
+}
+
+function lineClearsLaneWorkers(line: AutoloopLine, laneKey: string) {
+  const eventName = textFromValue(recordValue(line.event, 'event'));
+  if (eventName !== 'autopilot_loop_lane') return false;
+  const payload = recordFromValue(recordValue(line.event, 'payload'));
+  const lane = textFromValue(recordValue(payload, 'lane'));
+  if (lane !== laneKey) return false;
+  const selected = issueRefFromValue(recordValue(payload, 'selected_issue') ?? recordValue(payload, 'selected'));
+  if (selected) return false;
+  const status = textFromValue(recordValue(payload, 'status'));
+  return status === 'completed' || status === 'idle' || status === 'skipped';
 }
 
 function terminalIssueFromAutoloopLine(line: AutoloopLine) {

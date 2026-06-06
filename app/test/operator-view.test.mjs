@@ -181,6 +181,51 @@ test('autoloop lane workers clear issue after merge terminal events', () => {
   assert.deepEqual(laneWorkersFromAutoloopLines(state, 'merge'), []);
 });
 
+test('autoloop lane workers clear stale issue after empty completed lane tick', () => {
+  const now = Date.now();
+  const state = {
+    ...defaultLoopState(),
+    running: true,
+    startedAtMs: now - 100,
+    recentLines: [
+      {
+        atMs: now,
+        stream: 'stdout',
+        line: 'Latest: merge | #435 | waiting | merge_decision',
+        event: {
+          event: 'autopilot_signal',
+          payload: {
+            visibility: 'operator',
+            scope: 'lane',
+            lane: 'merge',
+            issue: '#435',
+            status: 'waiting',
+            action: 'merge_decision',
+            message: '#435 merge waiting merge_decision'
+          }
+        }
+      },
+      {
+        atMs: now + 1,
+        stream: 'stdout',
+        line: 'autopilot_loop_lane lane=merge status=completed action=lane_tick_completed selected=none',
+        event: {
+          event: 'autopilot_loop_lane',
+          payload: {
+            lane: 'merge',
+            status: 'completed',
+            action: 'lane_tick_completed',
+            selected_issue: null,
+            work_unit_completed: false
+          }
+        }
+      }
+    ]
+  };
+
+  assert.deepEqual(laneWorkersFromAutoloopLines(state, 'merge'), []);
+});
+
 test('autoloop stdout log omits repeated inactive skipped issue details', () => {
   const state = appendAutoloopLine(defaultLoopState(), {
     atMs: Date.now(),

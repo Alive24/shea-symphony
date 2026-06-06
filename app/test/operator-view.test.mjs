@@ -1555,6 +1555,65 @@ test('view model keeps lane queue rows observational without next skill metadata
   assert.ok(view.laneProjectIssues.merge.every((issue) => !Object.hasOwn(issue, 'nextSkill')));
 });
 
+test('blocked Todo project rows keep dependency readback but stay out of Main lane queue', () => {
+  const view = buildViewModel({
+    generatedAt: new Date().toISOString(),
+    workflowPath: 'workflows/shea-symphony.md',
+    commands: {
+      githubQueue: {
+        ok: true,
+        args: ['project', 'state', 'workflows/shea-symphony.md', '--json'],
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        durationMs: 12,
+        stderr: '',
+        stdoutPreview: '{}'
+      }
+    },
+    githubQueue: {
+      source: 'GitHub Project',
+      issues: [
+        { identifier: '#438', title: 'Ready Todo', state: 'Todo', blockedBy: [] },
+        {
+          identifier: '#439',
+          title: 'Blocked Todo',
+          state: 'Todo',
+          blockedBy: [{ identifier: '#401', state: 'Todo' }],
+          blockedReason: 'issue has unresolved tracker dependencies'
+        },
+        {
+          identifier: '#440',
+          title: 'Blocked Rework',
+          state: 'Rework',
+          blockedBy: [{ identifier: '#402', state: 'Agent Review' }]
+        },
+        {
+          identifier: '#441',
+          title: 'Resolved Rework',
+          state: 'Rework',
+          blockedBy: [{ identifier: '#403', state: 'Done' }]
+        }
+      ]
+    },
+    healthy: true
+  });
+
+  const ready = view.queueIssues.find((issue) => issue.id === '#438');
+  const blocked = view.queueIssues.find((issue) => issue.id === '#439');
+  const blockedRework = view.queueIssues.find((issue) => issue.id === '#440');
+  const board = buildLaneThroughputBoard({ queueIssues: view.queueIssues });
+  const main = board.find((lane) => lane.laneKey === 'main');
+
+  assert.equal(ready.lane, 'Main');
+  assert.equal(blocked.lane, 'Blocked');
+  assert.equal(blockedRework.lane, 'Blocked');
+  assert.deepEqual(blocked.blockedBy, [{ id: null, identifier: '#401', state: 'Todo' }]);
+  assert.match(blocked.evidence, /blocked by #401 Todo/);
+  assert.deepEqual(view.laneProjectIssues.main.map((issue) => issue.id), ['#441', '#438']);
+  assert.deepEqual(main.issues.map((issue) => issue.id), ['#441', '#438']);
+});
+
 test('fixture overview feeds first-screen human todo and lane board data', () => {
   const overview = buildFixtureOverview(true);
   const view = buildViewModel(overview);

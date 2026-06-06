@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use serde_json::{json, Value};
@@ -67,7 +67,8 @@ pub(crate) fn project_state(
                     render_project_state_json(
                         &issues,
                         &integration_gaps,
-                        project_state_scope(options.include_terminal)
+                        project_state_scope(options.include_terminal),
+                        &config.terminal_state_set().into_iter().collect()
                     )?
                 );
                 return Ok(());
@@ -569,6 +570,7 @@ pub(crate) fn render_project_state_json(
     issues: &[TrackerIssue],
     integration_gaps: &[String],
     scope: &str,
+    terminal_states: &BTreeSet<String>,
 ) -> Result<String, serde_json::Error> {
     let mut state_counts = BTreeMap::new();
     let mut lane_counts = BTreeMap::from([
@@ -583,7 +585,7 @@ pub(crate) fn render_project_state_json(
         let state = issue.state.trim();
         let state = if state.is_empty() { "(unknown)" } else { state };
         *state_counts.entry(state.to_string()).or_insert(0usize) += 1;
-        if let Some(lane) = lane_for_state(state) {
+        if let Some(lane) = lane_for_issue(issue, terminal_states) {
             *lane_counts.entry(lane.to_string()).or_insert(0usize) += 1;
         }
 
@@ -610,6 +612,23 @@ pub(crate) fn render_project_state_json(
 }
 
 fn render_queue_issue(issue: &TrackerIssue) -> Value {
+    let blocked_by = issue
+        .blocked_by
+        .iter()
+        .map(|blocker| {
+            json!({
+                "id": blocker.id,
+                "identifier": blocker.identifier,
+                "state": blocker.state,
+            })
+        })
+        .collect::<Vec<_>>();
+    let blocked_reason = if blocked_by.is_empty() {
+        None
+    } else {
+        Some("issue has tracker dependencies")
+    };
+
     json!({
         "identifier": issue.identifier,
         "title": issue.title,
@@ -621,16 +640,39 @@ fn render_queue_issue(issue: &TrackerIssue) -> Value {
         "labels": issue.labels,
         "priority": issue.priority,
         "branchName": issue.branch_name,
+        "blockedBy": blocked_by,
+        "blockedReason": blocked_reason,
     })
 }
 
-fn lane_for_state(state: &str) -> Option<&'static str> {
-    match normalize_state(state).as_str() {
+fn lane_for_issue(
+    issue: &TrackerIssue,
+    terminal_states: &BTreeSet<String>,
+) -> Option<&'static str> {
+    let normalized_state = issue.normalized_state();
+    if matches!(normalized_state.as_str(), "todo" | "rework")
+        && issue_has_unresolved_blockers(issue, terminal_states)
+    {
+        return None;
+    }
+
+    match normalized_state.as_str() {
         "todo" | "rework" | "in progress" => Some("main"),
         "agent review" => Some("review"),
         "merging" => Some("merge"),
         _ => None,
     }
+}
+
+fn issue_has_unresolved_blockers(issue: &TrackerIssue, terminal_states: &BTreeSet<String>) -> bool {
+    issue.blocked_by.iter().any(|blocker| {
+        blocker
+            .state
+            .as_deref()
+            .map(normalize_state)
+            .map(|state| !terminal_states.contains(&state))
+            .unwrap_or(true)
+    })
 }
 
 fn is_operator_state(state: &str) -> bool {

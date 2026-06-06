@@ -349,6 +349,14 @@
   }
 
   function runtimeDetailForWorker(worker: any) {
+    if (worker.backend === 'Codex app-server') {
+      const session = worker.sessionId ?? (worker.session === 'session pending' ? null : worker.session);
+      return [
+        worker.backend,
+        worker.pid ? `PID ${worker.pid}` : null,
+        session ? `session ${session}` : 'session pending'
+      ].filter(Boolean).join(' · ');
+    }
     return [worker.action, worker.backend, worker.session].filter(Boolean).join(' · ') || 'Worker is visible.';
   }
 
@@ -488,7 +496,8 @@
   }
 
   function sessionIdForIssue(issue: any) {
-    return issue?.worker?.session ?? issue?.worktree?.session ?? issue?.session ?? null;
+    const session = issue?.worker?.sessionId ?? issue?.worker?.session ?? issue?.worktree?.session ?? issue?.session ?? null;
+    return session === 'session pending' ? null : session;
   }
 
   function laneKeyForIssue(issue: any) {

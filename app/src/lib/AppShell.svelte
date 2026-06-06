@@ -28,6 +28,7 @@
     getLoopState,
     isTauriRuntime,
     mergeLaneSnapshot,
+    operatorLoopStatusDetail,
     operatorRunLogLines,
     startAutoloop,
     stopAutoloop,
@@ -308,7 +309,7 @@
       return {
         eventName,
         title: `Loop ${phase}`,
-        detail: stringField(payload, 'message') ?? 'Loop status updated.',
+        detail: operatorLoopStatusDetail(payload),
         chips: [
           ...concurrencyChips(objectField(payload, 'settings')),
           `running ${numberField(counts, 'running') ?? 0}`,

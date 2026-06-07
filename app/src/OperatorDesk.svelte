@@ -10,6 +10,7 @@
   } from './lib/uiState.ts';
   import { operatorOverviewStore, requestOperatorLocalArtifactsRefresh } from './lib/operatorOverviewStore.ts';
   import { buildLaneThroughputBoard } from './lib/viewModel/laneThroughput.ts';
+  import { buildHandoffPrompt } from './lib/viewModel/handoffPrompt.ts';
   import {
     appendAutoloopLine,
     defaultLoopState,
@@ -18,6 +19,7 @@
     laneWorkerFromAutoloop,
     laneWorkersFromAutoloopLines,
     mergeLaneSnapshot,
+    openHandoffTarget,
     operatorRunLogLines,
     subscribeAutoloopEvents,
     type LaneSnapshot,
@@ -31,6 +33,7 @@
   let autoloopState: LoopStateSnapshot = defaultLoopState();
   let defaultHandoffTarget = 'codex-app';
   let copiedHandoffId = '';
+  let handoffStatus = {};
   let autoloopRefreshTimer: number | null = null;
   let lastStableHumanTodoIssues = [];
   let lastStableLaneBoard = [];
@@ -162,37 +165,51 @@
     return operatorRunLogLines(state, lines);
   }
 
-  function handoffPrompt(issue) {
-    return [
-      `Use the appropriate Shea Symphony Skill for ${issue.id}.`,
-      '',
-      `Issue: ${issue.id} ${issue.title}`,
-      `State: ${issue.state}`,
-      `Lane: ${issue.lane}`,
-      `Category: ${issue.category}`,
-      `Recommended: ${issue.recommended}`,
-      issue.url ? `URL: ${issue.url}` : '',
-      '',
-      'Read the current Project issue state first, preserve lane boundaries, and ask before any Project mutation.'
-    ]
-      .filter(Boolean)
-      .join('\n');
+  function handoffMessage(issue) {
+    return handoffStatus[issue.id] ?? '';
   }
 
   async function copyHandoffPrompt(issue) {
     try {
-      await navigator.clipboard.writeText(handoffPrompt(issue));
+      await navigator.clipboard.writeText(buildHandoffPrompt(issue));
       copiedHandoffId = issue.id;
+      handoffStatus = { ...handoffStatus, [issue.id]: 'Handoff prompt copied.' };
       window.setTimeout(() => {
         if (copiedHandoffId === issue.id) copiedHandoffId = '';
       }, 1800);
+      return true;
     } catch (_) {
       copiedHandoffId = '';
+      handoffStatus = { ...handoffStatus, [issue.id]: 'Clipboard unavailable; prompt was not copied.' };
+      return false;
     }
   }
 
   async function openHandoff(issue) {
-    await copyHandoffPrompt(issue);
+    const copied = await copyHandoffPrompt(issue);
+    if (defaultHandoffTarget !== 'codex-app') {
+      handoffStatus = {
+        ...handoffStatus,
+        [issue.id]: copied
+          ? `Prompt copied. Open ${handoffLabel(defaultHandoffTarget)} and paste it.`
+          : `Clipboard unavailable. Open ${handoffLabel(defaultHandoffTarget)} manually after copying the prompt.`
+      };
+      return;
+    }
+    try {
+      await openHandoffTarget(defaultHandoffTarget);
+      handoffStatus = {
+        ...handoffStatus,
+        [issue.id]: copied ? 'Prompt copied. Codex App opened.' : 'Codex App opened, but prompt was not copied.'
+      };
+    } catch (_) {
+      handoffStatus = {
+        ...handoffStatus,
+        [issue.id]: copied
+          ? 'Prompt copied. Open Codex App manually and paste it.'
+          : 'Clipboard unavailable. Open Codex App manually after copying the prompt.'
+      };
+    }
   }
 
   async function refreshAutoloopState() {
@@ -294,6 +311,9 @@
                 {copiedHandoffId === issue.id ? 'Copied' : 'Copy Handoff Prompt'}
               </button>
             </div>
+            {#if handoffMessage(issue)}
+              <small class="handoff-status">{handoffMessage(issue)}</small>
+            {/if}
           </article>
         {/each}
       {:else}

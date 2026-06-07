@@ -47,6 +47,10 @@ import {
   buildIssueCommentLifecycleEvents
 } from '../src/lib/viewModel/githubIssueTimeline.ts';
 import {
+  buildHandoffPrompt,
+  handoffSkillForIssue
+} from '../src/lib/viewModel/handoffPrompt.ts';
+import {
   appendAutoloopLine,
   defaultLoopState,
   laneWorkerFromAutoloop,
@@ -1074,6 +1078,28 @@ test('lane board rendering omits handoff actions and manual skill labels', () =>
   assert.match(humanTodoSection, /handoff-actions/);
   assert.match(humanTodoSection, /Open in/);
   assert.match(humanTodoSection, /Copy Handoff Prompt/);
+});
+
+test('human handoff prompt is issue-specific and lane-boundary explicit', () => {
+  const issue = {
+    id: '#436',
+    title: 'Add strict Liquid-compatible rendering for prompt and workpad templates',
+    state: 'Human Review',
+    lane: 'Human',
+    category: 'Human Review',
+    workerStatus: 'No worker visible',
+    recommended: 'Human operator should review evidence before routing.',
+    evidence: 'GitHub queue · Human Review',
+    url: 'https://github.com/Alive24/shea-symphony/issues/436'
+  };
+
+  assert.equal(handoffSkillForIssue(issue), 'shea-symphony-human-review');
+  const prompt = buildHandoffPrompt(issue);
+  assert.match(prompt, /Use the shea-symphony-human-review skill for #436/);
+  assert.match(prompt, /State: Human Review/);
+  assert.match(prompt, /Read current Project issue state before acting/);
+  assert.match(prompt, /do not mutate Project state without explicit approval/);
+  assert.match(prompt, /https:\/\/github\.com\/Alive24\/shea-symphony\/issues\/436/);
 });
 
 test('Codex transcript parser renders conversation turns, tool calls, outputs, final answers, and usage', () => {

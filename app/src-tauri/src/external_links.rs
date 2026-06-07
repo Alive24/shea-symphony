@@ -12,6 +12,12 @@ pub fn open_github_source(url: String) -> Result<(), String> {
     open_external_url(&url)
 }
 
+#[tauri::command]
+pub fn open_handoff_target(target_id: String) -> Result<(), String> {
+    let target = handoff_target(&target_id)?;
+    open_native_target(target)
+}
+
 fn validate_codex_thread_link(deep_link: &str) -> Result<(), String> {
     let thread_id = deep_link
         .strip_prefix("codex://threads/")
@@ -43,6 +49,21 @@ fn is_allowed_github_source_path(path: &str) -> bool {
         }
         _ => false,
     }
+}
+
+fn handoff_target(target_id: &str) -> Result<HandoffTarget, String> {
+    match target_id {
+        "codex-app" => Ok(HandoffTarget {
+            app_name: "Codex",
+            display_name: "Codex App",
+        }),
+        _ => Err("Only configured native handoff targets can be opened.".into()),
+    }
+}
+
+struct HandoffTarget {
+    app_name: &'static str,
+    display_name: &'static str,
 }
 
 fn is_uuid_like(value: &str) -> bool {
@@ -78,10 +99,45 @@ fn open_external_url(url: &str) -> Result<(), String> {
     }
 }
 
+fn open_native_target(target: HandoffTarget) -> Result<(), String> {
+    let status = platform_open_native_target_command(target.app_name)
+        .status()
+        .map_err(|error| format!("Failed to open {}: {error}", target.display_name))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "System opener could not open {} and exited with status {status}.",
+            target.display_name
+        ))
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn platform_open_command(url: &str) -> Command {
     let mut command = Command::new("open");
     command.arg(url);
+    command
+}
+
+#[cfg(target_os = "macos")]
+fn platform_open_native_target_command(app_name: &str) -> Command {
+    let mut command = Command::new("open");
+    command.args(["-a", app_name]);
+    command
+}
+
+#[cfg(target_os = "windows")]
+fn platform_open_native_target_command(app_name: &str) -> Command {
+    let mut command = Command::new("cmd");
+    command.args(["/C", "start", "", app_name]);
+    command
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn platform_open_native_target_command(app_name: &str) -> Command {
+    let mut command = Command::new("xdg-open");
+    command.arg(app_name);
     command
 }
 
@@ -143,5 +199,14 @@ mod tests {
             validate_github_source_url("https://github.com/Alive24/shea-symphony/actions").is_err()
         );
         assert!(validate_github_source_url("https://github.com/other/repo/issues/430").is_err());
+    }
+
+    #[test]
+    fn validates_native_handoff_targets() {
+        let codex = handoff_target("codex-app").unwrap();
+        assert_eq!(codex.app_name, "Codex");
+        assert_eq!(codex.display_name, "Codex App");
+        assert!(handoff_target("gemini-cli").is_err());
+        assert!(handoff_target("https://example.com").is_err());
     }
 }

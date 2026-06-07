@@ -176,6 +176,14 @@ export async function openCodexThread(deepLink: string): Promise<void> {
   await invoke('open_codex_thread', { deepLink });
 }
 
+export async function openHandoffTarget(targetId: string): Promise<void> {
+  if (!isTauriRuntime()) {
+    throw new Error('Native handoff targets are only available in the desktop shell.');
+  }
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('open_handoff_target', { targetId });
+}
+
 export async function openGitHubSource(url: string): Promise<void> {
   if (!isTauriRuntime()) {
     window.open(url, '_blank', 'noopener,noreferrer');

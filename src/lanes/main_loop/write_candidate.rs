@@ -20,8 +20,8 @@ use live_handoff::apply_live_handoff_steps;
 use terminal::{apply_terminal_transition, TerminalTransitionContext};
 
 use super::{
-    append_runtime_supervision_event, codex_app_server_resume_thread_for_state, current_gh_login,
-    execute_issue_once_with_options, handle_run_loop_gate_failure, handle_run_loop_handoff_failure,
+    append_runtime_supervision_event, current_gh_login, execute_issue_once_with_options,
+    handle_run_loop_gate_failure, handle_run_loop_handoff_failure, main_recovery_plan,
     main_session_active_recoverable, reconcile_pending_main_session,
     run_loop_apply_recovery_handoff, run_loop_assignee_ownership_decision,
     run_loop_assignee_ownership_workpad, run_loop_claim_action, run_loop_handoff_plan,
@@ -463,25 +463,51 @@ pub(crate) fn run_loop_dispatch_write_candidate(
         Some(MainSessionReconciliation::Terminal(result)) => *result,
         Some(MainSessionReconciliation::Active { .. }) => unreachable!(),
         None => {
-            let app_server_resume_thread_id = if recover {
-                codex_app_server_resume_thread_for_state(config, &runtime_state)?
+            let recovery_plan = if recover
+                && runtime_state.backend == "codex"
+                && config.codex.command.contains("app-server")
+            {
+                Some(main_recovery_plan(config, &latest, &runtime_state)?)
             } else {
                 None
             };
-            if let Some(thread_id) = app_server_resume_thread_id.as_deref() {
+            if let Some(recovery_plan) = &recovery_plan {
                 println!(
-                    "run_loop_action=app_server_resume issue={} thread={} input=Continue",
-                    latest.identifier, thread_id
+                    "run_loop_action=recovery_mode issue={} mode={} evidence={}",
+                    latest.identifier,
+                    recovery_plan.mode.as_str(),
+                    recovery_plan.evidence
                 );
                 append_runtime_supervision_event(
                     config,
                     Some(&runtime_state),
-                    "CodexAppServerResume",
+                    "MainRecoveryMode",
                     &format!(
-                        "issue={} thread={} input=Continue",
-                        latest.identifier, thread_id
+                        "issue={} mode={} evidence={}",
+                        latest.identifier,
+                        recovery_plan.mode.as_str(),
+                        recovery_plan.evidence
                     ),
                 )?;
+                if let Some(thread_id) = recovery_plan.app_server_resume_thread_id.as_deref() {
+                    println!(
+                        "run_loop_action=app_server_resume issue={} thread={} mode={} input=Continue",
+                        latest.identifier,
+                        thread_id,
+                        recovery_plan.mode.as_str()
+                    );
+                    append_runtime_supervision_event(
+                        config,
+                        Some(&runtime_state),
+                        "CodexAppServerResume",
+                        &format!(
+                            "issue={} thread={} mode={} input=Continue",
+                            latest.identifier,
+                            thread_id,
+                            recovery_plan.mode.as_str()
+                        ),
+                    )?;
+                }
             }
             execute_issue_once_with_options(
                 workflow,
@@ -491,7 +517,12 @@ pub(crate) fn run_loop_dispatch_write_candidate(
                 runtime_state.attempt_count,
                 Some(&main_claim),
                 IssueExecutionOptions {
-                    app_server_resume_thread_id,
+                    app_server_resume_thread_id: recovery_plan
+                        .as_ref()
+                        .and_then(|plan| plan.app_server_resume_thread_id.clone()),
+                    prompt_override: recovery_plan
+                        .as_ref()
+                        .and_then(|plan| plan.prompt_override.clone()),
                 },
             )?
         }

@@ -1,3 +1,7 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
 use shea_symphony::agent::UsageLimitPause;
 use shea_symphony::codex_app_server::BACKEND_NAME as CODEX_APP_SERVER_BACKEND_NAME;
 use shea_symphony::config::RuntimeConfig;
@@ -24,6 +28,34 @@ use crate::orchestration::{
     current_time_ms, DEFAULT_SESSION_STALE_AFTER_MS, DEFAULT_SESSION_STATUS_LINES,
 };
 
+const RECOVERY_ARTIFACT_CHAR_LIMIT: usize = 12_000;
+const RECOVERY_EVENT_LOG_LINE_LIMIT: usize = 24;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MainRecoveryMode {
+    NativeThread,
+    TranscriptReplay,
+    WorktreeOnly,
+}
+
+impl MainRecoveryMode {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::NativeThread => "native_thread",
+            Self::TranscriptReplay => "transcript_replay",
+            Self::WorktreeOnly => "worktree_only",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MainRecoveryPlan {
+    pub(crate) mode: MainRecoveryMode,
+    pub(crate) app_server_resume_thread_id: Option<String>,
+    pub(crate) prompt_override: Option<String>,
+    pub(crate) evidence: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MainSessionReconciliation {
     Terminal(Box<IssueExecutionResult>),
@@ -47,23 +79,303 @@ pub(crate) fn codex_app_server_resume_thread_for_state(
     config: &RuntimeConfig,
     state: &RuntimeState,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    Ok(codex_app_server_session_record_for_state(config, state)?
+        .and_then(|record| record.thread.clone())
+        .filter(|thread_id| !thread_id.trim().is_empty()))
+}
+
+pub(crate) fn main_recovery_plan(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    state: &RuntimeState,
+) -> Result<MainRecoveryPlan, Box<dyn std::error::Error>> {
+    if let Some(thread_id) = codex_app_server_resume_thread_for_state(config, state)? {
+        return Ok(MainRecoveryPlan {
+            mode: MainRecoveryMode::NativeThread,
+            app_server_resume_thread_id: Some(thread_id.clone()),
+            prompt_override: None,
+            evidence: format!("thread={thread_id}"),
+        });
+    }
+
+    let record = codex_app_server_session_record_for_state(config, state)?;
+    if let Some(prompt) = transcript_recovery_prompt(config, issue, state, record.as_ref())? {
+        return Ok(MainRecoveryPlan {
+            mode: MainRecoveryMode::TranscriptReplay,
+            app_server_resume_thread_id: None,
+            prompt_override: Some(prompt),
+            evidence: "local_conversation_artifacts=present".into(),
+        });
+    }
+
+    Ok(MainRecoveryPlan {
+        mode: MainRecoveryMode::WorktreeOnly,
+        app_server_resume_thread_id: None,
+        prompt_override: Some(worktree_only_recovery_prompt(issue, state)?),
+        evidence: "local_conversation_artifacts=missing".into(),
+    })
+}
+
+fn codex_app_server_session_record_for_state(
+    config: &RuntimeConfig,
+    state: &RuntimeState,
+) -> Result<Option<AgentSessionRecord>, Box<dyn std::error::Error>> {
     if state.backend != "codex" {
         return Ok(None);
     }
-    let Some(session_id) = state.backend_session_id.as_deref() else {
-        return Ok(None);
-    };
     let registry = load_session_registry(&session_registry_path(config))?;
+    if let Some(session_id) = state.backend_session_id.as_deref() {
+        if let Some(record) = registry.sessions.iter().rev().find(|record| {
+            record.session_name == session_id
+                && record.session_source.as_deref() == Some(CODEX_APP_SERVER_BACKEND_NAME)
+        }) {
+            return Ok(Some(record.clone()));
+        }
+    }
+    let issue_identifier = runtime_state_issue_identifier(state);
     Ok(registry
         .sessions
         .iter()
         .rev()
         .find(|record| {
-            record.session_name == session_id
-                && record.session_source.as_deref() == Some(CODEX_APP_SERVER_BACKEND_NAME)
+            record.session_source.as_deref() == Some(CODEX_APP_SERVER_BACKEND_NAME)
+                && record.lane.eq_ignore_ascii_case("main")
+                && record.issue_identifier.as_deref() == issue_identifier
         })
-        .and_then(|record| record.thread.clone())
-        .filter(|thread_id| !thread_id.trim().is_empty()))
+        .cloned())
+}
+
+fn transcript_recovery_prompt(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    state: &RuntimeState,
+    record: Option<&AgentSessionRecord>,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let mut sections = Vec::new();
+    for path in app_server_protocol_paths(state, record) {
+        push_readable_artifact(&mut sections, "app-server protocol", &path);
+        if !sections.is_empty() {
+            break;
+        }
+    }
+    for path in app_server_event_paths(state, record) {
+        push_readable_artifact(&mut sections, "app-server normalized events", &path);
+        if sections
+            .iter()
+            .any(|(title, _)| title == "app-server normalized events")
+        {
+            break;
+        }
+    }
+    if let Some(record) = record {
+        push_readable_artifact(
+            &mut sections,
+            "original prompt artifact",
+            &record.prompt_artifact_path,
+        );
+    }
+    if let Some(lines) = issue_event_log_excerpt(config, issue, state, record) {
+        sections.push(("Shea event log records".into(), lines));
+    }
+
+    if sections.is_empty() {
+        return Ok(None);
+    }
+    if let Some(record) = record {
+        sections.push((
+            "session registry metadata".into(),
+            bounded_text(
+                &serde_json::to_string_pretty(record)?,
+                RECOVERY_ARTIFACT_CHAR_LIMIT,
+            ),
+        ));
+    }
+
+    Ok(Some(recovery_prompt(
+        "transcript_replay",
+        issue,
+        state,
+        sections,
+    )?))
+}
+
+fn worktree_only_recovery_prompt(
+    issue: &TrackerIssue,
+    state: &RuntimeState,
+) -> Result<String, Box<dyn std::error::Error>> {
+    recovery_prompt("worktree_only", issue, state, Vec::new())
+}
+
+fn recovery_prompt(
+    mode: &str,
+    issue: &TrackerIssue,
+    state: &RuntimeState,
+    sections: Vec<(String, String)>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let workspace = state
+        .workspace_path
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "unknown".into());
+    let branch = state.branch_name.as_deref().unwrap_or("unknown");
+    let status = git_output(state.workspace_path.as_deref(), &["status", "--short"]);
+    let diff_stat = git_output(state.workspace_path.as_deref(), &["diff", "--stat"]);
+    let mut prompt = format!(
+        "# Shea Symphony Main Recovery\n\n\
+Recovery mode: `{mode}`\n\n\
+Continue issue {identifier}: {title}\n\n\
+You are starting a new turn to recover an interrupted Shea Symphony Main Agent run. \
+Preserve the dirty worktree. Do not reset, clean, delete, or discard local files. \
+Inspect the current worktree first, then continue the implementation, verification, and normal handoff evidence from the latest available state.\n\n\
+## Runtime Context\n\n\
+- Issue state: {state_name}\n\
+- Workspace: {workspace}\n\
+- Branch: {branch}\n\
+- Previous backend session: {session}\n\
+- Previous runtime event: {event}\n\
+- Attempt: {attempt}\n\n\
+## Current Worktree Status\n\n```text\n{status}\n```\n\n\
+## Current Diff Stat\n\n```text\n{diff_stat}\n```\n",
+        identifier = issue.identifier,
+        title = issue.title,
+        state_name = issue.state,
+        session = state.backend_session_id.as_deref().unwrap_or("none"),
+        event = state.last_event.as_deref().unwrap_or("unknown"),
+        attempt = state.attempt_count,
+    );
+    for (title, body) in sections {
+        prompt.push_str(&format!("\n## {title}\n\n```text\n{body}\n```\n"));
+    }
+    prompt.push_str(
+        "\n## Recovery Instructions\n\n\
+1. Reconstruct the prior state from the context above.\n\
+2. Inspect the worktree before editing.\n\
+3. Continue the issue from the preserved local changes.\n\
+4. Run focused verification appropriate to the touched code.\n\
+5. Produce Shea Symphony handoff/readback evidence when ready.\n",
+    );
+    Ok(prompt)
+}
+
+fn app_server_event_paths(
+    state: &RuntimeState,
+    record: Option<&AgentSessionRecord>,
+) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(path) = state.backend_log_path.clone() {
+        paths.push(path);
+    }
+    if let Some(record) = record {
+        paths.push(record.log_path.clone());
+    }
+    dedupe_paths(paths)
+}
+
+fn app_server_protocol_paths(
+    state: &RuntimeState,
+    record: Option<&AgentSessionRecord>,
+) -> Vec<PathBuf> {
+    app_server_event_paths(state, record)
+        .into_iter()
+        .filter_map(|path| {
+            let name = path.file_name()?.to_str()?;
+            name.strip_suffix(".events.json")
+                .map(|base| path.with_file_name(format!("{base}.protocol.jsonl")))
+        })
+        .collect()
+}
+
+fn push_readable_artifact(sections: &mut Vec<(String, String)>, title: &str, path: &Path) {
+    if let Some(text) = read_bounded_artifact(path) {
+        sections.push((
+            format!("{title}: {}", path.display()),
+            bounded_text(&text, RECOVERY_ARTIFACT_CHAR_LIMIT),
+        ));
+    }
+}
+
+fn read_bounded_artifact(path: &Path) -> Option<String> {
+    fs::read_to_string(path)
+        .ok()
+        .filter(|content| !content.trim().is_empty())
+        .map(|content| bounded_text(&content, RECOVERY_ARTIFACT_CHAR_LIMIT))
+}
+
+fn issue_event_log_excerpt(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    state: &RuntimeState,
+    record: Option<&AgentSessionRecord>,
+) -> Option<String> {
+    let path = config.observability.logs_root.join("shea-symphony.jsonl");
+    let content = fs::read_to_string(path).ok()?;
+    let session_id = state
+        .backend_session_id
+        .as_deref()
+        .or_else(|| record.map(|record| record.session_name.as_str()));
+    let mut lines = content
+        .lines()
+        .filter(|line| {
+            line.contains(&issue.identifier)
+                || session_id.is_some_and(|session_id| line.contains(session_id))
+        })
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        return None;
+    }
+    if lines.len() > RECOVERY_EVENT_LOG_LINE_LIMIT {
+        lines = lines.split_off(lines.len().saturating_sub(RECOVERY_EVENT_LOG_LINE_LIMIT));
+    }
+    Some(bounded_text(
+        &lines.join("\n"),
+        RECOVERY_ARTIFACT_CHAR_LIMIT,
+    ))
+}
+
+fn git_output(workspace: Option<&Path>, args: &[&str]) -> String {
+    let Some(workspace) = workspace else {
+        return "workspace path unavailable".into();
+    };
+    match Command::new("git")
+        .arg("-C")
+        .arg(workspace)
+        .args(args)
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if text.is_empty() {
+                "<empty>".into()
+            } else {
+                bounded_text(&text, RECOVERY_ARTIFACT_CHAR_LIMIT)
+            }
+        }
+        Ok(output) => format!(
+            "git {:?} failed: {}",
+            args,
+            compact_evidence(&String::from_utf8_lossy(&output.stderr))
+        ),
+        Err(error) => format!("git {:?} failed: {error}", args),
+    }
+}
+
+fn bounded_text(text: &str, max_chars: usize) -> String {
+    let mut output = text.chars().take(max_chars).collect::<String>();
+    if text.chars().count() > max_chars {
+        output.push_str("\n...[truncated]");
+    }
+    output
+}
+
+fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut unique = Vec::new();
+    for path in paths {
+        if !unique.iter().any(|existing| existing == &path) {
+            unique.push(path);
+        }
+    }
+    unique
 }
 
 pub(crate) fn run_loop_runtime_state_for_issue(

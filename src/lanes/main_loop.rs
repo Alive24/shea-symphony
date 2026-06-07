@@ -69,9 +69,10 @@ pub(crate) use selection::{
     run_loop_claim_action, select_main_run_loop_issues, selected_profile_github_login,
     AssigneeOwnershipDecision, NoDispatchAction, RunLoopClaimAction,
 };
-pub(crate) use session::codex_app_server_resume_thread_for_state;
+#[cfg(test)]
+pub(crate) use session::MainRecoveryMode;
 pub(crate) use session::{
-    main_session_active_recoverable, reconcile_main_handoff_runtime_state,
+    main_recovery_plan, main_session_active_recoverable, reconcile_main_handoff_runtime_state,
     reconcile_pending_main_session, run_loop_runtime_state_for_issue,
     run_loop_runtime_state_with_result, run_loop_runtime_state_with_transition,
     MainSessionReconciliation,

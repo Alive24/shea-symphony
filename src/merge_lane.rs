@@ -815,6 +815,7 @@ pub fn merge_lane_workpad_with_repair_evidence(
             ("required_human_input", required_human_input),
         ],
     )
+    .expect("centralized merge run workpad template must render")
 }
 
 fn merge_actor(issue: &TrackerIssue) -> String {

@@ -69,6 +69,7 @@ pub fn render_doctor_repair_workpad(
             ("doctor_findings", doctor_findings),
         ],
     )
+    .expect("centralized doctor triage workpad template must render")
 }
 
 pub fn render_project_audit_report(report: &ProjectAuditReport) -> String {
@@ -141,6 +142,7 @@ pub fn render_human_review_repair_workpad(violation: &ProjectAuditViolation) -> 
             ("repair", violation.suggestion.clone()),
         ],
     )
+    .expect("centralized human review repair workpad template must render")
 }
 
 pub fn render_project_audit_report_json(

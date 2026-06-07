@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use crate::prompt::{render_template_with_values, smoke_render_template, PromptError};
 use crate::workflow::WorkflowDefinition;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -169,16 +170,15 @@ pub fn render_workpad_template(
     workflow: Option<&WorkflowDefinition>,
     id: WorkpadTemplateId,
     values: &[(&str, String)],
-) -> String {
-    render_template(&workpad_template_for(workflow, id).body, values)
+) -> Result<String, PromptError> {
+    render_template_with_values(&workpad_template_for(workflow, id).body, values)
 }
 
-pub fn render_template(template: &str, values: &[(&str, String)]) -> String {
-    let mut rendered = template.to_string();
-    for (key, value) in values {
-        rendered = rendered.replace(&format!("{{{{{key}}}}}"), value);
-    }
-    rendered.trim_end().to_string()
+pub fn smoke_render_workpad_template(
+    template: &WorkpadTemplate,
+    values: &[(&str, String)],
+) -> Result<(), PromptError> {
+    smoke_render_template(&template.body, values)
 }
 
 fn configured_template_path(
@@ -597,11 +597,68 @@ mod tests {
             &[("issue_ref", "#435".into())],
         );
 
-        assert_eq!(rendered, "Configured #435");
+        assert_eq!(rendered.unwrap(), "Configured #435");
         assert!(matches!(
             workpad_template_for(Some(&workflow), WorkpadTemplateId::MainHandoff).source,
             WorkpadTemplateSource::WorkflowFile(_)
         ));
+    }
+
+    #[test]
+    fn configured_workpad_templates_support_liquid_loops_and_filters() {
+        let dir = tempfile::tempdir().unwrap();
+        let template_path = dir.path().join("main.md");
+        fs::write(
+            &template_path,
+            "{% assign items = values | split: ',' %}{% for item in items %}{{ item | strip | upcase }}{% unless forloop.last %}/{{ items | size }}:{% endunless %}{% endfor %}",
+        )
+        .unwrap();
+        let workflow_path = dir.path().join("WORKFLOW.md");
+        let workflow = WorkflowDefinition::parse(
+            &workflow_path,
+            "---\nworkpad_templates:\n  main_handoff: main.md\n---\nPrompt",
+        )
+        .unwrap();
+
+        let rendered = render_workpad_template(
+            Some(&workflow),
+            WorkpadTemplateId::MainHandoff,
+            &[("values", "alpha, beta".into())],
+        )
+        .unwrap();
+
+        assert_eq!(rendered, "ALPHA/2:BETA");
+    }
+
+    #[test]
+    fn configured_workpad_templates_reject_unknown_variables_filters_and_malformed_liquid() {
+        let dir = tempfile::tempdir().unwrap();
+        let workflow_path = dir.path().join("WORKFLOW.md");
+
+        for (template_name, body) in [
+            ("unknown.md", "{{ missing_value }}"),
+            ("filter.md", "{{ issue_ref | missing_filter }}"),
+            ("malformed.md", "{% for item in values %}{{ item }}"),
+        ] {
+            fs::write(dir.path().join(template_name), body).unwrap();
+            let workflow = WorkflowDefinition::parse(
+                &workflow_path,
+                &format!("---\nworkpad_templates:\n  main_handoff: {template_name}\n---\nPrompt"),
+            )
+            .unwrap();
+
+            let error = render_workpad_template(
+                Some(&workflow),
+                WorkpadTemplateId::MainHandoff,
+                &[("issue_ref", "#436".into()), ("values", "alpha".into())],
+            )
+            .unwrap_err();
+            assert!(
+                error.to_string().contains("unknown template variable")
+                    || error.to_string().contains("template parse error"),
+                "unexpected error for {template_name}: {error}"
+            );
+        }
     }
 
     #[test]

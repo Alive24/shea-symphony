@@ -776,4 +776,5 @@ fn run_loop_parent_topology_workpad(
             ("parent_final_base_branch", parent_final_base_branch.into()),
         ],
     )
+    .expect("centralized parent topology workpad template must render")
 }

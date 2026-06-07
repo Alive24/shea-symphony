@@ -436,6 +436,7 @@ pub(crate) fn render_manual_review_workpad(
             ("result_note", result_note),
         ],
     )
+    .expect("centralized manual review workpad template must render")
 }
 
 pub(crate) fn validate_manual_review_pass_claim(

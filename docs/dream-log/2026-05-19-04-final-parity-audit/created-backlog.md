@@ -3,9 +3,9 @@
 ## #326 `Backlog: shape Liquid-compatible prompt rendering`
 
 - URL: https://github.com/Alive24/shea-symphony/issues/326
-- Why it exists: OpenAI Symphony requires strict Liquid-compatible prompt
-  rendering. Shea currently supports a documented strict subset, and no open
-  issue covered the compatibility path.
+- Why it existed: OpenAI Symphony requires strict Liquid-compatible prompt
+  rendering. At the time of this backlog note, Shea supported only limited
+  prompt rendering and no open issue covered the compatibility path.
 - Dream confidence: Medium.
 
 ## #327 `Backlog: define runtime state resume wiring`

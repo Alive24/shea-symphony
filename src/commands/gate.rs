@@ -175,6 +175,7 @@ pub(crate) fn gate_workpad(issue: &TrackerIssue, decision: &GateDecision) -> Str
             ("notes", notes),
         ],
     )
+    .expect("centralized main quality gate workpad template must render")
 }
 
 pub(crate) fn gate_target_state(decision: &GateDecision) -> &'static str {

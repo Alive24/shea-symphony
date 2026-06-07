@@ -764,6 +764,7 @@ pub fn render_review_workpad_with_workflow(
             ("pass_evidence_section", pass_evidence_section),
         ],
     )
+    .expect("agent review run workpad template must render")
 }
 
 fn should_render_usage_limit_diagnostic(job: &ReviewJob) -> bool {

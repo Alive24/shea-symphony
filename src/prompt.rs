@@ -1,14 +1,23 @@
+use std::collections::BTreeSet;
+
+use serde::Serialize;
 use serde_json::Value;
 use thiserror::Error;
 
 use crate::model::TrackerIssue;
 
+pub const STRICT_LIQUID_RENDERER_MODE: &str = "strict-liquid-compatible";
+
 #[derive(Debug, Error)]
 pub enum PromptError {
     #[error("unknown template variable: {0}")]
     UnknownVariable(String),
-    #[error("unsupported template tag: {0}")]
-    UnsupportedTag(String),
+    #[error("template parse error: {0}")]
+    Parse(String),
+    #[error("template render error: {0}")]
+    Render(String),
+    #[error("template context error: {0}")]
+    Context(String),
 }
 
 pub fn render_prompt(
@@ -16,131 +25,251 @@ pub fn render_prompt(
     issue: &TrackerIssue,
     attempt: Option<u32>,
 ) -> Result<String, PromptError> {
-    let template = render_conditionals(template, issue, attempt)?;
-    render_variables(&template, issue, attempt)
+    let context = liquid_context(&serde_json::json!({
+        "issue": issue,
+        "attempt": attempt,
+    }))?;
+    render_strict_liquid(template, &context)
 }
 
-fn render_conditionals(
+pub fn render_template_with_values(
     template: &str,
-    issue: &TrackerIssue,
-    attempt: Option<u32>,
+    values: &[(&str, String)],
 ) -> Result<String, PromptError> {
-    let mut output = String::new();
+    let mut object = serde_json::Map::new();
+    for (key, value) in values {
+        object.insert((*key).to_string(), Value::String(value.clone()));
+    }
+    let context = liquid_context(&Value::Object(object))?;
+    render_strict_liquid(template, &context)
+}
+
+pub fn smoke_render_prompt(template: &str, issue: &TrackerIssue) -> Result<(), PromptError> {
+    render_prompt(template, issue, Some(1)).map(|_| ())
+}
+
+pub fn smoke_render_template(template: &str, values: &[(&str, String)]) -> Result<(), PromptError> {
+    render_template_with_values(template, values).map(|_| ())
+}
+
+pub fn render_strict_liquid(
+    template: &str,
+    context: &liquid::Object,
+) -> Result<String, PromptError> {
+    validate_external_variables(template, &context_to_json(context)?)?;
+    let parser = liquid::ParserBuilder::with_stdlib()
+        .build()
+        .map_err(|error| PromptError::Parse(error.to_string()))?;
+    let parsed = parser
+        .parse(template)
+        .map_err(|error| PromptError::Parse(error.to_string()))?;
+    parsed
+        .render(context)
+        .map(|rendered| rendered.trim_end().to_string())
+        .map_err(|error| PromptError::Render(error.to_string()))
+}
+
+fn liquid_context<T: Serialize>(value: &T) -> Result<liquid::Object, PromptError> {
+    liquid::to_object(value).map_err(|error| PromptError::Context(error.to_string()))
+}
+
+fn context_to_json(context: &liquid::Object) -> Result<Value, PromptError> {
+    serde_json::to_value(context).map_err(|error| PromptError::Context(error.to_string()))
+}
+
+fn validate_external_variables(template: &str, context: &Value) -> Result<(), PromptError> {
+    let mut locals = BTreeSet::from(["forloop".to_string(), "tablerowloop".to_string()]);
     let mut rest = template;
 
-    while let Some(start) = rest.find("{%") {
-        output.push_str(&rest[..start]);
-        let tag_end = rest[start + 2..]
-            .find("%}")
-            .ok_or_else(|| PromptError::UnsupportedTag(rest[start..].to_string()))?
-            + start
-            + 2;
-        let tag = rest[start + 2..tag_end].trim();
-        if let Some(condition) = tag.strip_prefix("if ") {
-            let after_tag = &rest[tag_end + 2..];
-            let endif = after_tag
-                .find("{% endif %}")
-                .ok_or_else(|| PromptError::UnsupportedTag(tag.to_string()))?;
-            let block = &after_tag[..endif];
-            let after_block = &after_tag[endif + "{% endif %}".len()..];
-            let (truthy_block, falsey_block) = split_else(block);
-            output.push_str(if lookup_truthy(condition.trim(), issue, attempt)? {
-                truthy_block
-            } else {
-                falsey_block.unwrap_or("")
-            });
-            rest = after_block;
+    loop {
+        let variable_start = rest.find("{{");
+        let tag_start = rest.find("{%");
+        let Some((start, marker)) = earliest_marker(variable_start, tag_start) else {
+            break;
+        };
+        let close = if marker == "{{" { "}}" } else { "%}" };
+        let body_start = start + marker.len();
+        let Some(body_end) = rest[body_start..]
+            .find(close)
+            .map(|index| body_start + index)
+        else {
+            return Err(PromptError::Parse(rest[start..].to_string()));
+        };
+        let body = rest[body_start..body_end].trim();
+        if marker == "{{" {
+            validate_expression_variables(body, context, &locals)?;
         } else {
-            return Err(PromptError::UnsupportedTag(tag.to_string()));
+            validate_tag_variables(body, context, &mut locals)?;
+        }
+        rest = &rest[body_end + close.len()..];
+    }
+
+    Ok(())
+}
+
+fn earliest_marker(
+    variable_start: Option<usize>,
+    tag_start: Option<usize>,
+) -> Option<(usize, &'static str)> {
+    match (variable_start, tag_start) {
+        (Some(variable), Some(tag)) if variable < tag => Some((variable, "{{")),
+        (Some(_), Some(tag)) => Some((tag, "{%")),
+        (Some(variable), None) => Some((variable, "{{")),
+        (None, Some(tag)) => Some((tag, "{%")),
+        (None, None) => None,
+    }
+}
+
+fn validate_tag_variables(
+    tag: &str,
+    context: &Value,
+    locals: &mut BTreeSet<String>,
+) -> Result<(), PromptError> {
+    let mut parts = tag.split_whitespace();
+    match parts.next() {
+        Some("for") | Some("tablerow") => {
+            if let Some(local) = parts.next() {
+                locals.insert(local.trim().to_string());
+            }
+            if let Some(index) = tag.find(" in ") {
+                validate_expression_variables(&tag[index + 4..], context, locals)?;
+            }
+        }
+        Some("assign") => {
+            if let Some(local) = parts.next() {
+                locals.insert(local.trim_end_matches('=').to_string());
+            }
+            if let Some(index) = tag.find('=') {
+                validate_expression_variables(&tag[index + 1..], context, locals)?;
+            }
+        }
+        Some("capture") => {
+            if let Some(local) = parts.next() {
+                locals.insert(local.to_string());
+            }
+        }
+        Some("if") | Some("unless") | Some("elsif") | Some("case") | Some("when") => {
+            if let Some(index) = tag.find(char::is_whitespace) {
+                validate_expression_variables(&tag[index..], context, locals)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn validate_expression_variables(
+    expression: &str,
+    context: &Value,
+    locals: &BTreeSet<String>,
+) -> Result<(), PromptError> {
+    let expression = strip_quoted_segments(expression);
+    let bytes = expression.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if !is_identifier_start(bytes[index]) {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        index += 1;
+        while index < bytes.len() && is_identifier_continue(bytes[index]) {
+            index += 1;
+        }
+        let token = &expression[start..index];
+        if should_skip_token(token, &expression, start, locals) {
+            continue;
+        }
+        validate_variable_path(token, context, locals)?;
+    }
+    Ok(())
+}
+
+fn strip_quoted_segments(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut quote = None;
+    let mut escaped = false;
+    for ch in value.chars() {
+        if let Some(active) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == active {
+                quote = None;
+            }
+            output.push(' ');
+        } else if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+            output.push(' ');
+        } else {
+            output.push(ch);
         }
     }
-
-    output.push_str(rest);
-    Ok(output)
+    output
 }
 
-fn split_else(block: &str) -> (&str, Option<&str>) {
-    if let Some(index) = block.find("{% else %}") {
-        (&block[..index], Some(&block[index + "{% else %}".len()..]))
-    } else {
-        (block, None)
+fn should_skip_token(
+    token: &str,
+    expression: &str,
+    start: usize,
+    locals: &BTreeSet<String>,
+) -> bool {
+    if matches!(
+        token,
+        "and"
+            | "or"
+            | "contains"
+            | "in"
+            | "true"
+            | "false"
+            | "nil"
+            | "null"
+            | "blank"
+            | "empty"
+            | "limit"
+            | "offset"
+            | "reversed"
+    ) {
+        return true;
     }
-}
-
-fn render_variables(
-    template: &str,
-    issue: &TrackerIssue,
-    attempt: Option<u32>,
-) -> Result<String, PromptError> {
-    let mut output = String::new();
-    let mut rest = template;
-
-    while let Some(start) = rest.find("{{") {
-        output.push_str(&rest[..start]);
-        let end = rest[start + 2..]
-            .find("}}")
-            .ok_or_else(|| PromptError::UnknownVariable(rest[start..].to_string()))?
-            + start
-            + 2;
-        let variable = rest[start + 2..end].trim();
-        output.push_str(&lookup_string(variable, issue, attempt)?);
-        rest = &rest[end + 2..];
+    if locals.contains(token.split('.').next().unwrap_or(token)) {
+        return true;
     }
-
-    output.push_str(rest);
-    Ok(output)
+    expression[..start].trim_end().ends_with('|')
 }
 
-fn lookup_truthy(
-    variable: &str,
-    issue: &TrackerIssue,
-    attempt: Option<u32>,
-) -> Result<bool, PromptError> {
-    match lookup_value(variable, issue, attempt)? {
-        Value::Null => Ok(false),
-        Value::Bool(value) => Ok(value),
-        Value::String(value) => Ok(!value.is_empty()),
-        Value::Array(value) => Ok(!value.is_empty()),
-        Value::Object(value) => Ok(!value.is_empty()),
-        Value::Number(value) => Ok(value.as_i64().unwrap_or(0) != 0),
-    }
-}
-
-fn lookup_string(
-    variable: &str,
-    issue: &TrackerIssue,
-    attempt: Option<u32>,
-) -> Result<String, PromptError> {
-    let value = lookup_value(variable, issue, attempt)?;
-    Ok(match value {
-        Value::Null => String::new(),
-        Value::String(value) => value,
-        other => other.to_string(),
-    })
-}
-
-fn lookup_value(
-    variable: &str,
-    issue: &TrackerIssue,
-    attempt: Option<u32>,
-) -> Result<Value, PromptError> {
-    if variable == "attempt" {
-        return Ok(attempt.map(Value::from).unwrap_or(Value::Null));
-    }
-
-    let Some(path) = variable.strip_prefix("issue.") else {
-        return Err(PromptError::UnknownVariable(variable.to_string()));
+fn validate_variable_path(
+    token: &str,
+    context: &Value,
+    locals: &BTreeSet<String>,
+) -> Result<(), PromptError> {
+    let Some(root) = token.split('.').next() else {
+        return Ok(());
     };
+    if locals.contains(root) {
+        return Ok(());
+    }
+    let mut current = context;
+    for part in token.split('.') {
+        match current {
+            Value::Object(map) => {
+                current = map
+                    .get(part)
+                    .ok_or_else(|| PromptError::UnknownVariable(token.to_string()))?;
+            }
+            _ => return Err(PromptError::UnknownVariable(token.to_string())),
+        }
+    }
+    Ok(())
+}
 
-    let value = serde_json::to_value(issue).expect("TrackerIssue serializes");
-    path.split('.')
-        .try_fold(value, |current, part| match current {
-            Value::Object(map) => map
-                .get(part)
-                .cloned()
-                .ok_or_else(|| PromptError::UnknownVariable(variable.to_string())),
-            _ => Err(PromptError::UnknownVariable(variable.to_string())),
-        })
+fn is_identifier_start(byte: u8) -> bool {
+    byte.is_ascii_alphabetic() || byte == b'_'
+}
+
+fn is_identifier_continue(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.')
 }
 
 #[cfg(test)]
@@ -158,7 +287,7 @@ mod tests {
             description: Some("Body".into()),
             url: None,
             state: "Todo".into(),
-            labels: vec!["rust".into()],
+            labels: vec!["rust".into(), "liquid".into()],
             assignees: vec![],
             priority: None,
             branch_name: None,
@@ -183,7 +312,10 @@ mod tests {
 
     #[test]
     fn rejects_unknown_variables() {
-        assert!(render_prompt("{{ issue.nope }}", &issue(), None).is_err());
+        assert!(matches!(
+            render_prompt("{{ issue.nope }}", &issue(), None).unwrap_err(),
+            PromptError::UnknownVariable(variable) if variable == "issue.nope"
+        ));
     }
 
     #[test]
@@ -213,21 +345,50 @@ mod tests {
     }
 
     #[test]
-    fn renders_non_string_issue_fields_as_json() {
-        let rendered = render_prompt("labels={{ issue.labels }}", &issue(), None).unwrap();
+    fn renders_non_string_issue_fields_with_liquid_semantics() {
+        let rendered =
+            render_prompt("labels={{ issue.labels | join: ', ' }}", &issue(), None).unwrap();
 
-        assert_eq!(rendered, "labels=[\"rust\"]");
+        assert_eq!(rendered, "labels=rust, liquid");
     }
 
     #[test]
-    fn rejects_unsupported_liquid_tags() {
-        let error = render_prompt(
-            "{% for label in issue.labels %}{{ label }}{% endfor %}",
+    fn supports_liquid_loops_and_loop_locals() {
+        let rendered = render_prompt(
+            "{% for label in issue.labels %}[{{ forloop.index }}:{{ label }}]{% endfor %}",
             &issue(),
             None,
         )
-        .unwrap_err();
+        .unwrap();
 
-        assert!(matches!(error, PromptError::UnsupportedTag(_)));
+        assert_eq!(rendered, "[1:rust][2:liquid]");
+    }
+
+    #[test]
+    fn supports_default_join_and_size_filters() {
+        let rendered = render_prompt(
+            "title={{ issue.title | default: 'missing' }} labels={{ issue.labels | join: '/' }} count={{ issue.labels | size }}",
+            &issue(),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(rendered, "title=Title labels=rust/liquid count=2");
+    }
+
+    #[test]
+    fn rejects_unknown_filters() {
+        assert!(matches!(
+            render_prompt("{{ issue.title | nope }}", &issue(), None).unwrap_err(),
+            PromptError::Parse(_)
+        ));
+    }
+
+    #[test]
+    fn rejects_malformed_templates() {
+        assert!(matches!(
+            render_prompt("{% if issue.title %}missing endif", &issue(), None).unwrap_err(),
+            PromptError::Parse(_)
+        ));
     }
 }

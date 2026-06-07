@@ -49,6 +49,7 @@ pub(crate) struct IssueExecutionResult {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct IssueExecutionOptions {
     pub(crate) app_server_resume_thread_id: Option<String>,
+    pub(crate) prompt_override: Option<String>,
 }
 
 pub(crate) fn execute_issue_once(
@@ -112,15 +113,20 @@ fn execute_issue_once_in_workspace(
     let git_identity = apply_local_git_identity(&workspace.path, &config.identity.git)?;
     run_before_run(&workspace.path, &config.hooks)?;
 
-    let mut prompt = render_prompt_with_claim(
-        workflow.prompt_for_lane(AgentLane::MainAgent),
-        issue,
-        None,
-        claim,
-    )?;
-    if config.backend.kind == "codex" && config.codex.command.contains("app-server") {
-        prompt.push_str(CODEX_APP_SERVER_HANDOFF_BOUNDARY);
-    }
+    let mut prompt = if let Some(prompt_override) = options.prompt_override.clone() {
+        prompt_override
+    } else {
+        let mut prompt = render_prompt_with_claim(
+            workflow.prompt_for_lane(AgentLane::MainAgent),
+            issue,
+            None,
+            claim,
+        )?;
+        if config.backend.kind == "codex" && config.codex.command.contains("app-server") {
+            prompt.push_str(CODEX_APP_SERVER_HANDOFF_BOUNDARY);
+        }
+        prompt
+    };
     if options.app_server_resume_thread_id.is_some() {
         prompt = CODEX_APP_SERVER_CONTINUE_PROMPT.into();
     }

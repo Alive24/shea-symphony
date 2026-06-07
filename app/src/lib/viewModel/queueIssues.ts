@@ -12,18 +12,29 @@ export function buildQueueIssues(githubQueue: any, attentionTasks: any[] = []) {
   const fromGithub = (githubQueue?.issues ?? [])
     .map((issue) => {
       const state = normalizeStateName(issue.state);
+      const blockedBy = normalizedBlockers(issue.blockedBy ?? issue.blocked_by);
+      const unresolvedBlocked = isBlockedMainQueueState(state) && hasUnresolvedBlockers(blockedBy);
+      const blockedReason = textFromValue(issue.blockedReason ?? issue.blocked_reason, 'issue has unresolved tracker dependencies');
       return {
         id: issue.identifier,
         title: issue.title,
         state,
-        lane: stateToLane(state),
+        lane: unresolvedBlocked ? 'Blocked' : stateToLane(state),
         url: issue.url,
         updatedAt: issue.updatedAt,
         assignees: issue.assignees ?? [],
         labels: issue.labels ?? [],
-        evidence: `${githubQueue.source ?? 'GitHub queue'} · ${issue.state}`,
-        recommended: recommendationForQueueState(state),
-        tone: toneForState(state),
+        blockedBy,
+        blockedReason: blockedBy.length ? blockedReason : null,
+        evidence: [
+          githubQueue.source ?? 'GitHub queue',
+          issue.state,
+          unresolvedBlocked ? blockerSummary(blockedBy) : null
+        ].filter(Boolean).join(' · '),
+        recommended: unresolvedBlocked
+          ? 'Blocked by unresolved tracker dependencies; keep out of Main lane selection.'
+          : recommendationForQueueState(state),
+        tone: unresolvedBlocked ? 'danger' : toneForState(state),
         source: 'githubQueue'
       };
     })
@@ -142,12 +153,52 @@ function recommendationForQueueState(state: any) {
   return 'Observe this issue in the Project queue.';
 }
 
+function isBlockedMainQueueState(state: any) {
+  return ['Todo', 'Rework'].includes(normalizeStateName(state));
+}
+
+function normalizedBlockers(blockedBy: any) {
+  return (Array.isArray(blockedBy) ? blockedBy : [])
+    .map((blocker) => {
+      if (typeof blocker === 'string' || typeof blocker === 'number') {
+        return { id: null, identifier: issueRefFromValue(blocker), state: null };
+      }
+      if (!blocker || typeof blocker !== 'object') return null;
+      return {
+        id: blocker.id ?? null,
+        identifier: issueRefFromValue(blocker.identifier ?? blocker.issue ?? blocker.number ?? blocker.url ?? blocker.id),
+        state: blocker.state ? normalizeStateName(blocker.state) : null
+      };
+    })
+    .filter(Boolean);
+}
+
+function hasUnresolvedBlockers(blockedBy: any[] = []) {
+  return blockedBy.some((blocker) => !isTerminalBlockerState(blocker?.state));
+}
+
+function isTerminalBlockerState(state: any) {
+  const normalized = normalizeStateName(state);
+  return ['Done', 'Closed', 'Merged'].includes(normalized);
+}
+
+function blockerSummary(blockedBy: any[] = []) {
+  const blockers = blockedBy
+    .map((blocker) => {
+      const ref = blocker.identifier ?? blocker.id ?? 'unknown blocker';
+      return blocker.state ? `${ref} ${blocker.state}` : ref;
+    })
+    .join(', ');
+  return blockers ? `blocked by ${blockers}` : null;
+}
+
 function queueIssueSort(left: any, right: any) {
   const order: Record<string, number> = {
     'Need Human Input': 0,
     'Human Review': 1,
     Rework: 2,
     Todo: 3,
+    Blocked: 3,
     'Agent Review': 4,
     Merging: 5
   };

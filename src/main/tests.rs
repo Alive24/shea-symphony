@@ -1,7 +1,7 @@
 use super::*;
 use shea_symphony::tracker::MemoryTracker;
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
@@ -103,9 +103,8 @@ use shea_symphony::lane_claim::{
     LaneClaim, LaneClaimActor, LaneClaimLane, LaneClaimSource, LaneClaimState,
 };
 use shea_symphony::merge_lane::repair_dirty_pull_request;
-use shea_symphony::model::SessionStatusSnapshot;
-use shea_symphony::model::TrackerIssue;
 use shea_symphony::model::{normalize_state, LinkedPullRequest};
+use shea_symphony::model::{BlockerRef, SessionStatusSnapshot, TrackerIssue};
 use shea_symphony::orchestrator::Orchestrator;
 use shea_symphony::ownership::render_runtime_ownership_marker;
 use shea_symphony::ownership::{runtime_ownership_decision, RuntimeOwnershipDecision};
@@ -697,7 +696,13 @@ fn renders_project_state_json_queue_projection() {
         tracker_issue_with_ref("#3", "Approval", "Human Review"),
     ];
 
-    let rendered = render_project_state_json(&issues, &["gap".into()], "queue").unwrap();
+    let rendered = render_project_state_json(
+        &issues,
+        &["gap".into()],
+        "queue",
+        &BTreeSet::from(["done".into()]),
+    )
+    .unwrap();
     let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
 
     assert_eq!(value["trusted"], true);
@@ -707,6 +712,39 @@ fn renders_project_state_json_queue_projection() {
     assert_eq!(value["laneCounts"]["review"], 1);
     assert_eq!(value["operatorIssues"][0]["identifier"], "#3");
     assert_eq!(value["integrationGaps"][0], "gap");
+}
+
+#[test]
+fn renders_project_state_json_dependency_readback_without_main_lane_projection() {
+    let ready = tracker_issue_with_ref("#1", "Ready", "Todo");
+    let mut blocked = tracker_issue_with_ref("#2", "Blocked", "Todo");
+    blocked.blocked_by = vec![BlockerRef {
+        id: Some("I_kwBLOCKER".into()),
+        identifier: Some("#9".into()),
+        state: Some("Todo".into()),
+    }];
+    let mut resolved = tracker_issue_with_ref("#3", "Resolved dependency", "Rework");
+    resolved.blocked_by = vec![BlockerRef {
+        id: None,
+        identifier: Some("#8".into()),
+        state: Some("Done".into()),
+    }];
+    let terminal_states = BTreeSet::from(["done".into()]);
+
+    let rendered =
+        render_project_state_json(&[ready, blocked, resolved], &[], "queue", &terminal_states)
+            .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+
+    assert_eq!(value["laneCounts"]["main"], 2);
+    assert_eq!(value["issues"][1]["identifier"], "#2");
+    assert_eq!(value["issues"][1]["blockedBy"][0]["identifier"], "#9");
+    assert_eq!(value["issues"][1]["blockedBy"][0]["state"], "Todo");
+    assert_eq!(
+        value["issues"][1]["blockedReason"],
+        "issue has tracker dependencies"
+    );
+    assert_eq!(value["issues"][2]["blockedBy"][0]["state"], "Done");
 }
 
 #[test]

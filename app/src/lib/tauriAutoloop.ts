@@ -423,14 +423,15 @@ export function laneWorkerFromAutoloop(
   const target = textFromValue(lane.target, lane.status);
   const waiting = lane.status === 'running' || action === 'tick_started' || action === 'backend';
   const sessionId = workerSessionId(lane, null);
+  const backend = workerBackend(lane, laneKey);
   return {
     issue: selected,
     title: selected,
     action,
-    backend: 'Codex app-server',
+    backend,
     session: sessionId ?? 'session pending',
     sessionId,
-    pid: state.pid ?? null,
+    pid: workerPid(lane, state, backend),
     updatedAtMs: lane.updatedAtMs ?? null,
     elapsed: target,
     lane: laneKey,
@@ -450,6 +451,10 @@ export function laneWorkersFromAutoloopLines(
 
   for (const line of state.recentLines ?? []) {
     if (lowerBound != null && line.atMs < lowerBound) continue;
+    if (lineClearsLaneWorkers(line, laneKey)) {
+      workers.clear();
+      continue;
+    }
     const terminalIssue = terminalIssueFromAutoloopLine(line);
     if (terminalIssue) {
       workers.delete(terminalIssue);
@@ -462,11 +467,23 @@ export function laneWorkersFromAutoloopLines(
   return [...workers.values()];
 }
 
+function lineClearsLaneWorkers(line: AutoloopLine, laneKey: string) {
+  const eventName = textFromValue(recordValue(line.event, 'event'));
+  if (eventName !== 'autopilot_loop_lane') return false;
+  const payload = recordFromValue(recordValue(line.event, 'payload'));
+  const lane = textFromValue(recordValue(payload, 'lane'));
+  if (lane !== laneKey) return false;
+  const selected = issueRefFromValue(recordValue(payload, 'selected_issue') ?? recordValue(payload, 'selected'));
+  if (selected) return false;
+  const status = textFromValue(recordValue(payload, 'status'));
+  return status === 'completed' || status === 'idle' || status === 'skipped';
+}
+
 function terminalIssueFromAutoloopLine(line: AutoloopLine) {
   const eventName = textFromValue(recordValue(line.event, 'event'));
   if (eventName === 'autopilot_loop_lane') {
     const payload = recordFromValue(recordValue(line.event, 'payload'));
-    const issue = issueRefFromValue(recordValue(payload, 'selected_issue') ?? recordValue(payload, 'selected'));
+    const issue = issueFromLanePayload(payload);
     const status = textFromValue(recordValue(payload, 'status'));
     const workUnitCompleted = booleanFromRecord(payload, 'work_unit_completed');
     if (issue && workUnitCompleted && status === 'completed') return issue;
@@ -474,12 +491,13 @@ function terminalIssueFromAutoloopLine(line: AutoloopLine) {
   if (eventName !== 'autopilot_cli_line') return null;
   const payload = recordFromValue(recordValue(line.event, 'payload'));
   const fields = recordFromValue(recordValue(payload, 'fields'));
-  const issue = issueRefFromValue(recordValue(fields, 'issue'));
+  const issue = issueFromLanePayload(fields);
   if (!issue) return null;
   const state = textFromValue(recordValue(fields, 'state')).toLowerCase();
   const result = textFromValue(recordValue(fields, 'result')).toLowerCase();
   const outcome = textFromValue(recordValue(fields, 'outcome')).toLowerCase();
   const mergeAction = textFromValue(recordValue(fields, 'merge_loop_action') ?? recordValue(fields, 'merging_pool_action'));
+  if (isRunLoopResumePreflightArchive(line)) return issue;
   if (['done', 'closed'].includes(state)) return issue;
   if (['merged', 'closed'].includes(result) && outcome === 'applied') return issue;
   if (mergeAction === 'closed_issue' && outcome === 'applied') return issue;
@@ -499,7 +517,7 @@ function workerFromAutoloopLine(
   if (eventName === 'autopilot_loop_lane') {
     const lane = textFromValue(recordValue(payload, 'lane'));
     if (lane !== laneKey) return null;
-    const issue = issueRefFromValue(recordValue(payload, 'selected_issue') ?? recordValue(payload, 'selected'));
+    const issue = issueFromLanePayload(payload);
     if (!issue) return null;
     const status = textFromValue(recordValue(payload, 'status'), 'running');
     const latestResult = textFromValue(recordValue(payload, 'latest_result') ?? recordValue(payload, 'latestResult'));
@@ -517,7 +535,7 @@ function workerFromAutoloopLine(
   if (eventName === 'autopilot_signal') {
     const lane = textFromValue(recordValue(payload, 'lane'));
     if (lane !== laneKey) return null;
-    const issue = issueRefFromValue(recordValue(payload, 'issue'));
+    const issue = issueFromLanePayload(payload);
     if (!issue) return null;
     const status = textFromValue(recordValue(payload, 'status'), 'running');
     const action = textFromValue(recordValue(payload, 'action'), status);
@@ -532,12 +550,23 @@ function workerFromAutoloopLine(
   const inferredLane = parsedLane || (kind.startsWith('run_loop') ? 'main' : '');
   if (inferredLane !== laneKey) return null;
 
-  const issue = issueRefFromValue(recordValue(fields, 'issue'));
+  const issue = issueFromLanePayload(fields);
   if (!issue) return null;
+  if (isRunLoopResumePreflightArchive(line)) return null;
   const status = textFromValue(recordValue(fields, 'status'), 'running');
   const action = textFromValue(recordValue(fields, 'action'), textFromValue(recordValue(fields, 'run_loop_action'), kind || status));
   if (status === 'idle' || action === 'skip') return null;
   return liveWorker(issue, laneKey, state, action, status, fields, line.atMs);
+}
+
+function isRunLoopResumePreflightArchive(line: AutoloopLine) {
+  const eventName = textFromValue(recordValue(line.event, 'event'));
+  if (eventName !== 'autopilot_cli_line') return false;
+  const payload = recordFromValue(recordValue(line.event, 'payload'));
+  const kind = textFromValue(recordValue(payload, 'kind'));
+  if (kind !== 'run_loop_resume_preflight') return false;
+  const fields = recordFromValue(recordValue(payload, 'fields'));
+  return textFromValue(recordValue(fields, 'action')) === 'archive';
 }
 
 function liveWorker(
@@ -550,20 +579,55 @@ function liveWorker(
   updatedAtMs: number | null = null
 ): LaneWorker {
   const sessionId = workerSessionId(sessionSource, null);
+  const backend = workerBackend(sessionSource, laneKey);
   return {
     issue,
     title: issue,
     action,
-    backend: 'Codex app-server',
+    backend,
     session: sessionId ?? 'session pending',
     sessionId,
-    pid: state.pid ?? null,
+    pid: workerPid(sessionSource, state, backend),
     updatedAtMs,
     elapsed: status,
     lane: laneKey,
     status,
     waiting: true
   };
+}
+
+function workerBackend(source: Record<string, unknown>, laneKey: string) {
+  const backend = textFromValue(
+    recordValue(source, 'backend')
+      ?? recordValue(source, 'backend_kind')
+      ?? recordValue(source, 'backendKind')
+      ?? recordValue(source, 'backend_source')
+      ?? recordValue(source, 'backendSource')
+  );
+  return displayBackend(backend) || unknownBackendForLane(laneKey);
+}
+
+function displayBackend(backend: string) {
+  const normalized = backend.toLowerCase();
+  if (!normalized) return '';
+  if (normalized === 'codex-app-server' || normalized === 'codex app-server') return 'Codex app-server';
+  if (normalized === 'gemini-cli' || normalized === 'gemini') return 'Gemini CLI';
+  if (normalized === 'codex') return 'Codex';
+  if (normalized === 'tmux') return 'tmux';
+  return backend;
+}
+
+function unknownBackendForLane(laneKey: string) {
+  if (laneKey === 'main') return 'Main worker';
+  if (laneKey === 'review') return 'Review worker';
+  if (laneKey === 'merge') return 'Merge worker';
+  return 'Worker';
+}
+
+function workerPid(source: Record<string, unknown>, state: LoopStateSnapshot, backend: string) {
+  const pid = numberFromValue(recordValue(source, 'pid') ?? recordValue(source, 'process_id') ?? recordValue(source, 'processId'));
+  if (pid != null) return pid;
+  return backend === 'Codex app-server' ? state.pid ?? null : null;
 }
 
 function workerSessionId(source: Record<string, unknown>, fallback: string | null) {
@@ -577,6 +641,18 @@ function workerSessionId(source: Record<string, unknown>, fallback: string | nul
       ?? recordValue(source, 'runId')
   );
   return session || fallback;
+}
+
+function issueFromLanePayload(payload: Record<string, unknown>) {
+  return issueRefFromValue(
+    recordValue(payload, 'selected_issue')
+      ?? recordValue(payload, 'selectedIssue')
+      ?? recordValue(payload, 'selected')
+      ?? recordValue(payload, 'issue_ref')
+      ?? recordValue(payload, 'issueRef')
+      ?? recordValue(payload, 'issue')
+      ?? recordValue(payload, 'identifier')
+  );
 }
 
 function recordValue(value: unknown, key: string): unknown {

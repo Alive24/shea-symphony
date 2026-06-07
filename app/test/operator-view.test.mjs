@@ -92,10 +92,10 @@ test('maps live autoloop lane snapshots into existing lane board worker rows', (
     issue: '#421',
     title: '#421',
     action: 'reviewing',
-    backend: 'Codex app-server',
+    backend: 'Review worker',
     session: 'session pending',
     sessionId: null,
-    pid: 4242,
+    pid: null,
     updatedAtMs: 1234,
     elapsed: 'Human Review',
     lane: 'review',
@@ -128,7 +128,66 @@ test('maps live autoloop lane snapshots into existing lane board worker rows', (
       }
     }]
   }, 'review').map((entry) => [entry.issue, entry.backend, entry.pid, entry.session]), [
-    ['#421', 'Codex app-server', 4242, 'thread-421-turn-1']
+    ['#421', 'Review worker', null, 'thread-421-turn-1']
+  ]);
+});
+
+test('review autoloop workers do not invent backend or inherit Codex app-server PID', () => {
+  const state = {
+    ...defaultLoopState(),
+    running: true,
+    mode: 'write',
+    pid: 55169
+  };
+
+  const worker = laneWorkerFromAutoloop(
+    {
+      lane: 'review',
+      status: 'running',
+      selected: '#436',
+      action: 'review_selected',
+      target: 'Agent Review',
+      updatedAtMs: 1234
+    },
+    'review',
+    state
+  );
+
+  assert.equal(worker.backend, 'Review worker');
+  assert.equal(worker.pid, null);
+  assert.equal(worker.session, 'session pending');
+});
+
+test('review autoloop workers display Gemini only when backend evidence says Gemini', () => {
+  const now = Date.now();
+  const state = {
+    ...defaultLoopState(),
+    running: true,
+    startedAtMs: now - 100,
+    pid: 55169,
+    recentLines: [{
+      atMs: now,
+      stream: 'stdout',
+      line: 'review_loop_action=start issue=#436 worker_slot=1 backend=gemini-cli mode=write',
+      event: {
+        event: 'autopilot_cli_line',
+        payload: {
+          kind: 'review_loop_action',
+          raw: 'review_loop_action=start issue=#436 worker_slot=1 backend=gemini-cli mode=write',
+          fields: {
+            issue: '#436',
+            action: 'start',
+            lane: 'review',
+            backend: 'gemini-cli',
+            mode: 'write'
+          }
+        }
+      }
+    }]
+  };
+
+  assert.deepEqual(laneWorkersFromAutoloopLines(state, 'review').map((entry) => [entry.issue, entry.backend, entry.pid]), [
+    ['#436', 'Gemini CLI', null]
   ]);
 });
 
@@ -179,6 +238,148 @@ test('autoloop lane workers clear issue after merge terminal events', () => {
   };
 
   assert.deepEqual(laneWorkersFromAutoloopLines(state, 'merge'), []);
+});
+
+test('autoloop lane workers clear stale issue after empty completed lane tick', () => {
+  const now = Date.now();
+  const state = {
+    ...defaultLoopState(),
+    running: true,
+    startedAtMs: now - 100,
+    recentLines: [
+      {
+        atMs: now,
+        stream: 'stdout',
+        line: 'Latest: merge | #435 | waiting | merge_decision',
+        event: {
+          event: 'autopilot_signal',
+          payload: {
+            visibility: 'operator',
+            scope: 'lane',
+            lane: 'merge',
+            issue: '#435',
+            status: 'waiting',
+            action: 'merge_decision',
+            message: '#435 merge waiting merge_decision'
+          }
+        }
+      },
+      {
+        atMs: now + 1,
+        stream: 'stdout',
+        line: 'autopilot_loop_lane lane=merge status=completed action=lane_tick_completed selected=none',
+        event: {
+          event: 'autopilot_loop_lane',
+          payload: {
+            lane: 'merge',
+            status: 'completed',
+            action: 'lane_tick_completed',
+            selected_issue: null,
+            work_unit_completed: false
+          }
+        }
+      }
+    ]
+  };
+
+  assert.deepEqual(laneWorkersFromAutoloopLines(state, 'merge'), []);
+});
+
+test('autoloop lane workers do not treat resume preflight archive as active main work', () => {
+  const now = Date.now();
+  const state = {
+    ...defaultLoopState(),
+    running: true,
+    startedAtMs: now - 100,
+    recentLines: [
+      {
+        atMs: now,
+        stream: 'stdout',
+        line: 'run_loop_resume_preflight action=recoverable issue=#436 reason=runtime_stalled',
+        event: {
+          event: 'autopilot_cli_line',
+          payload: {
+            kind: 'run_loop_resume_preflight',
+            raw: 'run_loop_resume_preflight action=recoverable issue=#436 reason=runtime_stalled',
+            fields: {
+              action: 'recoverable',
+              issue: '#436',
+              reason: 'runtime_stalled'
+            }
+          }
+        }
+      },
+      {
+        atMs: now + 1,
+        stream: 'stdout',
+        line: 'run_loop_resume_preflight action=archive issue=#439 tracker_state="Need Human Input" reason=tracker_state_need_human_input',
+        event: {
+          event: 'autopilot_cli_line',
+          payload: {
+            kind: 'run_loop_resume_preflight',
+            raw: 'run_loop_resume_preflight action=archive issue=#439 tracker_state="Need Human Input" reason=tracker_state_need_human_input',
+            fields: {
+              action: 'archive',
+              issue: '#439',
+              tracker_state: 'Need Human Input',
+              reason: 'tracker_state_need_human_input'
+            }
+          }
+        }
+      }
+    ]
+  };
+
+  assert.deepEqual(laneWorkersFromAutoloopLines(state, 'main').map((entry) => [entry.issue, entry.action]), [
+    ['#436', 'recoverable']
+  ]);
+});
+
+test('autoloop lane workers clear stale main recovery row after review completes the same issue', () => {
+  const now = Date.now();
+  const state = {
+    ...defaultLoopState(),
+    running: true,
+    startedAtMs: now - 100,
+    recentLines: [
+      {
+        atMs: now,
+        stream: 'stdout',
+        line: 'run_loop_resume_preflight action=recoverable issue=#436 reason=runtime_stalled',
+        event: {
+          event: 'autopilot_cli_line',
+          payload: {
+            kind: 'run_loop_resume_preflight',
+            raw: 'run_loop_resume_preflight action=recoverable issue=#436 reason=runtime_stalled',
+            fields: {
+              action: 'recoverable',
+              issue: '#436',
+              reason: 'runtime_stalled'
+            }
+          }
+        }
+      },
+      {
+        atMs: now + 1,
+        stream: 'stdout',
+        line: 'autopilot_loop_lane lane=review status=completed action=lane_tick_completed selected=#436 target=Human Review work_unit_completed=true completed_work_units=1',
+        event: {
+          event: 'autopilot_loop_lane',
+          payload: {
+            lane: 'review',
+            status: 'completed',
+            action: 'lane_tick_completed',
+            issue_ref: '#436',
+            work_unit_completed: true,
+            completed_work_units: 1,
+            target: 'Human Review'
+          }
+        }
+      }
+    ]
+  };
+
+  assert.deepEqual(laneWorkersFromAutoloopLines(state, 'main'), []);
 });
 
 test('autoloop stdout log omits repeated inactive skipped issue details', () => {

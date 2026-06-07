@@ -1,4 +1,5 @@
 use super::*;
+use crate::lanes::main_loop::{main_recovery_plan, MainRecoveryMode};
 
 #[test]
 fn resume_preflight_continues_active_in_progress_state() {
@@ -65,6 +66,204 @@ fn resume_preflight_blocks_non_active_state_with_dirty_worktree() {
     assert!(
         matches!(action, ResumePreflightAction::Block { reason } if reason.contains("workspace is dirty"))
     );
+}
+
+#[test]
+fn resume_preflight_archives_need_human_input_with_dirty_worktree() {
+    let config = test_config();
+    let tracker = MemoryTracker::new(vec![tracker_issue("Need Human Input")]);
+    let temp = tempfile::tempdir().unwrap();
+    init_clean_git_workspace(temp.path());
+    std::fs::write(temp.path().join("scratch.txt"), "operator evidence").unwrap();
+    let mut state = active_runtime_state("#29");
+    state.workspace_path = Some(temp.path().to_path_buf());
+
+    let action = run_loop_resume_preflight(&tracker, &config, Some(&state), 2_000).unwrap();
+
+    assert_eq!(
+        action,
+        ResumePreflightAction::ArchiveStale {
+            issue_identifier: "#29".into(),
+            tracker_state: "Need Human Input".into(),
+            archive_reason: "tracker_state_need_human_input".into(),
+        }
+    );
+}
+
+#[test]
+fn resume_preflight_many_clears_need_human_input_dirty_runtime_slot() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = test_config();
+    config.artifacts.root = temp.path().join("artifacts");
+    config.observability.logs_root = temp.path().join("logs");
+    let tracker = MemoryTracker::new(vec![
+        tracker_issue_with_ref("#29", "Needs operator", "Need Human Input"),
+        tracker_issue_with_ref("#30", "Still active", "In Progress"),
+    ]);
+    let dirty_workspace = temp.path().join("dirty-issue-29");
+    std::fs::create_dir_all(&dirty_workspace).unwrap();
+    init_clean_git_workspace(&dirty_workspace);
+    std::fs::write(dirty_workspace.join("scratch.txt"), "operator evidence").unwrap();
+    let mut stale = active_runtime_state("#29");
+    stale.workspace_path = Some(dirty_workspace);
+    let active = active_runtime_state("#30");
+
+    let summary =
+        run_loop_resume_preflight_many(&tracker, &config, &[stale, active], 2_000, true).unwrap();
+
+    assert_eq!(summary.blocked, None);
+    assert_eq!(summary.active_main_workers, 1);
+    assert_eq!(summary.retained_states.len(), 1);
+    assert_eq!(
+        runtime_state_issue_identifier(&summary.retained_states[0]),
+        Some("#30")
+    );
+}
+
+#[test]
+fn resume_preflight_many_recovers_in_progress_when_need_human_input_slot_is_dirty() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = test_config();
+    config.artifacts.root = temp.path().join("artifacts");
+    config.observability.logs_root = temp.path().join("logs");
+    let tracker = MemoryTracker::new(vec![
+        tracker_issue_with_ref("#436", "Recover stale main", "In Progress"),
+        tracker_issue_with_ref("#439", "Needs operator", "Need Human Input"),
+    ]);
+    let mut recoverable = active_runtime_state("#436");
+    recoverable.updated_at_ms = Some(1_000);
+    let dirty_workspace = temp.path().join("dirty-issue-439");
+    std::fs::create_dir_all(&dirty_workspace).unwrap();
+    init_clean_git_workspace(&dirty_workspace);
+    std::fs::write(dirty_workspace.join("scratch.txt"), "operator evidence").unwrap();
+    let mut stale_nhi = active_runtime_state("#439");
+    stale_nhi.workspace_path = Some(dirty_workspace);
+
+    let summary = run_loop_resume_preflight_many(
+        &tracker,
+        &config,
+        &[recoverable, stale_nhi],
+        config.codex.stall_timeout_ms + 2_000,
+        true,
+    )
+    .unwrap();
+
+    assert_eq!(summary.blocked, None);
+    assert_eq!(summary.active_main_workers, 0);
+    assert_eq!(summary.recoverable_states.len(), 1);
+    assert_eq!(
+        runtime_state_issue_identifier(&summary.recoverable_states[0].state),
+        Some("#436")
+    );
+}
+
+#[test]
+fn main_recovery_plan_prefers_native_thread() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = runtime_reconcile_test_config(temp.path());
+    let issue = tracker_issue("In Progress");
+    let mut state = active_runtime_state("#29");
+    state.backend = "codex".into();
+    state.backend_session_id = Some("thread-29-turn-1".into());
+    let mut record = main_tmux_session_record("#29", SessionStatus::Failed);
+    record.backend = "codex".into();
+    record.session_source = Some("codex-app-server".into());
+    record.session_name = "thread-29-turn-1".into();
+    record.thread = Some("thread-29".into());
+    save_session_registry(
+        &session_registry_path(&config),
+        &shea_symphony::session_registry::SessionRegistry {
+            sessions: vec![record],
+        },
+    )
+    .unwrap();
+
+    let plan = main_recovery_plan(&config, &issue, &state).unwrap();
+
+    assert_eq!(plan.mode, MainRecoveryMode::NativeThread);
+    assert_eq!(
+        plan.app_server_resume_thread_id.as_deref(),
+        Some("thread-29")
+    );
+    assert_eq!(plan.prompt_override, None);
+}
+
+#[test]
+fn main_recovery_plan_uses_transcript_replay_when_artifacts_exist_without_thread() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = runtime_reconcile_test_config(temp.path());
+    let issue = tracker_issue("In Progress");
+    let events_path = temp.path().join("logs/app-server/29.events.json");
+    let protocol_path = temp.path().join("logs/app-server/29.protocol.jsonl");
+    let prompt_path = temp.path().join("logs/prompts/29.prompt.md");
+    std::fs::create_dir_all(events_path.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(prompt_path.parent().unwrap()).unwrap();
+    std::fs::write(&events_path, "normalized event evidence").unwrap();
+    std::fs::write(&protocol_path, "protocol evidence").unwrap();
+    std::fs::write(&prompt_path, "original prompt evidence").unwrap();
+    let mut state = active_runtime_state("#29");
+    state.backend = "codex".into();
+    state.backend_session_id = Some("thread-29-turn-1".into());
+    state.backend_log_path = Some(events_path.clone());
+    let mut record = main_tmux_session_record("#29", SessionStatus::Failed);
+    record.backend = "codex".into();
+    record.session_source = Some("codex-app-server".into());
+    record.session_name = "thread-29-turn-1".into();
+    record.thread = None;
+    record.log_path = events_path;
+    record.prompt_artifact_path = prompt_path;
+    save_session_registry(
+        &session_registry_path(&config),
+        &shea_symphony::session_registry::SessionRegistry {
+            sessions: vec![record],
+        },
+    )
+    .unwrap();
+
+    let plan = main_recovery_plan(&config, &issue, &state).unwrap();
+
+    assert_eq!(plan.mode, MainRecoveryMode::TranscriptReplay);
+    assert_eq!(plan.app_server_resume_thread_id, None);
+    let prompt = plan.prompt_override.unwrap();
+    assert!(prompt.contains("Recovery mode: `transcript_replay`"));
+    assert!(prompt.contains("protocol evidence"));
+    assert!(prompt.contains("normalized event evidence"));
+    assert!(prompt.contains("original prompt evidence"));
+}
+
+#[test]
+fn main_recovery_plan_falls_back_to_worktree_only_without_thread_or_artifacts() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = runtime_reconcile_test_config(temp.path());
+    let issue = tracker_issue("In Progress");
+    let workspace = temp.path().join("issue-29");
+    std::fs::create_dir_all(&workspace).unwrap();
+    init_clean_git_workspace(&workspace);
+    std::fs::write(workspace.join("scratch.txt"), "dirty work").unwrap();
+    let mut state = active_runtime_state("#29");
+    state.backend = "codex".into();
+    state.backend_session_id = Some("thread-29-turn-1".into());
+    state.workspace_path = Some(workspace);
+    let mut record = main_tmux_session_record("#29", SessionStatus::Failed);
+    record.backend = "codex".into();
+    record.session_source = Some("codex-app-server".into());
+    record.session_name = "thread-29-turn-1".into();
+    record.thread = None;
+    save_session_registry(
+        &session_registry_path(&config),
+        &shea_symphony::session_registry::SessionRegistry {
+            sessions: vec![record],
+        },
+    )
+    .unwrap();
+
+    let plan = main_recovery_plan(&config, &issue, &state).unwrap();
+
+    assert_eq!(plan.mode, MainRecoveryMode::WorktreeOnly);
+    assert_eq!(plan.app_server_resume_thread_id, None);
+    let prompt = plan.prompt_override.unwrap();
+    assert!(prompt.contains("Recovery mode: `worktree_only`"));
+    assert!(prompt.contains("scratch.txt"));
 }
 
 #[test]

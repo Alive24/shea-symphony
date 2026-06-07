@@ -226,6 +226,56 @@ test('autoloop lane workers clear stale issue after empty completed lane tick', 
   assert.deepEqual(laneWorkersFromAutoloopLines(state, 'merge'), []);
 });
 
+test('autoloop lane workers do not treat resume preflight archive as active main work', () => {
+  const now = Date.now();
+  const state = {
+    ...defaultLoopState(),
+    running: true,
+    startedAtMs: now - 100,
+    recentLines: [
+      {
+        atMs: now,
+        stream: 'stdout',
+        line: 'run_loop_resume_preflight action=recoverable issue=#436 reason=runtime_stalled',
+        event: {
+          event: 'autopilot_cli_line',
+          payload: {
+            kind: 'run_loop_resume_preflight',
+            raw: 'run_loop_resume_preflight action=recoverable issue=#436 reason=runtime_stalled',
+            fields: {
+              action: 'recoverable',
+              issue: '#436',
+              reason: 'runtime_stalled'
+            }
+          }
+        }
+      },
+      {
+        atMs: now + 1,
+        stream: 'stdout',
+        line: 'run_loop_resume_preflight action=archive issue=#439 tracker_state="Need Human Input" reason=tracker_state_need_human_input',
+        event: {
+          event: 'autopilot_cli_line',
+          payload: {
+            kind: 'run_loop_resume_preflight',
+            raw: 'run_loop_resume_preflight action=archive issue=#439 tracker_state="Need Human Input" reason=tracker_state_need_human_input',
+            fields: {
+              action: 'archive',
+              issue: '#439',
+              tracker_state: 'Need Human Input',
+              reason: 'tracker_state_need_human_input'
+            }
+          }
+        }
+      }
+    ]
+  };
+
+  assert.deepEqual(laneWorkersFromAutoloopLines(state, 'main').map((entry) => [entry.issue, entry.action]), [
+    ['#436', 'recoverable']
+  ]);
+});
+
 test('autoloop stdout log omits repeated inactive skipped issue details', () => {
   const state = appendAutoloopLine(defaultLoopState(), {
     atMs: Date.now(),

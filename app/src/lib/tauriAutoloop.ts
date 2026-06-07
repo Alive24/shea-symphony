@@ -496,6 +496,7 @@ function terminalIssueFromAutoloopLine(line: AutoloopLine) {
   const result = textFromValue(recordValue(fields, 'result')).toLowerCase();
   const outcome = textFromValue(recordValue(fields, 'outcome')).toLowerCase();
   const mergeAction = textFromValue(recordValue(fields, 'merge_loop_action') ?? recordValue(fields, 'merging_pool_action'));
+  if (isRunLoopResumePreflightArchive(line)) return issue;
   if (['done', 'closed'].includes(state)) return issue;
   if (['merged', 'closed'].includes(result) && outcome === 'applied') return issue;
   if (mergeAction === 'closed_issue' && outcome === 'applied') return issue;
@@ -550,10 +551,21 @@ function workerFromAutoloopLine(
 
   const issue = issueRefFromValue(recordValue(fields, 'issue'));
   if (!issue) return null;
+  if (isRunLoopResumePreflightArchive(line)) return null;
   const status = textFromValue(recordValue(fields, 'status'), 'running');
   const action = textFromValue(recordValue(fields, 'action'), textFromValue(recordValue(fields, 'run_loop_action'), kind || status));
   if (status === 'idle' || action === 'skip') return null;
   return liveWorker(issue, laneKey, state, action, status, fields, line.atMs);
+}
+
+function isRunLoopResumePreflightArchive(line: AutoloopLine) {
+  const eventName = textFromValue(recordValue(line.event, 'event'));
+  if (eventName !== 'autopilot_cli_line') return false;
+  const payload = recordFromValue(recordValue(line.event, 'payload'));
+  const kind = textFromValue(recordValue(payload, 'kind'));
+  if (kind !== 'run_loop_resume_preflight') return false;
+  const fields = recordFromValue(recordValue(payload, 'fields'));
+  return textFromValue(recordValue(fields, 'action')) === 'archive';
 }
 
 function liveWorker(

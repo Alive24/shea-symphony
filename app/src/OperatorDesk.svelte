@@ -9,6 +9,7 @@
     refreshStatusStore
   } from './lib/uiState.ts';
   import { operatorOverviewStore, requestOperatorLocalArtifactsRefresh } from './lib/operatorOverviewStore.ts';
+  import { humanTodoRefreshState } from './lib/viewModel/humanTodoRefresh.ts';
   import { buildLaneThroughputBoard } from './lib/viewModel/laneThroughput.ts';
   import { buildHandoffPrompt } from './lib/viewModel/handoffPrompt.ts';
   import {
@@ -45,6 +46,7 @@
   $: dataSource = view.dataSource;
   $: queueIssues = view.queueIssues ?? [];
   $: liveUnavailable = dataSource?.mode === 'offline';
+  $: hasProjectQueueRead = hasReadableProjectQueue(view.raw);
   $: autoloopLanes = autoloopState?.lanes ?? {};
   $: autoloopLogLines = autoloopState?.recentLines ?? [];
   $: autoloopStdoutLines = latestAutoloopStdout(autoloopState, autoloopLogLines);
@@ -91,6 +93,14 @@
     operatorSurfaceRefreshing && lastStableHumanTodoIssues.length
       ? lastStableHumanTodoIssues.map((issue) => ({ ...issue, refreshing: true }))
       : humanTodoIssues.map((issue) => ({ ...issue, refreshing: operatorSurfaceRefreshing }));
+  $: humanTodoEmptyState = humanTodoRefreshState({
+    visibleIssueCount: visibleHumanTodoIssues.length,
+    fullLoading,
+    slowReadsRemaining,
+    operatorSurfaceRefreshing,
+    liveUnavailable,
+    hasProjectQueueRead
+  });
   $: laneBoard =
     operatorSurfaceRefreshing && lastStableLaneBoard.length
       ? lastStableLaneBoard.map((lane) => ({ ...lane, refreshing: true }))
@@ -155,6 +165,13 @@
   function normalizeIssueRef(value) {
     const match = String(value ?? '').match(/#?(\d+)/);
     return match ? `#${match[1]}` : null;
+  }
+
+  function hasReadableProjectQueue(overview) {
+    const command = overview?.commands?.githubQueue;
+    if (command?.ok) return true;
+    const queue = overview?.githubQueue;
+    return Array.isArray(queue?.issues) || queue?.stateCounts || queue?.laneCounts;
   }
 
   function handoffLabel(targetId) {
@@ -327,16 +344,10 @@
           </article>
         {/each}
       {:else}
-        <article class="human-todo-empty">
-          <span class="issue-tag">Clear</span>
-          <strong>No human to-do issues visible</strong>
-          <p>
-            {fullLoading
-              ? `Loading CLI readback... ${slowReadsRemaining} surface${slowReadsRemaining === 1 ? '' : 's'} remaining.`
-              : liveUnavailable
-              ? 'Waiting for live Project readback before showing operator-owned issues.'
-              : 'The current Project read did not surface Need to Clarify, Need Human Input, or Human Review items.'}
-          </p>
+        <article class="human-todo-empty {humanTodoEmptyState.status}" aria-busy={!humanTodoEmptyState.isClear}>
+          <span class="issue-tag">{humanTodoEmptyState.badge}</span>
+          <strong>{humanTodoEmptyState.title}</strong>
+          <p>{humanTodoEmptyState.detail}</p>
         </article>
       {/if}
     </div>

@@ -305,10 +305,10 @@ function startOperatorBackgroundReads(force = false, source = 'manual', publishS
     }));
     if (publishStatus) {
       refreshStatusStore.set({
-        running: false,
+        running: true,
         remaining: get(operatorOverviewStore).slowReadsRemaining,
-        startedAt: null,
-        finishedAt: new Date().toISOString(),
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
         source,
         detail: 'Background refresh already in progress'
       });
@@ -409,7 +409,7 @@ function finishLoadedBackgroundSurface(generation: number, publishStatus: boolea
     fullLoading: nextRemaining > 0,
     backgroundRefreshing: nextRemaining > 0
   }));
-  if (publishStatus) {
+  if (publishStatus || get(refreshStatusStore).running) {
     refreshStatusStore.update((status) => ({
       ...status,
       running: nextRemaining > 0,
@@ -431,7 +431,7 @@ function finishSkippedBackgroundSurface(generation: number, source: string, publ
     fullLoading: nextRemaining > 0,
     backgroundRefreshing: nextRemaining > 0
   }));
-  if (publishStatus) {
+  if (publishStatus || get(refreshStatusStore).running) {
     refreshStatusStore.update((status) => ({
       ...status,
       running: nextRemaining > 0,

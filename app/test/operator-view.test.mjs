@@ -47,6 +47,9 @@ import {
   buildIssueCommentLifecycleEvents
 } from '../src/lib/viewModel/githubIssueTimeline.ts';
 import {
+  humanTodoRefreshState
+} from '../src/lib/viewModel/humanTodoRefresh.ts';
+import {
   buildHandoffPrompt,
   handoffSkillForIssue
 } from '../src/lib/viewModel/handoffPrompt.ts';
@@ -1101,6 +1104,66 @@ test('human handoff prompt is issue-specific and lane-boundary explicit', () => 
   assert.match(prompt, /Read current Project issue state before acting/);
   assert.match(prompt, /do not mutate Project state without explicit approval/);
   assert.match(prompt, /https:\/\/github\.com\/Alive24\/shea-symphony\/issues\/436/);
+});
+
+test('human todo empty state does not report clear while readback is loading', () => {
+  const state = humanTodoRefreshState({
+    visibleIssueCount: 0,
+    fullLoading: true,
+    slowReadsRemaining: 4,
+    hasProjectQueueRead: false
+  });
+
+  assert.equal(state.badge, 'Loading');
+  assert.equal(state.title, 'Checking human to-do issues');
+  assert.match(state.detail, /4 surfaces remaining/);
+  assert.equal(state.isClear, false);
+});
+
+test('human todo empty state prompts refresh before Project queue readback', () => {
+  const state = humanTodoRefreshState({
+    visibleIssueCount: 0,
+    fullLoading: false,
+    operatorSurfaceRefreshing: false,
+    liveUnavailable: false,
+    hasProjectQueueRead: false
+  });
+
+  assert.equal(state.badge, 'Refresh');
+  assert.equal(state.title, 'Refresh needed');
+  assert.match(state.detail, /before treating Human Todo as clear/);
+  assert.equal(state.isClear, false);
+});
+
+test('human todo empty state keeps manual refresh visibly in progress', () => {
+  const state = humanTodoRefreshState({
+    visibleIssueCount: 0,
+    operatorSurfaceRefreshing: true,
+    hasProjectQueueRead: false
+  });
+
+  assert.equal(state.badge, 'Refreshing');
+  assert.equal(state.title, 'Refreshing human to-do issues');
+  assert.equal(state.isClear, false);
+});
+
+test('human todo empty state distinguishes live unavailable from true empty', () => {
+  const unavailable = humanTodoRefreshState({
+    visibleIssueCount: 0,
+    liveUnavailable: true,
+    hasProjectQueueRead: false
+  });
+  const empty = humanTodoRefreshState({
+    visibleIssueCount: 0,
+    liveUnavailable: false,
+    hasProjectQueueRead: true
+  });
+
+  assert.equal(unavailable.badge, 'Unavailable');
+  assert.equal(unavailable.isClear, false);
+  assert.equal(empty.badge, 'Clear');
+  assert.equal(empty.title, 'No human to-do issues visible');
+  assert.equal(empty.isClear, true);
 });
 
 test('Codex transcript parser renders conversation turns, tool calls, outputs, final answers, and usage', () => {

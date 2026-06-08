@@ -1380,6 +1380,7 @@ enum ReviewCommandArgs {
     Fake(ReviewFakeArgs),
     Once(ReviewOnceArgs),
     Claim(LaneClaimArgs),
+    ClearClaim(ReviewClearClaimArgs),
     Pass(ReviewEvidenceArgs),
     Reject(ReviewRejectArgs),
     Session(LaneSessionAliasArgs),
@@ -2021,6 +2022,11 @@ fn command_from_review_args(command: ReviewCommandArgs) -> Result<Command, Strin
             lane: AgentSessionLaneArg::Review,
             worker: args.worker,
             source: args.source,
+            write: args.write,
+        }),
+        ReviewCommandArgs::ClearClaim(args) => Ok(Command::ReviewClearClaim {
+            workflow_path: args.workflow_path,
+            issue_ref: args.issue_ref,
             write: args.write,
         }),
         ReviewCommandArgs::Pass(args) => Ok(Command::ReviewPass {

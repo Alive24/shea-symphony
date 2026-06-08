@@ -884,6 +884,27 @@ fn parses_grouped_review_commands() {
 }
 
 #[test]
+fn parses_grouped_review_clear_claim_command() {
+    let command = Command::parse(vec![
+        "review".into(),
+        "clear-claim".into(),
+        "examples/github-project-workflow.md".into(),
+        "#235".into(),
+        "--write".into(),
+    ])
+    .unwrap();
+
+    assert_eq!(
+        command,
+        Command::ReviewClearClaim {
+            workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+            issue_ref: "#235".into(),
+            write: true,
+        }
+    );
+}
+
+#[test]
 fn parses_review_freshness_command() {
     let command = Command::parse(vec![
         "review".into(),

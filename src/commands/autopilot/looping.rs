@@ -19,7 +19,7 @@ use shea_symphony::workflow::WorkflowDefinition;
 use crate::cli::DisplayMode;
 use crate::lanes::main_loop::{compact_evidence, run_loop, RunLoopOptions};
 use crate::lanes::merge::{merge_loop, MergeLoopOptions};
-use crate::lanes::review::{review_loop, ReviewLoopOptions};
+use crate::lanes::review::{review_loop_with_summary, ReviewLoopOptions, ReviewLoopSummary};
 use crate::orchestration::{current_time_ms, shell_quote_display, warn_if_temporary_workflow_path};
 
 use super::{
@@ -963,11 +963,17 @@ impl AutopilotLoopProgress {
 
 impl AutopilotWorkUnitCounters {
     fn record_lane_result(&mut self, lane: &mut AutopilotLoopLaneResult) {
-        lane.work_unit_completed = lane.status == "completed"
-            && (lane.selected_issue.is_some() || lane.issue_ref.is_some());
+        let completed_this_tick = if lane.status == "completed"
+            && (lane.selected_issue.is_some() || lane.issue_ref.is_some())
+        {
+            lane.completed_work_units.max(1)
+        } else {
+            0
+        };
+        lane.work_unit_completed = completed_this_tick > 0;
         if lane.work_unit_completed {
-            self.total = self.total.saturating_add(1);
-            *self.lanes.entry(lane.lane.clone()).or_default() += 1;
+            self.total = self.total.saturating_add(completed_this_tick);
+            *self.lanes.entry(lane.lane.clone()).or_default() += completed_this_tick;
         }
         lane.completed_work_units = self.lanes.get(&lane.lane).copied().unwrap_or_default();
         lane.latest_result = AutopilotLaneLatestResult {
@@ -1010,7 +1016,7 @@ fn autopilot_review_tick(
     plan: Option<&AutopilotPlanSnapshot>,
 ) -> AutopilotLoopLaneResult {
     let lane_plan = autopilot_plan_lane(plan, "review");
-    let result = review_loop(ReviewLoopOptions {
+    let result = review_loop_with_summary(ReviewLoopOptions {
         workflow_path: options.workflow_path.clone(),
         max_iterations: Some(1),
         once: false,
@@ -1019,7 +1025,7 @@ fn autopilot_review_tick(
         max_concurrent: Some(settings.review_max_concurrent),
         quiet_idle: !options.verbose,
     });
-    autopilot_lane_result_from_execution(
+    autopilot_lane_result_from_review_execution(
         "review",
         lane_plan,
         settings.review_max_concurrent,
@@ -1445,6 +1451,72 @@ fn autopilot_lane_result_from_execution(
         action: action.clone(),
         work_unit_completed: false,
         completed_work_units: 0,
+        issue_ref: issue_ref.clone(),
+        latest_result: AutopilotLaneLatestResult {
+            status,
+            action,
+            issue_ref,
+            target_state: target_state.clone(),
+        },
+        selected_issue: lane_plan.and_then(|plan| plan.selected_issue.clone()),
+        target_state,
+        max_concurrent,
+        recover,
+        evidence,
+    }
+}
+
+fn autopilot_lane_result_from_review_execution(
+    lane: &str,
+    lane_plan: Option<&AutopilotLanePlan>,
+    max_concurrent: usize,
+    recover: bool,
+    result: Result<ReviewLoopSummary, Box<dyn std::error::Error>>,
+) -> AutopilotLoopLaneResult {
+    let mut evidence = lane_plan
+        .map(|plan| plan.evidence.clone())
+        .unwrap_or_else(|| vec!["source=autopilot_loop".into()]);
+    if let Some(plan) = lane_plan {
+        evidence.push(format!("planned_status={}", plan.status));
+        evidence.push(format!("planned_action={}", plan.proposed_action));
+        evidence.push(format!("planned_reason={}", plan.reason));
+    }
+    let (status, action, completed_work_units): (String, String, usize) = match result {
+        Ok(summary) if summary.did_work() => {
+            evidence.push(format!("review_jobs_started={}", summary.jobs_started));
+            evidence.push(format!(
+                "review_jobs_reconciled={}",
+                summary.jobs_reconciled
+            ));
+            (
+                "completed".into(),
+                "lane_tick_completed".into(),
+                summary.completed_work_units(),
+            )
+        }
+        Ok(summary) => {
+            evidence.push(format!(
+                "review_no_work skipped_existing_worker={} skipped_state_changed={} invalid_handoffs={}",
+                summary.skipped_existing_worker, summary.skipped_state_changed, summary.invalid_handoffs
+            ));
+            ("skipped".into(), "lane_tick_skipped".into(), 0)
+        }
+        Err(error) => {
+            evidence.push(format!("error={}", compact_evidence(&error.to_string())));
+            ("error".into(), "tick_failed".into(), 0)
+        }
+    };
+    let issue_ref = lane_plan
+        .and_then(|plan| plan.selected_issue.as_ref())
+        .map(|issue| issue.identifier.clone());
+    let target_state = lane_plan.and_then(|plan| plan.target_state.clone());
+
+    AutopilotLoopLaneResult {
+        lane: lane.into(),
+        status: status.clone(),
+        action: action.clone(),
+        work_unit_completed: false,
+        completed_work_units,
         issue_ref: issue_ref.clone(),
         latest_result: AutopilotLaneLatestResult {
             status,
@@ -2428,6 +2500,46 @@ mod tests {
         assert_eq!(no_issue_completed.completed_work_units, 0);
         assert!(!errored.work_unit_completed);
         assert_eq!(errored.completed_work_units, 1);
+    }
+
+    #[test]
+    fn review_lane_summary_without_reconciled_jobs_is_skipped_not_handled() {
+        let ready = AutopilotLanePlan {
+            lane: "review".into(),
+            status: "ready".into(),
+            selected_issue: Some(AutopilotIssueSummary {
+                identifier: "#442".into(),
+                title: "Fix issue detail heartbeat provenance".into(),
+                state: "Agent Review".into(),
+                assignees: Vec::new(),
+                url: None,
+                priority: None,
+                pull_request: Some("https://github.com/Alive24/shea-symphony/pull/443".into()),
+            }),
+            proposed_action: "start_independent_review".into(),
+            target_state: Some("Human Review | Rework | Need Human Input | unchanged".into()),
+            reason: "agent_review_issue".into(),
+            evidence: vec!["source=test".into()],
+        };
+        let mut counters = AutopilotWorkUnitCounters::default();
+        let mut skipped = autopilot_lane_result_from_review_execution(
+            "review",
+            Some(&ready),
+            2,
+            false,
+            Ok(ReviewLoopSummary {
+                skipped_existing_worker: 1,
+                ..ReviewLoopSummary::default()
+            }),
+        );
+
+        counters.record_lane_result(&mut skipped);
+
+        assert_eq!(skipped.status, "skipped");
+        assert_eq!(skipped.action, "lane_tick_skipped");
+        assert!(!skipped.work_unit_completed);
+        assert_eq!(skipped.completed_work_units, 0);
+        assert_eq!(counters.total, 0);
     }
 
     #[test]

@@ -30,7 +30,11 @@ pub(crate) fn hydrate_issues_for_review_lane(
     let project_context = issues.clone();
     issues
         .into_iter()
-        .map(|issue| hydrate_issue_for_evidence(adapter, issue, &project_context))
+        .map(|issue| {
+            let issue_ref = issue.identifier.clone();
+            let latest = adapter.get_issue(&issue_ref)?.unwrap_or(issue);
+            hydrate_issue_for_evidence(adapter, latest, &project_context)
+        })
         .collect()
 }
 

@@ -227,10 +227,36 @@ fn review_loop_recovery_delay_ms(
     Some(base_delay.saturating_mul(multiplier).min(cap).max(1))
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct ReviewLoopSummary {
+    pub(crate) jobs_started: usize,
+    pub(crate) jobs_reconciled: usize,
+    pub(crate) skipped_existing_worker: usize,
+    pub(crate) skipped_state_changed: usize,
+    pub(crate) invalid_handoffs: usize,
+}
+
+impl ReviewLoopSummary {
+    pub(crate) fn completed_work_units(self) -> usize {
+        self.jobs_reconciled
+    }
+
+    pub(crate) fn did_work(self) -> bool {
+        self.jobs_started > 0 || self.jobs_reconciled > 0
+    }
+}
+
 pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std::error::Error>> {
+    review_loop_with_summary(options).map(|_| ())
+}
+
+pub(crate) fn review_loop_with_summary(
+    options: ReviewLoopOptions,
+) -> Result<ReviewLoopSummary, Box<dyn std::error::Error>> {
     let limit = options.iteration_limit();
     let mut iterations = 0usize;
     let mut failure_memory = BTreeMap::<String, ReviewLoopFailureMemory>::new();
+    let mut summary = ReviewLoopSummary::default();
 
     loop {
         if let Some(max) = limit {
@@ -299,6 +325,7 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
                     &backend_kind,
                 ) {
                     ReviewRunEligibility::AlreadyQueued { worker_key } => {
+                        summary.skipped_existing_worker += 1;
                         if !options.quiet_idle {
                             println!(
                                 "review_loop_action=skip issue={} reason=review_worker_exists worker_key={worker_key}",
@@ -307,6 +334,7 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
                         }
                     }
                     ReviewRunEligibility::NotInAgentReview { current_state } => {
+                        summary.skipped_state_changed += 1;
                         if !options.quiet_idle {
                             println!(
                                 "review_loop_action=skip issue={} reason=state_changed current_state={current_state:?}",
@@ -315,6 +343,7 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
                         }
                     }
                     ReviewRunEligibility::InvalidHandoff { reason } => {
+                        summary.invalid_handoffs += 1;
                         println!(
                             "review_loop_action=skip issue={} reason=invalid_handoff detail={reason:?}",
                             issue.identifier
@@ -356,14 +385,6 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
                 &backend_kind,
             ) {
                 ReviewRunEligibility::Eligible { worker_key } => {
-                    print_latest_status(&latest_status_for_issue(
-                        &config,
-                        &selected_issue,
-                        "review",
-                        if options.write { "running" } else { "waiting" },
-                        "review_selected",
-                        Some("write review timeline and reconcile".into()),
-                    ));
                     if !options.quiet_idle {
                         println!(
                         "review_loop_iteration={iterations} worker_slot={worker_slot} issue={} worker_key={worker_key} mode={}",
@@ -372,6 +393,14 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
                     );
                     }
                     if !options.write {
+                        print_latest_status(&latest_status_for_issue(
+                            &config,
+                            &selected_issue,
+                            "review",
+                            "waiting",
+                            "review_selected",
+                            Some("write review timeline and reconcile".into()),
+                        ));
                         println!(
                             "review_loop_dry_run action=start issue={} backend={backend_kind} mode={}",
                             selected_issue.identifier,
@@ -430,6 +459,15 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
                                 &latest,
                                 &worker_key,
                             )?;
+                            summary.jobs_started += 1;
+                            print_latest_status(&latest_status_for_issue(
+                                &config,
+                                &latest,
+                                "review",
+                                "running",
+                                "review_selected",
+                                Some("write review timeline and reconcile".into()),
+                            ));
                             let workflow_for_job = workflow.clone();
                             let config_for_job = config.clone();
                             let issue_for_job = latest.clone();
@@ -460,6 +498,7 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
                             pending_review_jobs.push((worker_slot, latest, claim, handle));
                         }
                         ReviewRunEligibility::AlreadyQueued { worker_key } => {
+                            summary.skipped_existing_worker += 1;
                             if !options.quiet_idle {
                                 println!(
                                 "review_loop_action=skip issue={} reason=review_worker_exists worker_key={worker_key}",
@@ -468,6 +507,7 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
                             }
                         }
                         ReviewRunEligibility::NotInAgentReview { current_state } => {
+                            summary.skipped_state_changed += 1;
                             if !options.quiet_idle {
                                 println!(
                                 "review_loop_action=skip issue={} reason=state_changed current_state={current_state:?}",
@@ -476,6 +516,7 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
                             }
                         }
                         ReviewRunEligibility::InvalidHandoff { reason } => {
+                            summary.invalid_handoffs += 1;
                             println!(
                             "review_loop_action=skip issue={} reason=invalid_handoff detail={reason:?}",
                             latest.identifier
@@ -491,6 +532,7 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
                     }
                 }
                 ReviewRunEligibility::AlreadyQueued { worker_key } => {
+                    summary.skipped_existing_worker += 1;
                     if !options.quiet_idle {
                         println!(
                         "review_loop_action=skip issue={} reason=review_worker_exists worker_key={worker_key}",
@@ -499,6 +541,7 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
                     }
                 }
                 ReviewRunEligibility::NotInAgentReview { current_state } => {
+                    summary.skipped_state_changed += 1;
                     if !options.quiet_idle {
                         println!(
                         "review_loop_action=skip issue={} reason=state_changed current_state={current_state:?}",
@@ -507,6 +550,7 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
                     }
                 }
                 ReviewRunEligibility::InvalidHandoff { reason } => {
+                    summary.invalid_handoffs += 1;
                     println!(
                         "review_loop_action=skip issue={} reason=invalid_handoff detail={reason:?}",
                         selected_issue.identifier
@@ -546,6 +590,7 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
                 Some(&claim),
                 repeat_evidence.as_ref(),
             )?;
+            summary.jobs_reconciled += 1;
             let decision = review_gate_decision_for_issue(&job, &latest);
             println!(
                 "review_loop_action=reconciled issue={} worker_slot={} backend={} outcome={:?} target_state={:?} ledger={}",
@@ -606,7 +651,7 @@ pub(crate) fn review_loop(options: ReviewLoopOptions) -> Result<(), Box<dyn std:
         }
     }
 
-    Ok(())
+    Ok(summary)
 }
 
 pub(crate) fn review_backend_kind(

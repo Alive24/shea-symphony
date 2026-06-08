@@ -10,8 +10,8 @@ pub(crate) use automatic::{
     transition_issue_to_rework_with_diagnostic,
 };
 pub(crate) use automatic::{
-    review_backend_kind, review_fake, review_loop, review_once, select_review_worker_issues,
-    ReviewLoopOptions,
+    review_backend_kind, review_fake, review_loop, review_loop_with_summary, review_once,
+    select_review_worker_issues, ReviewLoopOptions, ReviewLoopSummary,
 };
 #[cfg(test)]
 pub(crate) use manual::{

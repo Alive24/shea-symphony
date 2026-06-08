@@ -625,6 +625,13 @@ changes.
 | `session list` | List active Shea Symphony tmux sessions by configured prefix. | Read-only operator summary. |
 | `session attach` | Print or execute the tmux attach command for one session. | Defaults to printing the command; `--exec` enters tmux. |
 
+Review backend implementations own backend-specific command previews, prelaunch
+diagnostics, stdout parsing, and artifact shaping. The current canonical
+workflow still selects `review_lane.backend: gemini-cli`; Gemini-specific
+configuration fields such as `gemini_command`, `gemini_model`, and
+`gemini_allowed_tools` remain the supported configuration surface for that
+backend.
+
 Example:
 
 ```bash

@@ -106,18 +106,16 @@ fn print_run_loop_write_selection(
                 iterations, issue.identifier, issue.title, max_concurrent, selected_count
             );
         }
-    } else {
-        if !options.quiet_idle {
-            println!(
-                "run_loop_iteration={} issue={} title={:?} mode=write max_concurrent={} selected_count={} slot={}",
-                iterations,
-                issue.identifier,
-                issue.title,
-                max_concurrent,
-                selected_count,
-                slot_index + 1
-            );
-        }
+    } else if !options.quiet_idle {
+        println!(
+            "run_loop_iteration={} issue={} title={:?} mode=write max_concurrent={} selected_count={} slot={}",
+            iterations,
+            issue.identifier,
+            issue.title,
+            max_concurrent,
+            selected_count,
+            slot_index + 1
+        );
     }
     let smoke_gate = main_app_server_smoke_gate(config);
     println!(

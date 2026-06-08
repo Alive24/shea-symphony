@@ -152,9 +152,11 @@ pub(crate) fn gate_workpad(issue: &TrackerIssue, decision: &GateDecision) -> Str
             .collect::<Vec<_>>()
             .join("\n")
     };
-    let missing = (!decision.missing.is_empty())
-        .then(|| format!("- Missing: {}", decision.missing.join(", ")))
-        .unwrap_or_default();
+    let missing = if decision.missing.is_empty() {
+        String::new()
+    } else {
+        format!("- Missing: {}", decision.missing.join(", "))
+    };
     let notes = decision
         .notes
         .iter()

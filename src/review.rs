@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 
+use crate::config::ReviewConfig;
 use crate::lane_claim::{LaneClaim, LaneClaimState};
 use crate::model::{normalize_state, TrackerIssue};
 use crate::workflow::WorkflowDefinition;
@@ -35,8 +36,8 @@ pub use gemini_health::{
 };
 pub use job::{
     poll_review_job_until_terminal, review_job_is_terminal, review_job_ledger_record,
-    review_usage_limit_pause, write_review_job_ledger_record, ReviewBackend, ReviewError,
-    ReviewJob, ReviewJobLedgerRecord, ReviewJobState, ReviewRequest,
+    review_usage_limit_pause, write_review_job_ledger_record, ReviewBackend, ReviewBackendCommand,
+    ReviewError, ReviewJob, ReviewJobLedgerRecord, ReviewJobState, ReviewRequest,
 };
 pub use report::{classify_findings, AgentReviewReport, ReviewFinding, ReviewFindingClass};
 
@@ -136,6 +137,20 @@ impl ReviewBackend for FakeReviewBackend {
     }
 }
 
+pub fn review_backend_from_config(config: &ReviewConfig) -> Box<dyn ReviewBackend> {
+    match config.backend.as_str() {
+        "gemini-cli" => Box::new(GeminiCliReviewBackend::from_config(config)),
+        _ => Box::new(FakeReviewBackend::new(FakeReviewOutcome::Pass)),
+    }
+}
+
+pub fn review_backend_kind_from_config(config: &ReviewConfig) -> &'static str {
+    match config.backend.as_str() {
+        "gemini-cli" => "gemini-cli",
+        _ => "fake-reviewer",
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct GeminiCliReviewBackend {
     command: String,
@@ -164,6 +179,21 @@ impl GeminiCliReviewBackend {
             model,
             allowed_tools,
             children: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+
+    pub fn from_config(config: &ReviewConfig) -> Self {
+        Self::with_headless_options(
+            config.gemini_command.clone(),
+            config.gemini_model.clone(),
+            config.gemini_allowed_tools.clone(),
+        )
+    }
+
+    fn headless_config(&self) -> GeminiCliHeadlessConfig<'_> {
+        GeminiCliHeadlessConfig {
+            model: self.model.as_deref(),
+            allowed_tools: &self.allowed_tools,
         }
     }
 }
@@ -304,6 +334,20 @@ impl ReviewBackend for GeminiCliReviewBackend {
         Ok(job)
     }
 
+    fn command_preview(&self) -> Option<ReviewBackendCommand> {
+        Some(ReviewBackendCommand {
+            mode: "headless",
+            command: self.command.clone(),
+            args: self.headless_config().args(),
+        })
+    }
+
+    fn prelaunch_error(&self) -> Option<String> {
+        self.headless_config()
+            .prelaunch_health_diagnostic(&self.command)
+            .map(|diagnostic| diagnostic.to_error_message())
+    }
+
     fn cancel(&self, job: &ReviewJob) -> Result<(), ReviewError> {
         let mut children = self
             .children
@@ -314,6 +358,22 @@ impl ReviewBackend for GeminiCliReviewBackend {
             let _ = child.wait();
         }
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct GeminiCliHeadlessConfig<'a> {
+    model: Option<&'a str>,
+    allowed_tools: &'a [String],
+}
+
+impl GeminiCliHeadlessConfig<'_> {
+    fn args(&self) -> Vec<String> {
+        gemini_cli_headless_args(self.model, self.allowed_tools)
+    }
+
+    fn prelaunch_health_diagnostic(&self, command: &str) -> Option<GeminiReviewHealthDiagnostic> {
+        gemini_prelaunch_health_diagnostic(command, self.model, self.allowed_tools)
     }
 }
 
@@ -1275,6 +1335,55 @@ mod tests {
             job.error.as_deref(),
             Some("Review backend timed out after 0ms.")
         );
+    }
+
+    fn gemini_review_config() -> ReviewConfig {
+        ReviewConfig {
+            backend: "gemini-cli".into(),
+            gemini_command: "/opt/homebrew/bin/gemini".into(),
+            gemini_model: Some("gemini-3.1-pro-preview".into()),
+            gemini_allowed_tools: vec!["run_shell_command".into()],
+            timeout_ms: 600_000,
+            max_concurrent_workers: 1,
+        }
+    }
+
+    #[test]
+    fn configured_review_backend_preserves_gemini_identity_and_command_preview() {
+        let config = gemini_review_config();
+        let backend = review_backend_from_config(&config);
+        let preview = backend.command_preview().unwrap();
+
+        assert_eq!(review_backend_kind_from_config(&config), "gemini-cli");
+        assert_eq!(backend.kind(), "gemini-cli");
+        assert_eq!(preview.mode, "headless");
+        assert_eq!(preview.command, "/opt/homebrew/bin/gemini");
+        assert_eq!(
+            preview.args,
+            vec![
+                "--skip-trust",
+                "--prompt",
+                "",
+                "--output-format",
+                "json",
+                "--model",
+                "gemini-3.1-pro-preview",
+                "--allowed-tools",
+                "run_shell_command,read_file,grep_search,list_directory",
+            ]
+        );
+    }
+
+    #[test]
+    fn configured_review_backend_routes_gemini_prelaunch_diagnostics_through_backend_boundary() {
+        let mut config = gemini_review_config();
+        config.gemini_command = "shea-missing-gemini-command".into();
+        let backend = review_backend_from_config(&config);
+        let error = backend.prelaunch_error().unwrap();
+
+        assert_eq!(backend.kind(), "gemini-cli");
+        assert!(error.contains("Gemini review backend health check classified"));
+        assert!(error.contains("reason=command_not_found"));
     }
 
     #[test]

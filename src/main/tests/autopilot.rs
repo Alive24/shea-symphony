@@ -77,7 +77,7 @@ fn review_worker_exists_lane_plan(identifier: &str) -> AutopilotLanePlan {
         selected_issue: None,
         proposed_action: "skip".into(),
         target_state: None,
-        reason: format!("review_worker_exists:review:{}:gemini-cli", identifier),
+        reason: format!("review_worker_exists:review:{identifier}:gemini-cli"),
         evidence: vec!["source=review_lane_decision".into()],
     }
 }

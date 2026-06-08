@@ -19,7 +19,7 @@
     laneWorkerFromAutoloop,
     laneWorkersFromAutoloopLines,
     mergeLaneSnapshot,
-    openHandoffTarget,
+    openCodexHandoff,
     operatorRunLogLines,
     subscribeAutoloopEvents,
     type LaneSnapshot,
@@ -185,9 +185,20 @@
     }
   }
 
+  function issueWorktreePath(issue) {
+    const issueRef = normalizeIssueRef(issue?.id);
+    const localStatus = view?.raw?.localStatus ?? {};
+    const candidates = [
+      ...(localStatus.issueWorktrees ?? []),
+      ...(localStatus.completedIssueWorktrees ?? [])
+    ];
+    return candidates.find((entry) => normalizeIssueRef(entry?.issue ?? entry?.issueRef ?? entry?.id) === issueRef)?.path ?? null;
+  }
+
   async function openHandoff(issue) {
-    const copied = await copyHandoffPrompt(issue);
+    const prompt = buildHandoffPrompt(issue);
     if (defaultHandoffTarget !== 'codex-app') {
+      const copied = await copyHandoffPrompt(issue);
       handoffStatus = {
         ...handoffStatus,
         [issue.id]: copied
@@ -197,17 +208,16 @@
       return;
     }
     try {
-      await openHandoffTarget(defaultHandoffTarget);
+      const worktreePath = issueWorktreePath(issue);
+      if (!worktreePath) {
+        throw new Error('No local issue worktree is visible. Refresh local artifacts before opening Codex.');
+      }
+      await openCodexHandoff(prompt, worktreePath);
+      handoffStatus = { ...handoffStatus, [issue.id]: '' };
+    } catch (error) {
       handoffStatus = {
         ...handoffStatus,
-        [issue.id]: copied ? 'Prompt copied. Codex App opened.' : 'Codex App opened, but prompt was not copied.'
-      };
-    } catch (_) {
-      handoffStatus = {
-        ...handoffStatus,
-        [issue.id]: copied
-          ? 'Prompt copied. Open Codex App manually and paste it.'
-          : 'Clipboard unavailable. Open Codex App manually after copying the prompt.'
+        [issue.id]: error instanceof Error ? error.message : 'Unable to open Codex handoff.'
       };
     }
   }

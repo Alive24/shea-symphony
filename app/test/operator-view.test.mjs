@@ -1078,6 +1078,7 @@ test('lane board rendering omits handoff actions and manual skill labels', () =>
   assert.match(humanTodoSection, /handoff-actions/);
   assert.match(humanTodoSection, /Open in/);
   assert.match(humanTodoSection, /Copy Handoff Prompt/);
+  assert.doesNotMatch(operatorDesk, /Prompt copied\. Codex App opened\./);
 });
 
 test('human handoff prompt is issue-specific and lane-boundary explicit', () => {

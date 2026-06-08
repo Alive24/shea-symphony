@@ -184,6 +184,15 @@ export async function openHandoffTarget(targetId: string): Promise<void> {
   await invoke('open_handoff_target', { targetId });
 }
 
+export async function openCodexHandoff(prompt: string, worktreePath: string | null = null): Promise<void> {
+  if (!isTauriRuntime()) {
+    await navigator.clipboard.writeText(prompt);
+    throw new Error('Codex handoff is only available in the desktop shell.');
+  }
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('open_codex_handoff', { prompt, worktreePath });
+}
+
 export async function openGitHubSource(url: string): Promise<void> {
   if (!isTauriRuntime()) {
     window.open(url, '_blank', 'noopener,noreferrer');

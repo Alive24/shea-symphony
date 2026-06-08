@@ -1,5 +1,7 @@
 use super::*;
-use crate::lanes::main_loop::{main_recovery_plan, MainRecoveryMode};
+use crate::lanes::main_loop::{
+    main_recovery_plan, main_recovery_plan_applicable, MainRecoveryMode,
+};
 
 #[test]
 fn resume_preflight_continues_active_in_progress_state() {
@@ -186,6 +188,38 @@ fn main_recovery_plan_prefers_native_thread() {
         Some("thread-29")
     );
     assert_eq!(plan.prompt_override, None);
+}
+
+#[test]
+fn main_recovery_plan_applicable_rejects_fresh_claim_state() {
+    let mut state = active_runtime_state("#29");
+    state.backend = "codex".into();
+    state.last_event = Some("Claimed".into());
+
+    assert!(!main_recovery_plan_applicable(&state));
+}
+
+#[test]
+fn main_recovery_plan_ignores_issue_log_without_conversation_artifacts() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = runtime_reconcile_test_config(temp.path());
+    let issue = tracker_issue("In Progress");
+    std::fs::create_dir_all(&config.observability.logs_root).unwrap();
+    std::fs::write(
+        config.observability.logs_root.join("shea-symphony.jsonl"),
+        "{\"event\":\"tracker_mutation\",\"issue_identifier\":\"#29\",\"message\":\"fresh claim\"}\n",
+    )
+    .unwrap();
+    let mut state = active_runtime_state("#29");
+    state.backend = "codex".into();
+    state.last_event = Some("Claimed".into());
+
+    let plan = main_recovery_plan(&config, &issue, &state).unwrap();
+
+    assert_eq!(plan.mode, MainRecoveryMode::WorktreeOnly);
+    let prompt = plan.prompt_override.unwrap();
+    assert!(prompt.contains("Recovery mode: `worktree_only`"));
+    assert!(!prompt.contains("Shea event log records"));
 }
 
 #[test]

@@ -84,6 +84,19 @@ pub(crate) fn codex_app_server_resume_thread_for_state(
         .filter(|thread_id| !thread_id.trim().is_empty()))
 }
 
+pub(crate) fn main_recovery_plan_applicable(state: &RuntimeState) -> bool {
+    state
+        .backend_session_id
+        .as_deref()
+        .is_some_and(|session_id| !session_id.trim().is_empty())
+        || state.backend_log_path.is_some()
+        || state.workspace_path.is_some()
+        || matches!(
+            state.last_event.as_deref(),
+            Some("SessionRunning" | "SessionTerminal" | "Failed" | "Completed")
+        )
+}
+
 pub(crate) fn main_recovery_plan(
     config: &RuntimeConfig,
     issue: &TrackerIssue,
@@ -152,35 +165,37 @@ fn transcript_recovery_prompt(
     record: Option<&AgentSessionRecord>,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
     let mut sections = Vec::new();
+    let mut has_conversation_artifact = false;
     for path in app_server_protocol_paths(state, record) {
-        push_readable_artifact(&mut sections, "app-server protocol", &path);
-        if !sections.is_empty() {
+        if push_readable_artifact(&mut sections, "app-server protocol", &path) {
+            has_conversation_artifact = true;
             break;
         }
     }
     for path in app_server_event_paths(state, record) {
-        push_readable_artifact(&mut sections, "app-server normalized events", &path);
-        if sections
-            .iter()
-            .any(|(title, _)| title == "app-server normalized events")
-        {
+        if push_readable_artifact(&mut sections, "app-server normalized events", &path) {
+            has_conversation_artifact = true;
             break;
         }
     }
     if let Some(record) = record {
-        push_readable_artifact(
+        if push_readable_artifact(
             &mut sections,
             "original prompt artifact",
             &record.prompt_artifact_path,
-        );
+        ) {
+            has_conversation_artifact = true;
+        }
     }
+
+    if !has_conversation_artifact {
+        return Ok(None);
+    }
+
     if let Some(lines) = issue_event_log_excerpt(config, issue, state, record) {
         sections.push(("Shea event log records".into(), lines));
     }
 
-    if sections.is_empty() {
-        return Ok(None);
-    }
     if let Some(record) = record {
         sections.push((
             "session registry metadata".into(),
@@ -285,13 +300,15 @@ fn app_server_protocol_paths(
         .collect()
 }
 
-fn push_readable_artifact(sections: &mut Vec<(String, String)>, title: &str, path: &Path) {
+fn push_readable_artifact(sections: &mut Vec<(String, String)>, title: &str, path: &Path) -> bool {
     if let Some(text) = read_bounded_artifact(path) {
         sections.push((
             format!("{title}: {}", path.display()),
             bounded_text(&text, RECOVERY_ARTIFACT_CHAR_LIMIT),
         ));
+        return true;
     }
+    false
 }
 
 fn read_bounded_artifact(path: &Path) -> Option<String> {

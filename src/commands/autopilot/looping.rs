@@ -19,7 +19,9 @@ use shea_symphony::workflow::WorkflowDefinition;
 use crate::cli::DisplayMode;
 use crate::lanes::main_loop::{compact_evidence, run_loop, RunLoopOptions};
 use crate::lanes::merge::{merge_loop, MergeLoopOptions};
-use crate::lanes::review::{review_loop_with_summary, ReviewLoopOptions, ReviewLoopSummary};
+use crate::lanes::review::{
+    review_clear_claim, review_loop_with_summary, ReviewLoopOptions, ReviewLoopSummary,
+};
 use crate::orchestration::{current_time_ms, shell_quote_display, warn_if_temporary_workflow_path};
 
 use super::{
@@ -534,8 +536,7 @@ impl AutopilotLaneKind {
 
     fn recover(self, settings: &AutopilotLoopTickSettings) -> bool {
         match self {
-            Self::Main | Self::Merge => settings.recover,
-            Self::Review => false,
+            Self::Main | Self::Review | Self::Merge => settings.recover,
         }
     }
 
@@ -1016,21 +1017,30 @@ fn autopilot_review_tick(
     plan: Option<&AutopilotPlanSnapshot>,
 ) -> AutopilotLoopLaneResult {
     let lane_plan = autopilot_plan_lane(plan, "review");
-    let result = review_loop_with_summary(ReviewLoopOptions {
-        workflow_path: options.workflow_path.clone(),
-        max_iterations: Some(1),
-        once: false,
-        write: options.write,
-        fake_outcome: None,
-        max_concurrent: Some(settings.review_max_concurrent),
-        quiet_idle: !options.verbose,
-    });
+    let recovery_issue_ref = (options.write && settings.recover)
+        .then(|| lane_plan.and_then(autopilot_review_recovery_issue_ref))
+        .flatten();
+    let result = (|| {
+        if let Some(issue_ref) = recovery_issue_ref.as_deref() {
+            review_clear_claim(options.workflow_path.clone(), issue_ref.to_string(), true)?;
+        }
+        review_loop_with_summary(ReviewLoopOptions {
+            workflow_path: options.workflow_path.clone(),
+            max_iterations: Some(1),
+            once: false,
+            write: options.write,
+            fake_outcome: None,
+            max_concurrent: Some(settings.review_max_concurrent),
+            quiet_idle: !options.verbose,
+        })
+    })();
     autopilot_lane_result_from_review_execution(
         "review",
         lane_plan,
         settings.review_max_concurrent,
-        false,
+        settings.recover,
         result,
+        recovery_issue_ref,
     )
 }
 
@@ -1096,6 +1106,16 @@ fn autopilot_merge_recovery_can_tick(
         && autopilot_merge_recovery_blocker_is_lane_local(plan)
 }
 
+fn autopilot_review_recovery_can_tick(
+    plan: &AutopilotPlanSnapshot,
+    settings: AutopilotLoopSettings,
+) -> bool {
+    settings.write
+        && settings.recover
+        && settings.review_max_concurrent > 0
+        && autopilot_review_recovery_blocker_is_lane_local(plan)
+}
+
 fn autopilot_main_recovery_blocker_is_lane_local(plan: &AutopilotPlanSnapshot) -> bool {
     !plan.readiness.blockers.is_empty()
         && plan
@@ -1107,6 +1127,18 @@ fn autopilot_main_recovery_blocker_is_lane_local(plan: &AutopilotPlanSnapshot) -
             .lanes
             .iter()
             .all(|lane| !lane.status.eq_ignore_ascii_case("blocked"))
+}
+
+fn autopilot_review_recovery_blocker_is_lane_local(plan: &AutopilotPlanSnapshot) -> bool {
+    let Some(review_lane) = autopilot_plan_lane(Some(plan), "review") else {
+        return false;
+    };
+    autopilot_review_lane_plan_can_recover(review_lane)
+        && plan.readiness.blockers.is_empty()
+        && plan
+            .lanes
+            .iter()
+            .all(|lane| lane.lane == "review" || !lane.status.eq_ignore_ascii_case("blocked"))
 }
 
 fn autopilot_merge_recovery_blocker_is_lane_local(plan: &AutopilotPlanSnapshot) -> bool {
@@ -1132,6 +1164,21 @@ fn autopilot_merge_recovery_blocker_is_lane_local(plan: &AutopilotPlanSnapshot) 
             .blockers
             .iter()
             .all(|blocker| autopilot_merge_runtime_recovery_blocker(plan, blocker, selected_issue))
+}
+
+fn autopilot_review_lane_plan_can_recover(lane: &AutopilotLanePlan) -> bool {
+    lane.status == "blocked" && autopilot_review_recovery_issue_ref(lane).is_some()
+}
+
+fn autopilot_review_recovery_issue_ref(lane: &AutopilotLanePlan) -> Option<String> {
+    let worker_key = lane.reason.strip_prefix("review_worker_exists:")?;
+    let mut parts = worker_key.split(':');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some("review"), Some(issue_ref), Some(_backend)) if !issue_ref.trim().is_empty() => {
+            Some(issue_ref.trim().to_string())
+        }
+        _ => None,
+    }
 }
 
 fn autopilot_merge_lane_plan_can_recover(lane: &AutopilotLanePlan) -> bool {
@@ -1472,6 +1519,7 @@ fn autopilot_lane_result_from_review_execution(
     max_concurrent: usize,
     recover: bool,
     result: Result<ReviewLoopSummary, Box<dyn std::error::Error>>,
+    recovery_issue_ref: Option<String>,
 ) -> AutopilotLoopLaneResult {
     let mut evidence = lane_plan
         .map(|plan| plan.evidence.clone())
@@ -1480,6 +1528,12 @@ fn autopilot_lane_result_from_review_execution(
         evidence.push(format!("planned_status={}", plan.status));
         evidence.push(format!("planned_action={}", plan.proposed_action));
         evidence.push(format!("planned_reason={}", plan.reason));
+    }
+    if let Some(issue_ref) = recovery_issue_ref.as_deref() {
+        evidence.push(format!(
+            "review_recovery=cleared_stale_claim issue={}",
+            issue_ref
+        ));
     }
     let (status, action, completed_work_units): (String, String, usize) = match result {
         Ok(summary) if summary.did_work() => {
@@ -1508,7 +1562,8 @@ fn autopilot_lane_result_from_review_execution(
     };
     let issue_ref = lane_plan
         .and_then(|plan| plan.selected_issue.as_ref())
-        .map(|issue| issue.identifier.clone());
+        .map(|issue| issue.identifier.clone())
+        .or(recovery_issue_ref);
     let target_state = lane_plan.and_then(|plan| plan.target_state.clone());
 
     AutopilotLoopLaneResult {
@@ -1768,22 +1823,24 @@ pub(crate) fn autopilot_loop_status_from_plan_with_work_units(
         .filter_map(|lane| lane.selected_issue.clone())
         .collect::<Vec<_>>();
     let main_recovery_can_tick = autopilot_main_recovery_can_tick(plan, settings);
+    let review_recovery_can_tick = autopilot_review_recovery_can_tick(plan, settings);
     let merge_recovery_can_tick = autopilot_merge_recovery_can_tick(plan, settings);
-    let effective_readiness_blockers = if main_recovery_can_tick || merge_recovery_can_tick {
-        plan.readiness
-            .blockers
-            .iter()
-            .filter(|blocker| {
-                !(main_recovery_can_tick
-                    && autopilot_readiness_blocker_is_main_recoverable(plan, blocker))
-                    && !(merge_recovery_can_tick
-                        && autopilot_readiness_blocker_is_merge_recoverable(plan, blocker))
-            })
-            .cloned()
-            .collect::<Vec<_>>()
-    } else {
-        plan.readiness.blockers.clone()
-    };
+    let effective_readiness_blockers =
+        if main_recovery_can_tick || review_recovery_can_tick || merge_recovery_can_tick {
+            plan.readiness
+                .blockers
+                .iter()
+                .filter(|blocker| {
+                    !(main_recovery_can_tick
+                        && autopilot_readiness_blocker_is_main_recoverable(plan, blocker))
+                        && !(merge_recovery_can_tick
+                            && autopilot_readiness_blocker_is_merge_recoverable(plan, blocker))
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            plan.readiness.blockers.clone()
+        };
     let readiness_blocker_count = effective_readiness_blockers.len();
     let mut blocked_reasons = effective_readiness_blockers.clone();
     blocked_reasons.extend(
@@ -1791,6 +1848,9 @@ pub(crate) fn autopilot_loop_status_from_plan_with_work_units(
             .iter()
             .filter(|lane| {
                 lane.status == "blocked"
+                    && !(review_recovery_can_tick
+                        && lane.lane == "review"
+                        && autopilot_review_lane_plan_can_recover(lane))
                     && !(merge_recovery_can_tick
                         && lane.lane == "merge"
                         && autopilot_merge_lane_plan_can_recover(lane))
@@ -1808,16 +1868,22 @@ pub(crate) fn autopilot_loop_status_from_plan_with_work_units(
             .retrying_count
             .saturating_add(recent_transient_failures.len()),
     );
-    if (main_recovery_can_tick || merge_recovery_can_tick) && counts.running == 0 {
+    if review_recovery_can_tick {
+        counts.blocked = counts.blocked.saturating_sub(1);
+    }
+    if (main_recovery_can_tick || review_recovery_can_tick || merge_recovery_can_tick)
+        && counts.running == 0
+    {
         counts.running = 1;
     }
-    let readiness_status = if (main_recovery_can_tick || merge_recovery_can_tick)
-        && effective_readiness_blockers.is_empty()
-    {
-        "ready"
-    } else {
-        plan.readiness.status.as_str()
-    };
+    let readiness_status =
+        if (main_recovery_can_tick || review_recovery_can_tick || merge_recovery_can_tick)
+            && effective_readiness_blockers.is_empty()
+        {
+            "ready"
+        } else {
+            plan.readiness.status.as_str()
+        };
     let phase = if cancellation_requested {
         "cancelled".into()
     } else {
@@ -2531,6 +2597,7 @@ mod tests {
                 skipped_existing_worker: 1,
                 ..ReviewLoopSummary::default()
             }),
+            None,
         );
 
         counters.record_lane_result(&mut skipped);

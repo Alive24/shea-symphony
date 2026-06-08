@@ -70,6 +70,18 @@ fn merge_lane_plan_for_issue(identifier: &str, status: &str, action: &str) -> Au
     }
 }
 
+fn review_worker_exists_lane_plan(identifier: &str) -> AutopilotLanePlan {
+    AutopilotLanePlan {
+        lane: "review".into(),
+        status: "blocked".into(),
+        selected_issue: None,
+        proposed_action: "skip".into(),
+        target_state: None,
+        reason: format!("review_worker_exists:review:{}:gemini-cli", identifier),
+        evidence: vec!["source=review_lane_decision".into()],
+    }
+}
+
 fn autopilot_session_record(issue_identifier: &str, status: SessionStatus) -> AgentSessionRecord {
     AgentSessionRecord {
         issue_id: Some(format!(
@@ -832,6 +844,74 @@ fn autopilot_loop_status_allows_merge_recovery_with_issue_scoped_session_attenti
     assert_eq!(status.counts.running, 1);
     assert!(status.blocked_reasons.is_empty());
     assert_eq!(status.selected_issues[0].identifier, "#415");
+}
+
+#[test]
+fn autopilot_loop_status_allows_review_stale_claim_recovery() {
+    let mut plan = test_autopilot_plan(Vec::new());
+    let review = plan
+        .lanes
+        .iter_mut()
+        .find(|lane| lane.lane == "review")
+        .unwrap();
+    *review = review_worker_exists_lane_plan("#442");
+
+    let status = autopilot_loop_status_from_plan(
+        &plan,
+        AutopilotLoopSettings {
+            write: true,
+            dry_run: false,
+            recover: true,
+            poll_interval_ms: 5_000,
+            main_max_concurrent: 3,
+            review_max_concurrent: 2,
+            merge_max_concurrent: 3,
+        },
+        1,
+        Some(5_000),
+        &[],
+        false,
+    );
+
+    assert_eq!(status.phase, "running");
+    assert_eq!(status.counts.running, 1);
+    assert_eq!(status.counts.blocked, 0);
+    assert!(status.blocked_reasons.is_empty());
+}
+
+#[test]
+fn autopilot_loop_status_keeps_review_stale_claim_blocked_without_recover() {
+    let mut plan = test_autopilot_plan(Vec::new());
+    let review = plan
+        .lanes
+        .iter_mut()
+        .find(|lane| lane.lane == "review")
+        .unwrap();
+    *review = review_worker_exists_lane_plan("#442");
+
+    let status = autopilot_loop_status_from_plan(
+        &plan,
+        AutopilotLoopSettings {
+            write: true,
+            dry_run: false,
+            recover: false,
+            poll_interval_ms: 5_000,
+            main_max_concurrent: 3,
+            review_max_concurrent: 2,
+            merge_max_concurrent: 3,
+        },
+        1,
+        Some(5_000),
+        &[],
+        false,
+    );
+
+    assert_eq!(status.phase, "blocked");
+    assert_eq!(status.counts.blocked, 1);
+    assert_eq!(
+        status.blocked_reasons,
+        vec!["review:review_worker_exists:review:#442:gemini-cli"]
+    );
 }
 
 #[test]

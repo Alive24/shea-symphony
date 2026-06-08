@@ -663,6 +663,21 @@ fn failed_backend_live_handoff_salvage_accepts_app_server_stall() {
 }
 
 #[test]
+fn failed_backend_live_handoff_salvage_accepts_reconciled_session_stall_artifact() {
+    let temp = tempfile::tempdir().unwrap();
+    let log_path = temp.path().join("439.events.json");
+    std::fs::write(
+        &log_path,
+        r#"{"event":"Failed { backend: \"codex\", error: \"Codex app-server stalled waiting for turn event\" }"}"#,
+    )
+    .unwrap();
+    let mut result = failed_codex_result("main session failed: registry status failed");
+    result.backend_log_path = Some(log_path);
+
+    assert!(failed_backend_can_use_live_handoff(&result));
+}
+
+#[test]
 fn failed_backend_live_handoff_salvage_rejects_usage_limit_pause() {
     let mut result = failed_codex_result("Codex app-server stalled waiting for turn event");
     result.usage_limit_pause = Some(UsageLimitPause {
@@ -684,6 +699,17 @@ fn failed_backend_live_handoff_salvage_rejects_non_codex_backend() {
 #[test]
 fn failed_backend_live_handoff_salvage_rejects_generic_failure() {
     let result = failed_codex_result("verification failed after running npm test");
+
+    assert!(!failed_backend_can_use_live_handoff(&result));
+}
+
+#[test]
+fn failed_backend_live_handoff_salvage_rejects_reconciled_session_without_stall_artifact() {
+    let temp = tempfile::tempdir().unwrap();
+    let log_path = temp.path().join("439.events.json");
+    std::fs::write(&log_path, r#"{"event":"Failed"}"#).unwrap();
+    let mut result = failed_codex_result("main session failed: registry status failed");
+    result.backend_log_path = Some(log_path);
 
     assert!(!failed_backend_can_use_live_handoff(&result));
 }

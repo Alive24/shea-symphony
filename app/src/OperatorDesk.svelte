@@ -11,6 +11,7 @@
   import { operatorOverviewStore, requestOperatorLocalArtifactsRefresh } from './lib/operatorOverviewStore.ts';
   import { humanTodoRefreshState } from './lib/viewModel/humanTodoRefresh.ts';
   import { buildLaneThroughputBoard } from './lib/viewModel/laneThroughput.ts';
+  import { buildHandoffPrompt } from './lib/viewModel/handoffPrompt.ts';
   import {
     appendAutoloopLine,
     defaultLoopState,
@@ -19,6 +20,7 @@
     laneWorkerFromAutoloop,
     laneWorkersFromAutoloopLines,
     mergeLaneSnapshot,
+    openCodexHandoff,
     operatorRunLogLines,
     subscribeAutoloopEvents,
     type LaneSnapshot,
@@ -32,6 +34,7 @@
   let autoloopState: LoopStateSnapshot = defaultLoopState();
   let defaultHandoffTarget = 'codex-app';
   let copiedHandoffId = '';
+  let handoffStatus = {};
   let autoloopRefreshTimer: number | null = null;
   let lastStableHumanTodoIssues = [];
   let lastStableLaneBoard = [];
@@ -179,37 +182,61 @@
     return operatorRunLogLines(state, lines);
   }
 
-  function handoffPrompt(issue) {
-    return [
-      `Use the appropriate Shea Symphony Skill for ${issue.id}.`,
-      '',
-      `Issue: ${issue.id} ${issue.title}`,
-      `State: ${issue.state}`,
-      `Lane: ${issue.lane}`,
-      `Category: ${issue.category}`,
-      `Recommended: ${issue.recommended}`,
-      issue.url ? `URL: ${issue.url}` : '',
-      '',
-      'Read the current Project issue state first, preserve lane boundaries, and ask before any Project mutation.'
-    ]
-      .filter(Boolean)
-      .join('\n');
+  function handoffMessage(issue) {
+    return handoffStatus[issue.id] ?? '';
   }
 
   async function copyHandoffPrompt(issue) {
     try {
-      await navigator.clipboard.writeText(handoffPrompt(issue));
+      await navigator.clipboard.writeText(buildHandoffPrompt(issue));
       copiedHandoffId = issue.id;
+      handoffStatus = { ...handoffStatus, [issue.id]: 'Handoff prompt copied.' };
       window.setTimeout(() => {
         if (copiedHandoffId === issue.id) copiedHandoffId = '';
       }, 1800);
+      return true;
     } catch (_) {
       copiedHandoffId = '';
+      handoffStatus = { ...handoffStatus, [issue.id]: 'Clipboard unavailable; prompt was not copied.' };
+      return false;
     }
   }
 
+  function issueWorktreePath(issue) {
+    const issueRef = normalizeIssueRef(issue?.id);
+    const localStatus = view?.raw?.localStatus ?? {};
+    const candidates = [
+      ...(localStatus.issueWorktrees ?? []),
+      ...(localStatus.completedIssueWorktrees ?? [])
+    ];
+    return candidates.find((entry) => normalizeIssueRef(entry?.issue ?? entry?.issueRef ?? entry?.id) === issueRef)?.path ?? null;
+  }
+
   async function openHandoff(issue) {
-    await copyHandoffPrompt(issue);
+    const prompt = buildHandoffPrompt(issue);
+    if (defaultHandoffTarget !== 'codex-app') {
+      const copied = await copyHandoffPrompt(issue);
+      handoffStatus = {
+        ...handoffStatus,
+        [issue.id]: copied
+          ? `Prompt copied. Open ${handoffLabel(defaultHandoffTarget)} and paste it.`
+          : `Clipboard unavailable. Open ${handoffLabel(defaultHandoffTarget)} manually after copying the prompt.`
+      };
+      return;
+    }
+    try {
+      const worktreePath = issueWorktreePath(issue);
+      if (!worktreePath) {
+        throw new Error('No local issue worktree is visible. Refresh local artifacts before opening Codex.');
+      }
+      await openCodexHandoff(prompt, worktreePath);
+      handoffStatus = { ...handoffStatus, [issue.id]: '' };
+    } catch (error) {
+      handoffStatus = {
+        ...handoffStatus,
+        [issue.id]: error instanceof Error ? error.message : 'Unable to open Codex handoff.'
+      };
+    }
   }
 
   async function refreshAutoloopState() {
@@ -311,6 +338,9 @@
                 {copiedHandoffId === issue.id ? 'Copied' : 'Copy Handoff Prompt'}
               </button>
             </div>
+            {#if handoffMessage(issue)}
+              <small class="handoff-status">{handoffMessage(issue)}</small>
+            {/if}
           </article>
         {/each}
       {:else}

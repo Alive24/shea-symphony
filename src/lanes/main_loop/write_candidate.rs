@@ -1,3 +1,5 @@
+use std::fs;
+
 use shea_symphony::config::RuntimeConfig;
 use shea_symphony::git_handoff::{prepare_issue_worktree, ProcessHandoffCommandRunner};
 use shea_symphony::handoff::{BranchTargetRole, IssueHandoffPlan};
@@ -20,22 +22,24 @@ use live_handoff::apply_live_handoff_steps;
 use terminal::{apply_terminal_transition, TerminalTransitionContext};
 
 use super::{
-    append_runtime_supervision_event, codex_app_server_resume_thread_for_state, current_gh_login,
-    execute_issue_once_with_options, handle_run_loop_gate_failure, handle_run_loop_handoff_failure,
-    main_session_active_recoverable, reconcile_pending_main_session,
+    append_runtime_supervision_event, current_gh_login, execute_issue_once_with_options,
+    handle_run_loop_gate_failure, handle_run_loop_handoff_failure, main_recovery_plan,
+    main_recovery_plan_applicable, main_session_active_recoverable, reconcile_pending_main_session,
     run_loop_apply_recovery_handoff, run_loop_assignee_ownership_decision,
     run_loop_assignee_ownership_workpad, run_loop_claim_action, run_loop_handoff_plan,
     run_loop_handoff_workpad, run_loop_live_handoff_enabled, run_loop_ownership_workpad,
     run_loop_preflight_launch_workspace, run_loop_recovery_preflight_launch_workspace,
     run_loop_runtime_ownership, run_loop_runtime_state_for_issue,
     run_loop_runtime_state_with_result, selected_profile_github_login, AssigneeOwnershipDecision,
-    IssueExecutionOptions, MainSessionReconciliation, RunLoopClaimAction, RunLoopOptions,
+    IssueExecutionOptions, IssueExecutionResult, MainSessionReconciliation, RunLoopClaimAction,
+    RunLoopOptions,
 };
 use crate::commands::gate::evaluate_issue_for_current_source;
 use crate::lanes::claim::{
     lane_claim_for_issue, pool_claim_eligibility, project_text_field, write_lane_claim_field,
     WorkerLane,
 };
+use crate::lanes::main_loop::compact_evidence;
 use crate::orchestration::{
     append_tracker_mutation_audit, current_time_ms, latest_status_for_issue, live_github_tracker,
     print_latest_status, progress_spec_with_event_log, recovery_key, set_state_with_recovery,
@@ -463,25 +467,52 @@ pub(crate) fn run_loop_dispatch_write_candidate(
         Some(MainSessionReconciliation::Terminal(result)) => *result,
         Some(MainSessionReconciliation::Active { .. }) => unreachable!(),
         None => {
-            let app_server_resume_thread_id = if recover {
-                codex_app_server_resume_thread_for_state(config, &runtime_state)?
+            let recovery_plan = if recover
+                && runtime_state.backend == "codex"
+                && config.codex.command.contains("app-server")
+                && main_recovery_plan_applicable(&runtime_state)
+            {
+                Some(main_recovery_plan(config, &latest, &runtime_state)?)
             } else {
                 None
             };
-            if let Some(thread_id) = app_server_resume_thread_id.as_deref() {
+            if let Some(recovery_plan) = &recovery_plan {
                 println!(
-                    "run_loop_action=app_server_resume issue={} thread={} input=Continue",
-                    latest.identifier, thread_id
+                    "run_loop_action=recovery_mode issue={} mode={} evidence={}",
+                    latest.identifier,
+                    recovery_plan.mode.as_str(),
+                    recovery_plan.evidence
                 );
                 append_runtime_supervision_event(
                     config,
                     Some(&runtime_state),
-                    "CodexAppServerResume",
+                    "MainRecoveryMode",
                     &format!(
-                        "issue={} thread={} input=Continue",
-                        latest.identifier, thread_id
+                        "issue={} mode={} evidence={}",
+                        latest.identifier,
+                        recovery_plan.mode.as_str(),
+                        recovery_plan.evidence
                     ),
                 )?;
+                if let Some(thread_id) = recovery_plan.app_server_resume_thread_id.as_deref() {
+                    println!(
+                        "run_loop_action=app_server_resume issue={} thread={} mode={} input=Continue",
+                        latest.identifier,
+                        thread_id,
+                        recovery_plan.mode.as_str()
+                    );
+                    append_runtime_supervision_event(
+                        config,
+                        Some(&runtime_state),
+                        "CodexAppServerResume",
+                        &format!(
+                            "issue={} thread={} mode={} input=Continue",
+                            latest.identifier,
+                            thread_id,
+                            recovery_plan.mode.as_str()
+                        ),
+                    )?;
+                }
             }
             execute_issue_once_with_options(
                 workflow,
@@ -491,11 +522,39 @@ pub(crate) fn run_loop_dispatch_write_candidate(
                 runtime_state.attempt_count,
                 Some(&main_claim),
                 IssueExecutionOptions {
-                    app_server_resume_thread_id,
+                    app_server_resume_thread_id: recovery_plan
+                        .as_ref()
+                        .and_then(|plan| plan.app_server_resume_thread_id.clone()),
+                    prompt_override: recovery_plan
+                        .as_ref()
+                        .and_then(|plan| plan.prompt_override.clone()),
                 },
             )?
         }
     };
+    let salvage_failed_backend_with_live_handoff =
+        failed_backend_can_use_live_handoff(&result) && live_worktree.is_some();
+    if salvage_failed_backend_with_live_handoff {
+        append_runtime_supervision_event(
+            config,
+            Some(&runtime_state),
+            "MainBackendFailureLiveHandoffSalvage",
+            &format!(
+                "issue={} backend={} message={}",
+                latest.identifier, result.backend, result.message
+            ),
+        )?;
+        println!(
+            "run_loop_action=salvage_live_handoff issue={} reason=backend_failed_after_local_work message={}",
+            latest.identifier,
+            compact_evidence(&result.message)
+        );
+        result.success = true;
+        result.message = format!(
+            "backend failed after local work; attempting live handoff salvage: {}",
+            result.message
+        );
+    }
     if result.success {
         apply_live_handoff_steps(
             config,
@@ -610,6 +669,29 @@ pub(crate) fn run_loop_dispatch_write_candidate(
         runtime_state,
         &result,
     )
+}
+
+pub(crate) fn failed_backend_can_use_live_handoff(result: &IssueExecutionResult) -> bool {
+    result.backend == "codex"
+        && !result.success
+        && !result.pending_session
+        && result.usage_limit_pause.is_none()
+        && result.live_handoff.is_none()
+        && failed_backend_has_salvageable_transport_evidence(result)
+}
+
+fn failed_backend_has_salvageable_transport_evidence(result: &IssueExecutionResult) -> bool {
+    const APP_SERVER_STALL: &str = "Codex app-server stalled waiting for turn event";
+    if result.message.contains(APP_SERVER_STALL) {
+        return true;
+    }
+
+    let Some(path) = result.backend_log_path.as_ref() else {
+        return false;
+    };
+    fs::read_to_string(path)
+        .map(|content| content.contains(APP_SERVER_STALL))
+        .unwrap_or(false)
 }
 
 fn ensure_parent_integration_branch_evidence(
@@ -745,4 +827,5 @@ fn run_loop_parent_topology_workpad(
             ("parent_final_base_branch", parent_final_base_branch.into()),
         ],
     )
+    .expect("centralized parent topology workpad template must render")
 }

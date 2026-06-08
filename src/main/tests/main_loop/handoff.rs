@@ -1,4 +1,5 @@
 use super::*;
+use crate::lanes::main_loop::failed_backend_can_use_live_handoff;
 use crate::lanes::main_loop::run_loop_apply_recovery_workspace_report;
 
 #[test]
@@ -624,6 +625,93 @@ fn successful_live_handoff_result(handoff: &IssueHandoffPlan) -> IssueExecutionR
         }),
         handoff_verification: Some("skipped:not_configured".into()),
     }
+}
+
+fn failed_codex_result(message: &str) -> IssueExecutionResult {
+    IssueExecutionResult {
+        workspace_path: PathBuf::from("/tmp/shea/issue-439"),
+        backend: "codex".into(),
+        profile_id: None,
+        instance_name: None,
+        success: false,
+        pending_session: false,
+        session_id: Some("session-439".into()),
+        run_id: None,
+        backend_log_path: None,
+        backend_attach_command: None,
+        message: message.into(),
+        usage_limit_pause: None,
+        prompt_artifact_path: None,
+        actor_role: "implementation_agent".into(),
+        actor_label: "Shea Symphony Agent".into(),
+        git_author: Some("Shea Symphony Agent <shea@example.invalid>".into()),
+        git_identity: GitIdentityApplyResult {
+            status: shea_symphony::workspace::GitIdentityApplyStatus::Applied,
+            author: Some("Shea Symphony Agent <shea@example.invalid>".into()),
+            applied_keys: vec!["user.name".into(), "user.email".into()],
+        },
+        live_handoff: None,
+        handoff_verification: None,
+    }
+}
+
+#[test]
+fn failed_backend_live_handoff_salvage_accepts_app_server_stall() {
+    let result = failed_codex_result("Codex app-server stalled waiting for turn event");
+
+    assert!(failed_backend_can_use_live_handoff(&result));
+}
+
+#[test]
+fn failed_backend_live_handoff_salvage_accepts_reconciled_session_stall_artifact() {
+    let temp = tempfile::tempdir().unwrap();
+    let log_path = temp.path().join("439.events.json");
+    std::fs::write(
+        &log_path,
+        r#"{"event":"Failed { backend: \"codex\", error: \"Codex app-server stalled waiting for turn event\" }"}"#,
+    )
+    .unwrap();
+    let mut result = failed_codex_result("main session failed: registry status failed");
+    result.backend_log_path = Some(log_path);
+
+    assert!(failed_backend_can_use_live_handoff(&result));
+}
+
+#[test]
+fn failed_backend_live_handoff_salvage_rejects_usage_limit_pause() {
+    let mut result = failed_codex_result("Codex app-server stalled waiting for turn event");
+    result.usage_limit_pause = Some(UsageLimitPause {
+        classifier: "usage_limit".into(),
+        evidence: "usage limit reached".into(),
+    });
+
+    assert!(!failed_backend_can_use_live_handoff(&result));
+}
+
+#[test]
+fn failed_backend_live_handoff_salvage_rejects_non_codex_backend() {
+    let mut result = failed_codex_result("Codex app-server stalled waiting for turn event");
+    result.backend = "tmux".into();
+
+    assert!(!failed_backend_can_use_live_handoff(&result));
+}
+
+#[test]
+fn failed_backend_live_handoff_salvage_rejects_generic_failure() {
+    let result = failed_codex_result("verification failed after running npm test");
+
+    assert!(!failed_backend_can_use_live_handoff(&result));
+}
+
+#[test]
+fn failed_backend_live_handoff_salvage_rejects_reconciled_session_without_stall_artifact() {
+    let temp = tempfile::tempdir().unwrap();
+    let log_path = temp.path().join("439.events.json");
+    std::fs::write(&log_path, r#"{"event":"Failed"}"#).unwrap();
+    let mut result = failed_codex_result("main session failed: registry status failed");
+    result.backend_log_path = Some(log_path);
+
+    assert!(!failed_backend_can_use_live_handoff(&result));
 }
 
 #[test]

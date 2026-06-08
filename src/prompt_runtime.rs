@@ -1,6 +1,6 @@
-use crate::lane_claim::LaneClaim;
+use crate::{lane_claim::LaneClaim, prompt::STRICT_LIQUID_RENDERER_MODE};
 
-pub const PROMPT_RENDERER_MODE: &str = "strict-liquid-subset";
+pub const PROMPT_RENDERER_MODE: &str = STRICT_LIQUID_RENDERER_MODE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RuntimeEnvelopeSpec {

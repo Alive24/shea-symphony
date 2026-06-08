@@ -546,6 +546,7 @@ pub(crate) fn run_loop_ownership_workpad(
             ),
         ],
     )
+    .expect("centralized main runtime ownership workpad template must render")
 }
 
 pub(crate) fn run_loop_live_handoff_enabled(config: &RuntimeConfig) -> bool {
@@ -695,6 +696,7 @@ pub(crate) fn run_loop_handoff_workpad(
             ),
         ],
     )
+    .expect("centralized main handoff workpad template must render")
 }
 
 fn branch_target_workpad_line(handoff: &IssueHandoffPlan) -> String {
@@ -955,6 +957,7 @@ pub(crate) fn run_loop_handoff_failure_workpad(
             ("error", error.to_string()),
         ],
     )
+    .expect("centralized main handoff failure workpad template must render")
 }
 
 pub(crate) fn run_loop_assignee_ownership_workpad(issue: &TrackerIssue, reason: &str) -> String {
@@ -968,6 +971,7 @@ pub(crate) fn run_loop_assignee_ownership_workpad(issue: &TrackerIssue, reason: 
             ("assignees", issue.assignees.join(", ")),
         ],
     )
+    .expect("centralized main assignee ownership workpad template must render")
 }
 
 pub(crate) fn run_loop_usage_limit_pause_workpad(
@@ -988,4 +992,5 @@ pub(crate) fn run_loop_usage_limit_pause_workpad(
             ("retry_delay_ms", retry_delay_ms.to_string()),
         ],
     )
+    .expect("centralized main usage limit pause workpad template must render")
 }

@@ -1,18 +1,22 @@
 # Prompt Template Contract
 
-Status: strict subset, not full Liquid compatibility.
+Status: strict Liquid-compatible rendering.
 
-Shea Symphony renders the workflow prompt before launching an agent backend. The
-official reference requires strict template rendering for `issue` and `attempt`
-context and records Liquid-compatible semantics as sufficient. Shea Symphony currently
-implements a deliberate subset so prompt failures are easy to diagnose during
-dogfood.
+Shea Symphony renders workflow prompt templates and configured workpad templates
+before launching agents or writing workpad evidence. Rendering uses the Rust
+`liquid` engine with the standard Liquid tag and filter library, plus Shea's
+strict external-context validation.
 
 ## Supported Context
 
+Prompt templates receive:
+
 - `issue.*`: fields from the normalized `TrackerIssue` model.
-- `attempt`: optional numeric attempt count; renders empty when no attempt is
-  present.
+- `attempt`: optional numeric attempt count.
+
+Workpad templates receive the named values supplied by the caller for that
+workpad surface, such as `issue_ref`, `issue_title`, `run_id`, `target_state`,
+or `evidence_summary`.
 
 Examples:
 
@@ -21,41 +25,51 @@ Work on {{ issue.identifier }}: {{ issue.title }}
 This is attempt {{ attempt }}.
 ```
 
-String values render as plain text. Non-string JSON values, such as arrays,
-numbers, objects, and booleans, render as JSON text.
-
-## Supported Tags
-
-Shea Symphony supports one level of basic conditionals:
-
 ```liquid
-{% if issue.description %}
-{{ issue.description }}
-{% else %}
-No description provided.
-{% endif %}
+### Labels
+{% for label in issue.labels %}
+- {{ forloop.index }}. {{ label }}
+{% endfor %}
 ```
 
-Truthiness follows JSON-like behavior:
+## Liquid Tags And Filters
 
-- `null`, empty strings, empty arrays, empty objects, `false`, and numeric zero
-  are falsey.
-- non-empty strings, arrays, objects, `true`, and non-zero numbers are truthy.
+Templates may use Liquid-compatible syntax supported by the selected engine,
+including conditionals, loops, assignment/capture locals, and standard filters.
+Representative supported filters include:
+
+- `default`
+- `join`
+- `size`
+- string filters such as `strip`, `upcase`, and `truncate`
+- array filters such as `first`, `last`, `sort`, and `uniq`
+
+Template-local variables introduced by Liquid tags, such as `for label in ...`,
+`assign`, and `capture`, are allowed. External variables must come from the
+prompt or workpad context described above.
 
 ## Strict Failures
 
-The renderer fails instead of guessing when it sees:
+Rendering fails before agent launch or workpad evidence write when a template
+contains:
 
-- unknown variables, such as `{{ issue.missing_field }}`;
-- variables outside the supported root objects, such as `{{ user.name }}`;
-- unsupported tags, such as `{% for %}`, `{% assign %}`, `{% include %}`, or
-  filters.
+- an unknown external variable, such as `{{ issue.missing_field }}` or
+  `{{ user.name }}`;
+- an unknown workpad placeholder, such as `{{ missing_handoff_value }}`;
+- an unknown filter, such as `{{ issue.title | no_such_filter }}`;
+- malformed Liquid syntax, such as an unclosed `{% if %}` or `{% for %}` block.
 
-This strictness is intentional. It keeps malformed prompts from silently
-reaching an agent backend with missing context.
+This strictness is intentional. Liquid compatibility must not silently drop
+missing data, tolerate misspelled filters, or write partial workpad evidence.
 
-## Parity Gap
+## Validation Readback
 
-Full Liquid-compatible prompt rendering remains a parity roadmap item. Until a
-vetted Liquid engine or complete parser is added behind the prompt boundary,
-workflow prompts should stay within the subset above.
+`cargo run -- validate workflows/shea-symphony.md` reports:
+
+- `prompt_renderer=strict-liquid-compatible`;
+- `prompt_template_smoke.<lane>=pass` for each configured lane prompt;
+- `workpad_template.<id>=... smoke=pass` for every configured or centralized
+  workpad template.
+
+Any parse error, unknown filter, or unknown external variable in a configured
+prompt or workpad template makes validation fail.

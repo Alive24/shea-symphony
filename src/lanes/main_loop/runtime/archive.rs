@@ -27,7 +27,9 @@ pub(super) fn stale_runtime_state_action(
         .active_issue
         .as_ref()
         .ok_or("runtime state has no active issue")?;
-    let archive_reason = if config
+    let archive_reason = if normalized_state == "need human input" {
+        "tracker_state_need_human_input"
+    } else if config
         .terminal_state_set()
         .iter()
         .any(|state| state == normalized_state)
@@ -41,6 +43,13 @@ pub(super) fn stale_runtime_state_action(
 
     match runtime_workspace_status(state)? {
         RuntimeWorkspaceStatus::Absent | RuntimeWorkspaceStatus::Clean(_) => {
+            Ok(ResumePreflightAction::ArchiveStale {
+                issue_identifier: active_issue.identifier.clone(),
+                tracker_state: issue.state.clone(),
+                archive_reason: archive_reason.into(),
+            })
+        }
+        RuntimeWorkspaceStatus::Dirty(_path) if normalized_state == "need human input" => {
             Ok(ResumePreflightAction::ArchiveStale {
                 issue_identifier: active_issue.identifier.clone(),
                 tracker_state: issue.state.clone(),

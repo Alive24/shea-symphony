@@ -719,8 +719,12 @@ target/debug/shea-symphony main loop workflows/shea-symphony.md --max-iterations
 `main loop --write` restarts recoverable Main runtime slots as new attempts by
 default without moving the issue to `Rework`, clearing dirty worktrees, or
 advancing to `Agent Review`. It reuses a tracker/runtime/discovery-backed git
-worktree under the configured workspace root and leaves normal handoff to a
-later successful Main result. Codex app-server session staleness defaults to
+worktree under the configured workspace root. Normal recovery leaves handoff to
+a later successful Main result. If a Codex app-server attempt stalls after local
+work but before a final turn event, the loop first attempts the same live
+handoff pipeline that a successful Main result would use; verification, PR
+publication, Project-visible PR linkage, and ready-for-review checks still gate
+any `Agent Review` transition. Codex app-server session staleness defaults to
 30 minutes and can be tuned with `codex.session_stale_after_ms` in the workflow.
 Codex app-server turn inactivity defaults to 5 minutes and can be tuned with
 `codex.stall_timeout_ms`; a turn that starts but produces no further protocol

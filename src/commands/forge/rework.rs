@@ -323,6 +323,7 @@ fn render_forge_rework_workpad(
             ("readbacks", readback_lines.join("\n")),
         ],
     )
+    .expect("centralized forge rework run workpad template must render")
 }
 
 fn render_forge_rework_blocked_workpad(issue: &TrackerIssue, reason: &str) -> String {
@@ -337,4 +338,5 @@ fn render_forge_rework_blocked_workpad(issue: &TrackerIssue, reason: &str) -> St
             ("reason", reason.into()),
         ],
     )
+    .expect("centralized forge rework blocked workpad template must render")
 }

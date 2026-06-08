@@ -50,6 +50,10 @@ import {
   humanTodoRefreshState
 } from '../src/lib/viewModel/humanTodoRefresh.ts';
 import {
+  buildHandoffPrompt,
+  handoffSkillForIssue
+} from '../src/lib/viewModel/handoffPrompt.ts';
+import {
   appendAutoloopLine,
   defaultLoopState,
   laneWorkerFromAutoloop,
@@ -95,10 +99,10 @@ test('maps live autoloop lane snapshots into existing lane board worker rows', (
     issue: '#421',
     title: '#421',
     action: 'reviewing',
-    backend: 'Codex app-server',
+    backend: 'Review worker',
     session: 'session pending',
     sessionId: null,
-    pid: 4242,
+    pid: null,
     updatedAtMs: 1234,
     elapsed: 'Human Review',
     lane: 'review',
@@ -131,7 +135,66 @@ test('maps live autoloop lane snapshots into existing lane board worker rows', (
       }
     }]
   }, 'review').map((entry) => [entry.issue, entry.backend, entry.pid, entry.session]), [
-    ['#421', 'Codex app-server', 4242, 'thread-421-turn-1']
+    ['#421', 'Review worker', null, 'thread-421-turn-1']
+  ]);
+});
+
+test('review autoloop workers do not invent backend or inherit Codex app-server PID', () => {
+  const state = {
+    ...defaultLoopState(),
+    running: true,
+    mode: 'write',
+    pid: 55169
+  };
+
+  const worker = laneWorkerFromAutoloop(
+    {
+      lane: 'review',
+      status: 'running',
+      selected: '#436',
+      action: 'review_selected',
+      target: 'Agent Review',
+      updatedAtMs: 1234
+    },
+    'review',
+    state
+  );
+
+  assert.equal(worker.backend, 'Review worker');
+  assert.equal(worker.pid, null);
+  assert.equal(worker.session, 'session pending');
+});
+
+test('review autoloop workers display Gemini only when backend evidence says Gemini', () => {
+  const now = Date.now();
+  const state = {
+    ...defaultLoopState(),
+    running: true,
+    startedAtMs: now - 100,
+    pid: 55169,
+    recentLines: [{
+      atMs: now,
+      stream: 'stdout',
+      line: 'review_loop_action=start issue=#436 worker_slot=1 backend=gemini-cli mode=write',
+      event: {
+        event: 'autopilot_cli_line',
+        payload: {
+          kind: 'review_loop_action',
+          raw: 'review_loop_action=start issue=#436 worker_slot=1 backend=gemini-cli mode=write',
+          fields: {
+            issue: '#436',
+            action: 'start',
+            lane: 'review',
+            backend: 'gemini-cli',
+            mode: 'write'
+          }
+        }
+      }
+    }]
+  };
+
+  assert.deepEqual(laneWorkersFromAutoloopLines(state, 'review').map((entry) => [entry.issue, entry.backend, entry.pid]), [
+    ['#436', 'Gemini CLI', null]
   ]);
 });
 
@@ -227,6 +290,103 @@ test('autoloop lane workers clear stale issue after empty completed lane tick', 
   };
 
   assert.deepEqual(laneWorkersFromAutoloopLines(state, 'merge'), []);
+});
+
+test('autoloop lane workers do not treat resume preflight archive as active main work', () => {
+  const now = Date.now();
+  const state = {
+    ...defaultLoopState(),
+    running: true,
+    startedAtMs: now - 100,
+    recentLines: [
+      {
+        atMs: now,
+        stream: 'stdout',
+        line: 'run_loop_resume_preflight action=recoverable issue=#436 reason=runtime_stalled',
+        event: {
+          event: 'autopilot_cli_line',
+          payload: {
+            kind: 'run_loop_resume_preflight',
+            raw: 'run_loop_resume_preflight action=recoverable issue=#436 reason=runtime_stalled',
+            fields: {
+              action: 'recoverable',
+              issue: '#436',
+              reason: 'runtime_stalled'
+            }
+          }
+        }
+      },
+      {
+        atMs: now + 1,
+        stream: 'stdout',
+        line: 'run_loop_resume_preflight action=archive issue=#439 tracker_state="Need Human Input" reason=tracker_state_need_human_input',
+        event: {
+          event: 'autopilot_cli_line',
+          payload: {
+            kind: 'run_loop_resume_preflight',
+            raw: 'run_loop_resume_preflight action=archive issue=#439 tracker_state="Need Human Input" reason=tracker_state_need_human_input',
+            fields: {
+              action: 'archive',
+              issue: '#439',
+              tracker_state: 'Need Human Input',
+              reason: 'tracker_state_need_human_input'
+            }
+          }
+        }
+      }
+    ]
+  };
+
+  assert.deepEqual(laneWorkersFromAutoloopLines(state, 'main').map((entry) => [entry.issue, entry.action]), [
+    ['#436', 'recoverable']
+  ]);
+});
+
+test('autoloop lane workers clear stale main recovery row after review completes the same issue', () => {
+  const now = Date.now();
+  const state = {
+    ...defaultLoopState(),
+    running: true,
+    startedAtMs: now - 100,
+    recentLines: [
+      {
+        atMs: now,
+        stream: 'stdout',
+        line: 'run_loop_resume_preflight action=recoverable issue=#436 reason=runtime_stalled',
+        event: {
+          event: 'autopilot_cli_line',
+          payload: {
+            kind: 'run_loop_resume_preflight',
+            raw: 'run_loop_resume_preflight action=recoverable issue=#436 reason=runtime_stalled',
+            fields: {
+              action: 'recoverable',
+              issue: '#436',
+              reason: 'runtime_stalled'
+            }
+          }
+        }
+      },
+      {
+        atMs: now + 1,
+        stream: 'stdout',
+        line: 'autopilot_loop_lane lane=review status=completed action=lane_tick_completed selected=#436 target=Human Review work_unit_completed=true completed_work_units=1',
+        event: {
+          event: 'autopilot_loop_lane',
+          payload: {
+            lane: 'review',
+            status: 'completed',
+            action: 'lane_tick_completed',
+            issue_ref: '#436',
+            work_unit_completed: true,
+            completed_work_units: 1,
+            target: 'Human Review'
+          }
+        }
+      }
+    ]
+  };
+
+  assert.deepEqual(laneWorkersFromAutoloopLines(state, 'main'), []);
 });
 
 test('autoloop stdout log omits repeated inactive skipped issue details', () => {
@@ -921,6 +1081,29 @@ test('lane board rendering omits handoff actions and manual skill labels', () =>
   assert.match(humanTodoSection, /handoff-actions/);
   assert.match(humanTodoSection, /Open in/);
   assert.match(humanTodoSection, /Copy Handoff Prompt/);
+  assert.doesNotMatch(operatorDesk, /Prompt copied\. Codex App opened\./);
+});
+
+test('human handoff prompt is issue-specific and lane-boundary explicit', () => {
+  const issue = {
+    id: '#436',
+    title: 'Add strict Liquid-compatible rendering for prompt and workpad templates',
+    state: 'Human Review',
+    lane: 'Human',
+    category: 'Human Review',
+    workerStatus: 'No worker visible',
+    recommended: 'Human operator should review evidence before routing.',
+    evidence: 'GitHub queue · Human Review',
+    url: 'https://github.com/Alive24/shea-symphony/issues/436'
+  };
+
+  assert.equal(handoffSkillForIssue(issue), 'shea-symphony-human-review');
+  const prompt = buildHandoffPrompt(issue);
+  assert.match(prompt, /Use the shea-symphony-human-review skill for #436/);
+  assert.match(prompt, /State: Human Review/);
+  assert.match(prompt, /Read current Project issue state before acting/);
+  assert.match(prompt, /do not mutate Project state without explicit approval/);
+  assert.match(prompt, /https:\/\/github\.com\/Alive24\/shea-symphony\/issues\/436/);
 });
 
 test('human todo empty state does not report clear while readback is loading', () => {
@@ -1616,6 +1799,65 @@ test('view model keeps lane queue rows observational without next skill metadata
   assert.ok(view.laneProjectIssues.main.every((issue) => !Object.hasOwn(issue, 'nextSkill')));
   assert.ok(view.laneProjectIssues.review.every((issue) => !Object.hasOwn(issue, 'nextSkill')));
   assert.ok(view.laneProjectIssues.merge.every((issue) => !Object.hasOwn(issue, 'nextSkill')));
+});
+
+test('blocked Todo project rows keep dependency readback but stay out of Main lane queue', () => {
+  const view = buildViewModel({
+    generatedAt: new Date().toISOString(),
+    workflowPath: 'workflows/shea-symphony.md',
+    commands: {
+      githubQueue: {
+        ok: true,
+        args: ['project', 'state', 'workflows/shea-symphony.md', '--json'],
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        durationMs: 12,
+        stderr: '',
+        stdoutPreview: '{}'
+      }
+    },
+    githubQueue: {
+      source: 'GitHub Project',
+      issues: [
+        { identifier: '#438', title: 'Ready Todo', state: 'Todo', blockedBy: [] },
+        {
+          identifier: '#439',
+          title: 'Blocked Todo',
+          state: 'Todo',
+          blockedBy: [{ identifier: '#401', state: 'Todo' }],
+          blockedReason: 'issue has unresolved tracker dependencies'
+        },
+        {
+          identifier: '#440',
+          title: 'Blocked Rework',
+          state: 'Rework',
+          blockedBy: [{ identifier: '#402', state: 'Agent Review' }]
+        },
+        {
+          identifier: '#441',
+          title: 'Resolved Rework',
+          state: 'Rework',
+          blockedBy: [{ identifier: '#403', state: 'Done' }]
+        }
+      ]
+    },
+    healthy: true
+  });
+
+  const ready = view.queueIssues.find((issue) => issue.id === '#438');
+  const blocked = view.queueIssues.find((issue) => issue.id === '#439');
+  const blockedRework = view.queueIssues.find((issue) => issue.id === '#440');
+  const board = buildLaneThroughputBoard({ queueIssues: view.queueIssues });
+  const main = board.find((lane) => lane.laneKey === 'main');
+
+  assert.equal(ready.lane, 'Main');
+  assert.equal(blocked.lane, 'Blocked');
+  assert.equal(blockedRework.lane, 'Blocked');
+  assert.deepEqual(blocked.blockedBy, [{ id: null, identifier: '#401', state: 'Todo' }]);
+  assert.match(blocked.evidence, /blocked by #401 Todo/);
+  assert.deepEqual(view.laneProjectIssues.main.map((issue) => issue.id), ['#441', '#438']);
+  assert.deepEqual(main.issues.map((issue) => issue.id), ['#441', '#438']);
 });
 
 test('fixture overview feeds first-screen human todo and lane board data', () => {

@@ -77,11 +77,13 @@ export function classifyHeartbeat(
   durableEvents: LaneEventEvidence[] = []
 ): HeartbeatSummary {
   const lane = loopState?.lanes?.[laneKey];
-  const lastHeartbeatMs = validTimestampMs(lane?.updatedAtMs) ?? validTimestampMs(latestLineAt(loopState));
+  const lastHeartbeatMs = issueRef
+    ? latestIssueScopedLineAt(loopState, laneKey, issueRef)
+    : validTimestampMs(lane?.updatedAtMs) ?? validTimestampMs(latestLineAt(loopState));
   const ageMs = lastHeartbeatMs == null ? null : Math.max(0, nowMs - lastHeartbeatMs);
   const latestLaneEvent = usefulLaneEvent(loopState, laneKey, issueRef, nowMs) ??
     usefulDurableLaneEvent(durableEvents, laneKey, issueRef, nowMs) ??
-    fallbackLaneEvent(lane, nowMs);
+    fallbackLaneEvent(lane, nowMs, issueRef);
 
   if (!loopState) {
     return heartbeat('unavailable', null, 'unavailable', 'Autoloop state is unavailable.', latestLaneEvent, laneKey, issueRef);
@@ -90,7 +92,7 @@ export function classifyHeartbeat(
     return heartbeat('stopped', lastHeartbeatMs, ageLabel(ageMs), 'Loop stopped', latestLaneEvent, laneKey, issueRef);
   }
   if (lastHeartbeatMs == null) {
-    return heartbeat('unavailable', null, 'unavailable', 'Heartbeat unavailable', latestLaneEvent, laneKey, issueRef);
+    return heartbeat('unavailable', null, 'unavailable', issueRef ? 'Issue heartbeat unavailable' : 'Heartbeat unavailable', latestLaneEvent, laneKey, issueRef);
   }
   if (ageMs != null && ageMs > staleAfterMs) {
     return heartbeat('stale', lastHeartbeatMs, ageLabel(ageMs), 'Heartbeat stale', latestLaneEvent, laneKey, issueRef);
@@ -349,6 +351,7 @@ type LaneEventSummary = {
 };
 
 function usefulLaneEvent(loopState: any, laneKey: string, issueRef: string | null, nowMs: number): LaneEventSummary | null {
+  const normalizedIssueRef = normalizeIssueRef(issueRef);
   const lines = [...(loopState?.recentLines ?? [])].reverse();
   for (const entry of lines) {
     const event = entry?.event;
@@ -356,8 +359,7 @@ function usefulLaneEvent(loopState: any, laneKey: string, issueRef: string | nul
     const raw = text(payload.raw ?? entry.line);
     const lane = text(payload.lane ?? payload.fields?.lane ?? event?.lane);
     if (lane && lane !== laneKey) continue;
-    const issue = normalizeIssueRef(payload.issue ?? payload.fields?.issue ?? payload.selected_issue ?? payload.selected);
-    if (issueRef && issue && issue !== normalizeIssueRef(issueRef)) continue;
+    if (normalizedIssueRef && explicitIssueRefFromPayload(payload) !== normalizedIssueRef) continue;
     if (isNoisyLine(raw)) continue;
     const atMs = validTimestampMs(entry?.atMs);
     if (event?.event === 'autopilot_signal' && payload.message) {
@@ -380,7 +382,7 @@ function durableLaneEventCandidate(event: LaneEventEvidence, laneKey: string, is
   const lane = text(event?.lane);
   if (lane && lane.toLowerCase() !== laneKey.toLowerCase()) return null;
   const issue = normalizeIssueRef(event?.issue ?? event?.issueRef ?? event?.identifier);
-  if (issueRef && issue && issue !== issueRef) return null;
+  if (issueRef && issue !== issueRef) return null;
   const atMs = validTimestampMs(event?.time) ?? validTimestampMs(event?.timestamp) ?? validTimestampMs(event?.at);
   if (atMs == null) return null;
   const label = text(event?.label ?? event?.title ?? event?.phase);
@@ -390,7 +392,8 @@ function durableLaneEventCandidate(event: LaneEventEvidence, laneKey: string, is
   return laneEvent(value, atMs, nowMs, text(event?.source) || 'localStatus.issueLifecycle');
 }
 
-function fallbackLaneEvent(lane: any, nowMs: number): LaneEventSummary {
+function fallbackLaneEvent(lane: any, nowMs: number, issueRef: string | null): LaneEventSummary {
+  if (issueRef) return laneEvent('No visible issue-scoped lane event.', null, nowMs, null);
   const textValue = text(lane?.latestLine ?? lane?.action) || 'No lane event visible.';
   return laneEvent(textValue, null, nowMs, null);
 }
@@ -408,6 +411,39 @@ function laneEvent(value: string, atMs: number | null, nowMs: number, source: st
 function latestLineAt(loopState: any) {
   const lines = loopState?.recentLines ?? [];
   return lines.length ? lines[lines.length - 1]?.atMs : null;
+}
+
+function latestIssueScopedLineAt(loopState: any, laneKey: string, issueRef: string) {
+  const normalizedIssueRef = normalizeIssueRef(issueRef);
+  const lines = [...(loopState?.recentLines ?? [])].reverse();
+  for (const entry of lines) {
+    const payload = entry?.event?.payload ?? {};
+    const lane = text(payload.lane ?? payload.fields?.lane ?? entry?.event?.lane);
+    if (lane && lane !== laneKey) continue;
+    if (explicitIssueRefFromPayload(payload) !== normalizedIssueRef) continue;
+    const atMs = validTimestampMs(entry?.atMs);
+    if (atMs != null) return atMs;
+  }
+  return null;
+}
+
+function explicitIssueRefFromPayload(payload: any) {
+  return normalizeIssueRef(
+    payload?.issue
+      ?? payload?.issue_ref
+      ?? payload?.issueRef
+      ?? payload?.identifier
+      ?? payload?.fields?.issue
+      ?? payload?.fields?.issue_ref
+      ?? payload?.fields?.issueRef
+      ?? payload?.fields?.identifier
+      ?? payload?.worker?.issue
+      ?? payload?.worker?.issue_ref
+      ?? payload?.worker?.issueRef
+      ?? payload?.worker?.identifier
+      ?? payload?.selected_issue
+      ?? payload?.selected
+  );
 }
 
 function validTimestampMs(value: unknown): number | null {

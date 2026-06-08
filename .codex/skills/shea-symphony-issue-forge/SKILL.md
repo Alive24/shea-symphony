@@ -85,6 +85,43 @@ non-interactive and owns the guarded body/evidence/status writes.
   relationship in the same creation flow, recommend `Backlog` until the blocker
   is Done, then promote it to `Todo`.
 
+## Investigation And Boundary Scan
+
+Before drafting issues for migrations, backend changes, external CLI/tool
+integrations, workflow orchestration, protocol changes, or other abstraction
+boundary work, do a short investigation pass before asking implementation-shape
+questions.
+
+The investigation should separate:
+
+- external facts: current official docs, CLI help, version output, or safe
+  compatibility probes when the behavior is likely to have changed;
+- local implementation facts: current config fields, backend abstractions,
+  prompt/runtime paths, docs, skills, tests, and operator readback surfaces;
+- boundary facts: which concepts are accidentally coupled today and which
+  behaviors must remain stable while the issue is implemented.
+
+For external tools, prefer official docs and local `--help` / non-sensitive
+smoke probes over assumptions. Do not send private repository contents to an
+external service during investigation unless the operator explicitly approves
+that exposure. A safe probe should use synthetic text, write logs under an
+artifact or temp path when possible, and record whether the result was observed
+locally or inferred from docs.
+
+For migration or adapter work, first ask whether the real issue is an
+abstraction boundary rather than a command-name replacement. Identify the
+existing coupled concerns, such as config schema, transport, parser, health
+diagnostics, artifact/ledger shape, docs, skills, and default workflow config.
+Prefer a conservative issue sequence when useful:
+
+1. generalize the internal abstraction without changing the default behavior;
+2. add or validate the new backend/tool behind the abstraction;
+3. switch defaults, docs, skills, and operator guidance after compatibility is
+   proven.
+
+Only draft a single large issue when the scan shows the work is small enough to
+verify safely in one PR.
+
 Resolve these before creation:
 
 - Goal.
@@ -97,6 +134,8 @@ Resolve these before creation:
 - Non-negotiable guardrails.
 - Dependencies, with explicit `None` when there are none.
 - Trusted docs/code references.
+- Investigation evidence for abstraction-boundary, migration, or external-tool
+  work, including what was checked and what remains unverified.
 - Verification commands. Prefer:
   - `cargo test`
   - `cargo fmt --check`

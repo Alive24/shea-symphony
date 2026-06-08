@@ -259,11 +259,15 @@ can be configured with `codex.session_stale_after_ms`; stale app-server records
 with process evidence are terminated before recovery resumes the recorded thread
 with `Continue`. Codex app-server turn inactivity defaults to 5 minutes and can
 be configured with `codex.stall_timeout_ms`; silent turns are terminated and
-left retryable instead of waiting for the full turn timeout. Use `--no-recover`
+left retryable instead of waiting for the full turn timeout. When such an
+app-server stall happens after a live issue worktree exists, `main loop --write`
+tries the live handoff pipeline before terminal failure routing, so publishable
+local work can still be verified, pushed, linked to the Project, and advanced
+without an operator manually moving the issue out of `Need Human Input`. Use `--no-recover`
 only for debugging or a deliberately
 conservative operator pass. Recovery does not route through `Rework` and does
-not advance to `Agent Review`; normal handoff still requires a later successful
-Main result.
+not advance to `Agent Review`; handoff still requires either a successful Main
+result or the guarded app-server-stall live handoff salvage path.
 `doctor` evaluates those runtime entries per issue so legitimate parallel Main
 workers do not create false `runtime_active_issue_disagrees` warnings while
 still surfacing missing, stale, or conflicting ownership. Planned claimable work

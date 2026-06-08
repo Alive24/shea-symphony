@@ -29,13 +29,15 @@ use super::{
     run_loop_preflight_launch_workspace, run_loop_recovery_preflight_launch_workspace,
     run_loop_runtime_ownership, run_loop_runtime_state_for_issue,
     run_loop_runtime_state_with_result, selected_profile_github_login, AssigneeOwnershipDecision,
-    IssueExecutionOptions, MainSessionReconciliation, RunLoopClaimAction, RunLoopOptions,
+    IssueExecutionOptions, IssueExecutionResult, MainSessionReconciliation, RunLoopClaimAction,
+    RunLoopOptions,
 };
 use crate::commands::gate::evaluate_issue_for_current_source;
 use crate::lanes::claim::{
     lane_claim_for_issue, pool_claim_eligibility, project_text_field, write_lane_claim_field,
     WorkerLane,
 };
+use crate::lanes::main_loop::compact_evidence;
 use crate::orchestration::{
     append_tracker_mutation_audit, current_time_ms, latest_status_for_issue, live_github_tracker,
     print_latest_status, progress_spec_with_event_log, recovery_key, set_state_with_recovery,
@@ -527,6 +529,29 @@ pub(crate) fn run_loop_dispatch_write_candidate(
             )?
         }
     };
+    let salvage_failed_backend_with_live_handoff =
+        failed_backend_can_use_live_handoff(&result) && live_worktree.is_some();
+    if salvage_failed_backend_with_live_handoff {
+        append_runtime_supervision_event(
+            config,
+            Some(&runtime_state),
+            "MainBackendFailureLiveHandoffSalvage",
+            &format!(
+                "issue={} backend={} message={}",
+                latest.identifier, result.backend, result.message
+            ),
+        )?;
+        println!(
+            "run_loop_action=salvage_live_handoff issue={} reason=backend_failed_after_local_work message={}",
+            latest.identifier,
+            compact_evidence(&result.message)
+        );
+        result.success = true;
+        result.message = format!(
+            "backend failed after local work; attempting live handoff salvage: {}",
+            result.message
+        );
+    }
     if result.success {
         apply_live_handoff_steps(
             config,
@@ -641,6 +666,17 @@ pub(crate) fn run_loop_dispatch_write_candidate(
         runtime_state,
         &result,
     )
+}
+
+pub(crate) fn failed_backend_can_use_live_handoff(result: &IssueExecutionResult) -> bool {
+    result.backend == "codex"
+        && !result.success
+        && !result.pending_session
+        && result.usage_limit_pause.is_none()
+        && result.live_handoff.is_none()
+        && result
+            .message
+            .contains("Codex app-server stalled waiting for turn event")
 }
 
 fn ensure_parent_integration_branch_evidence(

@@ -78,6 +78,8 @@ pub(crate) use session::{
     MainSessionReconciliation,
 };
 pub(crate) use supervision::append_runtime_supervision_event;
+#[cfg(test)]
+pub(crate) use write_candidate::failed_backend_can_use_live_handoff;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RunLoopOptions {

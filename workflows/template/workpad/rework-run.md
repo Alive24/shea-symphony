@@ -34,7 +34,5 @@
 
 ### Boundary
 
-- Main-lane rework implementation must update the existing `Main Agent Workpad`
-  in place.
-- This comment is append-only timeline evidence and must not overwrite or
-  replace the Main Agent Workpad.
+- Main-lane rework implementation must update the existing `Main Agent Workpad` in place.
+- This comment is append-only timeline evidence and must not overwrite or replace the Main Agent Workpad.

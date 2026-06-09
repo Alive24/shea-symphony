@@ -439,7 +439,6 @@ a {
 .route-hero h2,
 .section-heading h2,
 .panel-head h2,
-.attention-body h3,
 .lane-card h3,
 .worker-card h3,
 .settings-card h3,
@@ -1965,6 +1964,7 @@ a {
 
 .human-todo-card,
 .human-todo-empty {
+  min-width: 0;
   min-height: 100%;
   display: grid;
   align-content: start;
@@ -1993,6 +1993,7 @@ a {
 }
 
 .human-todo-card-head {
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2024,9 +2025,11 @@ a {
 }
 
 .human-todo-type {
+  min-width: 0;
   min-height: 28px;
   display: inline-flex;
   align-items: center;
+  max-width: 100%;
   padding: 2px var(--space-3);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-pill);
@@ -2034,6 +2037,8 @@ a {
   background: var(--card-bg);
   font-size: var(--text-xs);
   font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -2081,6 +2086,7 @@ a {
 }
 
 .handoff-actions {
+  min-width: 0;
   display: grid;
   gap: var(--space-2);
   margin-top: auto;
@@ -2088,8 +2094,11 @@ a {
 }
 
 .handoff-actions .btn {
+  min-width: 0;
   min-height: 38px;
   width: 100%;
+  max-width: 100%;
+  white-space: normal;
 }
 
 .handoff-status {
@@ -3839,33 +3848,6 @@ a {
   overflow-wrap: anywhere;
 }
 
-.attention-card {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 178px;
-  gap: var(--space-4) var(--space-5);
-  padding: var(--space-5);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-md);
-  background: var(--card-bg);
-  box-shadow: var(--elev-raised);
-}
-
-.attention-card.warn {
-  border-color: color-mix(in oklab, var(--warn), var(--border) 72%);
-}
-
-.attention-card.danger {
-  border-color: color-mix(in oklab, var(--danger), var(--border) 74%);
-}
-
-.attention-topline {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-}
-
 .issue-tag {
   display: inline-flex;
   align-items: center;
@@ -3880,20 +3862,6 @@ a {
   font-weight: 700;
 }
 
-.attention-body {
-  display: grid;
-  gap: var(--space-3);
-}
-
-.attention-body h3 {
-  max-width: 62ch;
-  color: var(--fg);
-  font-size: var(--text-xl);
-}
-
-.attention-body p,
-.recommendation strong,
-.evidence-preview p,
 .lane-card p,
 .route-hero p,
 .quiet-explainer p,
@@ -3903,41 +3871,6 @@ a {
 .empty-state p {
   margin: 0;
   color: var(--muted);
-}
-
-.attention-type {
-  margin: 0 0 var(--space-1);
-  color: var(--accent);
-  font-weight: 700;
-}
-
-.recommendation,
-.evidence-preview {
-  display: grid;
-  gap: var(--space-2);
-  padding: var(--space-4);
-  border-radius: var(--radius-md);
-  background: var(--subtle-bg);
-  border: 1px solid var(--border-soft);
-}
-
-.recommendation span,
-.evidence-preview span {
-  color: var(--muted);
-  font-size: var(--text-xs);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-}
-
-.recommendation strong {
-  color: var(--fg);
-  font-size: var(--text-base);
-}
-
-.attention-card > .btn {
-  align-self: end;
-  justify-self: end;
 }
 
 .btn {
@@ -6393,14 +6326,6 @@ button[disabled] {
   .lane-board-column:last-child {
     padding-bottom: 0;
     border-bottom: 0;
-  }
-
-  .attention-card {
-    grid-template-columns: 1fr;
-  }
-
-  .attention-card > .btn {
-    justify-self: start;
   }
 
   .event-card button,

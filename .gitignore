@@ -18,3 +18,5 @@ app/src-tauri/target/
 app/src-tauri/gen/
 .playwright-mcp
 .shea-symphony
+*storybook.log
+storybook-static

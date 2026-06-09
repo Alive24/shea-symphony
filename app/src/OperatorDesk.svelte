@@ -8,6 +8,7 @@
     getDefaultHandoffTarget,
     refreshStatusStore
   } from './lib/uiState.ts';
+  import AttentionCard from './lib/AttentionCard.svelte';
   import { operatorOverviewStore, requestOperatorLocalArtifactsRefresh } from './lib/operatorOverviewStore.ts';
   import { humanTodoRefreshState } from './lib/viewModel/humanTodoRefresh.ts';
   import { buildLaneThroughputBoard } from './lib/viewModel/laneThroughput.ts';
@@ -155,13 +156,6 @@
     return 'project-yellow';
   }
 
-  function assigneeLabel(issue) {
-    const assignees = Array.isArray(issue.assignees) ? issue.assignees.filter(Boolean) : [];
-    if (!assignees.length) return 'Unassigned';
-    if (assignees.length === 1) return assignees[0];
-    return `${assignees[0]} +${assignees.length - 1}`;
-  }
-
   function normalizeIssueRef(value) {
     const match = String(value ?? '').match(/#?(\d+)/);
     return match ? `#${match[1]}` : null;
@@ -190,7 +184,7 @@
     try {
       await navigator.clipboard.writeText(buildHandoffPrompt(issue));
       copiedHandoffId = issue.id;
-      handoffStatus = { ...handoffStatus, [issue.id]: 'Handoff prompt copied.' };
+      handoffStatus = { ...handoffStatus, [issue.id]: '' };
       window.setTimeout(() => {
         if (copiedHandoffId === issue.id) copiedHandoffId = '';
       }, 1800);
@@ -218,9 +212,7 @@
       const copied = await copyHandoffPrompt(issue);
       handoffStatus = {
         ...handoffStatus,
-        [issue.id]: copied
-          ? `Prompt copied. Open ${handoffLabel(defaultHandoffTarget)} and paste it.`
-          : `Clipboard unavailable. Open ${handoffLabel(defaultHandoffTarget)} manually after copying the prompt.`
+        [issue.id]: copied ? '' : `Clipboard unavailable. Open ${handoffLabel(defaultHandoffTarget)} manually after copying the prompt.`
       };
       return;
     }
@@ -314,34 +306,15 @@
     <div class="human-todo-rail" aria-label="Human operator issue queue">
       {#if visibleHumanTodoIssues.length}
         {#each visibleHumanTodoIssues as issue}
-          <article class="human-todo-card {issue.categoryTone}" class:refreshing={issue.refreshing}>
-            <div class="human-todo-card-head">
-              <div class="human-todo-identity">
-                <span class="issue-tag">{issue.id}</span>
-                <span class="assignee-pill">{assigneeLabel(issue)}</span>
-              </div>
-              <span class="human-todo-type {issue.categoryTone}">{issue.category}</span>
-            </div>
-            <div>
-              <strong>{issue.title}</strong>
-              <p>{issue.categoryDetail}</p>
-            </div>
-            <div class="human-todo-meta">
-              <span>{issue.lane} · {issue.workerStatus}</span>
-              <small>{issue.recommended}</small>
-            </div>
-            <div class="handoff-actions">
-              <button class="btn btn-primary" type="button" disabled={operatorSurfaceRefreshing} onclick={() => openHandoff(issue)}>
-                Open in {handoffLabel(defaultHandoffTarget)}
-              </button>
-              <button class="btn btn-ghost" type="button" disabled={operatorSurfaceRefreshing} onclick={() => copyHandoffPrompt(issue)}>
-                {copiedHandoffId === issue.id ? 'Copied' : 'Copy Handoff Prompt'}
-              </button>
-            </div>
-            {#if handoffMessage(issue)}
-              <small class="handoff-status">{handoffMessage(issue)}</small>
-            {/if}
-          </article>
+          <AttentionCard
+            {issue}
+            disabled={operatorSurfaceRefreshing}
+            handoffTargetLabel={handoffLabel(defaultHandoffTarget)}
+            copied={copiedHandoffId === issue.id}
+            message={handoffMessage(issue)}
+            onOpen={openHandoff}
+            onCopy={copyHandoffPrompt}
+          />
         {/each}
       {:else}
         <article class="human-todo-empty {humanTodoEmptyState.status}" aria-busy={!humanTodoEmptyState.isClear}>

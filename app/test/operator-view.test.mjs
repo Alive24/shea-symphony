@@ -1075,12 +1075,14 @@ test('lane board rendering omits handoff actions and manual skill labels', () =>
     operatorDesk.indexOf('aria-label="Worker pickup and queue by lane"')
   );
   const laneDetail = readFileSync(new URL('../src/lib/LaneDetail.svelte', import.meta.url), 'utf8');
+  const attentionCard = readFileSync(new URL('../src/lib/AttentionCard.svelte', import.meta.url), 'utf8');
 
   assert.doesNotMatch(laneBoardSection, /handoff-actions|Copy Handoff Prompt|Next Skill|Manual Main|Manual Review|Manual Merge/);
   assert.doesNotMatch(laneDetail, /Next Skill|Manual Main|Manual Review|Manual Merge/);
-  assert.match(humanTodoSection, /handoff-actions/);
-  assert.match(humanTodoSection, /Open in/);
-  assert.match(humanTodoSection, /Copy Handoff Prompt/);
+  assert.match(humanTodoSection, /<AttentionCard/);
+  assert.match(attentionCard, /handoff-actions/);
+  assert.match(attentionCard, /Open in/);
+  assert.match(attentionCard, /Copy Handoff Prompt/);
   assert.doesNotMatch(operatorDesk, /Prompt copied\. Codex App opened\./);
 });
 

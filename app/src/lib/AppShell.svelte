@@ -71,6 +71,7 @@
   let dataMode: DataMode = 'live';
   let handoffTarget: HandoffTarget = 'codex-app';
   let refreshInterval: RefreshInterval = 'manual';
+  let refreshMenuOpen = false;
   let refreshTimer: number | undefined;
   let logsOpen = false;
   let runLogsOpen = false;
@@ -93,6 +94,12 @@
     avatarUrl: '',
     error: 'Loading GitHub identity'
   };
+  const refreshOptions: { value: RefreshInterval; label: string }[] = [
+    { value: 'manual', label: 'Manual' },
+    { value: '10000', label: '10s' },
+    { value: '30000', label: '30s' },
+    { value: '60000', label: '1m' }
+  ];
 
   $: latestLog = $cliLogStore[0];
   $: autoloopLogLines = autoloopState?.recentLines ?? [];
@@ -111,6 +118,8 @@
   $: autoloopStateStore.set(autoloopState);
   $: refreshRunning = $refreshStatusStore.running;
   $: refreshLabel = refreshRunning ? `Refreshing${$refreshStatusStore.remaining ? ` (${$refreshStatusStore.remaining})` : ''}` : 'Refresh';
+  $: selectedRefreshOption =
+    refreshOptions.find((option) => option.value === refreshInterval) ?? refreshOptions[0];
   $: githubUserLabel = githubUser.available && githubUser.login ? `@${githubUser.login}` : 'gh unavailable';
   $: githubUserDetail = githubUser.available
     ? githubUser.email || 'GitHub CLI authenticated'
@@ -214,6 +223,11 @@
     refreshInterval = (event.currentTarget as HTMLSelectElement).value as RefreshInterval;
     localStorage.setItem('shea-refresh-interval', refreshInterval);
     configureRefreshTimer();
+  }
+
+  function selectRefreshInterval(value: RefreshInterval) {
+    refreshMenuOpen = false;
+    updateRefreshInterval({ currentTarget: { value } } as unknown as Event);
   }
 
   function configureRefreshTimer() {
@@ -765,7 +779,7 @@
         disabled={!$autoloopControlStore.tauriAvailable || $autoloopControlStore.busy || $autoloopControlStore.running}
         onclick={startWriteFromNav}
       >
-        Start write
+        Start
       </button>
       <button
         class="runtime-action-button"
@@ -775,6 +789,41 @@
       >
         Stop
       </button>
+      <div class="runtime-refresh-split">
+        <button
+          class="runtime-refresh-main"
+          type="button"
+          aria-busy={refreshRunning}
+          disabled={refreshRunning}
+          onclick={() => requestRefresh('manual')}
+        >
+          {refreshLabel}
+        </button>
+        <button
+          class="runtime-refresh-menu-button"
+          type="button"
+          aria-label={`Auto refresh interval: ${selectedRefreshOption.label}`}
+          aria-haspopup="listbox"
+          aria-expanded={refreshMenuOpen}
+          onclick={() => (refreshMenuOpen = !refreshMenuOpen)}
+        >
+          <span class="select-caret" aria-hidden="true"></span>
+        </button>
+        {#if refreshMenuOpen}
+          <div class="refresh-split-menu" role="listbox" aria-label="Auto refresh intervals">
+            {#each refreshOptions as option}
+              <button
+                type="button"
+                role="option"
+                aria-selected={option.value === refreshInterval}
+                onclick={() => selectRefreshInterval(option.value)}
+              >
+                {option.label}
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
       <button class="runtime-action-button" type="button" onclick={openAutoloopLogsFromNav}>Logs</button>
       <button
         class="theme-icon-button"
@@ -855,15 +904,10 @@
     {githubUserDetail}
     handoffTargets={HANDOFF_TARGETS}
     {handoffTarget}
-    {refreshInterval}
-    {refreshRunning}
-    {refreshLabel}
     {developerToolsOpen}
     onClose={() => (settingsOpen = false)}
     onHandoffTargetChange={updateHandoffTarget}
     onHandoffTargetSelect={updateHandoffTargetValue}
-    onRefresh={() => requestRefresh('manual')}
-    onRefreshIntervalChange={updateRefreshInterval}
     onDeveloperToolsVisibilityChange={updateDeveloperToolsVisibility}
   />
 {/if}

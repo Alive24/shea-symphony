@@ -755,6 +755,75 @@ a {
   opacity: 0.48;
 }
 
+.runtime-refresh-split {
+  position: relative;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+}
+
+.runtime-refresh-main,
+.runtime-refresh-menu-button {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(212, 233, 226, 0.36);
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 850;
+  white-space: nowrap;
+  transition:
+    transform var(--motion-fast) var(--ease-standard),
+    background var(--motion-base) var(--ease-standard),
+    border-color var(--motion-base) var(--ease-standard),
+    color var(--motion-base) var(--ease-standard);
+}
+
+.runtime-refresh-main {
+  min-width: 92px;
+  padding: 0 var(--space-3);
+  border-right: 0;
+  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
+}
+
+.runtime-refresh-menu-button {
+  position: relative;
+  width: 38px;
+  padding: 0;
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+}
+
+.runtime-refresh-main:hover:not(:disabled),
+.runtime-refresh-main:focus-visible,
+.runtime-refresh-menu-button:hover,
+.runtime-refresh-menu-button:focus-visible,
+.runtime-refresh-menu-button[aria-expanded="true"] {
+  color: #1e3932;
+  background: #d4e9e2;
+  border-color: #d4e9e2;
+}
+
+.runtime-refresh-main[aria-busy="true"] {
+  color: #1e3932;
+  background: #d4e9e2;
+  border-color: #d4e9e2;
+}
+
+.runtime-refresh-main:disabled {
+  cursor: not-allowed;
+  opacity: 0.66;
+}
+
+.runtime-refresh-menu-button .select-caret {
+  right: 50%;
+  transform: translate(50%, -65%) rotate(45deg);
+}
+
 .menu-button:hover,
 .menu-button[aria-expanded="true"] {
   color: #1e3932;
@@ -807,6 +876,8 @@ a {
 .theme-toggle:active,
 .theme-icon-button:active,
 .runtime-action-button:active,
+.runtime-refresh-main:active,
+.runtime-refresh-menu-button:active,
 .menu-button:active,
 .developer-tools-collapsed button:active,
 .btn:active,
@@ -1503,7 +1574,8 @@ a {
 }
 
 .handoff-picker-menu,
-.settings-picker-menu {
+.settings-picker-menu,
+.refresh-split-menu {
   position: absolute;
   z-index: 20;
   top: calc(100% + var(--space-2));
@@ -1519,7 +1591,8 @@ a {
 }
 
 .handoff-picker-menu button,
-.settings-picker-menu button {
+.settings-picker-menu button,
+.refresh-split-menu button {
   min-height: 38px;
   display: inline-flex;
   align-items: center;
@@ -1539,33 +1612,10 @@ a {
 .handoff-picker-menu button:hover,
 .handoff-picker-menu button[aria-selected="true"],
 .settings-picker-menu button:hover,
-.settings-picker-menu button[aria-selected="true"] {
+.settings-picker-menu button[aria-selected="true"],
+.refresh-split-menu button:hover,
+.refresh-split-menu button[aria-selected="true"] {
   background: color-mix(in oklab, var(--accent), transparent 88%);
-}
-
-.settings-refresh-row {
-  display: grid;
-  grid-template-columns: minmax(116px, auto) minmax(96px, 1fr);
-  gap: var(--space-2);
-  align-items: center;
-}
-
-.settings-refresh-section .settings-select-row {
-  gap: 0;
-}
-
-.settings-modal .refresh-button {
-  min-height: 38px;
-  color: var(--accent-on);
-  border-color: var(--accent);
-  border-radius: var(--radius-md);
-  background: var(--accent);
-}
-
-.settings-modal .refresh-button[aria-busy="true"] {
-  color: var(--accent-on);
-  background: var(--accent-active);
-  border-color: var(--accent-active);
 }
 
 .settings-checkbox {
@@ -6238,6 +6288,28 @@ button[disabled] {
 }
 
 @media (max-width: 880px) {
+  .rail {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-3);
+  }
+
+  .brand-lockup,
+  .nav-list,
+  .nav-actions {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .nav-actions {
+    margin-left: 0;
+  }
+
+  .topbar-cluster {
+    justify-content: flex-start;
+  }
+
   .workspace {
     padding: var(--space-4);
   }
@@ -6400,10 +6472,6 @@ button[disabled] {
 
   .human-todo-head {
     display: grid;
-  }
-
-  .settings-refresh-row {
-    grid-template-columns: 1fr;
   }
 
   .human-todo-rail {

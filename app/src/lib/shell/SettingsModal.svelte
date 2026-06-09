@@ -2,7 +2,6 @@
   import type { GitHubUserSnapshot } from '../tauriAutoloop.ts';
 
   type HandoffTarget = 'codex-app' | 'claude-code' | 'gemini-cli';
-  type RefreshInterval = 'manual' | '10000' | '30000' | '60000';
   type HandoffIcon = 'codex' | 'claude' | 'gemini';
 
   export let githubUser: GitHubUserSnapshot;
@@ -10,30 +9,16 @@
   export let githubUserDetail = 'GitHub CLI unavailable';
   export let handoffTargets: { id: string; label: string; icon?: string }[] = [];
   export let handoffTarget: HandoffTarget = 'codex-app';
-  export let refreshInterval: RefreshInterval = 'manual';
-  export let refreshRunning = false;
-  export let refreshLabel = 'Refresh';
   export let developerToolsOpen = true;
   export let onClose: () => void = () => {};
   export let onHandoffTargetChange: (event: Event) => void = () => {};
   export let onHandoffTargetSelect: (target: HandoffTarget) => void = () => {};
-  export let onRefresh: () => void = () => {};
-  export let onRefreshIntervalChange: (event: Event) => void = () => {};
   export let onDeveloperToolsVisibilityChange: (event: Event) => void = () => {};
 
   let handoffMenuOpen = false;
-  let refreshMenuOpen = false;
-  const refreshOptions = [
-    { value: 'manual', label: 'Manual' },
-    { value: '10000', label: '10s' },
-    { value: '30000', label: '30s' },
-    { value: '60000', label: '1m' }
-  ];
 
   $: selectedHandoffTarget =
     handoffTargets.find((target) => target.id === handoffTarget) ?? handoffTargets[0];
-  $: selectedRefreshOption =
-    refreshOptions.find((option) => option.value === refreshInterval) ?? refreshOptions[0];
   $: accountName = githubUser.name?.trim() ?? '';
   $: accountLogin = githubUser.login?.trim() ?? '';
   $: showAccountName = Boolean(
@@ -51,11 +36,6 @@
   function selectHandoffTarget(target: string) {
     handoffMenuOpen = false;
     onHandoffTargetSelect(target as HandoffTarget);
-  }
-
-  function selectRefreshInterval(value: RefreshInterval) {
-    refreshMenuOpen = false;
-    onRefreshIntervalChange({ currentTarget: { value } } as unknown as Event);
   }
 
   function iconName(icon: string | undefined): HandoffIcon {
@@ -136,47 +116,6 @@
               {/each}
             </div>
           {/if}
-        </div>
-      </section>
-
-      <section class="settings-section settings-section-inline settings-refresh-section">
-        <span class="settings-section-label">Refresh</span>
-        <div class="settings-refresh-row">
-          <button class="refresh-button" type="button" aria-busy={refreshRunning} onclick={onRefresh}>
-            {refreshLabel}
-          </button>
-          <div class="settings-picker refresh-picker">
-            <select class="native-picker-fallback" value={refreshInterval} onchange={onRefreshIntervalChange} aria-label="Auto refresh interval" tabindex="-1">
-              {#each refreshOptions as option}
-                <option value={option.value}>{option.label}</option>
-              {/each}
-            </select>
-            <button
-              class="settings-picker-button"
-              type="button"
-              aria-label="Auto refresh interval"
-              aria-haspopup="listbox"
-              aria-expanded={refreshMenuOpen}
-              onclick={() => (refreshMenuOpen = !refreshMenuOpen)}
-            >
-              <strong>{selectedRefreshOption.label}</strong>
-              <span class="select-caret" aria-hidden="true"></span>
-            </button>
-            {#if refreshMenuOpen}
-              <div class="settings-picker-menu" role="listbox" aria-label="Auto refresh intervals">
-                {#each refreshOptions as option}
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={option.value === refreshInterval}
-                    onclick={() => selectRefreshInterval(option.value as RefreshInterval)}
-                  >
-                    {option.label}
-                  </button>
-                {/each}
-              </div>
-            {/if}
-          </div>
         </div>
       </section>
 

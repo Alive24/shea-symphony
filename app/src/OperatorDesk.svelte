@@ -354,19 +354,6 @@
   </section>
 
   <section class:refreshing={operatorSurfaceRefreshing} class="lane-board-overview" aria-label="Worker pickup and queue by lane" aria-busy={operatorSurfaceRefreshing}>
-    <div class="autoloop-control-bar" aria-label="Autoloop controls">
-      <div>
-        <strong>{autoloopState.running ? 'Autoloop running' : 'Autoloop idle'}</strong>
-        <span>
-          {tauriAvailable ? `${autoloopState.mode} · ${autoloopState.workflowPath}` : 'Open in Shea Symphony App desktop shell for live loop control.'}
-        </span>
-        {#if latestAutoloopLine}
-          <small>{latestAutoloopLine}</small>
-        {:else if fullLoading}
-          <small>Loading CLI readback · {slowReadsRemaining} surface{slowReadsRemaining === 1 ? '' : 's'} remaining</small>
-        {/if}
-      </div>
-    </div>
     <div class="lane-board-grid">
       {#each laneBoard as lane}
         <article class="lane-board-column {lane.tone}">
@@ -416,6 +403,19 @@
           </div>
         </article>
       {/each}
+    </div>
+    <div class="autoloop-control-bar" aria-label="Autoloop controls">
+      <div>
+        <strong>{autoloopState.running ? 'Autoloop running' : 'Autoloop idle'}</strong>
+        <span>
+          {tauriAvailable ? `${autoloopState.mode} · ${autoloopState.workflowPath}` : 'Open in Shea Symphony App desktop shell for live loop control.'}
+        </span>
+        {#if latestAutoloopLine}
+          <small>{latestAutoloopLine}</small>
+        {:else if fullLoading}
+          <small>Loading CLI readback · {slowReadsRemaining} surface{slowReadsRemaining === 1 ? '' : 's'} remaining</small>
+        {/if}
+      </div>
     </div>
   </section>
 </section>

@@ -1,0 +1,3 @@
+display_name: Shea Symphony Investigate
+short_description: Explore Shea symptoms before Issue Forge.
+default_prompt: Investigate this Shea Symphony symptom or rough idea before Issue Forge. Gather evidence, separate hypotheses, classify the problem, and recommend whether to keep investigating, forge an issue, route Human Review or Doctor, or take no action.

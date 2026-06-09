@@ -13,13 +13,14 @@ use shea_symphony::progress::{run_with_progress_heartbeat, ProgressHeartbeatSpec
 use shea_symphony::prompt::render_prompt;
 use shea_symphony::prompt_runtime::AUTOMATIC_HEADLESS_REVIEW_BOUNDARY;
 use shea_symphony::review::{
-    gemini_cli_headless_args, gemini_prelaunch_health_diagnostic, gemini_review_health_diagnostic,
-    poll_review_job_until_terminal, render_repeated_review_failure_workpad,
-    render_review_workpad_with_workflow, review_failure_signature, review_gate_decision_for_issue,
-    review_run_eligibility, review_worker_key, transition_allowed_for_review_agent,
-    write_review_job_ledger_record, FakeReviewBackend, FakeReviewOutcome, GeminiCliReviewBackend,
-    GeminiReviewRecoveryPolicy, ReviewBackend, ReviewGateDecision, ReviewJob, ReviewJobState,
-    ReviewOutcome, ReviewRepeatedFailureEvidence, ReviewRequest, ReviewRunEligibility,
+    gemini_review_health_diagnostic, poll_review_job_until_terminal,
+    render_repeated_review_failure_workpad, render_review_workpad_with_workflow,
+    review_backend_from_config, review_backend_kind_from_config, review_failure_signature,
+    review_gate_decision_for_issue, review_run_eligibility, review_worker_key,
+    transition_allowed_for_review_agent, write_review_job_ledger_record, FakeReviewBackend,
+    FakeReviewOutcome, GeminiReviewRecoveryPolicy, ReviewBackend, ReviewGateDecision, ReviewJob,
+    ReviewJobState, ReviewOutcome, ReviewRepeatedFailureEvidence, ReviewRequest,
+    ReviewRunEligibility,
 };
 use shea_symphony::rework::rework_transition_expected;
 #[cfg(test)]
@@ -105,37 +106,8 @@ pub(crate) fn review_once(
         workspace: config.workspace.root.clone(),
         artifact_root: config.observability.logs_root.join("reviews"),
     };
-    let job = match config.review.backend.as_str() {
-        "gemini-cli" => {
-            let backend = GeminiCliReviewBackend::with_headless_options(
-                config.review.gemini_command.clone(),
-                config.review.gemini_model.clone(),
-                config.review.gemini_allowed_tools.clone(),
-            );
-            match backend.start(request) {
-                Ok(job) => {
-                    let spec = review_backend_progress_spec(&config, &issue, backend.kind(), &job);
-                    run_with_progress_heartbeat(spec, || {
-                        poll_review_job_until_terminal(
-                            &backend,
-                            job,
-                            Duration::from_millis(config.review.timeout_ms),
-                            Duration::from_millis(500),
-                        )
-                    })?
-                }
-                Err(error) => ReviewJob::failed_unavailable(
-                    issue.identifier.clone(),
-                    "gemini-cli",
-                    error.to_string(),
-                ),
-            }
-        }
-        _ => {
-            let backend = FakeReviewBackend::new(FakeReviewOutcome::Pass);
-            backend.poll(backend.start(request)?)?
-        }
-    };
+    let backend = review_backend_from_config(&config.review);
+    let job = run_configured_review_backend(&config, &issue, backend.as_ref(), request)?;
     apply_review_result(
         Some(&workflow),
         &config,
@@ -393,6 +365,8 @@ pub(crate) fn review_loop_with_summary(
                     );
                     }
                     if !options.write {
+                        let backend = review_backend_from_config(&config.review);
+                        let command_preview = backend.command_preview();
                         print_latest_status(&latest_status_for_issue(
                             &config,
                             &selected_issue,
@@ -404,22 +378,17 @@ pub(crate) fn review_loop_with_summary(
                         println!(
                             "review_loop_dry_run action=start issue={} backend={backend_kind} mode={}",
                             selected_issue.identifier,
-                            if backend_kind == "gemini-cli" {
-                                "headless"
-                            } else {
-                                "job"
-                            }
+                            command_preview
+                                .as_ref()
+                                .map(|command| command.mode)
+                                .unwrap_or("job")
                         );
-                        if backend_kind == "gemini-cli" {
+                        if let Some(command_preview) = command_preview {
                             println!(
                                 "review_loop_dry_run action=command issue={} command={} args={}",
                                 selected_issue.identifier,
-                                shell_quote_display(&config.review.gemini_command),
-                                gemini_cli_headless_args(
-                                    config.review.gemini_model.as_deref(),
-                                    &config.review.gemini_allowed_tools,
-                                )
-                                .join(" ")
+                                shell_quote_display(&command_preview.command),
+                                command_preview.args.join(" ")
                             );
                         }
                         print_review_claim_field_dry_run(&selected_issue, &worker_key);
@@ -478,7 +447,10 @@ pub(crate) fn review_loop_with_summary(
                                 latest.identifier,
                                 worker_slot,
                                 backend_kind,
-                                if backend_kind == "gemini-cli" { "headless" } else { "job" }
+                                review_backend_from_config(&config.review)
+                                    .command_preview()
+                                    .map(|command| command.mode)
+                                    .unwrap_or("job")
                             );
                             let handle = thread::spawn(move || {
                                 run_review_job(
@@ -660,10 +632,8 @@ pub(crate) fn review_backend_kind(
 ) -> String {
     if fake_outcome.is_some() {
         "fake-reviewer".into()
-    } else if config.review.backend == "gemini-cli" {
-        "gemini-cli".into()
     } else {
-        "fake-reviewer".into()
+        review_backend_kind_from_config(&config.review).into()
     }
 }
 
@@ -825,47 +795,41 @@ fn run_review_job(
         })?);
     }
 
-    match config.review.backend.as_str() {
-        "gemini-cli" => {
-            if let Some(diagnostic) = gemini_prelaunch_health_diagnostic(
-                &config.review.gemini_command,
-                config.review.gemini_model.as_deref(),
-                &config.review.gemini_allowed_tools,
-            ) {
-                return Ok(ReviewJob::failed_unavailable(
-                    issue.identifier.clone(),
-                    "gemini-cli",
-                    diagnostic.to_error_message(),
-                ));
-            }
-            let backend = GeminiCliReviewBackend::with_headless_options(
-                config.review.gemini_command.clone(),
-                config.review.gemini_model.clone(),
-                config.review.gemini_allowed_tools.clone(),
-            );
-            match backend.start(request) {
-                Ok(job) => {
-                    let spec = review_backend_progress_spec(config, issue, backend.kind(), &job);
-                    Ok(run_with_progress_heartbeat(spec, || {
-                        poll_review_job_until_terminal(
-                            &backend,
-                            job,
-                            Duration::from_millis(config.review.timeout_ms),
-                            Duration::from_millis(500),
-                        )
-                    })?)
-                }
-                Err(error) => Ok(ReviewJob::failed_unavailable(
-                    issue.identifier.clone(),
-                    "gemini-cli",
-                    error.to_string(),
-                )),
-            }
+    let backend = review_backend_from_config(&config.review);
+    run_configured_review_backend(config, issue, backend.as_ref(), request)
+}
+
+fn run_configured_review_backend(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    backend: &dyn ReviewBackend,
+    request: ReviewRequest,
+) -> Result<ReviewJob, Box<dyn std::error::Error>> {
+    if let Some(error) = backend.prelaunch_error() {
+        return Ok(ReviewJob::failed_unavailable(
+            issue.identifier.clone(),
+            backend.kind(),
+            error,
+        ));
+    }
+
+    match backend.start(request) {
+        Ok(job) => {
+            let spec = review_backend_progress_spec(config, issue, backend.kind(), &job);
+            Ok(run_with_progress_heartbeat(spec, || {
+                poll_review_job_until_terminal(
+                    backend,
+                    job,
+                    Duration::from_millis(config.review.timeout_ms),
+                    Duration::from_millis(500),
+                )
+            })?)
         }
-        _ => {
-            let backend = FakeReviewBackend::new(FakeReviewOutcome::Pass);
-            Ok(backend.poll(backend.start(request)?)?)
-        }
+        Err(error) => Ok(ReviewJob::failed_unavailable(
+            issue.identifier.clone(),
+            backend.kind(),
+            error.to_string(),
+        )),
     }
 }
 
@@ -945,6 +909,7 @@ impl ReviewLoopOptions {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_review_result(
     workflow: Option<&WorkflowDefinition>,
     config: &RuntimeConfig,

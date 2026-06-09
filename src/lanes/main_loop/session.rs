@@ -373,7 +373,7 @@ fn git_output(workspace: Option<&Path>, args: &[&str]) -> String {
             args,
             compact_evidence(&String::from_utf8_lossy(&output.stderr))
         ),
-        Err(error) => format!("git {:?} failed: {error}", args),
+        Err(error) => format!("git {args:?} failed: {error}"),
     }
 }
 

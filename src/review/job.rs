@@ -102,9 +102,22 @@ pub trait ReviewBackend {
     fn kind(&self) -> &'static str;
     fn start(&self, request: ReviewRequest) -> Result<ReviewJob, ReviewError>;
     fn poll(&self, job: ReviewJob) -> Result<ReviewJob, ReviewError>;
+    fn command_preview(&self) -> Option<ReviewBackendCommand> {
+        None
+    }
+    fn prelaunch_error(&self) -> Option<String> {
+        None
+    }
     fn cancel(&self, _job: &ReviewJob) -> Result<(), ReviewError> {
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewBackendCommand {
+    pub mode: &'static str,
+    pub command: String,
+    pub args: Vec<String>,
 }
 
 pub fn review_job_is_terminal(job: &ReviewJob) -> bool {

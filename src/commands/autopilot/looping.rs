@@ -1531,8 +1531,7 @@ fn autopilot_lane_result_from_review_execution(
     }
     if let Some(issue_ref) = recovery_issue_ref.as_deref() {
         evidence.push(format!(
-            "review_recovery=cleared_stale_claim issue={}",
-            issue_ref
+            "review_recovery=cleared_stale_claim issue={issue_ref}"
         ));
     }
     let (status, action, completed_work_units): (String, String, usize) = match result {
@@ -1832,8 +1831,8 @@ pub(crate) fn autopilot_loop_status_from_plan_with_work_units(
                 .iter()
                 .filter(|blocker| {
                     !(main_recovery_can_tick
-                        && autopilot_readiness_blocker_is_main_recoverable(plan, blocker))
-                        && !(merge_recovery_can_tick
+                        && autopilot_readiness_blocker_is_main_recoverable(plan, blocker)
+                        || merge_recovery_can_tick
                             && autopilot_readiness_blocker_is_merge_recoverable(plan, blocker))
                 })
                 .cloned()

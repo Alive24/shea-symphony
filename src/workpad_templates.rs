@@ -574,7 +574,7 @@ mod tests {
     fn fallback_registry_covers_every_template_id() {
         for id in WorkpadTemplateId::all() {
             let template = workpad_template_for(None, *id);
-            assert!(!template.body.trim().is_empty(), "missing {:?}", id);
+            assert!(!template.body.trim().is_empty(), "missing {id:?}");
             assert_eq!(template.source, WorkpadTemplateSource::CentralizedFallback);
         }
     }
@@ -686,7 +686,7 @@ mod tests {
         assert_eq!(readback.len(), WorkpadTemplateId::all().len());
         for id in WorkpadTemplateId::all() {
             let template = readback.iter().find(|template| template.id == *id).unwrap();
-            assert!(!template.body.trim().is_empty(), "empty {:?}", id);
+            assert!(!template.body.trim().is_empty(), "empty {id:?}");
         }
         assert!(readback
             .iter()

@@ -8,7 +8,7 @@
 
   const navItems = [
     { href: '/', label: 'Operator Desk' },
-    { href: '/lanes', label: 'Lane Views' },
+    { href: '/lanes', label: 'Lanes' },
     { href: '/doctor', label: 'Doctor' },
     { href: '/intelligence', label: 'Intelligence' }
   ];

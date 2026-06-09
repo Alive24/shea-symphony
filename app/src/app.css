@@ -2611,6 +2611,19 @@ a {
   gap: var(--space-2);
 }
 
+.lane-completed-pagination {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.lane-completed-pagination > span {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
 .lane-completed-table-head,
 .lane-completed-row {
   --worktree-row-columns: 76px minmax(190px, 1.25fr) 116px 94px 96px 62px minmax(150px, 0.85fr) 66px;

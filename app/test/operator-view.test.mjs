@@ -1442,6 +1442,135 @@ test('latest lane event falls back to persisted local lifecycle evidence when me
   assert.equal(summary.latestLaneEventSource, 'localStatus.issueLifecycle');
 });
 
+test('issue detail heartbeat ignores lane-wide current-session ticks without issue provenance', () => {
+  const now = 1_700_000_600_000;
+  const laneWideLines = [
+    {
+      atMs: now - 10_000,
+      stream: 'stdout',
+      line: 'autopilot_loop_lane lane=main status=running action=tick_started selected=none',
+      event: {
+        event: 'autopilot_loop_lane',
+        payload: {
+          lane: 'main',
+          status: 'running',
+          action: 'tick_started',
+          selected: 'none',
+          selected_issue: null
+        }
+      }
+    },
+    {
+      atMs: now - 5_000,
+      stream: 'stdout',
+      line: 'autopilot_loop_lane lane=main status=completed action=lane_tick_completed',
+      event: {
+        event: 'autopilot_loop_lane',
+        payload: {
+          lane: 'main',
+          status: 'completed',
+          action: 'lane_tick_completed'
+        }
+      }
+    }
+  ];
+
+  const issueSummary = classifyHeartbeat({
+    running: true,
+    lanes: { main: { updatedAtMs: now - 1_000, latestLine: 'lane-wide latest line' } },
+    recentLines: laneWideLines
+  }, 'main', '#442', now);
+
+  assert.equal(issueSummary.state, 'unavailable');
+  assert.equal(issueSummary.label, 'Issue heartbeat unavailable');
+  assert.equal(issueSummary.lastHeartbeatMs, null);
+  assert.equal(issueSummary.latestLaneEvent, 'No visible issue-scoped lane event.');
+  assert.equal(issueSummary.latestLaneEventAtMs, null);
+
+  const laneSummary = classifyHeartbeat({
+    running: true,
+    lanes: { main: { updatedAtMs: now - 1_000, latestLine: 'lane-wide latest line' } },
+    recentLines: laneWideLines
+  }, 'main', null, now);
+
+  assert.equal(laneSummary.state, 'running');
+  assert.equal(laneSummary.lastHeartbeatMs, now - 1_000);
+});
+
+test('issue detail latest event ignores same-lane events for a different issue', () => {
+  const now = 1_700_000_600_000;
+  const summary = classifyHeartbeat({
+    running: true,
+    lanes: { main: { updatedAtMs: now - 1_000 } },
+    recentLines: [
+      {
+        atMs: now - 20_000,
+        stream: 'stdout',
+        line: 'Latest: main | #441 | running | implementation',
+        event: {
+          event: 'autopilot_signal',
+          payload: {
+            visibility: 'operator',
+            lane: 'main',
+            issue_ref: '#441',
+            message: '#441 implementation in progress'
+          }
+        }
+      },
+      {
+        atMs: now - 10_000,
+        stream: 'stdout',
+        line: 'autopilot_loop_lane lane=main status=completed action=lane_tick_completed selected=#441',
+        event: {
+          event: 'autopilot_loop_lane',
+          payload: {
+            lane: 'main',
+            status: 'completed',
+            action: 'lane_tick_completed',
+            selected_issue: { identifier: '#441' }
+          }
+        }
+      }
+    ]
+  }, 'main', '#442', now);
+
+  assert.equal(summary.state, 'unavailable');
+  assert.equal(summary.lastHeartbeatMs, null);
+  assert.equal(summary.latestLaneEvent, 'No visible issue-scoped lane event.');
+  assert.equal(summary.latestLaneEventSource, null);
+});
+
+test('issue detail heartbeat and latest event use explicit matching issue provenance', () => {
+  const now = 1_700_000_600_000;
+  const summary = classifyHeartbeat({
+    running: true,
+    lanes: { main: { updatedAtMs: now - 1_000 } },
+    recentLines: [
+      {
+        atMs: now - 15_000,
+        stream: 'stdout',
+        line: 'Latest: main | #442 | running | implementation',
+        event: {
+          event: 'autopilot_signal',
+          payload: {
+            visibility: 'operator',
+            lane: 'main',
+            worker: { issueRef: '#442' },
+            message: '#442 implementation in progress'
+          }
+        }
+      }
+    ]
+  }, 'main', '#442', now);
+
+  assert.equal(summary.state, 'running');
+  assert.equal(summary.label, 'Loop running');
+  assert.equal(summary.lastHeartbeatMs, now - 15_000);
+  assert.equal(summary.latestLaneEvent, '#442 implementation in progress');
+  assert.equal(summary.latestLaneEventAtMs, now - 15_000);
+  assert.equal(summary.latestLaneEventSource, 'recentLines.autopilot_signal');
+});
+
 test('project read cooldown preserves last stable review queue visibility', () => {
   const view = buildViewModel({
     generatedAt: new Date().toISOString(),

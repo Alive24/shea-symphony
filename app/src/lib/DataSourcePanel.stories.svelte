@@ -19,7 +19,7 @@
   };
 
   const { Story } = defineMeta({
-    title: 'Operator Components/DataSourcePanel',
+    title: 'Components/DataSourcePanel',
     component: DataSourcePanel,
     tags: ['autodocs'],
     args: {

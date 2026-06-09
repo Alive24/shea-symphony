@@ -27,7 +27,7 @@
   };
 
   const { Story } = defineMeta({
-    title: 'Operator Components/LaneCard',
+    title: 'Components/LaneCard',
     component: LaneCard,
     tags: ['autodocs'],
     args: {

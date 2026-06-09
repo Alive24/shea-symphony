@@ -17,7 +17,7 @@
   };
 
   const { Story } = defineMeta({
-    title: 'Operator Components/RuntimeRibbon',
+    title: 'Components/RuntimeRibbon',
     component: RuntimeRibbon,
     tags: ['autodocs'],
     args: {

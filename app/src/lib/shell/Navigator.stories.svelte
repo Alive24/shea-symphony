@@ -61,7 +61,7 @@
   };
 
   const { Story } = defineMeta({
-    title: 'Operator Components/Navigator',
+    title: 'Components/Navigator',
     component: Navigator,
     tags: ['autodocs'],
     parameters: {

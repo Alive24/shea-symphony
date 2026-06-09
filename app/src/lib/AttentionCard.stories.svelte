@@ -35,7 +35,7 @@
   };
 
   const { Story } = defineMeta({
-    title: 'Operator Components/AttentionCard',
+    title: 'Components/AttentionCard',
     component: AttentionCard,
     tags: ['autodocs'],
     parameters: {

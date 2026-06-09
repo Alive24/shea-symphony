@@ -68,7 +68,7 @@
   }));
 
   const { Story } = defineMeta({
-    title: 'Operator Components/LaneBoard',
+    title: 'Components/LaneBoard',
     component: LaneBoard,
     tags: ['autodocs'],
     parameters: {

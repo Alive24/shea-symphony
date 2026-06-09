@@ -13,7 +13,7 @@
   }));
 
   const { Story } = defineMeta({
-    title: 'Operator Components/AppShell',
+    title: 'Components/AppShell',
     component: AppShell,
     tags: ['autodocs'],
     parameters: {

@@ -117,7 +117,7 @@
   });
 
   const { Story } = defineMeta({
-    title: 'Operator Pages/Lanes',
+    title: 'Pages/Lanes',
     component: LaneViews,
     tags: ['autodocs'],
     parameters: {

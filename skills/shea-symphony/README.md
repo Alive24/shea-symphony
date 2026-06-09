@@ -1,6 +1,6 @@
 # Shea Symphony Skill Suite
 
-Release: `2026.05.23`
+Release: `2026.06.09`
 
 This directory contains the repo-owned Shea Symphony skills used by local Codex
 and Gemini operator sessions. The suite is intentionally versioned in the repo
@@ -64,6 +64,7 @@ operator confirmation before writing.
 ## Packaged Skills
 
 - `shea-symphony-issue-forge`
+- `shea-symphony-investigate`
 - `shea-symphony-issue-forge-reflect`
 - `shea-symphony-issue-forge-dream`
 - `shea-symphony-manual-main`
@@ -71,6 +72,11 @@ operator confirmation before writing.
 - `shea-symphony-human-review`
 - `shea-symphony-manual-merge`
 - `shea-symphony-doctor`
+
+Investigate is the pre-Forge exploration slot. It gathers read-only evidence,
+keeps competing hypotheses visible, classifies ambiguous Shea Symphony symptoms
+or ideas, and recommends whether to continue investigating, hand off to Issue
+Forge, use Doctor or Human Review, record a backlog seed, or take no action.
 
 Human Review briefs the operator after Review Agent pass evidence, guides
 operator-owned UAT, records a structured decision note, and routes only after

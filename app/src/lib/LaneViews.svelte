@@ -2,8 +2,7 @@
   import { autoloopStateStore, REFRESH_REQUEST_EVENT } from './uiState.ts';
   import { operatorOverviewStore } from './operatorOverviewStore.ts';
   import {
-    localArtifactRefreshEventDetail,
-    localRefreshStatusLabel
+    localArtifactRefreshEventDetail
   } from './localArtifactRefresh.ts';
   import { getCodexTranscript, getIssueTimeline, openCodexThread, openGitHubSource } from './tauriAutoloop.ts';
   import {
@@ -63,7 +62,6 @@
   $: completedPageEnd = Math.min(completedPage * completedPageSize, filteredCompletedLocalIssues.length);
   $: selectedIssue = selectedIssueRef ? findIssueForDetail(selectedIssueRef, issueRows, completedLocalIssues, view) : null;
   $: localArtifactsRefresh = $operatorOverviewStore.localArtifactsRefresh;
-  $: localArtifactsRefreshLabel = localRefreshStatusLabel(localArtifactsRefresh, formatTime);
   $: remoteLifecycleEvents = selectedIssue ? buildIssueCommentLifecycleEvents(issueTimelineResponse, selectedIssue) : [];
   $: lifecycleEvents = selectedIssue ? buildLifecycleEvents(selectedIssue, view, remoteLifecycleEvents) : [];
   $: selectedLaneKey = laneKeyForIssue(selectedIssue);
@@ -846,11 +844,6 @@
 
   <section class="lane-completed-panel" aria-label="Local issue worktrees">
     <div class="lane-completed-head">
-      <div>
-        <span class="mini-label">Local worktrees</span>
-        <strong>{filteredCompletedLocalIssues.length} visible</strong>
-        <small class:error={localArtifactsRefresh?.error}>{localArtifactsRefreshLabel}</small>
-      </div>
       <div class="lane-completed-actions">
         <button class="btn btn-ghost" type="button" on:click={refreshLocalArtifacts} disabled={localArtifactsRefresh?.running}>
           {localArtifactsRefresh?.running ? 'Refreshing' : 'Refresh local'}
@@ -867,6 +860,16 @@
           {/each}
         </div>
       </div>
+      {#if filteredCompletedLocalIssues.length}
+        <div class="lane-completed-pagination">
+          <span>{completedPageStart}-{completedPageEnd} of {filteredCompletedLocalIssues.length}</span>
+          <div class="pagination">
+            <button class="btn btn-ghost" type="button" on:click={previousCompletedPage} disabled={completedPage <= 1}>Previous</button>
+            <span>Page {completedPage} of {completedPageCount}</span>
+            <button class="btn btn-ghost" type="button" on:click={nextCompletedPage} disabled={completedPage >= completedPageCount}>Next</button>
+          </div>
+        </div>
+      {/if}
     </div>
 
     <div class="lane-completed-list">

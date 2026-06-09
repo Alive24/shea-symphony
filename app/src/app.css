@@ -2544,9 +2544,12 @@ a {
   gap: var(--space-3);
 }
 
-.lane-completed-head > div:first-child,
+.lane-completed-head > div,
 .lane-detail-summary > div {
   min-width: 0;
+}
+
+.lane-detail-summary > div {
   display: grid;
   gap: 2px;
 }
@@ -2568,9 +2571,10 @@ a {
 }
 
 .lane-completed-actions {
-  flex: none;
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-2);
   min-width: 0;
 }
@@ -2612,11 +2616,13 @@ a {
 }
 
 .lane-completed-pagination {
-  min-width: 0;
+  flex: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: var(--space-3);
+  min-width: 0;
 }
 
 .lane-completed-pagination > span {

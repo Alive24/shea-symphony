@@ -34,7 +34,7 @@
     { label: '24h', hours: 24 },
     { label: '72h', hours: 72 }
   ];
-  const completedPageSize = 10;
+  const completedPageSize = 8;
 
   let completedWindowHours = null;
   let completedPage = 1;
@@ -60,6 +60,7 @@
   $: pagedCompletedLocalIssues = filteredCompletedLocalIssues.slice((completedPage - 1) * completedPageSize, completedPage * completedPageSize);
   $: completedPageStart = filteredCompletedLocalIssues.length ? (completedPage - 1) * completedPageSize + 1 : 0;
   $: completedPageEnd = Math.min(completedPage * completedPageSize, filteredCompletedLocalIssues.length);
+  $: completedPageItems = pageItems(completedPage, completedPageCount);
   $: selectedIssue = selectedIssueRef ? findIssueForDetail(selectedIssueRef, issueRows, completedLocalIssues, view) : null;
   $: localArtifactsRefresh = $operatorOverviewStore.localArtifactsRefresh;
   $: remoteLifecycleEvents = selectedIssue ? buildIssueCommentLifecycleEvents(issueTimelineResponse, selectedIssue) : [];
@@ -232,12 +233,31 @@
     completedPage = 1;
   }
 
-  function previousCompletedPage() {
-    completedPage = Math.max(1, completedPage - 1);
+  function setCompletedPage(page: number) {
+    completedPage = Math.min(Math.max(1, page), completedPageCount);
   }
 
-  function nextCompletedPage() {
-    completedPage = Math.min(completedPageCount, completedPage + 1);
+  function pageItems(current: number, total: number) {
+    if (total <= 7) return Array.from({ length: total }, (_, index) => index + 1);
+    const pages = new Set([1, total, current - 1, current, current + 1]);
+    if (current <= 3) {
+      pages.add(2);
+      pages.add(3);
+      pages.add(4);
+    }
+    if (current >= total - 2) {
+      pages.add(total - 3);
+      pages.add(total - 2);
+      pages.add(total - 1);
+    }
+    const sorted = [...pages].filter((page) => page >= 1 && page <= total).sort((left, right) => left - right);
+    const items: Array<number | string> = [];
+    for (const page of sorted) {
+      const previous = items[items.length - 1];
+      if (typeof previous === 'number' && page - previous > 1) items.push(`gap-${previous}-${page}`);
+      items.push(page);
+    }
+    return items;
   }
 
   function filterCompletedByWindow(issues: any[], hours: number | null) {
@@ -818,7 +838,9 @@
         <article class="lane-board-column {lane.pickedCount ? 'success' : lane.issues.length ? 'warn' : 'neutral'}">
           <div class="lane-board-column-head">
             <strong>{lane.lane}</strong>
-            <small>{lane.pickedCount} active · {lane.completedCount} completed</small>
+            {#if lane.pickedCount || lane.completedCount}
+              <small>{lane.pickedCount} active · {lane.completedCount} completed</small>
+            {/if}
           </div>
 
           <div class="lane-board-issue-list">
@@ -863,25 +885,49 @@
       {#if filteredCompletedLocalIssues.length}
         <div class="lane-completed-pagination">
           <span>{completedPageStart}-{completedPageEnd} of {filteredCompletedLocalIssues.length}</span>
-          <div class="pagination">
-            <button class="btn btn-ghost" type="button" on:click={previousCompletedPage} disabled={completedPage <= 1}>Previous</button>
-            <span>Page {completedPage} of {completedPageCount}</span>
-            <button class="btn btn-ghost" type="button" on:click={nextCompletedPage} disabled={completedPage >= completedPageCount}>Next</button>
-          </div>
+          {#if completedPageCount > 1}
+            <nav class="worktree-pagination" aria-label="Local worktree pages">
+              <button
+                class="page-step"
+                type="button"
+                on:click={() => setCompletedPage(completedPage - 1)}
+                disabled={completedPage <= 1}
+                aria-label="Previous local worktree page"
+              >
+                Previous
+              </button>
+              {#each completedPageItems as item}
+                {#if typeof item === 'number'}
+                  <button
+                    class:active={item === completedPage}
+                    type="button"
+                    on:click={() => setCompletedPage(item)}
+                    aria-current={item === completedPage ? 'page' : undefined}
+                    aria-label={`Local worktree page ${item}`}
+                  >
+                    {item}
+                  </button>
+                {:else}
+                  <span aria-hidden="true">...</span>
+                {/if}
+              {/each}
+              <button
+                class="page-step"
+                type="button"
+                on:click={() => setCompletedPage(completedPage + 1)}
+                disabled={completedPage >= completedPageCount}
+                aria-label="Next local worktree page"
+              >
+                Next
+              </button>
+            </nav>
+          {/if}
         </div>
       {/if}
     </div>
 
     <div class="lane-completed-list">
       {#if filteredCompletedLocalIssues.length}
-        <div class="lane-completed-pagination">
-          <span>{completedPageStart}-{completedPageEnd} of {filteredCompletedLocalIssues.length}</span>
-          <div class="pagination">
-            <button class="btn btn-ghost" type="button" on:click={previousCompletedPage} disabled={completedPage <= 1}>Previous</button>
-            <span>Page {completedPage} of {completedPageCount}</span>
-            <button class="btn btn-ghost" type="button" on:click={nextCompletedPage} disabled={completedPage >= completedPageCount}>Next</button>
-          </div>
-        </div>
         <div class="lane-completed-table-head" aria-hidden="true">
           <span>Issue</span>
           <span>Title</span>

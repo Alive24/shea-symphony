@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::process::Command;
 
 #[tauri::command]
@@ -16,6 +17,13 @@ pub fn open_github_source(url: String) -> Result<(), String> {
 pub fn open_handoff_target(target_id: String) -> Result<(), String> {
     let target = handoff_target(&target_id)?;
     open_native_target(target)
+}
+
+#[tauri::command]
+pub fn open_codex_handoff(prompt: String, worktree_path: Option<String>) -> Result<(), String> {
+    validate_handoff_prompt(&prompt)?;
+    let worktree = validate_handoff_worktree_path(worktree_path)?;
+    open_external_url(&codex_new_thread_link(&prompt, worktree.as_ref()))
 }
 
 fn validate_codex_thread_link(deep_link: &str) -> Result<(), String> {
@@ -49,6 +57,56 @@ fn is_allowed_github_source_path(path: &str) -> bool {
         }
         _ => false,
     }
+}
+
+fn validate_handoff_prompt(prompt: &str) -> Result<(), String> {
+    if prompt.trim().is_empty() {
+        Err("Codex handoff prompt cannot be empty.".into())
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_handoff_worktree_path(
+    worktree_path: Option<String>,
+) -> Result<Option<PathBuf>, String> {
+    let Some(path) = worktree_path
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    let path = PathBuf::from(path);
+    if path.is_absolute() && path.is_dir() {
+        Ok(Some(path))
+    } else {
+        Err("Codex handoff worktree path must be an existing absolute directory.".into())
+    }
+}
+
+fn codex_new_thread_link(prompt: &str, worktree_path: Option<&PathBuf>) -> String {
+    let mut link = format!(
+        "codex://threads/new?prompt={}",
+        percent_encode_query(prompt)
+    );
+    if let Some(path) = worktree_path {
+        link.push_str("&path=");
+        link.push_str(&percent_encode_query(&path.to_string_lossy()));
+    }
+    link
+}
+
+fn percent_encode_query(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(byte as char)
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
 }
 
 fn handoff_target(target_id: &str) -> Result<HandoffTarget, String> {
@@ -208,5 +266,35 @@ mod tests {
         assert_eq!(codex.display_name, "Codex App");
         assert!(handoff_target("gemini-cli").is_err());
         assert!(handoff_target("https://example.com").is_err());
+    }
+
+    #[test]
+    fn validates_codex_handoff_prompt() {
+        assert!(validate_handoff_prompt("Use the skill.").is_ok());
+        assert!(validate_handoff_prompt("   ").is_err());
+    }
+
+    #[test]
+    fn validates_codex_handoff_worktree_path() {
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(
+            validate_handoff_worktree_path(Some(cwd.display().to_string())).unwrap(),
+            Some(cwd)
+        );
+        assert!(validate_handoff_worktree_path(None).unwrap().is_none());
+        assert!(validate_handoff_worktree_path(Some("relative/path".into())).is_err());
+        assert!(
+            validate_handoff_worktree_path(Some("/definitely/missing/shea-worktree".into()))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn builds_codex_new_thread_link_with_prompt_and_path() {
+        let path = PathBuf::from("/tmp/shea worktree");
+        assert_eq!(
+            codex_new_thread_link("Review #407\nUse dev.", Some(&path)),
+            "codex://threads/new?prompt=Review%20%23407%0AUse%20dev.&path=%2Ftmp%2Fshea%20worktree"
+        );
     }
 }

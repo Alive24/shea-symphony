@@ -1,31 +1,49 @@
 <script lang="ts">
-  export let task: any;
-  export let onOpen: (task: any) => void = () => {};
+  export let issue: any;
+  export let disabled = false;
+  export let handoffTargetLabel = 'Codex App';
+  export let copied = false;
+  export let message = '';
+  export let onOpen: (issue: any) => void = () => {};
+  export let onCopy: (issue: any) => void = () => {};
+
+  function assigneeLabel(value: any) {
+    const assignees = Array.isArray(value?.assignees) ? value.assignees.filter(Boolean) : [];
+    if (!assignees.length) return 'Unassigned';
+    if (assignees.length === 1) return assignees[0];
+    return `${assignees[0]} +${assignees.length - 1}`;
+  }
 </script>
 
-<article class="attention-card {task.tone}">
-  <div class="attention-topline">
-    <span class="issue-tag">{task.id}</span>
-    <span class="status-pill {task.tone}">{task.urgency}</span>
-  </div>
-
-  <div class="attention-body">
-    <div>
-      <p class="attention-type">{task.type}</p>
-      <h3>{task.title}</h3>
+<article class="human-todo-card {issue.categoryTone}" class:refreshing={issue.refreshing}>
+  <div class="human-todo-card-head">
+    <div class="human-todo-identity">
+      <span class="issue-tag">{issue.id}</span>
+      <span class="assignee-pill">{assigneeLabel(issue)}</span>
     </div>
-    <p>{task.reason}</p>
+    <span class="human-todo-type {issue.categoryTone}">{issue.category}</span>
   </div>
 
-  <div class="recommendation">
-    <span>Recommended next action</span>
-    <strong>{task.recommended}</strong>
+  <div>
+    <strong>{issue.title}</strong>
+    <p>{issue.categoryDetail}</p>
   </div>
 
-  <div class="evidence-preview">
-    <span>Evidence preview</span>
-    <p>{task.evidence}</p>
+  <div class="human-todo-meta">
+    <span>{issue.lane} · {issue.workerStatus}</span>
+    <small>{issue.recommended}</small>
   </div>
 
-  <button class="btn btn-primary" type="button" on:click={() => onOpen(task)}>{task.action}</button>
+  <div class="handoff-actions">
+    <button class="btn btn-primary" type="button" disabled={disabled} onclick={() => onOpen(issue)}>
+      Open in {handoffTargetLabel}
+    </button>
+    <button class="btn btn-ghost" type="button" disabled={disabled} onclick={() => onCopy(issue)}>
+      {copied ? 'Copied' : 'Copy Handoff Prompt'}
+    </button>
+  </div>
+
+  {#if message}
+    <small class="handoff-status">{message}</small>
+  {/if}
 </article>

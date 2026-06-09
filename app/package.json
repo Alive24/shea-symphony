@@ -11,7 +11,9 @@
     "preview": "vite preview --host 127.0.0.1",
     "tauri": "tauri",
     "test": "node --test",
-    "test:build": "npm run build && SHEA_SYMPHONY_APP_REQUIRE_BUILD=1 node --test test/static-build.test.mjs"
+    "test:build": "npm run build && SHEA_SYMPHONY_APP_REQUIRE_BUILD=1 node --test test/static-build.test.mjs",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build"
   },
   "dependencies": {
     "@ark-ui/svelte": "^5.22.0",
@@ -25,6 +27,17 @@
     "svelte": "latest",
     "svelte-check": "^4.4.8",
     "typescript": "^6.0.3",
-    "vite": "latest"
+    "vite": "latest",
+    "storybook": "^10.4.2",
+    "@storybook/svelte-vite": "^10.4.2",
+    "@storybook/addon-svelte-csf": "^5.1.2",
+    "@chromatic-com/storybook": "^5.2.1",
+    "@storybook/addon-vitest": "^10.4.2",
+    "@storybook/addon-a11y": "^10.4.2",
+    "@storybook/addon-docs": "^10.4.2",
+    "vitest": "^4.1.8",
+    "playwright": "^1.60.0",
+    "@vitest/browser-playwright": "^4.1.8",
+    "@vitest/coverage-v8": "^4.1.8"
   }
 }

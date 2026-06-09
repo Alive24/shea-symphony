@@ -1,3 +1,5 @@
+use std::fs;
+
 use shea_symphony::config::RuntimeConfig;
 use shea_symphony::git_handoff::{prepare_issue_worktree, ProcessHandoffCommandRunner};
 use shea_symphony::handoff::{BranchTargetRole, IssueHandoffPlan};
@@ -22,7 +24,7 @@ use terminal::{apply_terminal_transition, TerminalTransitionContext};
 use super::{
     append_runtime_supervision_event, current_gh_login, execute_issue_once_with_options,
     handle_run_loop_gate_failure, handle_run_loop_handoff_failure, main_recovery_plan,
-    main_session_active_recoverable, reconcile_pending_main_session,
+    main_recovery_plan_applicable, main_session_active_recoverable, reconcile_pending_main_session,
     run_loop_apply_recovery_handoff, run_loop_assignee_ownership_decision,
     run_loop_assignee_ownership_workpad, run_loop_claim_action, run_loop_handoff_plan,
     run_loop_handoff_workpad, run_loop_live_handoff_enabled, run_loop_ownership_workpad,
@@ -468,6 +470,7 @@ pub(crate) fn run_loop_dispatch_write_candidate(
             let recovery_plan = if recover
                 && runtime_state.backend == "codex"
                 && config.codex.command.contains("app-server")
+                && main_recovery_plan_applicable(&runtime_state)
             {
                 Some(main_recovery_plan(config, &latest, &runtime_state)?)
             } else {
@@ -674,9 +677,21 @@ pub(crate) fn failed_backend_can_use_live_handoff(result: &IssueExecutionResult)
         && !result.pending_session
         && result.usage_limit_pause.is_none()
         && result.live_handoff.is_none()
-        && result
-            .message
-            .contains("Codex app-server stalled waiting for turn event")
+        && failed_backend_has_salvageable_transport_evidence(result)
+}
+
+fn failed_backend_has_salvageable_transport_evidence(result: &IssueExecutionResult) -> bool {
+    const APP_SERVER_STALL: &str = "Codex app-server stalled waiting for turn event";
+    if result.message.contains(APP_SERVER_STALL) {
+        return true;
+    }
+
+    let Some(path) = result.backend_log_path.as_ref() else {
+        return false;
+    };
+    fs::read_to_string(path)
+        .map(|content| content.contains(APP_SERVER_STALL))
+        .unwrap_or(false)
 }
 
 fn ensure_parent_integration_branch_evidence(

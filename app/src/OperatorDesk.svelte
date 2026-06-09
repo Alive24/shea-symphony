@@ -8,7 +8,10 @@
     getDefaultHandoffTarget,
     refreshStatusStore
   } from './lib/uiState.ts';
+  import AttentionCard from './lib/AttentionCard.svelte';
+  import LaneBoard from './lib/LaneBoard.svelte';
   import { operatorOverviewStore, requestOperatorLocalArtifactsRefresh } from './lib/operatorOverviewStore.ts';
+  import { humanTodoRefreshState } from './lib/viewModel/humanTodoRefresh.ts';
   import { buildLaneThroughputBoard } from './lib/viewModel/laneThroughput.ts';
   import { buildHandoffPrompt } from './lib/viewModel/handoffPrompt.ts';
   import {
@@ -19,7 +22,7 @@
     laneWorkerFromAutoloop,
     laneWorkersFromAutoloopLines,
     mergeLaneSnapshot,
-    openHandoffTarget,
+    openCodexHandoff,
     operatorRunLogLines,
     subscribeAutoloopEvents,
     type LaneSnapshot,
@@ -45,6 +48,7 @@
   $: dataSource = view.dataSource;
   $: queueIssues = view.queueIssues ?? [];
   $: liveUnavailable = dataSource?.mode === 'offline';
+  $: hasProjectQueueRead = hasReadableProjectQueue(view.raw);
   $: autoloopLanes = autoloopState?.lanes ?? {};
   $: autoloopLogLines = autoloopState?.recentLines ?? [];
   $: autoloopStdoutLines = latestAutoloopStdout(autoloopState, autoloopLogLines);
@@ -91,6 +95,14 @@
     operatorSurfaceRefreshing && lastStableHumanTodoIssues.length
       ? lastStableHumanTodoIssues.map((issue) => ({ ...issue, refreshing: true }))
       : humanTodoIssues.map((issue) => ({ ...issue, refreshing: operatorSurfaceRefreshing }));
+  $: humanTodoEmptyState = humanTodoRefreshState({
+    visibleIssueCount: visibleHumanTodoIssues.length,
+    fullLoading,
+    slowReadsRemaining,
+    operatorSurfaceRefreshing,
+    liveUnavailable,
+    hasProjectQueueRead
+  });
   $: laneBoard =
     operatorSurfaceRefreshing && lastStableLaneBoard.length
       ? lastStableLaneBoard.map((lane) => ({ ...lane, refreshing: true }))
@@ -145,16 +157,16 @@
     return 'project-yellow';
   }
 
-  function assigneeLabel(issue) {
-    const assignees = Array.isArray(issue.assignees) ? issue.assignees.filter(Boolean) : [];
-    if (!assignees.length) return 'Unassigned';
-    if (assignees.length === 1) return assignees[0];
-    return `${assignees[0]} +${assignees.length - 1}`;
-  }
-
   function normalizeIssueRef(value) {
     const match = String(value ?? '').match(/#?(\d+)/);
     return match ? `#${match[1]}` : null;
+  }
+
+  function hasReadableProjectQueue(overview) {
+    const command = overview?.commands?.githubQueue;
+    if (command?.ok) return true;
+    const queue = overview?.githubQueue;
+    return Array.isArray(queue?.issues) || queue?.stateCounts || queue?.laneCounts;
   }
 
   function handoffLabel(targetId) {
@@ -173,7 +185,7 @@
     try {
       await navigator.clipboard.writeText(buildHandoffPrompt(issue));
       copiedHandoffId = issue.id;
-      handoffStatus = { ...handoffStatus, [issue.id]: 'Handoff prompt copied.' };
+      handoffStatus = { ...handoffStatus, [issue.id]: '' };
       window.setTimeout(() => {
         if (copiedHandoffId === issue.id) copiedHandoffId = '';
       }, 1800);
@@ -185,29 +197,37 @@
     }
   }
 
+  function issueWorktreePath(issue) {
+    const issueRef = normalizeIssueRef(issue?.id);
+    const localStatus = view?.raw?.localStatus ?? {};
+    const candidates = [
+      ...(localStatus.issueWorktrees ?? []),
+      ...(localStatus.completedIssueWorktrees ?? [])
+    ];
+    return candidates.find((entry) => normalizeIssueRef(entry?.issue ?? entry?.issueRef ?? entry?.id) === issueRef)?.path ?? null;
+  }
+
   async function openHandoff(issue) {
-    const copied = await copyHandoffPrompt(issue);
+    const prompt = buildHandoffPrompt(issue);
     if (defaultHandoffTarget !== 'codex-app') {
+      const copied = await copyHandoffPrompt(issue);
       handoffStatus = {
         ...handoffStatus,
-        [issue.id]: copied
-          ? `Prompt copied. Open ${handoffLabel(defaultHandoffTarget)} and paste it.`
-          : `Clipboard unavailable. Open ${handoffLabel(defaultHandoffTarget)} manually after copying the prompt.`
+        [issue.id]: copied ? '' : `Clipboard unavailable. Open ${handoffLabel(defaultHandoffTarget)} manually after copying the prompt.`
       };
       return;
     }
     try {
-      await openHandoffTarget(defaultHandoffTarget);
+      const worktreePath = issueWorktreePath(issue);
+      if (!worktreePath) {
+        throw new Error('No local issue worktree is visible. Refresh local artifacts before opening Codex.');
+      }
+      await openCodexHandoff(prompt, worktreePath);
+      handoffStatus = { ...handoffStatus, [issue.id]: '' };
+    } catch (error) {
       handoffStatus = {
         ...handoffStatus,
-        [issue.id]: copied ? 'Prompt copied. Codex App opened.' : 'Codex App opened, but prompt was not copied.'
-      };
-    } catch (_) {
-      handoffStatus = {
-        ...handoffStatus,
-        [issue.id]: copied
-          ? 'Prompt copied. Open Codex App manually and paste it.'
-          : 'Clipboard unavailable. Open Codex App manually after copying the prompt.'
+        [issue.id]: error instanceof Error ? error.message : 'Unable to open Codex handoff.'
       };
     }
   }
@@ -287,114 +307,36 @@
     <div class="human-todo-rail" aria-label="Human operator issue queue">
       {#if visibleHumanTodoIssues.length}
         {#each visibleHumanTodoIssues as issue}
-          <article class="human-todo-card {issue.categoryTone}" class:refreshing={issue.refreshing}>
-            <div class="human-todo-card-head">
-              <div class="human-todo-identity">
-                <span class="issue-tag">{issue.id}</span>
-                <span class="assignee-pill">{assigneeLabel(issue)}</span>
-              </div>
-              <span class="human-todo-type {issue.categoryTone}">{issue.category}</span>
-            </div>
-            <div>
-              <strong>{issue.title}</strong>
-              <p>{issue.categoryDetail}</p>
-            </div>
-            <div class="human-todo-meta">
-              <span>{issue.lane} · {issue.workerStatus}</span>
-              <small>{issue.recommended}</small>
-            </div>
-            <div class="handoff-actions">
-              <button class="btn btn-primary" type="button" disabled={operatorSurfaceRefreshing} onclick={() => openHandoff(issue)}>
-                Open in {handoffLabel(defaultHandoffTarget)}
-              </button>
-              <button class="btn btn-ghost" type="button" disabled={operatorSurfaceRefreshing} onclick={() => copyHandoffPrompt(issue)}>
-                {copiedHandoffId === issue.id ? 'Copied' : 'Copy Handoff Prompt'}
-              </button>
-            </div>
-            {#if handoffMessage(issue)}
-              <small class="handoff-status">{handoffMessage(issue)}</small>
-            {/if}
-          </article>
+          <AttentionCard
+            {issue}
+            disabled={operatorSurfaceRefreshing}
+            handoffTargetLabel={handoffLabel(defaultHandoffTarget)}
+            copied={copiedHandoffId === issue.id}
+            message={handoffMessage(issue)}
+            onOpen={openHandoff}
+            onCopy={copyHandoffPrompt}
+          />
         {/each}
       {:else}
-        <article class="human-todo-empty">
-          <span class="issue-tag">Clear</span>
-          <strong>No human to-do issues visible</strong>
-          <p>
-            {fullLoading
-              ? `Loading CLI readback... ${slowReadsRemaining} surface${slowReadsRemaining === 1 ? '' : 's'} remaining.`
-              : liveUnavailable
-              ? 'Waiting for live Project readback before showing operator-owned issues.'
-              : 'The current Project read did not surface Need to Clarify, Need Human Input, or Human Review items.'}
-          </p>
+        <article class="human-todo-empty {humanTodoEmptyState.status}" aria-busy={!humanTodoEmptyState.isClear}>
+          <span class="issue-tag">{humanTodoEmptyState.badge}</span>
+          <strong>{humanTodoEmptyState.title}</strong>
+          <p>{humanTodoEmptyState.detail}</p>
         </article>
       {/if}
     </div>
   </section>
 
-  <section class:refreshing={operatorSurfaceRefreshing} class="lane-board-overview" aria-label="Worker pickup and queue by lane" aria-busy={operatorSurfaceRefreshing}>
-    <div class="autoloop-control-bar" aria-label="Autoloop controls">
-      <div>
-        <strong>{autoloopState.running ? 'Autoloop running' : 'Autoloop idle'}</strong>
-        <span>
-          {tauriAvailable ? `${autoloopState.mode} · ${autoloopState.workflowPath}` : 'Open in Shea Symphony App desktop shell for live loop control.'}
-        </span>
-        {#if latestAutoloopLine}
-          <small>{latestAutoloopLine}</small>
-        {:else if fullLoading}
-          <small>Loading CLI readback · {slowReadsRemaining} surface{slowReadsRemaining === 1 ? '' : 's'} remaining</small>
-        {/if}
-      </div>
-    </div>
-    <div class="lane-board-grid">
-      {#each laneBoard as lane}
-        <article class="lane-board-column {lane.tone}">
-          <div class="lane-board-column-head compact">
-            <strong>{lane.label}</strong>
-            <span
-              class="lane-board-state-slot {lane.refreshing || (fullLoading && !lastStableLaneBoard.length) ? 'loading' : lane.status}"
-              aria-label={lane.refreshing || (fullLoading && !lastStableLaneBoard.length)
-                ? `${lane.label} loading`
-                : lane.status === 'complete'
-                ? `${lane.label} complete`
-                : `${lane.label} ${lane.status}`}
-            >
-              {#if lane.refreshing || (fullLoading && !lastStableLaneBoard.length)}
-                <span class="lane-board-spinner" aria-hidden="true"></span>
-              {:else if lane.status === 'complete'}
-                <span aria-hidden="true">✓</span>
-              {:else if lane.status === 'blocked'}
-                <span aria-hidden="true">!</span>
-              {:else}
-                <span aria-hidden="true"></span>
-              {/if}
-            </span>
-          </div>
-
-          <div class="lane-board-issue-list">
-            {#if lane.issues.length}
-              {#each lane.issues as issue}
-                <div class="lane-board-item {issue.kind === 'picked' ? 'picked' : issue.tone} {issue.waiting ? 'waiting' : ''}">
-                  {#if issue.kind === 'picked'}
-                    <span class="worker-number {issue.waiting ? 'waiting' : ''}">{issue.workerNumber}</span>
-                  {:else}
-                    <span class="worker-number placeholder" aria-hidden="true"></span>
-                  {/if}
-                  <strong>{issue.id}</strong>
-                  <span>
-                    {issue.title}
-                    {#if issue.meta}
-                      <small>{issue.meta}</small>
-                    {/if}
-                  </span>
-                </div>
-              {/each}
-            {:else}
-              <div class="lane-board-empty">{fullLoading && !lane.refreshing && !lastStableLaneBoard.length ? 'Loading CLI readback...' : 'No issue visible.'}</div>
-            {/if}
-          </div>
-        </article>
-      {/each}
-    </div>
-  </section>
+  <LaneBoard
+    lanes={laneBoard}
+    refreshing={operatorSurfaceRefreshing}
+    {fullLoading}
+    hasStableLanes={lastStableLaneBoard.length > 0}
+    autoloopRunning={autoloopState.running}
+    {tauriAvailable}
+    autoloopMode={autoloopState.mode}
+    workflowPath={autoloopState.workflowPath}
+    {latestAutoloopLine}
+    {slowReadsRemaining}
+  />
 </section>

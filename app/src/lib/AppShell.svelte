@@ -39,10 +39,10 @@
     type RunLogVerbosity,
     type GitHubUserSnapshot
   } from './tauriAutoloop.ts';
-  import BrandRefreshStatus from './shell/BrandRefreshStatus.svelte';
   import CliLogModal from './shell/CliLogModal.svelte';
   import DeveloperToolsPanel from './shell/DeveloperToolsPanel.svelte';
   import JsonLogView from './shell/JsonLogView.svelte';
+  import Navigator from './shell/Navigator.svelte';
   import SettingsModal from './shell/SettingsModal.svelte';
 
   type ThemeMode = 'daylight' | 'night';
@@ -62,7 +62,7 @@
 
   const navItems = [
     { href: '/', label: 'Operator Desk' },
-    { href: '/lanes', label: 'Lane Views' },
+    { href: '/lanes', label: 'Lanes' },
     { href: '/doctor', label: 'Doctor' },
     { href: '/intelligence', label: 'Intelligence' }
   ];
@@ -71,6 +71,7 @@
   let dataMode: DataMode = 'live';
   let handoffTarget: HandoffTarget = 'codex-app';
   let refreshInterval: RefreshInterval = 'manual';
+  let refreshMenuOpen = false;
   let refreshTimer: number | undefined;
   let logsOpen = false;
   let runLogsOpen = false;
@@ -93,6 +94,12 @@
     avatarUrl: '',
     error: 'Loading GitHub identity'
   };
+  const refreshOptions: { value: RefreshInterval; label: string }[] = [
+    { value: 'manual', label: 'Manual' },
+    { value: '10000', label: '10s' },
+    { value: '30000', label: '30s' },
+    { value: '60000', label: '1m' }
+  ];
 
   $: latestLog = $cliLogStore[0];
   $: autoloopLogLines = autoloopState?.recentLines ?? [];
@@ -111,6 +118,8 @@
   $: autoloopStateStore.set(autoloopState);
   $: refreshRunning = $refreshStatusStore.running;
   $: refreshLabel = refreshRunning ? `Refreshing${$refreshStatusStore.remaining ? ` (${$refreshStatusStore.remaining})` : ''}` : 'Refresh';
+  $: selectedRefreshOption =
+    refreshOptions.find((option) => option.value === refreshInterval) ?? refreshOptions[0];
   $: githubUserLabel = githubUser.available && githubUser.login ? `@${githubUser.login}` : 'gh unavailable';
   $: githubUserDetail = githubUser.available
     ? githubUser.email || 'GitHub CLI authenticated'
@@ -214,6 +223,11 @@
     refreshInterval = (event.currentTarget as HTMLSelectElement).value as RefreshInterval;
     localStorage.setItem('shea-refresh-interval', refreshInterval);
     configureRefreshTimer();
+  }
+
+  function selectRefreshInterval(value: RefreshInterval) {
+    refreshMenuOpen = false;
+    updateRefreshInterval({ currentTarget: { value } } as unknown as Event);
   }
 
   function configureRefreshTimer() {
@@ -636,13 +650,6 @@
     }
   }
 
-  function isActivePath(href: string) {
-    if (href === '/') return currentPath === '/';
-    if (href === '/doctor') return currentPath === '/doctor' || currentPath.startsWith('/doctor/') || currentPath === '/observability';
-    if (href === '/intelligence') return currentPath === '/intelligence' || currentPath.startsWith('/intelligence/') || currentPath === '/reference';
-    return currentPath === href || currentPath.startsWith(`${href}/`);
-  }
-
   function navigate(event: MouseEvent, href: string) {
     event.preventDefault();
     window.dispatchEvent(new CustomEvent('shea-navigate', { detail: { href } }));
@@ -730,87 +737,32 @@
 </svelte:head>
 
 <div class="app-chrome">
-  <header class="rail" aria-label="Primary navigation">
-    <a class:loading={refreshRunning} class="brand-lockup" href="/" onclick={(event) => navigate(event, '/')}>
-      <span class="brand-mark" aria-hidden="true">
-        <span>SS</span>
-        <span class="brand-loader"></span>
-      </span>
-      <span>
-        <strong>Shea Symphony</strong>
-        <BrandRefreshStatus
-          running={refreshRunning}
-          remaining={$refreshStatusStore.remaining}
-          finishedAt={$refreshStatusStore.finishedAt}
-        />
-      </span>
-    </a>
-
-    <nav class="nav-list" aria-label="Current surface">
-      {#each navItems as item}
-        <a
-          class:active={isActivePath(item.href)}
-          href={item.href}
-          onclick={(event) => navigate(event, item.href)}
-        >
-          {item.label}
-        </a>
-      {/each}
-    </nav>
-
-    <div class="topbar-cluster nav-actions" aria-label="Runtime state">
-      <button
-        class="runtime-action-button runtime-action-write"
-        type="button"
-        disabled={!$autoloopControlStore.tauriAvailable || $autoloopControlStore.busy || $autoloopControlStore.running}
-        onclick={startWriteFromNav}
-      >
-        Start write
-      </button>
-      <button
-        class="runtime-action-button"
-        type="button"
-        disabled={!$autoloopControlStore.tauriAvailable || $autoloopControlStore.busy || !$autoloopControlStore.running}
-        onclick={stopAutoloopFromNav}
-      >
-        Stop
-      </button>
-      <button class="runtime-action-button" type="button" onclick={openAutoloopLogsFromNav}>Logs</button>
-      <button
-        class="theme-icon-button"
-        type="button"
-        aria-label="Toggle Day and Night theme"
-        aria-pressed={theme === 'night'}
-        onclick={toggleTheme}
-      >
-        {#if theme === 'daylight'}
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="12" cy="12" r="4"></circle>
-            <path d="M12 2v3M12 19v3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M2 12h3M19 12h3M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12"></path>
-          </svg>
-        {:else}
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M20.2 14.4A7.6 7.6 0 0 1 9.6 3.8A8.7 8.7 0 1 0 20.2 14.4Z"></path>
-          </svg>
-        {/if}
-      </button>
-      <button
-        class="menu-button"
-        type="button"
-        aria-label={`Settings ${githubUserLabel}`}
-        aria-haspopup="dialog"
-        aria-expanded={settingsOpen}
-        onclick={() => (settingsOpen = true)}
-      >
-        {#if githubUser.avatarUrl}
-          <img src={githubUser.avatarUrl} alt="" />
-        {:else}
-          <span class="menu-avatar" aria-hidden="true">gh</span>
-        {/if}
-        <span class="menu-user-id">{githubUserLabel}</span>
-      </button>
-    </div>
-  </header>
+  <Navigator
+    {currentPath}
+    {navItems}
+    {refreshRunning}
+    refreshRemaining={$refreshStatusStore.remaining}
+    refreshFinishedAt={$refreshStatusStore.finishedAt}
+    {refreshLabel}
+    {refreshMenuOpen}
+    {refreshOptions}
+    {refreshInterval}
+    {selectedRefreshOption}
+    autoloopControl={$autoloopControlStore}
+    {theme}
+    {settingsOpen}
+    {githubUser}
+    {githubUserLabel}
+    onNavigate={navigate}
+    onStartWrite={startWriteFromNav}
+    onStopAutoloop={stopAutoloopFromNav}
+    onRequestRefresh={() => requestRefresh('manual')}
+    onToggleRefreshMenu={() => (refreshMenuOpen = !refreshMenuOpen)}
+    onSelectRefreshInterval={selectRefreshInterval}
+    onOpenLogs={openAutoloopLogsFromNav}
+    onToggleTheme={toggleTheme}
+    onOpenSettings={() => (settingsOpen = true)}
+  />
 
   <section class:developer-tools-resizing={resizingDeveloperTools} class="workspace">
     <main class="screen-shell">
@@ -855,15 +807,10 @@
     {githubUserDetail}
     handoffTargets={HANDOFF_TARGETS}
     {handoffTarget}
-    {refreshInterval}
-    {refreshRunning}
-    {refreshLabel}
     {developerToolsOpen}
     onClose={() => (settingsOpen = false)}
     onHandoffTargetChange={updateHandoffTarget}
     onHandoffTargetSelect={updateHandoffTargetValue}
-    onRefresh={() => requestRefresh('manual')}
-    onRefreshIntervalChange={updateRefreshInterval}
     onDeveloperToolsVisibilityChange={updateDeveloperToolsVisibility}
   />
 {/if}

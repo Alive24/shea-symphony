@@ -2,8 +2,7 @@
   import { autoloopStateStore, REFRESH_REQUEST_EVENT } from './uiState.ts';
   import { operatorOverviewStore } from './operatorOverviewStore.ts';
   import {
-    localArtifactRefreshEventDetail,
-    localRefreshStatusLabel
+    localArtifactRefreshEventDetail
   } from './localArtifactRefresh.ts';
   import { getCodexTranscript, getIssueTimeline, openCodexThread, openGitHubSource } from './tauriAutoloop.ts';
   import {
@@ -17,7 +16,8 @@
     buildIssueCommentLifecycleEvents
   } from './viewModel/githubIssueTimeline.ts';
   import {
-    issueIdentityTitle
+    issueIdentityTitle,
+    nonTransientIssueTitle
   } from './viewModel/issueTitles.ts';
 
   export let view: any;
@@ -34,8 +34,10 @@
     { label: '24h', hours: 24 },
     { label: '72h', hours: 72 }
   ];
+  const completedPageSize = 8;
 
   let completedWindowHours = null;
+  let completedPage = 1;
   let transcriptLoading = false;
   let transcriptError = '';
   let transcriptResponse: any = transcriptUnavailable('Transcript has not been loaded yet.');
@@ -51,10 +53,16 @@
   $: issueRows = buildIssueRows(queueIssues, laneWorkers, view);
   $: selectedIssueRef = routeIssueRef(route);
   $: completedLocalIssues = buildCompletedLocalIssues(view, issueRows);
-  $: filteredCompletedLocalIssues = filterCompletedByWindow(completedLocalIssues, completedWindowHours);
+  $: titledCompletedLocalIssues = completedLocalIssues.filter(hasCompleteIssueTitle);
+  $: filteredCompletedLocalIssues = filterCompletedByWindow(titledCompletedLocalIssues, completedWindowHours);
+  $: completedPageCount = Math.max(1, Math.ceil(filteredCompletedLocalIssues.length / completedPageSize));
+  $: completedPage = Math.min(completedPage, completedPageCount);
+  $: pagedCompletedLocalIssues = filteredCompletedLocalIssues.slice((completedPage - 1) * completedPageSize, completedPage * completedPageSize);
+  $: completedPageStart = filteredCompletedLocalIssues.length ? (completedPage - 1) * completedPageSize + 1 : 0;
+  $: completedPageEnd = Math.min(completedPage * completedPageSize, filteredCompletedLocalIssues.length);
+  $: completedPageItems = pageItems(completedPage, completedPageCount);
   $: selectedIssue = selectedIssueRef ? findIssueForDetail(selectedIssueRef, issueRows, completedLocalIssues, view) : null;
   $: localArtifactsRefresh = $operatorOverviewStore.localArtifactsRefresh;
-  $: localArtifactsRefreshLabel = localRefreshStatusLabel(localArtifactsRefresh, formatTime);
   $: remoteLifecycleEvents = selectedIssue ? buildIssueCommentLifecycleEvents(issueTimelineResponse, selectedIssue) : [];
   $: lifecycleEvents = selectedIssue ? buildLifecycleEvents(selectedIssue, view, remoteLifecycleEvents) : [];
   $: selectedLaneKey = laneKeyForIssue(selectedIssue);
@@ -208,6 +216,48 @@
         evidence: entry.evidence
       }
     };
+  }
+
+  function hasCompleteIssueTitle(issue: any) {
+    const title = nonTransientIssueTitle(issue?.title, issue?.id);
+    if (!title) return false;
+    const normalized = title.trim().toLowerCase();
+    const issueRef = normalizeIssueRef(issue?.id);
+    if (normalized === 'issue') return false;
+    if (/^issue\s+#?\d+$/.test(normalized)) return false;
+    return !issueRef || normalized !== `issue ${issueRef.toLowerCase()}`;
+  }
+
+  function setCompletedWindow(hours: number | null) {
+    completedWindowHours = hours;
+    completedPage = 1;
+  }
+
+  function setCompletedPage(page: number) {
+    completedPage = Math.min(Math.max(1, page), completedPageCount);
+  }
+
+  function pageItems(current: number, total: number) {
+    if (total <= 7) return Array.from({ length: total }, (_, index) => index + 1);
+    const pages = new Set([1, total, current - 1, current, current + 1]);
+    if (current <= 3) {
+      pages.add(2);
+      pages.add(3);
+      pages.add(4);
+    }
+    if (current >= total - 2) {
+      pages.add(total - 3);
+      pages.add(total - 2);
+      pages.add(total - 1);
+    }
+    const sorted = [...pages].filter((page) => page >= 1 && page <= total).sort((left, right) => left - right);
+    const items: Array<number | string> = [];
+    for (const page of sorted) {
+      const previous = items[items.length - 1];
+      if (typeof previous === 'number' && page - previous > 1) items.push(`gap-${previous}-${page}`);
+      items.push(page);
+    }
+    return items;
   }
 
   function filterCompletedByWindow(issues: any[], hours: number | null) {
@@ -782,25 +832,15 @@
     </div>
   </section>
 {:else}
-  <section class="route-hero compact">
-    <div>
-      <p class="eyebrow">Lane Views</p>
-      <h2>Lane Views</h2>
-      <p>Issue-first lane posture, local runtime visibility, and workpad routing without duplicating lane pages.</p>
-    </div>
-
-    <div class="pagination">
-      <span class="section-note">{view?.generatedAtLabel ?? 'not checked'}</span>
-    </div>
-  </section>
-
   <section class="lane-board-overview lane-views-board" aria-label="Lane issue board">
     <div class="lane-board-grid">
       {#each laneColumns as lane}
         <article class="lane-board-column {lane.pickedCount ? 'success' : lane.issues.length ? 'warn' : 'neutral'}">
           <div class="lane-board-column-head">
             <strong>{lane.lane}</strong>
-            <small>{lane.pickedCount} active · {lane.completedCount} completed</small>
+            {#if lane.pickedCount || lane.completedCount}
+              <small>{lane.pickedCount} active · {lane.completedCount} completed</small>
+            {/if}
           </div>
 
           <div class="lane-board-issue-list">
@@ -826,11 +866,6 @@
 
   <section class="lane-completed-panel" aria-label="Local issue worktrees">
     <div class="lane-completed-head">
-      <div>
-        <span class="mini-label">Local worktrees</span>
-        <strong>{filteredCompletedLocalIssues.length} visible</strong>
-        <small class:error={localArtifactsRefresh?.error}>{localArtifactsRefreshLabel}</small>
-      </div>
       <div class="lane-completed-actions">
         <button class="btn btn-ghost" type="button" on:click={refreshLocalArtifacts} disabled={localArtifactsRefresh?.running}>
           {localArtifactsRefresh?.running ? 'Refreshing' : 'Refresh local'}
@@ -840,13 +875,55 @@
             <button
               class:active={completedWindowHours === window.hours}
               type="button"
-              on:click={() => completedWindowHours = window.hours}
+              on:click={() => setCompletedWindow(window.hours)}
             >
               {window.label}
             </button>
           {/each}
         </div>
       </div>
+      {#if filteredCompletedLocalIssues.length}
+        <div class="lane-completed-pagination">
+          <span>{completedPageStart}-{completedPageEnd} of {filteredCompletedLocalIssues.length}</span>
+          {#if completedPageCount > 1}
+            <nav class="worktree-pagination" aria-label="Local worktree pages">
+              <button
+                class="page-step"
+                type="button"
+                on:click={() => setCompletedPage(completedPage - 1)}
+                disabled={completedPage <= 1}
+                aria-label="Previous local worktree page"
+              >
+                Previous
+              </button>
+              {#each completedPageItems as item}
+                {#if typeof item === 'number'}
+                  <button
+                    class:active={item === completedPage}
+                    type="button"
+                    on:click={() => setCompletedPage(item)}
+                    aria-current={item === completedPage ? 'page' : undefined}
+                    aria-label={`Local worktree page ${item}`}
+                  >
+                    {item}
+                  </button>
+                {:else}
+                  <span aria-hidden="true">...</span>
+                {/if}
+              {/each}
+              <button
+                class="page-step"
+                type="button"
+                on:click={() => setCompletedPage(completedPage + 1)}
+                disabled={completedPage >= completedPageCount}
+                aria-label="Next local worktree page"
+              >
+                Next
+              </button>
+            </nav>
+          {/if}
+        </div>
+      {/if}
     </div>
 
     <div class="lane-completed-list">
@@ -861,7 +938,7 @@
           <span>Branch</span>
           <span>Head</span>
         </div>
-        {#each filteredCompletedLocalIssues as issue}
+        {#each pagedCompletedLocalIssues as issue}
           <a
             class="lane-completed-row"
             href={issuePath(issue)}
@@ -884,7 +961,7 @@
       {:else}
         <div class="inline-empty compact-empty">
           <strong>No local issue worktree in this window</strong>
-          <p>Switch to All or refresh after an issue worktree is created locally.</p>
+          <p>Switch to All or refresh after an issue worktree with a complete title is visible locally.</p>
         </div>
       {/if}
     </div>

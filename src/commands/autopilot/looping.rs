@@ -468,7 +468,7 @@ fn autopilot_loop_with_cancellation(
     }
 
     if had_lane_error && !options.continuous {
-        Err("one or more autopilot lane ticks failed; see per-lane results above".into())
+        Err("one or more Autoloop lane ticks failed; see per-lane results above".into())
     } else {
         if !stopped_reported {
             if let Some(work_unit_limit) = work_unit_limit {
@@ -2513,7 +2513,7 @@ mod tests {
             status: "ready".into(),
             selected_issue: Some(AutopilotIssueSummary {
                 identifier: "#412".into(),
-                title: "Report autopilot lane work units in run events".into(),
+                title: "Report Autoloop lane work units in run events".into(),
                 state: "Agent Review".into(),
                 assignees: Vec::new(),
                 url: None,
@@ -2693,7 +2693,7 @@ fn autopilot_loop_status_is_operator_visible(status: &AutopilotLoopStatusSnapsho
 
 pub(crate) fn render_autopilot_loop_status_human(status: &AutopilotLoopStatusSnapshot) -> String {
     let mut lines = vec![
-        "Autopilot Loop".to_string(),
+        "Autoloop Loop".to_string(),
         format!(
             "iteration={} mode={} phase={} message={}",
             status.iteration, status.mode, status.phase, status.message

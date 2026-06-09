@@ -13,7 +13,7 @@ export function buildTrackerSignals(overview: any, commands: LooseRecord) {
       label: 'ProjectV2 tracker',
       status: commands.autopilot?.ok ? 'Readable' : 'Unknown',
       tone: commands.autopilot?.ok ? 'success' : 'warn',
-      detail: autopilot?.readiness?.reason ?? 'Autopilot plan is the primary tracker read for queue posture.'
+      detail: autopilot?.readiness?.reason ?? 'Autoloop plan is the primary tracker read for queue posture.'
     },
     {
       label: 'Status metadata',

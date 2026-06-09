@@ -79,7 +79,7 @@ The normal operator path is:
 
 `autopilot loop` is a CLI foreground supervisor. It is not a daemon, background
 service, or app-server, and it currently requires `--max-iterations N` or
-`--once`. The compatibility flag still says iterations, but autopilot run
+`--once`. The compatibility flag still says iterations, but Autoloop run
 events now treat completed lane work units as the primary throughput counter.
 Supervisor cycles remain visible as lifecycle evidence through
 `supervisor_cycle`; lane events and result events carry `completed_work_units`
@@ -93,7 +93,7 @@ target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-itera
 target/debug/shea-symphony main loop workflows/shea-symphony.md --max-iterations 1 --dry-run --display tui
 ```
 
-The autopilot TUI is still a foreground command, not a daemon. It renders Main,
+The Autoloop TUI is still a foreground command, not a daemon. It renders Main,
 Review, and Merge lane cards, parked operator queues, retry/backoff rows, and a
 short event log from a shared dashboard snapshot. Keep future Web UI work on
 that snapshot/model boundary rather than parsing terminal-rendered strings.
@@ -208,7 +208,7 @@ claims, or workpad mutation.
 
 ## Post-Merge App-Server Smoke Gate
 
-Before using #359 or another broader autopilot dogfood issue for a long-running
+Before using #359 or another broader Autoloop dogfood issue for a long-running
 write-mode run, perform one bounded Main-lane app-server smoke after #367 is
 `Done` and visible on canonical `main`. This is an evidence gate, not a
 production-readiness claim.
@@ -250,7 +250,7 @@ passing app-server smoke.
 
 ## Parent #405 UAT Checklist
 
-Parent #405 owns final Human Review and UAT for independent autopilot lane
+Parent #405 owns final Human Review and UAT for independent Autoloop lane
 throughput. Run this checklist from a clean canonical `main` checkout after the
 child slices are merged into the parent integration path or visible on `main`.
 
@@ -697,14 +697,14 @@ Interrupted runtime recovery flow:
 2. Run `target/debug/shea-symphony doctor workflows/shea-symphony.md` before
    retrying or clearing runtime state; stale, failed, usage-limited, or
    unattributed sessions require operator inspection.
-3. For normal all-lane recovery, start with the same foreground autopilot path:
+3. For normal all-lane recovery, start with the same foreground Autoloop path:
 
 ```bash
 target/debug/shea-symphony autopilot plan workflows/shea-symphony.md
 target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-iterations 1 --write
 ```
 
-`autopilot loop --write` uses recover-first handling for Main and Merge lanes by
+Autoloop (`autopilot loop --write`) uses recover-first handling for Main and Merge lanes by
 default while still preserving Review's independent evidence boundary. It is the
 normal supervised dogfood path when the operator is not deliberately isolating
 one lane.
@@ -799,7 +799,7 @@ Operator commands print compact issue-scoped `Latest:` lines for the current
 lane, issue, category, action, actor, workspace/branch when known, and next
 expected step. Treat these as the glanceable status bar; no-issue idle ticks and
 runtime telemetry belong to JSON/status details, while JSONL events remain the
-durable audit trail. Autopilot invokes lane ticks in quiet mode by default, so
+durable audit trail. Autoloop invokes lane ticks in quiet mode by default, so
 iteration counters, selected-none stops, already-queued skips, and bare
 `reason=` / `pull_request=` diagnostics do not enter the operator stream unless
 you opt into verbose diagnostics.

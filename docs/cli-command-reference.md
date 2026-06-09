@@ -42,10 +42,10 @@ workflows may still use an inline prompt body.
 | `skills status` | Read-only per-repo skill readiness matrix across source suite, Codex, Gemini, metadata, links, and optional session input. | `cargo run -- skills status workflows/shea-symphony.md` |
 | `profiles` | List configured/discovered execution profiles. | `cargo run -- profiles examples/cockpit-profiles-workflow.md` |
 | `debug` | Read-only human report combining Project, doctor, smoke readiness, runtime/session, cleanup, and lane next-action signals. | `cargo run -- debug workflows/shea-symphony.md` |
-| `autopilot plan` | Read-only Main/Review/Merge lane preflight with parked operator queues and foreground autopilot readiness. | `cargo run -- autopilot plan workflows/shea-symphony.md` |
+| `autopilot plan` | Read-only Main/Review/Merge lane preflight with parked operator queues and foreground Autoloop readiness. | `cargo run -- autopilot plan workflows/shea-symphony.md` |
 | `autopilot loop` | Bounded foreground all-lane supervisor tick that runs Main, Review, and Merge lane loops in order. | `cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --write` |
 
-`autopilot plan` is the mandatory planning bridge before `autopilot loop`. It
+The Autoloop plan (`autopilot plan`) is the mandatory planning bridge before `autopilot loop`. It
 does not claim Project issues, launch Main/Review/Merge workers, start sessions,
 write workpads, update runtime state, or mutate PRs. Its human output gives one
 compact row for Main, Review, and Merge, plus parked `Human Review`,
@@ -60,7 +60,7 @@ cargo run -- autopilot plan workflows/shea-symphony.md --json
 Readiness is explicit: `ready`, `idle_but_healthy`,
 `blocked_by_doctor_or_canonical_checkout`, or
 `blocked_by_ambiguous_lane_or_runtime_state`. Doctor blockers and canonical
-checkout safety are blockers for write-mode autopilot; historical Doctor
+checkout safety are blockers for write-mode Autoloop; historical Doctor
 warnings remain visible evidence without automatically blocking the plan.
 
 `autopilot loop` is a foreground command, not a daemon, background service, or
@@ -81,7 +81,7 @@ between lanes, and records one lane work-unit result for each lane. A slow,
 blocked, idle, or busy lane remains visible in the status and result output, but
 it is not a shared global iteration gate when another lane has ready work. A
 global readiness blocker such as an unsafe canonical checkout, Doctor blocker,
-or non-recoverable runtime ambiguity still blocks write-mode autopilot before
+or non-recoverable runtime ambiguity still blocks write-mode Autoloop before
 lane mutation.
 
 The iteration budget controls the supervisor lifetime, not the total number of
@@ -97,7 +97,7 @@ turning the other lanes off.
 Use `--display tui` for a scannable foreground dashboard that shows Main,
 Review, and Merge lane cards, parked operator queues, retry/backoff rows, and
 recent loop events. `--json` remains a machine-output mode and cannot be
-combined with `--display tui`. The TUI is rendered from an autopilot dashboard
+combined with `--display tui`. The TUI is rendered from an Autoloop dashboard
 snapshot rather than from ad hoc terminal text, so a future Web UI should read
 that shared snapshot shape instead of parsing terminal output.
 

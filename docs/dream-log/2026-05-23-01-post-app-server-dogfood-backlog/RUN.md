@@ -30,7 +30,7 @@ Operator context: after #367 app-server parent reached Human Review; operator wi
 
 This Dream run intentionally avoided duplicating the active implementation parents:
 
-- #359/#362/#363 already cover write-mode all-lane autopilot and its docs/skills.
+- #359/#362/#363 already cover write-mode all-lane Autoloop and its docs/skills.
 - #364 already covers Forge/Project relationship support.
 - #367/#368/#369/#370/#371 already cover the app-server runtime migration.
 - #321-#327 already cover the earlier OpenAI Symphony parity backlog.

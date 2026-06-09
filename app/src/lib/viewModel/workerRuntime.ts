@@ -137,7 +137,7 @@ export function buildWorkerMonitor(
     backend: issue.backend ?? 'Shea Symphony CLI',
     session: issue.session ?? issue.run_id ?? 'active',
     elapsed: issue.elapsed ?? 'live',
-    evidence: issue.evidence ?? issue.reason ?? 'Active issue surfaced by autopilot.',
+    evidence: issue.evidence ?? issue.reason ?? 'Active issue surfaced by autoloop.',
     target: issue.target ?? issue.target_state ?? issue.status ?? 'Unknown',
     lane: normalizeSessionLane(issue.lane) ?? 'main',
     source: 'runtime'
@@ -200,7 +200,7 @@ export function workersForLane(autopilot: any, lane: string) {
       backend: textFromValue(issue.backend, 'Shea Symphony CLI'),
       session: textFromValue(issue.session ?? issue.session_id ?? issue.run_id, 'active'),
       elapsed: textFromValue(issue.elapsed, 'live'),
-      evidence: textFromValue(issue.evidence ?? issue.reason, 'Active issue surfaced by autopilot.'),
+      evidence: textFromValue(issue.evidence ?? issue.reason, 'Active issue surfaced by autoloop.'),
       target: textFromValue(issue.target ?? issue.target_state ?? issue.status, 'Unknown')
     }));
 

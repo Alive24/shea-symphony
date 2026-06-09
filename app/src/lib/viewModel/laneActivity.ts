@@ -9,9 +9,9 @@ export function buildParkedTasks(autopilot: any, githubQueue: any, githubQueueRe
         state: queue.state ?? queue.queue ?? 'Parked',
         reason: issue.reason ?? queue.reason ?? 'Issue is parked outside active lane dispatch.',
         recommended: queue.next_action ?? issue.next_action ?? 'Inspect the issue readback before routing.',
-        evidence: issue.evidence ?? queue.evidence ?? 'Autopilot plan surfaced this item.',
+        evidence: issue.evidence ?? queue.evidence ?? 'Autoloop plan surfaced this item.',
         assignees: issue.assignees ?? [],
-        source: 'Autopilot plan'
+        source: 'Autoloop plan'
       })
     )
   );
@@ -43,7 +43,7 @@ export function laneSourceFor(lanePlan: any, autopilotResult: any, overview: any
   if (overview?.fixture === true) {
     return {
       provenance: 'fixture',
-      sourceLabel: lanePlan ? 'Fixture autopilot' : 'Fixture fallback',
+      sourceLabel: lanePlan ? 'Fixture autoloop' : 'Fixture fallback',
       sourceTone: 'warn',
       countsReliable: true
     };
@@ -52,7 +52,7 @@ export function laneSourceFor(lanePlan: any, autopilotResult: any, overview: any
   if (lanePlan) {
     return {
       provenance: 'live',
-      sourceLabel: 'Live autopilot',
+      sourceLabel: 'Live autoloop',
       sourceTone: 'success',
       countsReliable: true
     };

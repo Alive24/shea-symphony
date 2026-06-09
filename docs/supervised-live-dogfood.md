@@ -79,7 +79,7 @@ Proceed only when tracker access is trusted, `autopilot plan` reports readiness
 or a clear idle state, and the dry-run shows no blocking integration gaps. Use
 `debug` when a compact human-readable readiness report is useful.
 
-## One Autopilot Tick
+## One Autoloop Tick
 
 Preview the same bounded all-lane foreground tick without tracker mutation:
 
@@ -93,7 +93,7 @@ Use one bounded write tick:
 cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --write
 ```
 
-`autopilot loop` is a bounded foreground CLI supervisor, not a daemon,
+Autoloop (`autopilot loop`) is a bounded foreground CLI supervisor, not a daemon,
 background service, or app-server. It composes Main, Review, and Merge lane
 ticks in order and returns control to the operator after the explicit iteration
 budget. Drop to `main loop`, `review loop`, or `merge loop` only for focused

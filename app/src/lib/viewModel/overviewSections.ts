@@ -33,7 +33,7 @@ export function buildCommandFailures(commands: Record<string, any>) {
 
 export function buildReadinessItems(commands: Record<string, any>) {
   return [
-    readinessFromCommand('Autopilot plan', commands.autopilot),
+    readinessFromCommand('Autoloop plan', commands.autopilot),
     readinessFromCommand('Doctor', commands.doctor),
     readinessFromCommand('Review status', commands.review),
     readinessFromCommand('Skills', commands.skills)
@@ -71,7 +71,7 @@ export function buildLaneSummaries({
         : githubQueue?.laneCounts
           ? `${githubLaneCount} open Project item${githubLaneCount === 1 ? '' : 's'} in lane states.`
           : source.provenance === 'live'
-            ? 'Live autopilot read returned no selected issue for this lane.'
+            ? 'Live autoloop read returned no selected issue for this lane.'
             : fallback?.latest ?? 'No live lane data.',
       posture:
         lanePlan?.status ??

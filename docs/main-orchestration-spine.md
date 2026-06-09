@@ -41,10 +41,10 @@ clear owner:
 - `src/commands/autopilot.rs`: read-only `autopilot plan` execution. It owns
   the preflight snapshot shape, lane proposals, parked queue summaries,
   readiness rendering, and the explicit no-mutation planning contract.
-- `src/commands/autopilot/lanes.rs`: read-only autopilot lane proposals. It
+- `src/commands/autopilot/lanes.rs`: read-only Autoloop lane proposals. It
   owns Main, Review, and Merge dry-run selection, proposed next actions, and
   lane evidence summaries without mutating tracker state.
-- `src/commands/autopilot/readiness.rs`: read-only autopilot readiness and
+- `src/commands/autopilot/readiness.rs`: read-only Autoloop readiness and
   safety summary assembly. It owns Doctor/canonical-checkout/runtime blockers
   and warnings while leaving lane proposal selection in `autopilot.rs`.
 - `src/commands/clean.rs`: artifact cleanup plan and audit command execution.
@@ -113,7 +113,7 @@ clear owner:
   lane handoff planning remains outside the command module.
 - `src/commands/doctor.rs`: Doctor command execution, selective issue
   hydration, and command-level Doctor diagnostics. It owns audit loading and
-  rendering while exposing read-only summaries for debug and autopilot preflight.
+  rendering while exposing read-only summaries for debug and Autoloop preflight.
 - `src/commands/doctor/repair.rs`: Doctor repair and auto-fix command glue,
   including write-mode repair evidence, operator-confirmed PR ready repair, and
   the legacy Human Review repair entrypoint.

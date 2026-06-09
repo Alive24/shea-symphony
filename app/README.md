@@ -6,7 +6,7 @@ This app was migrated from the OpenDesign prototype at:
 
 It is a Tauri v2 desktop shell with a Vite + Svelte foreground surface for Shea
 Symphony. The runnable surface is the first-screen Operator Desk: Human Todo and
-Lane Board. Tauri owns the local `autopilot loop` process and uses allowlisted
+Lane Board. Tauri owns the local Autoloop process, launched through `autopilot loop`, and uses allowlisted
 Shea Symphony CLI commands for readback; there is no runtime Node bridge.
 
 ## Run

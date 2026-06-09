@@ -123,7 +123,7 @@ fn parent_batch_human_review_brief_preserves_order_and_boundaries() {
 }
 
 #[test]
-fn autopilot_dogfood_docs_prefer_foreground_loop() {
+fn autoloop_dogfood_docs_prefer_foreground_loop() {
     let command_reference = repo_file("docs/cli-command-reference.md");
     let operator_dogfood = repo_file("docs/operator-dogfood.md");
     let supervised_runbook = repo_file("docs/supervised-live-dogfood.md");
@@ -168,7 +168,7 @@ fn autopilot_dogfood_docs_prefer_foreground_loop() {
 }
 
 fn docs_readiness_contains_independent_lane_model(document: &str) -> bool {
-    document.contains("Autopilot lane throughput is independent")
+    document.contains("Autoloop lane throughput is independent")
         && document.contains("shared")
         && document.contains("global iteration gate")
 }

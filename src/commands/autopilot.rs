@@ -303,7 +303,7 @@ fn state_summary_value(issues: &[TrackerIssue]) -> String {
 
 fn render_autopilot_plan_human(snapshot: &AutopilotPlanSnapshot) -> String {
     let mut lines = vec![
-        "Autopilot Plan".to_string(),
+        "Autoloop Plan".to_string(),
         "read_only=true".to_string(),
         format!("workflow={}", snapshot.workflow_path),
         format!("state_summary={}", snapshot.state_summary),

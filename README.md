@@ -33,7 +33,7 @@ After setting up Shea Symphony, the desired human workflow looks like this:
 
 - Configurable backends and prompts for Main, Review, and Merge lanes.
 - Configurable handoff templates
-- Switch between Autopilot and Manual mode for fine control
+- Switch between Autoloop and Manual mode for fine control
 
 #### CLI Toolkit
 
@@ -136,9 +136,9 @@ cargo run -- review loop workflows/shea-symphony.md --max-iterations 1 --dry-run
 cargo run -- merge loop workflows/shea-symphony.md --max-iterations 1 --dry-run
 ```
 
-`autopilot plan` is the bridge toward all-lane automation. It does not launch
-workers. It shows lane readiness, parked human queues, runtime concerns,
-doctor findings, and the next likely actions.
+The Autoloop plan (`autopilot plan`) is the bridge toward all-lane automation.
+It does not launch workers. It shows lane readiness, parked human queues,
+runtime concerns, doctor findings, and the next likely actions.
 
 ## The Lane Model
 
@@ -225,10 +225,10 @@ The current self-dogfood workflow can:
 - recover interrupted Main and Merge lane work by default;
 - inspect runtime/session status;
 - diagnose tracker, PR, worktree, skill, runtime, and lane-state problems;
-- plan future all-lane autopilot actions without mutating state.
+- plan future all-lane autoloop actions without mutating state.
 
 It is still not a hosted production orchestrator. Long-running all-lane
-autopilot, richer app-server observation, broader hosted dashboards, full remote
+autoloop, richer app-server observation, broader hosted dashboards, full remote
 worker supervision, and deeper cross-provider policy controls are active
 follow-up areas.
 

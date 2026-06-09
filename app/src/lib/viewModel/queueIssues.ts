@@ -65,7 +65,7 @@ export function buildAutopilotQueueIssues(autopilot: any) {
       updatedAt: null,
       assignees: selectedRecord.assignees ?? [],
       labels: selectedRecord.labels ?? [],
-      evidence: `Autopilot plan · ${textFromValue(lane?.status, 'selected')} · ${textFromValue(lane?.reason, 'selected issue')}`,
+      evidence: `Autoloop plan · ${textFromValue(lane?.status, 'selected')} · ${textFromValue(lane?.reason, 'selected issue')}`,
       recommended: recommendationForQueueState(state),
       tone: toneForState(state),
       source: 'autopilotPlan'

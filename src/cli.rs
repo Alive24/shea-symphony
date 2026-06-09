@@ -467,7 +467,7 @@ struct AutopilotLoopArgs {
     workflow_path: PathBuf,
     #[arg(
         long,
-        help = "Bounded number of foreground autopilot iterations to run"
+        help = "Bounded number of foreground Autoloop iterations to run"
     )]
     max_iterations: Option<usize>,
     #[arg(
@@ -479,7 +479,7 @@ struct AutopilotLoopArgs {
     #[arg(
         long,
         conflicts_with_all = ["max_iterations", "once"],
-        help = "Run foreground autopilot until cancelled"
+        help = "Run foreground Autoloop until cancelled"
     )]
     continuous: bool,
     #[arg(

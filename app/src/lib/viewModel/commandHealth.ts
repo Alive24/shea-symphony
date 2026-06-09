@@ -42,7 +42,7 @@ export function buildReadPathMap(commandHealth: any[]) {
     readPathNode(byId.get('autopilot'), {
       id: 'tracker',
       label: 'Tracker Posture',
-      role: 'Autopilot plan',
+      role: 'Autoloop plan',
       detail: 'Feeds lane counts, selected issues, and parked queues.'
     }),
     readPathNode(byId.get('githubQueue'), {

@@ -12,7 +12,7 @@ Use this skill to operate a human-supervised Shea Symphony Merging Agent
 session. The Merging Agent owns merge-lane repair and landing. It does not own
 fresh feature implementation or ordinary Todo dispatch.
 
-For normal all-lane dogfood, prefer the foreground autopilot path first:
+For normal all-lane dogfood, prefer the foreground Autoloop path first:
 
 ```bash
 cargo run -- autopilot plan workflows/shea-symphony.md

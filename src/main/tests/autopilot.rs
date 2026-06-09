@@ -1112,7 +1112,7 @@ fn autopilot_loop_status_keeps_ready_lanes_running_when_one_lane_is_blocked() {
             status: "ready".into(),
             selected_issue: Some(AutopilotIssueSummary {
                 identifier: "#413".into(),
-                title: "Document and test independent autopilot lane throughput".into(),
+                title: "Document and test independent Autoloop lane throughput".into(),
                 state: "Todo".into(),
                 assignees: Vec::new(),
                 url: None,

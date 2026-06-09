@@ -62,7 +62,7 @@ Recent dogfood moved Shea Symphony from tmux-first Main and merge-agent runtime 
 
 - Backlog seed: #388.
 - Dream confidence: Medium.
-- Why kept: #367 proves implementation and Review, but #359 autopilot should not rely on app-server without a narrow post-merge smoke gate.
+- Why kept: #367 proves implementation and Review, but #359 Autoloop should not rely on app-server without a narrow post-merge smoke gate.
 - Existing coverage checked: #367 owns parent UAT, #359 owns autopilot, and #318 owns progress heartbeat behavior.
 
 ### Resilient Project Write Mutations

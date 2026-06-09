@@ -1853,7 +1853,7 @@ test('view model uses CLI autopilot parked queues for human todo issues', () => 
     ]
   );
   assert.deepEqual(view.queueIssues.find((issue) => issue.id === '#503').assignees, ['Alive24']);
-  assert.ok(view.attentionTasks.every((task) => task.sourceLabel === 'Autopilot plan'));
+  assert.ok(view.attentionTasks.every((task) => task.sourceLabel === 'Autoloop plan'));
 });
 
 test('human review project state does not appear in the review lane board queue', () => {
@@ -2156,7 +2156,7 @@ test('read surface payloads incrementally replace pending overview commands', ()
 
   assert.equal(merged.commands.autopilot.ok, true);
   assert.equal(merged.autopilot.lanes.length, 3);
-  assert.ok(view.laneSummaries.some((lane) => lane.sourceLabel === 'Live autopilot'));
+  assert.ok(view.laneSummaries.some((lane) => lane.sourceLabel === 'Live autoloop'));
 });
 
 test('offline fallback does not present fake Project or worker work', () => {

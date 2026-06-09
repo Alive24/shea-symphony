@@ -521,7 +521,7 @@ fn forge_relationship_parent_records_integration_branch_evidence() {
     let adapter = RecordingAdapter::default();
     let mut parent = tracker_issue_with_ref(
         "#405",
-        "Make autopilot lanes independently throughput-oriented",
+        "Make Autoloop lanes independently throughput-oriented",
         "Todo",
     );
     parent.description = Some("## Issue Setup\n\n- UAT Required: Yes".into());
@@ -554,14 +554,14 @@ fn forge_relationship_parent_records_integration_branch_evidence() {
         ]
     );
     assert!(readbacks.iter().any(|readback| readback.contains(
-        "parent integration branch `integration/issue-405-make-autopilot-lanes-independently-throughput-oriented` recorded"
+        "parent integration branch `integration/issue-405-make-autoloop-lanes-independently-throughput-oriented` recorded"
     )));
     let parent = adapter.get_issue("#405").unwrap().unwrap();
     let description = parent.description.unwrap();
     assert!(description.contains("### Parent Topology"));
     assert!(description.contains("- First observed subissue: #410"));
     assert!(description.contains(
-        "- Parent integration branch: `integration/issue-405-make-autopilot-lanes-independently-throughput-oriented`"
+        "- Parent integration branch: `integration/issue-405-make-autoloop-lanes-independently-throughput-oriented`"
     ));
 }
 

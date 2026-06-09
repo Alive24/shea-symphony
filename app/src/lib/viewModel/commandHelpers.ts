@@ -58,7 +58,7 @@ export function commandRecommendation(name: string, result: any) {
 
 export function labelForCommand(name: string) {
   const labels: Record<string, string> = {
-    autopilot: 'Autopilot plan',
+    autopilot: 'Autoloop plan',
     doctor: 'Doctor',
     review: 'Review status',
     skills: 'Skills status',

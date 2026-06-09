@@ -102,5 +102,5 @@ cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --writ
 `autopilot plan` is read-only. `autopilot loop` is a bounded foreground
 supervisor, not a daemon, background service, or app-server. Use Manual Main,
 Manual Review, and Manual Merge only for focused debugging, break-glass recovery,
-or operator-selected lane-specific work after the normal autopilot preflight
+or operator-selected lane-specific work after the normal Autoloop preflight
 points at that lane.

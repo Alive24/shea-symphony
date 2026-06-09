@@ -35,7 +35,7 @@ cargo run -- forge create --workflow workflows/shea-symphony.md --status backlog
   - Theme: historical ADR consolidation after app-server supersedes tmux default.
   - Confidence: Medium.
 - #388 `Backlog: add post-merge app-server runtime smoke gate`
-  - Theme: bounded app-server smoke before autopilot relies on #367.
+  - Theme: bounded app-server smoke before Autoloop relies on #367.
   - Confidence: Medium.
 - #389 `Backlog: design resilient Project write mutations`
   - Theme: Project write retry/fallback strategy after REST-first read work.

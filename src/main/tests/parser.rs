@@ -136,7 +136,7 @@ fn autopilot_loop_help_documents_foreground_boundary() {
     assert!(help.contains("foreground CLI supervisor"));
     assert!(help.contains("independent Main, Review, and Merge lane loops"));
     assert!(help.contains("--continuous"));
-    assert!(help.contains("Bounded number of foreground autopilot iterations"));
+    assert!(help.contains("Bounded number of foreground Autoloop iterations"));
     assert!(help.contains("Preview bounded independent lane loops without mutation"));
     assert!(help.contains("--no-recover"));
     assert!(!help.contains("Enable recover-first handling"));

@@ -77,7 +77,7 @@ These items remain blockers for claiming broad self-running parity:
 2. Full Claude Code protocol parity beyond conservative subprocess execution.
 3. Persistent or unbounded worker supervision with retry, continuation, stall
    recovery, and terminal workspace cleanup wired into reconciliation. Bounded
-   foreground autopilot loop is not a daemon and does not close this obligation
+   foreground Autoloop is not a daemon and does not close this obligation
    by itself.
 4. Persistent Review Agent supervision that is independent from the main
    implementation lane and can safely pass work to `Human Review`.

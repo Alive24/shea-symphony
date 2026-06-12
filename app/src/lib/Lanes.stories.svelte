@@ -1,6 +1,6 @@
 <script module>
   import { defineMeta } from '@storybook/addon-svelte-csf';
-  import LaneViews from './LaneViews.svelte';
+  import LaneIssueView from './LaneIssueView.svelte';
   import { buildFixtureOverview } from './operatorFixtures.ts';
   import { buildViewModel } from './operatorViewModel.ts';
 
@@ -118,7 +118,7 @@
 
   const { Story } = defineMeta({
     title: 'Pages/Lanes',
-    component: LaneViews,
+    component: LaneIssueView,
     tags: ['autodocs'],
     parameters: {
       layout: 'fullscreen'
@@ -132,7 +132,7 @@
 
 {#snippet template(args)}
   <main class="lanes-page-story-shell" aria-label="Lanes page Storybook preview">
-    <LaneViews {...args} />
+    <LaneIssueView {...args} />
   </main>
 {/snippet}
 
@@ -154,7 +154,7 @@
   {template}
 />
 <Story
-  name="Issue lifecycle detail"
+  name="Issue detail"
   args={{
     view: activeLanesView,
     route: '/lanes/409'
@@ -172,7 +172,8 @@
 
 <style>
   .lanes-page-story-shell {
-    width: 1920px;
+    width: 100%;
+    max-width: 1920px;
     min-height: 1080px;
     padding: var(--space-6);
     color: var(--fg);

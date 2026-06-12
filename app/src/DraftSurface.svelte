@@ -4,7 +4,7 @@
   import EvidenceColumns from './lib/EvidenceColumns.svelte';
   import IntelligenceDashboard from './lib/IntelligenceDashboard.svelte';
   import IssueIndex from './lib/IssueIndex.svelte';
-  import LaneViews from './lib/LaneViews.svelte';
+  import LaneIssueView from './lib/LaneIssueView.svelte';
   import OperatorBrief from './lib/OperatorBrief.svelte';
   import ReadPathMap from './lib/ReadPathMap.svelte';
   import ReadSurfaceObservatory from './lib/ReadSurfaceObservatory.svelte';
@@ -55,7 +55,7 @@
 </script>
 
 {#if route.startsWith('/lanes')}
-  <LaneViews {view} {route} />
+  <LaneIssueView {view} {route} />
 {:else if route === '/doctor' || route === '/observability'}
   <RuntimeRibbon
     source={view?.dataSource}

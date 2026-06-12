@@ -265,7 +265,7 @@ function baseFixtureOverview() {
           { phase: 'Done', label: 'Merge lane closed issue', time: minutesAgo(164), url: 'https://github.com/Alive24/shea-symphony/issues/412#issuecomment-1004123' }
         ],
         '#417': [
-          { phase: 'Backlog', label: 'Created from Lane Views polish note', time: minutesAgo(980), url: 'https://github.com/Alive24/shea-symphony/issues/417' },
+          { phase: 'Backlog', label: 'Created from LaneIssueView polish note', time: minutesAgo(980), url: 'https://github.com/Alive24/shea-symphony/issues/417' },
           { phase: 'Main', label: 'Implementation handoff published', time: minutesAgo(790), url: 'https://github.com/Alive24/shea-symphony/issues/417#issuecomment-1004171' },
           { phase: 'Agent Review', label: 'Review evidence linked tracker timeline', time: minutesAgo(610), url: 'https://github.com/Alive24/shea-symphony/issues/417#issuecomment-1004172' },
           { phase: 'Done', label: 'Closeout retained local worktree', time: minutesAgo(490), url: 'https://github.com/Alive24/shea-symphony/issues/417#issuecomment-1004173' }

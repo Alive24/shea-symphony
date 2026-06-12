@@ -1,6 +1,6 @@
 <script module>
   import { defineMeta } from '@storybook/addon-svelte-csf';
-  import LaneViews from './LaneViews.svelte';
+  import LaneIssueView from './LaneIssueView.svelte';
   import { buildFixtureOverview } from './operatorFixtures.ts';
   import { buildViewModel } from './operatorViewModel.ts';
 
@@ -17,7 +17,56 @@
     };
   }
 
-  const completedIssue = issueView('409');
+  function minutesAgo(minutes) {
+    return new Date(Date.now() - minutes * 60 * 1000).toISOString();
+  }
+
+  const transcriptFixture = {
+    status: 'available',
+    deepLink: 'codex://threads/019e8f37-5cab-74f3-9933-93e3809396e5',
+    path: '/tmp/shea-symphony/logs/app-server/issue-409.protocol.jsonl',
+    threadId: '019e8f37-5cab-74f3-9933-93e3809396e5',
+    lastUserMessageAt: new Date(Date.now() - 16 * 60 * 1000).toISOString(),
+    lastAssistantMessageAt: new Date(Date.now() - 12 * 60 * 1000).toISOString()
+  };
+  const completedIssue = {
+    ...issueView('409'),
+    transcriptFixture
+  };
+  const normalIssue = {
+    ...issueView('430', (overview) => {
+      overview.sessionsText = 'agent_session lane=merge issue=#430 title="Merge lane should land approved app-server cleanup" backend="Codex app-server" session=merge-430 pid=8129 status=running target=Done';
+      overview.localStatus.issueLifecycle['#430'] = [
+        {
+          phase: 'Backlog',
+          label: 'Issue visible in tracker',
+          time: minutesAgo(90),
+          detail: 'Tracker issue readback is available.',
+          url: 'https://github.com/Alive24/shea-symphony/issues/430'
+        },
+        {
+          phase: 'Promoted',
+          label: 'Promoted into Merge',
+          time: minutesAgo(22),
+          detail: 'Merging',
+          url: 'https://github.com/Alive24/shea-symphony/issues/430#issuecomment-1004301'
+        }
+      ];
+      overview.autopilot.active_issues = [
+        {
+          lane: 'merge',
+          issue: '#430',
+          backend: 'Codex app-server',
+          session: 'merge-430',
+          pid: 8129
+        }
+      ];
+    }),
+    transcriptFixture: {
+      ...transcriptFixture,
+      path: '/tmp/shea-symphony/logs/app-server/issue-430.protocol.jsonl'
+    }
+  };
   const humanReviewIssue = issueView('425', (overview) => {
     overview.localStatus.issueLifecycle['#425'] = [
       {
@@ -42,7 +91,7 @@
 
   const { Story } = defineMeta({
     title: 'Pages/LaneIssueView',
-    component: LaneViews,
+    component: LaneIssueView,
     tags: ['autodocs'],
     parameters: {
       layout: 'fullscreen'
@@ -52,18 +101,20 @@
 </script>
 
 {#snippet template(args)}
-  <main class="lane-issue-view-story-shell" aria-label="Lane issue detail Storybook preview">
-    <LaneViews {...args} />
+  <main class="lane-issue-view-story-shell" aria-label="LaneIssueView Storybook preview">
+    <LaneIssueView {...args} />
   </main>
 {/snippet}
 
 <Story name="Completed issue" {template} />
+<Story name="Normal issue" args={normalIssue} {template} />
 <Story name="Human review issue" args={humanReviewIssue} {template} />
 <Story name="Active runtime issue" args={activeRuntimeIssue} {template} />
 
 <style>
   .lane-issue-view-story-shell {
-    width: 1920px;
+    width: 100%;
+    max-width: 1920px;
     min-height: 1080px;
     padding: var(--space-6);
     color: var(--fg);

@@ -1074,11 +1074,11 @@ test('lane board rendering omits handoff actions and manual skill labels', () =>
     operatorDesk.indexOf('aria-label="Human operator issue queue"'),
     operatorDesk.indexOf('aria-label="Worker pickup and queue by lane"')
   );
-  const laneDetail = readFileSync(new URL('../src/lib/LaneDetail.svelte', import.meta.url), 'utf8');
+  const laneIssueView = readFileSync(new URL('../src/lib/LaneIssueView.svelte', import.meta.url), 'utf8');
   const attentionCard = readFileSync(new URL('../src/lib/AttentionCard.svelte', import.meta.url), 'utf8');
 
   assert.doesNotMatch(laneBoardSection, /handoff-actions|Copy Handoff Prompt|Next Skill|Manual Main|Manual Review|Manual Merge/);
-  assert.doesNotMatch(laneDetail, /Next Skill|Manual Main|Manual Review|Manual Merge/);
+  assert.doesNotMatch(laneIssueView, /Next Skill|Manual Main|Manual Review|Manual Merge/);
   assert.match(humanTodoSection, /<AttentionCard/);
   assert.match(attentionCard, /handoff-actions/);
   assert.match(attentionCard, /Open in/);
@@ -1320,7 +1320,7 @@ test('Codex transcript parser renders app-server protocol JSONL without token de
           item: {
             type: 'commandExecution',
             command: 'rg transcript app/src',
-            aggregatedOutput: 'app/src/lib/LaneViews.svelte:350',
+            aggregatedOutput: 'app/src/lib/LaneIssueView.svelte:350',
             status: 'completed',
             exitCode: 0
           }
@@ -1337,7 +1337,7 @@ test('Codex transcript parser renders app-server protocol JSONL without token de
   assert.equal(parsed.summary.toolCalls, 1);
   assert.equal(parsed.events.some((event) => event.body === 'tiny'), false);
   assert.equal(parsed.events.find((event) => event.kind === 'tool_call').title, 'rg transcript app/src');
-  assert.match(parsed.events.find((event) => event.kind === 'tool_output').body, /LaneViews/);
+  assert.match(parsed.events.find((event) => event.kind === 'tool_output').body, /LaneIssueView/);
 });
 
 test('Codex transcript parser marks malformed still-growing JSONL as partial', () => {
@@ -1349,21 +1349,35 @@ test('Codex transcript parser marks malformed still-growing JSONL as partial', (
 });
 
 test('Codex conversation surface uses a deep link summary instead of transcript rendering', () => {
-  const laneViews = readFileSync(new URL('../src/lib/LaneViews.svelte', import.meta.url), 'utf8');
+  const laneIssueView = readFileSync(new URL('../src/lib/LaneIssueView.svelte', import.meta.url), 'utf8');
   const tauriAutoloop = readFileSync(new URL('../src/lib/tauriAutoloop.ts', import.meta.url), 'utf8');
 
-  assert.match(laneViews, /Open in Codex/);
-  assert.match(laneViews, /transcriptDeepLink/);
-  assert.match(laneViews, /lastUserMessageAt/);
-  assert.match(laneViews, /lastAssistantMessageAt/);
-  assert.match(laneViews, /openCodexThread\(transcriptDeepLink\)/);
-  assert.match(laneViews, /openSourceLink\(event\.url\)/);
+  assert.match(laneIssueView, /Open in Codex/);
+  assert.match(laneIssueView, /transcriptDeepLink/);
+  assert.match(laneIssueView, /function codexTranscriptLink/);
+  assert.match(laneIssueView, /lastUserMessageAt/);
+  assert.match(laneIssueView, /lastAssistantMessageAt/);
+  assert.match(laneIssueView, /openCodexThread\(deepLink\)/);
+  assert.match(laneIssueView, /openSourceLink\(event\.url\)/);
   assert.match(tauriAutoloop, /open_codex_thread/);
   assert.match(tauriAutoloop, /open_github_source/);
-  assert.doesNotMatch(laneViews, /JsonLogView/);
-  assert.doesNotMatch(laneViews, /transcriptPageEvents/);
-  assert.doesNotMatch(laneViews, /window\.open\(transcriptDeepLink/);
-  assert.doesNotMatch(laneViews, /target="_blank" rel="noreferrer">Source/);
+  assert.doesNotMatch(laneIssueView, /JsonLogView/);
+  assert.doesNotMatch(laneIssueView, /transcriptPageEvents/);
+  assert.doesNotMatch(laneIssueView, /window\.open\(transcriptDeepLink/);
+  assert.doesNotMatch(laneIssueView, /target="_blank" rel="noreferrer">Source/);
+});
+
+test('LaneIssueView keeps heartbeat in summary without a separate session card', () => {
+  const laneIssueView = readFileSync(new URL('../src/lib/LaneIssueView.svelte', import.meta.url), 'utf8');
+  const summary = laneIssueView.match(/<div class="lane-detail-summary">[\s\S]*?<\/div>\s*\{#if selectedIssue\.worktree/)?.[0] ?? '';
+
+  assert.match(summary, /Last heartbeat/);
+  assert.match(summary, /formatMsTime\(heartbeatSummary\?\.lastHeartbeatMs\)/);
+  assert.match(summary, /Last event[\s\S]*Local worktree/);
+  assert.doesNotMatch(laneIssueView, /Heartbeat \/ session/);
+  assert.doesNotMatch(laneIssueView, /Latest lane event/);
+  assert.doesNotMatch(laneIssueView, /Event log/);
+  assert.doesNotMatch(laneIssueView, /lane-session-grid/);
 });
 
 test('missing transcript state is local-only and explicit', () => {
@@ -1701,26 +1715,27 @@ test('completed worktree progress display uses session provenance when present',
   assert.match(display.title, /session_registry\.updated_at_ms/);
 });
 
-test('lane detail lifecycle does not reuse tracker updatedAt as phase time', () => {
-  const laneViews = readFileSync(new URL('../src/lib/LaneViews.svelte', import.meta.url), 'utf8');
+test('LaneIssueView timeline does not reuse tracker updatedAt as phase time', () => {
+  const laneIssueView = readFileSync(new URL('../src/lib/LaneIssueView.svelte', import.meta.url), 'utf8');
   const tauriAutoloop = readFileSync(new URL('../src/lib/tauriAutoloop.ts', import.meta.url), 'utf8');
-  const inferLifecycleEvents = laneViews.match(/function inferLifecycleEvents[\s\S]*?function phaseFromText/)?.[0] ?? '';
+  const inferLifecycleEvents = laneIssueView.match(/function inferLifecycleEvents[\s\S]*?function phaseFromText/)?.[0] ?? '';
 
   assert.match(inferLifecycleEvents, /time: issue\.createdAt \?\? null/);
   assert.match(inferLifecycleEvents, /time: issue\.promotedAt \?\? promotionTimeFromRemote\(remoteEvents\) \?\? null/);
-  assert.match(laneViews, /maybeLoadIssueTimeline\(selectedIssue\)/);
-  assert.match(laneViews, /buildIssueCommentLifecycleEvents\(issueTimelineResponse, selectedIssue\)/);
-  assert.match(laneViews, /if \(!hasRemotePhase\(remoteEvents, 'Backlog'\)\)/);
-  assert.match(laneViews, /promotionTimeFromRemote\(remoteEvents\)/);
-  assert.match(laneViews, /formatTimeWithRelative\(transcriptResponse\?\.lastUserMessageAt\)/);
-  assert.match(laneViews, /formatTimeWithRelative\(transcriptResponse\?\.lastAssistantMessageAt\)/);
+  assert.match(laneIssueView, /maybeLoadIssueTimeline\(selectedIssue\)/);
+  assert.match(laneIssueView, /buildIssueCommentLifecycleEvents\(issueTimelineResponse, selectedIssue\)/);
+  assert.match(laneIssueView, /eventSortMs\(right\) - eventSortMs\(left\)/);
+  assert.match(laneIssueView, /if \(!hasRemotePhase\(remoteEvents, ["']Backlog["']\)\)/);
+  assert.match(laneIssueView, /promotionTimeFromRemote\(remoteEvents\)/);
+  assert.match(laneIssueView, /formatTimeWithRelative\(\s*transcriptResponse\?\.lastUserMessageAt/);
+  assert.match(laneIssueView, /formatTimeWithRelative\(\s*transcriptResponse\?\.lastAssistantMessageAt/);
   assert.match(tauriAutoloop, /get_issue_timeline/);
   assert.doesNotMatch(inferLifecycleEvents, /issue\.updatedAt/);
   assert.doesNotMatch(inferLifecycleEvents, /model\?\.generatedAt/);
-  assert.doesNotMatch(laneViews, /completedAt: row\.updatedAt/);
+  assert.doesNotMatch(laneIssueView, /completedAt: row\.updatedAt/);
 });
 
-test('GitHub issue comments become lane detail lifecycle events', () => {
+test('GitHub issue comments become LaneIssueView timeline events', () => {
   const events = buildIssueCommentLifecycleEvents(
     {
       available: true,

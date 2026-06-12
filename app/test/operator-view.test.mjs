@@ -927,6 +927,27 @@ test('lane throughput board keeps concise queued exception metadata visible', ()
   assert.equal(recovered.meta, 'Recovered lane event needs operator attention. · Recovered · Inspect recovered run evidence.');
 });
 
+test('lane throughput board keeps routine ready queue metadata compact', () => {
+  const board = buildLaneThroughputBoard({
+    queueIssues: [
+      {
+        id: '#430',
+        title: 'Merge lane should land approved app-server cleanup',
+        lane: 'Merge',
+        state: 'Merging',
+        evidence: 'fixture operator queue · Autoloop plan · ready · Fixture merge queue has one approved issue.',
+        recommended: 'Merge lane should verify approval and PR mergeability.',
+        tone: 'success'
+      }
+    ]
+  });
+
+  const mergeIssue = board.find((lane) => lane.laneKey === 'merge').issues.find((issue) => issue.id === '#430');
+
+  assert.equal(mergeIssue.meta, 'Merging');
+  assert.doesNotMatch(mergeIssue.meta, /Fixture merge queue|PR mergeability|Autoloop plan|fixture operator queue/);
+});
+
 test('lane throughput board keeps issue identity ahead of transient worker labels', () => {
   const board = buildLaneThroughputBoard({
     queueIssues: [

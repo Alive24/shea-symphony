@@ -210,11 +210,17 @@ function evidenceMetaParts(value: any, state: string | null) {
   const text = cleanMetaPart(value);
   if (!text) return [];
   const parts = text.split(' · ').map((part) => part.trim()).filter(Boolean);
+  if (isRoutineAutopilotReadyEvidence(parts)) return [];
   const filtered = parts.filter((part) => {
     if (sameMeta(part, state)) return false;
     return !defaultEvidenceSourceLabels.has(part.toLowerCase());
   });
   return filtered.length ? filtered : [];
+}
+
+function isRoutineAutopilotReadyEvidence(parts: string[]) {
+  const lowerParts = parts.map((part) => part.toLowerCase());
+  return lowerParts.includes('autoloop plan') && lowerParts.includes('ready');
 }
 
 function quietDefaultState(state: string | null) {
@@ -230,7 +236,13 @@ function quietDefaultWorkerDetail(detail: string | null) {
 }
 
 function quietDefaultRecommendation(recommended: string | null, state: string | null) {
-  return sameMeta(state, 'Todo') && sameMeta(recommended, 'Run Issue Quality Gate before dispatch.');
+  if (!recommended) return true;
+  if (sameMeta(state, 'Todo') && sameMeta(recommended, 'Run Issue Quality Gate before dispatch.')) return true;
+  if (sameMeta(state, 'Agent Review') && sameMeta(recommended, 'Review lane should inspect PR and record independent evidence.')) return true;
+  if (sameMeta(state, 'Human Review') && sameMeta(recommended, 'Human operator should review evidence before routing.')) return true;
+  if (sameMeta(state, 'Merging') && sameMeta(recommended, 'Merge lane should verify approval and PR mergeability.')) return true;
+  if (sameMeta(state, 'Need Human Input') && sameMeta(recommended, 'Inspect issue and diagnostics before choosing a lane.')) return true;
+  return false;
 }
 
 function dedupeMetaParts(parts: (string | null)[]) {

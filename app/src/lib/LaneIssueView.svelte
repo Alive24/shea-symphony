@@ -982,10 +982,19 @@
     </div>
 
     {#if selectedIssue.worktree?.path}
-      <div class="lane-worktree-strip">
-        <span>{selectedIssue.worktree.branch ?? "branch unknown"}</span>
-        <strong>{selectedIssue.worktree.head ?? "head unknown"}</strong>
-        <code>{selectedIssue.worktree.path}</code>
+      <div class="lane-worktree-strip" aria-label="Local worktree metadata">
+        <div class="lane-worktree-field">
+          <span class="mini-label">Branch</span>
+          <strong>{selectedIssue.worktree.branch ?? "branch unknown"}</strong>
+        </div>
+        <div class="lane-worktree-field lane-worktree-head">
+          <span class="mini-label">Head</span>
+          <code>{selectedIssue.worktree.head ?? "head unknown"}</code>
+        </div>
+        <div class="lane-worktree-field lane-worktree-path">
+          <span class="mini-label">Path</span>
+          <code>{selectedIssue.worktree.path}</code>
+        </div>
       </div>
     {/if}
 

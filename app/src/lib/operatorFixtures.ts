@@ -224,6 +224,10 @@ function baseFixtureOverview() {
           path: '/tmp/shea-symphony/worktrees/issue-409-doctor-refresh',
           branch: 'feature/issue-409-doctor-refresh',
           head: 'fixture409',
+          createdAt: minutesAgo(950),
+          lastProgressAt: minutesAgo(34),
+          lastModified: minutesAgo(29),
+          treeState: 'clean',
           completedAt: minutesAgo(34)
         },
         {
@@ -235,6 +239,10 @@ function baseFixtureOverview() {
           path: '/tmp/shea-symphony/worktrees/issue-412-menu-followup',
           branch: 'feature/issue-412-menu-followup',
           head: 'fixture412',
+          createdAt: minutesAgo(620),
+          lastProgressAt: minutesAgo(164),
+          lastModified: minutesAgo(151),
+          treeState: 'dirty',
           completedAt: minutesAgo(164)
         },
         {
@@ -246,6 +254,10 @@ function baseFixtureOverview() {
           path: '/tmp/shea-symphony/worktrees/issue-417-lane-detail',
           branch: 'feature/issue-417-lane-detail',
           head: 'fixture417',
+          createdAt: minutesAgo(980),
+          lastProgressAt: minutesAgo(490),
+          lastModified: minutesAgo(486),
+          treeState: 'clean',
           completedAt: minutesAgo(490)
         }
       ],

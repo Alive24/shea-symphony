@@ -2020,6 +2020,20 @@ test('fixture overview feeds first-screen human todo and lane board data', () =>
   assert.ok(view.readPathMap.some((path) => path.id === 'tauri-bridge'));
 });
 
+test('fixture completed worktrees include durable lane table timestamps', () => {
+  const overview = buildFixtureOverview(true);
+  const completed = overview.localStatus.completedIssueWorktrees;
+
+  assert.equal(completed.length, 3);
+  for (const entry of completed) {
+    assert.match(entry.createdAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.match(entry.lastProgressAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.match(entry.lastModified, /^\d{4}-\d{2}-\d{2}T/);
+    assert.match(entry.treeState, /^(clean|dirty)$/);
+  }
+  assert.ok(completed.some((entry) => entry.treeState === 'dirty'));
+});
+
 test('view model renders object-shaped selected issues as issue references', () => {
   const view = buildViewModel({
     generatedAt: new Date().toISOString(),

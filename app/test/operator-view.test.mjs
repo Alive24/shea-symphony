@@ -970,9 +970,9 @@ test('lane throughput board keeps issue identity ahead of transient worker label
   const mergeIssue = board.find((lane) => lane.laneKey === 'merge').issues.find((issue) => issue.id === '#417');
 
   assert.equal(mainIssue.title, 'Project issue title wins');
-  assert.match(mainIssue.meta, /tick_started/);
+  assert.equal(mainIssue.meta, 'Codex · active');
   assert.equal(reviewIssue.title, 'Last-known issue title');
-  assert.match(reviewIssue.meta, /reviewing/);
+  assert.equal(reviewIssue.meta, 'Gemini CLI · active');
   assert.equal(mergeIssue.title, '#417');
   assert.match(mergeIssue.meta, /Waiting for agent response/);
 });
@@ -1011,7 +1011,8 @@ test('lane throughput board shows useful Codex app-server runtime identity', () 
   });
 
   const issue = board.find((lane) => lane.laneKey === 'main').issues.find((row) => row.id === '#435');
-  assert.equal(issue.meta, 'Codex app-server · PID 83222 · session thread-435-turn-1');
+  assert.equal(issue.meta, 'Codex app-server · active');
+  assert.doesNotMatch(issue.meta, /PID|session|thread-435-turn-1/);
 });
 
 test('lane throughput board reconciles the same issue moving between lanes', () => {
@@ -1061,7 +1062,8 @@ test('lane throughput board reconciles the same issue moving between lanes', () 
   assert.deepEqual(main.issues.map((issue) => issue.id), []);
   assert.equal(main.runningCount, 0);
   assert.deepEqual(review.issues.map((issue) => issue.id), ['#435']);
-  assert.equal(review.issues[0].meta, 'Codex app-server · PID 83222 · session review-session');
+  assert.equal(review.issues[0].meta, 'Codex app-server · active');
+  assert.doesNotMatch(review.issues[0].meta, /PID|session|review-session/);
 });
 
 test('lane board rendering omits handoff actions and manual skill labels', () => {

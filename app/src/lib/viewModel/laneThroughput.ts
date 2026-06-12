@@ -146,16 +146,30 @@ function workerIssueRow(worker: any, index: number, issueTitleById: Map<string, 
 }
 
 function workerRuntimeMeta(worker: any) {
-  const backend = worker.backend ?? 'worker';
-  if (backend === 'Codex app-server') {
-    const session = worker.sessionId ?? (worker.session === 'session pending' ? null : worker.session);
-    return [
-      backend,
-      worker.pid ? `PID ${worker.pid}` : null,
-      session ? `session ${session}` : 'session pending'
-    ].filter(Boolean).join(' · ');
-  }
-  return `${worker.action ?? 'Active'} · ${backend} · ${worker.session ?? worker.elapsed ?? 'session'}`;
+  return `${displayWorkerBackend(worker.backend)} · ${workerRuntimeState(worker)}`;
+}
+
+function displayWorkerBackend(value: any) {
+  const backend = String(value ?? 'worker').trim();
+  const normalized = backend.toLowerCase();
+  if (normalized === 'codex-app-server' || normalized === 'codex app-server') return 'Codex app-server';
+  if (normalized === 'gemini-cli' || normalized === 'gemini') return 'Gemini CLI';
+  if (normalized === 'codex') return 'Codex';
+  if (normalized === 'tmux') return 'tmux';
+  return backend || 'worker';
+}
+
+function workerRuntimeState(worker: any) {
+  const status = String(worker.status ?? '').toLowerCase();
+  if (['failed', 'error'].includes(status)) return 'failed';
+  if (status === 'blocked') return 'blocked';
+  if (status === 'completed') return 'completed';
+  return hasWorkerSession(worker) ? 'active' : 'starting';
+}
+
+function hasWorkerSession(worker: any) {
+  const session = String(worker.sessionId ?? worker.session ?? '').trim().toLowerCase();
+  return Boolean(session && session !== 'session pending');
 }
 
 function workerDisplayTitle(worker: any, titles: Map<string, string>) {

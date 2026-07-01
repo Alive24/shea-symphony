@@ -272,7 +272,7 @@ Library Review code should be grouped by review-domain responsibility:
 - `src/review/freshness.rs`: Review freshness inputs, decisions, and workpad
   rendering for preserving or invalidating prior Human Review evidence after
   Rework.
-- `src/review/gemini_health.rs`: Gemini review backend health categories,
+- `src/review/gemini_health.rs`: review backend health categories,
   prelaunch diagnostics, retry classification, and failure signatures.
 - `src/review/job.rs`: Review job state, job records, backend trait,
   terminal polling, ledger record/write helpers, and usage-limit pause

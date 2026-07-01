@@ -30,7 +30,7 @@ pub const CODEX_APP_SERVER_HANDOFF_ENVELOPE: RuntimeEnvelopeSpec = RuntimeEnvelo
 pub const AUTOMATIC_HEADLESS_REVIEW_ENVELOPE: RuntimeEnvelopeSpec = RuntimeEnvelopeSpec {
     id: "automatic_headless_review_boundary",
     lane: "review",
-    backend: "gemini-cli",
+    backend: "agy-cli",
     path: "review/automatic",
     purpose: "headless review safety and stdout protocol",
 };

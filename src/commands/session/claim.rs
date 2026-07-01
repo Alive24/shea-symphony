@@ -148,6 +148,8 @@ fn actor_from_worker(worker: &str) -> LaneClaimActor {
     let normalized = worker.to_ascii_lowercase();
     if normalized.contains("gemini") {
         LaneClaimActor::Gemini
+    } else if normalized.contains("agy") || normalized.contains("antigravity") {
+        LaneClaimActor::Antigravity
     } else if normalized.contains("claude") {
         LaneClaimActor::Claude
     } else if normalized.contains("human") {

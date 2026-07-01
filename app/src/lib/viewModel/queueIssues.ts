@@ -12,6 +12,7 @@ export function buildQueueIssues(githubQueue: any, attentionTasks: any[] = []) {
   const fromGithub = (githubQueue?.issues ?? [])
     .map((issue) => {
       const state = normalizeStateName(issue.state);
+      if (isBlockedMainQueueState(state) && hasIncompleteNativeSubissues(issue)) return null;
       const blockedBy = normalizedBlockers(issue.blockedBy ?? issue.blocked_by);
       const unresolvedBlocked = isBlockedMainQueueState(state) && hasUnresolvedBlockers(blockedBy);
       const blockedReason = textFromValue(issue.blockedReason ?? issue.blocked_reason, 'issue has unresolved tracker dependencies');
@@ -38,7 +39,7 @@ export function buildQueueIssues(githubQueue: any, attentionTasks: any[] = []) {
         source: 'githubQueue'
       };
     })
-    .filter((issue) => isLaneQueueState(issue.state) && issue.lane !== 'Unknown');
+    .filter((issue) => issue && isLaneQueueState(issue.state) && issue.lane !== 'Unknown');
 
   if (fromGithub.length) return fromGithub.sort(queueIssueSort);
 
@@ -175,6 +176,61 @@ function normalizedBlockers(blockedBy: any) {
 
 function hasUnresolvedBlockers(blockedBy: any[] = []) {
   return blockedBy.some((blocker) => !isTerminalBlockerState(blocker?.state));
+}
+
+function hasIncompleteNativeSubissues(issue: any) {
+  const subissues = normalizedNativeSubissues(issue);
+  return subissues.some((subissue) => normalizeStateName(subissue.projectState) !== 'Done');
+}
+
+function normalizedNativeSubissues(issue: any) {
+  const fields = issue?.projectFields ?? issue?.project_fields ?? {};
+  const byId = new Map();
+  const push = (subissue: any, projectState: any = null) => {
+    const identifier = issueRefFromValue(subissue);
+    if (!identifier) return;
+    const existing = byId.get(identifier) ?? { identifier, projectState: null };
+    existing.projectState = existing.projectState
+      ?? projectState
+      ?? subissue?.projectState
+      ?? subissue?.project_state
+      ?? subissue?.projectStatus
+      ?? subissue?.project_status
+      ?? subissue?.status
+      ?? null;
+    byId.set(identifier, existing);
+  };
+
+  for (const value of [
+    issue?.nativeSubissues,
+    issue?.native_subissues,
+    issue?.subIssues,
+    issue?.sub_issues,
+    fields?.['GitHub Native Subissues']
+  ]) {
+    for (const subissue of nativeSubissueArray(value)) push(subissue);
+  }
+
+  for (const identifier of String(fields?.['Native Subissues'] ?? '').split(',').map((value) => value.trim()).filter(Boolean)) {
+    push(identifier);
+  }
+
+  for (const [identifier, state] of parseIssueStatePairs(fields?.['Native Subissue Project States'])) {
+    push(identifier, state);
+  }
+
+  return [...byId.values()];
+}
+
+function nativeSubissueArray(value: any) {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.nodes)) return value.nodes;
+  return [];
+}
+
+function parseIssueStatePairs(value: any) {
+  if (typeof value !== 'string') return [];
+  return value.split(',').map((pair) => pair.trim().split('=')).filter((pair) => pair.length === 2 && pair[0] && pair[1]);
 }
 
 function isTerminalBlockerState(state: any) {

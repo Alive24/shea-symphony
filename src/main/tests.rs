@@ -748,6 +748,41 @@ fn renders_project_state_json_dependency_readback_without_main_lane_projection()
 }
 
 #[test]
+fn renders_project_state_json_native_parent_gate_without_main_lane_projection() {
+    let mut incomplete = tracker_issue_with_ref("#447", "Incomplete native parent", "Todo");
+    incomplete.project_fields.insert(
+        "GitHub Native Subissues".into(),
+        serde_json::json!([
+            {"identifier": "#450", "project_state": "Done"},
+            {"identifier": "#451", "project_state": "Agent Review"}
+        ]),
+    );
+    let mut complete = tracker_issue_with_ref("#448", "Complete native parent", "Todo");
+    complete.project_fields.insert(
+        "GitHub Native Subissues".into(),
+        serde_json::json!([
+            {"identifier": "#452", "project_state": "Done"},
+            {"identifier": "#453", "project_state": "Done"}
+        ]),
+    );
+    let terminal_states = BTreeSet::from(["done".into()]);
+
+    let rendered =
+        render_project_state_json(&[incomplete, complete], &[], "queue", &terminal_states).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+
+    assert_eq!(value["laneCounts"]["main"], 1);
+    assert_eq!(
+        value["issues"][0]["nativeSubissues"][1]["identifier"],
+        "#451"
+    );
+    assert_eq!(
+        value["issues"][0]["nativeSubissues"][1]["projectState"],
+        "Agent Review"
+    );
+}
+
+#[test]
 fn project_state_queue_scope_excludes_terminal_issues_by_default() {
     let workflow = WorkflowDefinition::parse(
         "/tmp/WORKFLOW.md",

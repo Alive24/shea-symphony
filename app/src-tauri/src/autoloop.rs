@@ -16,24 +16,34 @@ use crate::autoloop_state::{
     default_lanes, AutoloopError, AutoloopLine, AutoloopOptions, AutoloopStarted, AutoloopStopped,
     LoopManager, LoopRuntime, LoopStateSnapshot,
 };
-use crate::cli::{command_preview, now_ms, shea_command, DEFAULT_WORKFLOW_PATH};
+use crate::cli::{command_preview_for_workspace, now_ms, shea_command_for_workspace};
+use crate::workspace::WorkspaceManager;
 
 #[tauri::command]
-pub fn get_loop_state(manager: State<'_, LoopManager>) -> Result<LoopStateSnapshot, String> {
-    Ok(manager
+pub fn get_loop_state(
+    manager: State<'_, LoopManager>,
+    workspace: State<'_, WorkspaceManager>,
+) -> Result<LoopStateSnapshot, String> {
+    let mut state = manager
         .inner
         .lock()
         .map_err(|error| error.to_string())?
         .state
-        .clone())
+        .clone();
+    if !state.running {
+        state.workflow_path = workspace.current().workflow_path;
+    }
+    Ok(state)
 }
 
 #[tauri::command]
 pub fn start_autoloop(
     app: AppHandle,
     manager: State<'_, LoopManager>,
+    workspace: State<'_, WorkspaceManager>,
     options: Option<AutoloopOptions>,
 ) -> Result<LoopStateSnapshot, String> {
+    let workspace_profile = workspace.current();
     let options = options.unwrap_or(AutoloopOptions {
         workflow_path: None,
         max_iterations: Some(1),
@@ -49,7 +59,7 @@ pub fn start_autoloop(
     let workflow_path = options
         .workflow_path
         .clone()
-        .unwrap_or_else(|| DEFAULT_WORKFLOW_PATH.into());
+        .unwrap_or_else(|| workspace_profile.workflow_path.clone());
     let write = options.write.unwrap_or(false);
     let mode = if write { "write" } else { "dry-run" }.to_string();
     let mut args = vec![
@@ -113,9 +123,12 @@ pub fn start_autoloop(
         };
     }
 
-    let mut command = shea_command(&args.iter().map(String::as_str).collect::<Vec<_>>());
+    let mut command = shea_command_for_workspace(
+        &args.iter().map(String::as_str).collect::<Vec<_>>(),
+        &workspace_profile,
+    );
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let command_for_event = command_preview(&args);
+    let command_for_event = command_preview_for_workspace(&args, &workspace_profile);
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
@@ -188,20 +201,25 @@ pub fn start_autoloop(
         }
     });
 
-    get_loop_state(manager)
+    get_loop_state(manager, workspace)
 }
 
 #[tauri::command]
 pub fn stop_autoloop(
     app: AppHandle,
     manager: State<'_, LoopManager>,
+    workspace: State<'_, WorkspaceManager>,
 ) -> Result<LoopStateSnapshot, String> {
     let pid = {
         let mut runtime = manager.inner.lock().map_err(|error| error.to_string())?;
         let Some(pid) = runtime.state.pid else {
             runtime.state.running = false;
             runtime.state.stopping = false;
-            return Ok(runtime.state.clone());
+            let mut state = runtime.state.clone();
+            if !state.running {
+                state.workflow_path = workspace.current().workflow_path;
+            }
+            return Ok(state);
         };
         runtime.state.stopping = true;
         pid
@@ -226,7 +244,7 @@ pub fn stop_autoloop(
         return Err(format!("failed to signal autoloop stop: {error}"));
     }
 
-    get_loop_state(manager)
+    get_loop_state(manager, workspace)
 }
 
 fn spawn_line_reader<R: std::io::Read + Send + 'static>(

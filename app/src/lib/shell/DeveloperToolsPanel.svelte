@@ -22,6 +22,7 @@
     running: false,
     mode: 'dry-run',
     workflowPath: 'workflows/shea-symphony.md',
+    targetRoot: '',
     latestLine: 'No recent autoloop result',
     laneMaxSummary: ''
   };
@@ -176,6 +177,9 @@
         ? `${autoloopControl.mode} · ${autoloopControl.workflowPath}`
         : 'Open in Shea Symphony App desktop shell for live loop control.'}
     </p>
+    {#if autoloopControl.targetRoot}
+      <p class="developer-tool-note">{autoloopControl.targetRoot}</p>
+    {/if}
     {#if autoloopControl.laneMaxSummary}
       <p class="developer-tool-note">{autoloopControl.laneMaxSummary}</p>
     {/if}

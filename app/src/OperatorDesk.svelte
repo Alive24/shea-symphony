@@ -59,6 +59,7 @@
     running: autoloopState.running,
     mode: autoloopState.mode,
     workflowPath: autoloopState.workflowPath,
+    targetRoot: '',
     latestLine: latestAutoloopLine,
     laneMaxSummary: laneMaxSummary(autoloopLanes)
   });
@@ -278,6 +279,7 @@
         running: false,
         mode: 'dry-run',
         workflowPath: 'workflows/shea-symphony.md',
+        targetRoot: '',
         latestLine: 'No recent autoloop result',
         laneMaxSummary: ''
       });

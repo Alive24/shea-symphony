@@ -99,6 +99,12 @@ pub(crate) enum Command {
     Debug {
         workflow_path: PathBuf,
     },
+    TargetRuntimeStatus {
+        path: PathBuf,
+    },
+    TargetRuntimeInit {
+        path: PathBuf,
+    },
     CleanupPlan {
         workflow_path: PathBuf,
     },
@@ -388,6 +394,11 @@ enum CliCommand {
     Profiles(WorkflowPathArgs),
     Debug(WorkflowPathArgs),
     #[command(
+        name = "target-runtime",
+        about = "Inspect or initialize a target repository .shea runtime"
+    )]
+    TargetRuntime(TargetRuntimeArgs),
+    #[command(
         next_help_heading = "Lane orchestration",
         name = "autopilot",
         about = "Read-only planning and bounded all-lane loop"
@@ -438,6 +449,26 @@ struct WorkflowPathArgs {
 struct AutopilotArgs {
     #[command(subcommand)]
     command: AutopilotCommandArgs,
+}
+
+#[derive(Debug, Args)]
+struct TargetRuntimeArgs {
+    #[command(subcommand)]
+    command: TargetRuntimeCommandArgs,
+}
+
+#[derive(Debug, Subcommand)]
+enum TargetRuntimeCommandArgs {
+    #[command(about = "Inspect .shea-example/.shea initialization state")]
+    Status(TargetRuntimePathArgs),
+    #[command(about = "Initialize .shea from .shea-example without overwriting")]
+    Init(TargetRuntimePathArgs),
+}
+
+#[derive(Debug, Args)]
+struct TargetRuntimePathArgs {
+    #[arg(help = "Target repository workspace path")]
+    path: PathBuf,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1826,6 +1857,14 @@ impl TryFrom<Cli> for Command {
                     CliCommand::Debug(args) => Ok(Self::Debug {
                         workflow_path: args.workflow_path,
                     }),
+                    CliCommand::TargetRuntime(args) => match args.command {
+                        TargetRuntimeCommandArgs::Status(args) => {
+                            Ok(Self::TargetRuntimeStatus { path: args.path })
+                        }
+                        TargetRuntimeCommandArgs::Init(args) => {
+                            Ok(Self::TargetRuntimeInit { path: args.path })
+                        }
+                    },
                     CliCommand::Autopilot(args) => match args.command {
                         AutopilotCommandArgs::Plan(args) => Ok(Self::AutopilotPlan {
                             workflow_path: args.workflow_path,
@@ -2152,6 +2191,7 @@ fn usage() -> String {
         "  clean                       Plan or audit artifact cleanup",
         "  profiles                    List execution profiles",
         "  debug                       Render a combined operator debug report",
+        "  target-runtime              Inspect or initialize a target repository .shea runtime",
         "",
         "Project / Agent internals:",
         "  project                     Read or mutate Project facts through grouped subcommands",

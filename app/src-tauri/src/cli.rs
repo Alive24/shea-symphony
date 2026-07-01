@@ -1,5 +1,5 @@
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
@@ -7,7 +7,9 @@ use std::{
 use serde::Serialize;
 use serde_json::{json, Value};
 
-pub use crate::target_context::DEFAULT_WORKFLOW_PATH;
+use crate::workspace::WorkspaceProfile;
+
+pub const DEFAULT_WORKFLOW_PATH: &str = "workflows/shea-symphony.md";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,10 +30,10 @@ pub struct CommandRun {
     pub stdout: String,
 }
 
-pub fn run_shea_read(args: &[String]) -> CommandRun {
+pub fn run_shea_read_for_workspace(args: &[String], workspace: &WorkspaceProfile) -> CommandRun {
     let started_at = Instant::now();
     let string_args = args.iter().map(String::as_str).collect::<Vec<_>>();
-    let mut command = shea_command(&string_args);
+    let mut command = shea_command_for_workspace(&string_args, workspace);
     match command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -78,40 +80,63 @@ pub fn now_ms() -> u128 {
         .unwrap_or(0)
 }
 
-pub fn shea_command(args: &[&str]) -> Command {
-    let repo_root = repo_root();
-    if should_use_cargo_runner() {
-        let mut command = Command::new("cargo");
-        command
-            .args(["run", "--quiet", "--"])
-            .args(args)
-            .current_dir(repo_root);
-        command
+pub fn shea_command_for_workspace(args: &[&str], workspace: &WorkspaceProfile) -> Command {
+    command_from_spec(shea_command_spec(args, workspace))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SheaCommandSpec {
+    pub program: PathBuf,
+    pub args: Vec<String>,
+    pub current_dir: PathBuf,
+}
+
+pub fn shea_command_spec(args: &[&str], workspace: &WorkspaceProfile) -> SheaCommandSpec {
+    let engine_root = workspace.engine_path();
+    let target_root = workspace.target_path();
+    if should_use_cargo_runner_for_engine(&engine_root) {
+        let mut command_args = vec![
+            "run".into(),
+            "--quiet".into(),
+            "--manifest-path".into(),
+            engine_root.join("Cargo.toml").display().to_string(),
+            "--".into(),
+        ];
+        command_args.extend(args.iter().map(|arg| (*arg).to_string()));
+        SheaCommandSpec {
+            program: PathBuf::from("cargo"),
+            args: command_args,
+            current_dir: target_root,
+        }
     } else {
-        let binary = repo_root.join("target").join("debug").join("shea-symphony");
-        let mut command = Command::new(binary);
-        command.args(args).current_dir(repo_root);
-        command
+        SheaCommandSpec {
+            program: engine_root
+                .join("target")
+                .join("debug")
+                .join("shea-symphony"),
+            args: args.iter().map(|arg| (*arg).to_string()).collect(),
+            current_dir: target_root,
+        }
     }
 }
 
-pub fn command_preview(args: &[String]) -> Vec<String> {
-    if should_use_cargo_runner() {
-        let mut preview = vec!["cargo".into(), "run".into(), "--quiet".into(), "--".into()];
-        preview.extend(args.iter().cloned());
-        preview
-    } else {
-        let repo_root = repo_root();
-        let binary = repo_root.join("target").join("debug").join("shea-symphony");
-        let mut preview = vec![binary.display().to_string()];
-        preview.extend(args.iter().cloned());
-        preview
-    }
+pub fn command_preview_for_workspace(args: &[String], workspace: &WorkspaceProfile) -> Vec<String> {
+    let string_args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let spec = shea_command_spec(&string_args, workspace);
+    let mut preview = vec![spec.program.display().to_string()];
+    preview.extend(spec.args);
+    preview
 }
 
-fn should_use_cargo_runner() -> bool {
+fn command_from_spec(spec: SheaCommandSpec) -> Command {
+    let mut command = Command::new(spec.program);
+    command.args(spec.args).current_dir(spec.current_dir);
+    command
+}
+
+fn should_use_cargo_runner_for_engine(engine_root: &Path) -> bool {
     cfg!(debug_assertions)
-        || !repo_root()
+        || !engine_root
             .join("target")
             .join("debug")
             .join("shea-symphony")
@@ -168,7 +193,7 @@ fn command_run_from_error(args: &[String], started_at: Instant, error: String) -
     }
 }
 
-fn repo_root() -> PathBuf {
+pub fn repo_root() -> PathBuf {
     let source_root = source_repo_root();
     canonical_main_worktree(&source_root).unwrap_or(source_root)
 }
@@ -212,7 +237,8 @@ fn parse_canonical_main_worktree(text: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_canonical_main_worktree;
+    use super::{parse_canonical_main_worktree, shea_command_spec};
+    use crate::workspace::WorkspaceProfile;
     use std::path::PathBuf;
 
     #[test]
@@ -230,6 +256,40 @@ branch refs/heads/main
         assert_eq!(
             parse_canonical_main_worktree(output),
             Some(PathBuf::from("/repo/main"))
+        );
+    }
+
+    #[test]
+    fn command_spec_uses_engine_manifest_and_target_cwd() {
+        let engine_root = PathBuf::from("/engine/shea-symphony");
+        let target_root = PathBuf::from("/target/repo");
+        let profile = WorkspaceProfile {
+            engine_root: engine_root.display().to_string(),
+            target_root: target_root.display().to_string(),
+            workflow_path: "workflows/shea-symphony.md".into(),
+            source: "test".into(),
+            error: None,
+        };
+
+        let spec = shea_command_spec(
+            &["autopilot", "plan", "workflows/shea-symphony.md"],
+            &profile,
+        );
+
+        assert_eq!(spec.program, PathBuf::from("cargo"));
+        assert_eq!(spec.current_dir, target_root);
+        assert_eq!(
+            spec.args,
+            vec![
+                "run",
+                "--quiet",
+                "--manifest-path",
+                "/engine/shea-symphony/Cargo.toml",
+                "--",
+                "autopilot",
+                "plan",
+                "workflows/shea-symphony.md",
+            ]
         );
     }
 }

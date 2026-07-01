@@ -7,7 +7,7 @@ use shea_symphony::profiles::selected_execution_profile;
 use shea_symphony::tracker::adapter_from_config;
 use shea_symphony::workspace::remove_issue_workspace;
 
-use crate::orchestration::{load_config, DEFAULT_RUN_LOOP_BASE_BRANCH};
+use crate::orchestration::load_config;
 
 pub(crate) fn cleanup_workspaces(
     workflow_path: PathBuf,
@@ -114,7 +114,7 @@ pub(crate) fn workspace_cleanup_plan(
         let plan = match plan_issue_handoff_for_profile(
             &config.workspace.root,
             issue,
-            DEFAULT_RUN_LOOP_BASE_BRANCH,
+            config.git_base_branch(),
             profile_namespace,
         ) {
             Ok(plan) => plan,

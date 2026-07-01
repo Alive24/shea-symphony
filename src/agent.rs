@@ -2045,6 +2045,9 @@ mod tests {
     use super::*;
     use crate::config::RuntimeConfig;
     use crate::workflow::WorkflowDefinition;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_ARTIFACT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn dry_run_backend_emits_normalized_events() {
@@ -2737,10 +2740,12 @@ exit 0
     }
 
     fn codex_config(command: &str, timeout_ms: u64) -> RuntimeConfig {
+        let artifact_root = test_artifact_root();
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
             &format!(
-                "---\nagent:\n  backend: codex\ncodex:\n  command: {command:?}\n  turn_timeout_ms: {timeout_ms}\n---\nPrompt"
+                "---\nartifacts:\n  root: {:?}\nagent:\n  backend: codex\ncodex:\n  command: {command:?}\n  turn_timeout_ms: {timeout_ms}\n---\nPrompt",
+                artifact_root.display().to_string()
             ),
         )
         .unwrap();
@@ -2752,14 +2757,24 @@ exit 0
         timeout_ms: u64,
         stall_timeout_ms: u64,
     ) -> RuntimeConfig {
+        let artifact_root = test_artifact_root();
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
             &format!(
-                "---\nagent:\n  backend: codex\ncodex:\n  command: {command:?}\n  turn_timeout_ms: {timeout_ms}\n  stall_timeout_ms: {stall_timeout_ms}\n---\nPrompt"
+                "---\nartifacts:\n  root: {:?}\nagent:\n  backend: codex\ncodex:\n  command: {command:?}\n  turn_timeout_ms: {timeout_ms}\n  stall_timeout_ms: {stall_timeout_ms}\n---\nPrompt",
+                artifact_root.display().to_string()
             ),
         )
         .unwrap();
         RuntimeConfig::from_workflow(&workflow, std::path::Path::new("/tmp/WORKFLOW.md")).unwrap()
+    }
+
+    fn test_artifact_root() -> PathBuf {
+        let counter = TEST_ARTIFACT_COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "shea-symphony-agent-test-{}-{counter}",
+            std::process::id()
+        ))
     }
 
     fn claude_config(command: &str, timeout_ms: u64) -> RuntimeConfig {
@@ -2934,6 +2949,7 @@ done
         let temp = tempfile::tempdir().unwrap();
         let (codex, trace_path) = fake_codex_app_server(temp.path());
         let workspace = temp.path().join("workspace");
+        let workspace_cwd = workspace.display().to_string();
         fs::create_dir_all(&workspace).unwrap();
         let config = codex_config(&format!("{} app-server", codex.display()), 5_000);
         let backend = CodexBackend;
@@ -2941,6 +2957,7 @@ done
             .prepare(workspace, "hello app-server".into(), &config)
             .unwrap();
         prepared.prompt_artifact_path = Some(temp.path().join("logs/prompts/app-server.prompt.md"));
+        prepared.session_registry_path = Some(temp.path().join("sessions/session-registry.json"));
         prepared.issue_identifier = Some("#368".into());
         prepared.issue_title = Some("Add Codex app-server transport backend harness".into());
         prepared
@@ -2988,6 +3005,10 @@ done
         assert!(trace.contains("\"method\":\"thread/start\""));
         assert!(trace.contains("\"method\":\"turn/start\""));
         assert!(trace.contains("\"approvalPolicy\":\"never\""));
+        assert!(trace.contains(&format!(
+            "\"cwd\":{}",
+            serde_json::to_string(&workspace_cwd).unwrap()
+        )));
         assert_eq!(trace.matches("\"reasoningEffort\":\"high\"").count(), 2);
         assert!(trace.contains("hello app-server"));
     }
@@ -3005,6 +3026,7 @@ done
             .prepare(workspace, "Continue".into(), &config)
             .unwrap();
         prepared.prompt_artifact_path = Some(temp.path().join("logs/prompts/app-server.prompt.md"));
+        prepared.session_registry_path = Some(temp.path().join("sessions/session-registry.json"));
         prepared.issue_identifier = Some("#368".into());
         prepared.app_server_resume_thread_id = Some("thread-368".into());
         prepared
@@ -3124,6 +3146,8 @@ done
                 .unwrap();
             prepared.prompt_artifact_path =
                 Some(temp.path().join("logs/prompts/app-server.prompt.md"));
+            prepared.session_registry_path =
+                Some(temp.path().join("sessions/session-registry.json"));
             prepared
                 .env
                 .insert("FAKE_CODEX_TRACE".into(), trace_path.display().to_string());
@@ -3155,6 +3179,8 @@ done
                 .unwrap();
             prepared.prompt_artifact_path =
                 Some(temp.path().join("logs/prompts/app-server.prompt.md"));
+            prepared.session_registry_path =
+                Some(temp.path().join("sessions/session-registry.json"));
             prepared
                 .env
                 .insert("FAKE_CODEX_TRACE".into(), trace_path.display().to_string());
@@ -3181,6 +3207,7 @@ done
             .prepare(workspace, "silent turn".into(), &config)
             .unwrap();
         prepared.prompt_artifact_path = Some(temp.path().join("logs/prompts/app-server.prompt.md"));
+        prepared.session_registry_path = Some(temp.path().join("sessions/session-registry.json"));
         prepared
             .env
             .insert("FAKE_CODEX_TRACE".into(), trace_path.display().to_string());
@@ -3212,6 +3239,7 @@ done
             .prepare(workspace, "partial stream".into(), &config)
             .unwrap();
         prepared.prompt_artifact_path = Some(temp.path().join("logs/prompts/app-server.prompt.md"));
+        prepared.session_registry_path = Some(temp.path().join("sessions/session-registry.json"));
         prepared
             .env
             .insert("FAKE_CODEX_TRACE".into(), trace_path.display().to_string());
@@ -3262,9 +3290,10 @@ done
         assert_eq!(prepared.profile_id.as_deref(), Some("codex-alpha"));
         assert_eq!(prepared.instance_name.as_deref(), Some("codex-alpha"));
         assert_eq!(
-            prepared.env.get("CODEX_HOME"),
+            prepared.env.get("SHEA_SYMPHONY_PROFILE_HOME"),
             Some(&"/tmp/cockpit/codex-alpha".into())
         );
+        assert!(!prepared.env.contains_key("CODEX_HOME"));
         assert_eq!(
             session_id_with_profile("codex-subprocess", &prepared),
             "codex-subprocess:codex-alpha"

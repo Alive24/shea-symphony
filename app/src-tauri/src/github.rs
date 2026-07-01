@@ -2,8 +2,9 @@ use std::process::Command;
 
 use serde::Serialize;
 use serde_json::Value;
+use tauri::State;
 
-use crate::target_context::{TargetContext, TargetOptions};
+use crate::{target_context::TargetContext, workspace::WorkspaceManager};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -112,11 +113,12 @@ pub async fn get_github_user() -> Result<GitHubUserSnapshot, String> {
 
 #[tauri::command]
 pub async fn get_issue_timeline(
+    workspace: State<'_, WorkspaceManager>,
     issue_ref: String,
-    target: Option<TargetOptions>,
 ) -> Result<IssueTimelineSnapshot, String> {
+    let workspace_profile = workspace.current();
     tauri::async_runtime::spawn_blocking(move || {
-        let context = TargetContext::from_options(target.as_ref());
+        let context = TargetContext::from_workspace(&workspace_profile);
         let Some(repository) = context.repository else {
             return Ok(unavailable_issue_timeline(
                 "",

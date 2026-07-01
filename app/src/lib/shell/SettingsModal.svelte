@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { GitHubUserSnapshot } from '../tauriAutoloop.ts';
+  import type { GitHubUserSnapshot, WorkspaceProfile } from '../tauriAutoloop.ts';
 
   type HandoffTarget = 'codex-app' | 'claude-code' | 'gemini-cli';
   type HandoffIcon = 'codex' | 'claude' | 'gemini';
@@ -10,10 +10,23 @@
   export let handoffTargets: { id: string; label: string; icon?: string }[] = [];
   export let handoffTarget: HandoffTarget = 'codex-app';
   export let developerToolsOpen = true;
+  export let workspaceProfile: WorkspaceProfile = {
+    engineRoot: '',
+    targetRoot: '',
+    workflowPath: 'workflows/shea-symphony.md',
+    source: 'self',
+    error: null
+  };
+  export let workspacePathInput = '';
+  export let workspaceBusy = false;
+  export let workspaceError = '';
   export let onClose: () => void = () => {};
   export let onHandoffTargetChange: (event: Event) => void = () => {};
   export let onHandoffTargetSelect: (target: HandoffTarget) => void = () => {};
   export let onDeveloperToolsVisibilityChange: (event: Event) => void = () => {};
+  export let onWorkspacePathInput: (event: Event) => void = () => {};
+  export let onWorkspaceSave: () => void = () => {};
+  export let onWorkspaceReset: () => void = () => {};
 
   let handoffMenuOpen = false;
 
@@ -79,6 +92,27 @@
           {/if}
           <small>{githubUserDetail}</small>
         </div>
+      </section>
+
+      <section class="settings-section">
+        <span class="settings-section-label">Workspace</span>
+        <label class="settings-field">
+          <span>Target root</span>
+          <input
+            type="text"
+            value={workspacePathInput}
+            placeholder={workspaceProfile.engineRoot || '/path/to/repository'}
+            disabled={workspaceBusy}
+            oninput={onWorkspacePathInput}
+          />
+        </label>
+        <div class="settings-actions-row">
+          <button class="btn btn-primary" type="button" disabled={workspaceBusy} onclick={onWorkspaceSave}>Save</button>
+          <button class="btn btn-ghost" type="button" disabled={workspaceBusy} onclick={onWorkspaceReset}>Use Shea checkout</button>
+        </div>
+        <small class:settings-error={workspaceError}>
+          {workspaceError || `${workspaceProfile.source} · ${workspaceProfile.targetRoot || workspaceProfile.engineRoot}`}
+        </small>
       </section>
 
       <section class="settings-section settings-section-inline">

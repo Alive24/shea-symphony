@@ -1,5 +1,3 @@
-import { getActiveTarget, type ActiveTarget } from './uiState.ts';
-
 export type LaneSnapshot = {
   lane: string;
   status: string;
@@ -45,9 +43,33 @@ export type LoopStateSnapshot = {
   recentLines: AutoloopLine[];
 };
 
+export type WorkspaceProfile = {
+  engineRoot: string;
+  targetRoot: string;
+  workflowPath: string;
+  source: string;
+  error?: string | null;
+};
+
 export type RuntimeSnapshot = Record<string, unknown>;
 export type OperatorOverview = Record<string, unknown>;
 export type ReadSurface = Record<string, unknown>;
+export type TargetRuntimeState =
+  | 'ready_to_initialize'
+  | 'initialized'
+  | 'existing_runtime'
+  | 'missing_example';
+export type TargetRuntimeReport = {
+  targetPath: string;
+  examplePath: string;
+  runtimePath: string;
+  localExcludePath?: string | null;
+  state: TargetRuntimeState;
+  initialized: boolean;
+  locallyIgnored: boolean;
+  conflict?: string | null;
+  message: string;
+};
 export type GitHubUserSnapshot = {
   available: boolean;
   login: string;
@@ -84,10 +106,6 @@ export type StartAutoloopOptions = {
   signalFormat?: 'json' | 'plain';
 };
 
-function targetOptions(): ActiveTarget {
-  return getActiveTarget();
-}
-
 export type AutoloopEvent =
   | { type: 'started'; payload: unknown }
   | { type: 'line'; payload: AutoloopLine }
@@ -122,16 +140,38 @@ export function defaultLoopState() {
   return structuredClone(defaultState);
 }
 
+export function defaultWorkspaceProfile(): WorkspaceProfile {
+  return {
+    engineRoot: '',
+    targetRoot: '',
+    workflowPath: 'workflows/shea-symphony.md',
+    source: 'self',
+    error: null
+  };
+}
+
 export async function getLoopState(): Promise<LoopStateSnapshot> {
   if (!isTauriRuntime()) return defaultLoopState();
   const { invoke } = await import('@tauri-apps/api/core');
   return invoke<LoopStateSnapshot>('get_loop_state');
 }
 
+export async function getWorkspaceProfile(): Promise<WorkspaceProfile> {
+  if (!isTauriRuntime()) return defaultWorkspaceProfile();
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<WorkspaceProfile>('get_workspace_profile');
+}
+
+export async function setActiveWorkspace(targetRoot: string | null): Promise<WorkspaceProfile> {
+  if (!isTauriRuntime()) return defaultWorkspaceProfile();
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<WorkspaceProfile>('set_active_workspace', { targetRoot });
+}
+
 export async function getRuntimeSnapshot(): Promise<RuntimeSnapshot | null> {
   if (!isTauriRuntime()) return null;
   const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<RuntimeSnapshot>('get_runtime_snapshot', { options: targetOptions() });
+  return invoke<RuntimeSnapshot>('get_runtime_snapshot');
 }
 
 export async function getGitHubUser(): Promise<GitHubUserSnapshot> {
@@ -152,19 +192,33 @@ export async function getGitHubUser(): Promise<GitHubUserSnapshot> {
 export async function getIssueTimeline(issueRef: string): Promise<Record<string, unknown> | null> {
   if (!isTauriRuntime()) return null;
   const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<Record<string, unknown>>('get_issue_timeline', { issueRef, target: targetOptions() });
+  return invoke<Record<string, unknown>>('get_issue_timeline', { issueRef });
 }
 
 export async function getOperatorOverview(force = false, scope = 'full'): Promise<OperatorOverview | null> {
   if (!isTauriRuntime()) return null;
   const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<OperatorOverview>('get_operator_overview', { options: { force, scope, target: targetOptions() } });
+  return invoke<OperatorOverview>('get_operator_overview', { options: { force, scope } });
 }
 
 export async function getReadSurface(name: string, force = false, allowProjectFallback = false): Promise<ReadSurface | null> {
   if (!isTauriRuntime()) return null;
   const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<ReadSurface>('get_read_surface', { name, force, allowProjectFallback, target: targetOptions() });
+  return invoke<ReadSurface>('get_read_surface', { name, force, allowProjectFallback });
+}
+
+export async function getTargetRuntimeState(workspacePath: string): Promise<TargetRuntimeReport | null> {
+  if (!isTauriRuntime()) return null;
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<TargetRuntimeReport>('get_target_runtime_state', { workspacePath });
+}
+
+export async function initializeTargetRuntimeState(workspacePath: string): Promise<TargetRuntimeReport> {
+  if (!isTauriRuntime()) {
+    throw new Error('Target runtime initialization is only available in the desktop shell.');
+  }
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<TargetRuntimeReport>('initialize_target_runtime_state', { workspacePath });
 }
 
 export async function getCodexTranscript(issueRef: string, sessionId: string | null = null): Promise<Record<string, unknown> | null> {
@@ -213,9 +267,7 @@ export async function startAutoloop(options: StartAutoloopOptions = {}): Promise
     throw new Error('Tauri runtime is unavailable; open Shea Symphony App in the desktop shell.');
   }
   const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<LoopStateSnapshot>('start_autoloop', {
-    options: { ...options, workflowPath: options.workflowPath ?? targetOptions().workflowPath }
-  });
+  return invoke<LoopStateSnapshot>('start_autoloop', { options });
 }
 
 export async function stopAutoloop(): Promise<LoopStateSnapshot> {

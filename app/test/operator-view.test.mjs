@@ -1390,17 +1390,17 @@ test('Codex conversation surface uses a deep link summary instead of transcript 
   assert.doesNotMatch(laneIssueView, /target="_blank" rel="noreferrer">Source/);
 });
 
-test('Tauri read and timeline requests include active target context', () => {
+test('Tauri read and timeline requests use active workspace context', () => {
   const laneIssueView = readFileSync(new URL('../src/lib/LaneIssueView.svelte', import.meta.url), 'utf8');
   const tauriAutoloop = readFileSync(new URL('../src/lib/tauriAutoloop.ts', import.meta.url), 'utf8');
   const appShell = readFileSync(new URL('../src/lib/AppShell.svelte', import.meta.url), 'utf8');
 
-  assert.match(tauriAutoloop, /getActiveTarget/);
-  assert.match(tauriAutoloop, /get_issue_timeline', \{ issueRef, target: targetOptions\(\) \}/);
-  assert.match(tauriAutoloop, /get_read_surface', \{ name, force, allowProjectFallback, target: targetOptions\(\) \}/);
-  assert.match(tauriAutoloop, /workflowPath: options\.workflowPath \?\? targetOptions\(\)\.workflowPath/);
-  assert.match(appShell, /const activeTarget = getActiveTarget\(\)/);
-  assert.match(appShell, /workflowPath: activeTarget\.workflowPath/);
+  assert.doesNotMatch(tauriAutoloop, /targetOptions/);
+  assert.match(tauriAutoloop, /get_issue_timeline', \{ issueRef \}/);
+  assert.match(tauriAutoloop, /get_read_surface', \{ name, force, allowProjectFallback \}/);
+  assert.match(tauriAutoloop, /start_autoloop', \{ options \}/);
+  assert.match(appShell, /const workflowPath = activeWorkflowPath/);
+  assert.match(appShell, /workspaceProfileStore\.set\(workspaceProfile\)/);
   assert.match(laneIssueView, /model\?\.targetContext\?\.repository/);
 });
 

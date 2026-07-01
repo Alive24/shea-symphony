@@ -6,6 +6,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::workspace::WorkspaceProfile;
+
 pub const DEFAULT_WORKFLOW_PATH: &str = "workflows/shea-symphony.md";
 pub const DEFAULT_REPOSITORY: &str = "Alive24/shea-symphony";
 
@@ -68,6 +70,33 @@ impl TargetContext {
             skills_path,
             self_workspace,
             explicit_target,
+            workflow_exists,
+        }
+    }
+
+    pub fn from_workspace(workspace: &WorkspaceProfile) -> Self {
+        let workflow_path = nonempty(Some(workspace.workflow_path.as_str()))
+            .unwrap_or_else(|| DEFAULT_WORKFLOW_PATH.into());
+        let workflow_file_path = workspace.workflow_file_path();
+        let workflow_exists = workflow_file_path.exists();
+        let parsed = WorkflowTargetConfig::from_path(&workflow_file_path);
+        let self_workspace = workspace.target_root == workspace.engine_root;
+        let repository = parsed
+            .repository
+            .or_else(|| self_workspace.then(|| DEFAULT_REPOSITORY.into()));
+        let workspace_path = Some(workspace.target_root.clone());
+        let skills_path = workspace_path
+            .as_deref()
+            .map(|path| Path::new(path).join(".codex").join("skills"))
+            .map(|path| path.display().to_string());
+
+        Self {
+            workflow_path,
+            repository,
+            workspace_path,
+            skills_path,
+            self_workspace,
+            explicit_target: !self_workspace,
             workflow_exists,
         }
     }

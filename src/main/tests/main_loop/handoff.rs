@@ -461,7 +461,7 @@ fn live_run_loop_handoff_skips_link_comment_when_pr_already_visible() {
 }
 
 #[test]
-fn live_run_loop_handoff_rejects_fallback_only_pr_evidence() {
+fn live_run_loop_handoff_accepts_fallback_pr_evidence() {
     let config = test_config();
     let issue = tracker_issue("In Progress");
     let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
@@ -482,17 +482,20 @@ fn live_run_loop_handoff_rejects_fallback_only_pr_evidence() {
             ..Default::default()
         });
 
-    assert!(!apply_live_handoff_pr_link(
+    assert!(apply_live_handoff_pr_link(
         &adapter,
         &issue.identifier,
         &mut result
     ));
 
-    assert!(!result.success);
-    assert!(result
-        .message
-        .contains("GitHub-native linked PR was not visible"));
-    assert!(result.message.contains("fallback_diagnostic_visible=true"));
+    assert!(result.success);
+    assert_eq!(
+        result
+            .live_handoff
+            .as_ref()
+            .and_then(|handoff| handoff.project_pr_link_verified),
+        Some(true)
+    );
 }
 
 #[test]
@@ -569,9 +572,7 @@ fn live_run_loop_handoff_requires_verified_project_pr_linkage() {
     ));
 
     assert!(!result.success);
-    assert!(result
-        .message
-        .contains("GitHub-native linked PR was not visible"));
+    assert!(result.message.contains("linked PR was not visible"));
     assert_eq!(
         result
             .live_handoff

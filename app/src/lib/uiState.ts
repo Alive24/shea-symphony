@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store';
+import { defaultWorkspaceProfile, type WorkspaceProfile } from './tauriAutoloop.ts';
 
 export type CliLogEntry = {
   id: number;
@@ -29,6 +30,7 @@ export const HANDOFF_TARGETS = [
 ];
 
 export const defaultHandoffTargetStore = writable('codex-app');
+export const workspaceProfileStore = writable<WorkspaceProfile>(defaultWorkspaceProfile());
 export const autoloopStateStore = writable(null);
 export const cliLogStore = writable<CliLogEntry[]>([]);
 export const autoloopControlStore = writable({
@@ -37,6 +39,7 @@ export const autoloopControlStore = writable({
   running: false,
   mode: 'dry-run',
   workflowPath: 'workflows/shea-symphony.md',
+  targetRoot: '',
   latestLine: 'No recent autoloop result',
   laneMaxSummary: ''
 });

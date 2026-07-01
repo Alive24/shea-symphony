@@ -439,7 +439,7 @@ fn apply_json_settings(state: &mut LoopStateSnapshot, settings: Option<&Value>) 
     for (lane, field) in lane_concurrency {
         if let Some(value) = settings
             .get(field)
-            .or_else(|| settings.get(&snake_to_camel(field)))
+            .or_else(|| settings.get(snake_to_camel(field)))
             .and_then(Value::as_u64)
         {
             state
@@ -486,7 +486,7 @@ fn string_json_field(payload: &Value, key: &str) -> Option<String> {
         .map(str::to_string)
         .or_else(|| {
             payload
-                .get(&snake_to_camel(key))
+                .get(snake_to_camel(key))
                 .and_then(Value::as_str)
                 .map(str::to_string)
         })
@@ -495,7 +495,7 @@ fn string_json_field(payload: &Value, key: &str) -> Option<String> {
 fn count_json_field(payload: &Value, key: &str) -> Option<usize> {
     payload
         .get(key)
-        .or_else(|| payload.get(&snake_to_camel(key)))
+        .or_else(|| payload.get(snake_to_camel(key)))
         .and_then(Value::as_u64)
         .map(|value| value as usize)
 }

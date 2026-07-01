@@ -1,5 +1,28 @@
 # Shea Symphony
 
+## Milestone 260701
+
+Delivered in this milestone:
+
+- Tauri operator desk with lane, queue, issue, worktree, and run-log visibility.
+- GUI-controlled Autoloop, including bounded runs and continuous/background runs.
+- GitHub Issues + GitHub Project v2 as the primary tracker workflow.
+- Quality-gated Issue Forge for create, promote, rework, and relationship-aware issues.
+- Repo-owned Codex/Gemini skills for Issue Forge, Reflect, Dream, Human Review, Manual lanes, and Doctor.
+- Codex app-server-first Main and Merge-agent runtime.
+- Gemini-powered Agent Review with durable review evidence and pass/rework routing.
+- Workspace, branch, PR handoff, and parent/subissue topology handling.
+- Independent Main, Review, and Merge lane throughput.
+- Human Review, guarded merge, and merge-repair flows.
+- Doctor, debug, status, TUI, event-log, and app readback surfaces.
+- Workflow-configurable prompts and workpad templates.
+
+Known gaps after this milestone:
+
+- GUI management for current Shea workflow/config files under `workflows/`.
+- External target-repository workspace support.
+- Stabilized release packaging and onboarding.
+
 Shea Symphony is an opinionated and extended Rust implementation with GUI of OpenAI Symphony orchestration system to make it also work for small teams of humans that want to start building AI-native engineering workflows in a responsible and manageable way.
 
 > NOTE: This project is being built by itself with self-dogfooding and not fully stabilized for release yet;

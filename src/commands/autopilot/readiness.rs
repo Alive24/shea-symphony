@@ -266,7 +266,8 @@ impl AutopilotCanonicalCheckout {
         };
         match inspect_canonical_checkout(&root, config) {
             Ok(report) => {
-                let reason = canonical_checkout_readiness_blocker(&report);
+                let reason =
+                    canonical_checkout_readiness_blocker(&report, config.git_base_branch());
                 Self {
                     safe_for_write: reason.is_none(),
                     root: Some(report.root.display().to_string()),
@@ -294,12 +295,17 @@ impl AutopilotCanonicalCheckout {
     }
 }
 
-fn canonical_checkout_readiness_blocker(report: &CanonicalCheckoutReport) -> Option<String> {
+fn canonical_checkout_readiness_blocker(
+    report: &CanonicalCheckoutReport,
+    base_branch: &str,
+) -> Option<String> {
     let Some(branch) = report.branch.as_deref() else {
         return Some("HEAD is detached".into());
     };
-    if branch != "main" {
-        return Some(format!("current branch is {branch:?}, expected \"main\""));
+    if branch != base_branch {
+        return Some(format!(
+            "current branch is {branch:?}, expected \"{base_branch}\""
+        ));
     }
     if let (Some(head), Some(upstream), Some(upstream_head)) = (
         report.head.as_deref(),
@@ -308,7 +314,7 @@ fn canonical_checkout_readiness_blocker(report: &CanonicalCheckoutReport) -> Opt
     ) {
         if head != upstream_head {
             return Some(format!(
-                "local main does not match upstream {upstream} at {upstream_head}"
+                "local {base_branch} does not match upstream {upstream} at {upstream_head}"
             ));
         }
     }

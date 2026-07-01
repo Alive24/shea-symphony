@@ -43,6 +43,14 @@ export type LoopStateSnapshot = {
   recentLines: AutoloopLine[];
 };
 
+export type WorkspaceProfile = {
+  engineRoot: string;
+  targetRoot: string;
+  workflowPath: string;
+  source: string;
+  error?: string | null;
+};
+
 export type RuntimeSnapshot = Record<string, unknown>;
 export type OperatorOverview = Record<string, unknown>;
 export type ReadSurface = Record<string, unknown>;
@@ -132,10 +140,32 @@ export function defaultLoopState() {
   return structuredClone(defaultState);
 }
 
+export function defaultWorkspaceProfile(): WorkspaceProfile {
+  return {
+    engineRoot: '',
+    targetRoot: '',
+    workflowPath: 'workflows/shea-symphony.md',
+    source: 'self',
+    error: null
+  };
+}
+
 export async function getLoopState(): Promise<LoopStateSnapshot> {
   if (!isTauriRuntime()) return defaultLoopState();
   const { invoke } = await import('@tauri-apps/api/core');
   return invoke<LoopStateSnapshot>('get_loop_state');
+}
+
+export async function getWorkspaceProfile(): Promise<WorkspaceProfile> {
+  if (!isTauriRuntime()) return defaultWorkspaceProfile();
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<WorkspaceProfile>('get_workspace_profile');
+}
+
+export async function setActiveWorkspace(targetRoot: string | null): Promise<WorkspaceProfile> {
+  if (!isTauriRuntime()) return defaultWorkspaceProfile();
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<WorkspaceProfile>('set_active_workspace', { targetRoot });
 }
 
 export async function getRuntimeSnapshot(): Promise<RuntimeSnapshot | null> {

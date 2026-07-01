@@ -119,19 +119,28 @@ pub enum CanonicalCheckoutError {
     TrackedDirty { root: PathBuf, paths: String },
     #[error("canonical checkout is blocked: unclassified untracked files in {root}: {paths}. Move them to an issue worktree or artifact location, or add legitimate ignored files to .gitignore before running a live write lane.")]
     UnclassifiedUntracked { root: PathBuf, paths: String },
-    #[error("canonical checkout is blocked: {root} is detached at {head}. Switch the canonical checkout back to clean latest `main` before running a live write lane.")]
-    Detached { root: PathBuf, head: String },
-    #[error("canonical checkout is blocked: {root} is on branch `{branch}` instead of `main`. Do local inspection in an issue worktree; keep the canonical checkout on clean latest `main`.")]
-    NonMain { root: PathBuf, branch: String },
-    #[error("canonical checkout is blocked: local `main` at {head} does not match upstream `{upstream}` at {upstream_head}. Refresh the canonical checkout to latest `main` before running a live write lane.")]
-    StaleMain {
+    #[error("canonical checkout is blocked: {root} is detached at {head}. Switch the canonical checkout back to clean latest `{expected_branch}` before running a live write lane.")]
+    Detached {
         root: PathBuf,
+        head: String,
+        expected_branch: String,
+    },
+    #[error("canonical checkout is blocked: {root} is on branch `{branch}` instead of `{expected_branch}`. Do local inspection in an issue worktree; keep the canonical checkout on clean latest `{expected_branch}`.")]
+    NonBaseBranch {
+        root: PathBuf,
+        branch: String,
+        expected_branch: String,
+    },
+    #[error("canonical checkout is blocked: local `{base_branch}` at {head} does not match upstream `{upstream}` at {upstream_head}. Refresh the canonical checkout to latest `{base_branch}` before running a live write lane.")]
+    StaleBaseBranch {
+        root: PathBuf,
+        base_branch: String,
         head: String,
         upstream: String,
         upstream_head: String,
     },
-    #[error("canonical checkout refresh is blocked: local `main` in {root} has no upstream. Configure it to track `origin/main` before running a live write lane.")]
-    MissingUpstream { root: PathBuf },
+    #[error("canonical checkout refresh is blocked: local `{base_branch}` in {root} has no upstream. Configure it to track `origin/{base_branch}` before running a live write lane.")]
+    MissingUpstream { root: PathBuf, base_branch: String },
     #[error("canonical checkout refresh is blocked: {root} is under workflow workspace root {workspace_root}. Run write-mode lane/control commands from the canonical checkout, not an issue worktree.")]
     IssueWorktree {
         root: PathBuf,
@@ -155,9 +164,10 @@ pub enum CanonicalCheckoutError {
         stdout: String,
         stderr: String,
     },
-    #[error("canonical checkout refresh is blocked: local `main` at {head} cannot fast-forward to upstream `{upstream}` at {upstream_head}.")]
+    #[error("canonical checkout refresh is blocked: local `{base_branch}` at {head} cannot fast-forward to upstream `{upstream}` at {upstream_head}.")]
     NonFastForward {
         root: PathBuf,
+        base_branch: String,
         head: String,
         upstream: String,
         upstream_head: String,
@@ -229,14 +239,14 @@ pub fn enforce_clean_canonical_checkout_for_write(
 ) -> Result<CanonicalCheckoutReport, CanonicalCheckoutError> {
     let mut report = inspect_canonical_checkout(root, config)?;
     ensure_not_issue_worktree(&report, config)?;
-    ensure_attached_main(&report)?;
+    ensure_attached_base(&report, config.git_base_branch())?;
     ensure_clean_enough_for_write(&report)?;
     migrate_classified_artifacts(&mut report)?;
     if !report.migrated.is_empty() {
         let migrated = report.migrated.clone();
         report = inspect_canonical_checkout(root, config)?;
         report.migrated = migrated;
-        ensure_attached_main(&report)?;
+        ensure_attached_base(&report, config.git_base_branch())?;
         ensure_clean_enough_for_write(&report)?;
     }
     if let (Some(upstream), Some(upstream_head), Some(head)) = (
@@ -245,8 +255,9 @@ pub fn enforce_clean_canonical_checkout_for_write(
         report.head.as_deref(),
     ) {
         if head != upstream_head {
-            return Err(CanonicalCheckoutError::StaleMain {
+            return Err(CanonicalCheckoutError::StaleBaseBranch {
                 root: report.root.clone(),
+                base_branch: config.git_base_branch().to_string(),
                 head: head.to_string(),
                 upstream: upstream.to_string(),
                 upstream_head: upstream_head.to_string(),
@@ -264,9 +275,9 @@ pub fn refresh_canonical_checkout_before_write(
 ) -> Result<CanonicalCheckoutRefreshReport, CanonicalCheckoutError> {
     let mut report = inspect_canonical_checkout(root, config)?;
     ensure_not_issue_worktree(&report, config)?;
-    ensure_attached_main(&report)?;
+    ensure_attached_base(&report, config.git_base_branch())?;
     ensure_clean_enough_for_write(&report)?;
-    let upstream = require_upstream(&report)?;
+    let upstream = require_upstream(&report, config.git_base_branch())?;
 
     if matches!(mode, CanonicalCheckoutRefreshMode::Apply) {
         migrate_classified_artifacts(&mut report)?;
@@ -274,7 +285,7 @@ pub fn refresh_canonical_checkout_before_write(
         let migrated = report.migrated.clone();
         report = inspect_canonical_checkout(root, config)?;
         report.migrated = migrated;
-        ensure_attached_main(&report)?;
+        ensure_attached_base(&report, config.git_base_branch())?;
         ensure_clean_enough_for_write(&report)?;
     }
 
@@ -284,6 +295,7 @@ pub fn refresh_canonical_checkout_before_write(
         .as_deref()
         .ok_or_else(|| CanonicalCheckoutError::MissingUpstream {
             root: report.root.clone(),
+            base_branch: config.git_base_branch().to_string(),
         })?
         .to_string();
 
@@ -302,6 +314,7 @@ pub fn refresh_canonical_checkout_before_write(
     if !git_can_fast_forward(&report.root, &head_before, &upstream_head)? {
         return Err(CanonicalCheckoutError::NonFastForward {
             root: report.root.clone(),
+            base_branch: config.git_base_branch().to_string(),
             head: head_before,
             upstream,
             upstream_head,
@@ -407,18 +420,23 @@ fn ensure_not_issue_worktree(
     Ok(())
 }
 
-fn ensure_attached_main(report: &CanonicalCheckoutReport) -> Result<(), CanonicalCheckoutError> {
+fn ensure_attached_base(
+    report: &CanonicalCheckoutReport,
+    base_branch: &str,
+) -> Result<(), CanonicalCheckoutError> {
     let head = report.head.as_deref().unwrap_or("unknown").to_string();
     let Some(branch) = report.branch.as_deref() else {
         return Err(CanonicalCheckoutError::Detached {
             root: report.root.clone(),
             head,
+            expected_branch: base_branch.to_string(),
         });
     };
-    if branch != "main" {
-        return Err(CanonicalCheckoutError::NonMain {
+    if branch != base_branch {
+        return Err(CanonicalCheckoutError::NonBaseBranch {
             root: report.root.clone(),
             branch: branch.to_string(),
+            expected_branch: base_branch.to_string(),
         });
     }
     Ok(())
@@ -448,13 +466,17 @@ fn ensure_clean_enough_for_write(
     Ok(())
 }
 
-fn require_upstream(report: &CanonicalCheckoutReport) -> Result<String, CanonicalCheckoutError> {
+fn require_upstream(
+    report: &CanonicalCheckoutReport,
+    base_branch: &str,
+) -> Result<String, CanonicalCheckoutError> {
     report
         .upstream
         .clone()
         .filter(|upstream| !upstream.trim().is_empty())
         .ok_or_else(|| CanonicalCheckoutError::MissingUpstream {
             root: report.root.clone(),
+            base_branch: base_branch.to_string(),
         })
 }
 
@@ -496,6 +518,7 @@ fn fetch_upstream(root: &Path, upstream: &str) -> Result<(), CanonicalCheckoutEr
             .split_once('/')
             .ok_or_else(|| CanonicalCheckoutError::MissingUpstream {
                 root: root.to_path_buf(),
+                base_branch: upstream.to_string(),
             })?;
     let output = Command::new("git")
         .args(["fetch", remote, branch])
@@ -758,8 +781,13 @@ mod tests {
     use std::process::Command;
 
     fn config(root: &Path) -> RuntimeConfig {
+        config_with_base(root, "main")
+    }
+
+    fn config_with_base(root: &Path, base_branch: &str) -> RuntimeConfig {
         let markdown = format!(
-            "---\ntracker:\n  kind: memory\nartifacts:\n  root: {}\nworkspace:\n  root: {}/worktrees\nobservability:\n  logs_root: {}/logs\n---\nPrompt",
+            "---\ntracker:\n  kind: memory\ngit:\n  base_branch: {}\nartifacts:\n  root: {}\nworkspace:\n  root: {}/worktrees\nobservability:\n  logs_root: {}/logs\n---\nPrompt",
+            base_branch,
             root.display(),
             root.display(),
             root.display()
@@ -911,6 +939,30 @@ mod tests {
         assert_eq!(report.action, CanonicalCheckoutRefreshAction::FfOnly);
         assert_eq!(report.head_after, remote_head);
         assert_eq!(git_head(&repo), remote_head);
+    }
+
+    #[test]
+    fn refresh_accepts_configured_base_branch() {
+        let temp = tempfile::tempdir().unwrap();
+        let (repo, _remote) = init_repo_with_origin(temp.path());
+        git_ok(&repo, &["checkout", "-b", "dev-chunteng"]);
+        fs::write(repo.join("tracked.txt"), "dev\n").unwrap();
+        git_ok(&repo, &["add", "tracked.txt"]);
+        git_ok(&repo, &["commit", "-qm", "dev base"]);
+        git_ok(&repo, &["push", "-u", "origin", "dev-chunteng"]);
+
+        let report = refresh_canonical_checkout_before_write(
+            &repo,
+            &config_with_base(temp.path(), "dev-chunteng"),
+            CanonicalCheckoutRefreshMode::Apply,
+        )
+        .unwrap();
+
+        assert_eq!(
+            report.action,
+            CanonicalCheckoutRefreshAction::AlreadyCurrent
+        );
+        assert_eq!(report.checkout.branch.as_deref(), Some("dev-chunteng"));
     }
 
     #[test]

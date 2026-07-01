@@ -19,17 +19,21 @@
     resetFixtureOverview,
     setDataMode,
     setDefaultHandoffTarget,
+    workspaceProfileStore,
     updateCliLog
   } from './uiState.ts';
   import {
     appendAutoloopLine,
     defaultLoopState,
+    defaultWorkspaceProfile,
     getGitHubUser,
     getLoopState,
+    getWorkspaceProfile,
     isTauriRuntime,
     mergeLaneSnapshot,
     operatorLoopStatusDetail,
     operatorRunLogLines,
+    setActiveWorkspace,
     startAutoloop,
     stopAutoloop,
     subscribeAutoloopEvents,
@@ -37,7 +41,8 @@
     type LaneSnapshot,
     type LoopStateSnapshot,
     type RunLogVerbosity,
-    type GitHubUserSnapshot
+    type GitHubUserSnapshot,
+    type WorkspaceProfile
   } from './tauriAutoloop.ts';
   import CliLogModal from './shell/CliLogModal.svelte';
   import DeveloperToolsPanel from './shell/DeveloperToolsPanel.svelte';
@@ -78,9 +83,13 @@
   let runLogVerbosity: RunLogVerbosity = 'normal';
   let expandedRunLogRows = new Set<string>();
   let autoloopBusy = false;
+  let workspaceBusy = false;
   let tauriAvailable = false;
   let tauriError = '';
   let autoloopState: LoopStateSnapshot = defaultLoopState();
+  let workspaceProfile: WorkspaceProfile = defaultWorkspaceProfile();
+  let workspacePathInput = '';
+  let workspaceError = '';
   let settingsOpen = false;
   let developerToolsOpen = true;
   let developerToolsCollapsed = false;
@@ -106,16 +115,20 @@
   $: autoloopStdoutLines = latestAutoloopStdout(autoloopState, autoloopLogLines);
   $: visibleRunLogLines = autoloopStdoutLines.slice(-runLogDisplayLimit(runLogVerbosity));
   $: latestAutoloopLine = autoloopStdoutLines.slice(-1)[0]?.line ?? (autoloopState.running ? 'Loop is running' : 'No recent autoloop result');
+  $: activeWorkflowPath = workspaceProfile.workflowPath || 'workflows/shea-symphony.md';
+  $: activeTargetRoot = workspaceProfile.targetRoot || workspaceProfile.engineRoot || '';
   $: autoloopControlStore.set({
     tauriAvailable,
     busy: autoloopBusy,
     running: autoloopState.running,
     mode: autoloopState.mode,
-    workflowPath: autoloopState.workflowPath,
+    workflowPath: autoloopState.running ? autoloopState.workflowPath : activeWorkflowPath,
+    targetRoot: activeTargetRoot,
     latestLine: latestAutoloopLine,
     laneMaxSummary: laneMaxSummary(autoloopState?.lanes)
   });
   $: autoloopStateStore.set(autoloopState);
+  $: workspaceProfileStore.set(workspaceProfile);
   $: refreshRunning = $refreshStatusStore.running;
   $: refreshLabel = refreshRunning ? `Refreshing${$refreshStatusStore.remaining ? ` (${$refreshStatusStore.remaining})` : ''}` : 'Refresh';
   $: selectedRefreshOption =
@@ -551,6 +564,50 @@
     }
   }
 
+  async function refreshWorkspaceProfile() {
+    try {
+      tauriAvailable = isTauriRuntime();
+      workspaceProfile = await getWorkspaceProfile();
+      workspacePathInput = workspaceProfile.targetRoot;
+      workspaceError = workspaceProfile.error ?? '';
+    } catch (error) {
+      workspaceError = error.message;
+    }
+  }
+
+  async function saveWorkspaceProfile() {
+    if (!tauriAvailable || workspaceBusy) return;
+    workspaceBusy = true;
+    workspaceError = '';
+    try {
+      workspaceProfile = await setActiveWorkspace(workspacePathInput.trim() || null);
+      workspacePathInput = workspaceProfile.targetRoot;
+      workspaceError = workspaceProfile.error ?? '';
+      await refreshAutoloopState();
+      requestRefresh('workspace');
+    } catch (error) {
+      workspaceError = error.message;
+    } finally {
+      workspaceBusy = false;
+    }
+  }
+
+  async function resetWorkspaceProfile() {
+    if (!tauriAvailable || workspaceBusy) return;
+    workspaceBusy = true;
+    workspaceError = '';
+    try {
+      workspaceProfile = await setActiveWorkspace(null);
+      workspacePathInput = workspaceProfile.targetRoot;
+      await refreshAutoloopState();
+      requestRefresh('workspace-reset');
+    } catch (error) {
+      workspaceError = error.message;
+    } finally {
+      workspaceBusy = false;
+    }
+  }
+
   function laneConcurrency(lane: AutoloopLaneTarget) {
     if (lane === 'autoloop') return {};
     return {
@@ -567,9 +624,10 @@
     const startedAt = performance.now();
     const modeLabel = write ? 'write' : 'dry-run';
     const continuous = maxIterations == null;
+    const workflowPath = activeWorkflowPath;
     const loopArgs = continuous
-      ? ['autopilot', 'loop', 'workflows/shea-symphony.md', '--continuous', write ? '--write' : '--dry-run']
-      : ['autopilot', 'loop', 'workflows/shea-symphony.md', '--max-iterations', String(maxIterations), write ? '--write' : '--dry-run'];
+      ? ['autopilot', 'loop', workflowPath, '--continuous', write ? '--write' : '--dry-run']
+      : ['autopilot', 'loop', workflowPath, '--max-iterations', String(maxIterations), write ? '--write' : '--dry-run'];
     const laneOptions = laneConcurrency(lane);
     if (lane !== 'autoloop') {
       loopArgs.push('--main-max-concurrent', String(laneOptions.mainMaxConcurrent));
@@ -582,11 +640,11 @@
       status: 'running',
       detail: `Starting ${lane === 'autoloop' ? 'autoloop' : lane} ${modeLabel} ${continuous ? 'continuous' : `${maxIterations} iteration`} loop.`,
       args: loopArgs,
-      raw: { args: loopArgs, lane, write, maxIterations: maxIterations ?? null, continuous, ...laneOptions }
+      raw: { args: loopArgs, lane, write, maxIterations: maxIterations ?? null, continuous, workspace: workspaceProfile, ...laneOptions }
     });
     try {
       autoloopState = await startAutoloop({
-        workflowPath: 'workflows/shea-symphony.md',
+        workflowPath,
         maxIterations,
         continuous,
         write,
@@ -682,6 +740,7 @@
         error: error.message
       };
     });
+    refreshWorkspaceProfile();
     refreshAutoloopState();
     let unlistenAutoloop: (() => void) | undefined;
     subscribeAutoloopEvents((event) => {
@@ -808,10 +867,17 @@
     handoffTargets={HANDOFF_TARGETS}
     {handoffTarget}
     {developerToolsOpen}
+    {workspaceProfile}
+    {workspacePathInput}
+    {workspaceBusy}
+    {workspaceError}
     onClose={() => (settingsOpen = false)}
     onHandoffTargetChange={updateHandoffTarget}
     onHandoffTargetSelect={updateHandoffTargetValue}
     onDeveloperToolsVisibilityChange={updateDeveloperToolsVisibility}
+    onWorkspacePathInput={(event) => (workspacePathInput = (event.currentTarget as HTMLInputElement).value)}
+    onWorkspaceSave={saveWorkspaceProfile}
+    onWorkspaceReset={resetWorkspaceProfile}
   />
 {/if}
 

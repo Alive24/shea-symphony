@@ -4,6 +4,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::config::RuntimeConfig;
+use crate::profiles::selected_execution_profile;
+use crate::workflow::WorkflowDefinition;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillStatusInput {
     pub workflow_path: PathBuf,
@@ -480,13 +484,17 @@ fn manifest_line_value(line: &str, key: &str) -> Option<String> {
 }
 
 fn target_specs(input: &SkillStatusInput) -> Vec<TargetSpec> {
+    let codex_root = input
+        .codex_dir
+        .clone()
+        .unwrap_or_else(|| default_codex_root(input));
     vec![
         TargetSpec {
             label: "codex".into(),
-            root: input.codex_dir.clone().unwrap_or_else(default_codex_root),
+            root: codex_root,
             configured: input.codex_dir.is_some()
                 || nonempty_env_path("SHEA_SYMPHONY_CODEX_SKILLS_DIR").is_some()
-                || nonempty_env_path("CODEX_HOME").is_some(),
+                || profile_working_dir_from_workflow(&input.workflow_path).is_some(),
             required: true,
         },
         TargetSpec {
@@ -502,14 +510,16 @@ fn target_specs(input: &SkillStatusInput) -> Vec<TargetSpec> {
     ]
 }
 
-fn default_codex_root() -> PathBuf {
+fn default_codex_root(input: &SkillStatusInput) -> PathBuf {
     if let Some(path) = nonempty_env_path("SHEA_SYMPHONY_CODEX_SKILLS_DIR") {
         return path;
     }
-    if let Some(home) = nonempty_env_path("CODEX_HOME") {
-        return home.join("skills");
+    if let Some(path) = profile_working_dir_from_workflow(&input.workflow_path) {
+        return path.join(".codex").join("skills");
     }
-    home_dir().join(".codex").join("skills")
+    workflow_repo_root(&input.workflow_path)
+        .join(".codex")
+        .join("skills")
 }
 
 fn default_gemini_root() -> PathBuf {
@@ -520,6 +530,56 @@ fn default_gemini_root() -> PathBuf {
         return home.join("local-skills");
     }
     home_dir().join(".gemini").join("local-skills")
+}
+
+fn profile_working_dir_from_workflow(workflow_path: &Path) -> Option<PathBuf> {
+    let path = absolute_workflow_path(workflow_path)?;
+    let text = fs::read_to_string(&path).ok()?;
+    let workflow = WorkflowDefinition::parse(&path, &text).ok()?;
+    let config = RuntimeConfig::from_workflow(&workflow, &path).ok()?;
+    selected_execution_profile(&config.profiles)
+        .ok()
+        .flatten()
+        .and_then(|profile| profile.working_dir)
+}
+
+fn workflow_repo_root(workflow_path: &Path) -> PathBuf {
+    let Some(start) = absolute_workflow_path(workflow_path) else {
+        return std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    };
+    let mut cursor = start
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let fallback = if cursor.file_name().and_then(|name| name.to_str()) == Some("workflows") {
+        cursor
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| cursor.clone())
+    } else {
+        cursor.clone()
+    };
+    loop {
+        if cursor.join(".git").exists()
+            || cursor.join(".codex").exists()
+            || cursor.join("skills").join("shea-symphony").exists()
+        {
+            return cursor;
+        }
+        if !cursor.pop() {
+            return fallback;
+        }
+    }
+}
+
+fn absolute_workflow_path(workflow_path: &Path) -> Option<PathBuf> {
+    if workflow_path.is_absolute() {
+        Some(workflow_path.to_path_buf())
+    } else {
+        std::env::current_dir()
+            .ok()
+            .map(|cwd| cwd.join(workflow_path))
+    }
 }
 
 fn home_dir() -> PathBuf {
@@ -1361,5 +1421,77 @@ path = "suite/shea-symphony-issue-forge-dream"
         ));
         assert_eq!(report.summary.blockers, 0);
         assert_eq!(report.summary.gemini_status, "missing_optional");
+    }
+
+    #[test]
+    fn default_codex_target_is_workflow_repo_local_skills() {
+        let temp = TempDir::new().unwrap();
+        let repo = temp.path().join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        write(&repo.join("workflows/shea-symphony.md"), "---\n---\nPrompt");
+        let source_suite = suite(&repo);
+        let repo_codex = repo.join(".codex/skills");
+        write(
+            &repo_codex.join("shea-symphony-doctor/SKILL.md"),
+            &fs::read_to_string(source_suite.join("shea-symphony-doctor/SKILL.md")).unwrap(),
+        );
+
+        let report = build_skill_readiness_report(SkillStatusInput {
+            workflow_path: repo.join("workflows/shea-symphony.md"),
+            suite_path: Some(source_suite),
+            codex_dir: None,
+            gemini_dir: Some(temp.path().join("missing-gemini")),
+            require_gemini: false,
+            session_skills: Vec::new(),
+            session_skills_file: None,
+        });
+
+        let codex_target = report
+            .targets
+            .iter()
+            .find(|target| target.label == "codex")
+            .unwrap();
+        assert_eq!(codex_target.root, repo_codex);
+        assert_eq!(codex_target.status, "present");
+    }
+
+    #[test]
+    fn selected_profile_working_dir_sets_target_codex_skills_root() {
+        let temp = TempDir::new().unwrap();
+        let engine = temp.path().join("engine");
+        let target = temp.path().join("target-repo");
+        let workflow_path = engine.join("workflows/shea-symphony.md");
+        fs::create_dir_all(engine.join(".git")).unwrap();
+        let source_suite = suite(&engine);
+        write(
+            &workflow_path,
+            &format!(
+                "---\nprofiles:\n  default: target\n  entries:\n    - id: target\n      working_dir: {:?}\n---\nPrompt",
+                target.display().to_string()
+            ),
+        );
+        let target_codex = target.join(".codex/skills");
+        write(
+            &target_codex.join("shea-symphony-doctor/SKILL.md"),
+            &fs::read_to_string(source_suite.join("shea-symphony-doctor/SKILL.md")).unwrap(),
+        );
+
+        let report = build_skill_readiness_report(SkillStatusInput {
+            workflow_path,
+            suite_path: Some(source_suite),
+            codex_dir: None,
+            gemini_dir: Some(temp.path().join("missing-gemini")),
+            require_gemini: false,
+            session_skills: Vec::new(),
+            session_skills_file: None,
+        });
+
+        let codex_target = report
+            .targets
+            .iter()
+            .find(|target| target.label == "codex")
+            .unwrap();
+        assert_eq!(codex_target.root, target_codex);
+        assert_eq!(codex_target.status, "present");
     }
 }

@@ -5,6 +5,7 @@ mod cli;
 mod external_links;
 mod github;
 mod read_surfaces;
+mod target_runtime;
 mod workspace;
 
 use autoloop_state::LoopManager;
@@ -38,7 +39,9 @@ fn main() {
             external_links::open_codex_thread,
             external_links::open_github_source,
             external_links::open_handoff_target,
-            external_links::open_codex_handoff
+            external_links::open_codex_handoff,
+            target_runtime::get_target_runtime_state,
+            target_runtime::initialize_target_runtime_state
         ])
         .run(tauri::generate_context!())
         .expect("error while running Shea Symphony App");

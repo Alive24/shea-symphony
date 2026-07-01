@@ -1,5 +1,11 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import type { CliLogEntry } from '../uiState.ts';
+  import {
+    getTargetRuntimeState,
+    initializeTargetRuntimeState,
+    type TargetRuntimeReport
+  } from '../tauriAutoloop.ts';
 
   type DataMode = 'live' | 'fixture';
   type AutoloopLaneTarget = 'main' | 'review' | 'merge' | 'autoloop';
@@ -27,6 +33,10 @@
     laneMaxSummary: ''
   };
   let countMenuOpen: AutoloopLaneTarget | '' = '';
+  let targetRuntimePath = '';
+  let targetRuntimeBusy = false;
+  let targetRuntimeReport: TargetRuntimeReport | null = null;
+  let targetRuntimeError = '';
   let countByTarget: Record<AutoloopLaneTarget, number> = {
     main: 1,
     review: 1,
@@ -50,6 +60,42 @@
 
   function startCountedDryRun(target: AutoloopLaneTarget) {
     onStartDryRunWithMaxIterations(countByTarget[target] ?? 1, target);
+  }
+
+  onMount(() => {
+    targetRuntimePath = localStorage.getItem('shea-target-runtime-path') ?? '';
+  });
+
+  function updateTargetRuntimePath(event: Event) {
+    targetRuntimePath = (event.currentTarget as HTMLInputElement).value;
+    localStorage.setItem('shea-target-runtime-path', targetRuntimePath);
+  }
+
+  async function refreshTargetRuntime() {
+    if (!targetRuntimePath.trim()) return;
+    targetRuntimeBusy = true;
+    targetRuntimeError = '';
+    try {
+      targetRuntimeReport = await getTargetRuntimeState(targetRuntimePath.trim());
+      if (!targetRuntimeReport) targetRuntimeError = 'Desktop shell required';
+    } catch (error) {
+      targetRuntimeError = error instanceof Error ? error.message : String(error);
+    } finally {
+      targetRuntimeBusy = false;
+    }
+  }
+
+  async function initializeTargetRuntime() {
+    if (!targetRuntimePath.trim()) return;
+    targetRuntimeBusy = true;
+    targetRuntimeError = '';
+    try {
+      targetRuntimeReport = await initializeTargetRuntimeState(targetRuntimePath.trim());
+    } catch (error) {
+      targetRuntimeError = error instanceof Error ? error.message : String(error);
+    } finally {
+      targetRuntimeBusy = false;
+    }
   }
 </script>
 
@@ -118,6 +164,50 @@
         <small>{autoloopControl.running ? 'running' : autoloopControl.mode}</small>
       </button>
     </div>
+  </div>
+
+  <div class="developer-tool-group">
+    <span class="developer-tool-label">Target runtime</span>
+    <input
+      class="target-runtime-input"
+      type="text"
+      value={targetRuntimePath}
+      placeholder="/path/to/target-repo"
+      aria-label="Target repository path"
+      oninput={updateTargetRuntimePath}
+    />
+    <div class="developer-tool-row">
+      <button
+        class="btn btn-ghost dev-run-button"
+        type="button"
+        disabled={!autoloopControl.tauriAvailable || targetRuntimeBusy || !targetRuntimePath.trim()}
+        onclick={refreshTargetRuntime}
+      >
+        Status
+      </button>
+      <button
+        class="btn btn-primary dev-run-button"
+        type="button"
+        disabled={!autoloopControl.tauriAvailable || targetRuntimeBusy || !targetRuntimePath.trim()}
+        onclick={initializeTargetRuntime}
+      >
+        Init
+      </button>
+      {#if targetRuntimeReport}
+        <span class="target-runtime-chip" data-state={targetRuntimeReport.state}>
+          {targetRuntimeReport.state.replaceAll('_', ' ')}
+        </span>
+      {/if}
+    </div>
+    {#if targetRuntimeError}
+      <p class="developer-tool-note">{targetRuntimeError}</p>
+    {:else if targetRuntimeReport}
+      <p class="developer-tool-note">{targetRuntimeReport.message}</p>
+      <p class="developer-tool-note">ignore={targetRuntimeReport.locallyIgnored ? 'yes' : 'no'}</p>
+      {#if targetRuntimeReport.conflict}
+        <p class="developer-tool-note">{targetRuntimeReport.conflict}</p>
+      {/if}
+    {/if}
   </div>
 
   <div class="developer-tool-group">

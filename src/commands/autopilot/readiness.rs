@@ -186,11 +186,28 @@ fn autopilot_effective_runtime_blockers(
         .blockers
         .iter()
         .filter(|blocker| {
-            !(blocker.starts_with("session_attention=")
-                && autopilot_terminal_session_history_should_not_block_ready_main(lanes, runtime))
+            let main_runtime_can_continue = blocker.starts_with("active_runtime_states=")
+                && autopilot_main_runtime_should_not_block_ready_main(lanes, runtime);
+            let terminal_session_history_can_continue = blocker.starts_with("session_attention=")
+                && autopilot_terminal_session_history_should_not_block_ready_main(lanes, runtime);
+            !(main_runtime_can_continue || terminal_session_history_can_continue)
         })
         .cloned()
         .collect()
+}
+
+fn autopilot_main_runtime_should_not_block_ready_main(
+    lanes: &[AutopilotLanePlan],
+    runtime: &AutopilotRuntimeSummary,
+) -> bool {
+    !runtime.active_issues.is_empty()
+        && runtime
+            .active_issues
+            .iter()
+            .all(|issue| issue.lane.eq_ignore_ascii_case("main"))
+        && lanes.iter().any(|lane| {
+            lane.lane == "main" && lane.status == "ready" && lane.selected_issue.is_some()
+        })
 }
 
 fn autopilot_terminal_session_history_should_not_block_ready_main(

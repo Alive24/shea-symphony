@@ -592,6 +592,49 @@ fn autopilot_plan_readiness_allows_ready_main_with_terminal_historical_session_a
 }
 
 #[test]
+fn autopilot_plan_readiness_allows_ready_main_with_active_main_runtime() {
+    let config = main_loop_test_config();
+    let mut ready_issue = tracker_issue_with_ref("#428", "Ready work", "Todo");
+    ready_issue.description = Some(forge_contract());
+    let issues = vec![ready_issue];
+    let adapter = shea_symphony::tracker::MemoryTracker::new(issues.clone());
+    let mut runtime = clean_autopilot_runtime();
+    runtime.runtime_state_count = 1;
+    runtime.blockers = vec!["active_runtime_states=1".into()];
+    runtime.evidence = vec!["runtime issue=#381 lane=main backend=codex session=none".into()];
+    runtime.active_issues = vec![AutopilotActiveIssue {
+        lane: "main".into(),
+        identifier: "#381".into(),
+        backend: "codex".into(),
+        session_id: None,
+    }];
+
+    let plan = build_autopilot_plan_from_parts(AutopilotPlanInputs {
+        workflow_path: Path::new("/tmp/WORKFLOW.md"),
+        config: &config,
+        adapter: &adapter,
+        issues,
+        doctor_report: clean_autopilot_doctor(1),
+        canonical_checkout: clean_autopilot_canonical(),
+        runtime,
+        integration_gaps: Vec::new(),
+    })
+    .unwrap();
+
+    assert_eq!(plan.readiness.status, "ready");
+    assert!(plan.readiness.blockers.is_empty());
+    assert_eq!(
+        plan.lanes
+            .iter()
+            .find(|lane| lane.lane == "main")
+            .and_then(|lane| lane.selected_issue.as_ref())
+            .map(|issue| issue.identifier.as_str()),
+        Some("#428")
+    );
+    assert_eq!(plan.runtime.runtime_state_count, 1);
+}
+
+#[test]
 fn autopilot_runtime_summary_ignores_attention_sessions_for_terminal_issues() {
     let done_issue = tracker_issue_with_ref("#415", "Completed work", "Done");
     let active_issue = tracker_issue_with_ref("#428", "Ready work", "Todo");

@@ -465,10 +465,7 @@ struct AutopilotPlanArgs {
 struct AutopilotLoopArgs {
     #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
     workflow_path: PathBuf,
-    #[arg(
-        long,
-        help = "Bounded number of foreground Autoloop iterations to run"
-    )]
+    #[arg(long, help = "Bounded number of foreground Autoloop iterations to run")]
     max_iterations: Option<usize>,
     #[arg(
         long,

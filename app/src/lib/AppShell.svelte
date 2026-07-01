@@ -12,6 +12,7 @@
     autoloopStateStore,
     cliLogStore,
     defaultHandoffTargetStore,
+    getActiveTarget,
     getDataMode,
     getDefaultHandoffTarget,
     refreshStatusStore,
@@ -567,9 +568,11 @@
     const startedAt = performance.now();
     const modeLabel = write ? 'write' : 'dry-run';
     const continuous = maxIterations == null;
+    const activeTarget = getActiveTarget();
+    const workflowPath = activeTarget.workflowPath ?? 'workflows/shea-symphony.md';
     const loopArgs = continuous
-      ? ['autopilot', 'loop', 'workflows/shea-symphony.md', '--continuous', write ? '--write' : '--dry-run']
-      : ['autopilot', 'loop', 'workflows/shea-symphony.md', '--max-iterations', String(maxIterations), write ? '--write' : '--dry-run'];
+      ? ['autopilot', 'loop', workflowPath, '--continuous', write ? '--write' : '--dry-run']
+      : ['autopilot', 'loop', workflowPath, '--max-iterations', String(maxIterations), write ? '--write' : '--dry-run'];
     const laneOptions = laneConcurrency(lane);
     if (lane !== 'autoloop') {
       loopArgs.push('--main-max-concurrent', String(laneOptions.mainMaxConcurrent));
@@ -586,7 +589,7 @@
     });
     try {
       autoloopState = await startAutoloop({
-        workflowPath: 'workflows/shea-symphony.md',
+        workflowPath: activeTarget.workflowPath,
         maxIterations,
         continuous,
         write,

@@ -1390,6 +1390,20 @@ test('Codex conversation surface uses a deep link summary instead of transcript 
   assert.doesNotMatch(laneIssueView, /target="_blank" rel="noreferrer">Source/);
 });
 
+test('Tauri read and timeline requests include active target context', () => {
+  const laneIssueView = readFileSync(new URL('../src/lib/LaneIssueView.svelte', import.meta.url), 'utf8');
+  const tauriAutoloop = readFileSync(new URL('../src/lib/tauriAutoloop.ts', import.meta.url), 'utf8');
+  const appShell = readFileSync(new URL('../src/lib/AppShell.svelte', import.meta.url), 'utf8');
+
+  assert.match(tauriAutoloop, /getActiveTarget/);
+  assert.match(tauriAutoloop, /get_issue_timeline', \{ issueRef, target: targetOptions\(\) \}/);
+  assert.match(tauriAutoloop, /get_read_surface', \{ name, force, allowProjectFallback, target: targetOptions\(\) \}/);
+  assert.match(tauriAutoloop, /workflowPath: options\.workflowPath \?\? targetOptions\(\)\.workflowPath/);
+  assert.match(appShell, /const activeTarget = getActiveTarget\(\)/);
+  assert.match(appShell, /workflowPath: activeTarget\.workflowPath/);
+  assert.match(laneIssueView, /model\?\.targetContext\?\.repository/);
+});
+
 test('LaneIssueView keeps heartbeat in summary without a separate session card', () => {
   const laneIssueView = readFileSync(new URL('../src/lib/LaneIssueView.svelte', import.meta.url), 'utf8');
   const summary = laneIssueView.match(/<div class="lane-detail-summary">[\s\S]*?<\/div>\s*\{#if selectedIssue\.worktree/)?.[0] ?? '';
@@ -1650,6 +1664,71 @@ test('project read cooldown preserves last stable review queue visibility', () =
     ['#405', 'Make autopilot lanes independently throughput-oriented']
   ]);
   assert.equal(review.queuedCount, 1);
+});
+
+test('view model surfaces external target readiness and workflow path', () => {
+  const view = buildViewModel({
+    generatedAt: new Date().toISOString(),
+    workflowPath: '/tmp/target/WORKFLOW.md',
+    targetContext: {
+      workflowPath: '/tmp/target/WORKFLOW.md',
+      repository: 'Alive24/3D-RAMS',
+      workspacePath: '/tmp/target',
+      skillsPath: '/tmp/target/.codex/skills',
+      selfWorkspace: false,
+      readiness: { status: 'ready', blockers: [] }
+    },
+    commands: {
+      skills: {
+        ok: true,
+        args: ['skills', 'status', '/tmp/target/WORKFLOW.md', '--json'],
+        durationMs: 12,
+        stderr: ''
+      }
+    },
+    githubQueue: {
+      source: 'GitHub Project',
+      issues: [{ identifier: '#12', title: 'Target issue', state: 'Todo' }]
+    },
+    healthy: true
+  });
+
+  assert.equal(view.workflowPath, '/tmp/target/WORKFLOW.md');
+  assert.equal(view.targetContext.repository, 'Alive24/3D-RAMS');
+  assert.deepEqual(
+    view.readinessItems.find((item) => item.label === 'Target workspace'),
+    {
+      label: 'Target workspace',
+      status: 'Ready',
+      tone: 'success',
+      detail: 'Alive24/3D-RAMS'
+    }
+  );
+});
+
+test('missing external target config is visible readiness state', () => {
+  const view = buildViewModel({
+    generatedAt: new Date().toISOString(),
+    workflowPath: '/tmp/missing/WORKFLOW.md',
+    targetContext: {
+      workflowPath: '/tmp/missing/WORKFLOW.md',
+      repository: null,
+      workspacePath: null,
+      skillsPath: null,
+      selfWorkspace: false,
+      readiness: {
+        status: 'missingTargetConfig',
+        blockers: ['Target GitHub repository is not configured.', 'Target workspace path is not configured.']
+      }
+    },
+    commands: {},
+    healthy: false
+  });
+
+  const target = view.readinessItems.find((item) => item.label === 'Target workspace');
+  assert.equal(target.status, 'Missing config');
+  assert.equal(target.tone, 'danger');
+  assert.match(target.detail, /Target GitHub repository is not configured/);
 });
 
 test('default background refresh defers doctor surface', () => {

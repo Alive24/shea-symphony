@@ -7,7 +7,7 @@ use std::{
 use serde::Serialize;
 use serde_json::{json, Value};
 
-pub const DEFAULT_WORKFLOW_PATH: &str = "workflows/shea-symphony.md";
+pub use crate::target_context::DEFAULT_WORKFLOW_PATH;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

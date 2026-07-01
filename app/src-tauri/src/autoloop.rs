@@ -16,7 +16,8 @@ use crate::autoloop_state::{
     default_lanes, AutoloopError, AutoloopLine, AutoloopOptions, AutoloopStarted, AutoloopStopped,
     LoopManager, LoopRuntime, LoopStateSnapshot,
 };
-use crate::cli::{command_preview, now_ms, shea_command, DEFAULT_WORKFLOW_PATH};
+use crate::cli::{command_preview, now_ms, shea_command};
+use crate::target_context::{TargetContext, TargetOptions};
 
 #[tauri::command]
 pub fn get_loop_state(manager: State<'_, LoopManager>) -> Result<LoopStateSnapshot, String> {
@@ -46,10 +47,11 @@ pub fn start_autoloop(
         review_max_concurrent: None,
         merge_max_concurrent: None,
     });
-    let workflow_path = options
-        .workflow_path
-        .clone()
-        .unwrap_or_else(|| DEFAULT_WORKFLOW_PATH.into());
+    let target = TargetOptions {
+        workflow_path: options.workflow_path.clone(),
+        ..TargetOptions::default()
+    };
+    let workflow_path = TargetContext::from_options(Some(&target)).workflow_path;
     let write = options.write.unwrap_or(false);
     let mode = if write { "write" } else { "dry-run" }.to_string();
     let mut args = vec![

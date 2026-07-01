@@ -39,24 +39,34 @@ fn validate_codex_thread_link(deep_link: &str) -> Result<(), String> {
 
 fn validate_github_source_url(url: &str) -> Result<(), String> {
     let path = url
-        .strip_prefix("https://github.com/Alive24/shea-symphony/")
-        .ok_or_else(|| "Only Shea Symphony GitHub source links can be opened.".to_string())?;
+        .strip_prefix("https://github.com/")
+        .ok_or_else(|| "Only GitHub source links can be opened.".to_string())?;
     if is_allowed_github_source_path(path) {
         Ok(())
     } else {
-        Err("Only Shea Symphony issue, issue comment, and pull request links can be opened.".into())
+        Err("Only GitHub issue, issue comment, and pull request links can be opened.".into())
     }
 }
 
 fn is_allowed_github_source_path(path: &str) -> bool {
     let mut parts = path.split('/');
-    match (parts.next(), parts.next()) {
-        (Some("issues"), Some(number)) | (Some("pull"), Some(number)) => {
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some(owner), Some(repo), Some("issues"), Some(number))
+        | (Some(owner), Some(repo), Some("pull"), Some(number))
+            if valid_github_slug(owner) && valid_github_slug(repo) =>
+        {
             let number = number.split(['#', '?']).next().unwrap_or_default();
             number.chars().all(|ch| ch.is_ascii_digit()) && !number.is_empty()
         }
         _ => false,
     }
+}
+
+fn valid_github_slug(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
 }
 
 fn validate_handoff_prompt(prompt: &str) -> Result<(), String> {
@@ -251,12 +261,17 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_shea_github_source_links() {
+    fn validates_target_repo_github_source_links() {
+        assert!(validate_github_source_url("https://github.com/other/repo/issues/430").is_ok());
+        assert!(validate_github_source_url("https://github.com/other/repo/pull/430").is_ok());
+    }
+
+    #[test]
+    fn rejects_non_source_github_links() {
         assert!(validate_github_source_url("https://example.com").is_err());
         assert!(
             validate_github_source_url("https://github.com/Alive24/shea-symphony/actions").is_err()
         );
-        assert!(validate_github_source_url("https://github.com/other/repo/issues/430").is_err());
     }
 
     #[test]

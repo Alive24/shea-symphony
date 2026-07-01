@@ -48,7 +48,7 @@ export function buildViewModel(overview: any): any {
   const sessionWorkers = parseSessionWorkers(overview.sessionsText);
   const commandFailures = buildCommandFailures(commands);
   const parkedTasks = buildParkedTasks(autopilot, githubQueue, commands.githubQueue);
-  const readinessItems = buildReadinessItems(commands);
+  const readinessItems = buildReadinessItems(commands, overview.targetContext);
   const laneSummaries = buildLaneSummaries({
     autopilot,
     githubQueue,
@@ -133,6 +133,7 @@ export function buildViewModel(overview: any): any {
     healthy: overview.healthy,
     fixture: overview.fixture === true,
     workflowPath: overview.workflowPath,
+    targetContext: overview.targetContext,
     raw: overview,
     doctor
   };

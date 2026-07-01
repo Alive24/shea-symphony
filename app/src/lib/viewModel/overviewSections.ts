@@ -31,8 +31,15 @@ export function buildCommandFailures(commands: Record<string, any>) {
     }));
 }
 
-export function buildReadinessItems(commands: Record<string, any>) {
+export function buildReadinessItems(commands: Record<string, any>, targetContext: any = null) {
+  const targetReadiness = targetContext?.readiness;
   return [
+    {
+      label: targetContext?.selfWorkspace ? 'Self workspace' : 'Target workspace',
+      status: targetReadiness?.status === 'missingTargetConfig' ? 'Missing config' : 'Ready',
+      tone: targetReadiness?.status === 'missingTargetConfig' ? 'danger' : 'success',
+      detail: targetReadiness?.blockers?.join(' · ') || targetContext?.repository || 'Shea Symphony self-dogfood target.'
+    },
     readinessFromCommand('Autoloop plan', commands.autopilot),
     readinessFromCommand('Doctor', commands.doctor),
     readinessFromCommand('Review status', commands.review),

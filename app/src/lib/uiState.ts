@@ -12,9 +12,16 @@ export type CliLogEntry = {
   durationMs: number | null;
 };
 
+export type ActiveTarget = {
+  workflowPath?: string;
+  repository?: string;
+  workspacePath?: string;
+};
+
 export const DATA_MODE_KEY = 'shea-data-mode';
 export const FIXTURE_OVERVIEW_KEY = 'shea-fixture-overview';
 export const HANDOFF_TARGET_KEY = 'shea-handoff-target';
+export const ACTIVE_TARGET_KEY = 'shea-active-target';
 export const DATA_MODE_CHANGE_EVENT = 'shea-data-mode-change';
 export const HANDOFF_TARGET_CHANGE_EVENT = 'shea-handoff-target-change';
 export const REFRESH_REQUEST_EVENT = 'shea-refresh-request';
@@ -132,6 +139,41 @@ export function setDefaultHandoffTarget(targetId: string) {
   storage.setItem(HANDOFF_TARGET_KEY, nextTarget);
   defaultHandoffTargetStore.set(nextTarget);
   window.dispatchEvent(new CustomEvent(HANDOFF_TARGET_CHANGE_EVENT, { detail: { target: nextTarget } }));
+}
+
+export function getActiveTarget(): ActiveTarget {
+  const storage = browserStorage();
+  if (!storage) return {};
+  try {
+    const parsed = JSON.parse(storage.getItem(ACTIVE_TARGET_KEY) ?? '{}');
+    if (!parsed || typeof parsed !== 'object') return {};
+    return {
+      workflowPath: nonemptyString(parsed.workflowPath),
+      repository: nonemptyString(parsed.repository),
+      workspacePath: nonemptyString(parsed.workspacePath)
+    };
+  } catch (_) {
+    return {};
+  }
+}
+
+export function setActiveTarget(target: ActiveTarget) {
+  const storage = browserStorage();
+  if (!storage) return;
+  const next = {
+    workflowPath: nonemptyString(target.workflowPath),
+    repository: nonemptyString(target.repository),
+    workspacePath: nonemptyString(target.workspacePath)
+  };
+  if (!next.workflowPath && !next.repository && !next.workspacePath) {
+    storage.removeItem(ACTIVE_TARGET_KEY);
+    return;
+  }
+  storage.setItem(ACTIVE_TARGET_KEY, JSON.stringify(next));
+}
+
+function nonemptyString(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 export function resetFixtureOverview() {

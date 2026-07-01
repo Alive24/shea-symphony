@@ -5,6 +5,7 @@ mod cli;
 mod external_links;
 mod github;
 mod read_surfaces;
+mod target_context;
 
 use autoloop_state::LoopManager;
 

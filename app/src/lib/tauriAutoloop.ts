@@ -1,3 +1,5 @@
+import { getActiveTarget, type ActiveTarget } from './uiState.ts';
+
 export type LaneSnapshot = {
   lane: string;
   status: string;
@@ -82,6 +84,10 @@ export type StartAutoloopOptions = {
   signalFormat?: 'json' | 'plain';
 };
 
+function targetOptions(): ActiveTarget {
+  return getActiveTarget();
+}
+
 export type AutoloopEvent =
   | { type: 'started'; payload: unknown }
   | { type: 'line'; payload: AutoloopLine }
@@ -125,7 +131,7 @@ export async function getLoopState(): Promise<LoopStateSnapshot> {
 export async function getRuntimeSnapshot(): Promise<RuntimeSnapshot | null> {
   if (!isTauriRuntime()) return null;
   const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<RuntimeSnapshot>('get_runtime_snapshot');
+  return invoke<RuntimeSnapshot>('get_runtime_snapshot', { options: targetOptions() });
 }
 
 export async function getGitHubUser(): Promise<GitHubUserSnapshot> {
@@ -146,19 +152,19 @@ export async function getGitHubUser(): Promise<GitHubUserSnapshot> {
 export async function getIssueTimeline(issueRef: string): Promise<Record<string, unknown> | null> {
   if (!isTauriRuntime()) return null;
   const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<Record<string, unknown>>('get_issue_timeline', { issueRef });
+  return invoke<Record<string, unknown>>('get_issue_timeline', { issueRef, target: targetOptions() });
 }
 
 export async function getOperatorOverview(force = false, scope = 'full'): Promise<OperatorOverview | null> {
   if (!isTauriRuntime()) return null;
   const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<OperatorOverview>('get_operator_overview', { options: { force, scope } });
+  return invoke<OperatorOverview>('get_operator_overview', { options: { force, scope, target: targetOptions() } });
 }
 
 export async function getReadSurface(name: string, force = false, allowProjectFallback = false): Promise<ReadSurface | null> {
   if (!isTauriRuntime()) return null;
   const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<ReadSurface>('get_read_surface', { name, force, allowProjectFallback });
+  return invoke<ReadSurface>('get_read_surface', { name, force, allowProjectFallback, target: targetOptions() });
 }
 
 export async function getCodexTranscript(issueRef: string, sessionId: string | null = null): Promise<Record<string, unknown> | null> {
@@ -207,7 +213,9 @@ export async function startAutoloop(options: StartAutoloopOptions = {}): Promise
     throw new Error('Tauri runtime is unavailable; open Shea Symphony App in the desktop shell.');
   }
   const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<LoopStateSnapshot>('start_autoloop', { options });
+  return invoke<LoopStateSnapshot>('start_autoloop', {
+    options: { ...options, workflowPath: options.workflowPath ?? targetOptions().workflowPath }
+  });
 }
 
 export async function stopAutoloop(): Promise<LoopStateSnapshot> {

@@ -213,8 +213,8 @@ pub fn evaluate_agent_review_handoff(
     if has_pr {
         match evidence.project_pr_link_verified {
             Some(true) => {}
-            Some(false) => missing.push("GitHub-native linked PR verification".into()),
-            None => missing.push("GitHub-native linked PR verification status".into()),
+            Some(false) => missing.push("linked PR handoff verification".into()),
+            None => missing.push("linked PR handoff verification status".into()),
         }
         match evidence.pull_request_is_draft {
             Some(false) => {}
@@ -277,7 +277,7 @@ pub fn render_agent_review_handoff_workpad(
             evidence.pull_request_url.as_deref().unwrap_or("missing")
         ),
         format!(
-            "- GitHub-native linked PR verified: `{}`",
+            "- Linked PR handoff verified: `{}`",
             evidence
                 .project_pr_link_verified
                 .map(|verified| verified.to_string())
@@ -1189,7 +1189,7 @@ mod tests {
         assert!(!report.is_ready());
         assert!(report
             .missing
-            .contains(&"GitHub-native linked PR verification status".into()));
+            .contains(&"linked PR handoff verification status".into()));
     }
 
     #[test]

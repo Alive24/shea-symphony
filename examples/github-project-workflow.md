@@ -156,8 +156,8 @@ workpad. Record:
 
 ## Git And PR Discipline
 
-- Base the issue branch on the current `origin/main` unless the issue says
-  otherwise.
+- Base the issue branch on the current workflow git base branch
+  (`git.base_branch`, default `main`) unless the issue says otherwise.
 - Use a branch name that includes the issue number.
 - Keep one issue per branch and one branch per PR.
 - Do not rewrite or revert unrelated user changes.

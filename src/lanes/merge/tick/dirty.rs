@@ -60,6 +60,7 @@ pub(super) fn handle_dirty_merge(
             &repaired_decision,
             Some(&repair.output),
             Some(&evidence),
+            config.git_base_branch(),
         );
         let comment_outcome = record_merge_timeline_comment_with_recovery(
             config,
@@ -102,6 +103,7 @@ pub(super) fn handle_dirty_merge(
             &agent_decision,
             Some(&agent_repair.output),
             Some(&agent_repair.evidence),
+            config.git_base_branch(),
         );
         record_merge_timeline_comment_with_recovery(
             config,
@@ -162,6 +164,7 @@ pub(super) fn handle_dirty_merge(
         &failed_repair,
         Some(&repair.output),
         Some(&evidence),
+        config.git_base_branch(),
     );
     record_merge_timeline_comment_with_recovery(
         config,

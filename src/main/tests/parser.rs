@@ -219,6 +219,22 @@ fn parses_inspect_state_filters() {
 }
 
 #[test]
+fn parses_target_runtime_commands() {
+    assert_eq!(
+        parse(&["target-runtime", "status", "/tmp/target-repo"]),
+        Command::TargetRuntimeStatus {
+            path: PathBuf::from("/tmp/target-repo")
+        }
+    );
+    assert_eq!(
+        parse(&["target-runtime", "init", "/tmp/target-repo"]),
+        Command::TargetRuntimeInit {
+            path: PathBuf::from("/tmp/target-repo")
+        }
+    );
+}
+
+#[test]
 fn parses_project_state_read_surface() {
     assert_eq!(
         parse(&["project", "state", "examples/github-project-workflow.md"]),

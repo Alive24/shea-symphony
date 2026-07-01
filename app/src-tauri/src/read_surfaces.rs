@@ -11,9 +11,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::cli::{
-    command_summary_value, parse_json_output, pending_result, run_shea_read, shea_command,
-    timestamp_iso_like, CommandRun, DEFAULT_WORKFLOW_PATH,
+    command_summary_value, parse_json_output, pending_result, run_shea_read_for_workspace,
+    shea_command_for_workspace, timestamp_iso_like, CommandRun,
 };
+use crate::target_context::TargetContext;
+use crate::workspace::{WorkspaceManager, WorkspaceProfile};
 
 const DEFAULT_PROJECT_RATE_LIMIT_COOLDOWN_MS: u128 = 10 * 60 * 1000;
 const PROJECT_READ_SURFACES: &[&str] = &["autopilot", "doctor", "review", "githubQueue"];
@@ -26,11 +28,22 @@ pub struct OverviewOptions {
 }
 
 #[tauri::command]
-pub async fn get_runtime_snapshot() -> Result<serde_json::Value, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let output = shea_command(&["status", "show", DEFAULT_WORKFLOW_PATH, "--json"])
-            .output()
-            .map_err(|error| format!("failed to run status snapshot: {error}"))?;
+pub async fn get_runtime_snapshot(
+    workspace: tauri::State<'_, WorkspaceManager>,
+) -> Result<serde_json::Value, String> {
+    let workspace_profile = workspace.current();
+    tauri::async_runtime::spawn_blocking(move || {
+        let output = shea_command_for_workspace(
+            &[
+                "status",
+                "show",
+                workspace_profile.workflow_path.as_str(),
+                "--json",
+            ],
+            &workspace_profile,
+        )
+        .output()
+        .map_err(|error| format!("failed to run status snapshot: {error}"))?;
         if !output.status.success() {
             return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
         }
@@ -42,25 +55,37 @@ pub async fn get_runtime_snapshot() -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-pub async fn get_operator_overview(options: Option<OverviewOptions>) -> Result<Value, String> {
+pub async fn get_operator_overview(
+    workspace: tauri::State<'_, WorkspaceManager>,
+    options: Option<OverviewOptions>,
+) -> Result<Value, String> {
     let scope = options
         .as_ref()
         .and_then(|options| options.scope.as_deref())
         .unwrap_or("full")
         .to_string();
-    tauri::async_runtime::spawn_blocking(move || build_operator_overview(&scope))
-        .await
-        .map_err(|error| format!("operator overview task failed: {error}"))?
+    let workspace_profile = workspace.current();
+    tauri::async_runtime::spawn_blocking(move || {
+        build_operator_overview(&scope, &workspace_profile)
+    })
+    .await
+    .map_err(|error| format!("operator overview task failed: {error}"))?
 }
 
 #[tauri::command]
 pub async fn get_read_surface(
+    workspace: tauri::State<'_, WorkspaceManager>,
     name: String,
     _force: Option<bool>,
     allow_project_fallback: Option<bool>,
 ) -> Result<Value, String> {
+    let workspace_profile = workspace.current();
     tauri::async_runtime::spawn_blocking(move || {
-        build_read_surface(&name, allow_project_fallback.unwrap_or(false))
+        build_read_surface(
+            &name,
+            allow_project_fallback.unwrap_or(false),
+            &workspace_profile,
+        )
     })
     .await
     .map_err(|error| format!("read surface task failed: {error}"))?
@@ -68,18 +93,25 @@ pub async fn get_read_surface(
 
 #[tauri::command]
 pub async fn get_codex_transcript(
+    workspace: tauri::State<'_, WorkspaceManager>,
     issue_ref: String,
     session_id: Option<String>,
 ) -> Result<Value, String> {
+    let workspace_profile = workspace.current();
     tauri::async_runtime::spawn_blocking(move || {
-        build_codex_transcript(&issue_ref, session_id.as_deref())
+        build_codex_transcript(&issue_ref, session_id.as_deref(), &workspace_profile)
     })
     .await
     .map_err(|error| format!("transcript read task failed: {error}"))?
 }
 
-fn build_read_surface(name: &str, allow_project_fallback: bool) -> Result<Value, String> {
-    let args = read_surface_args(name).ok_or_else(|| format!("unknown read surface: {name}"))?;
+fn build_read_surface(
+    name: &str,
+    allow_project_fallback: bool,
+    workspace: &WorkspaceProfile,
+) -> Result<Value, String> {
+    let args = read_surface_args(name, workspace)
+        .ok_or_else(|| format!("unknown read surface: {name}"))?;
     let result = if project_backed_surface(name) {
         match project_read_cooldown() {
             Some(cooldown) => {
@@ -88,15 +120,16 @@ fn build_read_surface(name: &str, allow_project_fallback: bool) -> Result<Value,
                     skipped_project_read_command(&args, &cooldown),
                     project_read_paused_payload(&cooldown),
                     String::new(),
+                    workspace,
                 ));
             }
-            None => run_project_read_surface(&args),
+            None => run_project_read_surface(&args, workspace),
         }
     } else {
-        run_shea_read(&args)
+        run_shea_read_for_workspace(&args, workspace)
     };
     let parsed = if name == "status" {
-        runtime_status_summary(&result, allow_project_fallback)
+        runtime_status_summary(&result, allow_project_fallback, workspace)
     } else {
         parse_json_output(&result.stdout)
     };
@@ -109,11 +142,19 @@ fn build_read_surface(name: &str, allow_project_fallback: bool) -> Result<Value,
         } else {
             String::new()
         },
+        workspace,
     ))
 }
 
-fn build_codex_transcript(issue_ref: &str, session_id: Option<&str>) -> Result<Value, String> {
-    let local_status = run_shea_read(&read_surface_args("status").unwrap_or_default());
+fn build_codex_transcript(
+    issue_ref: &str,
+    session_id: Option<&str>,
+    workspace: &WorkspaceProfile,
+) -> Result<Value, String> {
+    let local_status = run_shea_read_for_workspace(
+        &read_surface_args("status", workspace).unwrap_or_default(),
+        workspace,
+    );
     let snapshot = parse_json_output(&local_status.stdout);
     let normalized_issue = normalize_issue_ref(issue_ref);
     let candidates = transcript_candidates(&snapshot, normalized_issue.as_deref(), session_id);
@@ -238,9 +279,7 @@ fn codex_conversation_summary(content: &str, path: &Path) -> Value {
 }
 
 fn protocol_message_from_record(record: &Value) -> Option<Value> {
-    if record.get("direction").and_then(Value::as_str).is_none() {
-        return None;
-    }
+    record.get("direction").and_then(Value::as_str)?;
     let line = record.get("line").and_then(Value::as_str)?;
     serde_json::from_str::<Value>(line).ok()
 }
@@ -699,23 +738,27 @@ fn normalize_issue_ref(value: &str) -> Option<String> {
     }
 }
 
-fn build_operator_overview(scope: &str) -> Result<Value, String> {
+fn build_operator_overview(scope: &str, workspace: &WorkspaceProfile) -> Result<Value, String> {
     let generated_at = timestamp_iso_like();
-    let github_queue_args = read_surface_args("githubQueue").unwrap_or_default();
+    let github_queue_args = read_surface_args("githubQueue", workspace).unwrap_or_default();
+    let workflow_path = workspace.workflow_path.as_str();
+    let target_context = TargetContext::from_workspace(workspace).to_value();
 
     if scope == "fast" {
         let commands = json!({
-            "autopilot": pending_result(&["autopilot", "plan", DEFAULT_WORKFLOW_PATH, "--json"], "Deferred to full overview."),
-            "doctor": pending_result(&["doctor", DEFAULT_WORKFLOW_PATH, "--json"], "Deferred to full overview."),
-            "review": pending_result(&["review", "status", DEFAULT_WORKFLOW_PATH, "--json"], "Deferred to full overview."),
-            "skills": pending_result(&["skills", "status", DEFAULT_WORKFLOW_PATH, "--json"], "Deferred to background read."),
-            "sessions": pending_result(&["session", "list", DEFAULT_WORKFLOW_PATH], "Deferred to background read."),
-            "status": pending_result(&["status", "show", DEFAULT_WORKFLOW_PATH, "--json"], "Deferred to background read."),
-            "githubQueue": pending_result(&["project", "state", DEFAULT_WORKFLOW_PATH, "--json"], "Deferred to background Project queue read."),
+            "autopilot": pending_result(&["autopilot", "plan", workflow_path, "--json"], "Deferred to full overview."),
+            "doctor": pending_result(&["doctor", workflow_path, "--json"], "Deferred to full overview."),
+            "review": pending_result(&["review", "status", workflow_path, "--json"], "Deferred to full overview."),
+            "skills": pending_result(&["skills", "status", workflow_path, "--json"], "Deferred to background read."),
+            "sessions": pending_result(&["session", "list", workflow_path], "Deferred to background read."),
+            "status": pending_result(&["status", "show", workflow_path, "--json"], "Deferred to background read."),
+            "githubQueue": pending_result(&["project", "state", workflow_path, "--json"], "Deferred to background Project queue read."),
         });
         return Ok(json!({
             "generatedAt": generated_at,
-            "workflowPath": DEFAULT_WORKFLOW_PATH,
+            "workflowPath": workflow_path,
+            "workspace": workspace,
+            "targetContext": target_context,
             "scope": "fast",
             "commands": commands,
             "autopilot": Value::Null,
@@ -729,14 +772,31 @@ fn build_operator_overview(scope: &str) -> Result<Value, String> {
         }));
     }
 
-    let runtime = run_shea_read(&read_surface_args("status").unwrap_or_default());
-    let autopilot =
-        run_project_read_surface_or_skip(&read_surface_args("autopilot").unwrap_or_default());
-    let doctor = run_project_read_surface_or_skip(&read_surface_args("doctor").unwrap_or_default());
-    let review = run_project_read_surface_or_skip(&read_surface_args("review").unwrap_or_default());
-    let skills = run_shea_read(&read_surface_args("skills").unwrap_or_default());
-    let sessions = run_shea_read(&read_surface_args("sessions").unwrap_or_default());
-    let github_queue = run_project_read_surface_or_skip(&github_queue_args);
+    let runtime = run_shea_read_for_workspace(
+        &read_surface_args("status", workspace).unwrap_or_default(),
+        workspace,
+    );
+    let autopilot = run_project_read_surface_or_skip(
+        &read_surface_args("autopilot", workspace).unwrap_or_default(),
+        workspace,
+    );
+    let doctor = run_project_read_surface_or_skip(
+        &read_surface_args("doctor", workspace).unwrap_or_default(),
+        workspace,
+    );
+    let review = run_project_read_surface_or_skip(
+        &read_surface_args("review", workspace).unwrap_or_default(),
+        workspace,
+    );
+    let skills = run_shea_read_for_workspace(
+        &read_surface_args("skills", workspace).unwrap_or_default(),
+        workspace,
+    );
+    let sessions = run_shea_read_for_workspace(
+        &read_surface_args("sessions", workspace).unwrap_or_default(),
+        workspace,
+    );
+    let github_queue = run_project_read_surface_or_skip(&github_queue_args, workspace);
     let healthy = [
         autopilot.summary.ok,
         doctor.summary.ok,
@@ -748,7 +808,9 @@ fn build_operator_overview(scope: &str) -> Result<Value, String> {
 
     Ok(json!({
         "generatedAt": generated_at,
-        "workflowPath": DEFAULT_WORKFLOW_PATH,
+        "workflowPath": workflow_path,
+        "workspace": workspace,
+        "targetContext": target_context,
         "commands": {
             "autopilot": command_summary_value(&autopilot.summary),
             "doctor": command_summary_value(&doctor.summary),
@@ -763,59 +825,56 @@ fn build_operator_overview(scope: &str) -> Result<Value, String> {
         "review": parse_json_output(&review.stdout),
         "skills": parse_json_output(&skills.stdout),
         "sessionsText": sessions.stdout.trim(),
-        "localStatus": runtime_status_summary(&runtime, false),
+        "localStatus": runtime_status_summary(&runtime, false, workspace),
         "githubQueue": parse_json_output(&github_queue.stdout),
         "healthy": healthy,
     }))
 }
 
-fn read_surface_args(name: &str) -> Option<Vec<String>> {
+fn read_surface_args(name: &str, workspace: &WorkspaceProfile) -> Option<Vec<String>> {
+    let workflow_path = workspace.workflow_path.clone();
     match name {
         "autopilot" => Some(vec![
             "autopilot".into(),
             "plan".into(),
-            DEFAULT_WORKFLOW_PATH.into(),
+            workflow_path,
             "--json".into(),
         ]),
-        "doctor" => Some(vec![
-            "doctor".into(),
-            DEFAULT_WORKFLOW_PATH.into(),
-            "--json".into(),
-        ]),
+        "doctor" => Some(vec!["doctor".into(), workflow_path, "--json".into()]),
         "review" => Some(vec![
             "review".into(),
             "status".into(),
-            DEFAULT_WORKFLOW_PATH.into(),
+            workflow_path,
             "--json".into(),
         ]),
         "skills" => Some(vec![
             "skills".into(),
             "status".into(),
-            DEFAULT_WORKFLOW_PATH.into(),
+            workflow_path,
             "--json".into(),
         ]),
-        "sessions" => Some(vec![
-            "session".into(),
-            "list".into(),
-            DEFAULT_WORKFLOW_PATH.into(),
-        ]),
+        "sessions" => Some(vec!["session".into(), "list".into(), workflow_path]),
         "status" => Some(vec![
             "status".into(),
             "show".into(),
-            DEFAULT_WORKFLOW_PATH.into(),
+            workflow_path,
             "--json".into(),
         ]),
         "githubQueue" => Some(vec![
             "project".into(),
             "state".into(),
-            DEFAULT_WORKFLOW_PATH.into(),
+            workflow_path,
             "--json".into(),
         ]),
         _ => None,
     }
 }
 
-fn runtime_status_summary(result: &CommandRun, allow_project_fallback: bool) -> Value {
+fn runtime_status_summary(
+    result: &CommandRun,
+    allow_project_fallback: bool,
+    workspace: &WorkspaceProfile,
+) -> Value {
     let snapshot = parse_json_output(&result.stdout);
     if snapshot.is_null() {
         return Value::Null;
@@ -845,9 +904,9 @@ fn runtime_status_summary(result: &CommandRun, allow_project_fallback: bool) -> 
         .and_then(Value::as_array)
         .map(Vec::len)
         .unwrap_or(0);
-    let issue_worktrees = git_worktree_issue_inventory();
+    let issue_worktrees = git_worktree_issue_inventory(workspace);
     let project_issues = if allow_project_fallback && project_read_cooldown().is_none() {
-        project_issue_readbacks(&issue_worktrees, &snapshot)
+        project_issue_readbacks(&issue_worktrees, &snapshot, workspace)
     } else {
         Value::Array(vec![])
     };
@@ -855,6 +914,7 @@ fn runtime_status_summary(result: &CommandRun, allow_project_fallback: bool) -> 
         completed_issue_worktrees(&snapshot, &issue_worktrees, &project_issues);
     json!({
         "source": "shea-symphony status show --json",
+        "targetContext": TargetContext::from_workspace(workspace).to_value(),
         "runningCount": running_count,
         "plannedCount": planned_count,
         "retryingCount": retrying_count,
@@ -1030,7 +1090,11 @@ fn completed_issue_worktrees(
     Value::Array(completed.into_values().collect())
 }
 
-fn project_issue_readbacks(issue_worktrees: &Value, snapshot: &Value) -> Value {
+fn project_issue_readbacks(
+    issue_worktrees: &Value,
+    snapshot: &Value,
+    workspace: &WorkspaceProfile,
+) -> Value {
     let registry_issues = session_registry_issue_refs(snapshot);
     let mut issues = BTreeMap::new();
     for worktree in issue_worktrees.as_array().into_iter().flatten() {
@@ -1040,7 +1104,7 @@ fn project_issue_readbacks(issue_worktrees: &Value, snapshot: &Value) -> Value {
         if registry_issues.contains_key(issue) || issues.contains_key(issue) {
             continue;
         }
-        if let Some(readback) = project_issue_readback(issue) {
+        if let Some(readback) = project_issue_readback(issue, workspace) {
             let _ = write_project_readback_session(snapshot, worktree, &readback);
             issues.insert(issue.to_string(), readback);
         }
@@ -1081,13 +1145,22 @@ fn session_registry_issue_refs(snapshot: &Value) -> BTreeMap<String, Value> {
     issues
 }
 
-fn project_issue_readback(issue: &str) -> Option<Value> {
+fn project_issue_readback(issue: &str, workspace: &WorkspaceProfile) -> Option<Value> {
     if project_read_cooldown().is_some() {
         return None;
     }
-    let output = shea_command(&["project", "issue", DEFAULT_WORKFLOW_PATH, issue, "--json"])
-        .output()
-        .ok()?;
+    let output = shea_command_for_workspace(
+        &[
+            "project",
+            "issue",
+            workspace.workflow_path.as_str(),
+            issue,
+            "--json",
+        ],
+        workspace,
+    )
+    .output()
+    .ok()?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     if project_rate_limit_detected(&stderr) {
         record_project_rate_limit_cooldown(&stderr);
@@ -1174,8 +1247,10 @@ fn unix_timestamp_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn git_worktree_issue_inventory() -> Value {
+fn git_worktree_issue_inventory(workspace: &WorkspaceProfile) -> Value {
     let output = Command::new("git")
+        .arg("-C")
+        .arg(workspace.target_path())
         .args(["worktree", "list", "--porcelain"])
         .output();
     let Ok(output) = output else {
@@ -1346,11 +1421,19 @@ fn should_count_modified_time(path: &Path) -> bool {
     })
 }
 
-fn surface_payload(name: &str, command: Value, parsed: Value, text: String) -> Value {
+fn surface_payload(
+    name: &str,
+    command: Value,
+    parsed: Value,
+    text: String,
+    workspace: &WorkspaceProfile,
+) -> Value {
     json!({
         "name": name,
         "generatedAt": timestamp_iso_like(),
-        "workflowPath": DEFAULT_WORKFLOW_PATH,
+        "workflowPath": workspace.workflow_path.as_str(),
+        "workspace": workspace,
+        "targetContext": TargetContext::from_workspace(workspace).to_value(),
         "command": command,
         "parsed": parsed,
         "text": text,
@@ -1372,15 +1455,15 @@ fn project_backed_surface(name: &str) -> bool {
     PROJECT_READ_SURFACES.contains(&name)
 }
 
-fn run_project_read_surface_or_skip(args: &[String]) -> CommandRun {
+fn run_project_read_surface_or_skip(args: &[String], workspace: &WorkspaceProfile) -> CommandRun {
     if let Some(cooldown) = project_read_cooldown() {
         return skipped_command_run(args, skipped_project_read_stderr(&cooldown));
     }
-    run_project_read_surface(args)
+    run_project_read_surface(args, workspace)
 }
 
-fn run_project_read_surface(args: &[String]) -> CommandRun {
-    let result = run_shea_read(args);
+fn run_project_read_surface(args: &[String], workspace: &WorkspaceProfile) -> CommandRun {
+    let result = run_shea_read_for_workspace(args, workspace);
     if !result.summary.ok
         && (project_rate_limit_detected(&result.summary.stderr)
             || project_rate_limit_detected(&result.summary.stdout_preview)

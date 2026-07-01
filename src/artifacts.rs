@@ -136,7 +136,7 @@ pub fn cleanup_plan(config: &RuntimeConfig, issues: &[TrackerIssue]) -> CleanupP
         .iter()
         .map(|issue| {
             cleanup_candidate(
-                &config.workspace.root,
+                config,
                 issue,
                 &terminal_states,
                 profile_namespace.as_deref(),
@@ -151,12 +151,18 @@ pub fn cleanup_plan(config: &RuntimeConfig, issues: &[TrackerIssue]) -> CleanupP
 }
 
 fn cleanup_candidate(
-    workspace_root: &Path,
+    config: &RuntimeConfig,
     issue: &TrackerIssue,
     terminal_states: &BTreeSet<String>,
     profile_namespace: Option<&str>,
 ) -> CleanupCandidate {
-    let handoff = plan_issue_handoff_for_profile(workspace_root, issue, "main", profile_namespace);
+    let workspace_root = &config.workspace.root;
+    let handoff = plan_issue_handoff_for_profile(
+        workspace_root,
+        issue,
+        config.git_base_branch(),
+        profile_namespace,
+    );
     let path = handoff
         .as_ref()
         .map(|handoff| handoff.workspace_path.clone())

@@ -27,6 +27,7 @@ use commands::session::{
 };
 use commands::skills::skills_status;
 use commands::status::{plan, status_api};
+use commands::target_runtime::{target_runtime_init, target_runtime_status};
 use commands::workflow::{inspect, validate};
 use commands::workspace::{
     cleanup_workspaces, workspace_adopt, workspace_ensure, workspace_list, workspace_show,
@@ -124,6 +125,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Command::SkillsStatus { input, json } => skills_status(input, json),
         Command::Profiles { workflow_path } => list_profiles(workflow_path),
         Command::Debug { workflow_path } => debug_report(workflow_path),
+        Command::TargetRuntimeStatus { path } => target_runtime_status(path),
+        Command::TargetRuntimeInit { path } => target_runtime_init(path),
         Command::CleanupPlan { workflow_path } => cleanup_plan_command(workflow_path),
         Command::CleanPlan { workflow_path } => cleanup_plan_command(workflow_path),
         Command::CleanAudit { workflow_path } => clean_audit_command(workflow_path),

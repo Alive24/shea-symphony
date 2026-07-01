@@ -44,10 +44,11 @@ normalized-event artifacts, persists a backend session registry record, and
 reconciles the normal Main handoff only after PR readiness and linked-PR
 readback are proven. `main_lane.backend: tmux` remains an explicit
 fallback/debug setting, not the unattended default.
-Gemini-backed `review loop` uses the headless CLI path by default: it writes the
-Review prompt through stdin, requests JSON output, applies configured model and
-interim allowed-tools settings, and records stdout/stderr/job evidence for the
-review handoff.
+`agy`-backed `review loop` uses the headless CLI path by default: it passes the
+Review prompt through `agy --print`, applies configured model and timeout
+settings, runs with `--sandbox --dangerously-skip-permissions` for unattended
+review, and records stdout/stderr/job evidence for the review handoff. The
+legacy `gemini-cli` backend remains available for fallback workflows.
 Main-lane crash recovery is enabled by default for bounded `main loop --write`
 ticks. It restarts recoverable interrupted `In Progress` runtime slots as new
 attempts while preserving issue state, dirty worktrees, and existing claim
@@ -67,7 +68,7 @@ before Project writes. Then use `session start --lane ... --run ...` to render
 the lane prompt and start the configured runtime when a supervised session is
 needed. Main and Merge-agent sessions default to Codex app-server through the
 lane backend config and `codex.command`; Review session start remains the tmux
-supervised fallback while automatic Review uses Gemini headless.
+supervised fallback while automatic Review uses `agy` headless.
 Clean `merge once` / `merge loop` remains direct CLI merge behavior and does not
 launch a merge-agent runtime. Dirty PRs still try the mechanical direct-CLI
 repair first; only content conflicts in a trusted clean PR worktree launch the

@@ -169,6 +169,9 @@ pub(crate) fn tmux_agent_command_for_lane(
                 (config.review.backend == "gemini-cli")
                     .then_some(config.review.gemini_command.as_str())
             })
+            .or_else(|| {
+                (config.review.backend == "agy-cli").then_some(config.review.agy_command.as_str())
+            })
             .unwrap_or(&config.tmux.agent_command),
         AgentSessionLaneArg::Merge => config
             .tmux

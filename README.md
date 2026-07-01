@@ -150,7 +150,7 @@ The canonical workflow now defaults Main execution to Codex app-server. tmux rem
 
 ### Review Lane
 
-The Review lane is independent review. In the current dogfood path, automatic review uses headless Gemini CLI and records a durable review job ledger plus a human-readable issue comment.
+The Review lane is independent review. In the current dogfood path, automatic review uses headless `agy` CLI and records a durable review job ledger plus a human-readable issue comment.
 
 Passing review can route ordinary issues to `Human Review`. Routine native subissues can route directly to `Merging` when the parent issue owns final UAT. Confirmed findings route to `Rework`.
 
@@ -191,7 +191,7 @@ The current self-dogfood workflow can:
 - create and promote tracker issues through Forge;
 - run bounded Main, Review, and Merge lane ticks;
 - use Codex app-server for Main execution;
-- use headless Gemini for Review execution;
+- use headless `agy` for Review execution;
 - create isolated issue worktrees and PR handoffs;
 - preserve Main workpads and lane timeline evidence;
 - recover interrupted Main and Merge lane work by default;

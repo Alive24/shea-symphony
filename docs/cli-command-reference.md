@@ -310,7 +310,7 @@ record with status `recorded`, and do not change Project Status:
 
 ```bash
 cargo run -- main claim workflows/shea-symphony.md '#265' --worker codex-manual-main --write
-cargo run -- review claim workflows/shea-symphony.md '#265' --worker "Manual Gemini Review" --write
+cargo run -- review claim workflows/shea-symphony.md '#265' --worker "Manual agy Review" --write
 cargo run -- merge claim workflows/shea-symphony.md '#265' --worker codex-manual-merge --write
 ```
 
@@ -617,7 +617,7 @@ changes.
 | --- | --- | --- |
 | `review fake` | Fixture/fake review transition helper. | Local testing path. |
 | `review once` | Run one configured review backend for one issue. | Direct backend command for one issue. |
-| `review loop` | Bounded review worker selection/reconciliation. | For `gemini-cli`, runs headless Gemini by default with stdin prompt transport, JSON output capture, configured model/tools, durable review-job evidence, and health-aware retry routing. |
+| `review loop` | Bounded review worker selection/reconciliation. | For the canonical `agy-cli` backend, runs `agy --print` headlessly with configured model/timeout plus `--sandbox --dangerously-skip-permissions`, durable review-job evidence, and health-aware retry routing. The legacy `gemini-cli` backend remains available for fallback workflows. |
 | `review status` | Read review-loop and review-runner status from local ledgers, runtime/session registry, and Project claim cross-checks. | Read-only; never claims, repairs, retries, kills jobs, writes workpads, or changes Project state. |
 | `review claim` | Claim one `Agent Review` item's `Review Agent` text field for manual/operator review. | Requires `--worker` and `--write`; refuses non-`Agent Review` issues and writes a structured, round-trip-validated claim pointer. |
 | `review pass` | Record manual independent review pass evidence and route to the correct next state. | Requires `--write`, a durable evidence file containing the exact current `Review Agent` claim, and preserves the field as terminal pass evidence. Ordinary issues and parent final issues route to `Human Review`; routine native subissues route directly to `Merging` unless they record `Subissue Human Review Exception: <reason>`. |
@@ -631,10 +631,9 @@ changes.
 
 Review backend implementations own backend-specific command previews, prelaunch
 diagnostics, stdout parsing, and artifact shaping. The current canonical
-workflow still selects `review_lane.backend: gemini-cli`; Gemini-specific
-configuration fields such as `gemini_command`, `gemini_model`, and
-`gemini_allowed_tools` remain the supported configuration surface for that
-backend.
+workflow selects `review_lane.backend: agy-cli` with `agy_command` and
+`agy_model`. Legacy `gemini-cli` workflows can still use `gemini_command`,
+`gemini_model`, and `gemini_allowed_tools`.
 
 Example:
 
@@ -644,7 +643,7 @@ cargo run -- review loop workflows/shea-symphony.md --max-iterations 1 --write
 cargo run -- review status workflows/shea-symphony.md
 cargo run -- review status workflows/shea-symphony.md --issue '#226' --recent 3 --verbose
 cargo run -- review status workflows/shea-symphony.md --json
-cargo run -- review claim workflows/shea-symphony.md '#226' --worker "Manual Gemini Review" --write
+cargo run -- review claim workflows/shea-symphony.md '#226' --worker "Manual agy Review" --write
 cargo run -- session start workflows/shea-symphony.md '#226' --lane review --run <RUN_ID> --write
 cargo run -- session list workflows/shea-symphony.md
 cargo run -- review pass workflows/shea-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
@@ -657,12 +656,12 @@ updates that same field to an audit pointer such as `state=done result=passed`,
 `state=done result=rejected`, `state=failed result=inconclusive`, or
 `state=failed result=blocked`; it does not clear the field.
 
-Gemini-backed `review loop` distinguishes recoverable backend health from
+Backend-backed `review loop` distinguishes recoverable backend health from
 operator-action blockers. Quota, rate-limit, and resource-exhausted responses
 wait and retry when the loop is allowed to continue; transient capacity,
 network, timeout, or 5xx failures retry with bounded backoff while keeping the
-issue in `Agent Review`. Command, auth, model, policy, or allowed-tools
-configuration failures route to `Need Human Input`. Repeated same-cause Gemini
+issue in `Agent Review`. Command, auth, model, policy, or tool-permission
+configuration failures route to `Need Human Input`. Repeated same-cause backend
 failures append compact repeat evidence instead of duplicating full logs.
 
 ## Local Skill Suite

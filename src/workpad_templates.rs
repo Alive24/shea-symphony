@@ -373,7 +373,7 @@ const AGENT_REVIEW_HANDOFF: &str = r#"## Shea Symphony Agent Review Handoff
 - Status: `{{status}}`
 - Target state after handoff: `{{target_state}}`
 - PR: `{{pull_request}}`
-- Project linked PR verified: `{{project_pr_link_verified}}`
+- Linked PR handoff verified: `{{project_pr_link_verified}}`
 - PR draft: `{{pull_request_is_draft}}`
 - Validation: {{validation_summary}}
 - Last transition: {{last_transition}}

@@ -793,14 +793,12 @@ fn record_live_handoff_pr_link(
         .list_linked_pull_requests(issue_ref)
         .map_err(|error| format!("handoff PR link verification failed: {error}"))?;
 
-    if native_linked_pull_requests_contain(&linked, &handoff.publication.pr_url) {
+    if linked_pull_requests_contain(&linked, &handoff.publication.pr_url) {
         Ok(())
     } else {
-        let fallback_visible = linked_pull_requests_contain(&linked, &handoff.publication.pr_url);
         Err(format!(
-            "GitHub-native linked PR was not visible after repair attempt: {}; fallback_diagnostic_visible={}",
-            handoff.publication.pr_url,
-            fallback_visible
+            "linked PR was not visible after repair attempt: {}; fallback_diagnostic_visible=false",
+            handoff.publication.pr_url
         ))
     }
 }

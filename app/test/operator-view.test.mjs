@@ -2108,6 +2108,67 @@ test('blocked Todo project rows keep dependency readback but stay out of Main la
   assert.deepEqual(main.issues.map((issue) => issue.id), ['#441', '#438']);
 });
 
+test('native parent rows with incomplete subissues stay out of Main lane queue', () => {
+  const view = buildViewModel({
+    generatedAt: new Date().toISOString(),
+    workflowPath: 'workflows/shea-symphony.md',
+    commands: {
+      githubQueue: {
+        ok: true,
+        args: ['project', 'state', 'workflows/shea-symphony.md', '--json'],
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        durationMs: 12,
+        stderr: '',
+        stdoutPreview: '{}'
+      }
+    },
+    githubQueue: {
+      source: 'GitHub Project',
+      issues: [
+        {
+          identifier: '#447',
+          title: 'Incomplete native parent',
+          state: 'Todo',
+          projectFields: {
+            'GitHub Native Subissues': [
+              { identifier: '#450', project_state: 'Done' },
+              { identifier: '#451', project_state: 'Agent Review' }
+            ]
+          }
+        },
+        {
+          identifier: '#448',
+          title: 'Complete native parent',
+          state: 'Todo',
+          nativeSubissues: [
+            { identifier: '#452', projectState: 'Done' },
+            { identifier: '#453', projectState: 'Done' }
+          ]
+        },
+        {
+          identifier: '#449',
+          title: 'Missing native subissue Project status',
+          state: 'Rework',
+          projectFields: {
+            'Native Subissues': '#454'
+          }
+        }
+      ]
+    },
+    healthy: true
+  });
+
+  const board = buildLaneThroughputBoard({ queueIssues: view.queueIssues });
+  const main = board.find((lane) => lane.laneKey === 'main');
+
+  assert.deepEqual(view.queueIssues.map((issue) => issue.id), ['#448']);
+  assert.deepEqual(view.laneProjectIssues.main.map((issue) => issue.id), ['#448']);
+  assert.deepEqual(main.issues.map((issue) => issue.id), ['#448']);
+  assert.equal(main.queuedCount, 1);
+});
+
 test('fixture overview feeds first-screen human todo and lane board data', () => {
   const overview = buildFixtureOverview(true);
   const view = buildViewModel(overview);

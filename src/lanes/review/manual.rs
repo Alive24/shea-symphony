@@ -46,6 +46,10 @@ pub(crate) fn review_claim(
         LaneClaimLane::Review,
         if worker.to_ascii_lowercase().contains("gemini") {
             LaneClaimActor::Gemini
+        } else if worker.to_ascii_lowercase().contains("agy")
+            || worker.to_ascii_lowercase().contains("antigravity")
+        {
+            LaneClaimActor::Antigravity
         } else {
             LaneClaimActor::Codex
         },

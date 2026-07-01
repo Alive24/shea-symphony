@@ -179,7 +179,7 @@ Review, Merge, and Doctor flows.
 For a bounded Review Agent pass, run:
 
 ```bash
-export SHEA_GEMINI_COMMAND="$(command -v gemini)"
+export SHEA_AGY_COMMAND="$(command -v agy)"
 cargo run -- review loop workflows/shea-symphony.md --max-iterations 1 --write
 ```
 
@@ -187,7 +187,7 @@ For a manual/operator-supplied review, use the same CLI authority boundary
 instead of editing the Project board directly:
 
 ```bash
-cargo run -- review claim workflows/shea-symphony.md '#226' --worker "Manual Gemini Review" --write
+cargo run -- review claim workflows/shea-symphony.md '#226' --worker "Manual agy Review" --write
 cargo run -- review pass workflows/shea-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
 cargo run -- review reject workflows/shea-symphony.md '#226' --evidence-file /tmp/review-evidence.md --target-state rework --write
 ```
@@ -196,16 +196,15 @@ Expected outcomes:
 
 - each write-mode Review Agent records a `Review Agent` Project field claim
   before launching the headless review job;
-- Gemini-backed `review loop` invokes the configured Gemini command headlessly
-  with `--prompt`, `--output-format json`, workflow-configured model, and
-  workflow-configured interim allowed tools, writes the prompt through stdin,
-  and records stdout, stderr, exit status, Gemini session id when present, a
-  review output artifact, durable job ledger, and append-only Agent Review
-  timeline comment;
+- `agy`-backed `review loop` invokes the configured `agy` command headlessly
+  with `--print`, workflow-configured model, and workflow-configured timeout,
+  runs with `--sandbox --dangerously-skip-permissions`, and records stdout,
+  stderr, exit status, backend session id when present, a review output
+  artifact, durable job ledger, and append-only Agent Review timeline comment;
 - manual review claims use `review claim`, and terminal manual review routing
   validates the exact evidence claim before preserving the `Review Agent` field
   as a terminal structured audit pointer;
-- worker display labels such as `Manual Gemini Review` are stored through
+- worker display labels such as `Manual agy Review` are stored through
   CLI-owned quoting/escaping; avoid raw Project edits for normal claim repair;
 - passed independent review may move the issue to `Human Review`;
 - confirmed findings move the issue to `Rework`;
@@ -214,10 +213,10 @@ Expected outcomes:
 - failed, timed-out, unavailable, unparsed, or infrastructure-blocked review
   stays out of `Human Review` with durable evidence.
 
-If the review workflow uses `review_lane.gemini_command: $SHEA_GEMINI_COMMAND`,
-set that environment variable to an absolute Gemini CLI path before starting
-the review loop. This avoids worker processes with a narrower `PATH` recording
-a backend-unavailable failure for an otherwise installed Gemini CLI.
+If the review workflow uses `review_lane.agy_command: $SHEA_AGY_COMMAND`,
+set that environment variable to an absolute `agy` CLI path before starting the
+review loop. This avoids worker processes with a narrower `PATH` recording a
+backend-unavailable failure for an otherwise installed `agy` CLI.
 
 Supervised tmux Review remains available for operator-controlled review through
 `review claim` followed by `session start --lane review --run <RUN_ID>`, but it
@@ -232,7 +231,7 @@ For GitHub Project #9, do not assume the `Review Agent` claim field is enough:
 doctor expects the canonical Agent Review timeline comment pass marker in the
 issue comment stream, or an explicit manual review pass Project field if a
 future tracker schema adds one.
-Manual Gemini or operator-supplied review notes are wrapped by `review pass` or
+Manual review backend or operator-supplied review notes are wrapped by `review pass` or
 `review reject` into a `## Shea Symphony Agent Review Run` timeline comment;
 label the inner note as manual evidence so operators can distinguish it from
 automatic `review loop` pass evidence.

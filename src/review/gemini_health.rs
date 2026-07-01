@@ -74,7 +74,7 @@ impl GeminiReviewHealthDiagnostic {
             .map(|value| value.to_string())
             .unwrap_or_else(|| "unknown".into());
         format!(
-            "Gemini review backend health check classified category={} reason={} recovery_policy={} retry_after_ms={}: {}",
+            "Review backend health check classified category={} reason={} recovery_policy={} retry_after_ms={}: {}",
             self.category.as_str(),
             self.reason_code,
             self.recovery_policy.as_str(),
@@ -85,18 +85,31 @@ impl GeminiReviewHealthDiagnostic {
 }
 
 pub(super) fn diagnose_gemini_spawn_failure(command: &str, error: &std::io::Error) -> String {
+    diagnose_backend_spawn_failure("Gemini", "review_lane.gemini_command", command, error)
+}
+
+pub(super) fn diagnose_agy_spawn_failure(command: &str, error: &std::io::Error) -> String {
+    diagnose_backend_spawn_failure("agy", "review_lane.agy_command", command, error)
+}
+
+fn diagnose_backend_spawn_failure(
+    backend_label: &str,
+    command_field: &str,
+    command: &str,
+    error: &std::io::Error,
+) -> String {
     match error.kind() {
         ErrorKind::NotFound if command_uses_path_lookup(command) => format!(
-            "review backend startup failed: configured command: `{command}`; resolved executable: not found in worker PATH; suggested fix: configure `review_lane.gemini_command` with an absolute Gemini path such as `/opt/homebrew/bin/gemini`, or export a worker PATH that can resolve `{command}`; retry: rerun `review loop` after updating the workflow or environment."
+            "review backend startup failed: configured command: `{command}`; resolved executable: not found in worker PATH; suggested fix: configure `{command_field}` with an absolute {backend_label} command path, or export a worker PATH that can resolve `{command}`; retry: rerun `review loop` after updating the workflow or environment."
         ),
         ErrorKind::NotFound => format!(
-            "review backend startup failed: configured command: `{command}`; resolved executable: path was not found or could not be executed; suggested fix: verify the configured Gemini path exists and is executable; retry: rerun `review loop` after updating the workflow or environment."
+            "review backend startup failed: configured command: `{command}`; resolved executable: path was not found or could not be executed; suggested fix: verify the configured {backend_label} path exists and is executable; retry: rerun `review loop` after updating the workflow or environment."
         ),
         ErrorKind::PermissionDenied => format!(
-            "review backend startup failed: configured command: `{command}`; resolved executable: permission denied; suggested fix: make the Gemini command executable or configure `review_lane.gemini_command` to an executable path; retry: rerun `review loop` after fixing permissions."
+            "review backend startup failed: configured command: `{command}`; resolved executable: permission denied; suggested fix: make the {backend_label} command executable or configure `{command_field}` to an executable path; retry: rerun `review loop` after fixing permissions."
         ),
         _ => format!(
-            "review backend startup failed: configured command: `{command}`; spawn error: {error}; suggested fix: inspect the Gemini CLI installation, auth/configuration, and worker environment; retry: rerun `review loop` after fixing the backend."
+            "review backend startup failed: configured command: `{command}`; spawn error: {error}; suggested fix: inspect the {backend_label} CLI installation, auth/configuration, and worker environment; retry: rerun `review loop` after fixing the backend."
         ),
     }
 }
@@ -111,13 +124,36 @@ pub fn gemini_prelaunch_health_diagnostic(
     model: Option<&str>,
     allowed_tools: &[String],
 ) -> Option<GeminiReviewHealthDiagnostic> {
+    review_prelaunch_health_diagnostic(
+        "Gemini",
+        "review_lane.gemini_command",
+        command,
+        model,
+        allowed_tools,
+    )
+}
+
+pub fn agy_prelaunch_health_diagnostic(
+    command: &str,
+    model: Option<&str>,
+) -> Option<GeminiReviewHealthDiagnostic> {
+    review_prelaunch_health_diagnostic("agy", "review_lane.agy_command", command, model, &[])
+}
+
+fn review_prelaunch_health_diagnostic(
+    backend_label: &str,
+    command_field: &str,
+    command: &str,
+    model: Option<&str>,
+    allowed_tools: &[String],
+) -> Option<GeminiReviewHealthDiagnostic> {
     let command = command.trim();
     if command.is_empty() {
         return Some(GeminiReviewHealthDiagnostic {
             category: GeminiReviewHealthCategory::NonRecoveringConfig,
             recovery_policy: GeminiReviewRecoveryPolicy::RequiresHumanInput,
             reason_code: "missing_command".into(),
-            message: "Gemini review command is empty before launch.".into(),
+            message: format!("{backend_label} review command is empty before launch."),
             operator_status: "Blocked on review backend configuration.".into(),
             retry_after_ms: None,
         });
@@ -129,7 +165,7 @@ pub fn gemini_prelaunch_health_diagnostic(
                 category: GeminiReviewHealthCategory::NonRecoveringConfig,
                 recovery_policy: GeminiReviewRecoveryPolicy::RequiresHumanInput,
                 reason_code: "empty_model".into(),
-                message: "Gemini review model is configured as an empty string.".into(),
+                message: format!("{backend_label} review model is configured as an empty string."),
                 operator_status: "Blocked on review backend model configuration.".into(),
                 retry_after_ms: None,
             });
@@ -141,8 +177,9 @@ pub fn gemini_prelaunch_health_diagnostic(
             category: GeminiReviewHealthCategory::NonRecoveringPolicy,
             recovery_policy: GeminiReviewRecoveryPolicy::RequiresHumanInput,
             reason_code: "empty_allowed_tool".into(),
-            message: "Gemini review allowed-tools configuration contains an empty tool name."
-                .into(),
+            message: format!(
+                "{backend_label} review allowed-tools configuration contains an empty tool name."
+            ),
             operator_status: "Blocked on review allowed-tools configuration.".into(),
             retry_after_ms: None,
         });
@@ -158,9 +195,10 @@ pub fn gemini_prelaunch_health_diagnostic(
             category: GeminiReviewHealthCategory::NonRecoveringConfig,
             recovery_policy: GeminiReviewRecoveryPolicy::RequiresHumanInput,
             reason_code: "command_not_found".into(),
-            message: format!("Gemini review command `{command}` was not found before launch."),
-            operator_status: "Blocked until the Gemini command path or worker PATH is fixed."
-                .into(),
+            message: format!(
+                "{backend_label} review command `{command}` was not found before launch."
+            ),
+            operator_status: format!("Blocked until `{command_field}` or worker PATH is fixed."),
             retry_after_ms: None,
         });
     };
@@ -172,12 +210,14 @@ pub fn gemini_prelaunch_health_diagnostic(
             recovery_policy: GeminiReviewRecoveryPolicy::RequiresHumanInput,
             reason_code: "command_not_file".into(),
             message: format!(
-                "Gemini review command `{}` resolves to `{}`, which is not a file.",
+                "{} review command `{}` resolves to `{}`, which is not a file.",
+                backend_label,
                 command,
                 path.display()
             ),
-            operator_status:
-                "Blocked until `review_lane.gemini_command` points at an executable file.".into(),
+            operator_status: format!(
+                "Blocked until `{command_field}` points at an executable file."
+            ),
             retry_after_ms: None,
         }),
         Ok(_) => Some(GeminiReviewHealthDiagnostic {
@@ -185,12 +225,14 @@ pub fn gemini_prelaunch_health_diagnostic(
             recovery_policy: GeminiReviewRecoveryPolicy::RequiresHumanInput,
             reason_code: "command_not_executable".into(),
             message: format!(
-                "Gemini review command `{}` resolves to `{}` but is not executable.",
+                "{} review command `{}` resolves to `{}` but is not executable.",
+                backend_label,
                 command,
                 path.display()
             ),
-            operator_status: "Blocked until the Gemini command is made executable or reconfigured."
-                .into(),
+            operator_status: format!(
+                "Blocked until `{command_field}` is made executable or reconfigured."
+            ),
             retry_after_ms: None,
         }),
         Err(error) if error.kind() == ErrorKind::NotFound => Some(GeminiReviewHealthDiagnostic {
@@ -198,12 +240,12 @@ pub fn gemini_prelaunch_health_diagnostic(
             recovery_policy: GeminiReviewRecoveryPolicy::RequiresHumanInput,
             reason_code: "command_not_found".into(),
             message: format!(
-                "Gemini review command `{}` resolves to `{}` but the path does not exist.",
+                "{} review command `{}` resolves to `{}` but the path does not exist.",
+                backend_label,
                 command,
                 path.display()
             ),
-            operator_status: "Blocked until the Gemini command path or worker PATH is fixed."
-                .into(),
+            operator_status: format!("Blocked until `{command_field}` or worker PATH is fixed."),
             retry_after_ms: None,
         }),
         Err(error) => Some(GeminiReviewHealthDiagnostic {
@@ -211,12 +253,13 @@ pub fn gemini_prelaunch_health_diagnostic(
             recovery_policy: GeminiReviewRecoveryPolicy::RequiresHumanInput,
             reason_code: "command_metadata_error".into(),
             message: format!(
-                "Gemini review command `{}` resolves to `{}` but could not be inspected: {}.",
+                "{} review command `{}` resolves to `{}` but could not be inspected: {}.",
+                backend_label,
                 command,
                 path.display(),
                 error
             ),
-            operator_status: "Blocked until the Gemini command path can be inspected.".into(),
+            operator_status: format!("Blocked until `{command_field}` can be inspected."),
             retry_after_ms: None,
         }),
     }
@@ -247,7 +290,8 @@ fn is_executable(metadata: &fs::Metadata) -> bool {
 }
 
 pub fn gemini_review_health_diagnostic(job: &ReviewJob) -> Option<GeminiReviewHealthDiagnostic> {
-    if !job.backend.to_ascii_lowercase().contains("gemini") {
+    let backend = job.backend.to_ascii_lowercase();
+    if !backend.contains("gemini") && !backend.contains("agy") {
         return None;
     }
     if !matches!(job.state, ReviewJobState::Failed | ReviewJobState::TimedOut) {
@@ -310,7 +354,7 @@ fn classify_gemini_review_health_text(
             category: GeminiReviewHealthCategory::QuotaRateLimit,
             recovery_policy: GeminiReviewRecoveryPolicy::WaitAndRetry,
             reason_code: pause.classifier,
-            message: "Gemini review backend reported quota or rate limiting.".into(),
+            message: "Review backend reported quota or rate limiting.".into(),
             operator_status:
                 "Waiting for quota/rate-limit recovery, then retrying review automatically.".into(),
             retry_after_ms: parse_retry_after_ms(text),
@@ -335,7 +379,7 @@ fn classify_gemini_review_health_text(
             category: GeminiReviewHealthCategory::NonRecoveringPolicy,
             recovery_policy: GeminiReviewRecoveryPolicy::RequiresHumanInput,
             reason_code: "policy_or_allowed_tools".into(),
-            message: "Gemini review backend reported a policy or allowed-tools refusal.".into(),
+            message: "Review backend reported a policy or allowed-tools refusal.".into(),
             operator_status:
                 "Blocked until review policy or allowed-tools configuration is changed.".into(),
             retry_after_ms: None,
@@ -368,10 +412,10 @@ fn classify_gemini_review_health_text(
             recovery_policy: GeminiReviewRecoveryPolicy::RequiresHumanInput,
             reason_code: "command_config_or_auth".into(),
             message:
-                "Gemini review backend reported command, authentication, or model configuration failure."
+                "Review backend reported command, authentication, or model configuration failure."
                     .into(),
             operator_status:
-                "Blocked until Gemini command, auth, or model configuration is repaired.".into(),
+                "Blocked until review command, auth, or model configuration is repaired.".into(),
             retry_after_ms: None,
         });
     }
@@ -412,8 +456,7 @@ fn classify_gemini_review_health_text(
             } else {
                 "transient_backend".into()
             },
-            message: "Gemini review backend appears temporarily unavailable or capacity-limited."
-                .into(),
+            message: "Review backend appears temporarily unavailable or capacity-limited.".into(),
             operator_status: "Retrying with backoff while keeping review loop ownership visible."
                 .into(),
             retry_after_ms: parse_retry_after_ms(text),

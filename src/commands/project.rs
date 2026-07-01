@@ -3,7 +3,9 @@ use std::path::PathBuf;
 
 use serde_json::{json, Value};
 use shea_symphony::config::RuntimeConfig;
-use shea_symphony::model::{native_subissue_gate_blocker, normalize_state, TrackerIssue};
+use shea_symphony::model::{
+    native_subissue_gate_blocker, native_subissue_statuses, normalize_state, TrackerIssue,
+};
 use shea_symphony::presentation::render_project_state_panel;
 use shea_symphony::progress::run_with_progress_heartbeat;
 use shea_symphony::review_status::{
@@ -628,6 +630,16 @@ fn render_queue_issue(issue: &TrackerIssue) -> Value {
     } else {
         Some("issue has tracker dependencies")
     };
+    let native_subissues = native_subissue_statuses(issue)
+        .into_iter()
+        .map(|subissue| {
+            json!({
+                "identifier": subissue.identifier,
+                "projectState": subissue.project_state,
+                "githubState": subissue.github_state,
+            })
+        })
+        .collect::<Vec<_>>();
 
     json!({
         "identifier": issue.identifier,
@@ -642,6 +654,7 @@ fn render_queue_issue(issue: &TrackerIssue) -> Value {
         "branchName": issue.branch_name,
         "blockedBy": blocked_by,
         "blockedReason": blocked_reason,
+        "nativeSubissues": native_subissues,
     })
 }
 
@@ -652,6 +665,11 @@ fn lane_for_issue(
     let normalized_state = issue.normalized_state();
     if matches!(normalized_state.as_str(), "todo" | "rework")
         && issue_has_unresolved_blockers(issue, terminal_states)
+    {
+        return None;
+    }
+    if matches!(normalized_state.as_str(), "todo" | "rework")
+        && native_subissue_gate_blocker(issue, terminal_states).is_some()
     {
         return None;
     }

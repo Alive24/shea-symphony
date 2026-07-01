@@ -184,10 +184,11 @@ PRs, edit native GitHub relationships, move Project statuses, or replace the
 
 Shea Symphony resolves branch targets from GitHub native parent/subissue
 metadata plus durable supplemental evidence. Normal single-issue work still
-targets `main`. A native subissue keeps its per-issue feature branch as the PR
-head and uses the recorded parent integration branch as the PR base. A parent
-issue with native subissues uses the parent integration branch as the parent
-final PR head and `main` as the PR base.
+targets the configured workflow git base branch (`git.base_branch`, default
+`main`). A native subissue keeps its per-issue feature branch as the PR head and
+uses the recorded parent integration branch as the PR base. A parent issue with
+native subissues uses the parent integration branch as the parent final PR head
+and the configured workflow git base branch as the PR base.
 
 Handoff, workpad, PR body, and merge readback surfaces should record:
 

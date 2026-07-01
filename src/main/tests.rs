@@ -152,9 +152,23 @@ fn canonical_checkout_report_accepts_latest_main() {
     let (_temp, repo, _remote) = canonical_git_repo();
 
     assert_eq!(
-        canonical_checkout_report(&repo),
+        canonical_checkout_report(&repo, "main"),
         CanonicalCheckoutReport::Ready
     );
+}
+
+#[test]
+fn canonical_checkout_report_accepts_configured_base_branch() {
+    let (_temp, repo, _remote) = canonical_git_repo();
+    git_ok(&repo, &["checkout", "-b", "dev-chunteng"]);
+    std::fs::write(repo.join("README.md"), "dev\n").unwrap();
+    git_ok(&repo, &["add", "README.md"]);
+    git_ok(&repo, &["commit", "-m", "dev base"]);
+    git_ok(&repo, &["push", "-u", "origin", "dev-chunteng"]);
+
+    let report = canonical_checkout_report(&repo, "dev-chunteng");
+
+    assert_eq!(report, CanonicalCheckoutReport::Ready);
 }
 
 #[test]
@@ -162,7 +176,7 @@ fn canonical_checkout_report_blocks_detached_head() {
     let (_temp, repo, _remote) = canonical_git_repo();
     git_ok(&repo, &["checkout", "--detach", "HEAD"]);
 
-    let report = canonical_checkout_report(&repo);
+    let report = canonical_checkout_report(&repo, "main");
     assert!(matches!(
         report,
         CanonicalCheckoutReport::Blocked { ref reason } if reason.contains("detached")
@@ -174,7 +188,7 @@ fn canonical_checkout_report_blocks_non_main_branch() {
     let (_temp, repo, _remote) = canonical_git_repo();
     git_ok(&repo, &["checkout", "-b", "feature/test"]);
 
-    let report = canonical_checkout_report(&repo);
+    let report = canonical_checkout_report(&repo, "main");
     assert!(matches!(
         report,
         CanonicalCheckoutReport::Blocked { ref reason } if reason.contains("current branch")
@@ -196,7 +210,7 @@ fn canonical_checkout_report_blocks_main_behind_origin_main() {
     git_ok(&other, &["commit", "-m", "advance main"]);
     git_ok(&other, &["push", "origin", "main"]);
 
-    let report = canonical_checkout_report(&repo);
+    let report = canonical_checkout_report(&repo, "main");
     assert!(matches!(
         report,
         CanonicalCheckoutReport::Blocked { ref reason }
@@ -875,13 +889,64 @@ fn workspace_ensure_creates_only_under_configured_workspace_root() {
     let plan = plan_issue_handoff_for_profile(&workspace_root, &issue, "main", None).unwrap();
 
     validate_workspace_path_under_root(&workspace_root, &plan.workspace_path).unwrap();
-    ensure_inspection_worktree(&repo, &plan.workspace_path, &plan.branch_name, None).unwrap();
+    ensure_inspection_worktree(
+        &repo,
+        &plan.workspace_path,
+        &plan.branch_name,
+        None,
+        &plan.pull_request.base_branch,
+    )
+    .unwrap();
 
     assert!(plan.workspace_path.starts_with(&workspace_root));
     assert!(plan.workspace_path.is_dir());
     assert_eq!(
         current_git_branch(&plan.workspace_path).unwrap().as_deref(),
         Some(plan.branch_name.as_str())
+    );
+}
+
+#[test]
+fn workspace_ensure_creates_worktree_from_configured_base_branch() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    ProcessCommand::new("git")
+        .args(["init", "--initial-branch=main", repo.to_str().unwrap()])
+        .status()
+        .unwrap();
+    ProcessCommand::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .current_dir(&repo)
+        .status()
+        .unwrap();
+    ProcessCommand::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(&repo)
+        .status()
+        .unwrap();
+    std::fs::write(repo.join("README.md"), "main\n").unwrap();
+    git_ok(&repo, &["add", "README.md"]);
+    git_ok(&repo, &["commit", "-qm", "init"]);
+    git_ok(&repo, &["checkout", "-b", "dev-chunteng"]);
+    std::fs::write(repo.join("BASE.txt"), "dev base\n").unwrap();
+    git_ok(&repo, &["add", "BASE.txt"]);
+    git_ok(&repo, &["commit", "-qm", "dev base"]);
+    git_ok(&repo, &["checkout", "main"]);
+
+    let workspace_path = temp.path().join("workspaces").join("issue-448");
+    ensure_inspection_worktree(
+        &repo,
+        &workspace_path,
+        "feature/issue-448-configurable-base",
+        None,
+        "dev-chunteng",
+    )
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(workspace_path.join("BASE.txt")).unwrap(),
+        "dev base\n"
     );
 }
 

@@ -292,7 +292,7 @@ fn ensure_local_parent_integration_branch(
         .branch_target
         .parent_final_base_branch
         .as_deref()
-        .unwrap_or("main");
+        .unwrap_or(plan.pull_request.base_branch.as_str());
     require_success(
         "git",
         runner.run(

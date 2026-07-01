@@ -99,7 +99,9 @@ pub(crate) fn append_canonical_checkout_gap(config: &RuntimeConfig, gaps: &mut V
         gaps.push("canonical_checkout_blocked: current directory is unavailable".into());
         return;
     };
-    if let Some(reason) = canonical_checkout_report(&current_dir).blocker() {
+    if let Some(reason) =
+        canonical_checkout_report(&current_dir, config.git_base_branch()).blocker()
+    {
         gaps.push(format!("canonical_checkout_blocked: {reason}"));
     }
 }
@@ -119,7 +121,7 @@ impl CanonicalCheckoutReport {
     }
 }
 
-pub(crate) fn canonical_checkout_report(path: &Path) -> CanonicalCheckoutReport {
+pub(crate) fn canonical_checkout_report(path: &Path, base_branch: &str) -> CanonicalCheckoutReport {
     let branch = match git_stdout(path, &["branch", "--show-current"]) {
         Ok(branch) if !branch.trim().is_empty() => branch.trim().to_string(),
         Ok(_) => {
@@ -133,15 +135,15 @@ pub(crate) fn canonical_checkout_report(path: &Path) -> CanonicalCheckoutReport 
             }
         }
     };
-    if branch != "main" {
+    if branch != base_branch {
         return CanonicalCheckoutReport::Blocked {
-            reason: format!("current branch is {branch:?}, expected \"main\""),
+            reason: format!("current branch is {branch:?}, expected \"{base_branch}\""),
         };
     }
 
-    if let Err(error) = git_status(path, &["fetch", "--quiet", "origin", "main"]) {
+    if let Err(error) = git_status(path, &["fetch", "--quiet", "origin", base_branch]) {
         return CanonicalCheckoutReport::Blocked {
-            reason: format!("git fetch origin main failed: {error}"),
+            reason: format!("git fetch origin {base_branch} failed: {error}"),
         };
     }
 
@@ -153,17 +155,18 @@ pub(crate) fn canonical_checkout_report(path: &Path) -> CanonicalCheckoutReport 
             }
         }
     };
-    let origin_main = match git_stdout(path, &["rev-parse", "origin/main"]) {
+    let origin_base = format!("origin/{base_branch}");
+    let origin_head = match git_stdout(path, &["rev-parse", &origin_base]) {
         Ok(value) => value.trim().to_string(),
         Err(error) => {
             return CanonicalCheckoutReport::Blocked {
-                reason: format!("cannot read origin/main: {error}"),
+                reason: format!("cannot read {origin_base}: {error}"),
             }
         }
     };
-    if head != origin_main {
+    if head != origin_head {
         return CanonicalCheckoutReport::Blocked {
-            reason: "local main does not exactly match origin/main".into(),
+            reason: format!("local {base_branch} does not exactly match {origin_base}"),
         };
     }
 

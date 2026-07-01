@@ -118,7 +118,13 @@ pub(crate) fn workspace_ensure(
         return Ok(());
     }
 
-    ensure_inspection_worktree(&repo_root, &workspace_path, &branch_name, pr_number)?;
+    ensure_inspection_worktree(
+        &repo_root,
+        &workspace_path,
+        &branch_name,
+        pr_number,
+        &plan.pull_request.base_branch,
+    )?;
     let worktrees = git_worktree_list(&repo_root)?;
     let candidate =
         validate_workspace_adoption(&issue, &workspace_path, &worktrees).map_err(|error| {
@@ -273,6 +279,7 @@ pub(crate) fn ensure_inspection_worktree(
     workspace_path: &Path,
     branch_name: &str,
     pr_number: Option<u64>,
+    base_branch: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if workspace_path.exists() {
         let candidate = IssueWorkspaceCandidate {
@@ -330,7 +337,14 @@ pub(crate) fn ensure_inspection_worktree(
     }
 
     let output = ProcessCommand::new("git")
-        .args(["worktree", "add", "-b", branch_name, &workspace_arg, "main"])
+        .args([
+            "worktree",
+            "add",
+            "-b",
+            branch_name,
+            &workspace_arg,
+            base_branch,
+        ])
         .current_dir(repo_root)
         .output()?;
     if !output.status.success() {

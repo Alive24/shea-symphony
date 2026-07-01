@@ -3,8 +3,6 @@ use std::path::Path;
 use shea_symphony::config::RuntimeConfig;
 use shea_symphony::workflow::WorkflowDefinition;
 
-pub(crate) const DEFAULT_RUN_LOOP_BASE_BRANCH: &str = "main";
-
 pub(crate) fn require_write_intent(write: bool) -> Result<(), Box<dyn std::error::Error>> {
     if write {
         Ok(())

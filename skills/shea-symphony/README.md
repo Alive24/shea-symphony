@@ -51,8 +51,11 @@ optional current-session skill visibility. Source suite discovery is
 `skills/shea-symphony/suite`, then installed-only mode. Missing session input is
 reported as `unknown`, not as a failure. Gemini is optional unless the operator
 passes `--require-gemini` or otherwise configures a Gemini skill root.
+Codex readiness defaults to the selected profile working directory's
+`.codex/skills`, or this workflow repo's `.codex/skills` when no target profile
+working directory is configured. It does not use `CODEX_HOME`.
 
-The installer detects:
+The legacy self-repo installer detects:
 
 - Codex target from `CODEX_HOME/skills`, then `$HOME/.codex/skills`.
 - Gemini target from `GEMINI_HOME/local-skills`, then `$HOME/.gemini/local-skills`.

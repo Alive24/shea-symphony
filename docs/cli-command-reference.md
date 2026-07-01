@@ -215,6 +215,9 @@ broken symlinks, file-shaped aliases, missing `SKILL.md`, and optional
 current-session visibility. Without `--session-skills` or
 `--session-skills-file`, current-session visibility is `unknown` and is not a
 failure. Gemini absence is a blocker only when `--require-gemini` is used.
+Codex readiness defaults to the selected profile working directory's
+`.codex/skills`, then the workflow repo's `.codex/skills`; it does not read
+`CODEX_HOME`. Use an explicit `--codex-dir` only for an intentional override.
 
 ## Main Implementation Runtime
 

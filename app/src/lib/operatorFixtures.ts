@@ -110,6 +110,15 @@ function baseFixtureOverview() {
     fixtureVersion: 2,
     generatedAt: now,
     workflowPath,
+    targetContext: {
+      workflowPath,
+      repository: 'Alive24/shea-symphony',
+      workspacePath: null,
+      skillsPath: '.codex/skills',
+      mode: 'self',
+      selfWorkspace: true,
+      readiness: { status: 'ready', blockers: [] }
+    },
     fixture: true,
     commands: {
       autopilot: fixtureCommand(['autopilot', 'plan', workflowPath, '--json']),

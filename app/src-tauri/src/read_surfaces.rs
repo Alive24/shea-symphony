@@ -14,6 +14,7 @@ use crate::cli::{
     command_summary_value, parse_json_output, pending_result, run_shea_read_for_workspace,
     shea_command_for_workspace, timestamp_iso_like, CommandRun,
 };
+use crate::target_context::TargetContext;
 use crate::workspace::{WorkspaceManager, WorkspaceProfile};
 
 const DEFAULT_PROJECT_RATE_LIMIT_COOLDOWN_MS: u128 = 10 * 60 * 1000;
@@ -741,6 +742,7 @@ fn build_operator_overview(scope: &str, workspace: &WorkspaceProfile) -> Result<
     let generated_at = timestamp_iso_like();
     let github_queue_args = read_surface_args("githubQueue", workspace).unwrap_or_default();
     let workflow_path = workspace.workflow_path.as_str();
+    let target_context = TargetContext::from_workspace(workspace).to_value();
 
     if scope == "fast" {
         let commands = json!({
@@ -756,6 +758,7 @@ fn build_operator_overview(scope: &str, workspace: &WorkspaceProfile) -> Result<
             "generatedAt": generated_at,
             "workflowPath": workflow_path,
             "workspace": workspace,
+            "targetContext": target_context,
             "scope": "fast",
             "commands": commands,
             "autopilot": Value::Null,
@@ -807,6 +810,7 @@ fn build_operator_overview(scope: &str, workspace: &WorkspaceProfile) -> Result<
         "generatedAt": generated_at,
         "workflowPath": workflow_path,
         "workspace": workspace,
+        "targetContext": target_context,
         "commands": {
             "autopilot": command_summary_value(&autopilot.summary),
             "doctor": command_summary_value(&doctor.summary),
@@ -910,6 +914,7 @@ fn runtime_status_summary(
         completed_issue_worktrees(&snapshot, &issue_worktrees, &project_issues);
     json!({
         "source": "shea-symphony status show --json",
+        "targetContext": TargetContext::from_workspace(workspace).to_value(),
         "runningCount": running_count,
         "plannedCount": planned_count,
         "retryingCount": retrying_count,
@@ -1428,6 +1433,7 @@ fn surface_payload(
         "generatedAt": timestamp_iso_like(),
         "workflowPath": workspace.workflow_path.as_str(),
         "workspace": workspace,
+        "targetContext": TargetContext::from_workspace(workspace).to_value(),
         "command": command,
         "parsed": parsed,
         "text": text,

@@ -285,7 +285,7 @@
       (model?.issueIndex ?? []).find(
         (issue: any) => normalizeIssueRef(issue.id ?? issue.identifier) === id,
       );
-    const issueUrl = entry.url ?? row?.url ?? githubIssueUrl(id);
+    const issueUrl = entry.url ?? row?.url ?? githubIssueUrl(id, model);
     const lastProgressAt = entry.lastProgressAt ?? null;
     const completedAt = entry.completedAt ?? lastProgressAt ?? null;
     const lastModified = entry.lastModified ?? null;
@@ -398,7 +398,7 @@
         id: normalized,
         title: "Issue",
         state: "Unknown",
-        url: githubIssueUrl(normalized),
+        url: githubIssueUrl(normalized, model),
       }
     );
   }
@@ -470,7 +470,7 @@
     remoteEvents: any[] = [],
   ) {
     const events: any[] = [];
-    const issueUrl = issue.url ?? githubIssueUrl(issue.id);
+    const issueUrl = issue.url ?? githubIssueUrl(issue.id, model);
     if (!hasRemotePhase(remoteEvents, "Backlog")) {
       events.push({
         phase: "Backlog",
@@ -909,10 +909,11 @@
     return "Unknown";
   }
 
-  function githubIssueUrl(issueRef: unknown) {
+  function githubIssueUrl(issueRef: unknown, model: any = view) {
     const number = issueNumber(issueRef);
+    const repository = model?.targetContext?.repository ?? model?.raw?.targetContext?.repository ?? "Alive24/shea-symphony";
     return number
-      ? `https://github.com/Alive24/shea-symphony/issues/${number}`
+      ? `https://github.com/${repository}/issues/${number}`
       : undefined;
   }
 </script>

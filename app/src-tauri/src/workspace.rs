@@ -41,6 +41,15 @@ impl WorkspaceProfile {
         PathBuf::from(&self.target_root)
     }
 
+    pub fn workflow_file_path(&self) -> PathBuf {
+        let path = PathBuf::from(&self.workflow_path);
+        if path.is_absolute() {
+            path
+        } else {
+            self.target_path().join(path)
+        }
+    }
+
     fn with_error(mut self, error: String) -> Self {
         self.error = Some(error);
         self

@@ -31,8 +31,9 @@ pub use freshness::{
     ReviewStaleReason,
 };
 pub use gemini_health::{
-    gemini_prelaunch_health_diagnostic, gemini_review_health_diagnostic, review_failure_signature,
-    GeminiReviewHealthCategory, GeminiReviewHealthDiagnostic, GeminiReviewRecoveryPolicy,
+    agy_prelaunch_health_diagnostic, gemini_prelaunch_health_diagnostic,
+    gemini_review_health_diagnostic, review_failure_signature, GeminiReviewHealthCategory,
+    GeminiReviewHealthDiagnostic, GeminiReviewRecoveryPolicy,
 };
 pub use job::{
     poll_review_job_until_terminal, review_job_is_terminal, review_job_ledger_record,
@@ -41,7 +42,7 @@ pub use job::{
 };
 pub use report::{classify_findings, AgentReviewReport, ReviewFinding, ReviewFindingClass};
 
-use gemini_health::diagnose_gemini_spawn_failure;
+use gemini_health::{diagnose_agy_spawn_failure, diagnose_gemini_spawn_failure};
 use job::review_job_id;
 
 const LOG_BLOCK_LIMIT: usize = 2_000;
@@ -140,6 +141,7 @@ impl ReviewBackend for FakeReviewBackend {
 pub fn review_backend_from_config(config: &ReviewConfig) -> Box<dyn ReviewBackend> {
     match config.backend.as_str() {
         "gemini-cli" => Box::new(GeminiCliReviewBackend::from_config(config)),
+        "agy-cli" => Box::new(GeminiCliReviewBackend::from_agy_config(config)),
         _ => Box::new(FakeReviewBackend::new(FakeReviewOutcome::Pass)),
     }
 }
@@ -147,24 +149,58 @@ pub fn review_backend_from_config(config: &ReviewConfig) -> Box<dyn ReviewBacken
 pub fn review_backend_kind_from_config(config: &ReviewConfig) -> &'static str {
     match config.backend.as_str() {
         "gemini-cli" => "gemini-cli",
+        "agy-cli" => "agy-cli",
         _ => "fake-reviewer",
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CliReviewKind {
+    Gemini,
+    Agy,
+}
+
+impl CliReviewKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Gemini => "gemini-cli",
+            Self::Agy => "agy-cli",
+        }
+    }
+
+    fn job_prefix(self) -> &'static str {
+        match self {
+            Self::Gemini => "gemini",
+            Self::Agy => "agy",
+        }
+    }
+
+    fn display_name(self) -> &'static str {
+        match self {
+            Self::Gemini => "Gemini",
+            Self::Agy => "agy",
+        }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct GeminiCliReviewBackend {
+    kind: CliReviewKind,
     command: String,
     model: Option<String>,
     allowed_tools: Vec<String>,
+    timeout_ms: u64,
     children: Arc<Mutex<BTreeMap<String, Child>>>,
 }
 
 impl GeminiCliReviewBackend {
     pub fn new(command: impl Into<String>) -> Self {
         Self {
+            kind: CliReviewKind::Gemini,
             command: command.into(),
             model: None,
             allowed_tools: Vec::new(),
+            timeout_ms: 600_000,
             children: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
@@ -175,9 +211,11 @@ impl GeminiCliReviewBackend {
         allowed_tools: Vec<String>,
     ) -> Self {
         Self {
+            kind: CliReviewKind::Gemini,
             command: command.into(),
             model,
             allowed_tools,
+            timeout_ms: 600_000,
             children: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
@@ -190,17 +228,30 @@ impl GeminiCliReviewBackend {
         )
     }
 
+    pub fn from_agy_config(config: &ReviewConfig) -> Self {
+        Self {
+            kind: CliReviewKind::Agy,
+            command: config.agy_command.clone(),
+            model: config.agy_model.clone(),
+            allowed_tools: Vec::new(),
+            timeout_ms: config.timeout_ms,
+            children: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+
     fn headless_config(&self) -> GeminiCliHeadlessConfig<'_> {
         GeminiCliHeadlessConfig {
+            kind: self.kind,
             model: self.model.as_deref(),
             allowed_tools: &self.allowed_tools,
+            timeout_ms: self.timeout_ms,
         }
     }
 }
 
 impl ReviewBackend for GeminiCliReviewBackend {
     fn kind(&self) -> &'static str {
-        "gemini-cli"
+        self.kind.as_str()
     }
 
     fn start(&self, request: ReviewRequest) -> Result<ReviewJob, ReviewError> {
@@ -208,27 +259,37 @@ impl ReviewBackend for GeminiCliReviewBackend {
             .map_err(|error| ReviewError::Artifact(error.to_string()))?;
         fs::create_dir_all(&request.artifact_root)
             .map_err(|error| ReviewError::Artifact(error.to_string()))?;
-        let id = review_job_id("gemini");
+        let id = review_job_id(self.kind.job_prefix());
         let prompt_path = request.artifact_root.join(format!("{id}.prompt.md"));
         fs::write(&prompt_path, &request.prompt)
             .map_err(|error| ReviewError::Artifact(error.to_string()))?;
 
-        let args = gemini_cli_headless_args(self.model.as_deref(), &self.allowed_tools);
-        let mut child = Command::new(&self.command)
+        let headless_config = self.headless_config();
+        let args = headless_config.args_for_prompt(&request.prompt);
+        let mut command = Command::new(&self.command);
+        command
             .args(&args)
             .current_dir(&request.workspace)
-            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| {
-                ReviewError::Backend(diagnose_gemini_spawn_failure(&self.command, &error))
-            })?;
+            .stderr(Stdio::piped());
+        if headless_config.uses_stdin_prompt() {
+            command.stdin(Stdio::piped());
+        } else {
+            command.stdin(Stdio::null());
+        }
+        let mut child = command.spawn().map_err(|error| {
+            ReviewError::Backend(match self.kind {
+                CliReviewKind::Gemini => diagnose_gemini_spawn_failure(&self.command, &error),
+                CliReviewKind::Agy => diagnose_agy_spawn_failure(&self.command, &error),
+            })
+        })?;
 
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(request.prompt.as_bytes())
-                .map_err(|error| ReviewError::Backend(error.to_string()))?;
+        if headless_config.uses_stdin_prompt() {
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin
+                    .write_all(request.prompt.as_bytes())
+                    .map_err(|error| ReviewError::Backend(error.to_string()))?;
+            }
         }
 
         self.children
@@ -259,7 +320,10 @@ impl ReviewBackend for GeminiCliReviewBackend {
             .map_err(|error| ReviewError::Backend(error.to_string()))?;
         let Some(child) = children.get_mut(&job.id) else {
             job.state = ReviewJobState::Failed;
-            job.error = Some("Gemini child process was not found.".into());
+            job.error = Some(format!(
+                "{} child process was not found.",
+                self.kind.display_name()
+            ));
             return Ok(job);
         };
 
@@ -316,9 +380,15 @@ impl ReviewBackend for GeminiCliReviewBackend {
             job.state = ReviewJobState::Failed;
             let detail = stderr.trim();
             job.error = Some(if detail.is_empty() {
-                format!("Gemini review command exited with status {exit_status} and no stderr.")
+                format!(
+                    "{} review command exited with status {exit_status} and no stderr.",
+                    self.kind.display_name()
+                )
             } else {
-                format!("Gemini review command exited with status {exit_status}: {detail}")
+                format!(
+                    "{} review command exited with status {exit_status}: {detail}",
+                    self.kind.display_name()
+                )
             });
             job.report = Some(AgentReviewReport {
                 reviewer_backend: self.kind().into(),
@@ -363,17 +433,35 @@ impl ReviewBackend for GeminiCliReviewBackend {
 
 #[derive(Debug, Clone, Copy)]
 struct GeminiCliHeadlessConfig<'a> {
+    kind: CliReviewKind,
     model: Option<&'a str>,
     allowed_tools: &'a [String],
+    timeout_ms: u64,
 }
 
 impl GeminiCliHeadlessConfig<'_> {
     fn args(&self) -> Vec<String> {
-        gemini_cli_headless_args(self.model, self.allowed_tools)
+        self.args_for_prompt("")
+    }
+
+    fn args_for_prompt(&self, prompt: &str) -> Vec<String> {
+        match self.kind {
+            CliReviewKind::Gemini => gemini_cli_headless_args(self.model, self.allowed_tools),
+            CliReviewKind::Agy => agy_cli_headless_args(prompt, self.model, self.timeout_ms),
+        }
+    }
+
+    fn uses_stdin_prompt(&self) -> bool {
+        matches!(self.kind, CliReviewKind::Gemini)
     }
 
     fn prelaunch_health_diagnostic(&self, command: &str) -> Option<GeminiReviewHealthDiagnostic> {
-        gemini_prelaunch_health_diagnostic(command, self.model, self.allowed_tools)
+        match self.kind {
+            CliReviewKind::Gemini => {
+                gemini_prelaunch_health_diagnostic(command, self.model, self.allowed_tools)
+            }
+            CliReviewKind::Agy => agy_prelaunch_health_diagnostic(command, self.model),
+        }
     }
 }
 
@@ -391,6 +479,21 @@ pub fn gemini_cli_headless_args(model: Option<&str>, allowed_tools: &[String]) -
     }
     if !allowed_tools.is_empty() {
         args.extend(["--allowed-tools".to_string(), allowed_tools.join(",")]);
+    }
+    args
+}
+
+pub fn agy_cli_headless_args(prompt: &str, model: Option<&str>, timeout_ms: u64) -> Vec<String> {
+    let mut args = vec![
+        "--print".to_string(),
+        prompt.to_string(),
+        "--print-timeout".to_string(),
+        format!("{}ms", timeout_ms.max(1)),
+        "--sandbox".to_string(),
+        "--dangerously-skip-permissions".to_string(),
+    ];
+    if let Some(model) = model.map(str::trim).filter(|model| !model.is_empty()) {
+        args.extend(["--model".to_string(), model.to_string()]);
     }
     args
 }
@@ -462,7 +565,7 @@ fn write_gemini_review_artifact(
 ) -> Result<PathBuf, ReviewError> {
     let artifact_root = prompt_artifact_path
         .and_then(Path::parent)
-        .ok_or_else(|| ReviewError::Artifact("missing Gemini prompt artifact path".into()))?;
+        .ok_or_else(|| ReviewError::Artifact("missing review prompt artifact path".into()))?;
     let output_path = artifact_root.join(format!("{job_id}.output.json"));
     let artifact = serde_json::json!({
         "job_id": job_id,
@@ -517,7 +620,7 @@ pub fn render_repeated_review_failure_workpad(
 
     if let Some(diagnostic) = diagnostic {
         lines.push(format!(
-            "- Gemini health: `{}` / `{}`",
+            "- Review backend health: `{}` / `{}`",
             diagnostic.category.as_str(),
             diagnostic.recovery_policy.as_str()
         ));
@@ -541,7 +644,7 @@ pub fn render_gemini_health_section(job: &ReviewJob) -> String {
         .unwrap_or_else(|| "- Retry-after: `not detected`".into());
 
     render_section(
-        "Gemini Backend Health",
+        "Review Backend Health",
         &[
             format!("- Classification: `{}`", diagnostic.category.as_str()),
             format!("- Reason: `{}`", diagnostic.reason_code),
@@ -676,8 +779,10 @@ fn terminal_review_failure_marker_matches(value: &str, worker_key: &str) -> bool
         && (value.contains("required operator action")
             || value.contains("review backend")
             || value.contains("repeated backend failure")
+            || value.contains("review backend health")
             || value.contains("gemini backend health")
             || value.contains("gemini review command")
+            || value.contains("agy review command")
             || value.contains("retry: rerun `review loop`")
             || value.contains("retry: rerun review loop"))
 }
@@ -701,7 +806,7 @@ pub fn render_review_workpad_with_workflow(
             attempt_details.push(format!("- Exit status: `{status}`"));
         }
         if let Some(session_id) = report.session_id.as_deref() {
-            attempt_details.push(format!("- Gemini session id: `{session_id}`"));
+            attempt_details.push(format!("- Backend session id: `{session_id}`"));
         }
     }
     if attempt_details.is_empty() {
@@ -1069,7 +1174,10 @@ fn review_required_operator_actions(job: &ReviewJob) -> Option<Vec<String>> {
         }
 
         return Some(vec![
-            format!("- Gemini backend health: `{}`.", diagnostic.category.as_str()),
+            format!(
+                "- Review backend health: `{}`.",
+                diagnostic.category.as_str()
+            ),
             format!("- Reason: `{}`.", diagnostic.reason_code),
             format!("- Status: {}", diagnostic.operator_status),
             "- This issue must not move to `Human Review` until an independent Review Agent records passing review evidence.".into(),
@@ -1080,7 +1188,7 @@ fn review_required_operator_actions(job: &ReviewJob) -> Option<Vec<String>> {
     if job.state == ReviewJobState::TimedOut {
         return Some(vec![
             "- Review backend timed out before producing evidence.".into(),
-            "- Check Gemini auth/configuration and increase `review.timeout_ms` only if the backend is healthy but slow.".into(),
+            "- Check review backend auth/configuration and increase `review.timeout_ms` only if the backend is healthy but slow.".into(),
             "- Retry: rerun `review loop` for this issue after fixing the backend.".into(),
         ]);
     }
@@ -1095,7 +1203,7 @@ fn review_required_operator_actions(job: &ReviewJob) -> Option<Vec<String>> {
     {
         return Some(vec![
             "- Fix the Review Agent backend command or worker PATH shown in the error above.".into(),
-        "- For Gemini CLI, prefer an absolute `review_lane.gemini_command` path or export a worker PATH that resolves `gemini`.".into(),
+            "- Prefer an absolute `review_lane.agy_command` or `review_lane.gemini_command` path, or export a worker PATH that resolves the configured command.".into(),
             "- This issue must not move to `Human Review` until an independent Review Agent records passing review evidence.".into(),
             "- Retry: rerun `review loop` for this issue after updating the workflow or environment.".into(),
         ]);
@@ -1343,6 +1451,8 @@ mod tests {
             gemini_command: "/opt/homebrew/bin/gemini".into(),
             gemini_model: Some("gemini-3.1-pro-preview".into()),
             gemini_allowed_tools: vec!["run_shell_command".into()],
+            agy_command: "/Users/example/.local/bin/agy".into(),
+            agy_model: Some("gemini-3.1-pro-preview".into()),
             timeout_ms: 600_000,
             max_concurrent_workers: 1,
         }
@@ -1382,8 +1492,51 @@ mod tests {
         let error = backend.prelaunch_error().unwrap();
 
         assert_eq!(backend.kind(), "gemini-cli");
-        assert!(error.contains("Gemini review backend health check classified"));
+        assert!(error.contains("Review backend health check classified"));
         assert!(error.contains("reason=command_not_found"));
+    }
+
+    #[test]
+    fn configured_review_backend_selects_agy_command_preview() {
+        let mut config = gemini_review_config();
+        config.backend = "agy-cli".into();
+        config.agy_command = "/Users/example/.local/bin/agy".into();
+        config.agy_model = Some("gemini-3.1-pro-preview".into());
+        config.timeout_ms = 1_200_000;
+        let backend = review_backend_from_config(&config);
+        let preview = backend.command_preview().unwrap();
+
+        assert_eq!(review_backend_kind_from_config(&config), "agy-cli");
+        assert_eq!(backend.kind(), "agy-cli");
+        assert_eq!(preview.mode, "headless");
+        assert_eq!(preview.command, "/Users/example/.local/bin/agy");
+        assert_eq!(
+            preview.args,
+            vec![
+                "--print",
+                "",
+                "--print-timeout",
+                "1200000ms",
+                "--sandbox",
+                "--dangerously-skip-permissions",
+                "--model",
+                "gemini-3.1-pro-preview",
+            ]
+        );
+    }
+
+    #[test]
+    fn configured_review_backend_routes_agy_prelaunch_diagnostics() {
+        let mut config = gemini_review_config();
+        config.backend = "agy-cli".into();
+        config.agy_command = "shea-missing-agy-command".into();
+        let backend = review_backend_from_config(&config);
+        let error = backend.prelaunch_error().unwrap();
+
+        assert_eq!(backend.kind(), "agy-cli");
+        assert!(error.contains("Review backend health check classified"));
+        assert!(error.contains("reason=command_not_found"));
+        assert!(error.contains("agy review command"));
     }
 
     #[test]
@@ -1404,7 +1557,7 @@ mod tests {
         assert!(error.contains("review backend startup failed"));
         assert!(error.contains("configured command: `shea-missing-gemini-command`"));
         assert!(error.contains("resolved executable: not found in worker PATH"));
-        assert!(error.contains("absolute Gemini path"));
+        assert!(error.contains("absolute Gemini command path"));
         assert!(error.contains("retry: rerun `review loop`"));
     }
 
@@ -1427,6 +1580,29 @@ mod tests {
                 "gemini-3.1-pro-preview",
                 "--allowed-tools",
                 "run_shell_command,read_file,grep_search,list_directory",
+            ]
+        );
+    }
+
+    #[test]
+    fn agy_headless_args_include_prompt_timeout_sandbox_and_model() {
+        let args = agy_cli_headless_args(
+            "Review this prompt.",
+            Some("gemini-3.1-pro-preview"),
+            1_200_000,
+        );
+
+        assert_eq!(
+            args,
+            vec![
+                "--print",
+                "Review this prompt.",
+                "--print-timeout",
+                "1200000ms",
+                "--sandbox",
+                "--dangerously-skip-permissions",
+                "--model",
+                "gemini-3.1-pro-preview",
             ]
         );
     }
@@ -1491,6 +1667,67 @@ mod tests {
     }
 
     #[test]
+    fn agy_backend_uses_print_prompt_arg_and_plain_text_response() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("review-workspace");
+        let artifact_root = temp.path().join("reviews");
+        let reviewer = temp.path().join("agy.sh");
+        fs::write(
+            &reviewer,
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > args.txt\nprintf 'Review completed.\\n[Confirmed] Bug: found one\\n'\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&reviewer).unwrap().permissions();
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(0o755);
+        fs::set_permissions(&reviewer, permissions).unwrap();
+
+        let config = ReviewConfig {
+            backend: "agy-cli".into(),
+            gemini_command: "gemini".into(),
+            gemini_model: None,
+            gemini_allowed_tools: Vec::new(),
+            agy_command: reviewer.display().to_string(),
+            agy_model: Some("gemini-3.1-pro-preview".into()),
+            timeout_ms: 1_200_000,
+            max_concurrent_workers: 1,
+        };
+        let backend = GeminiCliReviewBackend::from_agy_config(&config);
+        let request = ReviewRequest {
+            issue: issue(),
+            prompt: "Review this prompt.".into(),
+            workspace: workspace.clone(),
+            artifact_root: artifact_root.clone(),
+        };
+
+        let job = backend.start(request).unwrap();
+        let job = poll_review_job_until_terminal(
+            &backend,
+            job,
+            Duration::from_secs(5),
+            Duration::from_millis(10),
+        )
+        .unwrap();
+
+        assert_eq!(job.state, ReviewJobState::Completed);
+        assert_eq!(
+            fs::read_to_string(workspace.join("args.txt")).unwrap(),
+            "--print\nReview this prompt.\n--print-timeout\n1200000ms\n--sandbox\n--dangerously-skip-permissions\n--model\ngemini-3.1-pro-preview\n"
+        );
+        let report = job.report.as_ref().unwrap();
+        assert_eq!(report.summary.as_deref(), Some("Review completed."));
+        assert_eq!(report.session_id, None);
+        assert_eq!(report.exit_status.as_deref(), Some("0"));
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].class, ReviewFindingClass::Confirmed);
+        assert!(job
+            .artifact_path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .is_some_and(|name| name.to_string_lossy() == format!("{}.output.json", job.id)));
+    }
+
+    #[test]
     fn parses_gemini_warning_prelude_plus_json_envelope() {
         let parsed = parse_gemini_stdout(
             "Using experimental output\n{\"session_id\":\"abc\",\"response\":\"Review passed.\"}",
@@ -1511,9 +1748,9 @@ mod tests {
         let workpad = render_review_workpad(&issue(), &job);
 
         assert!(workpad.contains("### Required Operator Action"));
-        assert!(workpad.contains("Gemini backend health: `non_recovering_config`"));
+        assert!(workpad.contains("Review backend health: `non_recovering_config`"));
         assert!(workpad.contains("Human intervention is required"));
-        assert!(workpad.contains("Gemini Backend Health"));
+        assert!(workpad.contains("Review Backend Health"));
         assert!(workpad.contains("must not"));
     }
 
@@ -1548,7 +1785,7 @@ mod tests {
         assert!(workpad.contains("<summary>Error: Gemini review command exited with status 1"));
         assert!(workpad.contains("```text\nGemini review command exited with status 1"));
         assert!(!workpad.contains("- Error: Gemini review command exited with status 1"));
-        assert!(workpad.contains("Gemini Backend Health"));
+        assert!(workpad.contains("Review Backend Health"));
         assert!(workpad.contains("non_recovering_config"));
         assert!(workpad.contains("Human intervention is required"));
     }

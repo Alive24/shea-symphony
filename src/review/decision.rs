@@ -118,7 +118,7 @@ pub fn review_gate_decision_for_actor(job: &ReviewJob, actor: ReviewActor) -> Re
                         outcome: ReviewOutcome::BackendUnavailable,
                         target_state: Some("agent_review"),
                         message: format!(
-                            "Gemini review backend is {}; issue remains in Agent Review for {}.",
+                            "Review backend is {}; issue remains in Agent Review for {}.",
                             diagnostic.category.as_str(),
                             diagnostic.recovery_policy.as_str()
                         ),
@@ -129,7 +129,7 @@ pub fn review_gate_decision_for_actor(job: &ReviewJob, actor: ReviewActor) -> Re
                     outcome: ReviewOutcome::NeedsHumanInput,
                     target_state: Some("need_human_input"),
                     message: format!(
-                        "Gemini review backend is blocked by {}; human input is required.",
+                        "Review backend is blocked by {}; human input is required.",
                         diagnostic.category.as_str()
                     ),
                 };

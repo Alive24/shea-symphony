@@ -61,7 +61,7 @@ main_lane:
 tmux:
   command: tmux
   agent_command: codex
-  review_agent_command: /opt/homebrew/bin/gemini
+  review_agent_command: /Users/chuntengxiao/.local/bin/agy
   session_prefix: shea
 codex:
   command: codex app-server -c 'service_tier="fast"'
@@ -72,14 +72,9 @@ codex:
 claude:
   command: claude
 review_lane:
-  backend: gemini-cli
-  gemini_command: /opt/homebrew/bin/gemini
-  gemini_model: gemini-3.1-pro-preview
-  gemini_allowed_tools:
-    - run_shell_command
-    - read_file
-    - grep_search
-    - list_directory
+  backend: agy-cli
+  agy_command: /Users/chuntengxiao/.local/bin/agy
+  agy_model: gemini-3.1-pro-preview
   timeout_ms: 1200000
   max_concurrent_workers: 2
 merge_lane:

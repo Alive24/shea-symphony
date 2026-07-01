@@ -156,6 +156,8 @@ pub struct ReviewConfig {
     pub gemini_command: String,
     pub gemini_model: Option<String>,
     pub gemini_allowed_tools: Vec<String>,
+    pub agy_command: String,
+    pub agy_model: Option<String>,
     pub timeout_ms: u64,
     pub max_concurrent_workers: usize,
 }
@@ -377,6 +379,11 @@ impl RuntimeConfig {
                 .map(|tool| tool.trim().to_string())
                 .filter(|tool| !tool.is_empty())
                 .collect(),
+            agy_command: resolve_command_token(
+                get_string(review_lane_config, "agy_command"),
+                "agy",
+            ),
+            agy_model: get_string(review_lane_config, "agy_model"),
             timeout_ms: get_u64(review_lane_config, "timeout_ms").unwrap_or(600_000),
             max_concurrent_workers: get_u64(review_lane_config, "max_concurrent_workers")
                 .unwrap_or(1)
@@ -456,7 +463,7 @@ impl RuntimeConfig {
             ));
         }
         match self.review.backend.as_str() {
-            "fake" | "gemini-cli" => {}
+            "fake" | "gemini-cli" | "agy-cli" => {}
             other => return Err(ConfigError::UnsupportedBackend(other.to_string())),
         }
         match self.quality_gate.llm.mode.as_str() {
@@ -1211,6 +1218,26 @@ mod tests {
         assert_eq!(
             config.review.gemini_allowed_tools,
             vec!["run_shell_command".to_string()]
+        );
+    }
+
+    #[test]
+    fn review_agy_command_can_use_environment_token() {
+        std::env::set_var("SHEA_TEST_AGY_COMMAND", "/Users/example/.local/bin/agy");
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\nreview_lane:\n  backend: agy-cli\n  agy_command: $SHEA_TEST_AGY_COMMAND\n  agy_model: gemini-3.1-pro-preview\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+        std::env::remove_var("SHEA_TEST_AGY_COMMAND");
+
+        assert_eq!(config.review.backend, "agy-cli");
+        assert_eq!(config.review.agy_command, "/Users/example/.local/bin/agy");
+        assert_eq!(
+            config.review.agy_model.as_deref(),
+            Some("gemini-3.1-pro-preview")
         );
     }
 

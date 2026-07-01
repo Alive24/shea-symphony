@@ -30,7 +30,7 @@ pub const CODEX_APP_SERVER_HANDOFF_ENVELOPE: RuntimeEnvelopeSpec = RuntimeEnvelo
 pub const AUTOMATIC_HEADLESS_REVIEW_ENVELOPE: RuntimeEnvelopeSpec = RuntimeEnvelopeSpec {
     id: "automatic_headless_review_boundary",
     lane: "review",
-    backend: "gemini-cli",
+    backend: "agy-cli",
     path: "review/automatic",
     purpose: "headless review safety and stdout protocol",
 };
@@ -73,7 +73,7 @@ readback, and perform the final `Agent Review` handoff.\n";
 
 pub const AUTOMATIC_HEADLESS_REVIEW_BOUNDARY: &str =
     "\n\n## Automatic Headless Review Boundary\n\n\
-This Gemini process is running under Shea Symphony automatic `review loop` or `review once`.\n\
+This review backend process is running under Shea Symphony automatic `review loop` or `review once`.\n\
 Shea Symphony CLI has already claimed or will own any Review Agent claim, timeline comment write,\n\
 issue body update, and Project state transition outside this process.\n\n\
 Do not run mutating Shea Symphony or GitHub commands, including `review claim`, `review pass`,\n\

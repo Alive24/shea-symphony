@@ -332,16 +332,16 @@ dogfood.
 
 ## Review Backend Setup
 
-For live Agent Review, make the Gemini command visible to the worker process.
-`review loop` claims the Review Agent field and runs Gemini headlessly by
-default with `--prompt`, `--output-format json`, the configured model, and the
-configured interim allowed tools. Prompt content is written through stdin so
-long prompts are not passed through argv or TUI paste buffers.
+For live Agent Review, make the `agy` command visible to the worker process.
+`review loop` claims the Review Agent field and runs `agy` headlessly by
+default with `--print`, the configured model, the configured print timeout,
+`--sandbox --dangerously-skip-permissions`, and durable stdout/stderr/job
+evidence.
 
-Prefer an absolute Gemini path for automatic review workers:
+Prefer an absolute `agy` path for automatic review workers:
 
 ```bash
-command -v gemini
+command -v agy
 ```
 
 Then configure the workflow or operator environment with that path before
@@ -349,11 +349,9 @@ running review automation:
 
 ```yaml
 review_lane:
-  backend: gemini-cli
-  gemini_command: /opt/homebrew/bin/gemini
-  gemini_model: gemini-3.1-pro-preview
-  gemini_allowed_tools:
-    - run_shell_command
+  backend: agy-cli
+  agy_command: /Users/chuntengxiao/.local/bin/agy
+  agy_model: gemini-3.1-pro-preview
 ```
 
 ```bash
@@ -392,11 +390,11 @@ with `session start WORKFLOW '#issue' --lane review --run <RUN_ID> --write`.
 Session startup validates the existing Review Agent claim and writes attach/log
 evidence without moving the issue to `Human Review`; this tmux path is an
 explicit manual fallback, not the automatic review-loop default. The worker
-value may be a display label such as `Manual Gemini Review`; use the claim
+value may be a display label such as `Manual agy Review`; use the claim
 command so Shea Symphony can quote, escape, and validate the stored pointer
 before Project mutation.
 
-If Gemini cannot start, the Agent Review timeline comment should name the
+If the review backend cannot start, the Agent Review timeline comment should name the
 configured command, whether worker `PATH` could resolve it, the required
 operator action, and the retry command. Do not move an issue to `Human Review`
 unless the Review Agent actually records passing review evidence.
@@ -405,20 +403,20 @@ handoff evidence and send the work back to Main/operator repair; `doctor repair
 <issue> --mark-pr-ready --confirm-handoff-ready --write` is the explicit repair
 path when the operator has confirmed the handoff is otherwise complete.
 
-If Gemini exits, refuses the workspace trust check, times out, or produces output
+If the review backend exits, refuses the workspace trust check, times out, or produces output
 that is not yet parsed into durable pass/finding evidence, the issue must stay
 out of `Human Review`. Inspect the recorded tmux attach command, prompt
 artifact, session registry entry, and log path, then route with `review pass` or
 `review reject` only after independent review evidence exists.
 
-If Gemini returns successfully but says it could not inspect the PR, workspace,
+If the review backend returns successfully but says it could not inspect the PR, workspace,
 diff, code changes, or required handoff evidence, treat that as an automatic
 Review Agent inconclusive result, not a pass. `review loop` records the
 inconclusive reason in the ledger/timeline comment and routes the issue to
 `Rework` so the missing evidence can be repaired before another independent
 review pass.
 
-Manual Gemini or operator-supplied review notes must be routed through
+Manual review backend or operator-supplied review notes must be routed through
 `review pass` or `review reject`, which wraps the note in a
 `## Shea Symphony Agent Review Run` timeline comment. Mark the inner note as
 manual evidence so operators can distinguish it from automatic `review loop`
@@ -643,10 +641,10 @@ current GitHub Project #9 schema, the canonical source is an Agent Review
 timeline comment in the issue comment stream. A `Review Agent` claim by itself
 is not pass evidence.
 
-For a manual Gemini/operator review, claim and route through the CLI:
+For a manual `agy`/operator review, claim and route through the CLI:
 
 ```bash
-target/debug/shea-symphony review claim workflows/shea-symphony.md '#226' --worker "Manual Gemini Review" --write
+target/debug/shea-symphony review claim workflows/shea-symphony.md '#226' --worker "Manual agy Review" --write
 target/debug/shea-symphony review pass workflows/shea-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
 target/debug/shea-symphony review reject workflows/shea-symphony.md '#226' --evidence-file /tmp/review-evidence.md --target-state rework --write
 ```
@@ -766,7 +764,7 @@ overwrite another issue's tmux/session evidence. Merge work uses the `Merging
 Agent` Project field and can process multiple guarded merge slots in one
 bounded loop.
 Lane claim fields are latest-run audit pointers, not append-only logs. New
-values use `v=1 lane=<main|review|merge> actor=<codex|gemini|claude|human>
+values use `v=1 lane=<main|review|merge> actor=<codex|gemini|antigravity|claude|human>
 worker=<worker> source=<loop|manual|goal> issue=#N run=<id>
 state=<active|done|stale|failed|superseded> thread=<codex-link|unknown>
 registry=run/<id>`. Keep full paths and terminal logs in the session registry

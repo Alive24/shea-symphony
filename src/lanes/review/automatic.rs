@@ -599,7 +599,7 @@ pub(crate) fn review_loop_with_summary(
                         .map(|diagnostic| diagnostic.recovery_policy)
                         .unwrap_or(GeminiReviewRecoveryPolicy::RetryWithBackoff);
                     println!(
-                        "review_loop_action=wait issue={} reason=gemini_backend_health policy={} delay_ms={} repeat_count={}",
+                        "review_loop_action=wait issue={} reason=review_backend_health policy={} delay_ms={} repeat_count={}",
                         latest.identifier,
                         policy.as_str(),
                         delay_ms,
@@ -709,6 +709,10 @@ pub(crate) fn review_claim_for_issue(issue: &TrackerIssue, worker_key: &str) -> 
         LaneClaimLane::Review,
         if worker_key.to_ascii_lowercase().contains("gemini") {
             LaneClaimActor::Gemini
+        } else if worker_key.to_ascii_lowercase().contains("agy")
+            || worker_key.to_ascii_lowercase().contains("antigravity")
+        {
+            LaneClaimActor::Antigravity
         } else {
             LaneClaimActor::Codex
         },

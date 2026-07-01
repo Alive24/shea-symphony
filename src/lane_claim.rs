@@ -15,6 +15,7 @@ pub enum LaneClaimLane {
 pub enum LaneClaimActor {
     Codex,
     Gemini,
+    Antigravity,
     Claude,
     Human,
 }
@@ -91,6 +92,7 @@ impl LaneClaimActor {
         match self {
             Self::Codex => "codex",
             Self::Gemini => "gemini",
+            Self::Antigravity => "antigravity",
             Self::Claude => "claude",
             Self::Human => "human",
         }
@@ -380,6 +382,7 @@ fn parse_actor(value: &str) -> Result<LaneClaimActor, LaneClaimParseError> {
     match value {
         "codex" => Ok(LaneClaimActor::Codex),
         "gemini" => Ok(LaneClaimActor::Gemini),
+        "antigravity" => Ok(LaneClaimActor::Antigravity),
         "claude" => Ok(LaneClaimActor::Claude),
         "human" => Ok(LaneClaimActor::Human),
         other => Err(invalid("actor", other)),

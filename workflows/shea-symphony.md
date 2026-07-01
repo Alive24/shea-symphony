@@ -34,6 +34,8 @@ tracker:
   workpad:
     source: issue_comment
     marker: "<!-- shea-symphony-workpad -->"
+git:
+  base_branch: main
 prompts:
   main_agent: prompts/main-agent.md
   review_agent: prompts/review-agent.md

@@ -464,6 +464,10 @@ rendered metadata freshness, broken links, alias/file-shaped installs, missing
 is provided, session visibility is `unknown`; that is diagnostic context, not a
 failure. Gemini absence is not a failure unless the operator explicitly requires
 Gemini for the current environment.
+For target workspaces, Codex readiness inspects the selected profile working
+directory's `.codex/skills`; without a target profile working directory it falls
+back to the workflow repo's `.codex/skills`. It does not use `CODEX_HOME` or a
+home-directory Codex skill root.
 
 The packaged skills preserve the same lane boundaries as the Shea Symphony CLI:
 Issue Forge, Reflect, and Dream handle conversation, draft shaping, backlog

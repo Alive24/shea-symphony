@@ -215,6 +215,9 @@ broken symlinks, file-shaped aliases, missing `SKILL.md`, and optional
 current-session visibility. Without `--session-skills` or
 `--session-skills-file`, current-session visibility is `unknown` and is not a
 failure. Gemini absence is a blocker only when `--require-gemini` is used.
+Codex readiness defaults to the selected profile working directory's
+`.codex/skills`, then the workflow repo's `.codex/skills`; it does not read
+`CODEX_HOME`. Use an explicit `--codex-dir` only for an intentional override.
 
 ## Main Implementation Runtime
 
@@ -277,12 +280,13 @@ loop`, and `merge once` print compact issue-scoped `Latest:` status bars for
 real lane work; no-issue idle status and runtime telemetry stay in debug/JSON
 surfaces instead of the default operator log stream.
 Write-mode lane/control commands first run a guarded canonical checkout refresh
-before the first tracker mutation. From a clean attached `main` checkout, the
-CLI fetches the upstream branch and fast-forwards with `git merge --ff-only`
-when local `main` is only behind. Output includes
+before the first tracker mutation. From a clean attached workflow git base
+branch checkout (`git.base_branch`, default `main`), the CLI fetches the
+upstream branch and fast-forwards with `git merge --ff-only` when that local
+base branch is only behind. Output includes
 `canonical_checkout_refresh=already_current`, `ff_only`, `would_ff_only`, or
 `blocked`, followed by the normal `canonical_checkout ...` safety line.
-Tracked dirty files, detached HEAD, non-`main` branches, missing upstreams,
+Tracked dirty files, detached HEAD, non-base branches, missing upstreams,
 unclassified untracked files, and non-fast-forward updates block the lane.
 Recognized untracked runtime/log/prompt/evidence/draft artifacts are moved to
 artifact quarantine with a warning before write-mode git or tracker mutation.
@@ -319,10 +323,10 @@ subissue changes cannot silently bypass parent dispatch safety.
 
 Live write-mode claim, session, lane loop, review pass/reject, forge rework, and
 workspace ensure commands refuse to run unless the canonical checkout is a clean
-attached `main` checkout with a configured upstream. If local `main` is behind
-and can fast-forward, the CLI performs that canonical-only `ff-only` refresh
-before continuing. It never refreshes issue worktrees or PR branches in this
-path.
+attached workflow git base branch checkout with a configured upstream. If that
+local base branch is behind and can fast-forward, the CLI performs that
+canonical-only `ff-only` refresh before continuing. It never refreshes issue
+worktrees or PR branches in this path.
 
 PR relationship verification is a lane invariant, not just evidence text. A PR
 URL found in a workpad, issue comment, or local branch can help operators
@@ -721,7 +725,7 @@ Doctor lanes.
 
 | Command | Purpose | Boundary |
 | --- | --- | --- |
-| `merge once` | Inspect one `Merging` issue, verify a single linked PR, and either merge, safely refresh a stale branch, attempt safe conflict repair, or route blockers. | Live merge requires explicit `--write`; fixture workflows synthesize merge or conflict-repair command evidence without touching GitHub. Native subissues expect the parent integration branch as the PR base; parent final PRs expect `main`. `BEHIND` PRs are updated with `gh pr update-branch` and left in `Merging` for retry, transient `UNKNOWN` mergeability stays in `Merging`, `DIRTY` PRs first try direct clean local PR-worktree repair, then use the configured merge-agent backend for content conflicts in a trusted clean PR worktree. Interrupted conflict-repair merge states are aborted before retry. Successful repair and retryable backend or verification failures stay in `Merging`; only semantic uncertainty, unsafe or untrusted preconditions, untracked-file residue, push failures, or failing checks route to `Need Human Input` with a concrete question instead of defaulting to `Rework`. |
+| `merge once` | Inspect one `Merging` issue, verify a single linked PR, and either merge, safely refresh a stale branch, attempt safe conflict repair, or route blockers. | Live merge requires explicit `--write`; fixture workflows synthesize merge or conflict-repair command evidence without touching GitHub. Native subissues expect the parent integration branch as the PR base; parent final PRs expect the configured workflow git base branch (`git.base_branch`, default `main`). `BEHIND` PRs are updated with `gh pr update-branch` and left in `Merging` for retry, transient `UNKNOWN` mergeability stays in `Merging`, `DIRTY` PRs first try direct clean local PR-worktree repair, then use the configured merge-agent backend for content conflicts in a trusted clean PR worktree. Interrupted conflict-repair merge states are aborted before retry. Successful repair and retryable backend or verification failures stay in `Merging`; only semantic uncertainty, unsafe or untrusted preconditions, untracked-file residue, push failures, or failing checks route to `Need Human Input` with a concrete question instead of defaulting to `Rework`. |
 | `merge loop` | Repeat guarded merge ticks for an explicit bounded iteration count. | Requires `--max-iterations` or `--once`; `--max-concurrent N` processes up to `N` merge slots while respecting `Merging Agent` claim fields; recover-first handling is enabled by default in `--write` mode and can be disabled with `--no-recover`. |
 
 Examples:

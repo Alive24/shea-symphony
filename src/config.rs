@@ -8,9 +8,12 @@ use thiserror::Error;
 
 use crate::workflow::WorkflowDefinition;
 
+pub const DEFAULT_GIT_BASE_BRANCH: &str = "main";
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeConfig {
     pub tracker: TrackerConfig,
+    pub git: GitConfig,
     pub polling: PollingConfig,
     pub workspace: WorkspaceConfig,
     pub worker: WorkerConfig,
@@ -78,6 +81,11 @@ pub struct AssigneeFilter {
 pub struct WorkpadConfig {
     pub source: String,
     pub marker: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitConfig {
+    pub base_branch: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -276,6 +284,10 @@ pub enum ConfigError {
 }
 
 impl RuntimeConfig {
+    pub fn git_base_branch(&self) -> &str {
+        &self.git.base_branch
+    }
+
     pub fn from_workflow(
         workflow: &WorkflowDefinition,
         workflow_path: &Path,
@@ -284,6 +296,7 @@ impl RuntimeConfig {
         let root = workflow.config.as_object().cloned().unwrap_or_default();
 
         let tracker = parse_tracker(root.get("tracker"), workflow_dir);
+        let git = parse_git(root.get("git"));
         let polling = PollingConfig {
             interval_ms: get_u64(root.get("polling"), "interval_ms").unwrap_or(30_000),
         };
@@ -420,6 +433,7 @@ impl RuntimeConfig {
 
         Ok(Self {
             tracker,
+            git,
             polling,
             workspace,
             worker,
@@ -482,6 +496,7 @@ impl RuntimeConfig {
         }
 
         require_positive("polling.interval_ms", self.polling.interval_ms)?;
+        require_present("git.base_branch", Some(self.git.base_branch.as_str()))?;
         require_positive("hooks.timeout_ms", self.hooks.timeout_ms)?;
         if let Some(limit) = self.worker.max_concurrent_agents_per_host {
             if limit <= 0 {
@@ -565,6 +580,14 @@ impl RuntimeConfig {
             .filter(|state| !state.is_empty())
             .collect()
     }
+}
+
+fn parse_git(value: Option<&Value>) -> GitConfig {
+    let base_branch = get_string(value, "base_branch")
+        .map(|branch| branch.trim().to_string())
+        .filter(|branch| !branch.is_empty())
+        .unwrap_or_else(|| DEFAULT_GIT_BASE_BRANCH.to_string());
+    GitConfig { base_branch }
 }
 
 fn parse_tracker(value: Option<&Value>, workflow_dir: &Path) -> TrackerConfig {
@@ -953,7 +976,22 @@ mod tests {
             config.tracker.workpad.marker,
             "<!-- shea-symphony-workpad -->"
         );
+        assert_eq!(config.git.base_branch, DEFAULT_GIT_BASE_BRANCH);
         assert_eq!(config.tracker.project_owner_type, None);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn git_base_branch_is_workflow_configurable() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\ngit:\n  base_branch: dev-chunteng\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.git_base_branch(), "dev-chunteng");
         assert!(config.validate().is_ok());
     }
 

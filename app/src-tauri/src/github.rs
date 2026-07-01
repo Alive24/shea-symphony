@@ -2,8 +2,9 @@ use std::process::Command;
 
 use serde::Serialize;
 use serde_json::Value;
+use tauri::State;
 
-const GITHUB_REPO: &str = "Alive24/shea-symphony";
+use crate::{target_context::TargetContext, workspace::WorkspaceManager};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,6 +22,7 @@ pub struct GitHubUserSnapshot {
 pub struct IssueTimelineSnapshot {
     available: bool,
     status: String,
+    repository: String,
     issue_ref: String,
     issue: Option<IssueSnapshot>,
     comments: Vec<IssueCommentSnapshot>,
@@ -110,26 +112,42 @@ pub async fn get_github_user() -> Result<GitHubUserSnapshot, String> {
 }
 
 #[tauri::command]
-pub async fn get_issue_timeline(issue_ref: String) -> Result<IssueTimelineSnapshot, String> {
-    tauri::async_runtime::spawn_blocking(move || read_issue_timeline(&issue_ref))
-        .await
-        .map_err(|error| format!("github issue timeline task failed: {error}"))?
+pub async fn get_issue_timeline(
+    workspace: State<'_, WorkspaceManager>,
+    issue_ref: String,
+) -> Result<IssueTimelineSnapshot, String> {
+    let workspace_profile = workspace.current();
+    tauri::async_runtime::spawn_blocking(move || {
+        let context = TargetContext::from_workspace(&workspace_profile);
+        let Some(repository) = context.repository else {
+            return Ok(unavailable_issue_timeline(
+                "",
+                &issue_ref,
+                "Target GitHub repository is not configured.",
+            ));
+        };
+        read_issue_timeline(&repository, &issue_ref)
+    })
+    .await
+    .map_err(|error| format!("github issue timeline task failed: {error}"))?
 }
 
-fn read_issue_timeline(issue_ref: &str) -> Result<IssueTimelineSnapshot, String> {
+fn read_issue_timeline(repository: &str, issue_ref: &str) -> Result<IssueTimelineSnapshot, String> {
     let Some(number) = issue_number(issue_ref) else {
         return Ok(unavailable_issue_timeline(
+            repository,
             issue_ref,
             "Issue timeline reads require a numeric issue reference.",
         ));
     };
-    let issue_endpoint = format!("repos/{GITHUB_REPO}/issues/{number}");
+    let issue_endpoint = format!("repos/{repository}/issues/{number}");
     let issue_output = Command::new("gh")
         .args(["api", &issue_endpoint])
         .output()
         .map_err(|error| format!("failed to run gh api issue read: {error}"))?;
     if !issue_output.status.success() {
         return Ok(unavailable_issue_timeline(
+            repository,
             issue_ref,
             &String::from_utf8_lossy(&issue_output.stderr),
         ));
@@ -137,26 +155,28 @@ fn read_issue_timeline(issue_ref: &str) -> Result<IssueTimelineSnapshot, String>
     let issue_json: Value = serde_json::from_slice(&issue_output.stdout)
         .map_err(|error| format!("invalid gh issue JSON: {error}"))?;
 
-    let comments_endpoint = format!("repos/{GITHUB_REPO}/issues/{number}/comments?per_page=100");
+    let comments_endpoint = format!("repos/{repository}/issues/{number}/comments?per_page=100");
     let comments_output = Command::new("gh")
         .args(["api", "--paginate", "--slurp", &comments_endpoint])
         .output()
         .map_err(|error| format!("failed to run gh api issue comments read: {error}"))?;
     if !comments_output.status.success() {
         return Ok(unavailable_issue_timeline(
+            repository,
             issue_ref,
             &String::from_utf8_lossy(&comments_output.stderr),
         ));
     }
     let comments_json: Value = serde_json::from_slice(&comments_output.stdout)
         .map_err(|error| format!("invalid gh issue comments JSON: {error}"))?;
-    let timeline_endpoint = format!("repos/{GITHUB_REPO}/issues/{number}/timeline?per_page=100");
+    let timeline_endpoint = format!("repos/{repository}/issues/{number}/timeline?per_page=100");
     let timeline_output = Command::new("gh")
         .args(["api", "--paginate", "--slurp", &timeline_endpoint])
         .output()
         .map_err(|error| format!("failed to run gh api issue timeline read: {error}"))?;
     if !timeline_output.status.success() {
         return Ok(unavailable_issue_timeline(
+            repository,
             issue_ref,
             &String::from_utf8_lossy(&timeline_output.stderr),
         ));
@@ -167,6 +187,7 @@ fn read_issue_timeline(issue_ref: &str) -> Result<IssueTimelineSnapshot, String>
     Ok(IssueTimelineSnapshot {
         available: true,
         status: "available".into(),
+        repository: repository.into(),
         issue_ref: format!("#{number}"),
         issue: Some(issue_snapshot(number, &issue_json)),
         comments: comment_values(&comments_json)
@@ -181,10 +202,15 @@ fn read_issue_timeline(issue_ref: &str) -> Result<IssueTimelineSnapshot, String>
     })
 }
 
-fn unavailable_issue_timeline(issue_ref: &str, error: &str) -> IssueTimelineSnapshot {
+fn unavailable_issue_timeline(
+    repository: &str,
+    issue_ref: &str,
+    error: &str,
+) -> IssueTimelineSnapshot {
     IssueTimelineSnapshot {
         available: false,
         status: "unavailable".into(),
+        repository: repository.into(),
         issue_ref: issue_ref.into(),
         issue: None,
         comments: vec![],

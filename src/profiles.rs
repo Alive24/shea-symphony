@@ -25,6 +25,9 @@ pub struct ExecutionProfile {
 impl ExecutionProfile {
     pub fn environment_for_backend(&self, backend: &str) -> BTreeMap<String, String> {
         let mut env = self.env.clone();
+        if backend == "codex" {
+            env.remove("CODEX_HOME");
+        }
         env.insert("SHEA_SYMPHONY_PROFILE_ID".into(), self.profile_id.clone());
         env.insert(
             "SHEA_SYMPHONY_INSTANCE_NAME".into(),
@@ -36,9 +39,6 @@ impl ExecutionProfile {
                 "SHEA_SYMPHONY_PROFILE_HOME".into(),
                 path.display().to_string(),
             );
-            if backend == "codex" {
-                env.insert("CODEX_HOME".into(), path.display().to_string());
-            }
         }
         if let Some(args) = &self.extra_args {
             if !args.trim().is_empty() {
@@ -229,7 +229,7 @@ mod tests {
     }
 
     #[test]
-    fn cockpit_profile_environment_sets_backend_context_without_account_ids() {
+    fn cockpit_profile_environment_sets_backend_context_without_account_ids_or_codex_home() {
         let profile = load_cockpit_codex_profiles(Path::new(
             "examples/fixtures/cockpit-tools-codex-instances.json",
         ))
@@ -247,10 +247,27 @@ mod tests {
             Some(&"codex-alpha".into())
         );
         assert_eq!(
-            env.get("CODEX_HOME"),
+            env.get("SHEA_SYMPHONY_PROFILE_HOME"),
             Some(&"/tmp/cockpit/codex-alpha".into())
         );
+        assert!(!env.contains_key("CODEX_HOME"));
         assert!(!env.contains_key("bindAccountId"));
         assert!(!env.contains_key("BIND_ACCOUNT_ID"));
+    }
+
+    #[test]
+    fn codex_profile_environment_ignores_configured_codex_home() {
+        let mut profile = load_cockpit_codex_profiles(Path::new(
+            "examples/fixtures/cockpit-tools-codex-instances.json",
+        ))
+        .unwrap()
+        .remove(0);
+        profile
+            .env
+            .insert("CODEX_HOME".into(), "/tmp/global".into());
+
+        let env = profile.environment_for_backend("codex");
+
+        assert!(!env.contains_key("CODEX_HOME"));
     }
 }

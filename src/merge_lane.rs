@@ -686,8 +686,15 @@ pub fn merge_lane_workpad(
     issue: &TrackerIssue,
     decision: &MergeLaneDecision,
     merge_output: Option<&CommandOutput>,
+    default_base_branch: &str,
 ) -> String {
-    merge_lane_workpad_with_repair_evidence(issue, decision, merge_output, None)
+    merge_lane_workpad_with_repair_evidence(
+        issue,
+        decision,
+        merge_output,
+        None,
+        default_base_branch,
+    )
 }
 
 pub fn merge_lane_workpad_with_repair_evidence(
@@ -695,8 +702,9 @@ pub fn merge_lane_workpad_with_repair_evidence(
     decision: &MergeLaneDecision,
     merge_output: Option<&CommandOutput>,
     repair_evidence: Option<&MergeRepairEvidence>,
+    default_base_branch: &str,
 ) -> String {
-    let branch_target = branch_target_evidence(issue, expected_merge_base_branch_for_workpad());
+    let branch_target = branch_target_evidence(issue, default_base_branch);
     let mut preflight = vec![
         "- This lane only consumes issues already in `Merging`.".to_string(),
         "- It must not move work into `Human Review`.".to_string(),
@@ -892,12 +900,8 @@ fn civil_from_days(days_since_unix_epoch: i64) -> (i64, u32, u32) {
     (year, month as u32, day as u32)
 }
 
-pub fn expected_merge_base_branch(_config: &RuntimeConfig) -> &'static str {
-    "main"
-}
-
-fn expected_merge_base_branch_for_workpad() -> &'static str {
-    "main"
+pub fn expected_merge_base_branch(config: &RuntimeConfig) -> &str {
+    config.git_base_branch()
 }
 
 fn pull_request_status_from_json(
@@ -1177,6 +1181,20 @@ mod tests {
                 conclusion: Some("SUCCESS".into()),
             }],
         }
+    }
+
+    #[test]
+    fn expected_merge_base_uses_configured_git_base_branch() {
+        let workflow = crate::workflow::WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\ngit:\n  base_branch: dev-chunteng\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, std::path::Path::new("/tmp/WORKFLOW.md"))
+                .unwrap();
+
+        assert_eq!(expected_merge_base_branch(&config), "dev-chunteng");
     }
 
     fn subissue(state: &str, prs: Vec<LinkedPullRequest>) -> TrackerIssue {
@@ -1594,8 +1612,13 @@ branch refs/heads/feature/issue-60
             next_state_rationale: "stay in Merging for reread".into(),
         };
 
-        let workpad =
-            merge_lane_workpad_with_repair_evidence(&issue, &decision, None, Some(&evidence));
+        let workpad = merge_lane_workpad_with_repair_evidence(
+            &issue,
+            &decision,
+            None,
+            Some(&evidence),
+            "main",
+        );
 
         assert!(workpad.contains("### Merge Repair Evidence"));
         assert!(workpad.contains("- Method: `merge_agent`"));
@@ -1634,6 +1657,7 @@ branch refs/heads/feature/issue-60
             &decision,
             Some(&output),
             Some(&evidence),
+            "main",
         );
 
         assert!(workpad.len() < 65_536, "workpad len={}", workpad.len());
@@ -1725,7 +1749,7 @@ branch refs/heads/feature/issue-60
     fn need_human_input_workpad_includes_actionable_question() {
         let issue = issue("Merging", Vec::new());
         let decision = merge_lane_decision(&issue, "Merging", "main", &[], None);
-        let workpad = merge_lane_workpad(&issue, &decision, None);
+        let workpad = merge_lane_workpad(&issue, &decision, None, "main");
 
         assert!(workpad.contains("### Required Human Input"));
         assert!(workpad.contains("Which pull request should this Merging issue land?"));
@@ -1762,7 +1786,7 @@ branch refs/heads/feature/issue-60
             &issue.linked_pull_requests,
             Some(&status),
         );
-        let workpad = merge_lane_workpad(&issue, &decision, None);
+        let workpad = merge_lane_workpad(&issue, &decision, None, "main");
 
         assert_eq!(decision.kind, MergeLaneDecisionKind::ReadyToMerge);
         assert_eq!(decision.target_state, Some("done"));

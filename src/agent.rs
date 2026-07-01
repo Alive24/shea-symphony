@@ -2045,6 +2045,9 @@ mod tests {
     use super::*;
     use crate::config::RuntimeConfig;
     use crate::workflow::WorkflowDefinition;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_ARTIFACT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn dry_run_backend_emits_normalized_events() {
@@ -2737,10 +2740,12 @@ exit 0
     }
 
     fn codex_config(command: &str, timeout_ms: u64) -> RuntimeConfig {
+        let artifact_root = test_artifact_root();
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
             &format!(
-                "---\nagent:\n  backend: codex\ncodex:\n  command: {command:?}\n  turn_timeout_ms: {timeout_ms}\n---\nPrompt"
+                "---\nartifacts:\n  root: {:?}\nagent:\n  backend: codex\ncodex:\n  command: {command:?}\n  turn_timeout_ms: {timeout_ms}\n---\nPrompt",
+                artifact_root.display().to_string()
             ),
         )
         .unwrap();
@@ -2752,14 +2757,24 @@ exit 0
         timeout_ms: u64,
         stall_timeout_ms: u64,
     ) -> RuntimeConfig {
+        let artifact_root = test_artifact_root();
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
             &format!(
-                "---\nagent:\n  backend: codex\ncodex:\n  command: {command:?}\n  turn_timeout_ms: {timeout_ms}\n  stall_timeout_ms: {stall_timeout_ms}\n---\nPrompt"
+                "---\nartifacts:\n  root: {:?}\nagent:\n  backend: codex\ncodex:\n  command: {command:?}\n  turn_timeout_ms: {timeout_ms}\n  stall_timeout_ms: {stall_timeout_ms}\n---\nPrompt",
+                artifact_root.display().to_string()
             ),
         )
         .unwrap();
         RuntimeConfig::from_workflow(&workflow, std::path::Path::new("/tmp/WORKFLOW.md")).unwrap()
+    }
+
+    fn test_artifact_root() -> PathBuf {
+        let counter = TEST_ARTIFACT_COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "shea-symphony-agent-test-{}-{counter}",
+            std::process::id()
+        ))
     }
 
     fn claude_config(command: &str, timeout_ms: u64) -> RuntimeConfig {

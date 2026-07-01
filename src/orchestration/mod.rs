@@ -43,5 +43,4 @@ pub(crate) use tracker_recovery::{
 };
 pub(crate) use workflow_config::{
     load_config, require_write_intent, warn_if_temporary_workflow_path,
-    DEFAULT_RUN_LOOP_BASE_BRANCH,
 };

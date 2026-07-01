@@ -238,7 +238,8 @@ pub(crate) fn merge_once_tick(
             .ok_or("stale-branch decision missing pull request URL")?;
         let output = update_pull_request_branch(pr_ref, &runner, &std::env::current_dir()?)?;
         if output.status == 0 {
-            let workpad = merge_lane_workpad(&issue, &decision, Some(&output));
+            let workpad =
+                merge_lane_workpad(&issue, &decision, Some(&output), default_expected_base);
             let comment_outcome = record_merge_timeline_comment_with_recovery(
                 &config,
                 adapter.as_ref(),
@@ -265,7 +266,8 @@ pub(crate) fn merge_once_tick(
             single_line(&output.stdout),
             single_line(&output.stderr)
         );
-        let workpad = merge_lane_workpad(&issue, &failed_update, Some(&output));
+        let workpad =
+            merge_lane_workpad(&issue, &failed_update, Some(&output), default_expected_base);
         record_merge_timeline_comment_with_recovery(
             &config,
             adapter.as_ref(),
@@ -326,7 +328,7 @@ pub(crate) fn merge_once_tick(
             );
             output
         };
-        let workpad = merge_lane_workpad(&issue, &decision, Some(&output));
+        let workpad = merge_lane_workpad(&issue, &decision, Some(&output), default_expected_base);
         record_done_merge_lane_completion(
             &config,
             adapter.as_ref(),
@@ -343,7 +345,7 @@ pub(crate) fn merge_once_tick(
         return Ok(MergeOnceOutcome::Merged);
     }
 
-    let workpad = merge_lane_workpad(&issue, &decision, None);
+    let workpad = merge_lane_workpad(&issue, &decision, None, default_expected_base);
     record_merge_timeline_comment_with_recovery(
         &config,
         adapter.as_ref(),

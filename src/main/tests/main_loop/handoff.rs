@@ -28,6 +28,21 @@ fn run_loop_handoff_plan_uses_issue_workspace_and_branch_plan() {
 }
 
 #[test]
+fn run_loop_handoff_plan_uses_configured_base_branch() {
+    let mut config = test_config();
+    config.git.base_branch = "dev-chunteng".into();
+    let issue = tracker_issue("In Progress");
+
+    let handoff = run_loop_handoff_plan(&config, &issue).unwrap();
+
+    assert_eq!(handoff.pull_request.base_branch, "dev-chunteng");
+    assert_eq!(
+        handoff.branch_target.pull_request_base_branch,
+        "dev-chunteng"
+    );
+}
+
+#[test]
 fn run_loop_handoff_plan_rejects_branch_for_different_issue() {
     let config = test_config();
     let mut issue = tracker_issue("In Progress");

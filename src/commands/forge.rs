@@ -299,7 +299,7 @@ fn ensure_forge_parent_integration_branch_evidence(
         &parent_issue,
         first_subissue_ref,
         &parent_integration_branch,
-        "main",
+        config.git_base_branch(),
     );
     adapter.upsert_workpad(&parent_issue.identifier, &workpad)?;
     append_tracker_mutation_audit(

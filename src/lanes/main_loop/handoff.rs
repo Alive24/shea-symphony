@@ -22,7 +22,7 @@ use shea_symphony::workpad_templates::{render_workpad_template, WorkpadTemplateI
 use shea_symphony::workspace::run_workspace_command;
 
 use super::IssueExecutionResult;
-use crate::orchestration::{current_git_branch, DEFAULT_RUN_LOOP_BASE_BRANCH};
+use crate::orchestration::current_git_branch;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RunLoopLiveHandoff {
@@ -61,7 +61,7 @@ pub(crate) fn run_loop_handoff_plan(
     let mut plan = plan_issue_handoff_for_profile(
         &config.workspace.root,
         issue,
-        DEFAULT_RUN_LOOP_BASE_BRANCH,
+        config.git_base_branch(),
         profile.as_deref(),
     )?;
 

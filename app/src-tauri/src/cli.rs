@@ -94,6 +94,23 @@ pub struct SheaCommandSpec {
 pub fn shea_command_spec(args: &[&str], workspace: &WorkspaceProfile) -> SheaCommandSpec {
     let engine_root = workspace.engine_path();
     let target_root = workspace.target_path();
+    if let Some(cli_path) = workspace
+        .cli_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let path = PathBuf::from(cli_path);
+        return SheaCommandSpec {
+            program: if path.is_absolute() {
+                path
+            } else {
+                target_root.join(path)
+            },
+            args: args.iter().map(|arg| (*arg).to_string()).collect(),
+            current_dir: target_root,
+        };
+    }
     if should_use_cargo_runner_for_engine(&engine_root) {
         let mut command_args = vec![
             "run".into(),
@@ -267,6 +284,7 @@ branch refs/heads/main
             engine_root: engine_root.display().to_string(),
             target_root: target_root.display().to_string(),
             workflow_path: "workflows/shea-symphony.md".into(),
+            cli_path: None,
             source: "test".into(),
             error: None,
         };
@@ -290,6 +308,28 @@ branch refs/heads/main
                 "plan",
                 "workflows/shea-symphony.md",
             ]
+        );
+    }
+
+    #[test]
+    fn command_spec_uses_profile_cli_path_relative_to_target() {
+        let target_root = PathBuf::from("/target/repo");
+        let profile = WorkspaceProfile {
+            engine_root: "/engine/shea-symphony".into(),
+            target_root: target_root.display().to_string(),
+            workflow_path: ".shea/workflows/shea-symphony.md".into(),
+            cli_path: Some(".shea/bin/shea-symphony".into()),
+            source: "test".into(),
+            error: None,
+        };
+
+        let spec = shea_command_spec(&["doctor", ".shea/workflows/shea-symphony.md"], &profile);
+
+        assert_eq!(spec.program, target_root.join(".shea/bin/shea-symphony"));
+        assert_eq!(spec.current_dir, target_root);
+        assert_eq!(
+            spec.args,
+            vec!["doctor", ".shea/workflows/shea-symphony.md"]
         );
     }
 }

@@ -149,6 +149,7 @@ mod tests {
             engine_root: engine_root.display().to_string(),
             target_root: target_root.display().to_string(),
             workflow_path: workflow_path.into(),
+            cli_path: None,
             source: "test".into(),
             error: None,
         }

@@ -17,6 +17,7 @@ pub struct WorkspaceProfile {
     pub engine_root: String,
     pub target_root: String,
     pub workflow_path: String,
+    pub cli_path: Option<String>,
     pub source: String,
     pub error: Option<String>,
 }
@@ -28,6 +29,7 @@ impl WorkspaceProfile {
             engine_root: root.display().to_string(),
             target_root: root.display().to_string(),
             workflow_path: DEFAULT_WORKFLOW_PATH.into(),
+            cli_path: None,
             source: "self".into(),
             error: None,
         }
@@ -58,8 +60,9 @@ impl WorkspaceProfile {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredWorkspaceProfile {
-    target_root: String,
+    target_root: Option<String>,
     workflow_path: Option<String>,
+    cli_path: Option<String>,
 }
 
 #[derive(Clone)]
@@ -178,7 +181,12 @@ pub fn parse_workdir_arg(args: &[OsString]) -> Result<Option<PathBuf>, String> {
 fn load_stored_profile(engine_root: &Path, store_path: &Path) -> Option<WorkspaceProfile> {
     let text = fs::read_to_string(store_path).ok()?;
     let stored: StoredWorkspaceProfile = serde_json::from_str(&text).ok()?;
-    match profile_from_target(engine_root, Path::new(&stored.target_root), "saved") {
+    let target_root = stored
+        .target_root
+        .as_deref()
+        .map(PathBuf::from)
+        .or_else(|| target_root_from_profile_path(store_path))?;
+    match profile_from_target(engine_root, &target_root, "saved") {
         Ok(mut profile) => {
             if let Some(workflow_path) = stored
                 .workflow_path
@@ -186,6 +194,7 @@ fn load_stored_profile(engine_root: &Path, store_path: &Path) -> Option<Workspac
             {
                 profile.workflow_path = workflow_path;
             }
+            profile.cli_path = stored.cli_path.filter(|value| !value.trim().is_empty());
             Some(profile)
         }
         Err(error) => Some(
@@ -214,6 +223,7 @@ fn profile_from_target(
             .to_string(),
         target_root: target.display().to_string(),
         workflow_path: DEFAULT_WORKFLOW_PATH.into(),
+        cli_path: None,
         source: source.into(),
         error: None,
     })
@@ -227,8 +237,9 @@ fn save_stored_profile(store_path: &Path, profile: &WorkspaceProfile) -> Result<
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     let stored = StoredWorkspaceProfile {
-        target_root: profile.target_root.clone(),
+        target_root: Some(profile.target_root.clone()),
         workflow_path: Some(profile.workflow_path.clone()),
+        cli_path: profile.cli_path.clone(),
     };
     fs::write(
         store_path,
@@ -247,6 +258,11 @@ fn clear_stored_profile(store_path: &Path) -> Result<(), String> {
 
 fn canonicalize_or_keep(path: PathBuf) -> PathBuf {
     fs::canonicalize(&path).unwrap_or(path)
+}
+
+fn target_root_from_profile_path(path: &Path) -> Option<PathBuf> {
+    let shea_dir = path.parent()?;
+    (shea_dir.file_name()? == ".shea").then(|| shea_dir.parent().map(PathBuf::from))?
 }
 
 #[cfg(test)]
@@ -322,6 +338,32 @@ mod tests {
         );
         assert_eq!(restored.target_root, selected.target_root);
         assert_eq!(restored.source, "saved");
+    }
+
+    #[test]
+    fn profile_path_under_shea_infers_target_root_and_cli_path() {
+        let engine = temp_dir("profile-engine");
+        let target = temp_dir("profile-target");
+        let profile_path = target.join(".shea/app-profile.json");
+        fs::create_dir_all(profile_path.parent().unwrap()).unwrap();
+        fs::write(
+            &profile_path,
+            r#"{"workflow_path":".shea/workflows/shea-symphony.md","cli_path":".shea/bin/shea-symphony"}"#,
+        )
+        .unwrap();
+
+        let profile = initial_workspace_profile(
+            engine,
+            &[OsString::from("shea-symphony-app")],
+            &profile_path,
+        );
+
+        assert_eq!(
+            profile.target_root,
+            fs::canonicalize(&target).unwrap().display().to_string()
+        );
+        assert_eq!(profile.workflow_path, ".shea/workflows/shea-symphony.md");
+        assert_eq!(profile.cli_path.as_deref(), Some(".shea/bin/shea-symphony"));
     }
 
     fn temp_dir(name: &str) -> PathBuf {

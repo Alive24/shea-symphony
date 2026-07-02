@@ -47,6 +47,7 @@ export type WorkspaceProfile = {
   engineRoot: string;
   targetRoot: string;
   workflowPath: string;
+  cliPath?: string | null;
   source: string;
   error?: string | null;
 };
@@ -145,6 +146,7 @@ export function defaultWorkspaceProfile(): WorkspaceProfile {
     engineRoot: '',
     targetRoot: '',
     workflowPath: 'workflows/shea-symphony.md',
+    cliPath: null,
     source: 'self',
     error: null
   };

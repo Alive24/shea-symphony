@@ -38,18 +38,15 @@ pub(in crate::tracker) fn status_is_mapped(status: &str, config: &RuntimeConfig)
 pub(in crate::tracker) fn issue_matches_assignee_filter(
     issue: &TrackerIssue,
     filter: &AssigneeFilter,
+    current_login: Option<&str>,
 ) -> bool {
     if issue.assignees.is_empty() {
-        return filter.allow_unassigned;
+        return false;
     }
 
-    if filter.assignees.is_empty() {
-        return true;
-    }
-
-    let allowed: Vec<String> = filter
-        .assignees
-        .iter()
+    let allowed: Vec<String> = current_login
+        .into_iter()
+        .chain(filter.additional_assignees.iter().map(String::as_str))
         .map(|assignee| normalize_state(assignee))
         .collect();
 

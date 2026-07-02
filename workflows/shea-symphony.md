@@ -29,8 +29,7 @@ tracker:
     - Duplicate
   assignee_filter:
     source: issue_assignees
-    allow_unassigned: false
-    assignees: []
+    additional_assignees: []
   workpad:
     source: issue_comment
     marker: "<!-- shea-symphony-workpad -->"

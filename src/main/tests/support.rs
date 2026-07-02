@@ -94,12 +94,10 @@ pub(crate) fn main_loop_test_config() -> RuntimeConfig {
     RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap()
 }
 
-pub(crate) fn live_github_config(allow_unassigned: bool) -> RuntimeConfig {
+pub(crate) fn live_github_config() -> RuntimeConfig {
     let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            &format!(
-                "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_number: 9\n  assignee_filter:\n    allow_unassigned: {allow_unassigned}\n---\nPrompt"
-            ),
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_number: 9\n  assignee_filter:\n    additional_assignees: []\n---\nPrompt",
         )
         .unwrap();
     RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap()

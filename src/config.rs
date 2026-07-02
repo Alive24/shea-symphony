@@ -73,8 +73,7 @@ pub struct StateMap {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssigneeFilter {
     pub source: String,
-    pub allow_unassigned: bool,
-    pub assignees: Vec<String>,
+    pub additional_assignees: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -649,8 +648,9 @@ fn parse_state_map(value: Option<&Value>) -> StateMap {
 fn parse_assignee_filter(value: Option<&Value>) -> AssigneeFilter {
     AssigneeFilter {
         source: value_string(value, "source", "issue_assignees"),
-        allow_unassigned: get_bool(value, "allow_unassigned").unwrap_or(false),
-        assignees: get_string_vec(value, "assignees").unwrap_or_default(),
+        additional_assignees: get_string_vec(value, "additional_assignees")
+            .or_else(|| get_string_vec(value, "assignees"))
+            .unwrap_or_default(),
     }
 }
 

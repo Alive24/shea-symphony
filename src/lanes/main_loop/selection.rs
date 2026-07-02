@@ -102,12 +102,8 @@ pub(crate) fn run_loop_assignee_ownership_decision(
     }
 
     if issue.assignees.is_empty() {
-        return if config.tracker.assignee_filter.allow_unassigned {
-            AssigneeOwnershipDecision::Allowed
-        } else {
-            AssigneeOwnershipDecision::Block {
-                reason: "live GitHub issue has no assignee".into(),
-            }
+        return AssigneeOwnershipDecision::Block {
+            reason: "live GitHub issue has no assignee".into(),
         };
     }
 

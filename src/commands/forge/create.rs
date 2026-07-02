@@ -362,7 +362,6 @@ pub(crate) fn forge_create_requires_assignee(
     status == ForgeStatusArg::Todo
         && config.tracker.kind == "github_project_v2"
         && config.tracker.fixture_path.is_none()
-        && !config.tracker.assignee_filter.allow_unassigned
 }
 
 pub(crate) fn find_duplicate_issue_title<'a>(

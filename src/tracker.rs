@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::fs;
+use std::{fs, process::Command as ProcessCommand};
 
 #[cfg(test)]
 use crate::config::AssigneeFilter;
@@ -226,7 +226,17 @@ impl GithubProjectV2Adapter {
     }
 
     fn load_issues(&self, mode: GithubProjectReadMode) -> Result<Vec<TrackerIssue>, TrackerError> {
-        let mut issues = apply_github_read_filters(self.load_mapped_issues(mode)?, &self.config);
+        let current_login =
+            if self.fixture_issues.is_empty() && self.config.tracker.fixture_path.is_none() {
+                current_gh_login()
+            } else {
+                None
+            };
+        let mut issues = apply_github_read_filters(
+            self.load_mapped_issues(mode)?,
+            &self.config,
+            current_login.as_deref(),
+        );
         self.enrich_native_subissue_project_statuses(&mut issues)?;
         self.enrich_native_issue_blockers_for_claimable_issues(&mut issues)?;
         Ok(issues)
@@ -323,11 +333,26 @@ fn apply_github_status_filters(
 fn apply_github_read_filters(
     issues: Vec<TrackerIssue>,
     config: &RuntimeConfig,
+    current_login: Option<&str>,
 ) -> Vec<TrackerIssue> {
     apply_github_status_filters(issues, config)
         .into_iter()
-        .filter(|issue| issue_matches_assignee_filter(issue, &config.tracker.assignee_filter))
+        .filter(|issue| {
+            issue_matches_assignee_filter(issue, &config.tracker.assignee_filter, current_login)
+        })
         .collect()
+}
+
+fn current_gh_login() -> Option<String> {
+    let output = ProcessCommand::new("gh")
+        .args(["api", "user", "--jq", ".login"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let login = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!login.is_empty()).then_some(login)
 }
 
 pub fn relationship_readback_from_issue(issue: &TrackerIssue) -> IssueRelationshipReadback {

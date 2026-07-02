@@ -42,8 +42,7 @@ tracker:
     done: Done
   assignee_filter:
     source: issue_assignees
-    allow_unassigned: false
-    assignees: []
+    additional_assignees: []
   workpad:
     source: issue_comment
     marker: "<!-- shea-symphony-workpad -->"
@@ -143,8 +142,9 @@ Do not dispatch:
 - Pull request project items.
 - Issues without a matching ProjectV2 item.
 - Issues whose status field is missing or unmapped.
-- Issues assigned to a non-allowed assignee.
-- Unassigned issues when `allow_unassigned` is false.
+- Issues not assigned to the current authenticated GitHub user or an
+  `additional_assignees` entry.
+- Unassigned issues.
 
 ## Workpad
 

@@ -127,10 +127,8 @@ pub(crate) fn live_missing_assignee_gate_blocker(
     config: &RuntimeConfig,
     issue: &TrackerIssue,
 ) -> Option<String> {
-    (live_github_tracker(config)
-        && !config.tracker.assignee_filter.allow_unassigned
-        && issue.assignees.is_empty())
-    .then(|| "live GitHub issue assignee".into())
+    (live_github_tracker(config) && issue.assignees.is_empty())
+        .then(|| "live GitHub issue assignee".into())
 }
 
 fn expected_target_repository(config: &RuntimeConfig) -> Option<String> {

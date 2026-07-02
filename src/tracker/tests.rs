@@ -718,8 +718,7 @@ tracker:
   project_number: 1
   assignee_filter:
     source: issue_assignees
-    allow_unassigned: false
-    assignees:
+    additional_assignees:
       - codex
 ---
 Prompt
@@ -737,6 +736,7 @@ Prompt
     let filtered = apply_github_read_filters(
         vec![mapped_assigned, unmapped_status, wrong_assignee, unassigned],
         &config,
+        None,
     );
 
     assert_eq!(filtered.len(), 1);
@@ -756,15 +756,15 @@ tracker:
   project_number: 1
   assignee_filter:
     source: issue_assignees
-    allow_unassigned: false
-    assignees: []
+    additional_assignees: []
 ---
 Prompt
 "#,
     );
 
     let unassigned_merging = issue("Merging");
-    let dispatch_filtered = apply_github_read_filters(vec![unassigned_merging.clone()], &config);
+    let dispatch_filtered =
+        apply_github_read_filters(vec![unassigned_merging.clone()], &config, Some("codex"));
     let state_filtered = apply_github_status_filters(vec![unassigned_merging], &config);
 
     assert!(dispatch_filtered.is_empty());
@@ -773,14 +773,59 @@ Prompt
 }
 
 #[test]
-fn github_assignee_filter_can_allow_unassigned_issues() {
+fn empty_additional_assignees_filters_to_current_login() {
+    let config = github_config(
+        r#"---
+tracker:
+  kind: github_project_v2
+  owner: Alive24
+  repo: shea-symphony
+  project_owner: Alive24
+  project_number: 1
+  assignee_filter:
+    source: issue_assignees
+    additional_assignees: []
+---
+Prompt
+"#,
+    );
+
+    let mut mine = issue("Todo");
+    mine.assignees = vec!["Codex".into()];
+    let mut theirs = issue("Todo");
+    theirs.assignees = vec!["someone-else".into()];
+
+    let filtered =
+        apply_github_read_filters(vec![mine.clone(), theirs.clone()], &config, Some("codex"));
+    let no_login = apply_github_read_filters(vec![mine, theirs], &config, None);
+
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].assignees, vec!["Codex"]);
+    assert!(no_login.is_empty());
+}
+
+#[test]
+fn github_assignee_filter_allows_current_login_and_additional_assignees() {
     let filter = AssigneeFilter {
         source: "issue_assignees".into(),
-        allow_unassigned: true,
-        assignees: vec!["codex".into()],
+        additional_assignees: vec!["teammate".into()],
     };
+    let mut mine = issue("Todo");
+    mine.assignees = vec!["Codex".into()];
+    let mut teammate = issue("Todo");
+    teammate.assignees = vec!["teammate".into()];
 
-    assert!(issue_matches_assignee_filter(&issue("Todo"), &filter));
+    assert!(issue_matches_assignee_filter(&mine, &filter, Some("codex")));
+    assert!(issue_matches_assignee_filter(
+        &teammate,
+        &filter,
+        Some("codex")
+    ));
+    assert!(!issue_matches_assignee_filter(
+        &issue("Todo"),
+        &filter,
+        Some("codex")
+    ));
 }
 
 #[test]

@@ -271,7 +271,7 @@ fn validates_forge_create_contract_before_tracker_write() {
 
 #[test]
 fn forge_create_draft_validation_uses_intended_assignee_for_live_github() {
-    let config = live_github_config(false);
+    let config = live_github_config();
     let assignees = vec!["Alive24".to_string()];
 
     let report = validate_forge_create_report_with_assignees(
@@ -287,7 +287,7 @@ fn forge_create_draft_validation_uses_intended_assignee_for_live_github() {
 
 #[test]
 fn forge_validate_candidate_context_uses_live_issue_assignee() {
-    let config = live_github_config(false);
+    let config = live_github_config();
     let assignees = vec!["Alive24".to_string()];
     let report = forge_validation_report(
         ForgeStatusArg::Todo,
@@ -306,7 +306,7 @@ fn forge_validate_candidate_context_uses_live_issue_assignee() {
 
 #[test]
 fn forge_validate_candidate_context_reports_unassigned_live_issue() {
-    let config = live_github_config(false);
+    let config = live_github_config();
     let report = forge_validation_report(
         ForgeStatusArg::Todo,
         "Candidate promoted title",
@@ -326,7 +326,7 @@ fn forge_validate_candidate_context_reports_unassigned_live_issue() {
 
 #[test]
 fn forge_validate_candidate_context_reports_candidate_gaps_separately() {
-    let config = live_github_config(false);
+    let config = live_github_config();
     let assignees = vec!["Alive24".to_string()];
     let report = forge_validation_report(
         ForgeStatusArg::Todo,
@@ -344,7 +344,7 @@ fn forge_validate_candidate_context_reports_candidate_gaps_separately() {
 
 #[test]
 fn forge_create_live_github_requires_assignee_before_creation() {
-    let config = live_github_config(false);
+    let config = live_github_config();
 
     let error = validate_forge_create_contract("Create issue", &forge_contract(), &config, &[])
         .unwrap_err();
@@ -366,7 +366,7 @@ fn forge_create_entrypoint_rejects_live_github_without_assignee() {
     let workflow_path = temp.path().join("WORKFLOW.md");
     std::fs::write(
             &workflow_path,
-            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_number: 9\n  assignee_filter:\n    allow_unassigned: false\nobservability:\n  logs_root: log\n---\nPrompt",
+            "---\ntracker:\n  kind: github_project_v2\n  owner: Alive24\n  repo: shea-symphony\n  project_owner: Alive24\n  project_number: 9\n  assignee_filter:\n    additional_assignees: []\nobservability:\n  logs_root: log\n---\nPrompt",
         )
         .unwrap();
 

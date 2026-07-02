@@ -196,7 +196,15 @@ fn apply_linear_read_filters(
 ) -> Vec<TrackerIssue> {
     issues
         .into_iter()
-        .filter(|issue| issue_matches_assignee_filter(issue, &config.tracker.assignee_filter))
+        .filter(|issue| {
+            !issue.assignees.is_empty()
+                && (config
+                    .tracker
+                    .assignee_filter
+                    .additional_assignees
+                    .is_empty()
+                    || issue_matches_assignee_filter(issue, &config.tracker.assignee_filter, None))
+        })
         .collect()
 }
 

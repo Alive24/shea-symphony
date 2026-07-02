@@ -330,7 +330,7 @@ fn run_loop_claim_action_uses_tracker_claim_decision() {
 
 #[test]
 fn live_gate_blocks_missing_assignee_without_override() {
-    let config = live_github_config(false);
+    let config = live_github_config();
     let issue = tracker_issue("Todo");
 
     assert_eq!(
@@ -353,7 +353,7 @@ fn fixture_mode_does_not_require_live_assignee() {
 
 #[test]
 fn assignee_ownership_allows_matching_active_login() {
-    let config = live_github_config(false);
+    let config = live_github_config();
     let mut issue = tracker_issue("Todo");
     issue.assignees = vec!["CodexUser".into()];
 
@@ -365,7 +365,7 @@ fn assignee_ownership_allows_matching_active_login() {
 
 #[test]
 fn assignee_ownership_blocks_mismatched_active_login() {
-    let config = live_github_config(false);
+    let config = live_github_config();
     let mut issue = tracker_issue("Todo");
     issue.assignees = vec!["owner-a".into()];
 
@@ -376,7 +376,7 @@ fn assignee_ownership_blocks_mismatched_active_login() {
 
 #[test]
 fn assignee_ownership_allows_matching_profile_login() {
-    let config = live_github_config(false);
+    let config = live_github_config();
     let mut issue = tracker_issue("Todo");
     issue.assignees = vec!["profile-owner".into()];
 
@@ -393,7 +393,7 @@ fn assignee_ownership_allows_matching_profile_login() {
 
 #[test]
 fn assignee_ownership_blocks_missing_active_identity() {
-    let config = live_github_config(false);
+    let config = live_github_config();
     let mut issue = tracker_issue("Todo");
     issue.assignees = vec!["owner-a".into()];
 

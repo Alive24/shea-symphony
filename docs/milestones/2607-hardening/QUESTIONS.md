@@ -57,8 +57,9 @@ Yes. Review and merge are workflow stages, not Shea-only extension behavior.
 
 ### Is the App allowed to write?
 
-The App may control ticks and Autopilot. It should not directly modify tracker
-state or trigger arbitrary write operations.
+The App is the primary operator surface. It should use Tauri backend commands to
+start/query/signal/update Temporal workflows. It should not directly modify
+tracker state, edit worktrees, or run workflow internals outside Temporal.
 
 ### Where should workflow graph config live?
 
@@ -192,9 +193,10 @@ silently continuing.
 
 ### What is the transition API shape?
 
-Use an internal Symphony transition service as the primary surface. CLI
-transition commands should be thin wrappers over the same validation, evidence,
-tracker write, runtime write, and reconcile behavior.
+Use `TrackerTransitionActivity` as the primary tracker write surface.
+`IssueWorkflow` decides which transition to request. The Activity validates,
+writes tracker state, writes evidence, and returns the committed transition
+summary.
 
 ### What evidence is required for transitions?
 
@@ -204,16 +206,15 @@ trace id, artifact references, and timestamp.
 
 ### How should lane handoff completion work?
 
-Successful tracker transition is part of lane handoff completion. If a worker
-finishes code but the tracker transition fails, local runtime can record the
-worker result, but the lane is not complete until transition succeeds or a
-reconcile path resolves it.
+Successful `TrackerTransitionActivity` completion is part of lane handoff
+completion. If an Activity finishes code work but tracker transition fails,
+`IssueWorkflow` must not advance as if the state changed.
 
 ### How should claim ownership work?
 
 Use a two-layer model. Tracker fields hold coarse human-visible claim state.
-Local runtime state holds worker session, attempt id, heartbeat, worktree, and
-last progress details.
+Temporal workflow/activity history holds worker attempt, heartbeat, worktree,
+and last progress details where possible. Local artifacts hold large details.
 
 ### Should NTC and NHI reasons be enum values?
 
@@ -247,9 +248,10 @@ control-plane work rather than LLM latency.
 
 ### What should App refresh read?
 
-The top-level dashboard should start from one Symphony snapshot. It should show
-current operational lane items, human todo items, concise PR number/status, and
-local runtime state needed for display.
+The top-level dashboard should start from a Temporal query-backed
+`SymphonySnapshot`. It should show current operational lane items, human todo
+items, concise PR number/status, local Temporal/worker availability, and
+workflow state needed for display.
 
 The dashboard should not show worktree path, branch name, full traces, or full
 artifact bodies. Those belong in lane item detail and should be loaded lazily
@@ -259,22 +261,40 @@ Project history and broad queue browsing should stay in the tracker.
 
 ### How should App-triggered commands be bounded?
 
-The App may trigger snapshot reads and tracker cache refresh because they
-directly support display.
+The App should use Tauri backend commands that call Temporal start, query,
+signal, or update APIs.
 
-Automatic doctor checks should be run by Symphony. Human doctor work should
-open a Codex/operator flow instead of letting the App directly perform repair.
+Automatic doctor checks should be Temporal Activities. Human doctor work should
+enter through Temporal signal/update or open a Codex/operator flow that reports
+back through Temporal.
 
-Opening worktrees and resuming agents should be Symphony-owned workflow
-operations, not manual App imperatives.
+Opening worktrees and resuming agents should not be App imperatives. They should
+be workflow/activity outcomes or artifact links.
 
 ### What are the first concrete performance targets?
 
 Current leaning: start with relative targets before hard numbers:
 
-- one Project snapshot per loop cycle;
+- Temporal query-backed dashboard refresh;
 - no mutating command from UI refresh;
 - non-LLM path should be seconds-scale unless waiting on external services.
+
+### What is the 2607 Temporal decision?
+
+Temporal is the 2607 runtime spine, not a future spike. `IssueWorkflow` covers
+all standard Shea Symphony states from the start. The old autopilot/tick/resume
+loop is legacy-to-delete. Temporal Cloud is out of scope; the runtime is local.
+
+### Does 2607 need an independent local Symphony service?
+
+No. The Tauri backend command layer should call Temporal client APIs directly.
+Do not design an independent local Symphony service in 2607.
+
+### What is CLI for after Temporal?
+
+CLI is admin/dev fallback only: initialize local config when App is unavailable,
+run local doctor/self-checks, run the worker for development or CI, and expose
+thin debug wrappers. CLI does not own workflow product operations.
 
 ### How should land skill flow be represented?
 

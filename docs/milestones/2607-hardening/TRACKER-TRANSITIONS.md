@@ -6,17 +6,19 @@ Status: Draft
 
 Define the hard boundary for tracker state changes.
 
-2607 Hardening should introduce a Symphony-owned transition path that all
-lanes, current workflow steps, App commands, Shea extensions, and future
-Workflow Graph nodes use when tracker state changes.
+2607 Hardening should move tracker state changes behind
+`TrackerTransitionActivity`. `IssueWorkflow` requests transitions; the Activity
+validates, writes tracker state, writes evidence, and returns the committed
+summary.
 
 ## Principle
 
 Separate three things:
 
-- proposal: a lane, extension node, LLM, or operator proposes a next state;
-- decision: Symphony validates whether that proposal is allowed now;
-- commit: Symphony writes tracker state, runtime state, and evidence.
+- proposal: workflow code, an Activity result, extension output, or operator
+  signal proposes a next state;
+- decision: `IssueWorkflow` decides which transition to request;
+- commit: `TrackerTransitionActivity` writes tracker state and evidence.
 
 Extension nodes may influence workflow direction by selecting graph edges or
 proposing the next core node. They do not directly commit tracker state.
@@ -24,18 +26,15 @@ proposing the next core node. They do not directly commit tracker state.
 This keeps the workflow agentic without letting extension logic bypass the
 runtime boundary.
 
-## API Shape
+## Activity Shape
 
-Use an internal API as the primary surface. The CLI should be a thin wrapper.
+Use a Temporal Activity as the primary write surface.
 
 ```text
-SymphonyTransitionService.requestTransition(...)
-
-symphony transition --issue <id> --to <state> --reason <reason>
+TrackerTransitionActivity(request) -> committed_transition
 ```
 
-Internal runtime code and CLI commands must share the same validation, evidence,
-tracker write, runtime write, and reconcile behavior.
+App, CLI, lanes, and extensions must not bypass this Activity.
 
 ## Standard States
 
@@ -205,13 +204,15 @@ Do not silently continue through a conflicting external state change.
 
 ## App Boundary
 
-The App may trigger display-oriented CLI commands:
+The App may call Tauri backend commands that perform Temporal operations:
 
-- read snapshot;
-- refresh tracker cache;
-- controlled tick/pause/autopilot commands.
+- workflow query;
+- workflow signal;
+- workflow update;
+- workflow start.
 
-The App must not directly call tracker mutation or bypass transition checks.
+The App must not directly call tracker mutation or bypass
+`TrackerTransitionActivity`.
 
 ## First Implementation Bias
 
@@ -220,7 +221,7 @@ site.
 
 First useful refactor target:
 
-- introduce the transition service shape;
-- route one low-risk state move through it;
+- introduce `TrackerTransitionActivity`;
+- route all tracker state writes through it;
 - record evidence consistently;
-- keep old behavior working until migration is complete.
+- delete or reduce old direct write paths as Temporal migration lands.

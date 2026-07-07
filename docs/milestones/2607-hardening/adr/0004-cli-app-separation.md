@@ -1,31 +1,29 @@
-# ADR 0004: CLI And App Separation
+# ADR 0004: App And CLI Separation
 
 Status: Proposed
 
 ## Context
 
-The App is useful as an operator surface, but the reliable execution boundary
-should stay in Symphony. If the App directly mutates tracker state or worktrees,
-the system gains another source of truth.
+The App is the primary operator surface. Temporal local runtime is the reliable
+execution boundary. If the App directly mutates tracker state or worktrees, the
+system gains another source of truth.
 
 ## Decision
 
-The CLI/Symphony runtime is the execution authority. The App is a controlled
-consumer and operator control surface.
+The Tauri backend command layer may call Temporal client APIs directly. Do not
+introduce an independent local Symphony service in 2607.
 
-The App may control tick/autopilot execution. The App does not directly modify
-tracker state or worktrees.
+CLI is admin/dev fallback only. It does not own workflow product operations.
 
 ## Consequences
 
 - App refresh must not trigger hidden write operations.
 - App surfaces should consume status snapshots and state-grouped workflow
   snapshots.
-- Write paths stay testable in Symphony.
+- Write paths stay testable as Temporal Activities.
 
 ## Follow-Up
 
-- Define App command allowlist.
-- Define read-only workflow snapshot for 2607, with future graph snapshot
-  support in 2608.
+- Define Tauri backend command allowlist.
+- Define Temporal query-backed workflow snapshot for 2607.
 - Audit existing App read surfaces for heavy command paths.

@@ -26,7 +26,7 @@ Problem:
 
 Direction:
 
-- Prefer one tracker snapshot per runtime tick.
+- Prefer Temporal query-backed workflow snapshots for App reads.
 - Use targeted readback after writes instead of repeated full scans.
 - Make external waits visible in status snapshots.
 
@@ -39,8 +39,8 @@ Problem:
 
 Direction:
 
-- Route writes through a Symphony-owned transition command path.
-- Lane and extension logic proposes transitions with evidence; Symphony applies
+- Route writes through `TrackerTransitionActivity`.
+- `IssueWorkflow` requests transitions with evidence; the Activity applies
   them.
 
 Write operations that should use the unified path:
@@ -64,8 +64,8 @@ Problem:
 
 Direction:
 
-- Move standard state vocabulary and transition checks behind Symphony.
-- Record state transitions as runtime events.
+- Move standard state vocabulary and transition checks into `IssueWorkflow`.
+- Record state transitions in Temporal history and evidence.
 - Stop and reconcile when tracker state and runtime state conflict.
 
 ### App Refresh And Read Surfaces
@@ -79,8 +79,8 @@ Problem:
 
 Direction:
 
-- App dashboard starts from one Symphony snapshot that includes tracker state and
-  local runtime state.
+- App dashboard starts from a Temporal query-backed `SymphonySnapshot` that
+  includes tracker state and workflow state.
 - Artifact files are loaded lazily for drill-down, not for every top-level
   dashboard refresh.
 - App refresh must not trigger mutating commands.
@@ -102,13 +102,14 @@ Direction:
 
 Problem:
 
-- Command shapes and argument ordering have drifted across commands and docs.
+- CLI has accumulated product operation semantics that Temporal should own.
 
 Direction:
 
-- Normalize command routing and help text.
-- Keep CLI as the execution authority, but make command contracts boring and
-  consistent.
+- Downgrade CLI to admin/dev fallback.
+- Move product operations to Temporal workflow start/query/signal/update.
+- Remove tick/autopilot/review/merge/doctor-as-mutator command semantics as the
+  Temporal migration lands.
 
 ### Large Files And Mixed Ownership
 
@@ -139,7 +140,7 @@ These should guide the first inventory pass.
 Prefer a boundary cut before a performance cut:
 
 - identify who owns state transitions;
-- identify which snapshot a path used;
+- identify which Temporal query or Activity result a path used;
 - identify whether a component was allowed to write;
 - then remove repeated reads and heavy refresh paths.
 

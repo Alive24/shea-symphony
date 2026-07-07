@@ -4,8 +4,11 @@ Status: Draft
 
 ## Principle
 
-The CLI/Symphony runtime is the execution authority. The App is a controlled
-operator surface.
+Temporal local runtime is the execution authority. The App is the primary
+operator surface. CLI is admin/dev fallback only.
+
+Do not introduce an independent local Symphony service as a 2607 target. The
+Tauri backend command layer can call the Temporal client directly.
 
 ## App May
 
@@ -13,17 +16,33 @@ operator surface.
 - display current workflow step and issue state;
 - display snapshots;
 - display logs, traces, and artifacts after issue-level drill-down;
-- start, stop, or tick Autopilot through controlled Symphony commands;
-- trigger display-oriented commands such as snapshot read and tracker cache
-  refresh;
+- initialize local runtime state;
+- start or connect local Temporal service and Symphony worker;
+- start workflows through the Tauri backend;
+- send Temporal signals or updates through the Tauri backend;
+- query Temporal-backed snapshots through the Tauri backend;
 - show disabled or bypassed workflow steps when available.
 
 ## App Must Not
 
 - directly mutate tracker state;
 - directly edit worktrees;
-- bypass Symphony transition checks;
+- bypass Temporal workflow and Activity boundaries;
 - perform hidden write operations during refresh.
+
+## CLI May
+
+- initialize local config when App is unavailable;
+- run local doctor/self-checks;
+- run the Symphony worker for development or CI;
+- provide thin admin/debug wrappers.
+
+## CLI Must Not
+
+- own product workflow semantics;
+- run tick/autopilot loops;
+- directly merge, review, doctor, or transition issues as business logic;
+- become a second operation surface beside Temporal.
 
 ## First App Target
 

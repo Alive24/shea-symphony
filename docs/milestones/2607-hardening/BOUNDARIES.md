@@ -4,12 +4,13 @@ Status: Draft
 
 ## Symphony
 
-Symphony is the reliable workflow runtime.
+Symphony is the reliable local Temporal workflow runtime.
 
 Symphony owns:
 
-- workflow graph loading and validation;
+- workflow structure and future graph compatibility;
 - standard tracker states;
+- local Temporal workflow and worker ownership;
 - tracker reads and writes;
 - GitHub Project v2 adapter;
 - future tracker adapter interface for Linear and other trackers;
@@ -18,7 +19,7 @@ Symphony owns:
 - agent runner lifecycle;
 - review stage execution;
 - merge stage execution;
-- runtime state;
+- Temporal workflow state;
 - retry, stall, and reconciliation;
 - event log and traceability;
 - status snapshots;
@@ -41,19 +42,19 @@ Shea owns:
 - Dream and Reflect style backlog mining;
 - operator interaction policy;
 - project-specific workflow extensions;
-- App-specific interpretation of Symphony snapshots.
+- App-specific presentation of Symphony snapshots.
 
 Shea may use LLMs, but LLM output must be converted into structured evidence,
 questions, or transition proposals before Symphony acts on it.
 
 ## Hard Rules
 
-- Symphony writes tracker state.
+- Symphony writes tracker state through `TrackerTransitionActivity`.
 - Shea and extension nodes do not write tracker state directly.
-- Tracker writes must go through one Symphony-owned transition command path.
-- Workflow participants may propose transitions, but Symphony decides and
-  commits them.
-- State transitions must be recorded as runtime events.
+- Tracker writes must go through `TrackerTransitionActivity`.
+- Workflow participants may propose transitions, but `IssueWorkflow` decides
+  and `TrackerTransitionActivity` commits them.
+- State transitions must be recorded in Temporal history and evidence.
 - Standard nodes are not replaced in place. They may be disabled or bypassed by
   graph configuration.
 - App surfaces consume Symphony snapshots. They do not become source-of-truth
@@ -98,10 +99,11 @@ The App may:
 
 - display current graph and node state;
 - display status, logs, and traceability;
-- control tick/autopilot execution.
+- initialize and operate local Temporal-backed workflows through Tauri backend
+  commands.
 
 The App should not:
 
 - directly edit tracker state;
 - directly modify worktrees;
-- bypass Symphony transition checks.
+- bypass Temporal workflow or Activity boundaries.

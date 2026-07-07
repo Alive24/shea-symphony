@@ -18,20 +18,21 @@ Likely slow paths:
 The strongest subjective pain point is App refresh and the overall control
 plane delay after LLM work has already completed. Waiting should usually mean
 waiting on an LLM or external service, not waiting on repeated local
-orchestration work.
+orchestration work. Temporal should own durable orchestration instead of a
+custom loop.
 
 ## Initial Targets
 
 Use relative targets until the first timing pass lands:
 
-- one tracker snapshot per runtime tick;
+- query-backed dashboard refresh;
 - no mutating command from App refresh;
-- App refresh should not run heavyweight lane or tracker mutation paths;
+- App refresh should not run heavyweight Activity or tracker mutation paths;
 - dashboard refresh should load artifact detail lazily after the operator drills
   down;
 - top-level dashboard refresh should not read worktree path, branch detail,
   full traces, or full artifact bodies;
-- no repeated Project full scan inside one lane tick unless a write requires
+- no repeated Project full scan inside one workflow step unless a write requires
   readback;
 - non-LLM paths should be seconds-scale unless waiting on external services;
 - status snapshots should explain external waits.
@@ -40,8 +41,8 @@ Use relative targets until the first timing pass lands:
 
 - `project state`
 - `doctor`
-- `autopilot plan`
-- `autopilot loop` one tick
+- Temporal workflow query
+- Temporal Activity duration and retries
 - Main lane claim
 - Review lane claim/result application
 - Merge lane PR read/mergeability check

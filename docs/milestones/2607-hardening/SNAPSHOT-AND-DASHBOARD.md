@@ -4,8 +4,8 @@ Status: Draft
 
 ## Purpose
 
-Define what the App reads by default, what Symphony must expose, and where
-issue-level detail begins.
+Define what the App reads by default, what Temporal-backed Symphony workflows
+must expose, and where issue-level detail begins.
 
 The App should be a lightweight operational surface. It should not become a
 second tracker, a hidden runtime controller, or an eager artifact reader.
@@ -19,7 +19,8 @@ The top-level dashboard should focus on the current operational surface:
   `Human Review`;
 - current tracker state;
 - PR number and concise PR state when relevant;
-- whether autopilot is running, paused, or waiting;
+- whether workflow execution is running, paused, waiting, or terminal;
+- whether local Temporal service and Symphony worker are available;
 - whether a refresh/cache operation is stale, fresh, or failed.
 
 The dashboard does not need to show historical project queues. Operators can
@@ -48,7 +49,8 @@ payloads.
 
 ## Snapshot Shape
 
-`SymphonySnapshot` should be the first read surface for the App.
+`SymphonySnapshot` should be the first read surface for the App. In 2607 it
+should be backed by Temporal workflow queries, not CLI command output.
 
 It should include:
 
@@ -59,8 +61,8 @@ It should include:
 - active issue summaries;
 - human todo summaries;
 - active PR numbers and concise PR state;
-- autopilot state;
-- local runtime state needed for display;
+- workflow execution state;
+- Temporal workflow state needed for display;
 - artifact references and short summaries, not full artifact bodies;
 - stuck or waiting classification when already represented as workflow state.
 
@@ -77,9 +79,10 @@ It should not include:
 Tracker state is the external workflow fact. Runtime state is local execution
 evidence.
 
-During lane handoff, Symphony must treat the successful tracker transition as
-part of completion. A worker should not be considered fully handed off if the
-local runtime believes it is done but the tracker did not move.
+During lane handoff, `IssueWorkflow` must treat successful
+`TrackerTransitionActivity` completion as part of completion. A worker should
+not be considered fully handed off if an Activity finished but the tracker did
+not move.
 
 When runtime state and tracker state conflict:
 
@@ -90,25 +93,27 @@ When runtime state and tracker state conflict:
   `Need Human Input` or `Need to Clarify` rather than leaving the issue stuck
   behind UI-only text.
 
-## App Commands
+## App Operations
 
-The App may trigger CLI commands that directly support display:
+The App should call Tauri backend commands that use Temporal client APIs:
 
-- read a snapshot;
-- refresh tracker cache;
-- tick or pause autopilot through controlled Symphony commands.
+- start workflow;
+- query snapshot;
+- query issue detail;
+- send signal;
+- send update when synchronous accepted/rejected feedback is needed.
 
 The App should not directly trigger:
 
 - tracker state mutation;
 - worktree edits;
 - manual worktree opening as a workflow operation;
-- agent resume as an operator-side imperative;
-- doctor repair flows that modify state outside Symphony policy.
+- agent resume as an operator-side imperative outside Temporal;
+- doctor repair flows that modify state outside Temporal workflow policy.
 
-`doctor current issue` may later have two modes:
+Doctor work may have two modes:
 
-- automatic doctor checks that Symphony runs itself;
+- automatic doctor checks as Activities;
 - human doctor work opened through Codex/operator flow when coding-agent help is
   required.
 
@@ -132,12 +137,11 @@ should reflect that through `Need Human Input`, `Need to Clarify`, or
 
 For 2607 hardening, prefer:
 
-- CLI stdout JSON for immediate snapshot reads;
-- a local cache file for fast App refresh;
-- no daemon requirement in the first pass.
+- Temporal query-backed reads;
+- local artifact references for large details;
+- no independent local Symphony service in 2607.
 
-A daemon or local API can be reconsidered after the read/write boundaries and
-snapshot shape are stable.
+The Tauri backend command layer is the local API surface for the App.
 
 ## Performance Bias
 

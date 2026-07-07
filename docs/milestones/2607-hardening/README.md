@@ -1,0 +1,126 @@
+# 2607 Hardening
+
+Status: Draft
+
+## Purpose
+
+2607 Hardening is the post-MVP milestone for turning Shea Symphony from a
+working dogfood harness into a maintainable workflow runtime.
+
+The MVP proved that the system can move real issues through implementation,
+review, merge, and operator follow-up. This milestone focuses on hardening the
+runtime boundaries before adding more product surface area.
+
+Workflow Graph implementation is intentionally deferred to
+`docs/milestones/2608-workflow-graph-extension/`. 2607 should prepare the
+structure and boundaries, not replace the workflow runtime.
+
+## MVP Baseline
+
+The baseline is broad, not repo-specific:
+
+- the protected 2606 MVP branch exists as the working baseline;
+- Shea can run complete issue workflows against its own project;
+- Shea can run complete workflows while developing other projects through a
+  vendored runtime, even though that distribution model is not ideal;
+- occasional human doctor/operator repair is acceptable in the MVP, but should
+  become clearer and less frequent.
+
+## Milestone Goal
+
+Separate the reliable runtime named `Symphony` from the extension layer named
+`Shea`, while preserving the workflows that already work.
+
+Symphony should own hard execution concerns: tracker reads and writes, workflow
+state, worktrees, agent running, review, merge, runtime state, logging,
+traceability, and status snapshots.
+
+Shea should own extension concerns: skills, prompt templates, semantic gates,
+Issue Forge, Dream/Reflect style backlog mining, and operator interaction.
+
+## Subtraction First
+
+2607 Hardening starts with subtraction. Do not add new user-visible product
+capability until the existing runtime boundaries are clearer, repeated
+control-plane work is reduced, and tracker/workflow state ownership is
+explicit.
+
+Subtraction means:
+
+- remove duplicate tracker reads inside one tick;
+- remove scattered tracker writes from lane-specific code;
+- remove lane-local state mapping;
+- remove App-owned source-of-truth interpretation;
+- remove vendored runtime assumptions from target repositories;
+- remove hidden state transitions not represented in tracker state, runtime
+  state, or workflow evidence;
+- remove direct LLM authority over hard runtime decisions.
+
+Subtraction does not mean:
+
+- removing working Main, Review, or Merge flows;
+- removing human-in-the-loop states;
+- removing Shea extension capabilities;
+- rewriting the system from scratch.
+
+## Success Criteria
+
+- Symphony has one documented owner for tracker writes.
+- Workflow behavior has a clear state-grouped structure that can evolve toward
+  a persistent Workflow Graph without breaking MVP behavior.
+- Standard tracker states are explicit and resumable.
+- Hooks/extensions can be inserted without gaining direct tracker write access.
+- App surfaces consume status and workflow snapshots instead of owning source
+  of truth state.
+- Workspace and config layout no longer require vendoring the Symphony binary
+  into target repositories.
+- Non-LLM paths have visible performance expectations and measurement points.
+
+## Non-Goals
+
+- Rewriting the working MVP.
+- Reimplementing the Elixir reference one-to-one.
+- Adding new user-visible product capability during the subtraction phase.
+- Creating GitHub issues from every backlog note in this milestone directory.
+- Building a full visual Workflow Graph editor.
+- Implementing the full Workflow Graph runtime or extension module loader.
+- Letting LLM nodes perform unbounded side effects.
+
+## Workstreams
+
+- Boundary definition: decide what belongs to Symphony and what belongs to Shea.
+- Workflow structure: define state grouping, standard behavior configuration,
+  extension insertion points, and future Workflow Graph vocabulary.
+- Tracker ownership: route writes through Symphony.
+- Tracker transitions: separate proposal, decision, and commit through a
+  Symphony-owned transition path.
+- Workspace/config layout: replace vendored runtime assumptions.
+- CLI/App split: keep CLI as execution authority and App as a controlled view.
+- Snapshot/dashboard: keep top-level App refresh light and move issue details
+  behind drill-down.
+- Performance: measure and reduce repeated non-LLM control-plane work.
+
+## Source Documents
+
+- `design/context/local-code/shea-symphony/files/docs/bootstrap/references/openai-symphony/SPEC.md`
+- `docs/bootstrap/SHEA_SYMPHONY_SPEC.md`
+- `docs/codex-app-server-transport.md`
+- `docs/dogfood-readiness.md`
+- `docs/main-orchestration-spine.md`
+- `docs/milestones/2607-hardening/SUBTRACTION-INVENTORY.md`
+- `docs/milestones/2607-hardening/SNAPSHOT-AND-DASHBOARD.md`
+- `docs/milestones/2607-hardening/TRACKER-TRANSITIONS.md`
+- `docs/milestones/2608-workflow-graph-extension/README.md`
+
+## Open Questions
+
+See `QUESTIONS.md`.
+
+## Decisions
+
+Decision records live under `adr/`.
+
+## Backlog Notes
+
+Backlog notes live under `backlog/`. They are idea capture only until promoted
+through the normal issue workflow.

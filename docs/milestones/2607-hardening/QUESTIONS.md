@@ -1,0 +1,282 @@
+# 2607 Hardening Questions
+
+Status: Living notes
+
+This file captures discussion before it becomes an ADR, roadmap item, or
+backlog note.
+
+## Answered
+
+### What is the MVP baseline?
+
+The baseline is not limited to Shea developing itself. The baseline is that the
+complete workflow can run, including when Shea is used to develop another
+project. Human doctor intervention is sometimes needed and acceptable in the
+MVP.
+
+### What are the runtime names?
+
+Use `Symphony` for the hard runtime and `Shea` for the extension layer. Avoid
+the term `symphony core` in user-facing milestone docs.
+
+### Which states are standard?
+
+The standard state set includes:
+
+- `Backlog`
+- `Todo`
+- `Need to Clarify`
+- `In Progress`
+- `Need Human Input`
+- `Agent Review`
+- `Human Review`
+- `Merging`
+- `Rework`
+- `Done`
+
+`Agent Review` is a formal tracker state, but a Workflow Graph may disable or
+bypass that stage.
+
+### Who writes tracker state?
+
+Symphony writes tracker state. Shea and extension nodes may propose transitions
+with evidence, but do not write tracker state directly.
+
+Transition ownership should separate proposal, decision, and commit. Extensions
+may influence graph direction by recommending the next edge or core node, but
+Symphony validates and commits tracker state changes.
+
+### Is GitHub Project v2 part of Symphony?
+
+Yes. GitHub Project v2 is the first concrete tracker adapter in Symphony. The
+adapter shape should leave room for Linear later.
+
+### Are review and merge part of Symphony?
+
+Yes. Review and merge are workflow stages, not Shea-only extension behavior.
+
+### Is the App allowed to write?
+
+The App may control ticks and Autopilot. It should not directly modify tracker
+state or trigger arbitrary write operations.
+
+### Where should workflow graph config live?
+
+Support both `WORKFLOW.md` and `.shea/workflow.md`, but prefer
+`.shea/workflow.md`. Markdown is preferred because it can carry YAML, prose, and
+templates together.
+
+### Can standard nodes be replaced?
+
+No. A standard node can be disabled and an extension node can be inserted in the
+graph, but standard node implementation is not replaced in place.
+
+### How are edge conditions expressed first?
+
+Use fixed enum conditions first.
+
+### Can extensions call LLMs?
+
+Yes. LLM participation is allowed, but output must use a fixed schema.
+
+### What is the workspace/config layout?
+
+- Symphony binary is found from the local install location.
+- The canonical worktree is an already cloned repository.
+- Repo `.shea/` contains tracked team shared config.
+- Workspaces default under `~/.shea/`, not inside the canonical worktree.
+- Config precedence is workspace-local, then repo `.shea/`, then global
+  `~/.shea/`.
+
+## Still Open
+
+### What is the first fixed LLM output schema?
+
+Candidate fields:
+
+- `decision`
+- `evidence`
+- `proposed_transition`
+- `proposed_next_node`
+- `questions`
+- `blocked_reason`
+
+### What is the first visual graph surface?
+
+Current leaning: for 2607, use a state-grouped read-only workflow surface rather
+than a full graph runtime. It can show Tracker State, standard behavior, current
+inserted hooks/extensions, and evidence. A full graph visualizer/editor belongs
+in 2608 Workflow Graph Extension or later.
+
+### How far should Workflow Graph go in 2607?
+
+Do not implement full lifecycle graph execution in 2607. Hardening should make
+the structure clearer and move toward that direction without breaking current
+workflow config.
+
+The compatible layering is:
+
+- Tracker State as the top-level organization layer;
+- configurable standard Symphony behavior;
+- insertable hooks/extensions around standard behavior;
+- future graph nodes and edges derived from that structure.
+
+Workflow Graph extension modules move to `2608 Workflow Graph Extension`.
+
+### What is the side-effect policy for 2607?
+
+Do not introduce a broad side-effect taxonomy yet. The hard rule is that tracker
+writes go through Symphony transitions.
+
+The first practical policy only needs to answer:
+
+- whether workspace writes are allowed;
+- whether transition requests are allowed.
+
+External service policy should remain with existing runner/tool policy until a
+real extension module system in 2608 needs stronger modeling.
+
+### What belongs in 2608 Workflow Graph Extension?
+
+2608 should own full Workflow Graph runtime work: graph nodes and edges as
+first-class runtime objects, extension module loading, graph validation,
+disabled/bypassed semantics, extension output schema, and App graph
+visualization.
+
+2607 should only prepare the shape: Tracker State grouping, configurable
+standard behavior, insertion points, transition ownership, and evidence.
+
+### What is Phase 1 allowed to do?
+
+Phase 1 should not add user-visible features. It may add or change docs, tests,
+instrumentation, internal adapters, timing, read dedupe, and small state helpers.
+
+The no-regression baseline is:
+
+- Main lane can run.
+- Review lane can run.
+- Merge lane can run.
+- Doctor can report.
+- App can read status.
+- Existing workflows are not forced to migrate.
+
+### What is the Phase 1 subtraction priority?
+
+Priority areas are all important and may be investigated in parallel:
+
+- repeated Project reads;
+- scattered tracker writes;
+- lane-local state mapping;
+- App/read-surface source-of-truth inference;
+- vendored runtime assumptions;
+- CLI command shape drift;
+- large files caused by mixed ownership boundaries.
+
+Defer broad work on:
+
+- Tauri UI structure;
+- Issue Forge semantic quality;
+- Dream/Reflect;
+- a real plugin runtime;
+- a full Workflow Graph editor.
+
+File moves are allowed when they clarify ownership and preserve behavior. Broad
+file movement without a clear boundary is deferred.
+
+### How should runtime and tracker state conflicts be handled?
+
+Tracker state is the external fact. Runtime state is local execution evidence.
+When they conflict, Symphony should stop and reconcile rather than guessing.
+If an active runtime conflict exists, move to `Need Human Input` rather than
+silently continuing.
+
+### What is the transition API shape?
+
+Use an internal Symphony transition service as the primary surface. CLI
+transition commands should be thin wrappers over the same validation, evidence,
+tracker write, runtime write, and reconcile behavior.
+
+### What evidence is required for transitions?
+
+Every committed transition should record issue id, from state, to state,
+requester, committer, reason, workflow step id, optional future graph node id,
+trace id, artifact references, and timestamp.
+
+### How should lane handoff completion work?
+
+Successful tracker transition is part of lane handoff completion. If a worker
+finishes code but the tracker transition fails, local runtime can record the
+worker result, but the lane is not complete until transition succeeds or a
+reconcile path resolves it.
+
+### How should claim ownership work?
+
+Use a two-layer model. Tracker fields hold coarse human-visible claim state.
+Local runtime state holds worker session, attempt id, heartbeat, worktree, and
+last progress details.
+
+### Should NTC and NHI reasons be enum values?
+
+Use enum reasons plus freeform detail. Enums support dashboard filtering and
+automation; detail keeps the state useful to humans.
+
+### How should Human Review small fixes be handled?
+
+Before `Human Review` moves to `Merging` after a human fix, Symphony should run
+lightweight validation: PR exists, branch is current enough, required checks
+pass or are explicitly accepted, diff since last agent review is summarized,
+human modification is acknowledged, and required review comments are resolved
+or explicitly deferred.
+
+### What is the 2607 preparation target for Workflow Graph?
+
+Keep current workflow behavior compatible. Organize workflow structure around
+Tracker State, standard behavior, insertion points, transition ownership, and
+evidence. Full graph runtime and extension modules move to 2608.
+
+### What is special about Human Review?
+
+`Human Review` may transition to `Rework`, or a human may make a small fix and
+then approve the issue into `Merging`.
+
+### What feels slow first?
+
+App refresh is the clearest subjective pain point. More broadly, the system
+often feels slow after LLM work has already completed, which suggests repeated
+control-plane work rather than LLM latency.
+
+### What should App refresh read?
+
+The top-level dashboard should start from one Symphony snapshot. It should show
+current operational lane items, human todo items, concise PR number/status, and
+local runtime state needed for display.
+
+The dashboard should not show worktree path, branch name, full traces, or full
+artifact bodies. Those belong in lane item detail and should be loaded lazily
+after drill-down.
+
+Project history and broad queue browsing should stay in the tracker.
+
+### How should App-triggered commands be bounded?
+
+The App may trigger snapshot reads and tracker cache refresh because they
+directly support display.
+
+Automatic doctor checks should be run by Symphony. Human doctor work should
+open a Codex/operator flow instead of letting the App directly perform repair.
+
+Opening worktrees and resuming agents should be Symphony-owned workflow
+operations, not manual App imperatives.
+
+### What are the first concrete performance targets?
+
+Current leaning: start with relative targets before hard numbers:
+
+- one Project snapshot per loop cycle;
+- no mutating command from UI refresh;
+- non-LLM path should be seconds-scale unless waiting on external services.
+
+### How should land skill flow be represented?
+
+Current leaning: `Merging` uses a configured land runner by default and does not
+call `gh pr merge` directly from arbitrary extension logic.

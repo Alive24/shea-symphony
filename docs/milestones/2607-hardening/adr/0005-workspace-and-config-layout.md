@@ -1,0 +1,39 @@
+# ADR 0005: Workspace And Config Layout
+
+Status: Proposed
+
+## Context
+
+The MVP can use vendored runtime bits in target repositories. That is convenient
+for dogfood but blurs distribution, shared config, local runtime state, and
+generated worktree ownership.
+
+## Decision
+
+Resolve the Symphony binary from the local install location. Do not vendor the
+binary into target repositories.
+
+Use the target repository canonical worktree as the source checkout. Store
+tracked team shared config under repo `.shea/`, with `.shea/workflow.md` as the
+preferred workflow file.
+
+Store local runtime config, logs, state, and generated issue worktrees under
+`~/.shea/` by default.
+
+Config precedence is:
+
+1. workspace-local config;
+2. repo `.shea/` team shared config;
+3. global `~/.shea/` config.
+
+## Consequences
+
+- Target repos can share workflow config without vendoring executables.
+- Generated worktrees stay out of canonical worktrees.
+- Local overrides remain possible.
+
+## Follow-Up
+
+- Define local install lookup order.
+- Define `~/.shea/` path layout.
+- Define migration behavior for repos with root `WORKFLOW.md`.

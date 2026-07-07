@@ -37,6 +37,9 @@ The standard state set includes:
 `Agent Review` is a formal tracker state, but a Workflow Graph may disable or
 bypass that stage.
 
+`Backlog` is part of `IssueWorkflow`; backlog promotion and quality gate are
+workflow behavior, not external pre-work.
+
 ### Who writes tracker state?
 
 Symphony writes tracker state. Shea and extension nodes may propose transitions
@@ -282,8 +285,15 @@ Current leaning: start with relative targets before hard numbers:
 ### What is the 2607 Temporal decision?
 
 Temporal is the 2607 runtime spine, not a future spike. `IssueWorkflow` covers
-all standard Shea Symphony states from the start. The old autopilot/tick/resume
-loop is legacy-to-delete. Temporal Cloud is out of scope; the runtime is local.
+all standard Shea Symphony states from the start, including `Backlog`. The old
+autopilot/tick/resume loop is legacy-to-delete. Temporal Cloud is out of scope;
+the runtime is local.
+
+### How should Merging handle semantic fixes?
+
+`Merging` may perform semantic fixes in place through `MergeActivity` or a
+dedicated `MergeSemanticFixActivity`. If it cannot resolve the problem, move to
+`Need Human Input`, not `Rework`.
 
 ### Does 2607 need an independent local Symphony service?
 

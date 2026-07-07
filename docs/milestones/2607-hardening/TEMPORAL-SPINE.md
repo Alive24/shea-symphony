@@ -55,6 +55,7 @@ CLI
 
 `IssueWorkflow` should cover every standard Shea Symphony state from the start:
 
+- `Backlog`
 - `Todo`
 - `Need to Clarify`
 - `In Progress`
@@ -65,21 +66,27 @@ CLI
 - `Merging`
 - `Done`
 
-Do not create a temporary reduced state machine that omits `Agent Review`,
-`Rework`, `Need Human Input`, or `Need to Clarify`. Those states are core to
-Shea Symphony.
+Do not create a temporary reduced state machine that omits `Backlog`,
+`Agent Review`, `Rework`, `Need Human Input`, or `Need to Clarify`. Those
+states are core to Shea Symphony.
+
+Backlog promotion and quality gates belong inside `IssueWorkflow`. They should
+not remain external pre-work.
 
 ## Activities
 
 Side effects belong in Activities:
 
 - `ContractCheckActivity`
+- `BacklogQualityGateActivity`
 - `TrackerTransitionActivity`
 - `MainAgentActivity`
 - `AgentReviewActivity`
 - `HumanReviewValidationActivity`
 - `ReworkActivity`
 - `MergeActivity`
+- `MergeSemanticFixActivity`, if semantic fix is not folded into
+  `MergeActivity`
 - `DoctorActivity`
 - `WorktreeActivity`
 - `ArtifactWriteActivity`
@@ -91,6 +98,8 @@ Workflow code should orchestrate. Activities should perform I/O.
 Operator actions should enter the workflow through Temporal signals or updates:
 
 - submit clarification;
+- promote backlog item to todo;
+- submit backlog context;
 - submit human input;
 - approve human review;
 - request rework;

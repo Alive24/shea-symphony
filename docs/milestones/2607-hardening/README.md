@@ -114,6 +114,7 @@ Subtraction does not mean:
 - `docs/codex-app-server-transport.md`
 - `docs/dogfood-readiness.md`
 - `docs/main-orchestration-spine.md`
+- `docs/milestones/2607-hardening/ISSUE-WORKFLOW.md`
 - `docs/milestones/2607-hardening/TEMPORAL-SPINE.md`
 - `docs/milestones/2607-hardening/SUBTRACTION-INVENTORY.md`
 - `docs/milestones/2607-hardening/SNAPSHOT-AND-DASHBOARD.md`

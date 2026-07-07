@@ -166,6 +166,7 @@ Use enum reasons plus freeform detail.
 - `manual_decision_required`;
 - `local_environment_blocked`;
 - `tracker_state_conflict`.
+- `merge_semantic_fix_failed`;
 
 Enums support filtering, dashboard display, and automation. Freeform detail
 keeps the state useful to humans.
@@ -186,6 +187,16 @@ Before `Merging`, Symphony should run lightweight validation:
 
 If the human change is materially risky, the graph can route back to
 `Agent Review` or `Rework`.
+
+## Merging Semantic Fix
+
+`Merging` may perform semantic fixes in place through `MergeActivity` or a
+dedicated `MergeSemanticFixActivity`.
+
+If the semantic fix succeeds, continue merging. If it cannot resolve the
+problem, move to `Need Human Input`. Do not bounce merge-time semantic fix
+failure to `Rework` by default; the merging coding agent is not a meaningful
+handoff back to Main.
 
 ## External Tracker Changes
 

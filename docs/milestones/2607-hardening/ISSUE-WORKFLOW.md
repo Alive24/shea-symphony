@@ -1,0 +1,263 @@
+# IssueWorkflow
+
+Status: Draft
+
+## Purpose
+
+Define the Temporal `IssueWorkflow` state flow for Shea Symphony.
+
+`IssueWorkflow` should cover all standard Shea Symphony tracker states,
+including `Backlog`. Backlog promotion and quality gating are workflow behavior,
+not external pre-work.
+
+## Standard States
+
+- `Backlog`
+- `Todo`
+- `Need to Clarify`
+- `In Progress`
+- `Need Human Input`
+- `Agent Review`
+- `Human Review`
+- `Rework`
+- `Merging`
+- `Done`
+
+## State Flow
+
+```text
+Backlog
+  -> Todo
+  -> Need to Clarify
+  -> In Progress
+  -> Need Human Input
+  -> Agent Review
+  -> Human Review
+  -> Rework
+  -> Merging
+  -> Done
+```
+
+This diagram shows the full state vocabulary, not every allowed edge.
+
+## Backlog
+
+Purpose:
+
+- candidate issue intake;
+- quality gate before active work;
+- explicit promotion into `Todo`.
+
+Entry:
+
+- issue enters Shea-managed project backlog;
+- issue is captured by Issue Forge, Dream/Reflect, or manual operator intake.
+
+Activities:
+
+- `BacklogQualityGateActivity`;
+- optional `IssueForgeActivity`;
+- optional semantic contract summary.
+
+Signals or updates:
+
+- `promote_to_todo`;
+- `reject_or_archive_backlog_item`;
+- `submit_backlog_context`.
+
+Exit:
+
+- to `Todo` when promoted and quality gate passes;
+- remain in `Backlog` when more backlog shaping is needed.
+
+Notes:
+
+- Do not start implementation from `Backlog`.
+- Backlog workflow can be mostly idle, but promotion and quality gate still
+  belong inside `IssueWorkflow`.
+
+## Todo
+
+Purpose:
+
+- confirm the issue contract is ready for implementation.
+
+Activities:
+
+- `ContractCheckActivity`.
+
+Exit:
+
+- to `Need to Clarify` when the contract is insufficient;
+- to `In Progress` when ready.
+
+## Need To Clarify
+
+Purpose:
+
+- wait for human clarification before implementation starts.
+
+Signals or updates:
+
+- `submit_clarification`;
+- `cancel_issue_workflow`.
+
+Exit:
+
+- to `Todo` after clarification so `ContractCheckActivity` can run again;
+- to `Need Human Input` if clarification exposes an operational blocker.
+
+## In Progress
+
+Purpose:
+
+- Main agent implementation.
+
+Activities:
+
+- `MainAgentActivity`;
+- `ArtifactWriteActivity`;
+- `TrackerTransitionActivity`.
+
+Exit:
+
+- to `Agent Review` on implementation completion;
+- to `Need Human Input` on secret, permission, dangerous operation, external
+  failure, tracker conflict, or other human-needed blocker.
+
+## Need Human Input
+
+Purpose:
+
+- wait for human/operator input during an active workflow.
+
+Required workflow data:
+
+- `reason`;
+- `resume_target`;
+- `blocking_artifact_refs`;
+- `recommended_next_action`.
+
+Signals or updates:
+
+- `submit_human_input`;
+- `cancel_issue_workflow`;
+- `request_rework`.
+
+Exit:
+
+- to `resume_target` when the blocker is resolved;
+- to `Rework` if the human input changes the implementation contract;
+- to `Done` only for explicit cancellation or terminal no-op policy.
+
+## Agent Review
+
+Purpose:
+
+- agentic review gate before spending human attention.
+
+Activities:
+
+- `AgentReviewActivity`;
+- `TrackerTransitionActivity`;
+- `ArtifactWriteActivity`.
+
+Exit:
+
+- to `Human Review` when review passes;
+- to `Rework` when review finds actionable implementation issues;
+- to `Need Human Input` when review needs human judgment.
+
+Notes:
+
+- This is a standard state.
+- It may be configurable in future workflow structure, but 2607 should model it
+  explicitly.
+
+## Human Review
+
+Purpose:
+
+- formal human approval and review gate.
+
+Signals or updates:
+
+- `approve_human_review`;
+- `request_rework`;
+- `submit_human_fix`;
+- `cancel_issue_workflow`.
+
+Activities:
+
+- `HumanReviewValidationActivity` after approval or human fix.
+
+Exit:
+
+- to `Merging` when approved and lightweight validation passes;
+- to `Rework` when the human requests changes;
+- to `Need Human Input` when validation needs a human decision.
+
+## Rework
+
+Purpose:
+
+- implementation pass with review context.
+
+Activities:
+
+- `ReworkActivity`, or `MainAgentActivity` with explicit rework context;
+- `ArtifactWriteActivity`.
+
+Exit:
+
+- to `Agent Review` when rework completes;
+- to `Need Human Input` on blocker.
+
+Notes:
+
+- Rework is for review-driven implementation changes before merge.
+- Merge-time semantic fixes should not bounce here by default.
+
+## Merging
+
+Purpose:
+
+- land approved work.
+
+Activities:
+
+- `MergeActivity`;
+- semantic fix behavior inside `MergeActivity` or a dedicated
+  `MergeSemanticFixActivity`;
+- `TrackerTransitionActivity`;
+- `ArtifactWriteActivity`.
+
+Exit:
+
+- to `Done` when merge and terminal tracker updates succeed;
+- to `Need Human Input` when merge, semantic fix, checks, permissions, or
+  external services require human/operator action.
+
+Notes:
+
+- `Merging` may perform semantic fixes in place.
+- If merge-time semantic fix cannot resolve the problem, move to
+  `Need Human Input`, not `Rework`.
+- The merging coding agent is not a separate Main handoff.
+
+## Done
+
+Purpose:
+
+- terminal state.
+
+Activities:
+
+- terminal `TrackerTransitionActivity`;
+- artifact finalization;
+- claim cleanup.
+
+Rules:
+
+- no further workflow work after `Done`;
+- any follow-up becomes a new issue/workflow.

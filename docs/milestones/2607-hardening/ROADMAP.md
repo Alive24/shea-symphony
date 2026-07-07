@@ -40,6 +40,7 @@ Success means a maintainer can answer:
 
 - Make local Temporal service the 2607 orchestration backend.
 - Define `IssueWorkflow` across every standard Shea Symphony state.
+- Include `Backlog` promotion and quality gate inside `IssueWorkflow`.
 - Mark old autopilot/tick/resume loop as legacy-to-delete.
 - Define worker startup and local runtime initialization.
 - Keep Temporal Cloud out of scope.
@@ -60,6 +61,7 @@ Success means a maintainer can answer:
 - Route tracker writes through `TrackerTransitionActivity`.
 - Require transition evidence.
 - Add reconcile behavior for external tracker changes.
+- Define merge-time semantic fix behavior as part of `Merging`.
 - Keep extension nodes able to influence graph direction through proposals.
 
 ## Phase 5: Activities, Runner, And Worktree

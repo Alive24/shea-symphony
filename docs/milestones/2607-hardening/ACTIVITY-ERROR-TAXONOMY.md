@@ -175,7 +175,7 @@ Workflow behavior:
 - do not retry;
 - do not ask for human input unless evidence is inconsistent.
 
-### `bug`
+### `unhandled_error`
 
 The code violated an invariant or encountered an impossible state.
 
@@ -184,7 +184,7 @@ Examples:
 - invalid enum value in durable Workflow state;
 - malformed Activity payload produced by Symphony code;
 - missing artifact ref that the same Workflow just recorded;
-- serialization/versioning bug.
+- serialization/versioning error.
 
 Workflow behavior:
 
@@ -208,7 +208,7 @@ Map existing `ProjectStateFailureKind` values as follows:
 | `Auth` | `need_human_input` |
 | `Schema` | `need_human_input` |
 | `PartialResponse` | `retryable` for reads, `need_human_input` if repeated or schema-like |
-| `Payload` | `bug` or `need_human_input`, depending on whether payload came from Symphony or external tracker |
+| `Payload` | `unhandled_error` or `need_human_input`, depending on whether payload came from Symphony or external tracker |
 | `MissingCapability` | `need_human_input` or `rejected` for unsupported optional operation |
 | `Unknown` | `retryable` once if transport-like, otherwise `need_human_input` |
 
@@ -251,8 +251,8 @@ Recommended mapping:
 - stall timeout or transport interruption with clean retry: `retryable`;
 - cancellation requested by operator: `terminal_noop` or `need_human_input`
   depending on Workflow policy;
-- malformed app-server event: `retryable` once if transport-like, `bug` if the
-  parser or protocol assumption is wrong.
+- malformed app-server event: `retryable` once if transport-like,
+  `unhandled_error` if the parser or protocol assumption is wrong.
 
 Temporal should not model every Codex turn as a separate failure boundary.
 

@@ -390,7 +390,7 @@ artifact refs, not artifact bodies.
 
 Use shared outcome classes: `success`, `already_applied`, `retryable`,
 `wait_and_retry`, `need_human_input`, `conflict`, `rejected`,
-`terminal_noop`, and `bug`.
+`terminal_noop`, and `unhandled_error`.
 
 Activities report typed outcomes. `IssueWorkflow` decides retry, wait,
 reconcile, or state transition. Existing tracker error kinds, review backend

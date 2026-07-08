@@ -85,7 +85,7 @@ Success means a maintainer can answer:
   instead of modeling every model turn or tool call as a workflow step.
 - Define shared Activity outcome classes for success, already-applied,
   retryable, wait-and-retry, need-human-input, conflict, rejected,
-  terminal-noop, and bug.
+  terminal-noop, and unhandled-error.
 - Keep worktree creation and ownership inside Activities owned by Symphony.
 - Move target repository workspaces under `~/.shea/` by default.
 - Stop vendoring Symphony binaries into target repos.

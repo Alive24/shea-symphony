@@ -35,7 +35,8 @@ Tauri backend command layer can call the Temporal client directly.
 - initialize local config when App is unavailable;
 - run local doctor/self-checks;
 - run the Symphony worker for development or CI;
-- provide thin admin/debug wrappers.
+- provide thin admin/debug wrappers over Temporal start, query, signal, or
+  update APIs.
 
 ## CLI Must Not
 
@@ -44,12 +45,18 @@ Tauri backend command layer can call the Temporal client directly.
 - directly merge, review, doctor, or transition issues as business logic;
 - become a second operation surface beside Temporal.
 
+Existing product commands such as autopilot, main loop, review loop, merge
+loop, and mutating doctor should be deleted, reduced to compatibility shims, or
+rewired to Temporal Signals/Queries/Updates as the Temporal paths land.
+
 ## First App Target
 
 Read-only dashboard and workflow visualization:
 
 - current operational lane items;
 - human todo items;
+- both `Need Human Input` and `Human Review` items in the same human todo
+  surface, with the underlying state visible in detail;
 - concise PR number/status;
 - current issue state;
 - state-grouped workflow steps;

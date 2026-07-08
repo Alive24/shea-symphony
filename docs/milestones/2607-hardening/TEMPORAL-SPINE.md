@@ -30,6 +30,10 @@ Use Temporal local-first:
 Do not introduce an independent local Symphony service in 2607. The Tauri
 backend command layer is enough for the App.
 
+Use `symphony` as the core runtime naming boundary. Temporal is the runtime
+spine inside Symphony, not a reason to introduce a separate
+`temporal_runtime` package name by default.
+
 ## SDK Grounding
 
 Implementation contracts must follow `TEMPORAL-RUST-SDK-INTAKE.md`.

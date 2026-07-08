@@ -22,6 +22,8 @@ Use local Temporal as the 2607 Symphony runtime spine.
 - App operations use Tauri backend commands that call Temporal start, query,
   signal, or update APIs.
 - CLI is admin/dev fallback only.
+- Core runtime code uses the `symphony` naming boundary rather than introducing
+  a separate `temporal_runtime` package name by default.
 - Temporal Cloud is out of scope.
 - No independent local Symphony service is introduced in 2607.
 

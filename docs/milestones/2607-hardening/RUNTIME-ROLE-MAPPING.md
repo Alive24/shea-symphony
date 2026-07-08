@@ -58,7 +58,9 @@ Temporal does not own:
 
 ## Codex App-Server
 
-Codex app-server is the coding task runtime, not merely a low-level tool.
+Codex app-server is the default coding task runtime, not merely a low-level
+tool. Symphony should let it do its best and evolve with OpenAI instead of
+rebuilding Codex's internal agent/tool loop inside Temporal.
 
 In 2607, the intended boundary is coarse:
 
@@ -69,6 +71,9 @@ RunCodexImplementationActivity(input) -> CodexImplementationResult
 The Activity may internally use the existing app-server protocol, session
 registry, worktree setup, prompts, and skills. Temporal should not model every
 Codex tool call or model turn as a separate Activity.
+
+The same rule applies to future coding agents: Symphony owns the durable
+attempt boundary; the coding agent owns its internal execution loop.
 
 Inputs should be structured and small:
 
@@ -105,13 +110,8 @@ Gemini as a current backend.
 AgentReviewActivity(input) -> AgentReviewResult
 ```
 
-or, if the Gemini boundary remains explicit:
-
-```text
-GeminiReviewActivity(input) -> ReviewVerdict
-```
-
-The Activity returns a typed verdict:
+Gemini can remain the configured backend, but the core Activity name should not
+hard-code Gemini. The Activity returns a typed verdict:
 
 - `accept`;
 - `reject`;
@@ -147,6 +147,18 @@ It owns:
 
 Shea may call LLMs, but LLM results must become structured proposals,
 verdicts, evidence, or questions before Symphony commits state.
+
+## Naming Boundary
+
+Use `symphony` as the core runtime package/module boundary. Temporal is the
+runtime spine and default context inside Symphony; a separate
+`temporal_runtime` name is unnecessary unless a concrete implementation
+constraint appears.
+
+Shea extension code may also use Temporal-backed Activities, Queries, Signals,
+and Updates. The difference is ownership, not whether Temporal is involved:
+Symphony owns durable workflow control and state commits; Shea owns semantic
+extensions and operator-facing policy.
 
 ## Coarse Activity Boundary
 

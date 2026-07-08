@@ -14,6 +14,8 @@ The Tauri backend command layer may call Temporal client APIs directly. Do not
 introduce an independent local Symphony service in 2607.
 
 CLI is admin/dev fallback only. It does not own workflow product operations.
+Existing product commands should either disappear, become compatibility shims,
+or call the same Temporal start/query/signal/update boundary as the App.
 
 ## Consequences
 
@@ -21,6 +23,8 @@ CLI is admin/dev fallback only. It does not own workflow product operations.
 - App surfaces should consume status snapshots and state-grouped workflow
   snapshots.
 - Write paths stay testable as Temporal Activities.
+- CLI no longer preserves autopilot/main/review/merge loop semantics as a
+  parallel product surface.
 
 ## Follow-Up
 

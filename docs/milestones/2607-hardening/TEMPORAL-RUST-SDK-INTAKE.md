@@ -30,7 +30,7 @@ durable loop with Temporal's model.
 Design implication:
 
 - keep Temporal-facing payloads small and versionable;
-- isolate SDK usage behind a small `temporal_runtime` boundary;
+- isolate SDK usage behind the `symphony` runtime boundary;
 - avoid spreading SDK types through Shea prompt/skill code.
 
 ## Local Development Runtime
@@ -182,6 +182,9 @@ Workflow ID should map to the business entity.
 - Activities own side effects.
 - Tauri backend calls Temporal Client directly.
 - CLI is admin/dev fallback only.
+- Core runtime code should use the `symphony` naming boundary. Do not create a
+  separate `temporal_runtime` package name unless implementation constraints
+  force it.
 - Temporal history stores state, event order, summaries, retries, and artifact
   refs.
 - Local artifact store holds large data.

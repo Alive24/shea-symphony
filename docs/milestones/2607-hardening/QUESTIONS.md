@@ -306,6 +306,39 @@ CLI is admin/dev fallback only: initialize local config when App is unavailable,
 run local doctor/self-checks, run the worker for development or CI, and expose
 thin debug wrappers. CLI does not own workflow product operations.
 
+Product commands such as autopilot, main loop, review loop, merge loop, and
+mutating doctor should become Temporal Signals, Queries, Updates, Activities,
+or compatibility shims while being removed from the CLI product surface.
+
+### What is the Activity grain for coding agents?
+
+Use coarse attempt-level Activities. Codex app-server should be allowed to run
+its own internal agent/tool loop and evolve independently. Temporal should
+track the durable attempt boundary, heartbeat/progress, result summary, and
+artifact references, not every model turn or tool call.
+
+The same rule applies to future coding agents.
+
+### Should Agent Review be named after Gemini?
+
+No. Use `AgentReviewActivity` as the core Activity name. Gemini may remain the
+configured backend, but the workflow state machine should not be coupled to a
+provider name.
+
+### How should Human Todo be presented?
+
+The App can aggregate `Need Human Input` and `Human Review` into one human todo
+surface. Detail views must keep the underlying state explicit because `Need
+Human Input` is a mid-workflow unblock state while `Human Review` is the formal
+approval gate.
+
+### What should the core runtime package be named?
+
+Use `symphony`. Temporal is the runtime spine and default context inside
+Symphony, so a separate `temporal_runtime` package name is unnecessary unless
+implementation constraints force it. Shea extension code can still be
+Temporal-backed; the boundary is ownership, not Temporal usage.
+
 ### How should land skill flow be represented?
 
 Current leaning: `Merging` uses a configured land runner by default and does not

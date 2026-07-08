@@ -8,6 +8,8 @@ Status: Draft
 - Intake official Temporal Rust SDK materials before locking implementation
   contracts.
 - Record the Symphony/Shea boundary.
+- Ground the Temporal/Codex/review/Shea role split against current repo
+  modules.
 - Record Temporal local runtime as the 2607 orchestration spine.
 - Record Workflow Graph direction without making it a 2607 runtime rewrite.
 - Capture open questions without promoting them to GitHub issues yet.
@@ -70,6 +72,8 @@ Success means a maintainer can answer:
 
 - Run agent, review, merge, doctor, tracker, and worktree side effects as
   Temporal Activities.
+- Prefer coarse Activity boundaries around existing lane/runtime behavior
+  instead of modeling every model turn or tool call as a workflow step.
 - Keep worktree creation and ownership inside Activities owned by Symphony.
 - Move target repository workspaces under `~/.shea/` by default.
 - Stop vendoring Symphony binaries into target repos.

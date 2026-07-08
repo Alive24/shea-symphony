@@ -106,6 +106,16 @@ Side effects belong in Activities:
 
 Workflow code should orchestrate. Activities should perform I/O.
 
+Use `RUNTIME-ROLE-MAPPING.md` to keep Activity boundaries repo-grounded:
+
+- Codex app-server remains the coding runtime behind coarse implementation or
+  rework Activities;
+- review backends remain review Activities that return typed verdicts;
+- Shea skills and prompts shape task context and evidence, not workflow
+  durability;
+- Rig, MCP, and vector RAG are deferred unless a later milestone proves they
+  are needed.
+
 ## Signals And Updates
 
 Operator actions should enter the workflow through Temporal signals or updates:

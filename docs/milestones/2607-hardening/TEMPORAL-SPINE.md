@@ -30,6 +30,19 @@ Use Temporal local-first:
 Do not introduce an independent local Symphony service in 2607. The Tauri
 backend command layer is enough for the App.
 
+## SDK Grounding
+
+Implementation contracts must follow `TEMPORAL-RUST-SDK-INTAKE.md`.
+
+Hard constraints from the Rust SDK intake:
+
+- Workflow code is deterministic orchestration only;
+- side effects are Activities;
+- large payloads stay out of Workflow history;
+- dashboard reads use Queries;
+- operator actions use Signals or Updates;
+- one local task queue is enough until measured otherwise.
+
 ## Runtime Shape
 
 ```text

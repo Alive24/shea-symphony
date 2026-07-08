@@ -5,6 +5,8 @@ Status: Draft
 ## Phase 0: Documentation Spine
 
 - Create milestone docs.
+- Intake official Temporal Rust SDK materials before locking implementation
+  contracts.
 - Record the Symphony/Shea boundary.
 - Record Temporal local runtime as the 2607 orchestration spine.
 - Record Workflow Graph direction without making it a 2607 runtime rewrite.

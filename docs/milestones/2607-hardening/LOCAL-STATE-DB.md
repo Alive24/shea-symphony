@@ -192,6 +192,21 @@ with a partial unique index when available, or an equivalent typed store guard.
 This is a local duplicate-start guard and App read model, not the authoritative
 workflow fact.
 
+Initial `workflow_index.status` enum:
+
+- `starting`;
+- `running`;
+- `completed`;
+- `failed`;
+- `start_failed`;
+- `stale_start`;
+- `stale_missing`;
+- `closed_unknown`.
+
+Do not use `workflow_index.status` to represent static tracker waiting lanes.
+Static waits such as `Backlog`, `Human Review`, and normal `Need Human Input`
+belong in `tracker_cache.tracker_state`.
+
 Do not add a dedicated `tracker_mutation_log` table in the initial schema.
 Temporal history is the durable mutation attempt ledger. SQLite projects only
 the current or recent observable state needed by dashboard/detail surfaces,

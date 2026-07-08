@@ -128,6 +128,61 @@ state. The Workflow owns orchestration decisions. Activities own side effects.
 Task queue concurrency controls active work, not the number of static issues in
 the tracker.
 
+## Start Contract
+
+Coordinator start is optimistic with a local guard:
+
+```text
+read tracker executable state
+  -> derive workflow_id
+  -> insert workflow_index row with status=starting
+  -> start Temporal Workflow
+  -> store run_id and set status=running
+```
+
+The SQLite row makes startup observable and reduces duplicate starts. Temporal
+start success is the execution fact. SQLite is not the authoritative workflow
+runtime.
+
+Start conflicts:
+
+- SQLite insert conflict: inspect the active row and repair it if stale;
+- Temporal open Workflow already exists: bind to the existing execution and
+  repair `workflow_index`;
+- Temporal closed Workflow with the same `workflow_id`: generate a new
+  `workflow_id` with a new timestamp/source or attempt suffix.
+
+## Repair Contract
+
+The Coordinator owns local repair of `workflow_index`. It does not repair
+business state by directly moving tracker lanes.
+
+Repair matrix:
+
+| Local State | Temporal State | Action |
+| --- | --- | --- |
+| `starting` without `run_id` | not started or unknown | mark `stale_start` after timeout; reread tracker before retry |
+| missing row | active execution exists | rebuild projection from Temporal visibility/query; do not start another execution |
+| active row | active execution exists | keep row, refresh progress/freshness |
+| active row | closed execution exists | mark `completed` or `failed` when close status is known; otherwise `closed_unknown` |
+| active row | execution not found | mark `stale_missing`; reread tracker before retry |
+| stale row | tracker still executable | generate a new `workflow_id` and start a new execution |
+| stale row | tracker is static | leave closed/stale projection; do not start |
+
+Use conservative stale thresholds:
+
+- `starting` without `run_id` for more than a short startup timeout;
+- `running` without heartbeat/progress beyond its configured TTL;
+- Temporal visibility/query cannot confirm the recorded active execution.
+
+Repair triggers in 2607:
+
+- App start performs one repair pass;
+- refresh/snapshot may run lightweight repair for visible issues;
+- Coordinator start performs targeted repair for the target issue.
+
+Do not introduce a background Symphony daemon or full-time scanner in 2607.
+
 ## Tracker Validation
 
 Do not make every Workflow step read the tracker. Tracker reads should happen

@@ -499,6 +499,51 @@ The Workflow Coordinator is a thin launcher and registrar:
 It does not run agents, choose business transitions, or write tracker state.
 Temporal Workflow owns orchestration decisions; Activities own side effects.
 
+### How should Coordinator start a Workflow?
+
+Use an optimistic start with a local SQLite guard:
+
+```text
+read tracker executable state
+  -> derive workflow_id
+  -> insert workflow_index row with status=starting
+  -> start Temporal Workflow
+  -> store run_id and set status=running
+```
+
+SQLite makes startup observable and reduces duplicate starts. Temporal start
+success is the execution fact.
+
+Start conflicts:
+
+- SQLite insert conflict: inspect the active row and repair it if stale;
+- Temporal open Workflow already exists: bind to the existing execution and
+  repair `workflow_index`;
+- Temporal closed Workflow with the same `workflow_id`: generate a new
+  `workflow_id`.
+
+### How should Coordinator repair inconsistent local state?
+
+Use this repair matrix:
+
+| Local State | Temporal State | Action |
+| --- | --- | --- |
+| `starting` without `run_id` | not started or unknown | mark `stale_start` after timeout; reread tracker before retry |
+| missing row | active execution exists | rebuild projection from Temporal visibility/query; do not start another execution |
+| active row | active execution exists | keep row, refresh progress/freshness |
+| active row | closed execution exists | mark `completed` or `failed` when close status is known; otherwise `closed_unknown` |
+| active row | execution not found | mark `stale_missing`; reread tracker before retry |
+| stale row | tracker still executable | generate a new `workflow_id` and start a new execution |
+| stale row | tracker is static | leave closed/stale projection; do not start |
+
+Repair triggers:
+
+- App start performs one repair pass;
+- refresh/snapshot may run lightweight repair for visible issues;
+- Coordinator start performs targeted repair for the target issue.
+
+No background Symphony daemon or full-time scanner in 2607.
+
 ### How often should Workflow execution read the tracker?
 
 Do boundary validation, not high-frequency tracker polling:

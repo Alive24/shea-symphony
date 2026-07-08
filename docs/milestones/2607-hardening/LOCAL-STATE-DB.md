@@ -286,6 +286,11 @@ Activity and backend code may read SQLite for non-authoritative optimization,
 but any state-changing decision must be validated through the proper Temporal
 or tracker boundary.
 
+SQLite projection may receive concurrent requests. Writes should use short,
+retryable transactions and remain non-authoritative. Projection failure should
+mark affected read-model rows stale or failed rather than changing Workflow
+truth.
+
 ## Projection Model
 
 2607 starts with synchronous projection.

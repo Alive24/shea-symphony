@@ -44,9 +44,13 @@ Success means a maintainer can answer:
 
 - Make local Temporal service the 2607 orchestration backend.
 - Define `IssueWorkflow` across every standard Shea Symphony state.
+- Define one `IssueWorkflow` per issue as the ordered per-issue decision
+  boundary.
 - Include `Backlog` promotion and quality gate inside `IssueWorkflow`.
 - Mark old autopilot/tick/resume loop as legacy-to-delete.
 - Define worker startup and local runtime initialization.
+- Define worker-pool and Activity concurrency limits without rebuilding an
+  autopilot scheduler.
 - Keep Temporal Cloud out of scope.
 
 ## Phase 3: Query-Backed Snapshot And State

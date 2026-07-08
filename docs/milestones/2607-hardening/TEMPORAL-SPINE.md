@@ -43,7 +43,8 @@ Hard constraints from the Rust SDK intake:
 - Workflow code is deterministic orchestration only;
 - side effects are Activities;
 - large payloads stay out of Workflow history;
-- dashboard reads use Queries;
+- issue detail reads use Queries;
+- dashboard reads use the SQLite local read model;
 - operator actions use Signals or Updates;
 - one local task queue is enough until measured otherwise.
 
@@ -90,6 +91,9 @@ states are core to Shea Symphony.
 Backlog promotion and quality gates belong inside `IssueWorkflow`. They should
 not remain external pre-work.
 
+One `IssueWorkflow` should exist per issue. It owns ordered per-issue
+decisions. Multiple issues run concurrently as separate Workflow executions.
+
 ## Activities
 
 Side effects belong in Activities:
@@ -109,6 +113,10 @@ Side effects belong in Activities:
 - `ArtifactWriteActivity`
 
 Workflow code should orchestrate. Activities should perform I/O.
+
+Read-only or non-conflicting Activities may run concurrently within one issue
+when the Workflow can safely join their results. External fact-changing
+operations stay serial, idempotent, and readback-verified.
 
 Use `RUNTIME-ROLE-MAPPING.md` to keep Activity boundaries repo-grounded:
 
@@ -226,6 +234,10 @@ Tracker writes happen through `TrackerTransitionActivity`, which:
 - returns the committed transition summary to the workflow.
 
 No lane, extension, App command, or CLI command writes tracker state directly.
+
+Tracker transitions, PR-to-issue linking, merge/land, terminal writes, and
+claim cleanup should be serialized per issue. Activity success requires
+readback verification of the desired external fact.
 
 ## Deletion Target
 

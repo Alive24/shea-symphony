@@ -406,6 +406,29 @@ all standard Shea Symphony states from the start, including `Backlog`. The old
 autopilot/tick/resume loop is legacy-to-delete. Temporal Cloud is out of scope;
 the runtime is local.
 
+### What is the Temporal concurrency model?
+
+Use one `IssueWorkflow` per issue. A single Workflow execution is a
+deterministic ordered state machine; it does not mutate Workflow state
+concurrently. Signals and Updates are processed in workflow-history order, but
+Workflow code still validates state and allowed actions.
+
+Parallelism happens through multiple Workflow executions, Activities, Child
+Workflows when needed, and Worker pools. Multiple issues can run concurrently.
+Within one issue, read-only or non-conflicting Activities may run concurrently.
+
+External fact-changing operations remain serial, idempotent, and
+readback-verified: tracker transitions, PR-to-issue linking, merge/land,
+terminal writes, and claim cleanup.
+
+Codex/Main/Review/Merge stay coarse Activity boundaries, not per-model-turn
+Activities. SQLite projection may be concurrent at request level, but DB writes
+use short retryable transactions and remain non-authoritative.
+
+Design implication: Temporal is the durable concurrency spine. Shea should not
+rebuild an autopilot scheduler. `IssueWorkflow` owns ordered per-issue
+decisions; worker pools own parallel external work.
+
 ### How should Merging handle semantic fixes?
 
 `Merging` may perform semantic fixes in place through `MergeActivity` or a

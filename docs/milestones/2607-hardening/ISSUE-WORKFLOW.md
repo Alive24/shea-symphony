@@ -15,6 +15,10 @@ stores resumable control state, summaries, and artifact refs; rich issue
 payloads, transcripts, diffs, review reports, and artifact bodies stay outside
 Workflow state.
 
+Use one `IssueWorkflow` per issue. A single Workflow execution is an ordered
+state machine; it does not mutate its own Workflow state concurrently. Multiple
+issues may run concurrently as separate Workflow executions.
+
 Activity failure routing is defined in `ACTIVITY-ERROR-TAXONOMY.md`. Activities
 report typed outcomes; `IssueWorkflow` decides retry, wait, conflict handling,
 or state transition.

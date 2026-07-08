@@ -203,5 +203,7 @@ Workflow ID should map to the business entity.
 - Verify Activity heartbeat API shape for long-running Codex agent work.
 - Verify local Temporal dev server persistence options; quickstart uses
   `start-dev`, but 2607 may need durable local data under `~/.shea`.
-- Decide whether `Backlog` shaping should be one long-lived `IssueWorkflow` or
-  a child workflow if history grows too large.
+- Verify history-size management for long-lived issue workflows, including
+  `Backlog` shaping. Continue-as-new or child workflows may be used later for
+  history management, but `Backlog` remains part of the per-issue workflow
+  model.

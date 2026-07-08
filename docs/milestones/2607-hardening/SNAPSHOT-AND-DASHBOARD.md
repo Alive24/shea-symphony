@@ -127,8 +127,10 @@ The App should call Tauri backend commands that use Temporal client APIs:
 - start workflow;
 - query snapshot;
 - query issue detail;
-- send signal;
-- send update when synchronous accepted/rejected feedback is needed.
+- request refresh/cache work;
+- open or route to Codex/operator flow for human todo actions;
+- send signal/update only through the approved Symphony interface when the
+  caller is the routed agent/operator flow.
 
 The App should not directly trigger:
 
@@ -136,6 +138,7 @@ The App should not directly trigger:
 - worktree edits;
 - manual worktree opening as a workflow operation;
 - agent resume as an operator-side imperative outside Temporal;
+- approval, rework, or human-input business logic inside App UI code;
 - doctor repair flows that modify state outside Temporal workflow policy.
 
 Doctor work may have two modes:
@@ -143,6 +146,12 @@ Doctor work may have two modes:
 - automatic doctor checks as Activities;
 - human doctor work opened through Codex/operator flow when coding-agent help is
   required.
+
+Human input, approval, human fixes, and rework requests should follow the same
+pattern: the App displays the human todo and opens the appropriate
+Codex/operator flow. That flow calls Symphony/Temporal interfaces with
+structured results, and Symphony-owned Activities commit tracker/read-model
+changes.
 
 ## Stuck State Display
 

@@ -357,15 +357,22 @@ Project history and broad queue browsing should stay in the tracker.
 
 ### How should App-triggered commands be bounded?
 
-The App should use Tauri backend commands that call Temporal start, query,
-signal, or update APIs.
+The App should use Tauri backend commands for dashboard reads, issue detail
+reads, workflow start, refresh/cache requests, and local DB health/rebuild.
+
+Human input, approval, human fix, and request-rework actions should be routed
+to Codex/operator flows. The routed flow calls the Symphony/Temporal interface
+with structured results; the App does not implement those semantics directly.
 
 Automatic doctor checks should be Temporal Activities. Human doctor work should
-enter through Temporal signal/update or open a Codex/operator flow that reports
-back through Temporal.
+open a Codex/operator flow that reports back through Temporal.
 
 Opening worktrees and resuming agents should not be App imperatives. They should
 be workflow/activity outcomes or artifact links.
+
+For refresh/cache requests, prefer Temporal Update when the UI needs
+accepted/rejected feedback. The refresh itself can proceed asynchronously and
+surface progress through workflow state plus SQLite projection.
 
 ### What are the first concrete performance targets?
 

@@ -227,11 +227,15 @@ Do not silently continue through a conflicting external state change.
 The App may call Tauri backend commands that perform Temporal operations:
 
 - workflow query;
-- workflow signal;
-- workflow update;
+- workflow signal or update only through approved routing;
 - workflow start.
 
 The App must not directly call tracker mutation or bypass
+`TrackerTransitionActivity`.
+
+Human input, approval, human fix, and rework actions are routed to
+Codex/operator flows. Those flows call the Symphony/Temporal interface with
+structured results. Tracker state still changes only through
 `TrackerTransitionActivity`.
 
 ## Complete Migration Bias

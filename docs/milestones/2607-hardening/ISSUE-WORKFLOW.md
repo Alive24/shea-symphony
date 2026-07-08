@@ -166,7 +166,8 @@ In durable state this should be represented as a structured `WaitingState`, so
 the App can aggregate Human Todo items without losing whether this is
 `Need Human Input`, `Need to Clarify`, or `Human Review`.
 
-Signals or updates:
+Signals or updates, normally submitted by a routed Coding Agent/operator flow
+rather than App UI code:
 
 - `submit_human_input`;
 - `cancel_issue_workflow`;
@@ -211,7 +212,8 @@ Purpose:
 `Human Review` uses the same structured waiting object as other human waits,
 but remains a distinct tracker state and approval gate.
 
-Signals or updates:
+Signals or updates, normally submitted by a routed Coding Agent/operator flow
+rather than App UI code:
 
 - `approve_human_review`;
 - `request_rework`;

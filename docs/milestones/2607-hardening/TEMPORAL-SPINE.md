@@ -122,7 +122,8 @@ Use `RUNTIME-ROLE-MAPPING.md` to keep Activity boundaries repo-grounded:
 
 ## Signals And Updates
 
-Operator actions should enter the workflow through Temporal signals or updates:
+Operator or Coding Agent actions should enter the workflow through Temporal
+signals or updates:
 
 - submit clarification;
 - promote backlog item to todo;
@@ -137,6 +138,11 @@ Operator actions should enter the workflow through Temporal signals or updates:
 Use updates when the caller needs synchronous accepted/rejected feedback. Use
 signals for fire-and-continue actions. If Rust SDK support makes updates
 awkward, use signal plus query first without changing the architecture.
+
+The App is not expected to implement human input, approval, or rework semantics
+directly. For those actions it should open the appropriate Codex/operator flow.
+The routed flow then calls the Symphony/Temporal interface with structured
+results. Tracker mutations remain inside Activities.
 
 ## Queries And Read Model
 

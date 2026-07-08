@@ -101,9 +101,12 @@ The App may:
 - display status, logs, and traceability;
 - initialize and operate local Temporal-backed workflows through Tauri backend
   commands.
+- route human todo actions to Codex/operator flows.
 
 The App should not:
 
 - directly edit tracker state;
 - directly modify worktrees;
-- bypass Temporal workflow or Activity boundaries.
+- bypass Temporal workflow or Activity boundaries;
+- implement human input, approval, rework, or human doctor semantics directly
+  in UI code.

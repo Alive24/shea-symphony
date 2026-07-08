@@ -136,11 +136,13 @@ Updates:
 - issue detail refresh uses Query;
 - dashboard refresh may use a SQLite materialized read model populated from
   Temporal/tracker/artifact projections;
-- fire-and-continue human input can use Signal;
-- UI actions that need accepted/rejected feedback should use Update when Rust
-  SDK support is adequate;
+- fire-and-continue routed agent/operator results can use Signal;
+- routed agent/operator actions that need accepted/rejected feedback should use
+  Update when Rust SDK support is adequate;
 - if Update ergonomics block migration, use Signal plus Query without changing
   architecture;
+- App UI should open Codex/operator flows for human input, approval, human fix,
+  and rework actions instead of implementing those semantics directly;
 - query handlers should never read artifacts directly.
 
 ## Worker Constraints

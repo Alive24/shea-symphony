@@ -22,13 +22,59 @@ Tauri backend command layer can call the Temporal client directly.
 - send Temporal signals or updates through the Tauri backend;
 - query Temporal-backed snapshots through the Tauri backend;
 - show disabled or bypassed workflow steps when available.
+- open or route to Codex/operator flows for human input, approval, rework, or
+  doctor work.
 
 ## App Must Not
 
 - directly mutate tracker state;
 - directly edit worktrees;
 - bypass Temporal workflow and Activity boundaries;
+- implement human review, rework, or human-input business semantics inside UI
+  code;
 - perform hidden write operations during refresh.
+
+## Operation Routing
+
+Recommended routing:
+
+```text
+Dashboard render
+  -> LocalStateReader.get_dashboard_snapshot
+
+Issue detail open
+  -> Temporal Query for selected workflow
+  -> LocalStateReader.list_artifacts for artifact refs
+
+Refresh tracker cache / PR summaries
+  -> Tauri backend command
+  -> Temporal Update when accepted/rejected feedback matters
+  -> Activity refreshes tracker/cache
+  -> LocalStateProjector updates SQLite
+
+Start issue workflow
+  -> Tauri backend command
+  -> Temporal start workflow
+
+Human input / approve / request rework / human fix
+  -> App opens Codex/operator flow
+  -> Coding Agent or operator flow calls Symphony/Temporal interface
+  -> Workflow validates the request
+  -> Activities update tracker/read model
+
+DB health / migration / rebuild
+  -> Tauri backend command
+  -> LocalStateAdmin
+```
+
+The App may expose buttons or links for human todo actions, but those controls
+should route to the appropriate Coding Agent/operator flow. They should not
+apply tracker changes or encode review/rework policy in the App.
+
+For refresh operations, prefer Temporal Update when the UI needs immediate
+accepted/rejected feedback. The refresh work itself may continue
+asynchronously and expose progress through workflow state and SQLite
+projection.
 
 ## CLI May
 

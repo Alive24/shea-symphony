@@ -275,6 +275,39 @@ compute by querying many workflows, tracker items, and artifact directories on
 each render. It is durable and useful for future async sync/export, but remains
 rebuildable and non-authoritative for workflow progression.
 
+### Who can write SQLite?
+
+SQLite writes happen through Symphony runtime/backend boundaries, not UI
+components. The App may trigger commands, but UI components do not mutate the
+DB directly.
+
+SQLite may accelerate reads, but it must not authorize workflow progression or
+tracker transitions. Workflow decisions depend on Temporal state, Activity
+results, and targeted tracker readback.
+
+### How should SQLite projection work in 2607?
+
+Use synchronous projection first. Activity and backend command results update
+SQLite directly through a small projection/store boundary. Do not add an
+independent async projector loop in 2607.
+
+Keep the interface shaped so later async replay, export, or cloud sync can be
+added without changing workflow semantics.
+
+### How fresh must dashboard data be?
+
+Dashboard data is eventually consistent. Ordinary render reads SQLite and
+shows freshness/staleness. Explicit refresh paths may run tracker, Temporal, or
+artifact refresh work through Symphony runtime boundaries.
+
+Selected issue detail can use Temporal Query for authoritative workflow state.
+
+### When is SQLite rebuilt?
+
+Do not full-rebuild SQLite on every startup. Startup performs lightweight
+schema and health checks. Rebuild happens when the DB is missing, corrupt,
+schema-incompatible, explicitly requested, or required by a recovery path.
+
 Project history and broad queue browsing should stay in the tracker.
 
 ### How should App-triggered commands be bounded?

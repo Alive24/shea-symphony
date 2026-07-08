@@ -157,6 +157,50 @@ Do not let UI components mutate SQLite directly.
 Do not let SQLite writes imply tracker state mutation. Tracker mutation still
 goes through `TrackerTransitionActivity`.
 
+SQLite may accelerate reads, but must not authorize workflow progression or
+tracker transitions. Workflow decisions depend on Temporal state, Activity
+results, and targeted tracker readback, not SQLite cache contents.
+
+Activity and backend code may read SQLite for non-authoritative optimization,
+but any state-changing decision must be validated through the proper Temporal
+or tracker boundary.
+
+## Projection Model
+
+2607 starts with synchronous projection.
+
+When an Activity or backend command produces a result that changes dashboard,
+tracker-cache, artifact-index, PR-summary, or activity-progress data, the same
+runtime boundary should update SQLite before returning or before reporting the
+projection as fresh.
+
+Do not introduce an independent async projector loop in 2607. That would risk
+recreating the hand-rolled orchestration machinery this milestone is removing.
+
+Keep projection code factored behind a small interface so a later milestone can
+add async replay, export, or cloud sync without changing workflow semantics.
+
+## Freshness Model
+
+Dashboard reads are eventually consistent.
+
+Ordinary dashboard render reads the SQLite materialized view. It should not
+fresh-scan tracker, Temporal, artifact directories, or worktrees on every
+render.
+
+SQLite rows that mirror external or projected state should carry freshness
+metadata such as:
+
+- `updated_at`;
+- `source`;
+- `source_updated_at`;
+- `freshness`;
+- optional `last_refresh_error`.
+
+Selected issue detail and explicit refresh paths may ask Temporal/tracker for
+authoritative state. Top-level dashboard should show stale/fresh/failed status
+rather than hiding refresh uncertainty.
+
 ## Rebuild Policy
 
 The SQLite DB is durable but rebuildable.
@@ -171,6 +215,11 @@ state from:
 
 Rebuild may be partial and freshness-marked. It does not need to recover every
 old dashboard optimization.
+
+Do not full-rebuild SQLite on every App or worker start. Startup should perform
+lightweight schema and health checks. Rebuild should happen when the DB is
+missing, corrupt, schema-incompatible, or explicitly requested by the operator
+or a recovery path.
 
 ## Memory Cache
 
@@ -210,4 +259,3 @@ second workflow history.
 - No large artifact body store.
 - No direct UI-owned mutation path.
 - No Redis dependency in 2607.
-

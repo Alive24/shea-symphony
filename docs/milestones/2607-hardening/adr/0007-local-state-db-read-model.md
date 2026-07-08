@@ -21,6 +21,13 @@ Use a local SQLite database as the 2607 read model/cache/index layer.
 - Temporal Query is preferred for one workflow's current runtime state.
 - SQLite backs dashboard materialized views, tracker cache, PR summary cache,
   artifact indexes, workflow indexes, and freshness markers.
+- SQLite writes happen through Symphony runtime/backend boundaries, not UI
+  components.
+- 2607 uses synchronous projection from Activity/backend results into SQLite;
+  an independent async projector loop is deferred.
+- Dashboard reads are eventually consistent and must expose freshness.
+- SQLite is rebuilt explicitly or through recovery, not full-rebuilt on every
+  start.
 - Process memory may cache hot UI/runtime values but is not required for
   correctness.
 - Filesystem artifacts remain the body store for large logs, transcripts,
@@ -44,6 +51,8 @@ Default DB path:
 - Tracker writes still go through `TrackerTransitionActivity`.
 - Query handlers stay deterministic and do not perform filesystem, tracker, or
   SQLite I/O.
+- The App must handle stale dashboard rows as a normal state, not as an
+  exceptional failure.
 
 ## Follow-Up
 
@@ -52,4 +61,4 @@ Default DB path:
 - Update App snapshot code to prefer SQLite materialized dashboard reads.
 - Keep issue detail state backed by Temporal Query with lazy artifact reads.
 - Add freshness markers and explicit refresh paths.
-
+- Add explicit DB health, schema migration, and rebuild commands.

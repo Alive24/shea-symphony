@@ -117,6 +117,7 @@ Subtraction does not mean:
 - `docs/milestones/2607-hardening/RUNTIME-ROLE-MAPPING.md`
 - `docs/milestones/2607-hardening/TEMPORAL-RUST-SDK-INTAKE.md`
 - `docs/milestones/2607-hardening/ISSUE-WORKFLOW.md`
+- `docs/milestones/2607-hardening/ISSUE-WORKFLOW-STATE.md`
 - `docs/milestones/2607-hardening/TEMPORAL-SPINE.md`
 - `docs/milestones/2607-hardening/SUBTRACTION-INVENTORY.md`
 - `docs/milestones/2607-hardening/SNAPSHOT-AND-DASHBOARD.md`

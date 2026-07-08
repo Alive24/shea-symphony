@@ -10,6 +10,11 @@ Define the Temporal `IssueWorkflow` state flow for Shea Symphony.
 including `Backlog`. Backlog promotion and quality gating are workflow behavior,
 not external pre-work.
 
+Durable Workflow state is defined in `ISSUE-WORKFLOW-STATE.md`. The Workflow
+stores resumable control state, summaries, and artifact refs; rich issue
+payloads, transcripts, diffs, review reports, and artifact bodies stay outside
+Workflow state.
+
 ## Standard States
 
 - `Backlog`
@@ -138,6 +143,10 @@ Required workflow data:
 - `blocking_artifact_refs`;
 - `recommended_next_action`.
 
+In durable state this should be represented as a structured `WaitingState`, so
+the App can aggregate Human Todo items without losing whether this is
+`Need Human Input`, `Need to Clarify`, or `Human Review`.
+
 Signals or updates:
 
 - `submit_human_input`;
@@ -179,6 +188,9 @@ Notes:
 Purpose:
 
 - formal human approval and review gate.
+
+`Human Review` uses the same structured waiting object as other human waits,
+but remains a distinct tracker state and approval gate.
 
 Signals or updates:
 

@@ -52,6 +52,9 @@ payloads.
 `SymphonySnapshot` should be the first read surface for the App. In 2607 it
 should be backed by Temporal workflow queries, not CLI command output.
 
+`IssueWorkflow` state and query layering are defined in
+`ISSUE-WORKFLOW-STATE.md`.
+
 It should include:
 
 - snapshot id;
@@ -74,10 +77,22 @@ It should not include:
 - full worktree status for every issue;
 - source-of-truth state inferred by the App.
 
+Use two query layers:
+
+- `dashboard_snapshot` for lightweight operational summaries;
+- `issue_detail_snapshot` for one issue's attempt summaries, waiting detail,
+  recent artifact refs, review summary, and merge summary.
+
+Both query layers return artifact refs and summaries, not artifact bodies.
+
 ## Runtime And Tracker State
 
 Tracker state is the external workflow fact. Runtime state is local execution
 evidence.
+
+`IssueWorkflow.current_tracker_state` is the last tracker state confirmed by
+`TrackerTransitionActivity`, not a replacement for tracker state as external
+fact. Targeted readback happens in Activities, not every App refresh.
 
 During lane handoff, `IssueWorkflow` must treat successful
 `TrackerTransitionActivity` completion as part of completion. A worker should

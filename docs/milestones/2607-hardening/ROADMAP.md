@@ -51,6 +51,8 @@ Success means a maintainer can answer:
 
 ## Phase 3: Query-Backed Snapshot And State
 
+- Define `IssueWorkflow` durable state as small resumable control state,
+  summaries, and artifact refs.
 - Define query-backed `SymphonySnapshot` for App reads.
 - Keep top-level dashboard refresh separate from lane item detail.
 - Introduce Temporal queries for dashboard and issue detail.

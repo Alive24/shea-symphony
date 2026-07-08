@@ -368,6 +368,24 @@ No. Use submilestones for reviewability, but the 2607 hardening target is
 complete tracker transition ownership before new feature development resumes.
 Do not leave unknown direct tracker write paths as acceptable final scope.
 
+### What should `IssueWorkflow` store durably?
+
+Store small resumable control state: workflow id, repo id, issue ref, tracker
+backend, last committed tracker state, active step, attempts, structured
+waiting state, last transition summary, run summaries, artifact refs, PR
+summary, human todo summary, and runtime health summary.
+
+Do not store full issue descriptions, workpads, comments, diffs, transcripts,
+review reports, full Project field dumps, or full worktree status. Those belong
+in tracker reads, artifacts, or issue detail lazy-load paths.
+
+### How should App queries be layered?
+
+Use `dashboard_snapshot` for lightweight operational summaries and
+`issue_detail_snapshot` for one issue's attempt summaries, waiting detail,
+recent artifact refs, review verdict summary, and merge summary. Both return
+artifact refs, not artifact bodies.
+
 ### How should land skill flow be represented?
 
 Current leaning: `Merging` uses a configured land runner by default and does not

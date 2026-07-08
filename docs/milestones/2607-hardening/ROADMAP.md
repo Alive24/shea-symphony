@@ -49,8 +49,9 @@ Success means a maintainer can answer:
 - Include `Backlog` promotion and quality gate inside `IssueWorkflow`.
 - Mark old autopilot/tick/resume loop as legacy-to-delete.
 - Define worker startup and local runtime initialization.
-- Define worker-pool and Activity concurrency limits without rebuilding an
-  autopilot scheduler.
+- Define `symphony-core`, `symphony-agent`, and `symphony-local` task queues
+  with Activity-level concurrency limits, without rebuilding an autopilot
+  scheduler.
 - Keep Temporal Cloud out of scope.
 
 ## Phase 3: Query-Backed Snapshot And State

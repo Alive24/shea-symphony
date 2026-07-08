@@ -429,6 +429,31 @@ Design implication: Temporal is the durable concurrency spine. Shea should not
 rebuild an autopilot scheduler. `IssueWorkflow` owns ordered per-issue
 decisions; worker pools own parallel external work.
 
+### What is the starting task queue topology?
+
+Do not start with a single task queue in 2607. Single queue is too coarse for
+Shea because long-running Coding Agent Activities can delay short
+control-plane work.
+
+Start with:
+
+- `symphony-core`: `IssueWorkflow`, tracker transitions, PR-to-issue link
+  mutation, workflow control Activities, latency-sensitive low/medium
+  concurrency work;
+- `symphony-agent`: Codex Main/Rework/Merge runs and heavy Agent Review backend
+  work; long-running, resource-heavy, very low concurrency;
+- `symphony-local`: SQLite projection, artifact indexing, tracker cache
+  refresh, local health/admin/rebuild; short local work with higher
+  concurrency.
+
+Use Activity-level concurrency limits within each queue. Do not split into many
+more queues until measurement proves it.
+
+Design reason: task queues are for worker capacity, isolation, and routing.
+The goal is to keep long-running Coding Agent Activities from delaying tracker
+transitions, PR link verification, refresh/cache projection, and other
+control-plane work.
+
 ### How should Merging handle semantic fixes?
 
 `Merging` may perform semantic fixes in place through `MergeActivity` or a

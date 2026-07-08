@@ -112,8 +112,17 @@ merge, or terminal writes.
 Worker pools own parallel external work. `IssueWorkflow` owns per-issue
 ordering.
 
-2607 should start with the simplest task queue shape that works. Split task
-queues only when measurements show contention or isolation needs.
+2607 should start with three task queues:
+
+- `symphony-core` for `IssueWorkflow`, tracker transitions, PR-link mutation,
+  and latency-sensitive workflow control Activities;
+- `symphony-agent` for Codex Main/Rework/Merge runs and heavy Agent Review
+  backend work;
+- `symphony-local` for SQLite projection, artifact indexing, tracker cache
+  refresh, and local health/admin/rebuild work.
+
+Use Activity-level concurrency limits within each queue. Do not split into many
+more queues until measurement proves contention or isolation needs.
 
 The concurrency policy should protect external systems:
 
@@ -129,4 +138,3 @@ The concurrency policy should protect external systems:
 - No per-model-turn Temporal Activity graph.
 - No SQLite-backed workflow coordinator.
 - No App-side workflow scheduler.
-

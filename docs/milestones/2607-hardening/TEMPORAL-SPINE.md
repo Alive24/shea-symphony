@@ -46,7 +46,8 @@ Hard constraints from the Rust SDK intake:
 - issue detail reads use Queries;
 - dashboard reads use the SQLite local read model;
 - operator actions use Signals or Updates;
-- one local task queue is enough until measured otherwise.
+- 2607 starts with `symphony-core`, `symphony-agent`, and `symphony-local`
+  task queues.
 
 ## Runtime Shape
 
@@ -64,6 +65,14 @@ Symphony Worker
       -> IssueWorkflow
       -> Activities for tracker, git, worktree, Codex, LLM, review, merge,
          doctor, and artifact writes
+
+Task queues:
+  symphony-core
+    -> IssueWorkflow, tracker transitions, PR-link mutation, workflow control
+  symphony-agent
+    -> Codex Main/Rework/Merge, heavy Agent Review backend work
+  symphony-local
+    -> SQLite projection, artifact indexing, tracker cache, local admin
 
 CLI
   -> optional admin/dev fallback only

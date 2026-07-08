@@ -158,10 +158,17 @@ Important constraints:
 
 2607 implication:
 
-- start with one local `shea-symphony` task queue;
-- register `IssueWorkflow` and all core Activities in the same worker;
-- do not split task queues until there is a measured reason;
-- App initialization must verify that the worker is polling the expected queue.
+- start with three local task queues: `symphony-core`, `symphony-agent`, and
+  `symphony-local`;
+- route `IssueWorkflow`, tracker transitions, PR-link mutation, and workflow
+  control Activities to `symphony-core`;
+- route Codex Main/Rework/Merge runs and heavy Agent Review backend work to
+  `symphony-agent`;
+- route SQLite projection, artifact indexing, tracker cache refresh, and local
+  health/admin/rebuild work to `symphony-local`;
+- use Activity-level concurrency limits within each queue;
+- App initialization must verify that required workers are polling the expected
+  queues.
 
 ## Client Constraints
 

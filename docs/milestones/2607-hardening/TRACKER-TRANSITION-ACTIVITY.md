@@ -199,6 +199,10 @@ Recommended behavior:
 or reconciles. The Activity reports the fact; it does not guess the workflow
 policy.
 
+General Activity failure classes are defined in
+`ACTIVITY-ERROR-TAXONOMY.md`. Tracker-specific `ProjectStateFailureKind` values
+should map into that taxonomy instead of inventing a separate retry policy.
+
 ## Complete Migration Submilestones
 
 The 2607 target is complete tracker transition ownership, not a partial

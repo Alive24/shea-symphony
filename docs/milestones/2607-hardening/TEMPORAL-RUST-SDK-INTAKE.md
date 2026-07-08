@@ -105,7 +105,8 @@ heartbeats for progress and cancellation behavior.
 - `MainAgentActivity` and merge/review Activities need heartbeat/progress
   design;
 - large logs, transcripts, patches, and reports live in local artifact storage;
-- retryable vs non-retryable errors must be explicit in Activity contracts.
+- retryable vs non-retryable errors must follow
+  `ACTIVITY-ERROR-TAXONOMY.md`.
 
 ## Message Passing
 

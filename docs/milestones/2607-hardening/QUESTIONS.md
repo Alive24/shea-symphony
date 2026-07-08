@@ -386,6 +386,18 @@ Use `dashboard_snapshot` for lightweight operational summaries and
 recent artifact refs, review verdict summary, and merge summary. Both return
 artifact refs, not artifact bodies.
 
+### How should Activity failures be classified?
+
+Use shared outcome classes: `success`, `already_applied`, `retryable`,
+`wait_and_retry`, `need_human_input`, `conflict`, `rejected`,
+`terminal_noop`, and `bug`.
+
+Activities report typed outcomes. `IssueWorkflow` decides retry, wait,
+reconcile, or state transition. Existing tracker error kinds, review backend
+recovery policies, Codex/app-server statuses, merge repair retryability, and
+doctor findings should map into this taxonomy rather than becoming separate
+state machines.
+
 ### How should land skill flow be represented?
 
 Current leaning: `Merging` uses a configured land runner by default and does not

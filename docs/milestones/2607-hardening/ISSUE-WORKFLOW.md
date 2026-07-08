@@ -15,6 +15,10 @@ stores resumable control state, summaries, and artifact refs; rich issue
 payloads, transcripts, diffs, review reports, and artifact bodies stay outside
 Workflow state.
 
+Activity failure routing is defined in `ACTIVITY-ERROR-TAXONOMY.md`. Activities
+report typed outcomes; `IssueWorkflow` decides retry, wait, conflict handling,
+or state transition.
+
 ## Standard States
 
 - `Backlog`

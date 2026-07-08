@@ -319,6 +319,40 @@ typed boundaries. Prefer `rusqlite`, handwritten SQL, typed DTOs, and minimal
 repository functions. Symphony runtime owns schema versioning and minimal SQL
 migrations; do not introduce a heavy ORM or external migration service in 2607.
 
+### What is the first SQLite schema?
+
+Use five initial tables:
+
+- `workflow_index`;
+- `tracker_cache`;
+- `artifact_index`;
+- `activity_progress`;
+- `meta`.
+
+Do not add a `dashboard_snapshot` blob table first. Assemble dashboard reads
+from the indexed tables. Do not add a dedicated `tracker_mutation_log` table
+first; Temporal history is the durable mutation ledger and SQLite projects
+current observability through `activity_progress`, `tracker_cache`, and
+artifact refs.
+
+### How should PR-to-issue linking be made reliable?
+
+Treat PR linking as a durable idempotent tracker mutation, not an incidental
+post-PR command.
+
+Use a stable mutation key such as
+`link-pr:<repo-id>:<issue-number>:<pr-number>`. The Activity must write and
+then read back. Success means the desired PR relation is confirmed by tracker
+readback.
+
+If PR creation succeeds but linking is not confirmed, `IssueWorkflow` should
+retry the mutation according to typed policy. It should not move to the next
+handoff state as if the PR relation succeeded. If retry is exhausted or blocked,
+move to `Need Human Input` with evidence.
+
+SQLite does not become the mutation ledger. It only projects observable current
+or recent state for the App.
+
 Project history and broad queue browsing should stay in the tracker.
 
 ### How should App-triggered commands be bounded?

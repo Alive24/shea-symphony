@@ -21,6 +21,11 @@ Use a local SQLite database as the 2607 read model/cache/index layer.
 - Temporal Query is preferred for one workflow's current runtime state.
 - SQLite backs dashboard materialized views, tracker cache, PR summary cache,
   artifact indexes, workflow indexes, and freshness markers.
+- Initial schema uses `workflow_index`, `tracker_cache`, `artifact_index`,
+  `activity_progress`, and `meta`.
+- Do not add `dashboard_snapshot` or `tracker_mutation_log` tables first.
+  Assemble dashboard reads from indexed tables; use Temporal history as the
+  durable mutation attempt ledger.
 - SQLite writes happen through Symphony runtime/backend boundaries, not UI
   components.
 - Use a typed DB access layer split into reader, projector, and admin
@@ -66,7 +71,8 @@ Default DB path:
 
 - Define small `LocalStateReader`, `LocalStateProjector`, and
   `LocalStateAdmin` interfaces.
-- Add the initial schema for workflow, tracker, artifact, and activity indexes.
+- Add the initial schema for workflow, tracker, artifact, activity, and meta
+  indexes.
 - Update App snapshot code to prefer SQLite materialized dashboard reads.
 - Keep issue detail state backed by Temporal Query with lazy artifact reads.
 - Add freshness markers and explicit refresh paths.

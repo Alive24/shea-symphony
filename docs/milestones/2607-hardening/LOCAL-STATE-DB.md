@@ -91,7 +91,7 @@ the canonical repository worktree.
 
 ## Minimal Schema Direction
 
-Start with a small schema that supports known read paths:
+Start with five small tables that support known read paths:
 
 ```text
 workflow_index(
@@ -102,6 +102,7 @@ workflow_index(
   active_step,
   waiting_kind,
   last_progress_at,
+  freshness,
   updated_at
 )
 
@@ -125,6 +126,7 @@ tracker_cache(
   title,
   pr_number,
   pr_state,
+  pr_relation_confirmed_at,
   updated_at,
   freshness
 )
@@ -132,16 +134,87 @@ tracker_cache(
 activity_progress(
   workflow_id,
   activity_id,
+  activity_kind,
+  target_ref,
+  mutation_id,
   outcome,
   status,
+  attempt_count,
   last_heartbeat_at,
+  next_retry_at,
   summary
+)
+
+meta(
+  key,
+  value
 )
 ```
 
 Add columns only when a read path needs them. Do not store full transcripts,
 diffs, review reports, issue bodies, comments, or Project field dumps in
 SQLite.
+
+Primary keys:
+
+- `workflow_index.workflow_id`;
+- `tracker_cache(repo_id, issue_ref)`;
+- `artifact_index.artifact_id`;
+- `activity_progress(workflow_id, activity_id)`;
+- `meta.key`.
+
+Indexes:
+
+- `artifact_index(workflow_id)`;
+- `artifact_index(repo_id, issue_ref)`;
+- `activity_progress(workflow_id, mutation_id)`;
+- `tracker_cache(freshness)`;
+- `workflow_index(current_state, waiting_kind)`.
+
+Do not add a dedicated `tracker_mutation_log` table in the initial schema.
+Temporal history is the durable mutation attempt ledger. SQLite projects only
+the current or recent observable state needed by dashboard/detail surfaces,
+using `activity_progress`, `tracker_cache`, and artifact refs.
+
+If a later measured need appears for cross-workflow mutation history queries,
+add a projection table then.
+
+## Identity Shape
+
+Do not use naked issue numbers at typed boundaries.
+
+Recommended DTO identity:
+
+```text
+RepoId {
+  host
+  owner
+  repo
+}
+
+IssueRef {
+  tracker_backend
+  repo_id
+  number
+}
+
+WorkflowId = "issue:<repo-id>:<number>"
+```
+
+SQLite may denormalize these values into text columns. Code boundaries should
+use typed DTOs.
+
+## Freshness Enum
+
+Use a small enum first:
+
+- `fresh`;
+- `stale`;
+- `refreshing`;
+- `failed`;
+- `unknown`.
+
+Do not add more freshness states until a read path needs them.
 
 ## Access Layer
 
@@ -157,6 +230,29 @@ Recommended shape:
 - `LocalStateProjector` for Activity/backend result projection writes;
 - `LocalStateAdmin` for health checks, schema migration, rebuild, and compact
   operations.
+
+Recommended initial methods:
+
+```text
+LocalStateReader:
+  get_dashboard_snapshot(filter) -> DashboardSnapshot
+  get_issue_index(issue_ref) -> IssueLocalIndex
+  list_human_todo(filter) -> Vec<DashboardIssueSummary>
+  list_artifacts(issue_ref) -> Vec<ArtifactRefSummary>
+
+LocalStateProjector:
+  project_workflow_summary(summary)
+  project_tracker_cache(entry)
+  project_artifact_ref(ref)
+  project_activity_progress(progress)
+  mark_stale(scope, reason)
+
+LocalStateAdmin:
+  check_health()
+  migrate()
+  rebuild(scope)
+  compact()
+```
 
 The implementation should use a lightweight SQLite library, with a current
 preference for `rusqlite`, handwritten SQL, and typed DTO/repository functions.

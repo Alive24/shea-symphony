@@ -125,14 +125,29 @@ Purpose:
 Activities:
 
 - `MainAgentActivity`;
+- `TrackerTransitionActivity` mutation operation for PR-to-issue linking when a
+  PR is created;
 - `ArtifactWriteActivity`;
 - `TrackerTransitionActivity`.
 
 Exit:
 
-- to `Agent Review` on implementation completion;
+- to `Agent Review` on implementation completion after PR existence and
+  PR-to-issue relation are confirmed when a PR is required;
 - to `Need Human Input` on secret, permission, dangerous operation, external
   failure, tracker conflict, or other human-needed blocker.
+
+Handoff requirements:
+
+- PR exists when the implementation path requires a PR;
+- PR-to-issue relation is confirmed by tracker readback;
+- transition to the next tracker state is committed;
+- local read model projection is updated or explicitly marked stale.
+
+If PR creation succeeds but PR-to-issue linking is not confirmed, the Workflow
+must retry the durable mutation according to policy. It should not advance as
+if implementation handoff is complete. If retry policy is exhausted or blocked,
+move to `Need Human Input` with concrete evidence.
 
 ## Need Human Input
 

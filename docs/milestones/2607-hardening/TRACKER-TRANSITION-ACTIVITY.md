@@ -151,6 +151,64 @@ Existing mechanisms should be migrated, not replaced:
 Activity retry must not create duplicate tracker comments, duplicate claims,
 duplicate worktrees, duplicate PR links, or duplicate terminal writes.
 
+## Durable Tracker Mutations
+
+Some tracker writes are not state transitions, but they are still durable
+side-effect intents. PR-to-issue linking is the first important case.
+
+Represent these as explicit tracker mutation kinds inside the same Activity
+boundary rather than as incidental post-PR shell commands.
+
+First required mutation kind:
+
+```text
+TrackerMutationKind::LinkPrToIssue
+```
+
+Recommended request:
+
+```text
+LinkPrToIssueRequest {
+  mutation_id
+  workflow_id
+  repo_id
+  issue_ref
+  pr_ref
+  desired_relation
+  evidence_refs
+}
+```
+
+Recommended stable idempotency key:
+
+```text
+link-pr:<repo-id>:<issue-number>:<pr-number>
+```
+
+The Activity must write and then read back. Success means the desired PR
+relation is confirmed by tracker readback, not merely that an API call or `gh`
+command exited successfully.
+
+Outcomes should map into the shared Activity taxonomy:
+
+- relation already exists: `already_applied`;
+- write succeeds but readback does not show the relation yet:
+  `wait_and_retry`;
+- network, rate-limit, or transient backend failure: `retryable` or
+  `wait_and_retry`;
+- missing permission or auth scope: `need_human_input`;
+- issue/PR repo mismatch: `conflict`;
+- malformed internal request: `unhandled_error`.
+
+Do not rely on PR body closing keywords as the only reliable relation signal.
+They may be written as useful evidence, but the Activity must verify the
+relation that Symphony needs to observe.
+
+Do not add a dedicated SQLite mutation log table for this in the first schema.
+Temporal history is the durable attempt ledger. SQLite projects current
+observability through `activity_progress`, confirmed PR fields in
+`tracker_cache`, and artifact refs.
+
 ## Tracker Field Diet
 
 2607 should reduce unnecessary GitHub Project field churn.

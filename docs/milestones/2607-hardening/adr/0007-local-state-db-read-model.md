@@ -23,6 +23,12 @@ Use a local SQLite database as the 2607 read model/cache/index layer.
   artifact indexes, workflow indexes, and freshness markers.
 - SQLite writes happen through Symphony runtime/backend boundaries, not UI
   components.
+- Use a typed DB access layer split into reader, projector, and admin
+  boundaries. Do not introduce an ORM.
+- Prefer `rusqlite`, handwritten SQL, typed DTOs, and minimal repository
+  functions.
+- Symphony runtime owns schema versioning and minimal SQL migrations; no
+  external migration service is introduced in 2607.
 - 2607 uses synchronous projection from Activity/backend results into SQLite;
   an independent async projector loop is deferred.
 - Dashboard reads are eventually consistent and must expose freshness.
@@ -45,6 +51,8 @@ Default DB path:
 
 - App refresh can avoid repeated GitHub Project reads, artifact directory
   scans, and heavyweight command paths.
+- DB access remains explicit and debuggable instead of hiding state changes
+  behind domain object persistence.
 - SQLite must stay rebuildable from Temporal history/query, tracker reads, and
   artifacts.
 - Workflow decisions must not depend on SQLite as the source of truth.
@@ -56,7 +64,8 @@ Default DB path:
 
 ## Follow-Up
 
-- Define a small `LocalStateStore` interface.
+- Define small `LocalStateReader`, `LocalStateProjector`, and
+  `LocalStateAdmin` interfaces.
 - Add the initial schema for workflow, tracker, artifact, and activity indexes.
 - Update App snapshot code to prefer SQLite materialized dashboard reads.
 - Keep issue detail state backed by Temporal Query with lazy artifact reads.

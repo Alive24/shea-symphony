@@ -308,6 +308,17 @@ Do not full-rebuild SQLite on every startup. Startup performs lightweight
 schema and health checks. Rebuild happens when the DB is missing, corrupt,
 schema-incompatible, explicitly requested, or required by a recovery path.
 
+### Should SQLite use an ORM?
+
+No. SQLite is a local read model/cache/index, not the business fact layer or
+domain model. 2607 should use a typed DB access layer rather than
+ActiveRecord-style object loading/saving.
+
+Use `LocalStateReader`, `LocalStateProjector`, and `LocalStateAdmin` as the
+typed boundaries. Prefer `rusqlite`, handwritten SQL, typed DTOs, and minimal
+repository functions. Symphony runtime owns schema versioning and minimal SQL
+migrations; do not introduce a heavy ORM or external migration service in 2607.
+
 Project history and broad queue browsing should stay in the tracker.
 
 ### How should App-triggered commands be bounded?

@@ -143,6 +143,31 @@ Add columns only when a read path needs them. Do not store full transcripts,
 diffs, review reports, issue bodies, comments, or Project field dumps in
 SQLite.
 
+## Access Layer
+
+2607 should use a typed DB access layer, not an ORM.
+
+SQLite is a local read model/cache/index, not a business fact layer or domain
+model. Do not introduce ActiveRecord-style object loading/saving or a heavy
+ORM.
+
+Recommended shape:
+
+- `LocalStateReader` for App/Tauri backend reads;
+- `LocalStateProjector` for Activity/backend result projection writes;
+- `LocalStateAdmin` for health checks, schema migration, rebuild, and compact
+  operations.
+
+The implementation should use a lightweight SQLite library, with a current
+preference for `rusqlite`, handwritten SQL, and typed DTO/repository functions.
+
+Schema versioning and minimal SQL migrations are owned by the Symphony runtime.
+Do not introduce an external migration service in 2607.
+
+Keep structured filter fields as columns. Small JSON summaries are acceptable
+for backend-specific metadata or UI display payloads, but large payloads and
+fields that need filtering should not be hidden in JSON.
+
 ## Write Policy
 
 SQLite updates should happen through explicit Symphony runtime boundaries:

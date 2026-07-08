@@ -63,10 +63,17 @@ Success means a maintainer can answer:
 
 - Define transition proposal, decision, and commit records.
 - Route tracker writes through `TrackerTransitionActivity`.
+- Use small DTOs for Workflow history and keep rich tracker evidence behind
+  artifact refs or targeted Activity reads.
+- Reuse existing tracker adapter, recovery marker, readback, workpad, and audit
+  behavior inside the Activity boundary instead of wrapping the old lane loop.
 - Require transition evidence.
 - Add reconcile behavior for external tracker changes.
 - Define merge-time semantic fix behavior as part of `Merging`.
 - Keep extension nodes able to influence graph direction through proposals.
+- Complete the transition migration through explicit submilestones: contract,
+  state commits, evidence commits, claim/field diet, reconcile/recovery, and
+  deletion of old mutation paths.
 
 ## Phase 5: Activities, Runner, And Worktree
 

@@ -339,6 +339,35 @@ Symphony, so a separate `temporal_runtime` package name is unnecessary unless
 implementation constraints force it. Shea extension code can still be
 Temporal-backed; the boundary is ownership, not Temporal usage.
 
+### Should tracker transition code wrap the old lane mutation model?
+
+No. `TrackerTransitionActivity` should become the new owner. It should migrate
+existing tracker adapter, recovery marker, readback, workpad, and audit
+behavior into the Temporal Activity boundary. Do not preserve the old
+autopilot/lane mutation model as a target wrapper.
+
+### Should transition Activity payloads use full `TrackerIssue`?
+
+No. Use small request/result DTOs in Workflow history. This gives up having the
+complete issue description, workpad, comments, project fields, linked PR
+payloads, and rich evidence directly in Temporal history. That loss is
+intentional: rich details belong in artifacts, tracker comments/workpads, or
+targeted Activity reads.
+
+### How should Project field bloat be handled?
+
+Reduce it. GitHub Project fields should keep human-visible workflow state,
+coarse ownership, PR/status facts, and terminal/blocker facts. Detailed local
+runtime state belongs in Temporal workflow state, Activity progress, and local
+artifacts. If one issue's local state becomes unrecoverable, stop that issue,
+clear local state, and rebuild from tracker state plus durable artifacts.
+
+### Should tracker transition migration be a tiny first batch?
+
+No. Use submilestones for reviewability, but the 2607 hardening target is
+complete tracker transition ownership before new feature development resumes.
+Do not leave unknown direct tracker write paths as acceptable final scope.
+
 ### How should land skill flow be represented?
 
 Current leaning: `Merging` uses a configured land runner by default and does not

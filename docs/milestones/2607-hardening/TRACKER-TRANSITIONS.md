@@ -36,6 +36,9 @@ TrackerTransitionActivity(request) -> committed_transition
 
 App, CLI, lanes, and extensions must not bypass this Activity.
 
+The detailed Activity contract is recorded in
+`TRACKER-TRANSITION-ACTIVITY.md`.
+
 ## Standard States
 
 - `Backlog`
@@ -146,6 +149,12 @@ Local runtime claim:
 The tracker should show who owns the workflow item. Local runtime state should
 hold detailed execution machinery.
 
+2607 should reduce tracker field flags where they only exist for local recovery
+or duplicate-claim prevention. Those details belong in Temporal workflow state,
+Activity heartbeat/progress, local artifacts, and idempotent recovery markers.
+GitHub Project fields should be reserved for human-visible state and coarse
+ownership facts.
+
 ## Need States
 
 Use enum reasons plus freeform detail.
@@ -225,14 +234,8 @@ The App may call Tauri backend commands that perform Temporal operations:
 The App must not directly call tracker mutation or bypass
 `TrackerTransitionActivity`.
 
-## First Implementation Bias
+## Complete Migration Bias
 
-Start by documenting and testing the transition table before moving every call
-site.
-
-First useful refactor target:
-
-- introduce `TrackerTransitionActivity`;
-- route all tracker state writes through it;
-- record evidence consistently;
-- delete or reduce old direct write paths as Temporal migration lands.
+The 2607 target is complete tracker transition ownership, not a narrow first
+batch. Break the work into submilestones so implementation is reviewable, but
+do not treat unchecked transition paths as acceptable final scope.

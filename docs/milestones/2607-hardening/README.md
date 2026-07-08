@@ -121,6 +121,7 @@ Subtraction does not mean:
 - `docs/milestones/2607-hardening/SUBTRACTION-INVENTORY.md`
 - `docs/milestones/2607-hardening/SNAPSHOT-AND-DASHBOARD.md`
 - `docs/milestones/2607-hardening/TRACKER-TRANSITIONS.md`
+- `docs/milestones/2607-hardening/TRACKER-TRANSITION-ACTIVITY.md`
 - `docs/milestones/2607-hardening/adr/0006-temporal-local-runtime-spine.md`
 - `docs/milestones/2608-workflow-graph-extension/README.md`
 

@@ -1,0 +1,251 @@
+# TrackerTransitionActivity Contract
+
+Status: Draft
+
+## Purpose
+
+Define the 2607 contract for moving tracker state writes into Temporal without
+rebuilding tracker clients or preserving the old lane loop as a wrapper.
+
+`TrackerTransitionActivity` is the single commit authority for tracker state
+transitions. Existing tracker adapter capabilities should migrate into this
+Activity boundary rather than being wrapped by a legacy facade.
+
+## Non-Wrapper Decision
+
+Do not keep a compatibility wrapper around the old autopilot/lane mutation
+model as the target architecture.
+
+The migration should reuse existing proven code:
+
+- `TrackerAdapter`;
+- tracker recovery readback semantics;
+- recovery markers;
+- workpad/timeline evidence helpers;
+- event log audit records;
+- GitHub Project v2 and future tracker adapter boundaries.
+
+But the owner changes: `IssueWorkflow` requests a transition and
+`TrackerTransitionActivity` commits it. Lane code, App commands, CLI commands,
+and Shea extensions stop writing tracker state directly.
+
+## Request Shape
+
+Use a small Temporal payload. Do not pass full `TrackerIssue` values through
+Workflow history as the primary contract.
+
+Recommended request:
+
+```text
+TrackerTransitionRequest {
+  workflow_id
+  issue_ref
+  expected_from_state
+  requested_to_state
+  transition_kind
+  requester
+  reason_enum
+  reason_detail
+  evidence_refs
+  idempotency_key
+  field_update_intents
+}
+```
+
+`field_update_intents` should describe what must be human-visible in the
+tracker. It should not carry every local runtime detail.
+
+## Result Shape
+
+Recommended result:
+
+```text
+TrackerTransitionResult {
+  outcome
+  issue_ref
+  from_state_observed
+  to_state_committed
+  tracker_backend
+  evidence_refs
+  audit_ref
+  conflict_reason
+}
+```
+
+Outcomes:
+
+- `committed`;
+- `already_applied`;
+- `conflict`;
+- `rejected`;
+- `retry_later`.
+
+## Deliberately Not Chosen
+
+Do not use full `TrackerIssue` as the Activity request/result contract.
+
+What this gives up:
+
+- Workflow history will not contain the complete issue description, workpad,
+  comments, project fields, linked PR payloads, or rich tracker evidence.
+- Debugging a transition may require opening artifact refs or querying the
+  tracker again.
+- Activity internals still need targeted tracker reads.
+
+Why this is acceptable:
+
+- Temporal history stays small and replay-friendly.
+- Activity contracts remain versionable.
+- App dashboard queries can stay fast.
+- Rich evidence already belongs in artifacts, workpads, tracker comments, or
+  targeted issue detail reads.
+
+Do not introduce a dedicated tracker custom field only for idempotency.
+
+What this gives up:
+
+- There is no single always-visible Project field that lists every committed
+  transition key.
+
+Why this is acceptable:
+
+- Existing recovery markers and readback checks already cover retry safety.
+- Extra Project fields made the MVP harder to read and slower to refresh.
+- Local Temporal history and artifact state are better places for detailed
+  retry machinery.
+
+Do not model every tracker-side field update as Workflow state.
+
+What this gives up:
+
+- The Workflow will not expose every lane claim field and project field as
+  first-class durable fields.
+
+Why this is acceptable:
+
+- Project fields should show human-visible workflow facts.
+- Detailed worker/session/attempt state belongs in Temporal workflow state,
+  Activity heartbeat/progress, and local artifacts.
+
+## Idempotency
+
+Use stable idempotency keys for every side-effecting transition.
+
+Recommended key ingredients:
+
+- workflow id;
+- issue ref;
+- transition kind;
+- expected from state;
+- requested to state;
+- attempt slot.
+
+Existing mechanisms should be migrated, not replaced:
+
+- state transitions use tracker readback equality;
+- project field updates use field equality readback;
+- workpad and timeline evidence use hidden recovery markers;
+- artifacts use transition ids in paths;
+- event log audit records include the transition id or idempotency key.
+
+Activity retry must not create duplicate tracker comments, duplicate claims,
+duplicate worktrees, duplicate PR links, or duplicate terminal writes.
+
+## Tracker Field Diet
+
+2607 should reduce unnecessary GitHub Project field churn.
+
+Project/tracker fields should retain:
+
+- current workflow state;
+- coarse lane ownership when human-visible;
+- PR/status facts that operators need in the tracker;
+- terminal result or blocker facts that are useful outside the App.
+
+Local Temporal state and artifacts should own:
+
+- worker attempt ids;
+- heartbeat/progress timestamps;
+- Codex thread/session references;
+- detailed recovery state;
+- local worktree paths;
+- retry counters;
+- transient diagnostics;
+- large evidence and transcripts.
+
+If local state becomes unrecoverable for one issue, the acceptable recovery
+strategy is to stop that issue, clear local state, and restart from tracker
+state and durable artifacts. Each issue is atomic enough that this is cheaper
+than keeping every runtime detail in GitHub Project fields.
+
+## External Tracker Changes
+
+Tracker state is the external fact. Runtime state is local execution evidence.
+
+Recommended behavior:
+
+- if observed state already equals requested target, return `already_applied`;
+- if observed state differs from `expected_from_state` and is active, return
+  `conflict` with reason `external_state_changed`;
+- if observed state is terminal, return `conflict` with reason
+  `external_terminal_state`;
+- if the tracker operation hits network, rate-limit, or transient backend
+  failure, return retryable Activity failure or `retry_later` according to the
+  Temporal retry policy;
+- if auth, schema, permission, or validation is broken, return non-retryable
+  failure so `IssueWorkflow` can enter `Need Human Input`.
+
+`IssueWorkflow` decides whether a conflict moves to `Need Human Input`, stops,
+or reconciles. The Activity reports the fact; it does not guess the workflow
+policy.
+
+## Complete Migration Submilestones
+
+The 2607 target is complete tracker transition ownership, not a partial
+delivery milestone. To avoid losing scope, split the work into submilestones
+with explicit coverage.
+
+### TTA-1: Contract And Tests
+
+- Define request/result DTOs.
+- Define transition outcomes and conflict reasons.
+- Port recovery marker/idempotency tests into the new boundary.
+- Add tests proving full `TrackerIssue` is not required in the Workflow
+  contract.
+
+### TTA-2: State Transition Commits
+
+- Move all tracker status changes into `TrackerTransitionActivity`.
+- Cover Main, Review, Human Review, Rework, Merging, Backlog, Todo, Need to
+  Clarify, Need Human Input, and Done transitions.
+- Remove direct lane/App/CLI state writes.
+
+### TTA-3: Evidence And Workpad Commits
+
+- Move transition evidence writes into the Activity boundary.
+- Reuse workpad/timeline marker semantics.
+- Keep large evidence in local artifacts and store refs in tracker-visible
+  evidence.
+
+### TTA-4: Claim And Field Diet
+
+- Audit existing GitHub Project fields.
+- Keep only human-visible coarse fields in the tracker.
+- Move detailed worker/session/retry state into Temporal state, Activity
+  progress, and local artifacts.
+- Remove or stop writing redundant field flags after a compatibility window.
+
+### TTA-5: Reconcile And Recovery
+
+- Implement typed conflict handling for external tracker changes.
+- Implement readback recovery for transient write failures.
+- Define one-issue local reset recovery: clear local runtime state and rebuild
+  from tracker state plus durable artifacts when needed.
+
+### TTA-6: Delete Old Mutation Paths
+
+- Delete or reduce old CLI/lane mutation code after equivalent Temporal paths
+  exist.
+- Keep debug/admin commands only if they call the same Temporal
+  start/query/signal/update boundary.
+- Verify no non-Activity path can write tracker state.

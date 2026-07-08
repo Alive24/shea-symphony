@@ -55,18 +55,30 @@ Write operations that should use the unified path:
 - close issue;
 - create follow-up issue.
 
+Direction detail:
+
+- Do not keep the old lane mutation model as a wrapper around Temporal.
+- Migrate existing tracker adapter, readback recovery, marker, workpad, and
+  audit behavior into the `TrackerTransitionActivity` boundary.
+
 ### Lane-Local State Mapping
 
 Problem:
 
 - Main, Review, Merge, Doctor, and recovery paths can each encode state mapping
   and terminal behavior.
+- GitHub Project fields accumulated detailed field flags for duplicate-claim
+  prevention and recovery, which increases Project read/write churn.
 
 Direction:
 
 - Move standard state vocabulary and transition checks into `IssueWorkflow`.
 - Record state transitions in Temporal history and evidence.
 - Stop and reconcile when tracker state and runtime state conflict.
+- Keep tracker fields for human-visible state and coarse ownership. Move
+  worker attempts, heartbeats, retry counters, local worktree paths, Codex
+  session refs, and transient recovery detail into Temporal state, Activity
+  progress, and local artifacts.
 
 ### App Refresh And Read Surfaces
 

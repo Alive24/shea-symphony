@@ -50,7 +50,16 @@ payloads.
 ## Snapshot Shape
 
 `SymphonySnapshot` should be the first read surface for the App. In 2607 it
-should be backed by Temporal workflow queries, not CLI command output.
+should be backed by the local Symphony runtime boundary, not CLI command
+output.
+
+The read source depends on scope:
+
+- single issue detail should prefer Temporal Query for authoritative workflow
+  state;
+- top-level multi-issue dashboard should prefer SQLite materialized snapshots;
+- explicit refresh operations may run Activities that update tracker cache,
+  PR summaries, and artifact indexes.
 
 `IssueWorkflow` state and query layering are defined in
 `ISSUE-WORKFLOW-STATE.md`.
@@ -77,13 +86,16 @@ It should not include:
 - full worktree status for every issue;
 - source-of-truth state inferred by the App.
 
-Use two query layers:
+Use two read layers:
 
 - `dashboard_snapshot` for lightweight operational summaries;
 - `issue_detail_snapshot` for one issue's attempt summaries, waiting detail,
   recent artifact refs, review summary, and merge summary.
 
-Both query layers return artifact refs and summaries, not artifact bodies.
+`dashboard_snapshot` is normally assembled from SQLite local read-model rows.
+`issue_detail_snapshot` is normally backed by Temporal Query and may include
+SQLite artifact index metadata. Both return artifact refs and summaries, not
+artifact bodies.
 
 ## Runtime And Tracker State
 
@@ -152,7 +164,8 @@ should reflect that through `Need Human Input`, `Need to Clarify`, or
 
 For 2607 hardening, prefer:
 
-- Temporal query-backed reads;
+- Temporal Query-backed issue detail reads;
+- SQLite-backed dashboard materialized reads;
 - local artifact references for large details;
 - no independent local Symphony service in 2607.
 
@@ -167,7 +180,7 @@ Top-level dashboard refresh should be cheap:
 - avoid full worktree scans;
 - avoid mutating commands;
 - avoid repeated tracker reads inside one refresh;
-- prefer cache plus explicit refresh when needed.
+- prefer SQLite materialized cache plus explicit refresh when needed.
 
 Hard timing targets should come after a measurement pass, but the first design
 constraint is clear: local refresh should not feel blocked after LLM work has

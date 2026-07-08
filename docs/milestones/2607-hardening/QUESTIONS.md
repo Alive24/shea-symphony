@@ -251,14 +251,29 @@ control-plane work rather than LLM latency.
 
 ### What should App refresh read?
 
-The top-level dashboard should start from a Temporal query-backed
-`SymphonySnapshot`. It should show current operational lane items, human todo
-items, concise PR number/status, local Temporal/worker availability, and
-workflow state needed for display.
+The top-level dashboard should start from a SQLite-backed
+`dashboard_snapshot` materialized by Symphony runtime paths. It should show
+current operational lane items, human todo items, concise PR number/status,
+local Temporal/worker availability, and workflow state needed for display.
 
 The dashboard should not show worktree path, branch name, full traces, or full
 artifact bodies. Those belong in lane item detail and should be loaded lazily
 after drill-down.
+
+Temporal Query remains the preferred source for one issue's authoritative
+runtime state. SQLite is for aggregate dashboard reads, tracker cache, PR
+summary cache, artifact index, and freshness markers.
+
+### Does SQLite replace Temporal Query?
+
+No. Temporal Query reads deterministic per-workflow state from Temporal history
+and worker replay/cache. It is the right tool for one issue's current workflow
+state.
+
+SQLite is the local read model/cache/index for data that is awkward or slow to
+compute by querying many workflows, tracker items, and artifact directories on
+each render. It is durable and useful for future async sync/export, but remains
+rebuildable and non-authoritative for workflow progression.
 
 Project history and broad queue browsing should stay in the tracker.
 
@@ -278,7 +293,8 @@ be workflow/activity outcomes or artifact links.
 
 Current leaning: start with relative targets before hard numbers:
 
-- Temporal query-backed dashboard refresh;
+- SQLite-backed dashboard refresh;
+- Temporal Query-backed issue detail refresh;
 - no mutating command from UI refresh;
 - non-LLM path should be seconds-scale unless waiting on external services.
 

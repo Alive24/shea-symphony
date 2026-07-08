@@ -133,7 +133,9 @@ Updates:
 
 2607 implication:
 
-- dashboard refresh uses Query;
+- issue detail refresh uses Query;
+- dashboard refresh may use a SQLite materialized read model populated from
+  Temporal/tracker/artifact projections;
 - fire-and-continue human input can use Signal;
 - UI actions that need accepted/rejected feedback should use Update when Rust
   SDK support is adequate;

@@ -26,7 +26,9 @@ Problem:
 
 Direction:
 
-- Prefer Temporal query-backed workflow snapshots for App reads.
+- Prefer SQLite materialized dashboard reads for top-level App refresh.
+- Prefer Temporal Query for selected issue detail and authoritative workflow
+  state.
 - Use targeted readback after writes instead of repeated full scans.
 - Make external waits visible in status snapshots.
 
@@ -91,8 +93,9 @@ Problem:
 
 Direction:
 
-- App dashboard starts from a Temporal query-backed `SymphonySnapshot` that
-  includes tracker state and workflow state.
+- App dashboard starts from a SQLite-backed `dashboard_snapshot` materialized
+  by Symphony runtime paths.
+- Selected issue detail reads Temporal Query for authoritative workflow state.
 - Artifact files are loaded lazily for drill-down, not for every top-level
   dashboard refresh.
 - App refresh must not trigger mutating commands.

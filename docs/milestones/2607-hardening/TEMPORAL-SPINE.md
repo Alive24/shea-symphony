@@ -138,19 +138,22 @@ Use updates when the caller needs synchronous accepted/rejected feedback. Use
 signals for fire-and-continue actions. If Rust SDK support makes updates
 awkward, use signal plus query first without changing the architecture.
 
-## Queries
+## Queries And Read Model
 
-Dashboard and detail reads should be Temporal query-backed:
+Issue detail reads should be Temporal Query-backed:
 
-- dashboard snapshot;
-- issue detail;
 - current state;
 - waiting reason;
 - active PR summary;
-- artifact references.
+- artifact references;
+- attempt summaries.
+
+Top-level dashboard reads should use the SQLite local read model for
+multi-issue aggregation, tracker cache, PR summary cache, and artifact indexes.
 
 The App should not run workflow internals to refresh. It should query current
-workflow state and lazy-load artifact details.
+workflow state for selected issue detail, read materialized dashboard state for
+top-level views, and lazy-load artifact details.
 
 ## App And CLI
 

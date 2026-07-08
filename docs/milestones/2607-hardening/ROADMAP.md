@@ -53,9 +53,12 @@ Success means a maintainer can answer:
 
 - Define `IssueWorkflow` durable state as small resumable control state,
   summaries, and artifact refs.
-- Define query-backed `SymphonySnapshot` for App reads.
+- Define Temporal Query-backed issue detail reads.
+- Define SQLite-backed local dashboard read model/cache/index.
 - Keep top-level dashboard refresh separate from lane item detail.
-- Introduce Temporal queries for dashboard and issue detail.
+- Use Temporal Query for authoritative per-workflow runtime state.
+- Use SQLite for multi-issue dashboard aggregation, tracker cache, PR summary
+  cache, artifact index, and freshness markers.
 - Make Temporal workflow state the durable source for running, retrying,
   waiting, and terminal worker state.
 - Require tracker transition success as part of lane handoff completion.
@@ -110,4 +113,6 @@ Success means a maintainer can answer:
 - Measure non-LLM control-plane paths.
 - Remove repeated tracker reads.
 - Remove UI-triggered command churn by using Temporal queries/signals/updates.
+- Avoid dashboard-wide Temporal/tracker/filesystem fanout by reading SQLite
+  materialized snapshots.
 - Keep slow external dependencies visible in status snapshots.

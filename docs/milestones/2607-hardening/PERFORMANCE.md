@@ -25,7 +25,8 @@ custom loop.
 
 Use relative targets until the first timing pass lands:
 
-- query-backed dashboard refresh;
+- SQLite-backed dashboard materialized refresh;
+- Temporal Query-backed issue detail refresh;
 - no mutating command from App refresh;
 - App refresh should not run heavyweight Activity or tracker mutation paths;
 - dashboard refresh should load artifact detail lazily after the operator drills
@@ -34,6 +35,7 @@ Use relative targets until the first timing pass lands:
   full traces, or full artifact bodies;
 - no repeated Project full scan inside one workflow step unless a write requires
   readback;
+- no dashboard-wide Temporal/tracker/filesystem fanout on ordinary render;
 - non-LLM paths should be seconds-scale unless waiting on external services;
 - status snapshots should explain external waits.
 
@@ -42,6 +44,7 @@ Use relative targets until the first timing pass lands:
 - `project state`
 - `doctor`
 - Temporal workflow query
+- SQLite local read-model query
 - Temporal Activity duration and retries
 - Main lane claim
 - Review lane claim/result application

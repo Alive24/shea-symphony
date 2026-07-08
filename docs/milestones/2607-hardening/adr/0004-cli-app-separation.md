@@ -29,5 +29,6 @@ or call the same Temporal start/query/signal/update boundary as the App.
 ## Follow-Up
 
 - Define Tauri backend command allowlist.
-- Define Temporal query-backed workflow snapshot for 2607.
+- Define Temporal Query-backed issue detail reads for 2607.
+- Define SQLite-backed dashboard read model for 2607.
 - Audit existing App read surfaces for heavy command paths.

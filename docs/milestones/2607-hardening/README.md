@@ -35,6 +35,8 @@ Separate the reliable runtime named `Symphony` from the extension layer named
 Symphony should own hard execution concerns through Temporal workflows and
 activities: tracker reads and writes, workflow state, worktrees, agent running,
 review, merge, runtime state, logging, traceability, and status snapshots.
+SQLite backs the local read model/cache/index for dashboard and artifact lookup;
+it does not own workflow progression.
 
 Shea should own extension concerns: skills, prompt templates, semantic gates,
 Issue Forge, Dream/Reflect style backlog mining, and operator interaction.
@@ -105,6 +107,8 @@ Subtraction does not mean:
   fallback.
 - Snapshot/dashboard: keep top-level App refresh light and move issue details
   behind drill-down.
+- Local state DB: use SQLite as a rebuildable dashboard read model, tracker
+  cache, PR summary cache, and artifact index.
 - Performance: measure and reduce repeated non-LLM control-plane work.
 
 ## Source Documents
@@ -119,12 +123,14 @@ Subtraction does not mean:
 - `docs/milestones/2607-hardening/ACTIVITY-ERROR-TAXONOMY.md`
 - `docs/milestones/2607-hardening/ISSUE-WORKFLOW.md`
 - `docs/milestones/2607-hardening/ISSUE-WORKFLOW-STATE.md`
+- `docs/milestones/2607-hardening/LOCAL-STATE-DB.md`
 - `docs/milestones/2607-hardening/TEMPORAL-SPINE.md`
 - `docs/milestones/2607-hardening/SUBTRACTION-INVENTORY.md`
 - `docs/milestones/2607-hardening/SNAPSHOT-AND-DASHBOARD.md`
 - `docs/milestones/2607-hardening/TRACKER-TRANSITIONS.md`
 - `docs/milestones/2607-hardening/TRACKER-TRANSITION-ACTIVITY.md`
 - `docs/milestones/2607-hardening/adr/0006-temporal-local-runtime-spine.md`
+- `docs/milestones/2607-hardening/adr/0007-local-state-db-read-model.md`
 - `docs/milestones/2608-workflow-graph-extension/README.md`
 
 ## Open Questions

@@ -195,11 +195,21 @@ Rules:
 
 ## Query Surfaces
 
-Use two query layers.
+Use two read layers. They are related but not identical.
+
+Temporal Query is the authoritative way to read one workflow's current runtime
+state. SQLite is the local materialized read model for dashboard-wide
+aggregation, tracker cache, PR summary cache, artifact index, and freshness
+markers.
 
 ### Dashboard Snapshot
 
 `dashboard_snapshot` is the top-level App read model.
+
+It should normally be assembled from SQLite local state DB rows, refreshed by
+explicit Symphony runtime paths. It may include fields projected from Temporal
+Query results, but it should not fan out across every workflow, tracker item,
+and artifact directory on each App render.
 
 Recommended fields:
 
@@ -231,6 +241,10 @@ It should not include:
 
 `issue_detail_snapshot` expands one issue after drill-down.
 
+It should normally be backed by Temporal Query for the selected workflow, plus
+SQLite artifact-index metadata when useful. It should still lazy-load artifact
+bodies.
+
 Recommended fields:
 
 ```text
@@ -257,13 +271,15 @@ What this gives up:
   tracker context.
 - Debugging may require opening artifact refs.
 - Query output is not a complete historical archive.
+- Dashboard state may be stale until explicit refresh or projection update.
 
 Why this is acceptable:
 
 - Temporal replay stays fast.
-- Query payloads stay small.
+- Temporal Query payloads stay small.
 - Tracker and artifact store remain the right homes for rich evidence.
 - The dashboard avoids repeated heavy control-plane reads.
+- SQLite read-model rows stay rebuildable and do not become workflow truth.
 
 Do not derive dashboard truth in the App.
 
@@ -278,5 +294,7 @@ artifact filenames, or local worktree inspection.
 - If a field grows large, replace it with an artifact ref.
 - Query handlers should not perform filesystem, network, tracker, or artifact
   I/O.
+- Query handlers should not read SQLite; SQLite belongs to the client/backend
+  read-model layer, not deterministic Workflow code.
 - Activities perform targeted reads and writes; Workflows expose their current
   durable summary.

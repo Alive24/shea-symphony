@@ -160,8 +160,8 @@ App/runtime initialization should verify:
 - `symphony-agent` worker is polling or intentionally disabled;
 - `symphony-local` worker is polling;
 - required Workflow and Activity types are registered on the expected queues.
-- reconciler/App start logic will only start episodes for executable tracker
-  states, up to configured capacity.
+- Workflow Coordinator/App start logic will only start executions for
+  executable tracker states, up to configured capacity.
 
 If `symphony-agent` is unavailable, the App may still show dashboard state and
 allow local/admin operations, but issue implementation work should be marked

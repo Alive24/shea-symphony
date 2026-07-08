@@ -183,8 +183,9 @@ Notes:
 
 - `Need Human Input` is usually a static tracker lane after the workflow
   records the blocker and evidence.
-- Start or resume an `IssueWorkflow` episode only when a routed operator action
-  arrives or automatic doctor/reconcile work is required.
+- Start an `IssueWorkflow` execution or find an existing active execution only
+  when a routed operator action arrives or automatic doctor/reconcile work is
+  required.
 
 ## Agent Review
 

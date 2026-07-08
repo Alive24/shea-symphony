@@ -23,6 +23,12 @@ Use local Temporal as the 2607 Symphony runtime spine.
   activations.
 - `IssueWorkflow` is an executable orchestration episode, not a live execution
   for every issue from `Backlog` to `Done`.
+- `workflow_id` is a human-readable, episode-scoped Symphony execution
+  identity and Temporal Workflow ID. Temporal's returned `run_id` is retained
+  for exact execution lookup.
+- A thin Workflow Coordinator starts executable `IssueWorkflow` executions and
+  records `workflow_id`/`run_id`; it does not run agents or choose business
+  transitions.
 - Multiple executable issues run concurrently as separate Workflow episodes.
 - Side effects run through Temporal Activities.
 - Read-only or non-conflicting Activities may run concurrently; external

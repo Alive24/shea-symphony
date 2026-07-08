@@ -179,11 +179,15 @@ Starting a Workflow requires:
 - task queue;
 - Workflow ID.
 
-Workflow ID should map to the business entity.
+In 2607, `IssueWorkflow` executions are tracker-state-triggered pulses, not
+one long-lived Workflow per issue. Workflow ID should therefore identify the
+execution pulse, while still carrying the issue identity.
 
 2607 implication:
 
-- use a stable ID such as `issue:<repo-id>:<issue-number>`;
+- use a human-readable, episode-scoped ID such as
+  `issue:<repo-slug>:<issue-number>:pulse:<from-state>-to-<target-kind>:<YYYYMMDD-HHMMSSZ>:<source-slug>`;
+- use Temporal's returned `run_id` for exact Temporal execution lookup;
 - Tauri backend owns workflow ID construction;
 - App does not expose Temporal task queue or payload details;
 - CLI debug wrappers, if any, call the same client boundary.

@@ -96,12 +96,18 @@ Start with five small tables that support known read paths:
 ```text
 workflow_index(
   workflow_id,
+  run_id,
   repo_id,
   issue_ref,
+  from_state,
+  target_kind,
   current_state,
   active_step,
   waiting_kind,
+  source_ref,
+  started_at,
   last_progress_at,
+  status,
   freshness,
   updated_at
 )
@@ -165,11 +171,26 @@ Primary keys:
 
 Indexes:
 
+- `workflow_index(repo_id, issue_ref, status)`;
 - `artifact_index(workflow_id)`;
 - `artifact_index(repo_id, issue_ref)`;
 - `activity_progress(workflow_id, mutation_id)`;
 - `tracker_cache(freshness)`;
 - `workflow_index(current_state, waiting_kind)`.
+
+Use `workflow_index` as the local active workflow index. It records the
+human-readable Temporal Workflow ID plus the Temporal-native `run_id` returned
+after start. The active index should let the Workflow Coordinator enforce one
+active `IssueWorkflow` execution per issue at a time without scanning tracker
+or Temporal history on every App refresh.
+
+`workflow_id` is the primary Symphony execution identity. `run_id` is stored
+for exact Temporal execution lookup, not as the product-level identity.
+
+For active statuses, enforce one active workflow row per `(repo_id, issue_ref)`
+with a partial unique index when available, or an equivalent typed store guard.
+This is a local duplicate-start guard and App read model, not the authoritative
+workflow fact.
 
 Do not add a dedicated `tracker_mutation_log` table in the initial schema.
 Temporal history is the durable mutation attempt ledger. SQLite projects only

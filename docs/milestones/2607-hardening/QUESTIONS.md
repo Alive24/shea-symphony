@@ -451,7 +451,8 @@ Static tracker lanes do not start a live Workflow execution by default:
 - `Need Human Input`, unless automatic doctor/reconcile work is required;
 - `Done`.
 
-Executable states can start or resume a workflow episode:
+Executable states can start a workflow execution or find an existing active
+execution:
 
 - `Todo`;
 - `In Progress`;
@@ -465,8 +466,51 @@ approval, request-rework, or human-fix actions arrive through the Operator
 Action Bridge and then start the appropriate validation, rework, or merging
 episode.
 
-The Symphony reconciler/App start command reads tracker states and starts
-episodes only for executable states, up to configured capacity.
+The Workflow Coordinator/App start path reads tracker states, checks the local
+active workflow index, and starts executions only for executable states, up to
+configured capacity.
+
+### How should Workflow identity work?
+
+Use a human-readable, episode-scoped Temporal `workflow_id`:
+
+```text
+issue:<repo-slug>:<issue-number>:pulse:<from-state>-to-<target-kind>:<YYYYMMDD-HHMMSSZ>:<source-slug>
+```
+
+The `workflow_id` is the Symphony execution identity.
+
+Use Temporal's returned `run_id` only as the Temporal-native execution
+locator. SQLite, artifacts, logs, and App trace use `workflow_id` as the
+primary semantic key, adding `run_id` when exact Temporal execution lookup is
+needed.
+
+### What does the Workflow Coordinator own?
+
+The Workflow Coordinator is a thin launcher and registrar:
+
+- discover executable tracker states;
+- construct the human-readable `workflow_id`;
+- check the SQLite active workflow index and Temporal visibility when needed;
+- start `IssueWorkflow` executions;
+- record `workflow_id` and `run_id`;
+- enforce one active `IssueWorkflow` execution per issue at a time.
+
+It does not run agents, choose business transitions, or write tracker state.
+Temporal Workflow owns orchestration decisions; Activities own side effects.
+
+### How often should Workflow execution read the tracker?
+
+Do boundary validation, not high-frequency tracker polling:
+
+- read tracker state/revision at Workflow start;
+- optionally validate before long agent work;
+- validate expected tracker state before transition writes;
+- perform targeted readback after fact-changing writes;
+- treat external tracker edits as conflict or human-input paths.
+
+Normal in-flight decisions should rely on Temporal state, Activity results,
+SQLite active workflow index rows, and artifact references.
 
 ### What is the starting task queue topology?
 

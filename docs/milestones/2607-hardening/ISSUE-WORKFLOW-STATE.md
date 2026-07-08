@@ -36,6 +36,7 @@ Recommended state:
 ```text
 IssueWorkflowState {
   workflow_id
+  run_id
   repo_id
   issue_ref
   tracker_backend

@@ -260,9 +260,10 @@ Tracker transitions, PR-to-issue linking, merge/land, terminal writes, and
 claim cleanup should be serialized per issue. Activity success requires
 readback verification of the desired external fact.
 
-Tracker lane transitions create executable conditions. Symphony starts or
-resumes an `IssueWorkflow` episode only for executable states and only up to
-configured capacity.
+Tracker lane transitions create executable conditions. The Workflow
+Coordinator starts an `IssueWorkflow` execution only for executable states and
+only up to configured capacity. If an execution for that issue is already
+active, it finds the active execution instead of creating another one.
 
 ## Deletion Target
 

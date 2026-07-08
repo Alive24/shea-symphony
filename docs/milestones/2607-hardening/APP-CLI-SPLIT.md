@@ -58,7 +58,8 @@ Start issue workflow
 
 Human input / approve / request rework / human fix
   -> App opens Codex/operator flow
-  -> Coding Agent or operator flow calls Symphony/Temporal interface
+  -> Coding Agent or operator flow calls narrow tool/MCP action bridge
+  -> Bridge submits Temporal Update to Symphony
   -> Workflow validates the request
   -> Activities update tracker/read model
 
@@ -70,6 +71,9 @@ DB health / migration / rebuild
 The App may expose buttons or links for human todo actions, but those controls
 should route to the appropriate Coding Agent/operator flow. They should not
 apply tracker changes or encode review/rework policy in the App.
+
+Routed flows should use the Operator Action Bridge tool/MCP interface. Do not
+make CLI shell commands the normal submit path for Coding Agent actions.
 
 For refresh operations, prefer Temporal Update when the UI needs immediate
 accepted/rejected feedback. The refresh work itself may continue
@@ -83,12 +87,14 @@ projection.
 - run the Symphony worker for development or CI;
 - provide thin admin/debug wrappers over Temporal start, query, signal, or
   update APIs.
+- provide debug-only wrappers for operator action submission if needed.
 
 ## CLI Must Not
 
 - own product workflow semantics;
 - run tick/autopilot loops;
 - directly merge, review, doctor, or transition issues as business logic;
+- be the primary submit channel for Coding Agent operator actions;
 - become a second operation surface beside Temporal.
 
 Existing product commands such as autopilot, main loop, review loop, merge

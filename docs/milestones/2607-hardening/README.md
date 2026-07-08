@@ -124,6 +124,7 @@ Subtraction does not mean:
 - `docs/milestones/2607-hardening/ISSUE-WORKFLOW.md`
 - `docs/milestones/2607-hardening/ISSUE-WORKFLOW-STATE.md`
 - `docs/milestones/2607-hardening/LOCAL-STATE-DB.md`
+- `docs/milestones/2607-hardening/OPERATOR-ACTION-BRIDGE.md`
 - `docs/milestones/2607-hardening/TEMPORAL-SPINE.md`
 - `docs/milestones/2607-hardening/SUBTRACTION-INVENTORY.md`
 - `docs/milestones/2607-hardening/SNAPSHOT-AND-DASHBOARD.md`

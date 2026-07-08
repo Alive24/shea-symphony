@@ -18,6 +18,12 @@ Codex/operator flows for human input, approval, human fixes, rework, and human
 doctor work, but it does not implement those workflow semantics directly. The
 routed flow calls Symphony/Temporal interfaces with structured results.
 
+Routed Coding Agent/operator flows use a narrow Operator Action Bridge
+tool/MCP interface as the normal submit path. The bridge validates
+`OperatorActionContext` capability, action allowlist, expiry, and payload
+schema before submitting a Temporal Update. CLI wrappers are debug/admin
+fallback only, not the primary submit channel.
+
 CLI is admin/dev fallback only. It does not own workflow product operations.
 Existing product commands should either disappear, become compatibility shims,
 or call the same Temporal start/query/signal/update boundary as the App.
@@ -28,6 +34,7 @@ or call the same Temporal start/query/signal/update boundary as the App.
 - App surfaces should consume status snapshots and state-grouped workflow
   snapshots.
 - Human review/rework policy stays outside App UI code.
+- Coding Agent flows do not need raw Temporal or tracker clients.
 - Write paths stay testable as Temporal Activities.
 - CLI no longer preserves autopilot/main/review/merge loop semantics as a
   parallel product surface.

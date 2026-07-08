@@ -141,8 +141,9 @@ awkward, use signal plus query first without changing the architecture.
 
 The App is not expected to implement human input, approval, or rework semantics
 directly. For those actions it should open the appropriate Codex/operator flow.
-The routed flow then calls the Symphony/Temporal interface with structured
-results. Tracker mutations remain inside Activities.
+The routed flow then calls the narrow Operator Action Bridge tool/MCP interface
+with structured results. The bridge submits Temporal Updates to Symphony.
+Tracker mutations remain inside Activities.
 
 ## Queries And Read Model
 

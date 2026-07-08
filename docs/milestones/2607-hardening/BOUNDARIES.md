@@ -110,3 +110,7 @@ The App should not:
 - bypass Temporal workflow or Activity boundaries;
 - implement human input, approval, rework, or human doctor semantics directly
   in UI code.
+
+Routed Coding Agent/operator flows should receive an `OperatorActionContext`
+and submit structured results through a narrow tool/MCP bridge. They should not
+receive raw tracker mutation access or raw Temporal client authority.

@@ -149,8 +149,9 @@ Doctor work may have two modes:
 
 Human input, approval, human fixes, and rework requests should follow the same
 pattern: the App displays the human todo and opens the appropriate
-Codex/operator flow. That flow calls Symphony/Temporal interfaces with
-structured results, and Symphony-owned Activities commit tracker/read-model
+Codex/operator flow. That flow calls the Operator Action Bridge tool/MCP
+interface with structured results. The bridge submits to Symphony through
+Temporal Update, and Symphony-owned Activities commit tracker/read-model
 changes.
 
 ## Stuck State Display

@@ -207,11 +207,16 @@ Rig may be revisited later only if Shea needs a Rust-native external AI layer
 for structured judging, multi-provider eval, MCP tools outside Codex, or
 independent evaluator agents that Codex app-server and Skills do not cover.
 
-Do not add an MCP server in 2607.
+Do not add a broad MCP server in 2607.
 
 MCP may later expose selected Temporal/Symphony operations to external agents,
 but it should be an interface over the Temporal runtime, not the internal
 orchestration model.
+
+One narrow exception is allowed in 2607: the Operator Action Bridge may be
+implemented as a tool/MCP surface for routed Codex/operator flows. That bridge
+only submits scoped operator action results from an `OperatorActionContext`; it
+does not expose raw Temporal, tracker, SQLite, or workflow mutation APIs.
 
 Do not build vector RAG in 2607.
 

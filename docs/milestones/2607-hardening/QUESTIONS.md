@@ -374,6 +374,22 @@ For refresh/cache requests, prefer Temporal Update when the UI needs
 accepted/rejected feedback. The refresh itself can proceed asynchronously and
 surface progress through workflow state plus SQLite projection.
 
+### How do routed Coding Agent flows submit actions?
+
+Use an Operator Action Bridge tool/MCP interface as the primary path, not CLI.
+
+The App asks Symphony to prepare an `OperatorActionContext`, then opens the
+Codex/operator flow with a context path and brief. The routed flow calls a
+narrow tool such as `submit_operator_action(context_id, action, payload)`.
+
+The bridge validates context existence, expiry, allowed action, and payload
+schema, then submits a Temporal Update. Workflow validation runs again before
+any Activity changes tracker/read-model state.
+
+Coding Agent flows should not receive raw tracker mutation access, raw Temporal
+client access, or SQLite write access. CLI wrappers, if any, are debug/admin
+fallback only.
+
 ### What are the first concrete performance targets?
 
 Current leaning: start with relative targets before hard numbers:

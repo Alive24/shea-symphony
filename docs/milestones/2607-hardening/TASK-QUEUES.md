@@ -4,7 +4,8 @@ Status: Draft
 
 ## Purpose
 
-Define the 2607 Temporal task queue topology.
+Define the 2607 Temporal task queue topology for active workflow episodes and
+Activities.
 
 Temporal task queues should be used for worker capacity, isolation, and
 routing. They are not merely abstract architecture layers.
@@ -107,6 +108,10 @@ The goal is to prevent long-running Coding Agent Activities from delaying:
 - refresh/cache projection;
 - local dashboard read-model maintenance.
 
+Task queue concurrency controls active work, not the number of static issues in
+the tracker. Static lanes such as `Backlog` and `Human Review` do not consume
+worker capacity unless an executable episode is started.
+
 ## Activity-Level Limits
 
 Use Activity-level concurrency limits within each queue.
@@ -155,6 +160,8 @@ App/runtime initialization should verify:
 - `symphony-agent` worker is polling or intentionally disabled;
 - `symphony-local` worker is polling;
 - required Workflow and Activity types are registered on the expected queues.
+- reconciler/App start logic will only start episodes for executable tracker
+  states, up to configured capacity.
 
 If `symphony-agent` is unavailable, the App may still show dashboard state and
 allow local/admin operations, but issue implementation work should be marked

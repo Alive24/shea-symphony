@@ -12,11 +12,15 @@ Temporal.
 
 ## Core Model
 
-Use one `IssueWorkflow` per issue.
+Use at most one active `IssueWorkflow` execution per issue at a time.
 
 A single Workflow execution is a deterministic ordered state machine. It does
 not mutate its own Workflow state concurrently. Signals and Updates into one
 Workflow are appended to Workflow history and processed in history order.
+
+Tracker remains the durable queue between Workflow activations. `IssueWorkflow`
+is an executable orchestration episode, not a live long-running execution for
+every issue from `Backlog` to `Done`.
 
 Parallelism happens through:
 
@@ -25,13 +29,17 @@ Parallelism happens through:
 - Child Workflows when a later design needs them;
 - Worker pools.
 
-Multiple issues may run concurrently as separate `IssueWorkflow`s. Within one
-issue, read-only or non-conflicting Activities may run concurrently when the
-Workflow can safely join their results.
+Multiple executable issues may run concurrently as separate `IssueWorkflow`
+episodes. Within one issue, read-only or non-conflicting Activities may run
+concurrently when the active episode can safely join their results.
+
+Workflow population is based on executable tracker states, not all
+Shea-managed issues.
 
 ## Per-Issue Ordering
 
-`IssueWorkflow` owns ordered per-issue decisions:
+An active `IssueWorkflow` episode owns ordered per-issue decisions while it is
+running:
 
 - current state;
 - next allowed action;
@@ -40,9 +48,10 @@ Workflow can safely join their results.
 - when to request tracker transition or mutation;
 - when to enter `Need Human Input`.
 
-Workflow code must validate state and allowed actions whenever it handles a
-Signal or Update. History ordering prevents concurrent Workflow state mutation,
-but it does not remove the need for validation.
+Workflow code must validate tracker state and allowed actions whenever it
+handles a Signal or Update. History ordering prevents concurrent Workflow state
+mutation inside one execution, but it does not remove the need for validation
+against tracker state and the action context.
 
 ## Parallel Activities
 
@@ -80,7 +89,8 @@ command exited successfully.
 
 ## Signals And Updates
 
-Signals and Updates into one `IssueWorkflow` are ordered by Workflow history.
+Signals and Updates into one active `IssueWorkflow` execution are ordered by
+Workflow history.
 
 Workflow handling still must validate:
 
@@ -109,8 +119,8 @@ merge, or terminal writes.
 
 ## Worker Pools
 
-Worker pools own parallel external work. `IssueWorkflow` owns per-issue
-ordering.
+Worker pools own parallel external work. Active `IssueWorkflow` episodes own
+per-issue ordering. Tracker owns queueing between activations.
 
 2607 should start with three task queues:
 
@@ -147,3 +157,4 @@ The concurrency policy should protect external systems:
 - No per-model-turn Temporal Activity graph.
 - No SQLite-backed workflow coordinator.
 - No App-side workflow scheduler.
+- No long-lived idle Workflow execution for static tracker lanes.

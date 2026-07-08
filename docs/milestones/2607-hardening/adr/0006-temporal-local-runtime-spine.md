@@ -16,9 +16,14 @@ loop as a second durable runtime.
 
 Use local Temporal as the 2607 Symphony runtime spine.
 
-- `IssueWorkflow` covers every standard Shea Symphony state from the start.
-- Use one `IssueWorkflow` per issue as the ordered per-issue decision boundary.
-- Multiple issues run concurrently as separate Workflow executions.
+- `IssueWorkflow` understands every standard Shea Symphony state from the
+  start.
+- Use at most one active `IssueWorkflow` execution per issue at a time.
+- Tracker remains the durable queue and external state between workflow
+  activations.
+- `IssueWorkflow` is an executable orchestration episode, not a live execution
+  for every issue from `Backlog` to `Done`.
+- Multiple executable issues run concurrently as separate Workflow episodes.
 - Side effects run through Temporal Activities.
 - Read-only or non-conflicting Activities may run concurrently; external
   fact-changing operations remain serial, idempotent, and readback-verified.
@@ -41,8 +46,10 @@ Use local Temporal as the 2607 Symphony runtime spine.
 - The old autopilot/tick/resume loop becomes legacy-to-delete.
 - Symphony does not rebuild an autopilot scheduler beside Temporal.
 - Temporal history becomes the primary local execution trace.
-- Worker pools own parallel external work; `IssueWorkflow` owns ordered
-  per-issue decisions.
+- Worker pools own parallel external work; active `IssueWorkflow` executions
+  own ordered per-issue decisions.
+- Workflow population is based on executable tracker states, not all static
+  Shea-managed issues.
 - Long-running Coding Agent work is isolated from latency-sensitive
   control-plane and local projection work.
 - Large artifacts stay in the local artifact store and are referenced from

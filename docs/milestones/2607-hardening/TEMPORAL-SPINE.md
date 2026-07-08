@@ -8,7 +8,7 @@ Status: Draft
 local Temporal runtime.
 
 This is not a spike and not an adapter for later. Temporal becomes the
-Symphony runtime spine for durable workflow state, retries, waiting, signals,
+Symphony runtime spine for executable workflow episodes, retries, signals,
 queries, activity history, and cancellation.
 
 The protected 2606 MVP branch is the fallback. 2607 does not need to preserve
@@ -20,7 +20,9 @@ Use Temporal local-first:
 
 - local Temporal service is the only orchestration backend for 2607;
 - Temporal Cloud is out of scope;
-- Temporal Workflow owns durable issue orchestration;
+- Temporal Workflow owns executable issue orchestration episodes;
+- tracker remains the durable queue and external state between workflow
+  activations;
 - old autopilot/tick/resume loop is legacy-to-delete;
 - all side effects run through Activities;
 - App operations use Temporal start/query/signal/update through the Tauri
@@ -80,7 +82,8 @@ CLI
 
 ## IssueWorkflow
 
-`IssueWorkflow` should cover every standard Shea Symphony state from the start:
+`IssueWorkflow` should understand every standard Shea Symphony state from the
+start:
 
 - `Backlog`
 - `Todo`
@@ -93,22 +96,31 @@ CLI
 - `Merging`
 - `Done`
 
-Do not create a temporary reduced state machine that omits `Backlog`,
+Do not create a temporary reduced state vocabulary that omits `Backlog`,
 `Agent Review`, `Rework`, `Need Human Input`, or `Need to Clarify`. Those
 states are core to Shea Symphony.
 
-Backlog promotion and quality gates belong inside `IssueWorkflow`. They should
-not remain external pre-work.
+That does not mean every issue keeps a live Workflow execution open from
+`Backlog` to `Done`.
 
-One `IssueWorkflow` should exist per issue. It owns ordered per-issue
-decisions. Multiple issues run concurrently as separate Workflow executions.
+Use at most one active `IssueWorkflow` execution per issue at a time. Tracker
+is the durable queue between activations. `Backlog`, `Human Review`, and most
+`Need Human Input` cases are static tracker lanes by default.
+
+Executable tracker states activate or resume workflow episodes:
+
+- `Todo`;
+- `In Progress`;
+- `Agent Review`;
+- `Rework`;
+- `Merging`;
+- `Need Human Input` only when automatic doctor/reconcile work is required.
 
 ## Activities
 
 Side effects belong in Activities:
 
 - `ContractCheckActivity`
-- `BacklogQualityGateActivity`
 - `TrackerTransitionActivity`
 - `MainAgentActivity`
 - `AgentReviewActivity`
@@ -247,6 +259,10 @@ No lane, extension, App command, or CLI command writes tracker state directly.
 Tracker transitions, PR-to-issue linking, merge/land, terminal writes, and
 claim cleanup should be serialized per issue. Activity success requires
 readback verification of the desired external fact.
+
+Tracker lane transitions create executable conditions. Symphony starts or
+resumes an `IssueWorkflow` episode only for executable states and only up to
+configured capacity.
 
 ## Deletion Target
 

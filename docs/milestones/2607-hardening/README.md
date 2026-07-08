@@ -128,6 +128,7 @@ Subtraction does not mean:
 - `docs/milestones/2607-hardening/TASK-QUEUES.md`
 - `docs/milestones/2607-hardening/TEMPORAL-CONCURRENCY.md`
 - `docs/milestones/2607-hardening/TEMPORAL-SPINE.md`
+- `docs/milestones/2607-hardening/WORKFLOW-ACTIVATION.md`
 - `docs/milestones/2607-hardening/SUBTRACTION-INVENTORY.md`
 - `docs/milestones/2607-hardening/SNAPSHOT-AND-DASHBOARD.md`
 - `docs/milestones/2607-hardening/TRACKER-TRANSITIONS.md`

@@ -166,7 +166,6 @@ extensions and operator-facing policy.
 
 Good initial Activity boundaries:
 
-- `BacklogQualityGateActivity`;
 - `ContractCheckActivity`;
 - `RunCodexImplementationActivity`;
 - `AgentReviewActivity`;

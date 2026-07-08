@@ -6,18 +6,19 @@ Status: Draft
 
 Define the Temporal `IssueWorkflow` state flow for Shea Symphony.
 
-`IssueWorkflow` should cover all standard Shea Symphony tracker states,
-including `Backlog`. Backlog promotion and quality gating are workflow behavior,
-not external pre-work.
+`IssueWorkflow` should understand all standard Shea Symphony tracker states,
+including static lanes such as `Backlog` and `Human Review`. It should not
+stay open from `Backlog` through `Done` for every issue.
 
 Durable Workflow state is defined in `ISSUE-WORKFLOW-STATE.md`. The Workflow
 stores resumable control state, summaries, and artifact refs; rich issue
 payloads, transcripts, diffs, review reports, and artifact bodies stay outside
 Workflow state.
 
-Use one `IssueWorkflow` per issue. A single Workflow execution is an ordered
-state machine; it does not mutate its own Workflow state concurrently. Multiple
-issues may run concurrently as separate Workflow executions.
+Use at most one active `IssueWorkflow` execution per issue at a time. Tracker
+is the durable queue between workflow activations. An `IssueWorkflow` execution
+is an executable orchestration episode, not a live idle workflow for every
+Shea-managed issue.
 
 Activity failure routing is defined in `ACTIVITY-ERROR-TAXONOMY.md`. Activities
 report typed outcomes; `IssueWorkflow` decides retry, wait, conflict handling,
@@ -58,19 +59,12 @@ This diagram shows the full state vocabulary, not every allowed edge.
 Purpose:
 
 - candidate issue intake;
-- quality gate before active work;
 - explicit promotion into `Todo`.
 
 Entry:
 
 - issue enters Shea-managed project backlog;
 - issue is captured by Issue Forge, Dream/Reflect, or manual operator intake.
-
-Activities:
-
-- `BacklogQualityGateActivity`;
-- optional `IssueForgeActivity`;
-- optional semantic contract summary.
 
 Signals or updates:
 
@@ -86,8 +80,10 @@ Exit:
 Notes:
 
 - Do not start implementation from `Backlog`.
-- Backlog workflow can be mostly idle, but promotion and quality gate still
-  belong inside `IssueWorkflow`.
+- `Backlog` is a static tracker queue by default. It does not keep a live
+  `IssueWorkflow` execution open.
+- Promotion to `Todo` creates the executable condition. `Todo` is the workflow
+  activation point for contract check and implementation entry.
 
 ## Todo
 
@@ -157,7 +153,7 @@ move to `Need Human Input` with concrete evidence.
 
 Purpose:
 
-- wait for human/operator input during an active workflow.
+- wait for human/operator input after an active workflow hits a blocker.
 
 Required workflow data:
 
@@ -182,6 +178,13 @@ Exit:
 - to `resume_target` when the blocker is resolved;
 - to `Rework` if the human input changes the implementation contract;
 - to `Done` only for explicit cancellation or terminal no-op policy.
+
+Notes:
+
+- `Need Human Input` is usually a static tracker lane after the workflow
+  records the blocker and evidence.
+- Start or resume an `IssueWorkflow` episode only when a routed operator action
+  arrives or automatic doctor/reconcile work is required.
 
 ## Agent Review
 
@@ -233,6 +236,14 @@ Exit:
 - to `Merging` when approved and lightweight validation passes;
 - to `Rework` when the human requests changes;
 - to `Need Human Input` when validation needs a human decision.
+
+Notes:
+
+- `Human Review` is a static tracker lane by default.
+- Approval, request-rework, or human-fix actions arrive through
+  Codex/operator flow and the Operator Action Bridge.
+- The submitted action creates the executable condition for validation,
+  `Rework`, or `Merging`.
 
 ## Rework
 

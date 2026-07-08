@@ -37,8 +37,9 @@ The standard state set includes:
 `Agent Review` is a formal tracker state, but a Workflow Graph may disable or
 bypass that stage.
 
-`Backlog` is part of `IssueWorkflow`; backlog promotion and quality gate are
-workflow behavior, not external pre-work.
+`Backlog` is part of the standard state vocabulary, but it is a static tracker
+queue by default. Promotion to `Todo` creates the executable condition; `Todo`
+is the workflow activation point.
 
 ### Who writes tracker state?
 
@@ -401,21 +402,29 @@ Current leaning: start with relative targets before hard numbers:
 
 ### What is the 2607 Temporal decision?
 
-Temporal is the 2607 runtime spine, not a future spike. `IssueWorkflow` covers
-all standard Shea Symphony states from the start, including `Backlog`. The old
+Temporal is the 2607 runtime spine, not a future spike. `IssueWorkflow`
+understands all standard Shea Symphony states from the start, including
+`Backlog`, but Workflow executions are activation episodes for executable
+states rather than long-lived executions for every issue. The old
 autopilot/tick/resume loop is legacy-to-delete. Temporal Cloud is out of scope;
 the runtime is local.
 
 ### What is the Temporal concurrency model?
 
-Use one `IssueWorkflow` per issue. A single Workflow execution is a
-deterministic ordered state machine; it does not mutate Workflow state
-concurrently. Signals and Updates are processed in workflow-history order, but
-Workflow code still validates state and allowed actions.
+Use at most one active `IssueWorkflow` execution per issue at a time. Tracker
+is the durable queue and external state between workflow activations.
+`IssueWorkflow` is an executable orchestration episode, not a live execution
+for every issue from `Backlog` to `Done`.
 
-Parallelism happens through multiple Workflow executions, Activities, Child
-Workflows when needed, and Worker pools. Multiple issues can run concurrently.
-Within one issue, read-only or non-conflicting Activities may run concurrently.
+A single Workflow execution is a deterministic ordered state machine; it does
+not mutate Workflow state concurrently. Signals and Updates are processed in
+workflow-history order, but Workflow code still validates tracker state and
+allowed actions.
+
+Parallelism happens through multiple active Workflow episodes, Activities,
+Child Workflows when needed, and Worker pools. Multiple executable issues can
+run concurrently. Within one active issue episode, read-only or non-conflicting
+Activities may run concurrently.
 
 External fact-changing operations remain serial, idempotent, and
 readback-verified: tracker transitions, PR-to-issue linking, merge/land,
@@ -425,9 +434,39 @@ Codex/Main/Review/Merge stay coarse Activity boundaries, not per-model-turn
 Activities. SQLite projection may be concurrent at request level, but DB writes
 use short retryable transactions and remain non-authoritative.
 
-Design implication: Temporal is the durable concurrency spine. Shea should not
-rebuild an autopilot scheduler. `IssueWorkflow` owns ordered per-issue
+Design implication: Temporal is the durable concurrency spine for active work,
+and tracker is the durable queue between activations. Shea should not rebuild
+an autopilot scheduler. Active `IssueWorkflow` episodes own ordered per-issue
 decisions; worker pools own parallel external work.
+
+### What activates an IssueWorkflow?
+
+Workflow population is based on executable tracker states, not every
+Shea-managed issue.
+
+Static tracker lanes do not start a live Workflow execution by default:
+
+- `Backlog`;
+- `Human Review`;
+- `Need Human Input`, unless automatic doctor/reconcile work is required;
+- `Done`.
+
+Executable states can start or resume a workflow episode:
+
+- `Todo`;
+- `In Progress`;
+- `Agent Review`;
+- `Rework`;
+- `Merging`;
+- `Need Human Input` only for automatic doctor/reconcile work.
+
+Backlog promotion to `Todo` creates the executable condition. Human Review
+approval, request-rework, or human-fix actions arrive through the Operator
+Action Bridge and then start the appropriate validation, rework, or merging
+episode.
+
+The Symphony reconciler/App start command reads tracker states and starts
+episodes only for executable states, up to configured capacity.
 
 ### What is the starting task queue topology?
 

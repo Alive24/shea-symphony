@@ -124,6 +124,15 @@ ordering.
 Use Activity-level concurrency limits within each queue. Do not split into many
 more queues until measurement proves contention or isolation needs.
 
+Initial configurable defaults:
+
+- `symphony-core`: up to 3 concurrent control-plane Activities, while
+  serializing fact-changing writes per issue;
+- `symphony-agent`: up to 3 concurrent agent runs, while allowing only one
+  active agent attempt per issue;
+- `symphony-local`: higher local concurrency, initially 8, with short retryable
+  SQLite write transactions.
+
 The concurrency policy should protect external systems:
 
 - limit GitHub/tracker mutation concurrency;

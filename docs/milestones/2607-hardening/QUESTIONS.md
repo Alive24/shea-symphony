@@ -449,6 +449,16 @@ Start with:
 Use Activity-level concurrency limits within each queue. Do not split into many
 more queues until measurement proves it.
 
+Initial defaults are configurable:
+
+- `symphony-core`: up to 3 concurrent control-plane Activities, but
+  fact-changing writes remain serial per issue;
+- `symphony-agent`: up to 3 concurrent agent runs, matching prior Codex
+  app-server/agy CLI dogfood capacity, but only one active agent attempt per
+  issue;
+- `symphony-local`: start higher, around 8 local Activities, with short
+  retryable SQLite write transactions.
+
 Design reason: task queues are for worker capacity, isolation, and routing.
 The goal is to keep long-running Coding Agent Activities from delaying tracker
 transitions, PR link verification, refresh/cache projection, and other

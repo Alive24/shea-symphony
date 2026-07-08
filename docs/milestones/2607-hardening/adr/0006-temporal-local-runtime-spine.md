@@ -24,6 +24,9 @@ Use local Temporal as the 2607 Symphony runtime spine.
   fact-changing operations remain serial, idempotent, and readback-verified.
 - Start with three task queues: `symphony-core`, `symphony-agent`, and
   `symphony-local`.
+- Start with configurable concurrency caps of 3 for `symphony-core` and 3
+  concurrent agent runs for `symphony-agent`, while preserving per-issue
+  serialization for fact-changing operations.
 - Tracker writes go through `TrackerTransitionActivity`.
 - App operations use Tauri backend commands that call Temporal start, query,
   signal, or update APIs.

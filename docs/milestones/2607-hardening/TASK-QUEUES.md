@@ -111,14 +111,40 @@ The goal is to prevent long-running Coding Agent Activities from delaying:
 
 Use Activity-level concurrency limits within each queue.
 
+Initial configurable defaults:
+
+```text
+symphony-core:
+  max_concurrent_activities: 3
+  tracker_fact_write_per_issue: 1
+  pr_link_mutation_per_issue_pr: 1
+
+symphony-agent:
+  max_concurrent_agent_runs: 3
+  max_agent_runs_per_issue: 1
+  merge_land_per_issue: 1
+
+symphony-local:
+  max_concurrent_local_activities: 8
+  sqlite_write_transactions: short_retryable
+```
+
+`symphony-core` and `symphony-agent` start at 3 because previous Codex
+app-server and agy CLI dogfood runs have shown that three concurrent agent-side
+operations are realistic. These are starting caps, not correctness assumptions.
+
 Examples:
 
 - serialize merge/land per issue;
 - avoid duplicate PR-link mutations for the same issue/PR pair;
 - bound GitHub Project write concurrency;
-- keep Codex agent attempts very low concurrency;
+- keep Codex agent attempts low concurrency but allow up to three concurrent
+  agent runs by default;
 - allow artifact indexing and read-only cache refresh to run with higher
   concurrency.
+
+If GitHub Project rate limits, lock contention, or local resource pressure
+appear, lower the relevant sub-limit before changing the task queue topology.
 
 ## App Initialization
 
@@ -143,4 +169,3 @@ If `symphony-core` is unavailable, product workflow operations are unavailable.
 - No custom scheduler beside Temporal.
 - No queue split that gives App, CLI, or extensions direct tracker write
   authority.
-

@@ -1,8 +1,8 @@
 use std::str::FromStr;
 
 use temporalio_client::{
-    Client, ClientOptions, Connection, ConnectionOptions, GetWorkflowResultOptions, QueryOptions,
-    WorkflowStartOptions,
+    Client, ClientOptions, Connection, ConnectionOptions, WorkflowGetResultOptions,
+    WorkflowQueryOptions, WorkflowStartOptions,
 };
 use temporalio_sdk_core::Url;
 use thiserror::Error;
@@ -26,16 +26,24 @@ pub struct StartedIssueWorkflow {
 pub enum TemporalRuntimeError {
     #[error("invalid Temporal configuration: {0}")]
     InvalidConfig(String),
-    #[error("Temporal service is unavailable at {address} for namespace {namespace}: {source}")]
+    #[error(
+        "Temporal service is unavailable at {address} for namespace {namespace}: {source_error}"
+    )]
     Unavailable {
         address: String,
         namespace: String,
-        source: String,
+        source_error: String,
     },
-    #[error("failed to register Temporal worker for {task_queue}: {source}")]
-    WorkerRegistration { task_queue: String, source: String },
-    #[error("Temporal workflow operation failed for {workflow_id}: {source}")]
-    WorkflowOperation { workflow_id: String, source: String },
+    #[error("failed to register Temporal worker for {task_queue}: {source_error}")]
+    WorkerRegistration {
+        task_queue: String,
+        source_error: String,
+    },
+    #[error("Temporal workflow operation failed for {workflow_id}: {source_error}")]
+    WorkflowOperation {
+        workflow_id: String,
+        source_error: String,
+    },
 }
 
 impl SymphonyTemporalClient {
@@ -55,7 +63,7 @@ impl SymphonyTemporalClient {
             .map_err(|error| TemporalRuntimeError::Unavailable {
                 address: self.config.address.clone(),
                 namespace: self.config.namespace.clone(),
-                source: error.to_string(),
+                source_error: error.to_string(),
             })?;
 
         Client::new(
@@ -65,7 +73,7 @@ impl SymphonyTemporalClient {
         .map_err(|error| TemporalRuntimeError::Unavailable {
             address: self.config.address.clone(),
             namespace: self.config.namespace.clone(),
-            source: error.to_string(),
+            source_error: error.to_string(),
         })
     }
 
@@ -88,7 +96,7 @@ impl SymphonyTemporalClient {
             .await
             .map_err(|error| TemporalRuntimeError::WorkflowOperation {
                 workflow_id: workflow_id.clone(),
-                source: error.to_string(),
+                source_error: error.to_string(),
             })?;
 
         Ok(StartedIssueWorkflow {
@@ -104,11 +112,15 @@ impl SymphonyTemporalClient {
         let client = self.connect().await?;
         let handle = client.get_workflow_handle::<IssueWorkflow>(workflow_id);
         handle
-            .query(IssueWorkflow::current_state, (), QueryOptions::default())
+            .query(
+                IssueWorkflow::current_state,
+                (),
+                WorkflowQueryOptions::default(),
+            )
             .await
             .map_err(|error| TemporalRuntimeError::WorkflowOperation {
                 workflow_id: workflow_id.to_string(),
-                source: error.to_string(),
+                source_error: error.to_string(),
             })
     }
 
@@ -119,11 +131,11 @@ impl SymphonyTemporalClient {
         let client = self.connect().await?;
         let handle = client.get_workflow_handle::<IssueWorkflow>(workflow_id);
         handle
-            .get_result(GetWorkflowResultOptions::default())
+            .get_result(WorkflowGetResultOptions::default())
             .await
             .map_err(|error| TemporalRuntimeError::WorkflowOperation {
                 workflow_id: workflow_id.to_string(),
-                source: error.to_string(),
+                source_error: error.to_string(),
             })
     }
 }
@@ -172,8 +184,10 @@ mod tests {
     #[tokio::test]
     async fn missing_local_temporal_maps_to_unavailable_error() {
         let client = SymphonyTemporalClient::new(config("127.0.0.1:1"));
-        let error = client.connect().await.unwrap_err();
+        let result = client.connect().await;
 
+        assert!(result.is_err());
+        let error = result.err().unwrap();
         assert!(matches!(error, TemporalRuntimeError::Unavailable { .. }));
     }
 }

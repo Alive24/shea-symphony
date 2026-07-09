@@ -49,10 +49,16 @@ pub fn task_queue_registrations(config: &TemporalConfig) -> Vec<TaskQueueRegistr
 }
 
 pub fn core_worker_options(config: &TemporalConfig) -> Result<WorkerOptions, TemporalRuntimeError> {
-    Ok(WorkerOptions::new(config.task_queues.core.as_str())
+    let worker_options = WorkerOptions::new(config.task_queues.core.as_str())
         .register_activities(CoreActivities)
         .register_workflow::<IssueWorkflow>()
-        .build())
+        .map_err(|error| TemporalRuntimeError::WorkerRegistration {
+            task_queue: config.task_queues.core.clone(),
+            source_error: error.to_string(),
+        })?
+        .build();
+
+    Ok(worker_options)
 }
 
 pub fn agent_worker_options(config: &TemporalConfig) -> WorkerOptions {

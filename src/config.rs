@@ -1064,7 +1064,7 @@ mod tests {
     fn parses_temporal_runtime_config() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\ntemporal:\n  address: 127.0.0.1:7233\n  namespace: shea-dev\n  task_queues:\n    core: shea-core\n    agent: shea-agent\n    local: shea-local\n  worker:\n    core_concurrency: 2\n    agent_concurrency: 1\n    local_concurrency: 4\n---\nPrompt",
+            "---\ntracker:\n  kind: memory\ntemporal:\n  address: 127.0.0.1:7233\n  namespace: shea-dev\n  task_queues:\n    core: shea-core\n    agent: shea-agent\n    local: shea-local\n  worker:\n    core_concurrency: 2\n    agent_concurrency: 1\n    local_concurrency: 4\n---\nPrompt",
         )
         .unwrap();
         let config =

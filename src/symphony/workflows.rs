@@ -30,10 +30,10 @@ impl IssueWorkflow {
         ctx: &mut WorkflowContext<Self>,
         _input: IssueWorkflowInput,
     ) -> WorkflowResult<IssueWorkflowState> {
-        let request = ctx.state(|state| NoopActivityRequest {
-            workflow_id: state.workflow_id.clone(),
+        let request = ctx.state(|workflow| NoopActivityRequest {
+            workflow_id: workflow.state.workflow_id.clone(),
             activity_kind: "NoopCoreActivity".to_string(),
-            issue_ref: state.issue_ref.clone(),
+            issue_ref: workflow.state.issue_ref.clone(),
         });
 
         let _noop = ctx
@@ -44,13 +44,14 @@ impl IssueWorkflow {
             )
             .await?;
 
-        ctx.state_mut(|state| {
-            state.active_step = "noop_completed".to_string();
-            state.terminal_outcome = Some("completed_noop".to_string());
-            state.runtime_health_summary = "completed no-op IssueWorkflow path".to_string();
+        ctx.state_mut(|workflow| {
+            workflow.state.active_step = "noop_completed".to_string();
+            workflow.state.terminal_outcome = Some("completed_noop".to_string());
+            workflow.state.runtime_health_summary =
+                "completed no-op IssueWorkflow path".to_string();
         });
 
-        Ok(ctx.state(|state| state.clone()))
+        Ok(ctx.state(|workflow| workflow.state.clone()))
     }
 
     #[query(name = "current_state")]

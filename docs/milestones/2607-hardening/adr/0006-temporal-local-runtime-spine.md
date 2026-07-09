@@ -34,6 +34,11 @@ Use local Temporal as the 2607 Symphony runtime spine.
   Temporal visibility/query and tracker state.
 - Executable lane handlers are independently startable and internally
   chainable. Chaining is Workflow continuation, not a terminal outcome.
+- Coding/review/merge/doctor work uses coarse Agent Activities with typed
+  request/result DTOs, hard capability profiles, worktree leases when writing,
+  layered heartbeats, and artifact refs for large evidence.
+- Child Workflows are allowed but not the default. Promote subflows only when
+  they need independent durable orchestration.
 - Multiple executable issues run concurrently as separate Workflow episodes.
 - Side effects run through Temporal Activities.
 - Read-only or non-conflicting Activities may run concurrently; external

@@ -671,6 +671,145 @@ artifact references, not every model turn or tool call.
 
 The same rule applies to future coding agents.
 
+### What is the Agent Activity contract?
+
+Use `AGENT-ACTIVITY-CONTRACT.md` as the 2607 contract.
+
+Generic request shape:
+
+```text
+AgentActivityRequest {
+  workflow_id
+  run_id
+  repo_id
+  issue_ref
+  activity_kind
+  lane
+  attempt_id
+  worktree_ref
+  agent_backend
+  capability_profile
+  prompt_template_ref
+  context_refs
+  artifact_write_policy
+  heartbeat_policy
+  timeout_policy
+}
+```
+
+Generic result shape:
+
+```text
+AgentActivityResult {
+  outcome
+  summary
+  artifact_refs
+  evidence_refs
+  event_log_ref
+  transcript_ref?
+  diff_ref?
+  test_result_refs
+  worktree_summary
+  pr_ref?
+  proposed_next_state?
+  blocking_reason?
+  retry_after?
+}
+```
+
+`proposed_next_state` is only a proposal. Workflow decides whether to call
+`TrackerTransitionActivity`.
+
+### What capability profiles should Agent Activities use?
+
+Start with enum profiles:
+
+- `read_only`;
+- `code_write`;
+- `merge_write`;
+- `review_read_only`;
+- `review_comment`;
+- `review_safe_autofix`;
+- `doctor_read`;
+- `doctor_write_safe`;
+- `doctor_write_operator`.
+
+Automatic doctor may use `doctor_write_safe` for bounded, idempotent runtime
+repairs such as cache refresh, projection rebuild, stale local row cleanup, or
+idempotent link/readback retry. If doctor cannot write safely, or needs code
+changes, tracker lane changes, destructive cleanup, permission changes, or
+human judgment, it moves to `Need Human Input`.
+
+### How should Agent Activity heartbeat be layered?
+
+Use layered heartbeat summaries:
+
+- `temporal_activity`: Temporal Activity worker/wrapper is alive;
+- `local_runner`: local process or wrapper is alive;
+- `codex_session`: Codex app-server accepted or is running the session;
+- `agent_run`: agent-level task is progressing;
+- `model_turn`: optional model/tool-loop detail.
+
+Shared shape:
+
+```text
+HeartbeatSummary {
+  layer
+  status
+  phase
+  last_progress_at
+  child_ref
+  artifact_refs
+  message
+}
+```
+
+Temporal heartbeat stores only small current summaries and refs. Complete
+events belong in artifact/event logs or the agent backend.
+
+### Can Agent Review safely edit?
+
+Yes, if configured. `AgentReviewActivity` supports:
+
+- `review_read_only`;
+- `review_comment`;
+- `review_safe_autofix`.
+
+Review verdicts:
+
+- `pass`;
+- `pass_with_comments`;
+- `safe_autofix_applied`;
+- `request_rework`;
+- `need_human_input`;
+- `unhandled_error`.
+
+Safe autofix can only modify the current PR/worktree, must return `diff_ref`
+and validation refs, cannot merge, and cannot advance tracker state. Work that
+exceeds safe scope becomes `request_rework` or `need_human_input`.
+
+### Which flows should become Child Workflows?
+
+None by default in the 2607 first implementation. `IssueWorkflow` owns the
+executable pulse. Agent, review, merge, tracker transition, artifact, SQLite,
+worktree lease, and operator-validation steps remain coarse Activities unless
+they grow independent durable orchestration needs.
+
+Promote a subflow to Child Workflow only when it has its own state machine,
+long waits for multiple external events, independent Query/Signal/Cancel needs,
+complex multi-Activity retry/repair, internals the parent should not know, and
+clean failure/cancel summarization.
+
+Candidates, not defaults:
+
+- `LandWorkflow`, if land becomes semantic fix -> checks -> merge queue ->
+  post-merge verify -> cleanup;
+- `DoctorWorkflow`, if doctor becomes multi-step repair orchestration;
+- `ReviewAutofixWorkflow`, if safe review autofix becomes review/fix/validate
+  loop;
+- `LocalRebuildWorkflow`, as an admin/local workflow for whole local-state
+  rebuilds.
+
 ### Should Agent Review be named after Gemini?
 
 No. Use `AgentReviewActivity` as the core Activity name. Gemini may remain the

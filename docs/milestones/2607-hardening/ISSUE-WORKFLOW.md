@@ -202,6 +202,10 @@ Activities:
 - `ArtifactWriteActivity`;
 - `TrackerTransitionActivity`.
 
+`MainAgentActivity` follows `AGENT-ACTIVITY-CONTRACT.md`: attempt-level
+execution, `code_write` capability, worktree lease, layered heartbeat, typed
+result, and artifact refs for large evidence.
+
 Exit:
 
 - to `Agent Review` on implementation completion after PR existence and
@@ -271,6 +275,9 @@ Activities:
 - `TrackerTransitionActivity`;
 - `ArtifactWriteActivity`.
 
+`AgentReviewActivity` follows `AGENT-ACTIVITY-CONTRACT.md`. It may be
+configured as `review_read_only`, `review_comment`, or `review_safe_autofix`.
+
 Exit:
 
 - to `Human Review` when review passes;
@@ -329,6 +336,10 @@ Activities:
 - `ReworkActivity`, or `MainAgentActivity` with explicit rework context;
 - `ArtifactWriteActivity`.
 
+Rework agent attempts follow `AGENT-ACTIVITY-CONTRACT.md` with review or
+human-feedback refs in the request and addressed/pushed-back/unresolved
+classification in the result.
+
 Exit:
 
 - to `Agent Review` when rework completes;
@@ -352,6 +363,9 @@ Activities:
   `MergeSemanticFixActivity`;
 - `TrackerTransitionActivity`;
 - `ArtifactWriteActivity`.
+
+`MergeActivity` follows `AGENT-ACTIVITY-CONTRACT.md` with `merge_write`
+capability and the configured land runner.
 
 Exit:
 

@@ -109,6 +109,12 @@ Subtraction does not mean:
   behind drill-down.
 - Local state DB: use SQLite as a rebuildable dashboard read model, tracker
   cache, PR summary cache, and artifact index.
+- Agent Activity contract: keep coding/review/merge/doctor agent work as
+  coarse attempt boundaries with typed inputs, outputs, capabilities,
+  heartbeat layers, and artifact refs.
+- Child Workflow policy: keep `IssueWorkflow` plus coarse Activities as the
+  default; promote subflows to Child Workflows only when they need independent
+  durable orchestration.
 - Performance: measure and reduce repeated non-LLM control-plane work.
 
 ## Source Documents
@@ -118,6 +124,8 @@ Subtraction does not mean:
 - `docs/codex-app-server-transport.md`
 - `docs/dogfood-readiness.md`
 - `docs/main-orchestration-spine.md`
+- `AGENT-ACTIVITY-CONTRACT.md`
+- `CHILD-WORKFLOW-POLICY.md`
 - `docs/milestones/2607-hardening/RUNTIME-ROLE-MAPPING.md`
 - `docs/milestones/2607-hardening/TEMPORAL-RUST-SDK-INTAKE.md`
 - `docs/milestones/2607-hardening/ACTIVITY-ERROR-TAXONOMY.md`

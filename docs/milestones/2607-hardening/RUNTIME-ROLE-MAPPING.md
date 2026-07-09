@@ -75,6 +75,11 @@ Codex tool call or model turn as a separate Activity.
 The same rule applies to future coding agents: Symphony owns the durable
 attempt boundary; the coding agent owns its internal execution loop.
 
+The detailed 2607 contract is defined in `AGENT-ACTIVITY-CONTRACT.md`.
+Agent Activities use structured request/result DTOs, hard capability profiles,
+worktree leases for write-capable work, layered heartbeat summaries, and
+artifact refs instead of large Temporal payloads.
+
 Inputs should be structured and small:
 
 - issue id;
@@ -111,12 +116,19 @@ AgentReviewActivity(input) -> AgentReviewResult
 ```
 
 Gemini can remain the configured backend, but the core Activity name should not
-hard-code Gemini. The Activity returns a typed verdict:
+hard-code Gemini. Agent Review may be configured as read-only, comment-only,
+or safe-autofix according to `AGENT-ACTIVITY-CONTRACT.md`. The Activity returns
+a typed verdict:
 
-- `accept`;
-- `reject`;
-- `needs_human_input`;
-- `error`.
+- `pass`;
+- `pass_with_comments`;
+- `safe_autofix_applied`;
+- `request_rework`;
+- `need_human_input`;
+- `unhandled_error`.
+
+Safe autofix must be bounded to the current PR/worktree, return diff and
+validation refs, and cannot merge or advance tracker state.
 
 The verdict should include:
 

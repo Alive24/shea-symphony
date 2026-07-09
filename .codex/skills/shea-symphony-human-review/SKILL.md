@@ -15,25 +15,42 @@ Human Review is the operator-owned final acceptance checkpoint before merge-lane
 work. It is not implementation work, it is not the independent Review Agent, and
 it is not merge execution.
 
-## Repository
+## Runtime Topology
 
-Default repository:
+Live Shea Symphony review routing still runs through the protected 2606 MVP
+runtime until 2607 replaces the runtime spine. Use the MVP worktree for CLI/App
+execution and the active Shea Symphony development worktree only as source
+context.
+
+MVP runtime worktree:
+
+```bash
+/Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp
+```
+
+Canonical workflow inside the MVP runtime:
+
+```bash
+workflows/shea-symphony.md
+```
+
+GitHub repository:
 
 ```text
 Alive24/shea-symphony
 ```
 
-Default local checkout:
+If the Tauri App is needed, start it from the MVP runtime `app/` directory with
+the local MVP profile:
 
 ```bash
-/Volumes/Bohemialive/GitHub/shea-symphony
+cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp/app
+SHEA_SYMPHONY_APP_PROFILE_PATH=/Users/chuntengxiao/.shea-symphony/mvp/app-profile-shea-symphony.json npm run tauri -- dev
 ```
 
-Canonical workflow:
-
-```bash
-workflows/shea-symphony.md
-```
+The profile points at the Shea Symphony target checkout and the MVP CLI binary.
+Do not assume `npm run tauri -- dev -- --workdir <path>` alone keeps the backend
+on MVP code.
 
 Canonical decision note template:
 

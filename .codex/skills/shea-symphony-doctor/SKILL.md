@@ -13,19 +13,36 @@ install-health, local recovery findings, and stuck `Need Human Input` issues.
 After diagnosis, give one explicit repair recommendation and say whether it can
 be executed in the current Codex session.
 
-## Repository
+## Runtime Topology
 
-Default repository:
+Live Shea Symphony triage still runs through the protected 2606 MVP runtime
+until 2607 replaces the runtime spine. Use the MVP worktree for CLI/App
+execution and the active Shea Symphony development worktree only as source
+context.
+
+MVP runtime worktree:
 
 ```bash
-cd /Volumes/Bohemialive/GitHub/shea-symphony
+/Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp
 ```
 
-Canonical workflow:
+Canonical workflow inside the MVP runtime:
 
 ```bash
 workflows/shea-symphony.md
 ```
+
+If the Tauri App is needed, start it from the MVP runtime `app/` directory with
+the local MVP profile:
+
+```bash
+cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp/app
+SHEA_SYMPHONY_APP_PROFILE_PATH=/Users/chuntengxiao/.shea-symphony/mvp/app-profile-shea-symphony.json npm run tauri -- dev
+```
+
+The profile points at the Shea Symphony target checkout and the MVP CLI binary.
+Do not assume `npm run tauri -- dev -- --workdir <path>` alone keeps the backend
+on MVP code.
 
 ## Operating Rule
 

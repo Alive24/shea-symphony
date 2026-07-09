@@ -12,23 +12,46 @@ Use this skill for an independent manual Review Agent pass on a Shea Symphony
 issue or PR, especially when automatic `review loop` is blocked, timed out, or
 needs a human-supervised pass.
 
-## Repository
+## Runtime Topology
 
-Default repository:
+Live Shea Symphony review work still runs through the protected 2606 MVP
+runtime until 2607 replaces the runtime spine. Use the MVP worktree for CLI/App
+execution and the active Shea Symphony development worktree only as source
+context.
+
+MVP runtime worktree:
+
+```bash
+/Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp
+```
+
+Canonical workflow inside the MVP runtime:
+
+```bash
+workflows/shea-symphony.md
+```
+
+GitHub repository:
 
 ```text
 Alive24/shea-symphony
 ```
 
-Default local checkout:
+Run Shea Symphony CLI read/write commands from the MVP runtime only. Do not
+change the MVP runtime branch or inspect PR code there; use the issue worktree
+for implementation/review inspection.
+
+If the Tauri App is needed, start it from the MVP runtime `app/` directory with
+the local MVP profile:
 
 ```bash
-/Volumes/Bohemialive/GitHub/shea-symphony
+cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp/app
+SHEA_SYMPHONY_APP_PROFILE_PATH=/Users/chuntengxiao/.shea-symphony/mvp/app-profile-shea-symphony.json npm run tauri -- dev
 ```
 
-This checkout is the canonical harness launch directory. Use it to run Shea
-Symphony CLI read/write commands and GitHub CLI read commands only. Do not
-change its branch or checkout PR code there.
+The profile points at the Shea Symphony target checkout and the MVP CLI binary.
+Do not assume `npm run tauri -- dev -- --workdir <path>` alone keeps the backend
+on MVP code.
 
 ## Core Rule
 

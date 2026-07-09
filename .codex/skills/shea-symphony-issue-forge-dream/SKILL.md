@@ -15,19 +15,36 @@ broader, slower, and evidence-heavy.
 Dream is a skill behavior, not a Shea Symphony CLI subcommand. Do not expect or
 ask for `shea-symphony forge dream`.
 
-## Repository
+## Runtime Topology
 
-Default repo:
+Live Shea Symphony dream/reflection shaping still runs through the protected
+2606 MVP runtime until 2607 replaces the runtime spine. Use the MVP worktree for
+CLI/App execution and the active Shea Symphony development worktree only as
+source context.
+
+MVP runtime worktree:
 
 ```bash
-/Volumes/Bohemialive/GitHub/shea-symphony
+/Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp
 ```
 
-Canonical workflow:
+Canonical workflow inside the MVP runtime:
 
 ```bash
 workflows/shea-symphony.md
 ```
+
+If the Tauri App is needed, start it from the MVP runtime `app/` directory with
+the local MVP profile:
+
+```bash
+cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp/app
+SHEA_SYMPHONY_APP_PROFILE_PATH=/Users/chuntengxiao/.shea-symphony/mvp/app-profile-shea-symphony.json npm run tauri -- dev
+```
+
+The profile points at the Shea Symphony target checkout and the MVP CLI binary.
+Do not assume `npm run tauri -- dev -- --workdir <path>` alone keeps the backend
+on MVP code.
 
 Default assignee:
 
@@ -94,7 +111,7 @@ over memory-derived claims when both are cheap.
 Default reads:
 
 ```bash
-cd /Volumes/Bohemialive/GitHub/shea-symphony
+cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp
 cargo run -- project-state workflows/shea-symphony.md
 cargo run -- inspect workflows/shea-symphony.md
 cargo run -- doctor workflows/shea-symphony.md

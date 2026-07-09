@@ -12,19 +12,44 @@ Create Shea Symphony issues through a conversation-first workflow. Do not jump
 straight to `forge create` from rough intent unless the user explicitly provides
 a complete issue body.
 
-## Repository
+## Runtime Topology
 
-Default repo:
+Live Shea Symphony issue creation still runs through the protected 2606 MVP
+runtime until 2607 replaces the runtime spine. Use the MVP worktree for
+CLI/App execution and the active Shea Symphony development worktree only as
+source context.
+
+MVP runtime worktree:
 
 ```bash
-/Volumes/Bohemialive/GitHub/shea-symphony
+/Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp
 ```
 
-Canonical workflow:
+Canonical workflow inside the MVP runtime:
 
 ```bash
 workflows/shea-symphony.md
 ```
+
+Run deterministic tracker and forge mutations from the MVP runtime:
+
+```bash
+cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp
+cargo run -- forge validate --workflow workflows/shea-symphony.md --issue '#<issue>'
+cargo run -- forge create --workflow workflows/shea-symphony.md ...
+```
+
+If the Tauri App is needed, start it from the MVP runtime `app/` directory with
+the local MVP profile:
+
+```bash
+cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp/app
+SHEA_SYMPHONY_APP_PROFILE_PATH=/Users/chuntengxiao/.shea-symphony/mvp/app-profile-shea-symphony.json npm run tauri -- dev
+```
+
+The profile points at the Shea Symphony target checkout and the MVP CLI binary.
+Do not assume `npm run tauri -- dev -- --workdir <path>` alone keeps the backend
+on MVP code.
 
 Default assignee:
 
@@ -256,7 +281,7 @@ After the user confirms the draft:
 2. Run:
 
 ```bash
-cd /Volumes/Bohemialive/GitHub/shea-symphony
+cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp
 cargo run -- forge create \
   --workflow workflows/shea-symphony.md \
   --title "<title>" \

@@ -557,6 +557,55 @@ Do boundary validation, not high-frequency tracker polling:
 Normal in-flight decisions should rely on Temporal state, Activity results,
 SQLite active workflow index rows, and artifact references.
 
+### How should a pulse terminate?
+
+Only real terminal boundaries are terminal outcomes:
+
+- `completed_static_handoff`: tracker was committed to a static lane such as
+  `Human Review`, normal `Need Human Input`, or `Backlog`;
+- `completed_done`: tracker was committed to `Done`;
+- `failed_unhandled_error`: the Workflow cannot safely converge;
+- `cancelled`: operator or system policy cancelled the execution.
+
+Continuing from one executable lane handler to another inside the same
+Workflow execution is not a terminal outcome.
+
+### Can executable lanes chain inside one Workflow execution?
+
+Yes. Executable lane handlers are independently startable and internally
+chainable.
+
+Coordinator can start from `Todo`, `In Progress`, `Agent Review`, `Rework`,
+`Merging`, or automatic doctor/reconcile work in `Need Human Input`. Workflow
+start chooses the handler from `from_tracker_state`.
+
+If a handler produces another executable state, the Workflow may continue in
+the same execution to reduce handoff overhead. If it produces a static state or
+`Done`, it commits the tracker transition and completes.
+
+### What should the Workflow input contain?
+
+Recommended `IssueWorkflowInput`:
+
+```text
+IssueWorkflowInput {
+  workflow_id
+  repo_id
+  issue_ref
+  from_tracker_state
+  target_kind
+  source_ref
+  source_tracker_revision
+  started_at
+  operator_action_ref?
+  capacity_policy_ref?
+}
+```
+
+The input records why this execution started and which tracker fact it
+observed. The Workflow should not infer its start purpose by scanning tracker
+state again after start.
+
 ### What is the starting task queue topology?
 
 Do not start with a single task queue in 2607. Single queue is too coarse for

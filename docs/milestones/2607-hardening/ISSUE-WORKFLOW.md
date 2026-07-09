@@ -24,6 +24,31 @@ Activity failure routing is defined in `ACTIVITY-ERROR-TAXONOMY.md`. Activities
 report typed outcomes; `IssueWorkflow` decides retry, wait, conflict handling,
 or state transition.
 
+## Workflow Input
+
+Every `IssueWorkflow` execution starts from an executable tracker state.
+
+Recommended input:
+
+```text
+IssueWorkflowInput {
+  workflow_id
+  repo_id
+  issue_ref
+  from_tracker_state
+  target_kind
+  source_ref
+  source_tracker_revision
+  started_at
+  operator_action_ref?
+  capacity_policy_ref?
+}
+```
+
+The input tells the Workflow why this execution started and which tracker fact
+it observed. The Workflow should not infer its starting purpose by scanning
+tracker state again after start.
+
 ## Standard States
 
 - `Backlog`
@@ -53,6 +78,53 @@ Backlog
 ```
 
 This diagram shows the full state vocabulary, not every allowed edge.
+
+## Execution Model
+
+Executable lane handlers are independently startable and internally chainable.
+
+Coordinator may start an `IssueWorkflow` execution from any executable tracker
+state: `Todo`, `In Progress`, `Agent Review`, `Rework`, `Merging`, or the
+automatic doctor/reconcile subset of `Need Human Input`.
+
+Workflow start selects the handler from `from_tracker_state`. When a handler
+finishes:
+
+- if the next state is executable, the Workflow may continue to the next
+  handler in the same execution;
+- if the next state is static, the Workflow commits the tracker transition and
+  completes;
+- if the next state is `Done`, the Workflow commits terminal state and
+  completes;
+- if it cannot safely decide or act, it commits `Need Human Input` or fails
+  with `failed_unhandled_error` according to the error taxonomy.
+
+Chaining executable handlers is an internal continuation. Terminal outcomes
+exist only at static handoff, `Done`, unhandled error, or cancellation.
+
+Terminal Workflow outcomes:
+
+- `completed_static_handoff`;
+- `completed_done`;
+- `failed_unhandled_error`;
+- `cancelled`.
+
+## Tracker Transition Boundary
+
+Every tracker state transition uses `TrackerTransitionActivity`.
+
+Transition requests must carry:
+
+- `expected_from_state`;
+- `requested_to_state`;
+- `reason_enum` and optional `reason_detail`;
+- `evidence_refs`;
+- `workflow_id`;
+- source revision when the tracker backend provides one.
+
+If the tracker state no longer matches `expected_from_state`, the Activity
+returns a typed conflict. Workflow should not force-write around the
+precondition.
 
 ## Backlog
 

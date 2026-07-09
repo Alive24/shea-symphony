@@ -201,17 +201,31 @@ tracker reads.
 
 ## Episode Completion
 
-An `IssueWorkflow` episode should complete after it commits a static tracker
-state and required read-model projection. It may continue only while the issue
-remains in executable states.
+An `IssueWorkflow` execution completes only at a real terminal boundary:
+
+- `completed_static_handoff`: tracker was committed to a static lane such as
+  `Human Review`, normal `Need Human Input`, or `Backlog`;
+- `completed_done`: tracker was committed to `Done`;
+- `failed_unhandled_error`: the Workflow cannot safely converge;
+- `cancelled`: operator or system policy cancelled the execution.
+
+When the next state is still executable, the Workflow may continue to the next
+lane handler in the same execution. That continuation is not a terminal
+outcome and should not be exposed as a completed status.
+
+Executable lane handlers are independently startable and chainable. Coordinator
+can start from `Todo`, `In Progress`, `Agent Review`, `Rework`, `Merging`, or
+automatic doctor/reconcile work in `Need Human Input`. If one handler produces
+another executable state, continuing in the same execution is allowed and can
+reduce handoff overhead.
 
 Examples:
 
 - `Todo` contract check passes and starts implementation, continuing into the
-  executable work episode;
+  `In Progress` handler;
 - `In Progress` completes PR/link/handoff work and commits `Agent Review`;
 - `Agent Review` passes and commits `Human Review`, then completes because
-  `Human Review` is static;
+  `Human Review` is static with `completed_static_handoff`;
 - `Merging` lands work and commits `Done`, then completes;
 - an operational blocker commits `Need Human Input`, then completes unless an
   automatic doctor/reconcile episode is required.

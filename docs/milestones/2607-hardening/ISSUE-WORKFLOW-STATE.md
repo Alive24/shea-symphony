@@ -40,9 +40,17 @@ IssueWorkflowState {
   repo_id
   issue_ref
   tracker_backend
+  from_tracker_state
+  target_kind
+  source_ref
+  source_tracker_revision
+  started_at
+  operator_action_ref
+  capacity_policy_ref
   current_tracker_state
   active_step
   active_attempt
+  terminal_outcome
   waiting
   last_transition
   active_agent_run
@@ -54,6 +62,10 @@ IssueWorkflowState {
   runtime_health_summary
 }
 ```
+
+The start input fields stay in durable Workflow state so replay, query,
+operator action validation, and local projection can explain why this
+execution exists without scanning tracker history.
 
 Do not store:
 

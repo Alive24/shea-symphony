@@ -32,6 +32,8 @@ Use local Temporal as the 2607 Symphony runtime spine.
 - Coordinator start uses SQLite as a local duplicate-start guard and Temporal
   as the execution fact. Coordinator repair reconciles SQLite projection with
   Temporal visibility/query and tracker state.
+- Executable lane handlers are independently startable and internally
+  chainable. Chaining is Workflow continuation, not a terminal outcome.
 - Multiple executable issues run concurrently as separate Workflow episodes.
 - Side effects run through Temporal Activities.
 - Read-only or non-conflicting Activities may run concurrently; external

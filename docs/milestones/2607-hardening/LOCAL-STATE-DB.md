@@ -108,6 +108,7 @@ workflow_index(
   started_at,
   last_progress_at,
   status,
+  terminal_outcome,
   freshness,
   updated_at
 )

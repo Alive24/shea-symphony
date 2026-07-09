@@ -58,6 +58,7 @@ Acceptance:
 
 Primary docs:
 
+- `implementation/T2607-01-temporal-runtime-skeleton.md`
 - `TEMPORAL-SPINE.md`
 - `TASK-QUEUES.md`
 - `TEMPORAL-RUST-SDK-INTAKE.md`

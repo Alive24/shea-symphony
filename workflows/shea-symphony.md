@@ -35,6 +35,17 @@ tracker:
     marker: "<!-- shea-symphony-workpad -->"
 git:
   base_branch: main
+temporal:
+  address: localhost:7233
+  namespace: default
+  task_queues:
+    core: symphony-core
+    agent: symphony-agent
+    local: symphony-local
+  worker:
+    core_concurrency: 3
+    agent_concurrency: 3
+    local_concurrency: 8
 prompts:
   main_agent: prompts/main-agent.md
   review_agent: prompts/review-agent.md

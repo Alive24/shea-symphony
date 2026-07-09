@@ -5,6 +5,8 @@
 /tmp/
 project_items.json
 .codex/config.toml
+.shea/*.local.json
+.shea/local/
 web/node_modules/
 web/build/
 web/.svelte-kit/

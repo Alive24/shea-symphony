@@ -37,7 +37,7 @@ the local MVP profile:
 
 ```bash
 cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp/app
-SHEA_SYMPHONY_APP_PROFILE_PATH=/Users/chuntengxiao/.shea-symphony/mvp/app-profile-shea-symphony.json npm run tauri -- dev
+SHEA_SYMPHONY_APP_PROFILE_PATH=/Users/chuntengxiao/Documents/GitHub/shea-symphony/.shea/app-profile.local.json npm run tauri -- dev
 ```
 
 The profile points at the Shea Symphony target checkout and the MVP CLI binary.

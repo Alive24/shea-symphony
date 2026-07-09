@@ -11,7 +11,6 @@ pub mod handoff;
 pub mod issue_forge;
 pub mod issue_workspace;
 pub mod lane_claim;
-pub mod local_state;
 pub mod merge_lane;
 pub mod model;
 pub mod observability_api;

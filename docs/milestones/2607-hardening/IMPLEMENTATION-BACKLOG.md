@@ -160,6 +160,7 @@ Acceptance:
 
 Primary docs:
 
+- `implementation/T2607-04-tracker-transition-activity.md`
 - `TRACKER-TRANSITION-ACTIVITY.md`
 - `TRACKER-TRANSITIONS.md`
 - `ACTIVITY-ERROR-TAXONOMY.md`

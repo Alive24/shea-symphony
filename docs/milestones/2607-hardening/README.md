@@ -116,6 +116,8 @@ Subtraction does not mean:
   default; promote subflows to Child Workflows only when they need independent
   durable orchestration.
 - Performance: measure and reduce repeated non-LLM control-plane work.
+- Implementation backlog: split the hardening work into executable packages
+  without prematurely creating GitHub issues.
 
 ## Source Documents
 
@@ -126,6 +128,7 @@ Subtraction does not mean:
 - `docs/main-orchestration-spine.md`
 - `AGENT-ACTIVITY-CONTRACT.md`
 - `CHILD-WORKFLOW-POLICY.md`
+- `IMPLEMENTATION-BACKLOG.md`
 - `docs/milestones/2607-hardening/RUNTIME-ROLE-MAPPING.md`
 - `docs/milestones/2607-hardening/TEMPORAL-RUST-SDK-INTAKE.md`
 - `docs/milestones/2607-hardening/ACTIVITY-ERROR-TAXONOMY.md`

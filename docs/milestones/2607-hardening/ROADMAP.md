@@ -47,7 +47,8 @@ Success means a maintainer can answer:
 - Define at most one active `IssueWorkflow` execution per issue as the ordered
   executable decision boundary.
 - Define tracker as the durable queue between workflow activations.
-- Include `Backlog` promotion and quality gate inside `IssueWorkflow`.
+- Treat `Backlog` as a static tracker queue by default; promotion to `Todo`
+  creates an executable condition for a Workflow pulse.
 - Mark old autopilot/tick/resume loop as legacy-to-delete.
 - Define worker startup and local runtime initialization.
 - Define `symphony-core`, `symphony-agent`, and `symphony-local` task queues
@@ -122,3 +123,9 @@ Success means a maintainer can answer:
 - Avoid dashboard-wide Temporal/tracker/filesystem fanout by reading SQLite
   materialized snapshots.
 - Keep slow external dependencies visible in status snapshots.
+
+## Implementation Backlog
+
+Use `IMPLEMENTATION-BACKLOG.md` to promote the architecture decisions above
+into code work packages. It is not a GitHub issue list; it is the staging area
+for implementation slices before they enter the normal issue workflow.

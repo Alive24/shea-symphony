@@ -263,6 +263,7 @@ Acceptance:
 
 Primary docs:
 
+- `implementation/T2607-07-app-integration.md`
 - `SNAPSHOT-AND-DASHBOARD.md`
 - `OPERATOR-ACTION-BRIDGE.md`
 - `APP-CLI-SPLIT.md`

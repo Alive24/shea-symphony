@@ -217,6 +217,23 @@ Defaults should match the 2607 docs:
 - agent concurrency: 3;
 - local concurrency: 8.
 
+## SDK Version Choice
+
+As of the T2607-01 implementation pass on 2026-07-09, the official Temporal
+Rust SDK quickstart documents the compatible crate family as:
+
+```text
+temporalio-client = "0.5.0"
+temporalio-common = "0.5.0"
+temporalio-macros = "0.5.0"
+temporalio-sdk = "0.5.0"
+temporalio-sdk-core = "0.5.0"
+```
+
+The skeleton pins that crate family together and keeps SDK-facing types inside
+the `symphony` runtime module so later 2607 slices can absorb SDK API drift at
+one boundary.
+
 Use the existing workspace config precedence:
 
 1. workspace-local config;

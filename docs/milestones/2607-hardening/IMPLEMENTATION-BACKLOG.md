@@ -295,6 +295,7 @@ Acceptance:
 
 Primary docs:
 
+- `implementation/T2607-08-deletion-performance-hardening.md`
 - `SUBTRACTION-INVENTORY.md`
 - `PERFORMANCE.md`
 - `ROADMAP.md`

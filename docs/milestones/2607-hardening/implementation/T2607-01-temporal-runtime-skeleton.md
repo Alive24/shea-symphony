@@ -36,15 +36,31 @@ typed DTO locations, worker registration, task queues, and client boundary.
 Exact paths may change after code inspection, but the first implementation
 should aim for these ownership boundaries:
 
-- `symphony` runtime module/crate for Temporal client, workers, DTOs, and
+- `src/main.rs` as the default 2607 Temporal worker runtime entrypoint;
+- `src/symphony/**` for Temporal client, workers, DTOs, and
   workflow/activity registration;
 - App/Tauri backend command layer for starting local runtime and reaching the
   Temporal client boundary;
-- CLI admin/dev fallback for local worker/dev startup only;
 - test/support utilities for local Temporal integration checks.
 
 Do not create a separate `temporal_runtime` product namespace unless codebase
 constraints force it. Temporal is the runtime spine inside `symphony`.
+
+## Entrypoint Decision
+
+2607 intentionally moves the default binary away from the MVP CLI dispatcher.
+`src/main.rs` should start the Symphony Temporal worker runtime directly. The
+old CLI/autopilot entrypoint is retained as context through git history, the
+protected `2606-MVP` branch, and legacy modules that have not yet been
+mechanically removed.
+
+Do not add new 2607 runtime behavior to the old CLI dispatcher or lane loop as
+a compatibility measure. If a future issue needs an operator/admin surface, it
+should go through App/Tauri, a Temporal Query/Signal/Update boundary, or a
+deliberately scoped admin surface documented by that issue.
+
+The broader ownership rule is recorded in
+`docs/milestones/2607-hardening/CODE-OWNERSHIP-MAP.md`.
 
 ## DTO Skeleton
 

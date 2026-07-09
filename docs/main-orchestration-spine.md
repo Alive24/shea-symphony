@@ -1,5 +1,12 @@
 # Main Orchestration Spine
 
+> Status: 2606/MVP-era reference. This document describes the CLI-first
+> orchestration spine that powered the MVP runtime. For 2607 hardening, the
+> default binary entrypoint and forward development home are governed by
+> `docs/milestones/2607-hardening/CODE-OWNERSHIP-MAP.md`: `src/main.rs` is the
+> Temporal worker runtime entrypoint, and new runtime code should land under
+> `src/symphony/**` unless an issue explicitly says otherwise.
+
 `src/main.rs` stays the binary entrypoint and top-level dispatcher. It should
 not become the default home for every new command family or lane incident fix.
 New orchestration code should follow this spine:

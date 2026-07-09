@@ -3,7 +3,7 @@ name: shea-symphony-manual-main
 description: Use when manually running a Codex Main Agent session for Shea Symphony implementation or Main-lane Rework from a fresh Codex session. This skill claims Todo, Main-lane Rework, or resumable In Progress work through the Main Agent lane, preserves issue quality and dependency gates, creates or resumes isolated workspaces and PRs, and hands off only to Agent Review.
 metadata:
   short-description: Shea Symphony manual Main Agent
-  suite-version: 2026.05.23
+  suite-version: 2026.05.22
 ---
 
 # Shea Symphony Manual Main Agent
@@ -23,19 +23,36 @@ Use this manual skill only for operator-selected Main implementation, Main-lane
 `Rework`, focused debugging, or break-glass recovery. Do not replace normal
 long-running dogfood with three separate manual lane loops.
 
-## Repository
+## Runtime Topology
 
-Default repository:
+Live Shea Symphony lane work still runs through the protected 2606 MVP runtime
+until 2607 replaces the runtime spine. Use the MVP worktree for CLI/App
+execution and the active Shea Symphony development worktree only as source
+context.
+
+MVP runtime worktree:
 
 ```bash
-cd /Volumes/Bohemialive/GitHub/shea-symphony
+/Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp
 ```
 
-Canonical workflow:
+Canonical workflow inside the MVP runtime:
 
 ```bash
 workflows/shea-symphony.md
 ```
+
+If the Tauri App is needed, start it from the MVP runtime `app/` directory with
+the local MVP profile:
+
+```bash
+cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp/app
+SHEA_SYMPHONY_APP_PROFILE_PATH=/Users/chuntengxiao/Documents/GitHub/shea-symphony/.shea/app-profile.local.json npm run tauri -- dev
+```
+
+The profile points at the Shea Symphony target checkout and the MVP CLI binary.
+Do not assume `npm run tauri -- dev -- --workdir <path>` alone keeps the backend
+on MVP code.
 
 Canonical Main Agent prompt:
 
@@ -132,12 +149,24 @@ For the selected issue:
 3. Read the issue body, Main Agent Workpad, append-only timeline comments,
    canonical docs, and relevant code.
 4. Implement only the accepted issue scope.
-5. Run the strongest practical verification for the touched area.
-6. Update issue or PR evidence with changes, verification, risks, and follow-ups.
-7. Open or update the PR.
-8. Verify the issue Project item exposes the PR under linked pull requests.
-9. Confirm the PR is ready for review, not draft.
-10. Move the issue to `Agent Review`.
+5. Add concise comments for non-obvious runtime, tracker, schema, retry,
+   idempotency, compatibility, or external-service boundaries introduced or
+   materially changed by the issue. Avoid comments that merely restate obvious
+   assignments, names, or one-line control flow.
+6. When adding or changing Rust public API, add semantic crate/module `//!` and
+   item-level `///` Rustdoc, audit whether each item should remain `pub`, and
+   keep `missing_docs` enforcement scoped to the owned module. Ordinary `//`
+   boundary comments do not satisfy Rustdoc coverage. Use only the narrowest
+   justified `#[allow(missing_docs)]` for unavoidable macro-generated API.
+7. Run the strongest practical verification for the touched area. Rust public
+   API changes require `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` in
+   addition to formatting, tests, and strict clippy.
+8. Update issue or PR evidence with changes, verification, risks, follow-ups,
+   and any intentionally commented boundary.
+9. Open or update the PR.
+10. Verify the issue Project item exposes the PR under linked pull requests.
+11. Confirm the PR is ready for review, not draft.
+12. Move the issue to `Agent Review`.
 
 The Main Agent must stop at `Agent Review`. Draft PRs must not be handed off.
 
@@ -169,6 +198,11 @@ Keep exactly one durable Shea Symphony workpad updated in place. It must include
   implementation, verification, PR readiness, and Agent Review handoff.
 - `### Work Log` with timestamped progress notes.
 - changed files and scope boundary.
+- comment coverage for any new or changed non-obvious runtime, tracker,
+  schema, retry/idempotency, compatibility, or external-service boundary.
+- Rustdoc coverage for new or changed Rust public API, or `not applicable`.
+- public visibility audit results, including any item narrowed to `pub(crate)`
+  or private, or `not applicable`.
 - verification commands and results.
 - PR URL, linked-PR confirmation, and ready/not-draft status.
 - final handoff summary explaining why Main stops at `Agent Review`.

@@ -919,6 +919,14 @@ pub fn render_review_workpad_with_workflow(
                 "boundary_comment_coverage",
                 "not evaluated unless issue scope changes a non-obvious boundary".into(),
             ),
+            (
+                "rustdoc_coverage",
+                "not evaluated unless issue scope changes Rust public API".into(),
+            ),
+            (
+                "public_visibility_audit",
+                "not evaluated unless issue scope changes Rust public API".into(),
+            ),
             ("evidence_summary", review_evidence_summary(job)),
             ("job_id", job.id.clone()),
             ("attempt_details", attempt_details.join("\n")),

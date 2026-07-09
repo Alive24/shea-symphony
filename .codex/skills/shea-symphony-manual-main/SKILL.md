@@ -12,6 +12,17 @@ Use this skill to operate a human-supervised Shea Symphony Main Agent session.
 The Main Agent owns implementation work. It does not own review approval, human
 approval, or merging.
 
+For normal all-lane dogfood, prefer the CLI foreground path first:
+
+```bash
+cargo run -- autopilot plan workflows/shea-symphony.md
+cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --write
+```
+
+Use this manual skill only for operator-selected Main implementation, Main-lane
+`Rework`, focused debugging, or break-glass recovery. Do not replace normal
+long-running dogfood with three separate manual lane loops.
+
 ## Runtime Topology
 
 Live Shea Symphony lane work still runs through the protected 2606 MVP runtime
@@ -87,6 +98,7 @@ Run or equivalent-check:
 
 ```bash
 cargo run -- project state workflows/shea-symphony.md
+cargo run -- autopilot plan workflows/shea-symphony.md
 cargo run -- doctor workflows/shea-symphony.md
 cargo run -- project inspect workflows/shea-symphony.md '#<issue>'
 cargo run -- project issue workflows/shea-symphony.md '#<issue>' --json
@@ -98,11 +110,12 @@ Raw `gh issue view` and `gh pr view` are acceptable for ordinary issue and PR
 content. Raw Project field/status/claim reads or mutations are break-glass only;
 record the reason if they are needed.
 
-Write-mode lane/control commands may automatically refresh the canonical
-checkout when clean local `main` is only behind upstream. That `ff-only` sync is
-allowed control-surface progress. Implementation edits, PR branch freshness, and
-review/merge work still belong in the isolated issue or PR worktree, not in the
-canonical checkout.
+If `autopilot plan` shows the same Main issue as the next lane action and there
+is no need to isolate Main, run `autopilot loop --write` from clean canonical
+`main` instead of starting a manual Main session. Write-mode lane/control
+commands may automatically refresh the canonical checkout when clean local
+`main` is only behind upstream; implementation edits, PR branch freshness, and
+review/merge work still belong in the isolated issue or PR worktree.
 
 ## Selection
 
@@ -140,13 +153,20 @@ For the selected issue:
    idempotency, compatibility, or external-service boundaries introduced or
    materially changed by the issue. Avoid comments that merely restate obvious
    assignments, names, or one-line control flow.
-6. Run the strongest practical verification for the touched area.
-7. Update issue or PR evidence with changes, verification, risks, follow-ups,
+6. When adding or changing Rust public API, add semantic crate/module `//!` and
+   item-level `///` Rustdoc, audit whether each item should remain `pub`, and
+   keep `missing_docs` enforcement scoped to the owned module. Ordinary `//`
+   boundary comments do not satisfy Rustdoc coverage. Use only the narrowest
+   justified `#[allow(missing_docs)]` for unavoidable macro-generated API.
+7. Run the strongest practical verification for the touched area. Rust public
+   API changes require `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` in
+   addition to formatting, tests, and strict clippy.
+8. Update issue or PR evidence with changes, verification, risks, follow-ups,
    and any intentionally commented boundary.
-8. Open or update the PR.
-9. Verify the issue Project item exposes the PR under linked pull requests.
-10. Confirm the PR is ready for review, not draft.
-11. Move the issue to `Agent Review`.
+9. Open or update the PR.
+10. Verify the issue Project item exposes the PR under linked pull requests.
+11. Confirm the PR is ready for review, not draft.
+12. Move the issue to `Agent Review`.
 
 The Main Agent must stop at `Agent Review`. Draft PRs must not be handed off.
 
@@ -180,6 +200,9 @@ Keep exactly one durable Shea Symphony workpad updated in place. It must include
 - changed files and scope boundary.
 - comment coverage for any new or changed non-obvious runtime, tracker,
   schema, retry/idempotency, compatibility, or external-service boundary.
+- Rustdoc coverage for new or changed Rust public API, or `not applicable`.
+- public visibility audit results, including any item narrowed to `pub(crate)`
+  or private, or `not applicable`.
 - verification commands and results.
 - PR URL, linked-PR confirmation, and ready/not-draft status.
 - final handoff summary explaining why Main stops at `Agent Review`.

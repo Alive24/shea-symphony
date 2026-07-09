@@ -1,25 +1,16 @@
-use crate::config::{TemporalConfig, TemporalTaskQueuesConfig};
+//! Stable task-queue names for Symphony worker routing and capacity isolation.
+//!
+//! Queues are split by operational characteristics, not merely by source-code
+//! layer. Long-running agent Activities must not delay latency-sensitive tracker
+//! operations, and short local projection work must remain independently
+//! scalable. Per-queue Activity concurrency is configured separately.
 
+/// Queue for Issue Workflows and latency-sensitive control-plane Activities.
 pub const CORE_TASK_QUEUE: &str = "symphony-core";
+/// Queue for long-running, resource-heavy coding and review agent Activities.
 pub const AGENT_TASK_QUEUE: &str = "symphony-agent";
+/// Queue for short local projection, indexing, health, and rebuild Activities.
 pub const LOCAL_TASK_QUEUE: &str = "symphony-local";
-pub const TASK_QUEUE_COUNT: usize = 3;
-
-pub fn default_task_queues() -> TemporalTaskQueuesConfig {
-    TemporalTaskQueuesConfig {
-        core: CORE_TASK_QUEUE.to_string(),
-        agent: AGENT_TASK_QUEUE.to_string(),
-        local: LOCAL_TASK_QUEUE.to_string(),
-    }
-}
-
-pub fn configured_task_queues(config: &TemporalConfig) -> [&str; TASK_QUEUE_COUNT] {
-    [
-        config.task_queues.core.as_str(),
-        config.task_queues.agent.as_str(),
-        config.task_queues.local.as_str(),
-    ]
-}
 
 #[cfg(test)]
 mod tests {
@@ -27,10 +18,8 @@ mod tests {
 
     #[test]
     fn default_task_queues_match_2607_contract() {
-        let queues = default_task_queues();
-
-        assert_eq!(queues.core, CORE_TASK_QUEUE);
-        assert_eq!(queues.agent, AGENT_TASK_QUEUE);
-        assert_eq!(queues.local, LOCAL_TASK_QUEUE);
+        assert_eq!(CORE_TASK_QUEUE, "symphony-core");
+        assert_eq!(AGENT_TASK_QUEUE, "symphony-agent");
+        assert_eq!(LOCAL_TASK_QUEUE, "symphony-local");
     }
 }

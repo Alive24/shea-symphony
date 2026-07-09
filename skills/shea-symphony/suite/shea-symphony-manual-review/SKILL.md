@@ -3,7 +3,7 @@ name: shea-symphony-manual-review
 description: Use when manually reviewing a Shea Symphony GitHub issue or pull request as a Review Agent, while recording evidence in the Shea Symphony tracker without confusing manual review with automatic review loop evidence.
 metadata:
   short-description: Shea Symphony manual review
-  suite-version: 2026.05.23
+  suite-version: 2026.05.22
 ---
 
 # Shea Symphony Manual Review
@@ -24,28 +24,50 @@ Review Agent pass, automatic review is blocked or unavailable, or an issue needs
 manual evidence. Manual review evidence is not a substitute for automatic
 `review loop` evidence.
 
-## Repository
+## Runtime Topology
 
-Default repository:
+Live Shea Symphony review work still runs through the protected 2606 MVP
+runtime until 2607 replaces the runtime spine. Use the MVP worktree for CLI/App
+execution and the active Shea Symphony development worktree only as source
+context.
+
+MVP runtime worktree:
+
+```bash
+/Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp
+```
+
+Canonical workflow inside the MVP runtime:
+
+```bash
+workflows/shea-symphony.md
+```
+
+GitHub repository:
 
 ```text
 Alive24/shea-symphony
 ```
 
-Default local checkout:
+Run Shea Symphony CLI read/write commands from the MVP runtime only. Do not
+change the MVP runtime branch or inspect PR code there; use the issue worktree
+for implementation/review inspection.
+
+If the Tauri App is needed, start it from the MVP runtime `app/` directory with
+the local MVP profile:
 
 ```bash
-/Volumes/Bohemialive/GitHub/shea-symphony
+cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp/app
+SHEA_SYMPHONY_APP_PROFILE_PATH=/Users/chuntengxiao/Documents/GitHub/shea-symphony/.shea/app-profile.local.json npm run tauri -- dev
 ```
 
-This checkout is the canonical harness launch directory. Use it to run Shea
-Symphony CLI read/write commands and GitHub CLI read commands only. Do not
-change its branch or checkout PR code there.
+The profile points at the Shea Symphony target checkout and the MVP CLI binary.
+Do not assume `npm run tauri -- dev -- --workdir <path>` alone keeps the backend
+on MVP code.
 
 ## Core Rule
 
-Manual review evidence is not automatic `review loop` or `autopilot loop`
-review-lane evidence.
+Manual review evidence is not automatic `review loop` evidence.
 
 Before reviewing, claim the tracker `Review Agent` field so parallel reviewers
 do not work on the same issue. `Review Agent` is a Project text field. Use Shea
@@ -88,11 +110,24 @@ command, stop and ask the operator for the intended workspace.
    `Completion Criteria`, `Functional Verification`, and `Context Verification`.
    Treat `UAT` as Human Review-owned: assess whether UAT instructions and
    operator evidence are sufficient, but do not check UAT boxes yourself.
-10. If the review passes, update the issue body in place so only
+10. When the PR changes non-obvious runtime, tracker, schema,
+    retry/idempotency, compatibility, or external-service boundaries, confirm
+    the diff includes concise comments explaining the relevant constraint.
+    Missing boundary comments are review findings when they leave future agents
+    likely to misuse the code.
+11. When the PR adds or changes Rust public API, verify semantic `//!` / `///`
+    Rustdoc coverage, audit whether each item needs public visibility, check for
+    broken intra-doc links, and confirm scoped `missing_docs` enforcement.
+    Ordinary `//` comments do not satisfy Rustdoc coverage. Broad
+    `#[allow(missing_docs)]` is a finding; only the narrowest unavoidable
+    macro-generated allowance is acceptable with an explanation.
+12. Run `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` for Rust public API
+    changes in addition to the issue's normal verification.
+13. If the review passes, update the issue body in place so only
     evidence-backed, non-UAT satisfied items are checked. Leave unsupported,
     skipped, failed, and all UAT items unchecked.
-11. Save the review evidence to a local evidence file.
-12. Route the result with `review pass` or `review reject`. For routine native
+14. Save the review evidence to a local evidence file.
+15. Route the result with `review pass` or `review reject`. For routine native
     subissues, `review pass` routes to `Merging`, not `Human Review`; parent
     final issues and ordinary issues still route to `Human Review`. Direct
     subissue Human Review requires `Subissue Human Review Exception: <reason>`.
@@ -175,6 +210,9 @@ overwrite, or restructure the Main Agent Workpad.
 - Functional Verification: checked / unchecked / not applicable, with evidence.
 - UAT: Human Review-owned; leave unchecked and note pending / operator evidence / not applicable.
 - Context Verification: checked / unchecked / not applicable, with evidence.
+- Boundary Comment Coverage: checked / missing / not applicable, with evidence.
+- Rustdoc Coverage: checked / missing / not applicable, with evidence.
+- Public Visibility Audit: checked / overexposed / not applicable, with evidence.
 
 ### Evidence Boundary
 

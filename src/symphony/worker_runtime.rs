@@ -1,3 +1,10 @@
+//! Process-level host for Symphony's local Temporal workers.
+//!
+//! The runtime connects to the configured local Temporal service and runs one
+//! worker per starting task queue in a single process. Task queues and Activity
+//! concurrency still provide independent routing and capacity isolation; this
+//! module does not implement a second scheduler or orchestration loop.
+
 use futures_util::try_join;
 use temporalio_client::Client;
 use temporalio_common::telemetry::TelemetryOptions;
@@ -8,6 +15,13 @@ use crate::config::RuntimeConfig;
 use crate::symphony::client::{SymphonyTemporalClient, TemporalRuntimeError};
 use crate::symphony::workers::{agent_worker_options, core_worker_options, local_worker_options};
 
+/// Connects to Temporal, registers all Symphony workers, and runs them to exit.
+///
+/// This function performs network I/O and blocks until a worker fails or the
+/// process is shut down. Registration failures identify the affected task queue;
+/// runtime failures are returned as [`TemporalRuntimeError`] rather than being
+/// converted into tracker state. Workflow decisions remain replay-deterministic,
+/// while registered Activities own all external side effects.
 pub async fn run_symphony_workers(config: RuntimeConfig) -> Result<(), TemporalRuntimeError> {
     let runtime = core_runtime()?;
     let temporal_client = SymphonyTemporalClient::new(config.temporal.clone());

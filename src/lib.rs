@@ -1,3 +1,11 @@
+//! Shea Symphony's reusable runtime and orchestration library.
+//!
+//! The legacy modules expose the 2606 MVP implementation while
+//! [`symphony`] establishes the 2607 Temporal-backed execution boundary. The
+//! Symphony API owns deterministic workflow orchestration and delegates all
+//! external side effects to Activities; tracker state remains external truth
+//! and SQLite remains a rebuildable local read model.
+
 pub mod agent;
 pub mod artifacts;
 pub mod canonical_checkout;
@@ -29,6 +37,7 @@ pub mod runtime_state;
 pub mod session_registry;
 pub mod skill_status;
 pub mod status_surface;
+/// Temporal-backed Symphony workflow, Activity, worker, and local-state contracts.
 pub mod symphony;
 pub mod target_runtime;
 pub mod tracker;

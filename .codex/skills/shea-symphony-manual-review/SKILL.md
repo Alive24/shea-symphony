@@ -12,6 +12,18 @@ Use this skill for an independent manual Review Agent pass on a Shea Symphony
 issue or PR, especially when automatic `review loop` is blocked, timed out, or
 needs a human-supervised pass.
 
+Normal all-lane dogfood should reach review through:
+
+```bash
+cargo run -- autopilot plan workflows/shea-symphony.md
+cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --write
+```
+
+Use this manual skill only when the operator intentionally wants a focused
+Review Agent pass, automatic review is blocked or unavailable, or an issue needs
+manual evidence. Manual review evidence is not a substitute for automatic
+`review loop` evidence.
+
 ## Runtime Topology
 
 Live Shea Symphony review work still runs through the protected 2606 MVP
@@ -103,11 +115,19 @@ command, stop and ask the operator for the intended workspace.
     the diff includes concise comments explaining the relevant constraint.
     Missing boundary comments are review findings when they leave future agents
     likely to misuse the code.
-11. If the review passes, update the issue body in place so only
+11. When the PR adds or changes Rust public API, verify semantic `//!` / `///`
+    Rustdoc coverage, audit whether each item needs public visibility, check for
+    broken intra-doc links, and confirm scoped `missing_docs` enforcement.
+    Ordinary `//` comments do not satisfy Rustdoc coverage. Broad
+    `#[allow(missing_docs)]` is a finding; only the narrowest unavoidable
+    macro-generated allowance is acceptable with an explanation.
+12. Run `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` for Rust public API
+    changes in addition to the issue's normal verification.
+13. If the review passes, update the issue body in place so only
     evidence-backed, non-UAT satisfied items are checked. Leave unsupported,
     skipped, failed, and all UAT items unchecked.
-12. Save the review evidence to a local evidence file.
-13. Route the result with `review pass` or `review reject`. For routine native
+14. Save the review evidence to a local evidence file.
+15. Route the result with `review pass` or `review reject`. For routine native
     subissues, `review pass` routes to `Merging`, not `Human Review`; parent
     final issues and ordinary issues still route to `Human Review`. Direct
     subissue Human Review requires `Subissue Human Review Exception: <reason>`.
@@ -191,6 +211,8 @@ overwrite, or restructure the Main Agent Workpad.
 - UAT: Human Review-owned; leave unchecked and note pending / operator evidence / not applicable.
 - Context Verification: checked / unchecked / not applicable, with evidence.
 - Boundary Comment Coverage: checked / missing / not applicable, with evidence.
+- Rustdoc Coverage: checked / missing / not applicable, with evidence.
+- Public Visibility Audit: checked / overexposed / not applicable, with evidence.
 
 ### Evidence Boundary
 

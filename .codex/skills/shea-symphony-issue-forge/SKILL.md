@@ -165,10 +165,16 @@ Resolve these before creation:
   idempotency, compatibility, or external-service boundaries. For boundary-heavy
   issues, include this in `Non-Negotiable Guardrails` and make it objectively
   checkable in `Completion Criteria`.
+- Rust public API impact. When an issue adds or changes public Rust modules,
+  types, constants, functions, methods, fields, or enum variants, require
+  semantic `//!` / `///` Rustdoc, a public visibility audit, broken intra-doc
+  link checks, and scoped `missing_docs` enforcement. Ordinary `//` boundary
+  comments do not count as Rustdoc coverage.
 - Verification commands. Prefer:
   - `cargo test`
   - `cargo fmt --check`
   - `cargo clippy --all-targets --all-features -- -D warnings`
+  - `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` when Rust public API changes
 - UAT requirements for operator-facing surfaces.
 
 ## Issue Body Shape
@@ -205,6 +211,9 @@ Use this structure:
 - Add concise comments at non-obvious runtime, tracker, schema,
   retry/idempotency, compatibility, or external-service boundaries changed by
   this issue.
+- When this issue adds or changes Rust public API, document the public surface
+  with semantic `//!` / `///` Rustdoc, audit whether each item should remain
+  `pub`, and enforce missing docs at the narrowest owned module boundary.
 
 ## Scope
 
@@ -258,6 +267,9 @@ Use this structure:
 - [ ] Non-obvious boundary code added or changed by this issue has concise
       comments explaining the replay, side-effect, schema, retry/idempotency,
       compatibility, or external-service constraint.
+- [ ] When Rust public API changes, every retained public item has meaningful
+      Rustdoc, public visibility has been audited, intra-doc links are valid,
+      and scoped `missing_docs` enforcement passes without broad allowances.
 
 ### Functional Verification
 

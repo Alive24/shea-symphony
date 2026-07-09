@@ -3,7 +3,7 @@ name: shea-symphony-issue-forge
 description: Use when creating, shaping, or validating Shea Symphony GitHub issues from rough operator intent. Runs a conversation-first discuss flow, resolves gate-critical ambiguity, drafts a quality-gated issue, asks for explicit confirmation, then creates it through Shea Symphony forge create.
 metadata:
   short-description: Conversational Shea Symphony issue forge
-  suite-version: 2026.05.23
+  suite-version: 2026.05.22
 ---
 
 # Shea Symphony Issue Forge
@@ -12,19 +12,44 @@ Create Shea Symphony issues through a conversation-first workflow. Do not jump
 straight to `forge create` from rough intent unless the user explicitly provides
 a complete issue body.
 
-## Repository
+## Runtime Topology
 
-Default repo:
+Live Shea Symphony issue creation still runs through the protected 2606 MVP
+runtime until 2607 replaces the runtime spine. Use the MVP worktree for
+CLI/App execution and the active Shea Symphony development worktree only as
+source context.
+
+MVP runtime worktree:
 
 ```bash
-/Volumes/Bohemialive/GitHub/shea-symphony
+/Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp
 ```
 
-Canonical workflow:
+Canonical workflow inside the MVP runtime:
 
 ```bash
 workflows/shea-symphony.md
 ```
+
+Run deterministic tracker and forge mutations from the MVP runtime:
+
+```bash
+cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp
+cargo run -- forge validate --workflow workflows/shea-symphony.md --issue '#<issue>'
+cargo run -- forge create --workflow workflows/shea-symphony.md ...
+```
+
+If the Tauri App is needed, start it from the MVP runtime `app/` directory with
+the local MVP profile:
+
+```bash
+cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp/app
+SHEA_SYMPHONY_APP_PROFILE_PATH=/Users/chuntengxiao/Documents/GitHub/shea-symphony/.shea/app-profile.local.json npm run tauri -- dev
+```
+
+The profile points at the Shea Symphony target checkout and the MVP CLI binary.
+Do not assume `npm run tauri -- dev -- --workdir <path>` alone keeps the backend
+on MVP code.
 
 Default assignee:
 
@@ -85,6 +110,43 @@ non-interactive and owns the guarded body/evidence/status writes.
   relationship in the same creation flow, recommend `Backlog` until the blocker
   is Done, then promote it to `Todo`.
 
+## Investigation And Boundary Scan
+
+Before drafting issues for migrations, backend changes, external CLI/tool
+integrations, workflow orchestration, protocol changes, or other abstraction
+boundary work, do a short investigation pass before asking implementation-shape
+questions.
+
+The investigation should separate:
+
+- external facts: current official docs, CLI help, version output, or safe
+  compatibility probes when the behavior is likely to have changed;
+- local implementation facts: current config fields, backend abstractions,
+  prompt/runtime paths, docs, skills, tests, and operator readback surfaces;
+- boundary facts: which concepts are accidentally coupled today and which
+  behaviors must remain stable while the issue is implemented.
+
+For external tools, prefer official docs and local `--help` / non-sensitive
+smoke probes over assumptions. Do not send private repository contents to an
+external service during investigation unless the operator explicitly approves
+that exposure. A safe probe should use synthetic text, write logs under an
+artifact or temp path when possible, and record whether the result was observed
+locally or inferred from docs.
+
+For migration or adapter work, first ask whether the real issue is an
+abstraction boundary rather than a command-name replacement. Identify the
+existing coupled concerns, such as config schema, transport, parser, health
+diagnostics, artifact/ledger shape, docs, skills, and default workflow config.
+Prefer a conservative issue sequence when useful:
+
+1. generalize the internal abstraction without changing the default behavior;
+2. add or validate the new backend/tool behind the abstraction;
+3. switch defaults, docs, skills, and operator guidance after compatibility is
+   proven.
+
+Only draft a single large issue when the scan shows the work is small enough to
+verify safely in one PR.
+
 Resolve these before creation:
 
 - Goal.
@@ -97,10 +159,22 @@ Resolve these before creation:
 - Non-negotiable guardrails.
 - Dependencies, with explicit `None` when there are none.
 - Trusted docs/code references.
+- Investigation evidence for abstraction-boundary, migration, or external-tool
+  work, including what was checked and what remains unverified.
+- Comment expectations for non-obvious runtime, tracker, schema, retry,
+  idempotency, compatibility, or external-service boundaries. For boundary-heavy
+  issues, include this in `Non-Negotiable Guardrails` and make it objectively
+  checkable in `Completion Criteria`.
+- Rust public API impact. When an issue adds or changes public Rust modules,
+  types, constants, functions, methods, fields, or enum variants, require
+  semantic `//!` / `///` Rustdoc, a public visibility audit, broken intra-doc
+  link checks, and scoped `missing_docs` enforcement. Ordinary `//` boundary
+  comments do not count as Rustdoc coverage.
 - Verification commands. Prefer:
   - `cargo test`
   - `cargo fmt --check`
   - `cargo clippy --all-targets --all-features -- -D warnings`
+  - `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` when Rust public API changes
 - UAT requirements for operator-facing surfaces.
 
 ## Issue Body Shape
@@ -134,6 +208,12 @@ Use this structure:
 ## Non-Negotiable Guardrails
 
 - ...
+- Add concise comments at non-obvious runtime, tracker, schema,
+  retry/idempotency, compatibility, or external-service boundaries changed by
+  this issue.
+- When this issue adds or changes Rust public API, document the public surface
+  with semantic `//!` / `///` Rustdoc, audit whether each item should remain
+  `pub`, and enforce missing docs at the narrowest owned module boundary.
 
 ## Scope
 
@@ -184,6 +264,12 @@ Use this structure:
 ### Completion Criteria
 
 - [ ] ...
+- [ ] Non-obvious boundary code added or changed by this issue has concise
+      comments explaining the replay, side-effect, schema, retry/idempotency,
+      compatibility, or external-service constraint.
+- [ ] When Rust public API changes, every retained public item has meaningful
+      Rustdoc, public visibility has been audited, intra-doc links are valid,
+      and scoped `missing_docs` enforcement passes without broad allowances.
 
 ### Functional Verification
 
@@ -217,7 +303,7 @@ After the user confirms the draft:
 2. Run:
 
 ```bash
-cd /Volumes/Bohemialive/GitHub/shea-symphony
+cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp
 cargo run -- forge create \
   --workflow workflows/shea-symphony.md \
   --title "<title>" \

@@ -1,16 +1,26 @@
+//! Compile-time contract for Symphony's rebuildable SQLite read model.
+//!
+//! These descriptors freeze names, columns, keys, indexes, and serialized enum
+//! values for later migration and projection work. This module opens no database
+//! and performs no I/O. SQLite is an acceleration and observability surface: it
+//! may cache tracker facts and Temporal execution metadata, but it cannot
+//! authorize Workflow progression, tracker transitions, PR linkage, or merging.
+
 use serde::{Deserialize, Serialize};
 
-// Contract-only local read model schema. This module names the tables and DTO
-// values that later migrations must implement; it must not open SQLite or
-// authorize workflow/tracker progression.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Stable repository identity used in local read-model keys.
 pub struct RepoId {
+    /// Source host, such as `github.com`.
     pub host: String,
+    /// Repository owner or organization on the source host.
     pub owner: String,
+    /// Repository name on the source host.
     pub repo: String,
 }
 
 impl RepoId {
+    /// Builds a repository identity without performing remote validation.
     pub fn new(host: impl Into<String>, owner: impl Into<String>, repo: impl Into<String>) -> Self {
         Self {
             host: host.into(),
@@ -19,6 +29,7 @@ impl RepoId {
         }
     }
 
+    /// Returns the canonical slash-delimited key stored by local projections.
     pub fn database_key(&self) -> String {
         format!("{}/{}/{}", self.host, self.owner, self.repo)
     }
@@ -26,12 +37,16 @@ impl RepoId {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Tracker adapter that owns the authoritative external issue state.
 pub enum TrackerBackend {
+    /// GitHub Projects v2 and GitHub Issues.
     GithubProjectV2,
+    /// Linear issue tracking.
     Linear,
 }
 
 impl TrackerBackend {
+    /// Returns the stable serialized/storage spelling of this backend.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::GithubProjectV2 => "github_project_v2",
@@ -41,13 +56,18 @@ impl TrackerBackend {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Tracker-scoped issue identity used by local cache rows.
 pub struct IssueRef {
+    /// Tracker adapter that resolves this issue.
     pub tracker_backend: TrackerBackend,
+    /// Repository containing the issue.
     pub repo_id: RepoId,
+    /// Tracker-native numeric issue identifier.
     pub number: u64,
 }
 
 impl IssueRef {
+    /// Builds an issue reference without reading the tracker.
     pub fn new(tracker_backend: TrackerBackend, repo_id: RepoId, number: u64) -> Self {
         Self {
             tracker_backend,
@@ -56,6 +76,7 @@ impl IssueRef {
         }
     }
 
+    /// Formats the short tracker reference used in operator surfaces.
     pub fn display_ref(&self) -> String {
         format!("#{}", self.number)
     }
@@ -63,13 +84,19 @@ impl IssueRef {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
+/// Application-assigned Temporal Workflow ID stored by the local read model.
+///
+/// This is distinct from Temporal's Run ID and remains stable for the identity
+/// of one Workflow execution. Construction does not validate naming policy.
 pub struct WorkflowId(String);
 
 impl WorkflowId {
+    /// Wraps an already validated application Workflow ID.
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
     }
 
+    /// Borrows the exact ID sent to and read from Temporal.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -77,18 +104,31 @@ impl WorkflowId {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Lifecycle classification projected into the local Workflow index.
+///
+/// These values describe local knowledge and reconciliation outcomes; Temporal
+/// history and tracker state remain authoritative.
 pub enum WorkflowIndexStatus {
+    /// A start has been admitted locally but not yet observed as running.
     Starting,
+    /// The Workflow execution is currently observed as open and running.
     Running,
+    /// The Workflow execution completed successfully.
     Completed,
+    /// The Workflow execution reached a known failure.
     Failed,
+    /// Temporal rejected or failed the Workflow start request.
     StartFailed,
+    /// A locally recorded start was not confirmed within its freshness window.
     StaleStart,
+    /// An expected execution can no longer be found during reconciliation.
     StaleMissing,
+    /// The execution is closed but its terminal classification is unavailable.
     ClosedUnknown,
 }
 
 impl WorkflowIndexStatus {
+    /// Returns the stable serialized/storage spelling of this status.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Starting => "starting",
@@ -102,25 +142,37 @@ impl WorkflowIndexStatus {
         }
     }
 
+    /// Returns whether this status participates in the local duplicate-start guard.
+    ///
+    /// This is a local safety check only; it does not replace Temporal start
+    /// semantics or tracker eligibility checks.
     pub const fn is_active(self) -> bool {
         matches!(self, Self::Starting | Self::Running)
     }
 }
 
+/// Statuses treated as locally active for duplicate-start projection guards.
 pub const ACTIVE_WORKFLOW_STATUSES: &[WorkflowIndexStatus] =
     &[WorkflowIndexStatus::Starting, WorkflowIndexStatus::Running];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Freshness of a cached or projected local-state value.
 pub enum Freshness {
+    /// The projection is current within its configured freshness policy.
     Fresh,
+    /// The projection is known to be older than its freshness policy permits.
     Stale,
+    /// A refresh has started but no authoritative result has been committed yet.
     Refreshing,
+    /// The last refresh attempt failed and diagnostics should be consulted.
     Failed,
+    /// Freshness cannot currently be established.
     Unknown,
 }
 
 impl Freshness {
+    /// Returns the stable serialized/storage spelling of this freshness value.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Fresh => "fresh",
@@ -133,54 +185,81 @@ impl Freshness {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// SQLite storage affinity required by a schema column.
 pub enum ColumnKind {
+    /// UTF-8 text or text-encoded identifier/timestamp data.
     Text,
+    /// Integer data stored with SQLite integer affinity.
     Integer,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Name and storage affinity of one local-state table column.
 pub struct ColumnDescriptor {
+    /// Stable SQL column name.
     pub name: &'static str,
+    /// SQLite storage affinity expected by the migration.
     pub kind: ColumnKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Named primary-key contract for a local-state table.
 pub struct PrimaryKeyDescriptor {
+    /// Stable SQL constraint name.
     pub name: &'static str,
+    /// Ordered columns that make up the primary key.
     pub columns: &'static [&'static str],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Named non-primary index contract for a local-state table.
 pub struct IndexDescriptor {
+    /// Stable SQL index name.
     pub name: &'static str,
+    /// Ordered columns included in the index key.
     pub columns: &'static [&'static str],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Proposed local duplicate-start guard for active Workflow index rows.
+///
+/// This descriptor is migration input, not an implemented lock or an authority
+/// for starting Workflows.
 pub struct ActiveWorkflowGuardDescriptor {
-    // Describes the duplicate-start invariant before a later migration turns it
-    // into SQL. Temporal/tracker state remains authoritative.
+    /// Human-readable invariant the future SQL index must enforce locally.
     pub intent: &'static str,
+    /// Stable name proposed for the future partial unique index.
     pub proposed_index_name: &'static str,
+    /// Issue identity columns constrained by the guard.
     pub columns: &'static [&'static str],
+    /// Projected statuses to which the guard applies.
     pub active_statuses: &'static [WorkflowIndexStatus],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Complete compile-time contract for one local-state table.
 pub struct TableDescriptor {
+    /// Stable SQL table name.
     pub name: &'static str,
+    /// Ordered columns expected in the initial migration.
     pub columns: &'static [ColumnDescriptor],
+    /// Primary-key contract for the table.
     pub primary_key: PrimaryKeyDescriptor,
+    /// Secondary indexes required by known read paths.
     pub indexes: &'static [IndexDescriptor],
+    /// Optional local duplicate-start guard metadata.
     pub active_workflow_guard: Option<ActiveWorkflowGuardDescriptor>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Ordered set of table descriptors for the initial local-state schema.
 pub struct LocalStateSchema {
+    /// Tables in stable migration/documentation order.
     pub tables: &'static [TableDescriptor],
 }
 
 impl LocalStateSchema {
+    /// Finds a table descriptor by its stable SQL name.
     pub fn table(&self, name: &str) -> Option<&'static TableDescriptor> {
         self.tables.iter().find(|table| table.name == name)
     }
@@ -280,7 +359,7 @@ const META_COLUMNS: &[ColumnDescriptor] = &[text_column("key"), text_column("val
 
 const META_INDEXES: &[IndexDescriptor] = &[];
 
-pub const WORKFLOW_INDEX_TABLE: TableDescriptor = TableDescriptor {
+const WORKFLOW_INDEX_TABLE: TableDescriptor = TableDescriptor {
     name: "workflow_index",
     columns: WORKFLOW_INDEX_COLUMNS,
     primary_key: PrimaryKeyDescriptor {
@@ -297,7 +376,7 @@ pub const WORKFLOW_INDEX_TABLE: TableDescriptor = TableDescriptor {
     }),
 };
 
-pub const ARTIFACT_INDEX_TABLE: TableDescriptor = TableDescriptor {
+const ARTIFACT_INDEX_TABLE: TableDescriptor = TableDescriptor {
     name: "artifact_index",
     columns: ARTIFACT_INDEX_COLUMNS,
     primary_key: PrimaryKeyDescriptor {
@@ -308,7 +387,7 @@ pub const ARTIFACT_INDEX_TABLE: TableDescriptor = TableDescriptor {
     active_workflow_guard: None,
 };
 
-pub const TRACKER_CACHE_TABLE: TableDescriptor = TableDescriptor {
+const TRACKER_CACHE_TABLE: TableDescriptor = TableDescriptor {
     name: "tracker_cache",
     columns: TRACKER_CACHE_COLUMNS,
     primary_key: PrimaryKeyDescriptor {
@@ -319,7 +398,7 @@ pub const TRACKER_CACHE_TABLE: TableDescriptor = TableDescriptor {
     active_workflow_guard: None,
 };
 
-pub const ACTIVITY_PROGRESS_TABLE: TableDescriptor = TableDescriptor {
+const ACTIVITY_PROGRESS_TABLE: TableDescriptor = TableDescriptor {
     name: "activity_progress",
     columns: ACTIVITY_PROGRESS_COLUMNS,
     primary_key: PrimaryKeyDescriptor {
@@ -330,7 +409,7 @@ pub const ACTIVITY_PROGRESS_TABLE: TableDescriptor = TableDescriptor {
     active_workflow_guard: None,
 };
 
-pub const META_TABLE: TableDescriptor = TableDescriptor {
+const META_TABLE: TableDescriptor = TableDescriptor {
     name: "meta",
     columns: META_COLUMNS,
     primary_key: PrimaryKeyDescriptor {
@@ -341,6 +420,11 @@ pub const META_TABLE: TableDescriptor = TableDescriptor {
     active_workflow_guard: None,
 };
 
+/// Initial compile-time schema contract for Symphony's local read model.
+///
+/// The descriptor order is stable for migrations, documentation, and tests.
+/// Possessing this value does not imply that a SQLite database exists or is
+/// fresh, and it never authorizes Workflow or tracker mutation.
 pub const LOCAL_STATE_SCHEMA: LocalStateSchema = LocalStateSchema {
     // Keep descriptor order stable so migrations, docs, and tests speak about
     // the same initial schema without needing a live database.

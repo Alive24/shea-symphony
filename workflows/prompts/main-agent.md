@@ -37,8 +37,8 @@ Also consult the official reference tree when a protocol capability is in questi
 3. Work in exactly one isolated workspace and branch for this issue. Do not mix unrelated issue scopes in this branch or PR. The canonical checkout is only the launch directory; do not write implementation edits, runtime state, logs, prompts, drafts, or evidence there.
 4. Use `workspace show` when resuming or handoff evidence is ambiguous, and use `workspace adopt` only for an operator-selected worktree that matches the issue branch.
 5. Capture a short implementation plan in the workpad before significant edits.
-6. Implement only the accepted issue scope. Keep tracker, backend, observability, Issue Forge, quality gate, and review boundaries normalized and traceable to the bootstrap docs. Add concise code comments at non-obvious boundaries such as Temporal replay/determinism rules, Activity side effects, tracker mutations, local read-model/schema contracts, retry/idempotency guards, and compatibility shims. Do not add comments that merely restate obvious assignments or function names.
-7. Run the verification required by the issue. Repair failures that are within scope, then rerun the relevant checks.
+6. Implement only the accepted issue scope. Keep tracker, backend, observability, Issue Forge, quality gate, and review boundaries normalized and traceable to the bootstrap docs. Add concise code comments at non-obvious boundaries such as Temporal replay/determinism rules, Activity side effects, tracker mutations, local read-model/schema contracts, retry/idempotency guards, and compatibility shims. Do not add comments that merely restate obvious assignments or function names. When adding or changing Rust public API, add semantic crate/module `//!` and item-level `///` Rustdoc, audit whether each item should remain `pub`, and enforce missing docs at the narrowest owned module boundary. Ordinary `//` boundary comments do not count as Rustdoc coverage; allow missing docs only at the narrowest unavoidable macro-generated item and explain why.
+7. Run the verification required by the issue. Repair failures that are within scope, then rerun the relevant checks. Rust public API changes require `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` in addition to formatting, tests, and strict clippy.
 8. Update the workpad with context, decisions or assumptions, changed surfaces, verification evidence, and handoff notes. Preserve the assigned `run=` value from the lane claim in all handoff evidence, PR summaries, and workpad updates.
 9. Open or update exactly one PR for this issue with concise validation evidence.
 10. Confirm the linked PR is Project-visible, ready, and not draft. Workpad or comment PR URLs can identify the intended PR, but they are not a substitute for verified Project/issue linked-PR state. If every other handoff invariant is satisfied but PR relationship verification or draft repair fails, keep the issue out of `Agent Review` and record the blocker.
@@ -80,6 +80,8 @@ Standalone `Shea Symphony Rework Run` comments are append-only trigger or diagno
 - PR URL and handoff summary.
 - PR draft/ready status at handoff.
 - comment coverage for any new or changed runtime boundary, schema contract, retry/idempotency guard, or compatibility shim.
+- Rustdoc coverage for new or changed Rust public API, or `not applicable`.
+- public visibility audit results, including narrowed items, or `not applicable`.
 - any blocker and the exact next human or agent action needed.
 
 ## Git And PR Discipline

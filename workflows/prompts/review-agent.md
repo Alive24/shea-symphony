@@ -40,6 +40,14 @@ Use Shea Symphony CLI for Project state, Project fields, claim locks, workpad up
   compatibility, or external-service boundaries, confirm the diff includes
   concise comments explaining the relevant constraint. Missing boundary comments
   are review findings when they leave future agents likely to misuse the code.
+- When the PR adds or changes Rust public API, verify semantic `//!` / `///`
+  Rustdoc coverage, audit whether each item needs external visibility, check
+  broken intra-doc links, and require scoped `missing_docs` enforcement.
+  Ordinary `//` boundary comments do not count as Rustdoc coverage. Broad
+  `#[allow(missing_docs)]` is a finding; only the narrowest unavoidable
+  macro-generated allowance is acceptable with an explanation. Run
+  `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` and report Rustdoc coverage
+  and public visibility audit evidence separately.
 - Missing Human-owned `UAT` execution is not a confirmed implementation defect and must not by itself produce `Review Result: REWORK`. Report it as UAT readiness or Human Review follow-up evidence instead.
 - If the issue scope requires implementing a UAT fixture, rehearsal path, or dogfood workflow, missing that implementation can be a confirmed finding. In that case, identify the missing implementation deliverable rather than using "Missing UAT" as the blocker.
 - In manual review, when the review passes, update the issue body checklist in place so evidence-backed non-UAT review items are checked. Leave UAT, unsatisfied, skipped, or unsupported items unchecked and explain them in review evidence.

@@ -1,3 +1,10 @@
+//! Worker registrations for Symphony's three-queue Temporal topology.
+//!
+//! The core worker polls Workflow and control-plane Activity tasks. Agent and
+//! local workers are Activity-only so long-running coding work and short local
+//! projection work cannot consume Workflow-task capacity. Concurrency values are
+//! Activity execution limits for each queue, not a replacement scheduler.
+
 use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_sdk::WorkerOptions;
 
@@ -10,13 +17,26 @@ use crate::symphony::client::TemporalRuntimeError;
 use crate::symphony::workflows::{IssueWorkflow, ISSUE_WORKFLOW_TYPE};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Read-only description of one configured task-queue registration.
+///
+/// This is an operator/App introspection DTO. Mutating it does not reconfigure a
+/// running worker; worker options are built separately at process startup.
 pub struct TaskQueueRegistration {
+    /// Configured Temporal task-queue name.
     pub task_queue: String,
+    /// Durable Workflow type names registered on the queue.
     pub workflows: Vec<String>,
+    /// Durable Activity type names registered on the queue.
     pub activities: Vec<String>,
+    /// Maximum concurrently executing Activities for this worker.
     pub max_concurrent_activities: usize,
 }
 
+/// Describes the Workflow/Activity routing and concurrency configured at startup.
+///
+/// This function is side-effect free and does not contact Temporal. Type names in
+/// the returned value are durable compatibility surfaces once histories refer to
+/// them.
 pub fn task_queue_registrations(config: &TemporalConfig) -> Vec<TaskQueueRegistration> {
     vec![
         TaskQueueRegistration {
@@ -49,7 +69,10 @@ pub fn task_queue_registrations(config: &TemporalConfig) -> Vec<TaskQueueRegistr
     ]
 }
 
-pub fn core_worker_options(config: &TemporalConfig) -> Result<WorkerOptions, TemporalRuntimeError> {
+/// Builds core worker options, including durable Workflow registration.
+pub(super) fn core_worker_options(
+    config: &TemporalConfig,
+) -> Result<WorkerOptions, TemporalRuntimeError> {
     let worker_options = WorkerOptions::new(config.task_queues.core.as_str())
         .register_activities(CoreActivities)
         .register_workflow::<IssueWorkflow>()
@@ -62,14 +85,16 @@ pub fn core_worker_options(config: &TemporalConfig) -> Result<WorkerOptions, Tem
     Ok(worker_options)
 }
 
-pub fn agent_worker_options(config: &TemporalConfig) -> WorkerOptions {
+/// Builds Activity-only options for resource-heavy agent work.
+pub(super) fn agent_worker_options(config: &TemporalConfig) -> WorkerOptions {
     WorkerOptions::new(config.task_queues.agent.as_str())
         .task_types(WorkerTaskTypes::activity_only())
         .register_activities(AgentActivities)
         .build()
 }
 
-pub fn local_worker_options(config: &TemporalConfig) -> WorkerOptions {
+/// Builds Activity-only options for short local projection and health work.
+pub(super) fn local_worker_options(config: &TemporalConfig) -> WorkerOptions {
     WorkerOptions::new(config.task_queues.local.as_str())
         .task_types(WorkerTaskTypes::activity_only())
         .register_activities(LocalActivities)

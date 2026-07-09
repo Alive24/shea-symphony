@@ -126,6 +126,7 @@ Acceptance:
 
 Primary docs:
 
+- `implementation/T2607-03-workflow-coordinator.md`
 - `WORKFLOW-ACTIVATION.md`
 - `TEMPORAL-CONCURRENCY.md`
 - `LOCAL-STATE-DB.md`

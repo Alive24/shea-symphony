@@ -35,8 +35,9 @@ For old hackathon feedback issues:
 2. Add `needs:shaping` unless already shaped.
 3. Set Project `Package = Feedback Intake`.
 4. Set Project `Slice = feedback`.
-5. Set Project `Disposition = Feedback seed`.
-6. Keep or move the issue to a non-executable lane such as `Backlog`.
+5. Keep or move the issue to `Backlog`.
+6. Add a short issue comment or timeline note explaining what was captured and
+   how it may be promoted later.
 7. Do not attach `2607-Hardening` milestone until it becomes executable.
 
 This keeps the feedback visible without forcing immediate implementation.
@@ -59,7 +60,6 @@ Example:
 
 Handling:
 
-- set `Disposition = Absorb into 2607`;
 - link the executable 2607 issue;
 - add a short comment naming the package and successor issue;
 - close the feedback issue only after the evidence is captured somewhere
@@ -73,7 +73,6 @@ editing, or later product capability.
 Handling:
 
 - set `Package = 2608 Workflow Graph` or `Future`;
-- set `Disposition = Defer to 2608+`;
 - leave it in Backlog or close after linking to a future planning artifact.
 
 ### Superseded By Docs
@@ -83,7 +82,6 @@ doc, but no direct implementation issue is needed.
 
 Handling:
 
-- set `Disposition = Superseded by docs`;
 - comment with the canonical doc link;
 - close if no further tracking is useful.
 
@@ -113,7 +111,6 @@ Before a feedback seed becomes a 2607 executable issue, it needs:
 
 Once shaped:
 
-- set `Disposition = Executable`;
 - set the relevant `T2607-xx` Package;
 - set `Slice`;
 - add `2607-Hardening` milestone;

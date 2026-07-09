@@ -84,22 +84,6 @@ Recommended options:
 Use `Slice` to keep issue size honest. A package may have many executable
 issues with different slices.
 
-### `Disposition`
-
-Single-select field for non-executable or feedback-origin items.
-
-Recommended options:
-
-- `Executable`
-- `Feedback seed`
-- `Absorb into 2607`
-- `Defer to 2608+`
-- `Superseded by docs`
-- `Close after capture`
-
-Use `Disposition` to keep real feedback visible without pretending every old
-feedback item is ready to execute.
-
 ## Labels
 
 Use labels for cross-cutting filters, not primary structure.
@@ -133,8 +117,8 @@ Recommended Project views:
 
 - `2607 Board`: existing workflow `Status` board for active executable issues.
 - `By Package`: group by `Package`.
-- `Feedback Intake`: filter `Disposition = Feedback seed` or
-  `feedback:hackathon`.
+- `Feedback Intake`: filter `Package = Feedback Intake`, `Slice = feedback`,
+  or `feedback:hackathon`.
 - `Deletion Queue`: filter `Slice = deletion` or `kind:deletion`.
 - `Risky Writes`: filter `risk:tracker-write`.
 - `App/Perf`: filter `area:app` or `kind:instrumentation`.
@@ -150,7 +134,6 @@ Every executable 2607 issue should:
 - belong to the `2607-Hardening` milestone;
 - have `Package` set to one `T2607-xx` package;
 - have `Slice` set;
-- have `Disposition = Executable`;
 - include acceptance checks copied or narrowed from the package docs;
 - fit inside one normal Shea Symphony workflow pulse;
 - be reviewable independently;
@@ -185,7 +168,7 @@ Use this flow when turning docs into GitHub issues:
 implementation package doc
   -> choose a small slice
   -> draft executable issue contract
-  -> assign Package/Slice/Disposition
+  -> assign Package/Slice
   -> attach 2607-Hardening milestone
   -> add labels for area/kind/risk
   -> move to Todo only when executable
@@ -209,3 +192,8 @@ Feedback items should either:
 
 Do not attach `2607-Hardening` milestone to feedback seeds until they are
 shaped into executable issues.
+
+Feedback seeds do not need a separate Project field beyond `Package` and
+`Slice`. Use `Status = Backlog`, `Package = Feedback Intake`, `Slice =
+feedback`, labels, and an issue comment/timeline log. Promotion changes those
+fields into the executable package and slice.

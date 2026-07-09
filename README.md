@@ -2,11 +2,25 @@
 
 Shea Symphony is an opinionated and extended Rust implementation with GUI of OpenAI Symphony orchestration system to make it also work for small teams of humans that want to start building AI-native engineering workflows in a responsible and manageable way.
 
-> NOTE: This project is being built by itself with self-dogfooding and not fully stabilized for release yet;
+> ## Milestone Note: 2606 MVP
+>
+> The 2606 MVP is a local Rust/CLI-first and desktop-observable implementation. It has been self-dogfooded on Shea Symphony itself and used to help build external projects. See [What 2606 MVP Demonstrates](#what-2606-mvp-demonstrates) for more details.
+>
+> The next milestone is 2607 Hardening which aims to harden the runtime:
+>
+> - Further separate Symphony runtime responsibilities from Shea extensions;
+> - Replace prototyped lane/autopilot loops with Temporal architecture for reliability, maintainability, and observability;
+>   - Workflow coordination and orchestration;
+>   - Activity definition and dispatching
+>   - Worker supervision and lifecycle management
+>   - Temporal Message (start, Query, Signal, and Update) operations for workflow state management and coordination;
+>   - Temporal History for audit, self-improvement, and debugging;
+> - Keep tracker as durable queue/external state but use SQLite as local read model and active workflow index for user experience;
+> - UI/UX improvements for workflow/template/prompt/skill management and configuration;
 
 ## Desktop App
 
-The Shea Symphony desktop app is the foreground cockpit for human operators. It keeps Human Todo decisions, lane queues, local worktrees, and issue-level evidence visible without requiring a terminal expedition.
+The desktop app is the operator cockpit for observing queues, Human Todo, active lane work, local worktrees, and issue-level evidence without requiring a terminal expedition.
 
 ![Shea Symphony Operator Desk](docs/assets/screenshots/operator-desk.png)
 
@@ -26,7 +40,7 @@ LaneIssueView drills into one issue with tracker state, local worktree provenanc
 - Team Workflow: Also scale in quality and productivity with more human operators.
 - Human Input: Human can help more by writing better issues and providing feedback.
 
-### How Human Use It
+### How Humans Use It
 
 After setting up Shea Symphony, the desired human workflow looks like this:
 
@@ -49,14 +63,15 @@ After setting up Shea Symphony, the desired human workflow looks like this:
 - Configurable handoff templates
 - Switch between Autoloop and Manual mode for fine control
 
-#### CLI Toolkit
+#### CLI Toolkit (2606 MVP, To be replaced by Temporal in 2607 Hardening)
 
+- MVP Runtime CLI for orchestration and debugging.
 - Consistent state machine powered by tracker and mutation behaviors across all lanes.
 - Workspace management and session restoration for interrupted runs.
 
 #### Additional Features
 
-- GitHub Project v2 and Linear tracker state machines;
+- GitHub Project v2 tracker state machines (Linear planned);
 - parent/subissue branch topology;
 - Doctor diagnostics for stuck states;
 - repo-owned skills for conversational operator workflows;
@@ -91,50 +106,6 @@ The tracker stays the shared source of truth. Local artifacts, worktrees, logs, 
 - **Dream and Reflect skills** mine recent work into safe Backlog candidates before they become executable Todo issues.
 
 The intended feeling is closer to a team cockpit than a prompt runner. You should be able to leave work moving, come back later, and understand what happened from the issue, PR, workpad, and status output.
-
-## A Human-First Tour
-
-If you are evaluating Shea Symphony, start with these questions.
-
-### 1. Do you have a tracker-backed workflow?
-
-Shea Symphony expects real work to live in a tracker. The current self-dogfood workflow uses GitHub Issues plus GitHub Project v2. Linear support exists behind the same tracker abstraction, but the strongest dogfood path today is GitHub.
-
-The workflow file describes tracker states, lane prompts, runtime configuration, artifact roots, and verification expectations:
-
-```bash
-cargo run -- validate workflows/shea-symphony.md
-cargo run -- project state workflows/shea-symphony.md
-```
-
-### 2. Is the issue ready for an agent?
-
-Agents should not start from vibes alone. Issue Forge checks whether an issue has the contract shape needed for safe execution: goal, context, guardrails, scope, dependencies, verification, and expected outcome.
-
-In normal use, the conversational part happens through the Shea Symphony Codex skills. The CLI stays deterministic and scriptable:
-
-```bash
-cargo run -- forge validate \
-  --workflow workflows/shea-symphony.md \
-  --status Todo \
-  --title "<title>" \
-  --body-file /path/to/issue.md
-```
-
-Backlog seeds can stay intentionally softer. Todo issues are dispatchable and must pass the stronger gate.
-
-### 3. What would the system do next?
-
-Before writing anything, ask the system for a read-only plan:
-
-```bash
-cargo run -- autopilot plan workflows/shea-symphony.md
-cargo run -- main loop workflows/shea-symphony.md --max-iterations 1 --dry-run
-cargo run -- review loop workflows/shea-symphony.md --max-iterations 1 --dry-run
-cargo run -- merge loop workflows/shea-symphony.md --max-iterations 1 --dry-run
-```
-
-The Autoloop plan (`autopilot plan`) is the bridge toward all-lane automation. It does not launch workers. It shows lane readiness, parked human queues, runtime concerns, doctor findings, and the next likely actions.
 
 ## The Lane Model
 
@@ -181,77 +152,6 @@ Shea Symphony is opinionated about evidence because agent work without evidence 
 
 The goal is not to keep every byte forever. The goal is that a human can answer "what happened here?" without guessing.
 
-## What Works Today
-
-The current self-dogfood workflow can:
-
-- load and validate workflow files;
-- read GitHub Project v2 tracker state;
-- validate issue contracts before dispatch;
-- create and promote tracker issues through Forge;
-- run bounded Main, Review, and Merge lane ticks;
-- use Codex app-server for Main execution;
-- use headless `agy` for Review execution;
-- create isolated issue worktrees and PR handoffs;
-- preserve Main workpads and lane timeline evidence;
-- recover interrupted Main and Merge lane work by default;
-- inspect runtime/session status;
-- diagnose tracker, PR, worktree, skill, runtime, and lane-state problems;
-- plan future all-lane autoloop actions without mutating state.
-
-It is still not a hosted production orchestrator. Long-running all-lane autoloop, richer app-server observation, broader hosted dashboards, full remote worker supervision, and deeper cross-provider policy controls are active follow-up areas.
-
-## Operator Quickstart
-
-Build and verify locally:
-
-```bash
-cargo build
-cargo test
-cargo fmt --check
-cargo clippy --all-targets --all-features -- -D warnings
-```
-
-Inspect the canonical self-dogfood workflow:
-
-```bash
-cargo run -- validate workflows/shea-symphony.md
-cargo run -- project state workflows/shea-symphony.md
-cargo run -- doctor workflows/shea-symphony.md
-cargo run -- debug workflows/shea-symphony.md
-```
-
-Preview the next lane actions:
-
-```bash
-cargo run -- autopilot plan workflows/shea-symphony.md
-cargo run -- main loop workflows/shea-symphony.md --max-iterations 1 --dry-run
-cargo run -- review loop workflows/shea-symphony.md --max-iterations 1 --dry-run
-cargo run -- merge loop workflows/shea-symphony.md --max-iterations 1 --dry-run
-```
-
-Run a bounded write tick only when the preview and Doctor output make sense:
-
-```bash
-cargo run -- main loop workflows/shea-symphony.md --max-iterations 1 --write
-```
-
-For the full operator runbook, read [`docs/operator-dogfood.md`](docs/operator-dogfood.md). For command details, read [`docs/cli-command-reference.md`](docs/cli-command-reference.md).
-
-## Project Map
-
-- [`workflows/shea-symphony.md`](workflows/shea-symphony.md): canonical self-dogfood workflow.
-- [`workflows/prompts/`](workflows/prompts/): Main, Review, and Merge lane prompt contracts.
-- [`skills/shea-symphony/`](skills/shea-symphony/): installable Shea Symphony skills for Codex and Gemini operator sessions.
-- [`docs/operator-dogfood.md`](docs/operator-dogfood.md): supervised operator launcher and live-run guidance.
-- [`docs/cli-command-reference.md`](docs/cli-command-reference.md): command behavior, write boundaries, and examples.
-- [`docs/dogfood-readiness.md`](docs/dogfood-readiness.md): detailed capability inventory and known gaps.
-- [`docs/bootstrap-parity-audit.md`](docs/bootstrap-parity-audit.md): OpenAI Symphony parity and extension audit.
-- [`docs/parent-subissue-topology.md`](docs/parent-subissue-topology.md): parent/subissue branch and review semantics.
-- [`docs/artifact-storage-policy.md`](docs/artifact-storage-policy.md): artifact durability and cleanup policy.
-- [`docs/bootstrap/`](docs/bootstrap/): extension notes and pinned upstream references.
-- [`examples/`](examples/): fixture workflows and safe local examples.
-
 ## Design Boundaries
 
 Shea Symphony is orchestration infrastructure. It should not contain downstream application business logic. Domain work belongs in tracked issues and isolated issue workspaces.
@@ -268,24 +168,26 @@ Role boundaries matter:
 
 Write-mode commands should record evidence before state transitions, preserve claims and audit records, and fail closed when the safe next action is unclear.
 
-## Development
+## What 2606 MVP Demonstrates
 
-The main verification commands are:
+The current workflow can:
+
+- load and validate workflow files;
+- read GitHub Project v2 tracker state;
+- validate issue contracts before dispatch;
+- create and promote tracker issues through Forge;
+- run bounded Main, Review, and Merge lane ticks;
+- use Codex app-server for Main execution;
+- use headless `agy` for Review execution;
+- create isolated issue worktrees and PR handoffs;
+- preserve Main workpads and lane timeline evidence;
+- recover interrupted Main and Merge lane work by default;
+- inspect runtime/session status;
+- diagnose tracker, PR, worktree, skill, runtime, and lane-state problems;
+- plan future all-lane autoloop actions without mutating state.
+
+It has been developing with self-dogfooding, and helped built some external projects with this command:
 
 ```bash
-cargo test
-cargo fmt --check
-cargo clippy --all-targets --all-features -- -D warnings
+npm run tauri -- dev -- --workdir $YOUR_PROJECT_PATH
 ```
-
-Useful read-only commands:
-
-```bash
-cargo run -- validate examples/dry-run-workflow.md
-cargo run -- project inspect examples/dry-run-workflow.md '#1'
-cargo run -- plan examples/dry-run-workflow.md
-cargo run -- status show examples/dry-run-workflow.md --json
-cargo run -- clean plan workflows/shea-symphony.md
-```
-
-The implementation is grounded in `docs/bootstrap/` and the pinned official reference under `docs/bootstrap/references/openai-symphony/`.

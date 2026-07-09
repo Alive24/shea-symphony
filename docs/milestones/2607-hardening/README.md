@@ -129,6 +129,7 @@ Subtraction does not mean:
 - `AGENT-ACTIVITY-CONTRACT.md`
 - `CHILD-WORKFLOW-POLICY.md`
 - `IMPLEMENTATION-BACKLOG.md`
+- `implementation/README.md`
 - `implementation/T2607-01-temporal-runtime-skeleton.md`
 - `implementation/T2607-02-local-state-db.md`
 - `implementation/T2607-03-workflow-coordinator.md`

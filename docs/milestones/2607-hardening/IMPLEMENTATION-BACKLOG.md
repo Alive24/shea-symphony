@@ -195,6 +195,7 @@ Acceptance:
 
 Primary docs:
 
+- `implementation/T2607-05-agent-activity-boundary.md`
 - `AGENT-ACTIVITY-CONTRACT.md`
 - `RUNTIME-ROLE-MAPPING.md`
 - `CHILD-WORKFLOW-POLICY.md`

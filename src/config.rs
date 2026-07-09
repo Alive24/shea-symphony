@@ -14,6 +14,7 @@ pub const DEFAULT_GIT_BASE_BRANCH: &str = "main";
 pub struct RuntimeConfig {
     pub tracker: TrackerConfig,
     pub git: GitConfig,
+    pub temporal: TemporalConfig,
     pub polling: PollingConfig,
     pub workspace: WorkspaceConfig,
     pub worker: WorkerConfig,
@@ -85,6 +86,28 @@ pub struct WorkpadConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitConfig {
     pub base_branch: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TemporalConfig {
+    pub address: String,
+    pub namespace: String,
+    pub task_queues: TemporalTaskQueuesConfig,
+    pub worker: TemporalWorkerConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TemporalTaskQueuesConfig {
+    pub core: String,
+    pub agent: String,
+    pub local: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TemporalWorkerConfig {
+    pub core_concurrency: usize,
+    pub agent_concurrency: usize,
+    pub local_concurrency: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -296,6 +319,7 @@ impl RuntimeConfig {
 
         let tracker = parse_tracker(root.get("tracker"), workflow_dir);
         let git = parse_git(root.get("git"));
+        let temporal = parse_temporal(root.get("temporal"));
         let polling = PollingConfig {
             interval_ms: get_u64(root.get("polling"), "interval_ms").unwrap_or(30_000),
         };
@@ -433,6 +457,7 @@ impl RuntimeConfig {
         Ok(Self {
             tracker,
             git,
+            temporal,
             polling,
             workspace,
             worker,
@@ -496,6 +521,32 @@ impl RuntimeConfig {
 
         require_positive("polling.interval_ms", self.polling.interval_ms)?;
         require_present("git.base_branch", Some(self.git.base_branch.as_str()))?;
+        require_present("temporal.address", Some(self.temporal.address.as_str()))?;
+        require_present("temporal.namespace", Some(self.temporal.namespace.as_str()))?;
+        require_present(
+            "temporal.task_queues.core",
+            Some(self.temporal.task_queues.core.as_str()),
+        )?;
+        require_present(
+            "temporal.task_queues.agent",
+            Some(self.temporal.task_queues.agent.as_str()),
+        )?;
+        require_present(
+            "temporal.task_queues.local",
+            Some(self.temporal.task_queues.local.as_str()),
+        )?;
+        require_positive(
+            "temporal.worker.core_concurrency",
+            self.temporal.worker.core_concurrency as u64,
+        )?;
+        require_positive(
+            "temporal.worker.agent_concurrency",
+            self.temporal.worker.agent_concurrency as u64,
+        )?;
+        require_positive(
+            "temporal.worker.local_concurrency",
+            self.temporal.worker.local_concurrency as u64,
+        )?;
         require_positive("hooks.timeout_ms", self.hooks.timeout_ms)?;
         if let Some(limit) = self.worker.max_concurrent_agents_per_host {
             if limit <= 0 {
@@ -587,6 +638,26 @@ fn parse_git(value: Option<&Value>) -> GitConfig {
         .filter(|branch| !branch.is_empty())
         .unwrap_or_else(|| DEFAULT_GIT_BASE_BRANCH.to_string());
     GitConfig { base_branch }
+}
+
+fn parse_temporal(value: Option<&Value>) -> TemporalConfig {
+    let task_queues = get_value(value, "task_queues");
+    let worker = get_value(value, "worker");
+
+    TemporalConfig {
+        address: get_string(value, "address").unwrap_or_else(|| "localhost:7233".to_string()),
+        namespace: get_string(value, "namespace").unwrap_or_else(|| "default".to_string()),
+        task_queues: TemporalTaskQueuesConfig {
+            core: get_string(task_queues, "core").unwrap_or_else(|| "symphony-core".to_string()),
+            agent: get_string(task_queues, "agent").unwrap_or_else(|| "symphony-agent".to_string()),
+            local: get_string(task_queues, "local").unwrap_or_else(|| "symphony-local".to_string()),
+        },
+        worker: TemporalWorkerConfig {
+            core_concurrency: get_u64(worker, "core_concurrency").unwrap_or(3) as usize,
+            agent_concurrency: get_u64(worker, "agent_concurrency").unwrap_or(3) as usize,
+            local_concurrency: get_u64(worker, "local_concurrency").unwrap_or(8) as usize,
+        },
+    }
 }
 
 fn parse_tracker(value: Option<&Value>, workflow_dir: &Path) -> TrackerConfig {
@@ -978,6 +1049,35 @@ mod tests {
         );
         assert_eq!(config.git.base_branch, DEFAULT_GIT_BASE_BRANCH);
         assert_eq!(config.tracker.project_owner_type, None);
+        assert_eq!(config.temporal.address, "localhost:7233");
+        assert_eq!(config.temporal.namespace, "default");
+        assert_eq!(config.temporal.task_queues.core, "symphony-core");
+        assert_eq!(config.temporal.task_queues.agent, "symphony-agent");
+        assert_eq!(config.temporal.task_queues.local, "symphony-local");
+        assert_eq!(config.temporal.worker.core_concurrency, 3);
+        assert_eq!(config.temporal.worker.agent_concurrency, 3);
+        assert_eq!(config.temporal.worker.local_concurrency, 8);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn parses_temporal_runtime_config() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\ntemporal:\n  address: 127.0.0.1:7233\n  namespace: shea-dev\n  task_queues:\n    core: shea-core\n    agent: shea-agent\n    local: shea-local\n  worker:\n    core_concurrency: 2\n    agent_concurrency: 1\n    local_concurrency: 4\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.temporal.address, "127.0.0.1:7233");
+        assert_eq!(config.temporal.namespace, "shea-dev");
+        assert_eq!(config.temporal.task_queues.core, "shea-core");
+        assert_eq!(config.temporal.task_queues.agent, "shea-agent");
+        assert_eq!(config.temporal.task_queues.local, "shea-local");
+        assert_eq!(config.temporal.worker.core_concurrency, 2);
+        assert_eq!(config.temporal.worker.agent_concurrency, 1);
+        assert_eq!(config.temporal.worker.local_concurrency, 4);
         assert!(config.validate().is_ok());
     }
 

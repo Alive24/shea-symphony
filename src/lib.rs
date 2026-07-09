@@ -29,6 +29,7 @@ pub mod runtime_state;
 pub mod session_registry;
 pub mod skill_status;
 pub mod status_surface;
+pub mod symphony;
 pub mod target_runtime;
 pub mod tracker;
 pub mod workflow;

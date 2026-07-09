@@ -177,6 +177,21 @@ implementation package doc
 If the issue is not executable, keep it in `Backlog`, `Need to Clarify`, or
 `Feedback Intake` rather than moving it into the active 2607 queue.
 
+### Dogfood Finding: Forge Metadata Coverage
+
+During creation of #475 through the protected 2606 MVP `forge create` path,
+Forge correctly owned the issue body, assignee, Project insertion, `Status`,
+`Package`, and `Slice`, but it did not expose repo metadata writes for GitHub
+milestone or labels.
+
+Do not patch this gap with ad hoc post-create `gh issue edit` calls in the
+normal workflow. The desired 2607 direction is to bring milestone and label
+writes into the same durable, readback-verified tracker mutation boundary as
+other issue creation metadata. Until that exists, newly forged executable
+issues may have correct Project fields while missing repo milestone/labels;
+record that as dogfood evidence rather than weakening the Forge ownership
+model.
+
 ## Feedback Items
 
 Hackathon feedback and dogfood findings are valuable, but they are not

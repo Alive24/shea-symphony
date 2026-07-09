@@ -23,6 +23,9 @@ Examples:
 - Agent Review was missing.
 - Workflow state got stuck without clear reason.
 - A hackathon task required repeated human doctor intervention.
+- Forge-created executable issues carried Project fields but missed GitHub
+  milestone/labels because the protected creation path did not yet expose those
+  repo metadata writes.
 
 Feedback seeds may remain open if they are useful evidence. They should not
 sit in active executable lanes unless they have been shaped.
@@ -57,6 +60,9 @@ Example:
 - App refresh slowness becomes evidence for
   `T2607-02 Local State DB`, `T2607-07 App Integration`, or
   `T2607-08 Deletion And Performance`.
+- Forge metadata gaps become evidence for moving milestone/label writes into a
+  durable, readback-verified tracker mutation boundary instead of normalizing
+  raw post-create GitHub edits.
 
 Handling:
 

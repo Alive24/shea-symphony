@@ -192,6 +192,28 @@ issues may have correct Project fields while missing repo milestone/labels;
 record that as dogfood evidence rather than weakening the Forge ownership
 model.
 
+### Dogfood Finding: Forge Create Readback Race
+
+During creation of #477, the protected 2606 MVP `forge create` path created
+the issue and Project item successfully, but the final readback expected
+`Status = Todo` while an active autoloop had already claimed the new issue and
+advanced it to `In Progress`. The command exited as a failure even though the
+issue had been created correctly and should not be retried.
+
+This is a legitimate concurrency case, not a duplicate-creation case. Forge
+creation should distinguish:
+
+- create failed before issue creation;
+- issue created but Project metadata write failed;
+- issue created and metadata written, but another worker legally advanced the
+  state before final readback.
+
+The desired 2607 direction is for tracker writes to return durable write
+receipts plus readback reconciliation that can classify an already-advanced
+state as success-with-race when the issue ID, Project item, requested fields,
+and claim evidence prove the new state is a valid successor. Operators should
+not be asked to rerun `forge create` after the issue URL is known.
+
 ## Feedback Items
 
 Hackathon feedback and dogfood findings are valuable, but they are not

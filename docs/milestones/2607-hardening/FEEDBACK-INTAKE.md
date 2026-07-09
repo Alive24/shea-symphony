@@ -26,6 +26,9 @@ Examples:
 - Forge-created executable issues carried Project fields but missed GitHub
   milestone/labels because the protected creation path did not yet expose those
   repo metadata writes.
+- Forge-created executable issues could be claimed by autoloop before final
+  create readback, making the command report failure even though the issue was
+  successfully created and legally advanced.
 
 Feedback seeds may remain open if they are useful evidence. They should not
 sit in active executable lanes unless they have been shaped.
@@ -63,6 +66,9 @@ Example:
 - Forge metadata gaps become evidence for moving milestone/label writes into a
   durable, readback-verified tracker mutation boundary instead of normalizing
   raw post-create GitHub edits.
+- Forge create/readback races become evidence for durable write receipts and
+  readback reconciliation that can classify already-advanced tracker state
+  without asking operators to retry creation.
 
 Handling:
 

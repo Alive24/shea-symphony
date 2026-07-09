@@ -130,6 +130,7 @@ Subtraction does not mean:
 - `CHILD-WORKFLOW-POLICY.md`
 - `IMPLEMENTATION-BACKLOG.md`
 - `implementation/T2607-01-temporal-runtime-skeleton.md`
+- `implementation/T2607-02-local-state-db.md`
 - `docs/milestones/2607-hardening/RUNTIME-ROLE-MAPPING.md`
 - `docs/milestones/2607-hardening/TEMPORAL-RUST-SDK-INTAKE.md`
 - `docs/milestones/2607-hardening/ACTIVITY-ERROR-TAXONOMY.md`

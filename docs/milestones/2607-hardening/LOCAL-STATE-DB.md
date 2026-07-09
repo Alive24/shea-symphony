@@ -235,11 +235,12 @@ IssueRef {
   number
 }
 
-WorkflowId = "issue:<repo-id>:<number>"
+WorkflowId = "issue:<repo-slug>:<number>:pulse:<from-state>-to-<target-kind>:<YYYYMMDD-HHMMSSZ>:<source-slug>"
 ```
 
 SQLite may denormalize these values into text columns. Code boundaries should
-use typed DTOs.
+use typed DTOs. `workflow_id` is episode-scoped; issue identity should be
+carried separately through `repo_id` and `issue_ref`.
 
 ## Freshness Enum
 

@@ -93,6 +93,7 @@ Acceptance:
 
 Primary docs:
 
+- `implementation/T2607-02-local-state-db.md`
 - `LOCAL-STATE-DB.md`
 - `SNAPSHOT-AND-DASHBOARD.md`
 - `PERFORMANCE.md`

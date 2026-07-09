@@ -229,6 +229,7 @@ Acceptance:
 
 Primary docs:
 
+- `implementation/T2607-06-issue-workflow-state-machine.md`
 - `ISSUE-WORKFLOW.md`
 - `ISSUE-WORKFLOW-STATE.md`
 - `WORKFLOW-ACTIVATION.md`

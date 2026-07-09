@@ -134,6 +134,7 @@ Subtraction does not mean:
 - `implementation/T2607-03-workflow-coordinator.md`
 - `implementation/T2607-04-tracker-transition-activity.md`
 - `implementation/T2607-05-agent-activity-boundary.md`
+- `implementation/T2607-06-issue-workflow-state-machine.md`
 - `docs/milestones/2607-hardening/RUNTIME-ROLE-MAPPING.md`
 - `docs/milestones/2607-hardening/TEMPORAL-RUST-SDK-INTAKE.md`
 - `docs/milestones/2607-hardening/ACTIVITY-ERROR-TAXONOMY.md`

@@ -15,6 +15,7 @@
 {{pr_line}}
 {{artifact_line}}
 {{ledger_line}}
+- Boundary comment coverage: {{boundary_comment_coverage}}
 - Evidence summary: {{evidence_summary}}
 
 ### Review Attempt {{job_id}}

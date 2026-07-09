@@ -915,6 +915,10 @@ pub fn render_review_workpad_with_workflow(
                     .map(|path| format!("- Review job ledger: `{}`", path.display()))
                     .unwrap_or_else(|| "- Review job ledger: `not recorded`".into()),
             ),
+            (
+                "boundary_comment_coverage",
+                "not evaluated unless issue scope changes a non-obvious boundary".into(),
+            ),
             ("evidence_summary", review_evidence_summary(job)),
             ("job_id", job.id.clone()),
             ("attempt_details", attempt_details.join("\n")),

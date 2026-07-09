@@ -30,6 +30,9 @@ impl IssueWorkflow {
         ctx: &mut WorkflowContext<Self>,
         _input: IssueWorkflowInput,
     ) -> WorkflowResult<IssueWorkflowState> {
+        // Workflow code must stay replay-deterministic. Even this skeleton only
+        // schedules Activity work; filesystem, network, tracker, and clock I/O
+        // belong behind Activity boundaries.
         let request = ctx.state(|workflow| NoopActivityRequest {
             workflow_id: workflow.state.workflow_id.clone(),
             activity_kind: "NoopCoreActivity".to_string(),

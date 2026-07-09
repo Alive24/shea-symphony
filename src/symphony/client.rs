@@ -59,6 +59,8 @@ impl SymphonyTemporalClient {
         &self.config
     }
 
+    // Centralize SDK client construction so callers cannot invent alternate
+    // namespace/address handling as App and operator tools move onto Temporal.
     pub async fn connect(&self) -> Result<Client, TemporalRuntimeError> {
         let address = endpoint_url(&self.config.address)?;
         let connection_options = ConnectionOptions::new(address).build();
@@ -145,6 +147,8 @@ impl SymphonyTemporalClient {
 }
 
 fn endpoint_url(address: &str) -> Result<Url, TemporalRuntimeError> {
+    // Workflow config uses operator-friendly local addresses by default; the
+    // SDK expects a URL, so normalize missing schemes at this boundary.
     let normalized = if address.contains("://") {
         address.to_string()
     } else {

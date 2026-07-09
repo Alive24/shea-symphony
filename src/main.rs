@@ -7,6 +7,8 @@ const WORKFLOW_PATH_ENV: &str = "SHEA_WORKFLOW_PATH";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // In 2607 the default binary is the local Temporal worker runtime.
+    // Legacy CLI dogfooding remains pinned to the protected 2606-MVP branch.
     let workflow_path = workflow_path();
     let workflow_store = WorkflowStore::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(workflow_store.active(), &workflow_path)?;

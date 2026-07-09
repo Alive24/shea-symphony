@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+// Workflow DTOs are intentionally small because every field can become durable
+// Temporal history. Large details belong in artifacts, tracker comments, or
+// the local SQLite read model.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IssueWorkflowInput {
     pub workflow_id: String,

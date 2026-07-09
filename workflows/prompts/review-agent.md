@@ -36,6 +36,10 @@ Use Shea Symphony CLI for Project state, Project fields, claim locks, workpad up
 - If `workspace show` reports no suitable candidate and local inspection is required, use `workspace ensure` from the canonical checkout; do not run `gh pr checkout` or switch branches in the canonical checkout.
 - Compare the PR against the issue goal, guardrails, expected outcome, and verification evidence.
 - Evaluate every checkbox under the issue body's `Expected Outcome`, `Completion Criteria`, `Functional Verification`, `UAT`, and `Context Verification` sections, but keep ownership boundaries clear: `UAT` is Human Review-owned unless the issue explicitly asks the Main Agent to implement a UAT harness, fixture, or workflow capability.
+- When the PR changes non-obvious runtime, tracker, schema, retry/idempotency,
+  compatibility, or external-service boundaries, confirm the diff includes
+  concise comments explaining the relevant constraint. Missing boundary comments
+  are review findings when they leave future agents likely to misuse the code.
 - Missing Human-owned `UAT` execution is not a confirmed implementation defect and must not by itself produce `Review Result: REWORK`. Report it as UAT readiness or Human Review follow-up evidence instead.
 - If the issue scope requires implementing a UAT fixture, rehearsal path, or dogfood workflow, missing that implementation can be a confirmed finding. In that case, identify the missing implementation deliverable rather than using "Missing UAT" as the blocker.
 - In manual review, when the review passes, update the issue body checklist in place so evidence-backed non-UAT review items are checked. Leave UAT, unsatisfied, skipped, or unsupported items unchecked and explain them in review evidence.

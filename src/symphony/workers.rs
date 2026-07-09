@@ -1,3 +1,4 @@
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_sdk::WorkerOptions;
 
 use crate::config::TemporalConfig;
@@ -63,12 +64,14 @@ pub fn core_worker_options(config: &TemporalConfig) -> Result<WorkerOptions, Tem
 
 pub fn agent_worker_options(config: &TemporalConfig) -> WorkerOptions {
     WorkerOptions::new(config.task_queues.agent.as_str())
+        .task_types(WorkerTaskTypes::activity_only())
         .register_activities(AgentActivities)
         .build()
 }
 
 pub fn local_worker_options(config: &TemporalConfig) -> WorkerOptions {
     WorkerOptions::new(config.task_queues.local.as_str())
+        .task_types(WorkerTaskTypes::activity_only())
         .register_activities(LocalActivities)
         .build()
 }

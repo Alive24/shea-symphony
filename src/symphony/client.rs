@@ -39,6 +39,10 @@ pub enum TemporalRuntimeError {
         task_queue: String,
         source_error: String,
     },
+    #[error("failed to initialize Temporal runtime: {0}")]
+    RuntimeInitialization(String),
+    #[error("Temporal worker runtime failed: {0}")]
+    WorkerRuntime(String),
     #[error("Temporal workflow operation failed for {workflow_id}: {source_error}")]
     WorkflowOperation {
         workflow_id: String,

@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+// Contract-only local read model schema. This module names the tables and DTO
+// values that later migrations must implement; it must not open SQLite or
+// authorize workflow/tracker progression.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoId {
     pub host: String,
@@ -155,6 +158,8 @@ pub struct IndexDescriptor {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActiveWorkflowGuardDescriptor {
+    // Describes the duplicate-start invariant before a later migration turns it
+    // into SQL. Temporal/tracker state remains authoritative.
     pub intent: &'static str,
     pub proposed_index_name: &'static str,
     pub columns: &'static [&'static str],
@@ -337,6 +342,8 @@ pub const META_TABLE: TableDescriptor = TableDescriptor {
 };
 
 pub const LOCAL_STATE_SCHEMA: LocalStateSchema = LocalStateSchema {
+    // Keep descriptor order stable so migrations, docs, and tests speak about
+    // the same initial schema without needing a live database.
     tables: &[
         WORKFLOW_INDEX_TABLE,
         ARTIFACT_INDEX_TABLE,

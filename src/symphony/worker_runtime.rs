@@ -13,6 +13,8 @@ pub async fn run_symphony_workers(config: RuntimeConfig) -> Result<(), TemporalR
     let temporal_client = SymphonyTemporalClient::new(config.temporal.clone());
     let client = temporal_client.connect().await?;
 
+    // One process hosts the starting queue topology, but capacity is still
+    // isolated at Temporal task-queue and Activity-concurrency boundaries.
     let mut core_worker = worker(
         &runtime,
         client.clone(),
@@ -39,6 +41,8 @@ pub async fn run_symphony_workers(config: RuntimeConfig) -> Result<(), TemporalR
 }
 
 fn core_runtime() -> Result<CoreRuntime, TemporalRuntimeError> {
+    // Keep runtime construction close to the SDK quickstart so API drift is
+    // obvious when the Public Preview SDK changes.
     let telemetry_options = TelemetryOptions::builder().build();
     let runtime_options = RuntimeOptions::builder()
         .telemetry_options(telemetry_options)

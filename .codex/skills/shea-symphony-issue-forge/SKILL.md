@@ -161,6 +161,10 @@ Resolve these before creation:
 - Trusted docs/code references.
 - Investigation evidence for abstraction-boundary, migration, or external-tool
   work, including what was checked and what remains unverified.
+- Comment expectations for non-obvious runtime, tracker, schema, retry,
+  idempotency, compatibility, or external-service boundaries. For boundary-heavy
+  issues, include this in `Non-Negotiable Guardrails` and make it objectively
+  checkable in `Completion Criteria`.
 - Verification commands. Prefer:
   - `cargo test`
   - `cargo fmt --check`
@@ -198,6 +202,9 @@ Use this structure:
 ## Non-Negotiable Guardrails
 
 - ...
+- Add concise comments at non-obvious runtime, tracker, schema,
+  retry/idempotency, compatibility, or external-service boundaries changed by
+  this issue.
 
 ## Scope
 
@@ -248,6 +255,9 @@ Use this structure:
 ### Completion Criteria
 
 - [ ] ...
+- [ ] Non-obvious boundary code added or changed by this issue has concise
+      comments explaining the replay, side-effect, schema, retry/idempotency,
+      compatibility, or external-service constraint.
 
 ### Functional Verification
 

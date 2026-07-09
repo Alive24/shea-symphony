@@ -136,12 +136,17 @@ For the selected issue:
 3. Read the issue body, Main Agent Workpad, append-only timeline comments,
    canonical docs, and relevant code.
 4. Implement only the accepted issue scope.
-5. Run the strongest practical verification for the touched area.
-6. Update issue or PR evidence with changes, verification, risks, and follow-ups.
-7. Open or update the PR.
-8. Verify the issue Project item exposes the PR under linked pull requests.
-9. Confirm the PR is ready for review, not draft.
-10. Move the issue to `Agent Review`.
+5. Add concise comments for non-obvious runtime, tracker, schema, retry,
+   idempotency, compatibility, or external-service boundaries introduced or
+   materially changed by the issue. Avoid comments that merely restate obvious
+   assignments, names, or one-line control flow.
+6. Run the strongest practical verification for the touched area.
+7. Update issue or PR evidence with changes, verification, risks, follow-ups,
+   and any intentionally commented boundary.
+8. Open or update the PR.
+9. Verify the issue Project item exposes the PR under linked pull requests.
+10. Confirm the PR is ready for review, not draft.
+11. Move the issue to `Agent Review`.
 
 The Main Agent must stop at `Agent Review`. Draft PRs must not be handed off.
 
@@ -173,6 +178,8 @@ Keep exactly one durable Shea Symphony workpad updated in place. It must include
   implementation, verification, PR readiness, and Agent Review handoff.
 - `### Work Log` with timestamped progress notes.
 - changed files and scope boundary.
+- comment coverage for any new or changed non-obvious runtime, tracker,
+  schema, retry/idempotency, compatibility, or external-service boundary.
 - verification commands and results.
 - PR URL, linked-PR confirmation, and ready/not-draft status.
 - final handoff summary explaining why Main stops at `Agent Review`.

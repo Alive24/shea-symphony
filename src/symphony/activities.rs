@@ -3,6 +3,8 @@ use temporalio_sdk::activities::{ActivityContext, ActivityError};
 
 use crate::symphony::dto::{NoopActivityRequest, NoopActivityResult};
 
+// These names are the first durable Activity-type contract. Placeholder
+// implementations stay inert until later issues attach real side effects.
 pub const CORE_ACTIVITY_TYPES: &[&str] = &["NoopCoreActivity", "TrackerTransitionActivity"];
 pub const AGENT_ACTIVITY_TYPES: &[&str] = &[
     "MainAgentActivity",
@@ -26,6 +28,8 @@ impl CoreActivities {
         _ctx: ActivityContext,
         request: NoopActivityRequest,
     ) -> Result<NoopActivityResult, ActivityError> {
+        // The skeleton needs one successful Activity to prove worker routing
+        // without touching tracker, SQLite, worktrees, artifacts, or agents.
         Ok(NoopActivityResult::success(&request))
     }
 

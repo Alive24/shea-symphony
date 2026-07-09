@@ -98,11 +98,16 @@ command, stop and ask the operator for the intended workspace.
    `Completion Criteria`, `Functional Verification`, and `Context Verification`.
    Treat `UAT` as Human Review-owned: assess whether UAT instructions and
    operator evidence are sufficient, but do not check UAT boxes yourself.
-10. If the review passes, update the issue body in place so only
+10. When the PR changes non-obvious runtime, tracker, schema,
+    retry/idempotency, compatibility, or external-service boundaries, confirm
+    the diff includes concise comments explaining the relevant constraint.
+    Missing boundary comments are review findings when they leave future agents
+    likely to misuse the code.
+11. If the review passes, update the issue body in place so only
     evidence-backed, non-UAT satisfied items are checked. Leave unsupported,
     skipped, failed, and all UAT items unchecked.
-11. Save the review evidence to a local evidence file.
-12. Route the result with `review pass` or `review reject`. For routine native
+12. Save the review evidence to a local evidence file.
+13. Route the result with `review pass` or `review reject`. For routine native
     subissues, `review pass` routes to `Merging`, not `Human Review`; parent
     final issues and ordinary issues still route to `Human Review`. Direct
     subissue Human Review requires `Subissue Human Review Exception: <reason>`.
@@ -185,6 +190,7 @@ overwrite, or restructure the Main Agent Workpad.
 - Functional Verification: checked / unchecked / not applicable, with evidence.
 - UAT: Human Review-owned; leave unchecked and note pending / operator evidence / not applicable.
 - Context Verification: checked / unchecked / not applicable, with evidence.
+- Boundary Comment Coverage: checked / missing / not applicable, with evidence.
 
 ### Evidence Boundary
 

@@ -1,6 +1,6 @@
 # ADR 0007: Local State DB Read Model
 
-Status: Proposed
+Status: Accepted
 
 ## Context
 
@@ -28,12 +28,18 @@ Use a local SQLite database as the 2607 read model/cache/index layer.
   durable mutation attempt ledger.
 - SQLite writes happen through Symphony runtime/backend boundaries, not UI
   components.
-- Use a typed DB access layer split into reader, projector, and admin
-  boundaries. Do not introduce an ORM.
-- Prefer `rusqlite`, handwritten SQL, typed DTOs, and minimal repository
-  functions.
-- Symphony runtime owns schema versioning and minimal SQL migrations; no
-  external migration service is introduced in 2607.
+- Use a small typed lifecycle boundary first; reader, projector, and admin
+  APIs are separate later slices. Do not introduce an ORM.
+- Use bundled `rusqlite` for connection/transaction ownership and SeaQuery's
+  SQLite builder as the executable schema authority. Fixed private SQL is
+  limited to SQLite PRAGMA control and schema introspection that SeaQuery does
+  not represent.
+- Use `PRAGMA user_version` as the only migration-version authority. Ordered
+  forward migrations run in short `IMMEDIATE` transactions; no external
+  migration service or duplicate `meta.schema_version` is introduced.
+- Use one machine-shared database. Scope every repo-owned row by stable
+  `WorkspaceRuntimeId` and `RepoId`, while keeping the active issue guard
+  machine-wide on `(repo_id, issue_ref)`.
 - 2607 uses synchronous projection from Activity/backend results into SQLite;
   an independent async projector loop is deferred.
 - Dashboard reads are eventually consistent and must expose freshness.
@@ -70,9 +76,7 @@ Default DB path:
 ## Follow-Up
 
 - Define small `LocalStateReader`, `LocalStateProjector`, and
-  `LocalStateAdmin` interfaces.
-- Add the initial schema for workflow, tracker, artifact, activity, and meta
-  indexes.
+  `LocalStateAdmin` interfaces in their query, projection, and admin slices.
 - Update App snapshot code to prefer SQLite materialized dashboard reads.
 - Keep issue detail state backed by Temporal Query with lazy artifact reads.
 - Add freshness markers and explicit refresh paths.

@@ -49,7 +49,8 @@ pub enum TemporalRuntimeError {
     InvalidConfig(String),
     /// The configured Temporal service or namespace could not be reached.
     #[error(
-        "Temporal service is unavailable at {address} for namespace {namespace}: {source_error}"
+        "Temporal service is unavailable at {address} for namespace {namespace}: {source_error}. \
+         Run `./scripts/temporal-noop-smoke` to exercise the supported local dev-service path."
     )]
     Unavailable {
         /// Configured Temporal frontend address.
@@ -95,6 +96,16 @@ impl SymphonyTemporalClient {
     /// Returns the Temporal settings used by future operations.
     pub fn config(&self) -> &TemporalConfig {
         &self.config
+    }
+
+    /// Verifies that the configured local Temporal service accepts a connection.
+    ///
+    /// This is a read-only readiness probe: it neither starts a Workflow nor
+    /// mutates tracker, local-state, artifact, or worker state. Callers receive
+    /// [`TemporalRuntimeError::Unavailable`] with the configured address and
+    /// namespace when the local service cannot be reached.
+    pub async fn check_service(&self) -> Result<(), TemporalRuntimeError> {
+        self.connect().await.map(|_| ())
     }
 
     /// Connects to the configured Temporal frontend and namespace.
@@ -255,10 +266,11 @@ mod tests {
     #[tokio::test]
     async fn missing_local_temporal_maps_to_unavailable_error() {
         let client = SymphonyTemporalClient::new(config("127.0.0.1:1"));
-        let result = client.connect().await;
+        let result = client.check_service().await;
 
         assert!(result.is_err());
         let error = result.err().unwrap();
         assert!(matches!(error, TemporalRuntimeError::Unavailable { .. }));
+        assert!(error.to_string().contains("temporal-noop-smoke"));
     }
 }

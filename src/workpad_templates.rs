@@ -679,7 +679,8 @@ mod tests {
 
     #[test]
     fn canonical_workflow_readback_lists_every_workpad_surface() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("workflows/shea-symphony.md");
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".shea/workflows/shea-symphony.md");
         let workflow = WorkflowDefinition::load(path).unwrap();
         let readback = workpad_template_readback(&workflow);
 

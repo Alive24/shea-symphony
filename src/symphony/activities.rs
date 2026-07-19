@@ -5,10 +5,17 @@
 //! local-state projection. Workflow code schedules these functions and records
 //! their results; it must not perform the side effects itself.
 
+use std::time::Duration;
+
 use temporalio_macros::activities;
 use temporalio_sdk::activities::{ActivityContext, ActivityError};
 
 use crate::symphony::dto::{NoopActivityRequest, NoopActivityResult};
+
+const TEMPORAL_SMOKE_ISSUE_PREFIX: &str = "synthetic:temporal-smoke:";
+const TEMPORAL_SMOKE_ENABLED_ENV: &str = "SHEA_TEMPORAL_SMOKE";
+const TEMPORAL_SMOKE_QUERY_HOLD_ENV: &str = "SHEA_TEMPORAL_SMOKE_QUERY_HOLD_MS";
+const MAX_TEMPORAL_SMOKE_QUERY_HOLD_MS: u64 = 5_000;
 
 /// Durable Activity type names polled from the latency-sensitive core queue.
 ///
@@ -55,6 +62,15 @@ impl CoreActivities {
         _ctx: ActivityContext,
         request: NoopActivityRequest,
     ) -> Result<NoopActivityResult, ActivityError> {
+        if let Some(delay) = smoke_query_hold(&request) {
+            // Only the test-owned worker sets both explicit smoke variables,
+            // and they are ignored unless the synthetic smoke issue prefix is
+            // present.
+            // The delay creates a deterministic read-only Query window without
+            // adding a timer, clock read, or test branch to Workflow code.
+            tokio::time::sleep(delay).await;
+        }
+
         // The skeleton needs one successful Activity to prove worker routing
         // without touching tracker, SQLite, worktrees, artifacts, or agents.
         Ok(NoopActivityResult::success(&request))
@@ -72,6 +88,67 @@ impl CoreActivities {
         request: NoopActivityRequest,
     ) -> Result<NoopActivityResult, ActivityError> {
         Ok(NoopActivityResult::not_implemented(&request))
+    }
+}
+
+fn smoke_query_hold(request: &NoopActivityRequest) -> Option<Duration> {
+    let smoke_enabled = std::env::var(TEMPORAL_SMOKE_ENABLED_ENV).ok();
+    let configured_delay = std::env::var(TEMPORAL_SMOKE_QUERY_HOLD_ENV).ok();
+    smoke_query_hold_from_values(
+        &request.issue_ref,
+        smoke_enabled.as_deref(),
+        configured_delay.as_deref(),
+    )
+}
+
+fn smoke_query_hold_from_values(
+    issue_ref: &str,
+    smoke_enabled: Option<&str>,
+    value: Option<&str>,
+) -> Option<Duration> {
+    if !matches!(smoke_enabled, Some("1") | Some("true") | Some("yes"))
+        || !issue_ref.starts_with(TEMPORAL_SMOKE_ISSUE_PREFIX)
+    {
+        return None;
+    }
+
+    let milliseconds = value?.parse::<u64>().ok()?;
+    (milliseconds > 0 && milliseconds <= MAX_TEMPORAL_SMOKE_QUERY_HOLD_MS)
+        .then(|| Duration::from_millis(milliseconds))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn smoke_query_hold_requires_test_owned_input_and_a_bounded_value() {
+        assert_eq!(
+            smoke_query_hold_from_values("synthetic:temporal-smoke:issue", Some("1"), Some("2500")),
+            Some(Duration::from_millis(2500))
+        );
+        assert_eq!(
+            smoke_query_hold_from_values("#489", Some("1"), Some("2500")),
+            None,
+            "normal product input must never inherit the smoke-only delay"
+        );
+        assert_eq!(
+            smoke_query_hold_from_values("synthetic:temporal-smoke:issue", Some("0"), Some("2500")),
+            None,
+            "the normal worker never enables the test-only hold"
+        );
+        assert_eq!(
+            smoke_query_hold_from_values("synthetic:temporal-smoke:issue", Some("1"), Some("5001")),
+            None
+        );
+        assert_eq!(
+            smoke_query_hold_from_values(
+                "synthetic:temporal-smoke:issue",
+                Some("1"),
+                Some("invalid")
+            ),
+            None
+        );
     }
 }
 

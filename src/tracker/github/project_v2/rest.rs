@@ -160,9 +160,8 @@ fn rest_project_field_value(field: &serde_json::Value) -> serde_json::Value {
             .and_then(rich_text_or_string)
             .map(serde_json::Value::String)
             .unwrap_or(serde_json::Value::Null),
-        "text" | "date" => value
-            .as_str()
-            .map(|text| serde_json::Value::String(text.to_string()))
+        "text" | "date" => rich_text_or_string(value)
+            .map(serde_json::Value::String)
             .unwrap_or(serde_json::Value::Null),
         "number" => value.clone(),
         _ => value.clone(),
@@ -176,6 +175,16 @@ pub(in crate::tracker) fn apply_rest_project_item_overlays(
     for issue in issues {
         if let Some(overlay) = overlays.get(&issue.id) {
             for (name, value) in &overlay.project_fields {
+                // REST Text/Date values may be primitive strings or `{ raw, html }`; prefer
+                // `raw`, and never let an absent or unparseable REST value erase GraphQL evidence.
+                if value.is_null()
+                    && issue
+                        .project_fields
+                        .get(name)
+                        .is_some_and(|existing| !existing.is_null())
+                {
+                    continue;
+                }
                 issue.project_fields.insert(name.clone(), value.clone());
             }
             issue

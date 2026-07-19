@@ -76,6 +76,10 @@ pub const AUTOMATIC_HEADLESS_REVIEW_BOUNDARY: &str =
 This review backend process is running under Shea Symphony automatic `review loop` or `review once`.\n\
 Shea Symphony CLI has already claimed or will own any Review Agent claim, timeline comment write,\n\
 issue body update, and Project state transition outside this process.\n\n\
+Keep automatic review bounded: inspect the linked PR diff and explicitly named code paths before\n\
+broader local exploration. Do not recursively enumerate directory trees or perform a repository-wide\n\
+scan. If those focused sources cannot establish an independent conclusion, return `Review Result:\n\
+NEEDS_CONTEXT` with the missing evidence instead of continuing to explore.\n\n\
 Do not run mutating Shea Symphony or GitHub commands, including `review claim`, `review pass`,\n\
 `review reject`, `project set-state`, `project workpad`, `forge`, `gh issue edit`, `gh issue comment`, raw\n\
 Project GraphQL mutations, or Project UI changes. Do not activate or follow any manual review\n\
@@ -170,6 +174,14 @@ mod tests {
         assert!(RUNTIME_ENVELOPES
             .iter()
             .all(|envelope| !envelope.path.trim().is_empty()));
+    }
+
+    #[test]
+    fn automatic_review_envelope_bounds_exploration() {
+        assert!(AUTOMATIC_HEADLESS_REVIEW_BOUNDARY.contains("Keep automatic review bounded"));
+        assert!(AUTOMATIC_HEADLESS_REVIEW_BOUNDARY
+            .contains("Do not recursively enumerate directory trees"));
+        assert!(AUTOMATIC_HEADLESS_REVIEW_BOUNDARY.contains("Review Result:\nNEEDS_CONTEXT"));
     }
 
     #[test]

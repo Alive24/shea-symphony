@@ -46,6 +46,7 @@ use gemini_health::{diagnose_agy_spawn_failure, diagnose_gemini_spawn_failure};
 use job::review_job_id;
 
 const LOG_BLOCK_LIMIT: usize = 2_000;
+const AGY_PRINT_TIMEOUT_GRACE_MS: u64 = 60_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewRepeatedFailureEvidence {
@@ -234,7 +235,7 @@ impl GeminiCliReviewBackend {
             command: config.agy_command.clone(),
             model: config.agy_model.clone(),
             allowed_tools: Vec::new(),
-            timeout_ms: config.timeout_ms,
+            timeout_ms: agy_print_timeout_ms(config.timeout_ms),
             children: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
@@ -418,16 +419,50 @@ impl ReviewBackend for GeminiCliReviewBackend {
             .map(|diagnostic| diagnostic.to_error_message())
     }
 
-    fn cancel(&self, job: &ReviewJob) -> Result<(), ReviewError> {
-        let mut children = self
-            .children
-            .lock()
-            .map_err(|error| ReviewError::Backend(error.to_string()))?;
-        if let Some(mut child) = children.remove(&job.id) {
+    fn cancel(&self, mut job: ReviewJob) -> Result<ReviewJob, ReviewError> {
+        let child = {
+            let mut children = self
+                .children
+                .lock()
+                .map_err(|error| ReviewError::Backend(error.to_string()))?;
+            children.remove(&job.id)
+        };
+
+        if let Some(mut child) = child {
             let _ = child.kill();
-            let _ = child.wait();
+            let output = child
+                .wait_with_output()
+                .map_err(|error| ReviewError::Backend(error.to_string()))?;
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let exit_status = output
+                .status
+                .code()
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "terminated by signal".into());
+            let parsed_output = parse_gemini_stdout(&stdout);
+            let output_artifact = write_gemini_review_artifact(
+                job.artifact_path.as_deref(),
+                &job.id,
+                &stdout,
+                &stderr,
+                &exit_status,
+                parsed_output.session_id.as_deref(),
+                &parsed_output.response,
+            )?;
+            job.artifact_path = Some(output_artifact);
+            job.report = Some(AgentReviewReport {
+                reviewer_backend: self.kind().into(),
+                findings: Vec::new(),
+                summary: first_non_empty_line(&parsed_output.response).map(str::to_string),
+                stdout: Some(stdout),
+                stderr: Some(stderr),
+                exit_status: Some(exit_status),
+                session_id: parsed_output.session_id,
+            });
         }
-        Ok(())
+
+        Ok(job)
     }
 }
 
@@ -489,6 +524,8 @@ pub fn agy_cli_headless_args(prompt: &str, model: Option<&str>, timeout_ms: u64)
         prompt.to_string(),
         "--print-timeout".to_string(),
         format!("{}ms", timeout_ms.max(1)),
+        "--mode".to_string(),
+        "plan".to_string(),
         "--sandbox".to_string(),
         "--dangerously-skip-permissions".to_string(),
     ];
@@ -496,6 +533,18 @@ pub fn agy_cli_headless_args(prompt: &str, model: Option<&str>, timeout_ms: u64)
         args.extend(["--model".to_string(), model.to_string()]);
     }
     args
+}
+
+fn agy_print_timeout_ms(review_timeout_ms: u64) -> u64 {
+    // Leave the outer Shea watchdog time to harvest agy's terminal output rather
+    // than racing the CLI's own print-mode deadline. Short test/operator
+    // timeouts retain most of their review window while still leaving a gap.
+    let maximum_grace = review_timeout_ms.saturating_sub(1);
+    let proportional_grace = (review_timeout_ms / 10).max(1);
+    let grace = AGY_PRINT_TIMEOUT_GRACE_MS
+        .min(proportional_grace)
+        .min(maximum_grace);
+    review_timeout_ms.saturating_sub(grace).max(1)
 }
 
 fn gemini_headless_allowed_tools(configured_tools: &[String]) -> Vec<String> {
@@ -1244,7 +1293,7 @@ fn artifact_path(root: &Path, id: &str, extension: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use super::*;
 
@@ -1401,9 +1450,9 @@ mod tests {
             Ok(job)
         }
 
-        fn cancel(&self, _job: &ReviewJob) -> Result<(), ReviewError> {
+        fn cancel(&self, job: ReviewJob) -> Result<ReviewJob, ReviewError> {
             *self.cancels.lock().unwrap() += 1;
-            Ok(())
+            Ok(job)
         }
     }
 
@@ -1528,7 +1577,9 @@ mod tests {
                 "--print",
                 "",
                 "--print-timeout",
-                "1200000ms",
+                "1140000ms",
+                "--mode",
+                "plan",
                 "--sandbox",
                 "--dangerously-skip-permissions",
                 "--model",
@@ -1597,7 +1648,7 @@ mod tests {
     }
 
     #[test]
-    fn agy_headless_args_include_prompt_timeout_sandbox_and_model() {
+    fn agy_headless_args_include_prompt_timeout_plan_mode_sandbox_and_model() {
         let args = agy_cli_headless_args(
             "Review this prompt.",
             Some("gemini-3.1-pro-preview"),
@@ -1611,12 +1662,22 @@ mod tests {
                 "Review this prompt.",
                 "--print-timeout",
                 "1200000ms",
+                "--mode",
+                "plan",
                 "--sandbox",
                 "--dangerously-skip-permissions",
                 "--model",
                 "gemini-3.1-pro-preview",
             ]
         );
+    }
+
+    #[test]
+    fn agy_print_timeout_leaves_outer_watchdog_grace() {
+        assert_eq!(agy_print_timeout_ms(1_200_000), 1_140_000);
+        assert_eq!(agy_print_timeout_ms(60_000), 54_000);
+        assert_eq!(agy_print_timeout_ms(2), 1);
+        assert_eq!(agy_print_timeout_ms(1), 1);
     }
 
     #[test]
@@ -1724,7 +1785,7 @@ mod tests {
         assert_eq!(job.state, ReviewJobState::Completed);
         assert_eq!(
             fs::read_to_string(workspace.join("args.txt")).unwrap(),
-            "--print\nReview this prompt.\n--print-timeout\n1200000ms\n--sandbox\n--dangerously-skip-permissions\n--model\ngemini-3.1-pro-preview\n"
+            "--print\nReview this prompt.\n--print-timeout\n1140000ms\n--mode\nplan\n--sandbox\n--dangerously-skip-permissions\n--model\ngemini-3.1-pro-preview\n"
         );
         let report = job.report.as_ref().unwrap();
         assert_eq!(report.summary.as_deref(), Some("Review completed."));
@@ -1737,6 +1798,48 @@ mod tests {
             .as_ref()
             .and_then(|path| path.file_name())
             .is_some_and(|name| name.to_string_lossy() == format!("{}.output.json", job.id)));
+    }
+
+    #[test]
+    fn cli_backend_timeout_captures_termination_output_artifact() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("review-workspace");
+        let artifact_root = temp.path().join("reviews");
+        let reviewer = temp.path().join("reviewer.sh");
+        fs::write(
+            &reviewer,
+            "#!/bin/sh\nprintf 'before-timeout\\n'\n: > started.txt\nwhile :; do :; done\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&reviewer).unwrap().permissions();
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(0o755);
+        fs::set_permissions(&reviewer, permissions).unwrap();
+
+        let backend = GeminiCliReviewBackend::new(reviewer.display().to_string());
+        let request = ReviewRequest {
+            issue: issue(),
+            prompt: "Review this prompt.".into(),
+            workspace: workspace.clone(),
+            artifact_root,
+        };
+
+        let job = backend.start(request).unwrap();
+        let started = Instant::now();
+        while !workspace.join("started.txt").is_file() && started.elapsed() < Duration::from_secs(1)
+        {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(workspace.join("started.txt").is_file());
+        let job =
+            poll_review_job_until_terminal(&backend, job, Duration::ZERO, Duration::ZERO).unwrap();
+
+        assert_eq!(job.state, ReviewJobState::TimedOut);
+        let report = job.report.as_ref().unwrap();
+        assert_eq!(report.stdout.as_deref(), Some("before-timeout\n"));
+        assert_eq!(report.exit_status.as_deref(), Some("terminated by signal"));
+        let artifact = fs::read_to_string(job.artifact_path.as_ref().unwrap()).unwrap();
+        assert!(artifact.contains("before-timeout"));
     }
 
     #[test]

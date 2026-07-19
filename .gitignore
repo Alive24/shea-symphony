@@ -24,3 +24,4 @@ app/src-tauri/gen/
 storybook-static
 .shea/logs/
 .shea/artifacts/
+.antigravitycli/

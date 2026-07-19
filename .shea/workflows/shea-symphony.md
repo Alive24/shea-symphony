@@ -86,7 +86,7 @@ claude:
 review_lane:
   backend: agy-cli
   agy_command: /Users/chuntengxiao/.local/bin/agy
-  agy_model: gemini-3.1-pro-preview
+  agy_model: "Gemini 3.1 Pro (High)"
   timeout_ms: 1200000
   max_concurrent_workers: 2
 merge_lane:

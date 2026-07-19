@@ -22,3 +22,5 @@ app/src-tauri/gen/
 .shea-symphony
 *storybook.log
 storybook-static
+.shea/logs/
+.shea/artifacts/

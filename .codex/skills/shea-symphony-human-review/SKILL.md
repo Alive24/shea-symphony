@@ -25,7 +25,7 @@ context.
 MVP runtime worktree:
 
 ```bash
-/Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp
+//Volumes/Bohemialive/GitHub/shea-symphony/.shea/
 ```
 
 Canonical workflow inside the MVP runtime:
@@ -44,7 +44,7 @@ If the Tauri App is needed, start it from the MVP runtime `app/` directory with
 the local MVP profile:
 
 ```bash
-cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp/app
+cd //Volumes/Bohemialive/GitHub/shea-symphony/.shea//app
 SHEA_SYMPHONY_APP_PROFILE_PATH=/Users/chuntengxiao/Documents/GitHub/shea-symphony/.shea/app-profile.local.json npm run tauri -- dev
 ```
 
@@ -102,8 +102,8 @@ workflows/template/workpad/parent-batch-human-review-brief.md
   decision labels in their canonical English form.
 - Keep canonical values exactly where the template, command surface, or issue
   evidence expects fixed values, such as `Approve for Merging`, `Request
-  Rework`, `Need Human Input`, `Defer`, `Merging`, `Rework`, and `Human
-  Review`.
+Rework`, `Need Human Input`, `Defer`, `Merging`, `Rework`, and `Human
+Review`.
 
 ## CLI Topology Transition
 

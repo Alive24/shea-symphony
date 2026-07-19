@@ -22,7 +22,7 @@ source context.
 MVP runtime worktree:
 
 ```bash
-/Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp
+//Volumes/Bohemialive/GitHub/shea-symphony/.shea/
 ```
 
 Canonical workflow inside the MVP runtime:
@@ -34,7 +34,7 @@ workflows/shea-symphony.md
 Run deterministic tracker and forge mutations from the MVP runtime:
 
 ```bash
-cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp
+cd //Volumes/Bohemialive/GitHub/shea-symphony/.shea/
 cargo run -- forge validate --workflow workflows/shea-symphony.md --issue '#<issue>'
 cargo run -- forge create --workflow workflows/shea-symphony.md ...
 ```
@@ -43,7 +43,7 @@ If the Tauri App is needed, start it from the MVP runtime `app/` directory with
 the local MVP profile:
 
 ```bash
-cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp/app
+cd //Volumes/Bohemialive/GitHub/shea-symphony/.shea//app
 SHEA_SYMPHONY_APP_PROFILE_PATH=/Users/chuntengxiao/Documents/GitHub/shea-symphony/.shea/app-profile.local.json npm run tauri -- dev
 ```
 
@@ -303,7 +303,7 @@ After the user confirms the draft:
 2. Run:
 
 ```bash
-cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp
+cd //Volumes/Bohemialive/GitHub/shea-symphony/.shea/
 cargo run -- forge create \
   --workflow workflows/shea-symphony.md \
   --title "<title>" \

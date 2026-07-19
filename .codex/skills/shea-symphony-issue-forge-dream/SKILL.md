@@ -25,7 +25,7 @@ source context.
 MVP runtime worktree:
 
 ```bash
-/Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp
+//Volumes/Bohemialive/GitHub/shea-symphony/.shea/
 ```
 
 Canonical workflow inside the MVP runtime:
@@ -38,7 +38,7 @@ If the Tauri App is needed, start it from the MVP runtime `app/` directory with
 the local MVP profile:
 
 ```bash
-cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp/app
+cd //Volumes/Bohemialive/GitHub/shea-symphony/.shea//app
 SHEA_SYMPHONY_APP_PROFILE_PATH=/Users/chuntengxiao/Documents/GitHub/shea-symphony/.shea/app-profile.local.json npm run tauri -- dev
 ```
 
@@ -111,7 +111,7 @@ over memory-derived claims when both are cheap.
 Default reads:
 
 ```bash
-cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp
+cd //Volumes/Bohemialive/GitHub/shea-symphony/.shea/
 cargo run -- project-state workflows/shea-symphony.md
 cargo run -- inspect workflows/shea-symphony.md
 cargo run -- doctor workflows/shea-symphony.md

@@ -1,7 +1,7 @@
 # T2607-02 Local State DB
 
-Status: Migration v1 implemented; projection, query, admin, and integration
-slices deferred
+Status: Migration v1 and Describe-backed lifecycle projection implemented;
+query, admin, and integration slices deferred
 
 ## Purpose
 
@@ -89,10 +89,35 @@ require table reconstruction.
 - Schema and version updates roll back together on migration failure.
 - Post-migration version confirmation has its own typed failure.
 
+## Implemented Projection Slice
+
+- `LocalStateProjector` is a concrete synchronous crate-private writer. It
+  opens no Temporal/tracker client and exposes no `rusqlite::Connection` to its
+  callers.
+- `WorkflowLifecycleObservation` directly carries the immutable activation
+  facts, caller-supplied `current_state`, and `observed_at`; no secondary
+  execution-identity wrapper or fingerprint is introduced.
+- Only current Describe-backed Open/Closed observations can materialize a v1
+  row. Open creates/updates `running`; Closed creates/transitions to
+  `completed`, `failed`, or `closed_unknown` with a bounded close
+  classification.
+- `started_at` is always the Describe-proven Temporal execution start time;
+  `updated_at` changes only for a material projection. `waiting_kind` remains
+  NULL and `last_progress_at` is unchanged in this summary slice.
+- StartResponse is same-Run confirmation only. Missing/different rows return
+  `DescribeRequired` without a write. Definitive start failure returns a
+  bounded typed `StartFailureNotProjected` outcome and persists neither a
+  diagnostic nor a fabricated Run ID/start timestamp.
+- A short `BEGIN IMMEDIATE` transaction reads, compares immutable facts,
+  validates the monotonic Run/status transition, writes when needed, reads the
+  row back, and commits. The machine-wide active partial-index violation maps
+  to a typed local conflict without weakening its cross-runtime issue scope.
+- `completed` and `failed` do not regress. `closed_unknown` may refine when a
+  supported close classification later arrives. Old-Run evidence and identity
+  conflicts never overwrite a row.
+
 ## Deferred Slices
 
-- `projection`: typed upserts, freshness writes, and active-guard conflict
-  mapping;
 - `query`: workspace-scoped readers and dashboard snapshots;
 - `admin`: health, explicit rebuild/replace, compact, recovery, and manual
   checkpoint operations;

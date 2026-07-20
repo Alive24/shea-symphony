@@ -13,7 +13,7 @@
   export let workspaceProfile: WorkspaceProfile = {
     engineRoot: '',
     targetRoot: '',
-    workflowPath: 'workflows/shea-symphony.md',
+    workflowPath: '.shea/workflows/shea-symphony.md',
     source: 'self',
     error: null
   };

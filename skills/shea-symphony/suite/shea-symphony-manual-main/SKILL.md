@@ -15,8 +15,8 @@ approval, or merging.
 For normal all-lane dogfood, prefer the CLI foreground path first:
 
 ```bash
-cargo run -- autopilot plan workflows/shea-symphony.md
-cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --write
+cargo run -- autopilot plan .shea/workflows/shea-symphony.md
+cargo run -- autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --write
 ```
 
 Use this manual skill only for operator-selected Main implementation, Main-lane
@@ -39,7 +39,7 @@ MVP runtime worktree:
 Canonical workflow inside the MVP runtime:
 
 ```bash
-workflows/shea-symphony.md
+.shea/workflows/shea-symphony.md
 ```
 
 If the Tauri App is needed, start it from the MVP runtime `app/` directory with
@@ -97,12 +97,12 @@ scope.
 Run or equivalent-check:
 
 ```bash
-cargo run -- project state workflows/shea-symphony.md
-cargo run -- autopilot plan workflows/shea-symphony.md
-cargo run -- doctor workflows/shea-symphony.md
-cargo run -- project inspect workflows/shea-symphony.md '#<issue>'
-cargo run -- project issue workflows/shea-symphony.md '#<issue>' --json
-cargo run -- forge validate --workflow workflows/shea-symphony.md --issue '#<issue>'
+cargo run -- project state .shea/workflows/shea-symphony.md
+cargo run -- autopilot plan .shea/workflows/shea-symphony.md
+cargo run -- doctor .shea/workflows/shea-symphony.md
+cargo run -- project inspect .shea/workflows/shea-symphony.md '#<issue>'
+cargo run -- project issue .shea/workflows/shea-symphony.md '#<issue>' --json
+cargo run -- forge validate --workflow .shea/workflows/shea-symphony.md --issue '#<issue>'
 ```
 
 Use the Shea Symphony CLI Project read surface instead of raw Project GraphQL.
@@ -231,7 +231,7 @@ Before handoff, do not rely on a workpad comment or `project link-pr` output alo
 Confirm the CLI Project read surface exposes the PR under linked pull requests:
 
 ```bash
-cargo run -- project issue workflows/shea-symphony.md '#<issue>' --json
+cargo run -- project issue .shea/workflows/shea-symphony.md '#<issue>' --json
 gh pr view <pr-number> --repo Alive24/shea-symphony --json number,isDraft,url
 ```
 

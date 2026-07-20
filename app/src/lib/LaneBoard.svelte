@@ -6,7 +6,7 @@
   export let autoloopRunning = false;
   export let tauriAvailable = false;
   export let autoloopMode = 'dry-run';
-  export let workflowPath = 'workflows/shea-symphony.md';
+  export let workflowPath = '.shea/workflows/shea-symphony.md';
   export let latestAutoloopLine = '';
   export let slowReadsRemaining = 0;
 

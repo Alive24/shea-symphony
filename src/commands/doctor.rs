@@ -226,7 +226,7 @@ pub(crate) fn resolve_doctor_workflow_path(explicit: Option<PathBuf>) -> PathBuf
     {
         return path;
     }
-    let repo_default = PathBuf::from("workflows/shea-symphony.md");
+    let repo_default = PathBuf::from(".shea/workflows/shea-symphony.md");
     if repo_default.exists() {
         repo_default
     } else {

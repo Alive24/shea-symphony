@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 
 use crate::workspace::WorkspaceProfile;
 
-pub const DEFAULT_WORKFLOW_PATH: &str = "workflows/shea-symphony.md";
+pub const DEFAULT_WORKFLOW_PATH: &str = ".shea/workflows/shea-symphony.md";
 pub const DEFAULT_REPOSITORY: &str = "Alive24/shea-symphony";
 
 #[derive(Debug, Clone)]

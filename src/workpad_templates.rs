@@ -365,7 +365,7 @@ const WORKSPACE_ENSURE: &str = r#"## Shea Symphony Workspace Ensure
 - Source: `workspace ensure`
 - Evidence summary: {{evidence_summary}}"#;
 
-const AGENT_REVIEW_RUN: &str = include_str!("../workflows/template/workpad/agent-review.md");
+const AGENT_REVIEW_RUN: &str = include_str!("../.shea/template/workpad/agent-review.md");
 
 const AGENT_REVIEW_HANDOFF: &str = r#"## Shea Symphony Agent Review Handoff
 

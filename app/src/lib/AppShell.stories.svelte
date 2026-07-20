@@ -54,7 +54,7 @@
             autoloopRunning={false}
             tauriAvailable={true}
             autoloopMode="dry-run"
-            workflowPath="workflows/shea-symphony.md"
+            workflowPath=".shea/workflows/shea-symphony.md"
             latestAutoloopLine="No recent autoloop result"
             slowReadsRemaining={0}
           />

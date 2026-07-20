@@ -58,7 +58,7 @@ function fixtureCommand(args: string[]) {
 function baseFixtureOverview() {
   const now = new Date().toISOString();
   const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
-  const workflowPath = 'workflows/shea-symphony.md';
+  const workflowPath = '.shea/workflows/shea-symphony.md';
   const issues = [
     {
       identifier: '#418',

@@ -89,95 +89,40 @@ Default local path:
 The path may be overridden by workspace-local config. It should not live inside
 the canonical repository worktree.
 
-## Minimal Schema Direction
+## Implemented Migration V1
 
-Start with five small tables that support known read paths:
+Migration v1 is the first executable schema. `rusqlite` owns connection and
+transaction lifetimes, SeaQuery's SQLite builder is the single executable
+schema definition, and `PRAGMA user_version` is the only version authority.
+There is no parallel descriptor DSL or `meta.schema_version` row.
 
-```text
-workflow_index(
-  workflow_id,
-  run_id,
-  repo_id,
-  issue_ref,
-  from_state,
-  target_kind,
-  current_state,
-  active_step,
-  waiting_kind,
-  source_ref,
-  started_at,
-  last_progress_at,
-  status,
-  terminal_outcome,
-  freshness,
-  updated_at
-)
+The database is machine-shared. Every repo-owned table includes
+`workspace_runtime_id`, and typed `WorkspaceRuntimeId` values remain stable
+across App restarts. `IssueRef` storage keys include tracker backend,
+repository identity, and issue number; short `#123` forms are display-only.
 
-artifact_index(
-  artifact_id,
-  workflow_id,
-  repo_id,
-  issue_ref,
-  kind,
-  path,
-  summary,
-  created_by_step,
-  created_at
-)
+The five v1 tables are:
 
-tracker_cache(
-  repo_id,
-  issue_ref,
-  tracker_backend,
-  tracker_state,
-  title,
-  pr_number,
-  pr_state,
-  pr_relation_confirmed_at,
-  updated_at,
-  freshness
-)
+- `workflow_index`: required execution, runtime/repo/issue, lane, activation
+  provenance (`source_ref`, `source_tracker_revision`), status, freshness, and
+  timestamp fields; nullable run/wait/progress/outcome/operator-action fields;
+- `artifact_index`: required artifact, runtime/repo/issue, kind/path, and
+  creation fields; nullable workflow, summary, and creating-step fields;
+- `tracker_cache`: required runtime/repo/issue, backend/state/title,
+  timestamp, and freshness fields; nullable PR fields;
+- `activity_progress`: required runtime/workflow/activity, kind/target/status,
+  and attempt fields; nullable mutation/outcome/heartbeat/retry/summary fields;
+- `meta(key, value)`, initialized with RFC 3339 UTC `created_at` and
+  `updated_at` rows.
 
-activity_progress(
-  workflow_id,
-  activity_id,
-  activity_kind,
-  target_ref,
-  mutation_id,
-  outcome,
-  status,
-  attempt_count,
-  last_heartbeat_at,
-  next_retry_at,
-  summary
-)
+Primary keys are `workflow_index(workflow_id)`,
+`artifact_index(artifact_id)`,
+`tracker_cache(workspace_runtime_id, repo_id, issue_ref)`,
+`activity_progress(workflow_id, activity_id)`, and `meta(key)`.
 
-meta(
-  key,
-  value
-)
-```
-
-Add columns only when a read path needs them. Do not store full transcripts,
-diffs, review reports, issue bodies, comments, or Project field dumps in
-SQLite.
-
-Primary keys:
-
-- `workflow_index.workflow_id`;
-- `tracker_cache(repo_id, issue_ref)`;
-- `artifact_index.artifact_id`;
-- `activity_progress(workflow_id, activity_id)`;
-- `meta.key`.
-
-Indexes:
-
-- `workflow_index(repo_id, issue_ref, status)`;
-- `artifact_index(workflow_id)`;
-- `artifact_index(repo_id, issue_ref)`;
-- `activity_progress(workflow_id, mutation_id)`;
-- `tracker_cache(freshness)`;
-- `workflow_index(current_state, waiting_kind)`.
+Every lookup index begins with `workspace_runtime_id`. The deliberate exception
+is the partial unique active guard on `(repo_id, issue_ref)` for statuses
+`starting` and `running`: it is machine-wide across runtime scopes.
 
 Use `workflow_index` as the local active workflow index. It records the
 human-readable Temporal Workflow ID plus the Temporal-native `run_id` returned
@@ -188,8 +133,8 @@ or Temporal history on every App refresh.
 `workflow_id` is the primary Symphony execution identity. `run_id` is stored
 for exact Temporal execution lookup, not as the product-level identity.
 
-For active statuses, enforce one active workflow row per `(repo_id, issue_ref)`
-with a partial unique index when available, or an equivalent typed store guard.
+For active statuses, v1 enforces one active workflow row per
+`(repo_id, issue_ref)` with a partial unique index.
 This is a local duplicate-start guard and App read model, not the authoritative
 workflow fact.
 
@@ -266,8 +211,8 @@ Recommended shape:
 
 - `LocalStateReader` for App/Tauri backend reads;
 - `LocalStateProjector` for Activity/backend result projection writes;
-- `LocalStateAdmin` for health checks, schema migration, rebuild, and compact
-  operations.
+- `LocalStateAdmin` for later health, explicit rebuild/recovery, and compact
+  operations. Startup migration remains owned by `LocalStateDatabase`.
 
 Recommended initial methods:
 
@@ -287,16 +232,20 @@ LocalStateProjector:
 
 LocalStateAdmin:
   check_health()
-  migrate()
   rebuild(scope)
   compact()
 ```
 
-The implementation should use a lightweight SQLite library, with a current
-preference for `rusqlite`, handwritten SQL, and typed DTO/repository functions.
+The lifecycle boundary uses bundled `rusqlite`, SeaQuery SQLite schema
+statements, and SeaQuery's rusqlite binder. Narrow private SQL is limited to
+SQLite PRAGMA control and schema introspection that SeaQuery does not express.
+No ORM or external migration service is used.
 
-Schema versioning and minimal SQL migrations are owned by the Symphony runtime.
-Do not introduce an external migration service in 2607.
+Each connection receives a five-second busy timeout, foreign keys enabled,
+`synchronous = NORMAL`, and confirmed WAL mode. Missing migrations run in
+short `IMMEDIATE` transactions and re-read `user_version` after locking.
+Future versions, unversioned schema drift, corruption, bounded contention,
+migration failure, and readback failure remain typed and non-destructive.
 
 Keep structured filter fields as columns. Small JSON summaries are acceptable
 for backend-specific metadata or UI display payloads, but large payloads and

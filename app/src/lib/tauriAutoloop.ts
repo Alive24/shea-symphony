@@ -120,7 +120,7 @@ const defaultState: LoopStateSnapshot = {
   stopping: false,
   pid: null,
   mode: 'dry-run',
-  workflowPath: 'workflows/shea-symphony.md',
+  workflowPath: '.shea/workflows/shea-symphony.md',
   startedAtMs: null,
   stoppedAtMs: null,
   exitCode: null,
@@ -145,7 +145,7 @@ export function defaultWorkspaceProfile(): WorkspaceProfile {
   return {
     engineRoot: '',
     targetRoot: '',
-    workflowPath: 'workflows/shea-symphony.md',
+    workflowPath: '.shea/workflows/shea-symphony.md',
     cliPath: null,
     source: 'self',
     error: null

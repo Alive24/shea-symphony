@@ -27,9 +27,9 @@ mod workflows;
 pub use client::{StartedIssueWorkflow, SymphonyTemporalClient, TemporalRuntimeError};
 pub use dto::{IssueWorkflowInput, IssueWorkflowQueryResult, IssueWorkflowState};
 pub use local_state::{
-    ActiveWorkflowGuardDescriptor, ColumnDescriptor, ColumnKind, Freshness, IndexDescriptor,
-    IssueRef, LocalStateSchema, PrimaryKeyDescriptor, RepoId, TableDescriptor, TrackerBackend,
-    WorkflowId, WorkflowIndexStatus, ACTIVE_WORKFLOW_STATUSES, LOCAL_STATE_SCHEMA,
+    Freshness, IssueRef, JournalMode, LocalStateDatabase, LocalStateError,
+    LocalStateInitialization, RepoId, TrackerBackend, WorkflowId, WorkflowIndexStatus,
+    WorkspaceRuntimeId, ACTIVE_WORKFLOW_STATUSES,
 };
 pub use task_queues::{AGENT_TASK_QUEUE, CORE_TASK_QUEUE, LOCAL_TASK_QUEUE};
 pub use worker_runtime::run_symphony_workers;
@@ -37,11 +37,11 @@ pub use workers::{task_queue_registrations, TaskQueueRegistration};
 
 #[cfg(test)]
 mod tests {
-    use super::{WorkflowIndexStatus, LOCAL_STATE_SCHEMA};
+    use super::WorkflowIndexStatus;
 
     #[test]
     fn local_state_contract_is_exported_from_symphony_boundary() {
         assert!(WorkflowIndexStatus::Starting.is_active());
-        assert!(LOCAL_STATE_SCHEMA.table("workflow_index").is_some());
+        assert!(!WorkflowIndexStatus::Completed.is_active());
     }
 }

@@ -14,7 +14,7 @@ This is attempt {{ attempt }}. Resume from the existing issue workspace and pres
 
 You are the main implementation agent for Shea Symphony. Use GitHub Project v2 project #9 as the tracker state machine, with Shea Symphony CLI as the authority for Project reads and mutations. Implement the current issue exactly as contracted. Shea Symphony is orchestration infrastructure, not downstream product business logic.
 
-This lane owns implementation only. It may claim `Todo` or `Rework`, create one workspace, one branch, and one PR, and then stop at `Agent Review`. It does not review its own work, approve work, or merge work. Lane-specific behavior belongs in this prompt contract and the command controller, while shared tracker and runtime settings remain in `workflows/shea-symphony.md`.
+This lane owns implementation only. It may claim `Todo` or `Rework`, create one workspace, one branch, and one PR, and then stop at `Agent Review`. It does not review its own work, approve work, or merge work. Lane-specific behavior belongs in this prompt contract and the command controller, while shared tracker and runtime settings remain in `.shea/workflows/shea-symphony.md`.
 
 Read these canonical sources before changing code:
 

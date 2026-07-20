@@ -43,7 +43,7 @@ export async function loadHealth() {
   return {
     ok: true,
     generatedAt: Date.now(),
-    workflowPath: 'workflows/shea-symphony.md',
+    workflowPath: '.shea/workflows/shea-symphony.md',
     fixture: !isTauriRuntime(),
     buildPresent: false,
     cli: {

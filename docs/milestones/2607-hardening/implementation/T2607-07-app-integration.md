@@ -78,6 +78,11 @@ has better local conventions.
 
 Expose a small command allowlist.
 
+T2607-02 provides the internal `LocalStateAdmin` library seam only. This
+T2607-07 slice owns any eventual Tauri command or operator-facing control over
+that seam, and must keep a read-only health check distinct from explicit
+migration or later recovery commands.
+
 Recommended commands:
 
 ```text

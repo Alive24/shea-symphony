@@ -18,7 +18,7 @@
 mod activities;
 mod client;
 mod dto;
-mod local_state;
+pub(crate) mod local_state;
 mod task_queues;
 mod worker_runtime;
 mod workers;

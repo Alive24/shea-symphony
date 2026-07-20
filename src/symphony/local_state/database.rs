@@ -11,7 +11,8 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use super::migration::{Migration, MIGRATIONS};
 
-const CURRENT_SCHEMA_VERSION: u32 = super::migration::CURRENT_SCHEMA_VERSION;
+/// Latest schema version understood by this binary.
+pub(super) const CURRENT_SCHEMA_VERSION: u32 = super::migration::CURRENT_SCHEMA_VERSION;
 
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const DATABASE_RELATIVE_PATH: &str = "state/symphony.db";
@@ -423,7 +424,8 @@ fn configure_connection(connection: &Connection) -> rusqlite::Result<JournalMode
     configure_journal_mode(connection)
 }
 
-fn read_user_version(connection: &Connection) -> rusqlite::Result<u32> {
+/// Reads SQLite's sole schema-version authority without changing it.
+pub(super) fn read_user_version(connection: &Connection) -> rusqlite::Result<u32> {
     // PRAGMA user_version is SQLite's only migration-version authority and has
     // no SeaQuery representation.
     connection.pragma_query_value(None, "user_version", |row| row.get(0))
@@ -439,7 +441,8 @@ fn inspect_initial_schema(connection: &mut Connection) -> rusqlite::Result<(u32,
     Ok((version, conflict))
 }
 
-fn has_application_schema(connection: &Connection) -> rusqlite::Result<bool> {
+/// Detects application-owned schema objects while ignoring SQLite internals.
+pub(super) fn has_application_schema(connection: &Connection) -> rusqlite::Result<bool> {
     // sqlite_schema introspection has no SeaQuery representation. Internal
     // sqlite_* objects are ignored; any application object makes v0 ambiguous.
     connection.query_row(
@@ -449,7 +452,8 @@ fn has_application_schema(connection: &Connection) -> rusqlite::Result<bool> {
     )
 }
 
-fn is_busy(error: &rusqlite::Error) -> bool {
+/// Returns whether SQLite reported bounded lock contention.
+pub(super) fn is_busy(error: &rusqlite::Error) -> bool {
     matches!(
         error,
         rusqlite::Error::SqliteFailure(inner, _)
@@ -457,7 +461,8 @@ fn is_busy(error: &rusqlite::Error) -> bool {
     )
 }
 
-fn is_corrupt(error: &rusqlite::Error) -> bool {
+/// Returns whether SQLite rejected the file as corrupt or malformed.
+pub(super) fn is_corrupt(error: &rusqlite::Error) -> bool {
     matches!(
         error,
         rusqlite::Error::SqliteFailure(inner, _)

@@ -63,10 +63,16 @@ Human input / approve / request rework / human fix
   -> Workflow validates the request
   -> Activities update tracker/read model
 
-DB health / migration / rebuild
-  -> Tauri backend command
-  -> LocalStateAdmin
+DB health / explicit migration / later rebuild
+  -> T2607-07 Tauri backend command
+  -> T2607-02 LocalStateAdmin library
 ```
+
+T2607-02 owns only the internal `LocalStateAdmin` library boundary. It does
+not add a product CLI command, Tauri command, or Temporal Activity. T2607-07
+later owns the Tauri command/operator surface and must preserve the distinction
+between read-only health inspection and an explicit migration or recovery
+request.
 
 The App may expose buttons or links for human todo actions, but those controls
 should route to the appropriate Coding Agent/operator flow. They should not
@@ -88,6 +94,9 @@ projection.
 - provide thin admin/debug wrappers over Temporal start, query, signal, or
   update APIs.
 - provide debug-only wrappers for operator action submission if needed.
+
+Until T2607-07 provides an operator surface, LocalStateAdmin remains a library
+seam rather than a normal product CLI path.
 
 ## CLI Must Not
 

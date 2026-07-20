@@ -108,8 +108,8 @@ pub trait ReviewBackend {
     fn prelaunch_error(&self) -> Option<String> {
         None
     }
-    fn cancel(&self, _job: &ReviewJob) -> Result<(), ReviewError> {
-        Ok(())
+    fn cancel(&self, job: ReviewJob) -> Result<ReviewJob, ReviewError> {
+        Ok(job)
     }
 }
 
@@ -145,7 +145,7 @@ pub fn poll_review_job_until_terminal(
         }
 
         if started.elapsed() >= timeout {
-            backend.cancel(&job)?;
+            job = backend.cancel(job)?;
             job.state = ReviewJobState::TimedOut;
             job.error = Some(format!(
                 "Review backend timed out after {}ms.",

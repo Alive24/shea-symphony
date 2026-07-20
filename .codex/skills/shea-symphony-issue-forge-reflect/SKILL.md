@@ -43,7 +43,7 @@ source context.
 MVP runtime worktree:
 
 ```bash
-/Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp
+//Volumes/Bohemialive/GitHub/shea-symphony/.shea/
 ```
 
 Canonical workflow inside the MVP runtime:
@@ -56,7 +56,7 @@ If the Tauri App is needed, start it from the MVP runtime `app/` directory with
 the local MVP profile:
 
 ```bash
-cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp/app
+cd //Volumes/Bohemialive/GitHub/shea-symphony/.shea//app
 SHEA_SYMPHONY_APP_PROFILE_PATH=/Users/chuntengxiao/Documents/GitHub/shea-symphony/.shea/app-profile.local.json npm run tauri -- dev
 ```
 
@@ -97,7 +97,7 @@ Alive24
 Gather only relevant sources:
 
 ```bash
-cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp
+cd //Volumes/Bohemialive/GitHub/shea-symphony/.shea/
 cargo run -- project state workflows/shea-symphony.md
 cargo run -- project issue workflows/shea-symphony.md '#<number>' --json
 cargo run -- doctor workflows/shea-symphony.md
@@ -156,7 +156,7 @@ cargo run -- forge create \
 Read the Backlog item first:
 
 ```bash
-cd /Users/chuntengxiao/.shea-symphony/mvp/shea-symphony-2606-mvp
+cd //Volumes/Bohemialive/GitHub/shea-symphony/.shea/
 cargo run -- project issue workflows/shea-symphony.md '#<number>' --json
 ```
 
@@ -172,7 +172,7 @@ Discuss like Issue Forge:
   final Human Review and UAT owner. Routine native subissues should keep
   independent Agent Review, default to no direct UAT/Human Review, and route
   passing review to `Merging`. Record `Subissue Human Review Exception:
-  <reason>` only for child slices that truly need direct Human Review.
+<reason>` only for child slices that truly need direct Human Review.
 - After each question round, include a short promotion-readiness note.
 - Do not promote until the operator explicitly confirms promotion.
 

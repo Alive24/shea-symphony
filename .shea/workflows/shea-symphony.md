@@ -47,34 +47,29 @@ temporal:
     agent_concurrency: 3
     local_concurrency: 8
 prompts:
-  main_agent: prompts/main-agent.md
-  review_agent: prompts/review-agent.md
-  merge_agent: prompts/merge-agent.md
+  main_agent: ../prompts/main-agent.md
+  review_agent: ../prompts/review-agent.md
+  merge_agent: ../prompts/merge-agent.md
 workpad_templates:
-  agent_review_run: template/workpad/agent-review.md
-  doctor_triage: template/workpad/doctor-triage.md
-  human_review_repair: template/workpad/doctor-triage.md
-  merge_run: template/workpad/merge-run.md
-  merge_repair: template/workpad/merge-run.md
-  forge_rework_run: template/workpad/rework-run.md
-  forge_rework_blocked: template/workpad/rework-run.md
+  agent_review_run: ../template/workpad/agent-review.md
+  doctor_triage: ../template/workpad/doctor-triage.md
+  human_review_repair: ../template/workpad/doctor-triage.md
+  merge_run: ../template/workpad/merge-run.md
+  merge_repair: ../template/workpad/merge-run.md
+  forge_rework_run: ../template/workpad/rework-run.md
+  forge_rework_blocked: ../template/workpad/rework-run.md
 polling:
-  interval_ms: 5000
+  interval_ms: 50000
 artifacts:
-  root: $SHEA_SYMPHONY_ARTIFACT_ROOT
+  root: ../artifacts
   namespace: Alive24/shea-symphony
 workspace:
-  root: $SHEA_SYMPHONY_ARTIFACT_ROOT/Alive24/shea-symphony/default/worktrees
+  root: ../worktrees
 main_lane:
   backend: codex
   max_concurrent_agents: 3
   max_turns: 3
   max_retry_backoff_ms: 300000
-tmux:
-  command: tmux
-  agent_command: codex
-  review_agent_command: /Users/chuntengxiao/.local/bin/agy
-  session_prefix: shea
 codex:
   command: codex app-server -c 'service_tier="fast"'
   reasoning_effort: high
@@ -86,7 +81,7 @@ claude:
 review_lane:
   backend: agy-cli
   agy_command: /Users/chuntengxiao/.local/bin/agy
-  agy_model: gemini-3.1-pro-preview
+  agy_model: "Gemini 3.1 Pro (High)"
   timeout_ms: 1200000
   max_concurrent_workers: 2
 merge_lane:
@@ -96,7 +91,7 @@ verification:
   timeout_ms: 600000
   commands: []
 observability:
-  logs_root: $SHEA_SYMPHONY_ARTIFACT_ROOT/Alive24/shea-symphony/default/logs
+  logs_root: ../logs
 ---
 
 # Shea Symphony Workflow Index
@@ -109,9 +104,9 @@ boundary.
 
 Lane prompt contracts:
 
-- Main Agent: `workflows/prompts/main-agent.md`
-- Review Agent: `workflows/prompts/review-agent.md`
-- Merge Agent: `workflows/prompts/merge-agent.md`
+- Main Agent: `../prompts/main-agent.md`
+- Review Agent: `../prompts/review-agent.md`
+- Merge Agent: `../prompts/merge-agent.md`
 
 Older fixture workflows may still keep an inline prompt body. This canonical
 workflow uses explicit lane prompts so Main, Review, and Merge agents do not

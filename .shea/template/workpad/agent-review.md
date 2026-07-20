@@ -12,9 +12,9 @@
 - Decision: {{decision}}
 - Target state after review routing: `{{target_state}}`
 - Result: `{{result}}`
-{{pr_line}}
-{{artifact_line}}
-{{ledger_line}}
+  {{pr_line}}
+  {{artifact_line}}
+  {{ledger_line}}
 - Boundary comment coverage: {{boundary_comment_coverage}}
 - Rustdoc coverage: {{rustdoc_coverage}}
 - Public visibility audit: {{public_visibility_audit}}
@@ -28,6 +28,7 @@
 {{gemini_health_section}}
 {{usage_limit_section}}
 {{inconclusive_section}}
+
 ### Review Response
 
 {{agent_review_note}}

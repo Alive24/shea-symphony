@@ -230,10 +230,10 @@ pub fn discover_issue_workspaces_from_parts(
         }
 
         if let Some(token) = &number_token {
-            if branch.contains(token) || path.contains(token) {
+            if contains_issue_marker(branch, token) || contains_issue_marker(&path, token) {
                 evidence.push(WorkspaceEvidence {
                     source: "git_worktree".into(),
-                    detail: format!("branch or path contains `{token}`"),
+                    detail: format!("branch or path names issue `{token}`"),
                 });
                 strength = Some(WorkspaceMatchStrength::Strong);
             }
@@ -475,6 +475,31 @@ fn issue_number_token(issue_ref: &str) -> Option<String> {
     }
 }
 
+fn contains_issue_marker(text: &str, number: &str) -> bool {
+    let marker = format!("issue-{number}");
+    let mut search_start = 0;
+
+    while let Some(relative_index) = text[search_start..].find(&marker) {
+        let index = search_start + relative_index;
+        let before = text[..index].chars().next_back();
+        let after = text[index + marker.len()..].chars().next();
+        let has_left_boundary = before
+            .map(|character| !character.is_ascii_alphanumeric())
+            .unwrap_or(true);
+        let has_right_boundary = after
+            .map(|character| !character.is_ascii_alphanumeric())
+            .unwrap_or(true);
+
+        if has_left_boundary && has_right_boundary {
+            return true;
+        }
+
+        search_start = index + marker.len();
+    }
+
+    false
+}
+
 fn session_matches_issue(session: &AgentSessionRecord, issue_ref: &str) -> bool {
     let expected = issue_number_token(issue_ref);
     session
@@ -486,9 +511,8 @@ fn session_matches_issue(session: &AgentSessionRecord, issue_ref: &str) -> bool 
 fn branch_matches_issue(issue: &TrackerIssue, branch: &str) -> bool {
     let hints = issue_workspace_hints(issue);
     hints.iter().any(|hint| branch == hint)
-        || issue_number_token(&issue.identifier).is_some_and(|number| {
-            branch.contains(&format!("issue-{number}")) || branch.ends_with(&number)
-        })
+        || issue_number_token(&issue.identifier)
+            .is_some_and(|number| contains_issue_marker(branch, &number))
 }
 
 fn workpad_workspace_hints(description: &str, marker: &str) -> Vec<PathBuf> {
@@ -588,6 +612,15 @@ mod tests {
             created_at: None,
             updated_at: None,
         }
+    }
+
+    fn issue_with_identifier(identifier: &str) -> TrackerIssue {
+        let mut issue = issue();
+        issue.identifier = identifier.into();
+        issue.description = None;
+        issue.branch_name = None;
+        issue.linked_pull_requests = Vec::new();
+        issue
     }
 
     fn session(path: &str) -> AgentSessionRecord {
@@ -715,6 +748,59 @@ mod tests {
             .candidates
             .iter()
             .any(|candidate| candidate.path == Path::new("/tmp/issue-999")));
+    }
+
+    #[test]
+    fn ignores_digit_substrings_in_unrelated_worktree_paths() {
+        let report = discover_issue_workspaces_from_parts(
+            &issue_with_identifier("#5"),
+            &[],
+            &[
+                GitWorktree {
+                    path: PathBuf::from(
+                        "/Volumes/Bohemialive/CodexHome/worktrees/25b5/FailureReport",
+                    ),
+                    head: Some("first".into()),
+                    branch: None,
+                    prunable: None,
+                },
+                GitWorktree {
+                    path: PathBuf::from(
+                        "/Volumes/Bohemialive/CodexHome/worktrees/4854/FailureReport",
+                    ),
+                    head: Some("second".into()),
+                    branch: None,
+                    prunable: None,
+                },
+                GitWorktree {
+                    path: PathBuf::from(
+                        "/Volumes/Bohemialive/CodexHome/worktrees/f567/FailureReport",
+                    ),
+                    head: Some("third".into()),
+                    branch: None,
+                    prunable: None,
+                },
+            ],
+            "<!-- shea-symphony-workpad -->",
+        );
+
+        assert!(report.candidates.is_empty());
+        assert!(report.warnings.is_empty());
+    }
+
+    #[test]
+    fn recognizes_explicit_issue_markers_but_not_adjacent_numbers() {
+        let issue = issue_with_identifier("#5");
+
+        assert!(contains_issue_marker("feature/issue-5-local", "5"));
+        assert!(contains_issue_marker("/tmp/issue-5-diagnostic", "5"));
+        assert!(!contains_issue_marker("/tmp/25b5/FailureReport", "5"));
+        assert!(!contains_issue_marker("feature/issue-50-local", "5"));
+        assert!(!contains_issue_marker("feature/issue-5local", "5"));
+        assert!(!contains_issue_marker("feature/xissue-5-local", "5"));
+        assert!(branch_matches_issue(&issue, "feature/issue-5-local"));
+        assert!(!branch_matches_issue(&issue, "feature/issue-50-local"));
+        assert!(!branch_matches_issue(&issue, "feature/diagnostic5"));
     }
 
     #[test]

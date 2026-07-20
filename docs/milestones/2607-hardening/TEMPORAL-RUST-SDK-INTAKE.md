@@ -35,21 +35,23 @@ Design implication:
 
 ## Local Development Runtime
 
-The quickstart uses local Temporal service through Temporal CLI:
+The upstream quickstart uses a local Temporal service through the Temporal CLI.
+For this repository, T2607-01 defines exactly one supported local startup and
+runtime-proof path:
 
-```text
-temporal server start-dev
-```
+[`TEMPORAL-NOOP-SMOKE.md`](TEMPORAL-NOOP-SMOKE.md).
 
-The local service listens on `localhost:7233`; the local Web UI is exposed by
-the dev server.
+That explicitly gated command owns a transient `localhost:7233` service only
+when the endpoint is unavailable, invokes the supported headless CLI form, and
+cleans it up. Do not add a separate raw CLI, Docker, or Temporal Cloud startup
+path for this test slice. A future App-owned runtime path remains out of scope.
 
 2607 implication:
 
 - Temporal Cloud stays out of scope;
-- App first-run can check/start/connect local Temporal service;
+- T2607-01 owns only the smoke harness; App first-run is deferred;
 - worker startup is local;
-- local Temporal Web UI can be linked for traceability.
+- the smoke does not rely on or link to the local Temporal Web UI.
 
 ## Workflow Constraints
 
@@ -212,8 +214,9 @@ execution pulse, while still carrying the issue identity.
 - Confirm Rust SDK crate versions in repo dependency policy.
 - Verify Update support and ergonomics in a tiny local sample.
 - Verify Activity heartbeat API shape for long-running Codex agent work.
-- Verify local Temporal dev server persistence options; quickstart uses
-  `start-dev`, but 2607 may need durable local data under `~/.shea`.
+- Revisit persistence for a later user-facing local runtime. The T2607-01
+  smoke deliberately uses non-persistent dev storage through its one supported
+  harness path.
 - Verify episode history-size management for active `IssueWorkflow`
   executions. Static lanes such as `Backlog` and `Human Review` should not keep
   long-lived idle Workflow executions open by default.

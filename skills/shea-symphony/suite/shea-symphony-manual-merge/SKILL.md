@@ -15,8 +15,8 @@ fresh feature implementation or ordinary Todo dispatch.
 For normal all-lane dogfood, prefer the foreground Autoloop path first:
 
 ```bash
-cargo run -- autopilot plan workflows/shea-symphony.md
-cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --write
+cargo run -- autopilot plan .shea/workflows/shea-symphony.md
+cargo run -- autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --write
 ```
 
 Use this manual skill only for operator-selected merge-lane repair, focused
@@ -35,7 +35,7 @@ cd /Volumes/Bohemialive/GitHub/shea-symphony
 Canonical workflow:
 
 ```bash
-workflows/shea-symphony.md
+.shea/workflows/shea-symphony.md
 ```
 
 Canonical Merge Agent prompt:
@@ -69,10 +69,10 @@ Do not use this skill for fresh `Todo` implementation. Use
 ## Preflight
 
 ```bash
-cargo run -- project state workflows/shea-symphony.md
-cargo run -- doctor workflows/shea-symphony.md
-cargo run -- project inspect workflows/shea-symphony.md '#<issue>'
-cargo run -- project issue workflows/shea-symphony.md '#<issue>' --json
+cargo run -- project state .shea/workflows/shea-symphony.md
+cargo run -- doctor .shea/workflows/shea-symphony.md
+cargo run -- project inspect .shea/workflows/shea-symphony.md '#<issue>'
+cargo run -- project issue .shea/workflows/shea-symphony.md '#<issue>' --json
 gh issue view <issue> --repo Alive24/shea-symphony --comments
 gh pr view <pr> --repo Alive24/shea-symphony --json number,title,state,url,headRefName,baseRefName,mergeStateStatus,reviewDecision,statusCheckRollup,isDraft,commits,closingIssuesReferences
 ```
@@ -130,7 +130,7 @@ When a merge-agent runtime session is explicitly needed after a structured
 For automated interrupted merge-loop recovery, prefer:
 
 ```bash
-cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --write
+cargo run -- autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --write
 ```
 
 `autopilot loop --write` adopts interrupted structured Main and Merge loop/goal
@@ -138,7 +138,7 @@ claims first by default, then continues normal lane selection. If the operator
 is intentionally isolating merge work, run a bounded focused merge loop:
 
 ```bash
-cargo run -- merge loop workflows/shea-symphony.md --max-iterations 1 --write
+cargo run -- merge loop .shea/workflows/shea-symphony.md --max-iterations 1 --write
 ```
 
 Use a bounded `--max-iterations` value. Merge recovery must not adopt manual claims, and it

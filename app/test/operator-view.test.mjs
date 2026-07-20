@@ -1625,7 +1625,7 @@ test('issue detail heartbeat and latest event use explicit matching issue proven
 test('project read cooldown preserves last stable review queue visibility', () => {
   const view = buildViewModel({
     generatedAt: new Date().toISOString(),
-    workflowPath: 'workflows/shea-symphony.md',
+    workflowPath: '.shea/workflows/shea-symphony.md',
     commands: {
       githubQueue: {
         ok: false,
@@ -1923,11 +1923,11 @@ test('lane throughput board keeps blocked rows but summarizes idle and completed
 test('view model uses CLI autopilot parked queues for human todo issues', () => {
   const view = buildViewModel({
     generatedAt: new Date().toISOString(),
-    workflowPath: 'workflows/shea-symphony.md',
+    workflowPath: '.shea/workflows/shea-symphony.md',
     commands: {
       autopilot: {
         ok: true,
-        args: ['autopilot', 'plan', 'workflows/shea-symphony.md', '--json'],
+        args: ['autopilot', 'plan', '.shea/workflows/shea-symphony.md', '--json'],
         exitCode: 0,
         signal: null,
         timedOut: false,
@@ -1976,11 +1976,11 @@ test('view model uses CLI autopilot parked queues for human todo issues', () => 
 test('human review project state does not appear in the review lane board queue', () => {
   const view = buildViewModel({
     generatedAt: new Date().toISOString(),
-    workflowPath: 'workflows/shea-symphony.md',
+    workflowPath: '.shea/workflows/shea-symphony.md',
     commands: {
       autopilot: {
         ok: true,
-        args: ['autopilot', 'plan', 'workflows/shea-symphony.md', '--json'],
+        args: ['autopilot', 'plan', '.shea/workflows/shea-symphony.md', '--json'],
         exitCode: 0,
         signal: null,
         timedOut: false,
@@ -2018,11 +2018,11 @@ test('human review project state does not appear in the review lane board queue'
 test('view model keeps lane queue rows observational without next skill metadata', () => {
   const view = buildViewModel({
     generatedAt: new Date().toISOString(),
-    workflowPath: 'workflows/shea-symphony.md',
+    workflowPath: '.shea/workflows/shea-symphony.md',
     commands: {
       githubQueue: {
         ok: true,
-        args: ['project', 'state', 'workflows/shea-symphony.md', '--json'],
+        args: ['project', 'state', '.shea/workflows/shea-symphony.md', '--json'],
         exitCode: 0,
         signal: null,
         timedOut: false,
@@ -2052,11 +2052,11 @@ test('view model keeps lane queue rows observational without next skill metadata
 test('blocked Todo project rows keep dependency readback but stay out of Main lane queue', () => {
   const view = buildViewModel({
     generatedAt: new Date().toISOString(),
-    workflowPath: 'workflows/shea-symphony.md',
+    workflowPath: '.shea/workflows/shea-symphony.md',
     commands: {
       githubQueue: {
         ok: true,
-        args: ['project', 'state', 'workflows/shea-symphony.md', '--json'],
+        args: ['project', 'state', '.shea/workflows/shea-symphony.md', '--json'],
         exitCode: 0,
         signal: null,
         timedOut: false,
@@ -2111,11 +2111,11 @@ test('blocked Todo project rows keep dependency readback but stay out of Main la
 test('native parent rows with incomplete subissues stay out of Main lane queue', () => {
   const view = buildViewModel({
     generatedAt: new Date().toISOString(),
-    workflowPath: 'workflows/shea-symphony.md',
+    workflowPath: '.shea/workflows/shea-symphony.md',
     commands: {
       githubQueue: {
         ok: true,
-        args: ['project', 'state', 'workflows/shea-symphony.md', '--json'],
+        args: ['project', 'state', '.shea/workflows/shea-symphony.md', '--json'],
         exitCode: 0,
         signal: null,
         timedOut: false,
@@ -2200,11 +2200,11 @@ test('fixture completed worktrees include durable lane table timestamps', () => 
 test('view model renders object-shaped selected issues as issue references', () => {
   const view = buildViewModel({
     generatedAt: new Date().toISOString(),
-    workflowPath: 'workflows/shea-symphony.md',
+    workflowPath: '.shea/workflows/shea-symphony.md',
     commands: {
       autopilot: {
         ok: true,
-        args: ['autopilot', 'plan', 'workflows/shea-symphony.md', '--json'],
+        args: ['autopilot', 'plan', '.shea/workflows/shea-symphony.md', '--json'],
         exitCode: 0,
         signal: null,
         timedOut: false,
@@ -2237,11 +2237,11 @@ test('view model renders object-shaped selected issues as issue references', () 
 test('view model exposes unresumed in-progress runtime issues as main queue rows', () => {
   const view = buildViewModel({
     generatedAt: new Date().toISOString(),
-    workflowPath: 'workflows/shea-symphony.md',
+    workflowPath: '.shea/workflows/shea-symphony.md',
     commands: {
       autopilot: {
         ok: true,
-        args: ['autopilot', 'plan', 'workflows/shea-symphony.md', '--json'],
+        args: ['autopilot', 'plan', '.shea/workflows/shea-symphony.md', '--json'],
         exitCode: 0,
         signal: null,
         timedOut: false,
@@ -2275,11 +2275,11 @@ test('view model exposes unresumed in-progress runtime issues as main queue rows
 test('lane board queue excludes backlog project items', () => {
   const view = buildViewModel({
     generatedAt: new Date().toISOString(),
-    workflowPath: 'workflows/shea-symphony.md',
+    workflowPath: '.shea/workflows/shea-symphony.md',
     commands: {
       githubQueue: {
         ok: true,
-        args: ['autopilot', 'plan', 'workflows/shea-symphony.md', '--json'],
+        args: ['autopilot', 'plan', '.shea/workflows/shea-symphony.md', '--json'],
         exitCode: 0,
         signal: null,
         timedOut: false,
@@ -2324,13 +2324,13 @@ test('read surface payloads incrementally replace pending overview commands', ()
   const surface = buildFixtureReadSurface('autopilot', true);
   const overview = {
     generatedAt: new Date().toISOString(),
-    workflowPath: 'workflows/shea-symphony.md',
+    workflowPath: '.shea/workflows/shea-symphony.md',
     scope: 'fast',
     commands: {
       autopilot: {
         ok: false,
         pending: true,
-        args: ['autopilot', 'plan', 'workflows/shea-symphony.md', '--json'],
+        args: ['autopilot', 'plan', '.shea/workflows/shea-symphony.md', '--json'],
         exitCode: null,
         signal: null,
         timedOut: false,

@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 use crate::workspace::WorkspaceProfile;
 
-pub const DEFAULT_WORKFLOW_PATH: &str = "workflows/shea-symphony.md";
+pub const DEFAULT_WORKFLOW_PATH: &str = ".shea/workflows/shea-symphony.md";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -283,14 +283,14 @@ branch refs/heads/main
         let profile = WorkspaceProfile {
             engine_root: engine_root.display().to_string(),
             target_root: target_root.display().to_string(),
-            workflow_path: "workflows/shea-symphony.md".into(),
+            workflow_path: ".shea/workflows/shea-symphony.md".into(),
             cli_path: None,
             source: "test".into(),
             error: None,
         };
 
         let spec = shea_command_spec(
-            &["autopilot", "plan", "workflows/shea-symphony.md"],
+            &["autopilot", "plan", ".shea/workflows/shea-symphony.md"],
             &profile,
         );
 
@@ -306,7 +306,7 @@ branch refs/heads/main
                 "--",
                 "autopilot",
                 "plan",
-                "workflows/shea-symphony.md",
+                ".shea/workflows/shea-symphony.md",
             ]
         );
     }

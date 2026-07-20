@@ -28,15 +28,15 @@ MVP runtime worktree:
 Canonical workflow inside the MVP runtime:
 
 ```bash
-workflows/shea-symphony.md
+.shea/workflows/shea-symphony.md
 ```
 
 Run deterministic tracker and forge mutations from the MVP runtime:
 
 ```bash
 cd //Volumes/Bohemialive/GitHub/shea-symphony/.shea/
-cargo run -- forge validate --workflow workflows/shea-symphony.md --issue '#<issue>'
-cargo run -- forge create --workflow workflows/shea-symphony.md ...
+cargo run -- forge validate --workflow .shea/workflows/shea-symphony.md --issue '#<issue>'
+cargo run -- forge create --workflow .shea/workflows/shea-symphony.md ...
 ```
 
 If the Tauri App is needed, start it from the MVP runtime `app/` directory with
@@ -305,7 +305,7 @@ After the user confirms the draft:
 ```bash
 cd //Volumes/Bohemialive/GitHub/shea-symphony/.shea/
 cargo run -- forge create \
-  --workflow workflows/shea-symphony.md \
+  --workflow .shea/workflows/shea-symphony.md \
   --title "<title>" \
   --body-file /private/tmp/<slug>.md \
   --status Todo \

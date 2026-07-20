@@ -1,7 +1,7 @@
 use std::process::{Command, Output};
 
 const LIVE_SMOKE_ENV: &str = "SHEA_LIVE_GITHUB_SMOKE";
-const WORKFLOW: &str = "workflows/shea-symphony.md";
+const WORKFLOW: &str = ".shea/workflows/shea-symphony.md";
 
 fn live_smoke_enabled() -> bool {
     matches!(

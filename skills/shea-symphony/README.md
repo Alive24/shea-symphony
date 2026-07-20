@@ -39,9 +39,9 @@ Before installing or starting a skill-dependent session, inspect readiness
 without writing local skill roots:
 
 ```bash
-cargo run -- skills status workflows/shea-symphony.md
-cargo run -- skills status workflows/shea-symphony.md --json
-cargo run -- skills status workflows/shea-symphony.md --session-skills "shea-symphony-manual-main,shea-symphony-doctor"
+cargo run -- skills status .shea/workflows/shea-symphony.md
+cargo run -- skills status .shea/workflows/shea-symphony.md --json
+cargo run -- skills status .shea/workflows/shea-symphony.md --session-skills "shea-symphony-manual-main,shea-symphony-doctor"
 ```
 
 `skills status` treats this suite as the expected source, then compares Codex
@@ -104,8 +104,8 @@ For normal all-lane dogfood, operators should run the CLI directly instead of
 starting three independent manual skills:
 
 ```bash
-cargo run -- autopilot plan workflows/shea-symphony.md
-cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --write
+cargo run -- autopilot plan .shea/workflows/shea-symphony.md
+cargo run -- autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --write
 ```
 
 `autopilot plan` is read-only. `autopilot loop` is a bounded foreground

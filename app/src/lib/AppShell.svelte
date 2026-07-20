@@ -115,7 +115,7 @@
   $: autoloopStdoutLines = latestAutoloopStdout(autoloopState, autoloopLogLines);
   $: visibleRunLogLines = autoloopStdoutLines.slice(-runLogDisplayLimit(runLogVerbosity));
   $: latestAutoloopLine = autoloopStdoutLines.slice(-1)[0]?.line ?? (autoloopState.running ? 'Loop is running' : 'No recent autoloop result');
-  $: activeWorkflowPath = workspaceProfile.workflowPath || 'workflows/shea-symphony.md';
+  $: activeWorkflowPath = workspaceProfile.workflowPath || '.shea/workflows/shea-symphony.md';
   $: activeTargetRoot = workspaceProfile.targetRoot || workspaceProfile.engineRoot || '';
   $: autoloopControlStore.set({
     tauriAvailable,

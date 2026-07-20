@@ -15,8 +15,8 @@ needs a human-supervised pass.
 Normal all-lane dogfood should reach review through:
 
 ```bash
-cargo run -- autopilot plan workflows/shea-symphony.md
-cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --write
+cargo run -- autopilot plan .shea/workflows/shea-symphony.md
+cargo run -- autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --write
 ```
 
 Use this manual skill only when the operator intentionally wants a focused
@@ -40,7 +40,7 @@ MVP runtime worktree:
 Canonical workflow inside the MVP runtime:
 
 ```bash
-workflows/shea-symphony.md
+.shea/workflows/shea-symphony.md
 ```
 
 GitHub repository:
@@ -89,7 +89,7 @@ result.
 
 1. Identify the issue number and PR number.
 2. Read issue and PR metadata with `gh issue view`, `gh pr view`, and
-   `cargo run -- project issue workflows/shea-symphony.md '#<issue>' --json`.
+   `cargo run -- project issue .shea/workflows/shea-symphony.md '#<issue>' --json`.
 3. Confirm the PR closes or clearly links to the issue.
 4. Confirm the issue is in `Agent Review`, unless the operator explicitly asks
    for re-review.
@@ -97,7 +97,7 @@ result.
 6. Discover the existing issue workspace:
 
 ```bash
-cargo run -- workspace show workflows/shea-symphony.md '#<issue>'
+cargo run -- workspace show .shea/workflows/shea-symphony.md '#<issue>'
 ```
 
 Reuse the Main Agent issue worktree for local inspection and verification. If no
@@ -141,7 +141,7 @@ readback verification such as `project issue` or `doctor`.
 Claim with:
 
 ```bash
-cargo run -- review claim workflows/shea-symphony.md '#<issue>' \
+cargo run -- review claim .shea/workflows/shea-symphony.md '#<issue>' \
   --worker "manual-review-issue-<issue>" \
   --write
 ```
@@ -155,13 +155,13 @@ stop and report that review cannot be claimed safely.
 After producing the evidence file:
 
 ```bash
-cargo run -- review pass workflows/shea-symphony.md '#<issue>' \
+cargo run -- review pass .shea/workflows/shea-symphony.md '#<issue>' \
   --evidence-file /path/to/manual-review-evidence.md \
   --write
 ```
 
 ```bash
-cargo run -- review reject workflows/shea-symphony.md '#<issue>' \
+cargo run -- review reject .shea/workflows/shea-symphony.md '#<issue>' \
   --target-state rework \
   --evidence-file /path/to/manual-review-evidence.md \
   --write

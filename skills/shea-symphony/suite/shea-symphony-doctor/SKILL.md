@@ -24,7 +24,7 @@ cd /Volumes/Bohemialive/GitHub/shea-symphony
 Canonical workflow:
 
 ```bash
-workflows/shea-symphony.md
+.shea/workflows/shea-symphony.md
 ```
 
 ## Operating Rule
@@ -32,10 +32,10 @@ workflows/shea-symphony.md
 Start with read-only diagnosis:
 
 ```bash
-cargo run -- project state workflows/shea-symphony.md
-cargo run -- autopilot plan workflows/shea-symphony.md
-cargo run -- doctor workflows/shea-symphony.md
-cargo run -- debug workflows/shea-symphony.md
+cargo run -- project state .shea/workflows/shea-symphony.md
+cargo run -- autopilot plan .shea/workflows/shea-symphony.md
+cargo run -- doctor .shea/workflows/shea-symphony.md
+cargo run -- debug .shea/workflows/shea-symphony.md
 ```
 
 For install-health checks, preview or validate the repo-owned suite:
@@ -62,8 +62,8 @@ unless the operator asked for the whole suite.
 For worktree or session ambiguity, use the current grouped command:
 
 ```bash
-cargo run -- workspace show workflows/shea-symphony.md '#258'
-cargo run -- session list workflows/shea-symphony.md
+cargo run -- workspace show .shea/workflows/shea-symphony.md '#258'
+cargo run -- session list .shea/workflows/shea-symphony.md
 git worktree list --porcelain
 ```
 
@@ -75,7 +75,7 @@ with one concrete next action:
 - a lane handoff command, such as `$shea-symphony-manual-main`,
   `$shea-symphony-manual-review`, or `$shea-symphony-manual-merge`;
 - the normal all-lane foreground command, when no focused repair is needed:
-  `cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --write`;
+  `cargo run -- autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --write`;
 - a Shea Symphony CLI repair command, such as `project set-state`,
   `project link-pr`, `doctor ... repair`, or `project timeline-comment`;
 - a local install-health command, such as suite dry-run, validate, or a targeted

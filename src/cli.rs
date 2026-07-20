@@ -1498,7 +1498,7 @@ enum ForgeCommandArgs {
 
 #[derive(Debug, Args)]
 struct ForgeCreateArgs {
-    #[arg(long, default_value = "workflows/shea-symphony.md")]
+    #[arg(long, default_value = ".shea/workflows/shea-symphony.md")]
     workflow: PathBuf,
     #[arg(long)]
     title: String,
@@ -1525,7 +1525,7 @@ struct ForgeCreateArgs {
 #[derive(Debug, Args)]
 struct ForgePromoteArgs {
     issue_ref: String,
-    #[arg(long, default_value = "workflows/shea-symphony.md")]
+    #[arg(long, default_value = ".shea/workflows/shea-symphony.md")]
     workflow: PathBuf,
     #[arg(long)]
     title: String,
@@ -1546,7 +1546,7 @@ struct ForgePromoteArgs {
 #[derive(Debug, Args)]
 struct ForgeReworkArgs {
     issue_ref: String,
-    #[arg(long, default_value = "workflows/shea-symphony.md")]
+    #[arg(long, default_value = ".shea/workflows/shea-symphony.md")]
     workflow: PathBuf,
     #[arg(long)]
     title: String,
@@ -1578,7 +1578,7 @@ struct PromotionNoteArgs {
 
 #[derive(Debug, Args)]
 struct ForgeValidateArgs {
-    #[arg(long, default_value = "workflows/shea-symphony.md")]
+    #[arg(long, default_value = ".shea/workflows/shea-symphony.md")]
     workflow: PathBuf,
     #[arg(long, value_enum, ignore_case = true)]
     status: Option<ForgeStatusArg>,

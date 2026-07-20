@@ -44,7 +44,7 @@ Default repo:
 Canonical workflow:
 
 ```bash
-workflows/shea-symphony.md
+.shea/workflows/shea-symphony.md
 ```
 
 Default assignee:
@@ -81,9 +81,9 @@ Gather only relevant sources:
 
 ```bash
 cd /Volumes/Bohemialive/GitHub/shea-symphony
-cargo run -- project state workflows/shea-symphony.md
-cargo run -- project issue workflows/shea-symphony.md '#<number>' --json
-cargo run -- doctor workflows/shea-symphony.md
+cargo run -- project state .shea/workflows/shea-symphony.md
+cargo run -- project issue .shea/workflows/shea-symphony.md '#<number>' --json
+cargo run -- doctor .shea/workflows/shea-symphony.md
 ```
 
 Keep candidates if they are repeated dogfood pain, missing workflow rules, CLI
@@ -126,7 +126,7 @@ After explicit confirmation, create the seed:
 
 ```bash
 cargo run -- forge create \
-  --workflow workflows/shea-symphony.md \
+  --workflow .shea/workflows/shea-symphony.md \
   --title "Backlog: <short title>" \
   --body-file /private/tmp/<slug>.md \
   --status Backlog \
@@ -140,7 +140,7 @@ Read the Backlog item first:
 
 ```bash
 cd /Volumes/Bohemialive/GitHub/shea-symphony
-cargo run -- project issue workflows/shea-symphony.md '#<number>' --json
+cargo run -- project issue .shea/workflows/shea-symphony.md '#<number>' --json
 ```
 
 Confirm it is still `Backlog`. If it is already `Todo`, `In Progress`, or
@@ -194,7 +194,7 @@ Suggested command after confirmation:
 
 ```bash
 cargo run -- forge promote <number> \
-  --workflow workflows/shea-symphony.md \
+  --workflow .shea/workflows/shea-symphony.md \
   --title "<executable title>" \
   --body-file /private/tmp/<promoted-body>.md \
   --operator-confirmation "<exact confirmation>" \

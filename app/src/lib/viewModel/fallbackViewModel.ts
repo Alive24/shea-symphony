@@ -99,7 +99,7 @@ export function fallbackViewModel(reason: string) {
     generatedAtLabel: 'offline',
     healthy: false,
     fixture: false,
-    workflowPath: 'workflows/shea-symphony.md',
+    workflowPath: '.shea/workflows/shea-symphony.md',
     raw: null
   };
 }

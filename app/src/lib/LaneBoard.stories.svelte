@@ -82,7 +82,7 @@
       autoloopRunning: true,
       tauriAvailable: true,
       autoloopMode: 'live',
-      workflowPath: 'workflows/shea-symphony.md',
+      workflowPath: '.shea/workflows/shea-symphony.md',
       latestAutoloopLine: 'main picked #442; review waiting on human input',
       slowReadsRemaining: 0
     }

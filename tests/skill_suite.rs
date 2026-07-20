@@ -54,17 +54,17 @@ fn skill_suite_documents_app_server_first_manual_boundaries() {
     assert!(human_review.contains("not an operator-owned UAT"));
     assert!(human_review.contains("decision. After the orientation brief"));
     assert!(human_review.contains("Do not ask for operator permission"));
-    assert!(manual_main.contains("cargo run -- project state workflows/shea-symphony.md"));
+    assert!(manual_main.contains("cargo run -- project state .shea/workflows/shea-symphony.md"));
     assert!(manual_main.contains("main_lane.backend: codex"));
     assert!(manual_main.contains("codex.command: codex app-server -c 'service_tier=\"fast\"'"));
-    assert!(manual_merge.contains("cargo run -- merge loop workflows/shea-symphony.md"));
+    assert!(manual_merge.contains("cargo run -- merge loop .shea/workflows/shea-symphony.md"));
     assert!(manual_merge.contains("app-server"));
     assert!(!manual_merge.contains("merge-once"));
 }
 
 #[test]
 fn human_review_template_supports_all_decisions() {
-    let template = repo_file("workflows/template/workpad/human-review.md");
+    let template = repo_file(".shea/template/workpad/human-review.md");
 
     assert!(!template.contains("<!-- shea-symphony-workpad -->"));
     assert!(template.contains("## Shea Symphony Human Review Decision"));
@@ -79,12 +79,12 @@ fn human_review_template_supports_all_decisions() {
 #[test]
 fn parent_batch_human_review_brief_preserves_order_and_boundaries() {
     let skill = repo_file("skills/shea-symphony/suite/shea-symphony-human-review/SKILL.md");
-    let brief = repo_file("workflows/template/workpad/parent-batch-human-review-brief.md");
-    let decision = repo_file("workflows/template/workpad/human-review.md");
+    let brief = repo_file(".shea/template/workpad/parent-batch-human-review-brief.md");
+    let decision = repo_file(".shea/template/workpad/human-review.md");
 
     assert!(skill.contains("first Human Review action is to prepare a compact"));
     assert!(skill.contains("parent-batch evidence brief from current readbacks"));
-    assert!(skill.contains("workflows/template/workpad/parent-batch-human-review-brief.md"));
+    assert!(skill.contains(".shea/template/workpad/parent-batch-human-review-brief.md"));
     assert!(skill.contains("read-only and advisory"));
     assert!(skill.contains("Do not write tracker comments"));
     assert!(skill.contains("Child `Done`, child PR merge"));

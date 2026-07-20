@@ -32,19 +32,19 @@ Default local checkout:
 Canonical workflow:
 
 ```bash
-workflows/shea-symphony.md
+.shea/workflows/shea-symphony.md
 ```
 
 Canonical decision note template:
 
 ```bash
-workflows/template/workpad/human-review.md
+.shea/template/workpad/human-review.md
 ```
 
 Canonical parent-batch briefing template:
 
 ```bash
-workflows/template/workpad/parent-batch-human-review-brief.md
+.shea/template/workpad/parent-batch-human-review-brief.md
 ```
 
 ## Core Boundary
@@ -107,10 +107,10 @@ During live use, if the current binary still exposes flat commands, use those
 commands and say so in the decision note:
 
 ```bash
-cargo run -- project state workflows/shea-symphony.md
-cargo run -- project issue workflows/shea-symphony.md '#<issue>' --json
-cargo run -- project timeline-comment workflows/shea-symphony.md '#<issue>' /path/to/human-review-note.md --write
-cargo run -- project set-state workflows/shea-symphony.md '#<issue>' merging --write
+cargo run -- project state .shea/workflows/shea-symphony.md
+cargo run -- project issue .shea/workflows/shea-symphony.md '#<issue>' --json
+cargo run -- project timeline-comment .shea/workflows/shea-symphony.md '#<issue>' /path/to/human-review-note.md --write
+cargo run -- project set-state .shea/workflows/shea-symphony.md '#<issue>' merging --write
 ```
 
 Do not turn the topology transition into custom GitHub Project mutations.
@@ -122,7 +122,7 @@ timeline comment has been written.
 Before briefing the operator, read the decision surfaces:
 
 ```bash
-cargo run -- project issue workflows/shea-symphony.md '#<issue>' --json
+cargo run -- project issue .shea/workflows/shea-symphony.md '#<issue>' --json
 gh issue view <issue> --repo Alive24/shea-symphony --comments
 gh pr view <pr> --repo Alive24/shea-symphony --json number,title,state,url,isDraft,baseRefName,headRefName,mergeStateStatus,reviewDecision,statusCheckRollup
 ```
@@ -315,9 +315,9 @@ parent-batch evidence brief from current readbacks before any UAT command,
 freshness repair, decision-note drafting, timeline comment, or Project state
 mutation.
 
-Use `workflows/template/workpad/parent-batch-human-review-brief.md` as the
+Use `.shea/template/workpad/parent-batch-human-review-brief.md` as the
 reusable brief shape. Keep it separate from
-`workflows/template/workpad/human-review.md`; the parent-batch brief is not the
+`.shea/template/workpad/human-review.md`; the parent-batch brief is not the
 final Human Review decision note and must not replace or weaken the explicit
 operator-confirmation boundary.
 
@@ -434,7 +434,7 @@ and Review Agent evidence.
 - A controlled fixture workflow is valid UAT when the issue asks for a safe
   rehearsal path or fixture and the operator explicitly accepts fixture
   rehearsal as the UAT boundary. Otherwise record it as smoke evidence.
-- The canonical workflow (`workflows/shea-symphony.md`) is a live lane command.
+- The canonical workflow (`.shea/workflows/shea-symphony.md`) is a live lane command.
   Before asking the operator to run it in write mode, first ask for a dry-run
   and confirm the selected issue/PR is expected and safe.
 - If the dry-run selects an unexpected live issue, stop and ask whether to
@@ -444,7 +444,7 @@ and Review Agent evidence.
 
 ## Prepare Decision Note
 
-Use `workflows/template/workpad/human-review.md` as the canonical note shape.
+Use `.shea/template/workpad/human-review.md` as the canonical note shape.
 Complete it with the specific issue, PR, reviewer, decision, evidence reviewed,
 UAT result, findings or missing evidence, and confirmation phrase.
 
@@ -482,7 +482,7 @@ the CLI append-only timeline command and explicitly include the operator's
 exact confirmation phrase.
 
 ```bash
-cargo run -- project timeline-comment workflows/shea-symphony.md '#<issue>' /path/to/human-review-note.md --write
+cargo run -- project timeline-comment .shea/workflows/shea-symphony.md '#<issue>' /path/to/human-review-note.md --write
 ```
 
 ## Route With CLI
@@ -492,16 +492,16 @@ After decision evidence is recorded, set state as the final mutation.
 Current grouped-command examples:
 
 ```bash
-cargo run -- project set-state workflows/shea-symphony.md '#<issue>' merging --write
-cargo run -- project set-state workflows/shea-symphony.md '#<issue>' rework --write
-cargo run -- project set-state workflows/shea-symphony.md '#<issue>' need_human_input --write
+cargo run -- project set-state .shea/workflows/shea-symphony.md '#<issue>' merging --write
+cargo run -- project set-state .shea/workflows/shea-symphony.md '#<issue>' rework --write
+cargo run -- project set-state .shea/workflows/shea-symphony.md '#<issue>' need_human_input --write
 ```
 
 After the state mutation, only read back:
 
 ```bash
-cargo run -- project issue workflows/shea-symphony.md '#<issue>' --json
-cargo run -- project state workflows/shea-symphony.md
+cargo run -- project issue .shea/workflows/shea-symphony.md '#<issue>' --json
+cargo run -- project state .shea/workflows/shea-symphony.md
 ```
 
 Do not continue reviewing, implementing, or merging after the state change.

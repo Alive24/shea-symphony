@@ -27,7 +27,7 @@ Default repository:
 Canonical workflow:
 
 ```bash
-workflows/shea-symphony.md
+.shea/workflows/shea-symphony.md
 ```
 
 ## Operating Rule
@@ -52,11 +52,11 @@ Choose the smallest useful evidence set for the question. Common Shea Symphony
 reads include:
 
 ```bash
-cargo run -- project state workflows/shea-symphony.md
-cargo run -- project issue workflows/shea-symphony.md '#<issue>' --json
-cargo run -- doctor workflows/shea-symphony.md
-cargo run -- debug workflows/shea-symphony.md
-cargo run -- autopilot plan workflows/shea-symphony.md
+cargo run -- project state .shea/workflows/shea-symphony.md
+cargo run -- project issue .shea/workflows/shea-symphony.md '#<issue>' --json
+cargo run -- doctor .shea/workflows/shea-symphony.md
+cargo run -- debug .shea/workflows/shea-symphony.md
+cargo run -- autopilot plan .shea/workflows/shea-symphony.md
 ```
 
 Use repository inspection when the question concerns implementation or wording:

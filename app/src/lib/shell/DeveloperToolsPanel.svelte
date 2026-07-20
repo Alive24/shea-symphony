@@ -27,7 +27,7 @@
     busy: false,
     running: false,
     mode: 'dry-run',
-    workflowPath: 'workflows/shea-symphony.md',
+    workflowPath: '.shea/workflows/shea-symphony.md',
     targetRoot: '',
     latestLine: 'No recent autoloop result',
     laneMaxSummary: ''

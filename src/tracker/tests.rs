@@ -1091,6 +1091,15 @@ fn parses_rest_project_item_overlays_from_paginated_items() {
                         "name": "Main Agent",
                         "data_type": "text",
                         "value": "v=1 lane=main"
+                    },
+                    {
+                        "id": 347408997,
+                        "name": "Parent Integration Branch",
+                        "data_type": "text",
+                        "value": {
+                            "raw": "integration/issue-468-feedback-intake",
+                            "html": "<code>integration/incorrect-html-fallback</code>"
+                        }
                     }
                 ]
             }
@@ -1115,6 +1124,15 @@ fn parses_rest_project_item_overlays_from_paginated_items() {
                         "name": "Target Date",
                         "data_type": "date",
                         "value": "2026-05-22"
+                    },
+                    {
+                        "id": 3,
+                        "name": "Rich Target Date",
+                        "data_type": "date",
+                        "value": {
+                            "raw": "2026-07-19",
+                            "html": "<time>2026-07-20</time>"
+                        }
                     }
                 ]
             }
@@ -1146,6 +1164,13 @@ fn parses_rest_project_item_overlays_from_paginated_items() {
             .and_then(serde_json::Value::as_str),
         Some("v=1 lane=main")
     );
+    assert_eq!(
+        first
+            .project_fields
+            .get("Parent Integration Branch")
+            .and_then(serde_json::Value::as_str),
+        Some("integration/issue-468-feedback-intake")
+    );
 
     let mut issue = issue("Todo");
     issue.id = "I_1".into();
@@ -1171,6 +1196,133 @@ fn parses_rest_project_item_overlays_from_paginated_items() {
             .and_then(serde_json::Value::as_str),
         Some("2026-05-22")
     );
+    assert_eq!(
+        second
+            .project_fields
+            .get("Rich Target Date")
+            .and_then(serde_json::Value::as_str),
+        Some("2026-07-19")
+    );
+}
+
+#[test]
+fn rest_project_item_overlay_keeps_graphql_values_for_null_or_unrecognized_rest_fields() {
+    let response = serde_json::json!([
+        {
+            "id": 190539792,
+            "node_id": "PVTI_3",
+            "content": {"node_id": "I_3"},
+            "fields": [
+                {
+                    "id": 1,
+                    "name": "Parent Integration Branch",
+                    "data_type": "text",
+                    "value": null
+                },
+                {
+                    "id": 2,
+                    "name": "Target Date",
+                    "data_type": "date",
+                    "value": {"raw": ["not", "text"]}
+                },
+                {
+                    "id": 3,
+                    "name": "Release Notes",
+                    "data_type": "text"
+                }
+            ]
+        }
+    ]);
+    let overlays = rest_project_item_overlays_from_response(&response).unwrap();
+    let mut issue = issue("Todo");
+    issue.id = "I_3".into();
+    issue.project_fields.insert(
+        "Parent Integration Branch".into(),
+        serde_json::json!("integration/issue-468-feedback-intake"),
+    );
+    issue
+        .project_fields
+        .insert("Target Date".into(), serde_json::json!("2026-07-19"));
+    issue.project_fields.insert(
+        "Release Notes".into(),
+        serde_json::json!("GraphQL queue-scan evidence"),
+    );
+
+    apply_rest_project_item_overlays(std::slice::from_mut(&mut issue), &overlays);
+
+    assert_eq!(
+        issue
+            .project_fields
+            .get("Parent Integration Branch")
+            .and_then(serde_json::Value::as_str),
+        Some("integration/issue-468-feedback-intake")
+    );
+    assert_eq!(
+        issue
+            .project_fields
+            .get("Target Date")
+            .and_then(serde_json::Value::as_str),
+        Some("2026-07-19")
+    );
+    assert_eq!(
+        issue
+            .project_fields
+            .get("Release Notes")
+            .and_then(serde_json::Value::as_str),
+        Some("GraphQL queue-scan evidence")
+    );
+}
+
+#[test]
+fn controlled_queuescan_readback_preserves_semantic_parent_branch_for_doctor() {
+    let response = serde_json::json!([
+        {
+            "id": 190539793,
+            "node_id": "PVTI_468",
+            "content": {"node_id": "I_468"},
+            "fields": [
+                {
+                    "id": 1,
+                    "name": "Parent Integration Branch",
+                    "data_type": "text",
+                    "value": {
+                        "raw": "integration/issue-468-feedback-intake",
+                        "html": "<code>integration/incorrect-html-fallback</code>"
+                    }
+                }
+            ]
+        }
+    ]);
+    let overlays = rest_project_item_overlays_from_response(&response).unwrap();
+    let mut parent = issue("Backlog");
+    parent.id = "I_468".into();
+    parent.identifier = "#468".into();
+    parent.project_fields.insert(
+        "GitHub Native Subissues".into(),
+        serde_json::json!([{"identifier": "#479"}]),
+    );
+    let mut subissue = issue("Todo");
+    subissue.identifier = "#479".into();
+    subissue.project_fields.insert(
+        "GitHub Native Parent".into(),
+        serde_json::json!({"identifier": "#468"}),
+    );
+    let mut issues = vec![parent, subissue];
+
+    apply_rest_project_item_overlays(&mut issues, &overlays);
+
+    assert_eq!(
+        issues[0]
+            .project_fields
+            .get("Parent Integration Branch")
+            .and_then(serde_json::Value::as_str),
+        Some("integration/issue-468-feedback-intake")
+    );
+    let report = crate::doctor::audit_project_issues(&issues);
+    assert!(!report.violations.iter().any(|violation| {
+        violation.issue_ref == "#468"
+            && violation.code == "parent_topology_missing_integration_branch"
+    }));
 }
 
 #[test]

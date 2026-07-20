@@ -1,0 +1,8 @@
+#!/usr/bin/env sh
+
+set -eu
+
+# Invoking this repository-owned command is the explicit opt-in for the local
+# Temporal integration smoke. The test owns only the processes it starts.
+export SHEA_TEMPORAL_SMOKE=1
+exec cargo test --test temporal_noop_smoke -- --ignored --nocapture

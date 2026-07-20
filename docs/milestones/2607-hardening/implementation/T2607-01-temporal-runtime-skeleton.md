@@ -204,13 +204,17 @@ CLI may expose thin admin/dev wrappers over the same boundary.
 
 2607 is local-first and does not depend on Temporal Cloud.
 
-The package should define one supported dev startup path, such as:
+The supported developer path is the explicitly gated,
+repo-owned [`TEMPORAL-NOOP-SMOKE.md`](../TEMPORAL-NOOP-SMOKE.md) command. It
+probes the configured local endpoint, refuses to touch an already-running
+service, and otherwise starts a test-owned headless Temporal CLI dev server
+with bounded readiness retries. It reports a typed unavailable-service error
+when the endpoint cannot be reached and does not hide startup failures behind
+agent or tracker errors.
 
-- use an existing local Temporal service if reachable;
-- provide a documented local dev command or script to start it;
-- fail with a clear typed error if no service is reachable.
-
-Do not hide Temporal startup failures behind agent or tracker errors.
+The worker and smoke both select `.shea/workflows/shea-symphony.md`; the 2607
+worker entrypoint defaults to that checked-in profile rather than the removed
+legacy `workflows/shea-symphony.md` path.
 
 ## Configuration
 
@@ -270,7 +274,9 @@ Minimum acceptance checks:
 
 If local Temporal integration tests are too heavy for default CI, mark them as
 explicit integration tests and keep unit tests around DTO construction and
-client-boundary error mapping.
+client-boundary error mapping. The no-op smoke is ignored by default and
+requires the explicit repo-owned command described in
+[`TEMPORAL-NOOP-SMOKE.md`](../TEMPORAL-NOOP-SMOKE.md).
 
 ## Rollback And Compatibility
 
@@ -287,5 +293,6 @@ Temporal-backed paths work.
 - Starting task queues are registered.
 - Placeholder Activities are registered.
 - A local no-op Workflow can start, be queried, and complete.
+- The gated local smoke cleans up only the service and worker processes it owns.
 - App/Tauri and CLI share one Symphony runtime client boundary.
 - No real business side effects occur through the skeleton.

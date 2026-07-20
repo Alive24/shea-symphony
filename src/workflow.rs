@@ -500,7 +500,8 @@ mod tests {
     }
 
     fn github_project_workflow() -> WorkflowDefinition {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("workflows/shea-symphony.md");
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".shea/workflows/shea-symphony.md");
         WorkflowDefinition::load(path).unwrap()
     }
 

@@ -43,10 +43,10 @@ impl IssueWorkflow {
     /// The method schedules external work through Activities only. Returning
     /// `Ok` means the Workflow path completed; the Activity result must still be
     /// interpreted according to its own outcome contract.
-    pub async fn run(
-        ctx: &mut WorkflowContext<Self>,
-        _input: IssueWorkflowInput,
-    ) -> WorkflowResult<IssueWorkflowState> {
+    pub async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<IssueWorkflowState> {
+        // The pinned SDK delivers a start input to either `#[init]` or `#[run]`.
+        // `#[init]` owns it here, so this method reads only durable state rather
+        // than requesting the already-consumed input during a Workflow Task.
         // Workflow code must stay replay-deterministic. Even this skeleton only
         // schedules Activity work; filesystem, network, tracker, and clock I/O
         // belong behind Activity boundaries.
@@ -56,7 +56,7 @@ impl IssueWorkflow {
             issue_ref: workflow.state.issue_ref.clone(),
         });
 
-        let _noop = ctx
+        let noop = ctx
             .start_activity(
                 CoreActivities::noop_core_activity,
                 request,
@@ -65,10 +65,18 @@ impl IssueWorkflow {
             .await?;
 
         ctx.state_mut(|workflow| {
-            workflow.state.active_step = "noop_completed".to_string();
-            workflow.state.terminal_outcome = Some("completed_noop".to_string());
-            workflow.state.runtime_health_summary =
-                "completed no-op IssueWorkflow path".to_string();
+            workflow.state.artifact_refs = noop.artifact_refs;
+            workflow.state.runtime_health_summary = noop.summary;
+            if noop.outcome == "noop_success" {
+                workflow.state.active_step = "noop_completed".to_string();
+                workflow.state.terminal_outcome = Some("completed_noop".to_string());
+            } else {
+                // Placeholder Activity results are part of the durable no-op
+                // contract. Preserve a non-success outcome instead of claiming
+                // the core no-op path completed when it did not.
+                workflow.state.active_step = "noop_activity_incomplete".to_string();
+                workflow.state.terminal_outcome = Some(noop.outcome);
+            }
         });
 
         Ok(ctx.state(|workflow| workflow.state.clone()))

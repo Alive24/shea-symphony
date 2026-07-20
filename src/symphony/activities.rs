@@ -10,7 +10,9 @@ use std::time::Duration;
 use temporalio_macros::activities;
 use temporalio_sdk::activities::{ActivityContext, ActivityError};
 
-use crate::symphony::dto::{NoopActivityRequest, NoopActivityResult};
+use crate::symphony::dto::{
+    NoopActivityRequest, NoopActivityResult, TrackerTransitionRequest, TrackerTransitionResult,
+};
 
 const TEMPORAL_SMOKE_ISSUE_PREFIX: &str = "synthetic:temporal-smoke:";
 const TEMPORAL_SMOKE_ENABLED_ENV: &str = "SHEA_TEMPORAL_SMOKE";
@@ -78,17 +80,25 @@ impl CoreActivities {
 
     #[activity(name = "TrackerTransitionActivity")]
     #[allow(dead_code)] // `#[activities]` exposes registration metadata indirectly.
-    /// Placeholder for the durable, idempotent tracker-transition Activity.
+    /// Inert placeholder for the durable tracker-transition Activity name.
     ///
-    /// This skeleton intentionally returns `not_implemented` and performs no
-    /// tracker mutation. A later implementation must use readback verification
-    /// and retry-safe mutation identifiers.
+    /// Temporal histories retain `TrackerTransitionActivity`, so this contract
+    /// evolves its payload without renaming or moving core-queue registration.
+    /// The carried idempotency key remains stable across retries; this slice
+    /// intentionally performs no tracker, filesystem, network, or local-state
+    /// side effect until a future writer/readback implementation is added.
     pub async fn tracker_transition_activity(
         _ctx: ActivityContext,
-        request: NoopActivityRequest,
-    ) -> Result<NoopActivityResult, ActivityError> {
-        Ok(NoopActivityResult::not_implemented(&request))
+        request: TrackerTransitionRequest,
+    ) -> Result<TrackerTransitionResult, ActivityError> {
+        Ok(inert_tracker_transition_result(&request))
     }
+}
+
+fn inert_tracker_transition_result(request: &TrackerTransitionRequest) -> TrackerTransitionResult {
+    // Keep the registered compatibility surface pure until a later slice owns
+    // adapter invocation, readback, and retry classification.
+    TrackerTransitionResult::not_implemented(request)
 }
 
 fn smoke_query_hold(request: &NoopActivityRequest) -> Option<Duration> {
@@ -120,6 +130,36 @@ fn smoke_query_hold_from_values(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::symphony::dto::{
+        TrackerState, TrackerTransitionEvidenceRefs, TrackerTransitionIssueRef,
+        TrackerTransitionKind, TrackerTransitionOutcome, TrackerTransitionReason,
+        TrackerTransitionRequester,
+    };
+
+    fn tracker_transition_request() -> TrackerTransitionRequest {
+        TrackerTransitionRequest::new(
+            "issue:shea-symphony:494:pulse:handoff",
+            Some("temporal-run-494".to_string()),
+            TrackerTransitionIssueRef::new(
+                "github_project_v2",
+                "github.com/Alive24/shea-symphony",
+                "#494",
+            )
+            .unwrap(),
+            TrackerState::new("In Progress").unwrap(),
+            TrackerState::new("Agent Review").unwrap(),
+            TrackerTransitionKind::new("main_handoff").unwrap(),
+            TrackerTransitionRequester::new("issue_workflow").unwrap(),
+            TrackerTransitionReason::new(
+                "implementation_complete",
+                Some("typed contract test".to_string()),
+            )
+            .unwrap(),
+            TrackerTransitionEvidenceRefs::new(Vec::new()).unwrap(),
+            0,
+        )
+        .unwrap()
+    }
 
     #[test]
     fn smoke_query_hold_requires_test_owned_input_and_a_bounded_value() {
@@ -149,6 +189,24 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn tracker_transition_placeholder_returns_only_an_inert_contract_result() {
+        let request = tracker_transition_request();
+
+        let result = inert_tracker_transition_result(&request);
+
+        assert_eq!(result.outcome, TrackerTransitionOutcome::Rejected);
+        assert_eq!(result.issue_ref, request.issue_ref);
+        assert!(result.observed_from_state.is_none());
+        assert!(result.committed_to_state.is_none());
+        assert!(result.conflict_reason.is_none());
+        assert!(result.evidence_refs.is_empty());
+        assert!(result.audit_ref.is_none());
+        assert!(result.retry_after_ms.is_none());
+        assert!(result.summary.as_str().contains("intentionally inert"));
+        assert!(result.summary.as_str().contains("not implemented"));
     }
 }
 

@@ -59,22 +59,17 @@ workpad_templates:
   forge_rework_run: ../template/workpad/rework-run.md
   forge_rework_blocked: ../template/workpad/rework-run.md
 polling:
-  interval_ms: 5000
+  interval_ms: 50000
 artifacts:
-  root: $SHEA_SYMPHONY_ARTIFACT_ROOT
+  root: ../artifacts
   namespace: Alive24/shea-symphony
 workspace:
-  root: $SHEA_SYMPHONY_ARTIFACT_ROOT/Alive24/shea-symphony/default/worktrees
+  root: ../worktrees
 main_lane:
   backend: codex
   max_concurrent_agents: 3
   max_turns: 3
   max_retry_backoff_ms: 300000
-tmux:
-  command: tmux
-  agent_command: codex
-  review_agent_command: /Users/chuntengxiao/.local/bin/agy
-  session_prefix: shea
 codex:
   command: codex app-server -c 'service_tier="fast"'
   reasoning_effort: high
@@ -96,7 +91,7 @@ verification:
   timeout_ms: 600000
   commands: []
 observability:
-  logs_root: $SHEA_SYMPHONY_ARTIFACT_ROOT/Alive24/shea-symphony/default/logs
+  logs_root: ../logs
 ---
 
 # Shea Symphony Workflow Index

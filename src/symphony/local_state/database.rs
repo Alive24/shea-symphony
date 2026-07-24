@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use rusqlite::{Connection, ErrorCode, TransactionBehavior};
+use rusqlite::{Connection, ErrorCode, Transaction, TransactionBehavior};
 use thiserror::Error;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
@@ -130,8 +130,23 @@ pub enum LocalStateError {
         #[source]
         source: rusqlite::Error,
     },
-    /// Migration metadata could not be represented as RFC 3339 UTC text.
-    #[error("migration_failure: could not format migration timestamp: {0}")]
+    /// A projector received a required value that was absent or invalid.
+    #[error("projection_input: {field} must be present and valid")]
+    ProjectionInput {
+        /// Name of the rejected projection field.
+        field: &'static str,
+    },
+    /// A synchronous local-state projection could not complete.
+    #[error("projection_failure: could not project local state at {path}: {source}")]
+    Projection {
+        /// Database path.
+        path: PathBuf,
+        /// Underlying SQLite error.
+        #[source]
+        source: rusqlite::Error,
+    },
+    /// A persisted local-state timestamp could not be represented as RFC 3339 UTC text.
+    #[error("local_state_timestamp: could not format timestamp: {0}")]
     Timestamp(#[from] time::error::Format),
 }
 
@@ -267,6 +282,41 @@ impl LocalStateDatabase {
         })
     }
 
+    /// Runs one short synchronous projection operation under `BEGIN IMMEDIATE`.
+    ///
+    /// This crate-private helper keeps physical connections and transactions
+    /// inside local state while applying the established connection policy.
+    pub(super) fn with_immediate_transaction<T>(
+        &self,
+        operation: impl FnOnce(&Transaction<'_>) -> rusqlite::Result<T>,
+    ) -> Result<T, LocalStateError> {
+        let mut connection = self.open_connection()?;
+        configure_connection_policy(&connection)
+            .map_err(|error| self.classify(error, SqlitePhase::Projection))?;
+        // Initialization negotiates WAL once. Projection connections only
+        // verify that machine-wide policy instead of changing journal mode or
+        // introducing a second contention retry loop.
+        let journal_mode: String = connection
+            .pragma_query_value(None, "journal_mode", |row| row.get(0))
+            .map_err(|error| self.classify(error, SqlitePhase::Projection))?;
+        if !journal_mode.eq_ignore_ascii_case("wal") {
+            return Err(self.classify(rusqlite::Error::InvalidQuery, SqlitePhase::Projection));
+        }
+
+        // Projection never performs Temporal or tracker I/O while this short
+        // writer lock is held. BEGIN IMMEDIATE serializes the read, transition,
+        // write, and readback without adding a second retry scheduler.
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.classify(error, SqlitePhase::Projection))?;
+        let output = operation(&transaction)
+            .map_err(|error| self.classify(error, SqlitePhase::Projection))?;
+        transaction
+            .commit()
+            .map_err(|error| self.classify(error, SqlitePhase::Projection))?;
+        Ok(output)
+    }
+
     fn open_connection(&self) -> Result<Connection, LocalStateError> {
         Connection::open(self.path.as_path())
             .map_err(|error| self.classify(error, SqlitePhase::Open))
@@ -363,6 +413,10 @@ impl LocalStateDatabase {
                 path: self.path.as_ref().clone(),
                 source: error,
             },
+            SqlitePhase::Projection => LocalStateError::Projection {
+                path: self.path.as_ref().clone(),
+                source: error,
+            },
         }
     }
 }
@@ -373,6 +427,7 @@ enum SqlitePhase {
     Configuration,
     Migration(u32),
     Readback,
+    Projection,
 }
 
 fn configure_connection_policy(connection: &Connection) -> rusqlite::Result<()> {

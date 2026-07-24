@@ -115,10 +115,15 @@ The Workflow Coordinator is a thin launcher and registrar. It should:
 - read tracker states;
 - identify executable states;
 - construct the human-readable `workflow_id`;
-- check the SQLite active workflow index and Temporal visibility when needed;
 - start `IssueWorkflow` executions only for executable states;
-- record `workflow_id` and Temporal `run_id`;
-- enforce at most one active execution per issue at a time;
+- use Temporal start/idempotency and a current execution Describe to establish
+  execution identity and status;
+- project verified Describe observations into `workflow_index` for local reads
+  and reconciliation hints;
+- use SQLite conflicts as diagnostics to reconcile against Temporal, never as a
+  start reservation or execution authority;
+- enforce at most one active execution per issue through Temporal-aware
+  coordination, not an SQLite row alone;
 - respect task queue and Activity concurrency limits;
 - ignore static issues except for dashboard/read-model projection.
 
@@ -130,50 +135,61 @@ the tracker.
 
 ## Start Contract
 
-Coordinator start is optimistic with a local guard:
+Coordinator start is optimistic with Temporal as the authority:
 
 ```text
 read tracker executable state
   -> derive workflow_id
-  -> insert workflow_index row with status=starting
   -> start Temporal Workflow
-  -> store run_id and set status=running
+  -> Describe the current Temporal execution
+  -> project the Describe-backed Open observation into workflow_index
 ```
 
-The SQLite row makes startup observable and reduces duplicate starts. Temporal
-start success is the execution fact. SQLite is not the authoritative workflow
-runtime.
+The start response can prove that Temporal accepted a request and may carry a
+Run ID, but it cannot supply the authoritative execution `started_at` required
+by v1. Therefore a StartResponse never creates a `starting` row, replaces a
+stored Run ID, or fabricates a start time. A matching already-projected Run can
+be confirmed; otherwise the projection boundary returns `DescribeRequired`.
+
+The Describe-backed SQLite row makes execution observation fast and locally
+inspectable. Temporal start/idempotency, current Describe, and history remain
+the execution facts; SQLite is not the authoritative workflow runtime.
 
 Start conflicts:
 
-- SQLite insert conflict: inspect the active row and repair it if stale;
+- SQLite active-row conflict: treat it as a local diagnostic, read current
+  Temporal evidence, and project/reconcile only that evidence; do not use it to
+  reserve, reject, or retry a start;
 - Temporal open Workflow already exists: bind to the existing execution and
-  repair `workflow_index`;
+  project its current Describe observation;
 - Temporal closed Workflow with the same `workflow_id`: generate a new
   `workflow_id` with a new timestamp/source or attempt suffix.
 
 ## Repair Contract
 
-The Coordinator owns local repair of `workflow_index`. It does not repair
-business state by directly moving tracker lanes.
+The Coordinator/reconciliation boundary owns observation and may ask the
+projector to materialize it. It does not repair business state by directly
+moving tracker lanes or by issuing ad hoc SQLite lifecycle SQL.
 
 Repair matrix:
 
 | Local State | Temporal State | Action |
 | --- | --- | --- |
-| `starting` without `run_id` | not started or unknown | mark `stale_start` after timeout; reread tracker before retry |
-| missing row | active execution exists | rebuild projection from Temporal visibility/query; do not start another execution |
-| active row | active execution exists | keep row, refresh progress/freshness |
-| active row | closed execution exists | mark `completed` or `failed` when close status is known; otherwise `closed_unknown` |
-| active row | execution not found | mark `stale_missing`; reread tracker before retry |
-| stale row | tracker still executable | generate a new `workflow_id` and start a new execution |
-| stale row | tracker is static | leave closed/stale projection; do not start |
+| missing row | current Describe is open | project `running` from the described Run ID and start time; do not infer a prior SQLite reservation |
+| missing row | current Describe is closed | project `completed`, `failed`, or `closed_unknown` from the described execution |
+| running row | current Describe is the same or a newer Run | project the Open observation; only current Describe evidence can replace the stored Run ID |
+| running row | current Describe is closed for the stored Run | project its bounded terminal classification |
+| any row | StartResponse only or definitive start failure | return the typed no-write projection outcome; do not create a row |
+| any row | conflicting, stale, or unavailable evidence | leave the row unchanged and reconcile through Temporal/tracker policy outside the projector |
 
 Use conservative stale thresholds:
 
-- `starting` without `run_id` for more than a short startup timeout;
 - `running` without heartbeat/progress beyond its configured TTL;
 - Temporal visibility/query cannot confirm the recorded active execution.
+
+The v1 lifecycle projector does not create `starting`, `stale_start`, or
+`stale_missing` rows. Any later stale-row policy needs an explicit projection
+contract rather than reintroducing a pre-start SQLite reservation.
 
 Repair triggers in 2607:
 
@@ -194,9 +210,10 @@ at durable boundaries:
 - fact-changing writes perform targeted readback after writing;
 - external tracker changes become typed conflicts or human-input cases.
 
-Normal in-flight decisions rely on Temporal state, Activity results, SQLite
-active workflow index rows, and artifact references. Manual tracker edits are
-an exception path; they should not make the normal path pay for repeated full
+Normal in-flight decisions rely on Temporal state, Activity results, and
+artifact references. SQLite active-index rows may provide local diagnostic
+hints, but cannot authorize an in-flight decision. Manual tracker edits are an
+exception path; they should not make the normal path pay for repeated full
 tracker reads.
 
 ## Episode Completion

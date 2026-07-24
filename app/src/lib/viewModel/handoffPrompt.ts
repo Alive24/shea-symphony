@@ -1,50 +1,80 @@
 import { normalizeStateName } from './issueState.ts';
 
-const skillByState: Record<string, string> = {
-  'Need to Clarify': 'shea-symphony-issue-forge',
-  'Need Human Input': 'shea-symphony-doctor',
-  'Human Review': 'shea-symphony-human-review',
-  Rework: 'shea-symphony-manual-main',
-  Todo: 'shea-symphony-manual-main',
-  'In Progress': 'shea-symphony-manual-main',
-  'Agent Review': 'shea-symphony-manual-review',
-  Merging: 'shea-symphony-manual-merge'
-};
+export type HumanHandoffState = 'Need to Clarify' | 'Need Human Input' | 'Human Review';
+export type HandoffPromptTemplates = Record<HumanHandoffState, string>;
 
-export function handoffSkillForIssue(issue: Record<string, any>) {
+const humanHandoffStates = new Set<HumanHandoffState>([
+  'Need to Clarify',
+  'Need Human Input',
+  'Human Review'
+]);
+
+export function buildHandoffPrompt(
+  issue: Record<string, any>,
+  templates: HandoffPromptTemplates
+) {
   const state = normalizeStateName(issue?.state);
-  return skillByState[state] ?? 'shea-symphony-doctor';
+  if (!humanHandoffStates.has(state as HumanHandoffState)) {
+    throw new Error(`No human handoff prompt is defined for state "${state}".`);
+  }
+
+  const template = templates[state as HumanHandoffState];
+  if (!template?.trim()) {
+    throw new Error(`The ${state} handoff prompt template is empty.`);
+  }
+
+  return renderHandoffTemplate(template, {
+    issue: {
+      identifier: String(issue?.id ?? 'unknown issue'),
+      title: String(issue?.title ?? '').trim(),
+      state,
+      lane: String(issue?.lane ?? '').trim(),
+      category: String(issue?.category ?? '').trim(),
+      worker_status: String(issue?.workerStatus ?? '').trim(),
+      worker_detail: String(issue?.workerDetail ?? '').trim(),
+      recommended: String(issue?.recommended ?? '').trim(),
+      evidence: String(issue?.evidence ?? '').trim(),
+      url: String(issue?.url ?? '').trim()
+    }
+  });
 }
 
-export function buildHandoffPrompt(issue: Record<string, any>) {
-  const state = normalizeStateName(issue?.state);
-  const issueId = String(issue?.id ?? 'unknown issue');
-  const skill = handoffSkillForIssue(issue);
-  const title = String(issue?.title ?? '').trim();
-  const recommended = String(issue?.recommended ?? '').trim();
-  const evidence = String(issue?.evidence ?? '').trim();
-  const workerStatus = String(issue?.workerStatus ?? '').trim();
-  const workerDetail = String(issue?.workerDetail ?? '').trim();
+export function renderHandoffTemplate(
+  template: string,
+  context: Record<string, any>
+) {
+  const conditionalPattern =
+    /{%\s*if\s+([A-Za-z_][A-Za-z0-9_.]*)\s*%}([\s\S]*?){%\s*endif\s*%}/g;
+  const variablePattern = /{{\s*([A-Za-z_][A-Za-z0-9_.]*)\s*}}/g;
 
-  return [
-    `Use the ${skill} skill for ${issueId}.`,
-    '',
-    'Context',
-    `- Issue: ${[issueId, title].filter(Boolean).join(' ')}`,
-    `- State: ${state}`,
-    issue?.lane ? `- Lane: ${issue.lane}` : null,
-    issue?.category ? `- Category: ${issue.category}` : null,
-    workerStatus ? `- Worker status: ${workerStatus}` : null,
-    workerDetail ? `- Worker detail: ${workerDetail}` : null,
-    recommended ? `- Recommended next read: ${recommended}` : null,
-    evidence ? `- Evidence: ${evidence}` : null,
-    issue?.url ? `- URL: ${issue.url}` : null,
-    '',
-    'Instructions',
-    '- Read current Project issue state before acting.',
-    '- Preserve Shea lane boundaries and do not mutate Project state without explicit approval.',
-    '- Keep the operator-facing readback concise and source-grounded.'
-  ]
-    .filter((line) => line != null)
-    .join('\n');
+  const withConditionals = template.replace(
+    conditionalPattern,
+    (_match, path: string, body: string) =>
+      templateValue(context, path) ? body : ''
+  );
+  const rendered = withConditionals.replace(
+    variablePattern,
+    (_match, path: string) => String(templateValue(context, path) ?? '')
+  );
+
+  const unsupportedTag = rendered.match(/{[{%][\s\S]*?[}%]}/);
+  if (unsupportedTag) {
+    throw new Error(`Unsupported handoff prompt template tag: ${unsupportedTag[0]}`);
+  }
+  return rendered.trim();
+}
+
+function templateValue(context: Record<string, any>, path: string) {
+  let value: any = context;
+  for (const segment of path.split('.')) {
+    if (
+      value == null ||
+      typeof value !== 'object' ||
+      !Object.prototype.hasOwnProperty.call(value, segment)
+    ) {
+      throw new Error(`Unknown handoff prompt template variable: ${path}`);
+    }
+    value = value[segment];
+  }
+  return value;
 }

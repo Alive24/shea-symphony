@@ -15,9 +15,6 @@
   {{pr_line}}
   {{artifact_line}}
   {{ledger_line}}
-- Boundary comment coverage: {{boundary_comment_coverage}}
-- Rustdoc coverage: {{rustdoc_coverage}}
-- Public visibility audit: {{public_visibility_audit}}
 - Evidence summary: {{evidence_summary}}
 
 ### Review Attempt {{job_id}}

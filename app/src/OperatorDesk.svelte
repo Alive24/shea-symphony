@@ -14,6 +14,9 @@
   import { humanTodoRefreshState } from './lib/viewModel/humanTodoRefresh.ts';
   import { buildLaneThroughputBoard } from './lib/viewModel/laneThroughput.ts';
   import { buildHandoffPrompt } from './lib/viewModel/handoffPrompt.ts';
+  import needToClarifyHandoffPrompt from '../../.shea/prompts/need-to-clarify-handoff.md?raw';
+  import needHumanInputHandoffPrompt from '../../.shea/prompts/need-human-input-handoff.md?raw';
+  import humanReviewHandoffPrompt from '../../.shea/prompts/human-review-handoff.md?raw';
   import {
     appendAutoloopLine,
     defaultLoopState,
@@ -40,6 +43,11 @@
   let autoloopRefreshTimer: number | null = null;
   let lastStableHumanTodoIssues = [];
   let lastStableLaneBoard = [];
+  const handoffPromptTemplates = {
+    'Need to Clarify': needToClarifyHandoffPrompt,
+    'Need Human Input': needHumanInputHandoffPrompt,
+    'Human Review': humanReviewHandoffPrompt
+  };
 
   $: view = $operatorOverviewStore.view;
   $: liveError = $operatorOverviewStore.liveError;
@@ -184,7 +192,7 @@
 
   async function copyHandoffPrompt(issue) {
     try {
-      await navigator.clipboard.writeText(buildHandoffPrompt(issue));
+      await navigator.clipboard.writeText(buildHandoffPrompt(issue, handoffPromptTemplates));
       copiedHandoffId = issue.id;
       handoffStatus = { ...handoffStatus, [issue.id]: '' };
       window.setTimeout(() => {
@@ -209,7 +217,6 @@
   }
 
   async function openHandoff(issue) {
-    const prompt = buildHandoffPrompt(issue);
     if (defaultHandoffTarget !== 'codex-app') {
       const copied = await copyHandoffPrompt(issue);
       handoffStatus = {
@@ -219,10 +226,8 @@
       return;
     }
     try {
+      const prompt = buildHandoffPrompt(issue, handoffPromptTemplates);
       const worktreePath = issueWorktreePath(issue);
-      if (!worktreePath) {
-        throw new Error('No local issue worktree is visible. Refresh local artifacts before opening Codex.');
-      }
       await openCodexHandoff(prompt, worktreePath);
       handoffStatus = { ...handoffStatus, [issue.id]: '' };
     } catch (error) {

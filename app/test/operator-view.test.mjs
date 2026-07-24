@@ -51,7 +51,7 @@ import {
 } from '../src/lib/viewModel/humanTodoRefresh.ts';
 import {
   buildHandoffPrompt,
-  handoffSkillForIssue
+  renderHandoffTemplate
 } from '../src/lib/viewModel/handoffPrompt.ts';
 import {
   appendAutoloopLine,
@@ -61,6 +61,23 @@ import {
   operatorLoopStatusDetail,
   operatorRunLogLines
 } from '../src/lib/tauriAutoloop.ts';
+
+function loadHumanHandoffPromptTemplates() {
+  return {
+    'Need to Clarify': readFileSync(
+      new URL('../../.shea/prompts/need-to-clarify-handoff.md', import.meta.url),
+      'utf8'
+    ),
+    'Need Human Input': readFileSync(
+      new URL('../../.shea/prompts/need-human-input-handoff.md', import.meta.url),
+      'utf8'
+    ),
+    'Human Review': readFileSync(
+      new URL('../../.shea/prompts/human-review-handoff.md', import.meta.url),
+      'utf8'
+    )
+  };
+}
 
 test('browser fallback uses fixture data instead of a Node API bridge', async () => {
   const overview = await loadOverview(true, 'fast');
@@ -1122,13 +1139,37 @@ test('human handoff prompt is issue-specific and lane-boundary explicit', () => 
     url: 'https://github.com/Alive24/shea-symphony/issues/436'
   };
 
-  assert.equal(handoffSkillForIssue(issue), 'shea-symphony-human-review');
-  const prompt = buildHandoffPrompt(issue);
+  const templates = loadHumanHandoffPromptTemplates();
+  const prompt = buildHandoffPrompt(issue, templates);
   assert.match(prompt, /Use the shea-symphony-human-review skill for #436/);
   assert.match(prompt, /State: Human Review/);
-  assert.match(prompt, /Read current Project issue state before acting/);
-  assert.match(prompt, /do not mutate Project state without explicit approval/);
+  assert.match(prompt, /remaining human-owned checks/);
+  assert.match(prompt, /until the operator gives explicit approval/);
   assert.match(prompt, /https:\/\/github\.com\/Alive24\/shea-symphony\/issues\/436/);
+});
+
+test('human handoff prompt files own each state-specific skill', () => {
+  const templates = loadHumanHandoffPromptTemplates();
+
+  assert.match(
+    buildHandoffPrompt({ id: '#1', state: 'Need to Clarify' }, templates),
+    /shea-symphony-issue-forge/
+  );
+  assert.match(
+    buildHandoffPrompt({ id: '#2', state: 'Need Human Input' }, templates),
+    /shea-symphony-doctor/
+  );
+  assert.match(
+    buildHandoffPrompt({ id: '#3', state: 'Human Review' }, templates),
+    /shea-symphony-human-review/
+  );
+});
+
+test('human handoff template rendering rejects unknown variables', () => {
+  assert.throws(
+    () => renderHandoffTemplate('Issue: {{ issue.missing }}', { issue: {} }),
+    /Unknown handoff prompt template variable/
+  );
 });
 
 test('human todo empty state does not report clear while readback is loading', () => {

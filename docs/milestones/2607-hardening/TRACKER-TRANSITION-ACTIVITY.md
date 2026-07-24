@@ -1,6 +1,20 @@
 # TrackerTransitionActivity Contract
 
-Status: Draft
+Status: Partially implemented — #494 completed the inert state-transition contract slice
+
+## Implemented Contract Slice (#494)
+
+The first durable payload boundary is now complete: internal serialized
+request/result DTOs, validated opaque tracker-state strings, closed
+Symphony-owned outcome/conflict enums, and a versioned deterministic
+idempotency key. The registered `TrackerTransitionActivity` keeps its durable
+name and core-queue registration, but returns an explicit inert result and
+performs no tracker or other external side effect.
+
+The following mutation slices remain explicitly deferred: adapter invocation
+and readback, Project failure/retry mapping, PR linking, evidence and
+workpad/timeline commits, claims, generic field updates, SQLite projection, and
+Workflow scheduling/routing.
 
 ## Purpose
 
@@ -39,21 +53,21 @@ Recommended request:
 ```text
 TrackerTransitionRequest {
   workflow_id
-  issue_ref
+  run_id?
+  issue_ref { tracker_kind, repository, issue }
   expected_from_state
   requested_to_state
   transition_kind
   requester
-  reason_enum
-  reason_detail
-  evidence_refs
+  reason { code, detail? }
+  evidence_refs?
+  attempt_slot
   idempotency_key
-  field_update_intents
 }
 ```
 
-`field_update_intents` should describe what must be human-visible in the
-tracker. It should not carry every local runtime detail.
+`issue_ref` holds only stable tracker identity, never a rich issue or Project
+payload. Future generic field-update intents are a separate mutation slice.
 
 ## Result Shape
 
@@ -63,12 +77,13 @@ Recommended result:
 TrackerTransitionResult {
   outcome
   issue_ref
-  from_state_observed
-  to_state_committed
-  tracker_backend
-  evidence_refs
-  audit_ref
-  conflict_reason
+  observed_from_state?
+  committed_to_state?
+  evidence_refs?
+  audit_ref?
+  conflict_reason?
+  retry_after_ms?
+  summary
 }
 ```
 
@@ -79,6 +94,8 @@ Outcomes:
 - `conflict`;
 - `rejected`;
 - `retry_later`.
+- `need_human_input`;
+- `unhandled_error`.
 
 ## Deliberately Not Chosen
 
@@ -139,6 +156,11 @@ Recommended key ingredients:
 - expected from state;
 - requested to state;
 - attempt slot.
+
+The implemented `symphony.transition.v1` format length-prefixes every
+fixed-order component. It is unambiguous even when opaque tracker strings
+contain delimiters, and the Workflow carries the result into each Activity
+retry instead of regenerating it inside the Activity.
 
 Existing mechanisms should be migrated, not replaced:
 
@@ -269,11 +291,13 @@ with explicit coverage.
 
 ### TTA-1: Contract And Tests
 
-- Define request/result DTOs.
-- Define transition outcomes and conflict reasons.
-- Port recovery marker/idempotency tests into the new boundary.
-- Add tests proving full `TrackerIssue` is not required in the Workflow
-  contract.
+The DTO/idempotency portion is complete in #494:
+
+- [x] Define compact request/result DTOs.
+- [x] Define transition outcomes and conflict reasons.
+- [x] Define versioned deterministic idempotency-key construction.
+- [x] Add serialization tests proving a full `TrackerIssue` is not required.
+- [ ] Port recovery marker/readback tests when state commits exist.
 
 ### TTA-2: State Transition Commits
 

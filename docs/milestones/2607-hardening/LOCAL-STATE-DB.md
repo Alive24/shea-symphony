@@ -115,6 +115,30 @@ The five v1 tables are:
 - `meta(key, value)`, initialized with RFC 3339 UTC `created_at` and
   `updated_at` rows.
 
+## Implemented Admin Boundary
+
+`LocalStateAdmin` now provides the narrow administrative library seam above
+the completed `LocalStateDatabase` lifecycle. It is not a CLI command, a Tauri
+command, or a Temporal Activity.
+
+`check_health` opens only an existing database with SQLite read-only flags. It
+reports typed readiness and diagnostics for missing/unavailable paths, supported
+but not-current versions, future versions, unversioned application schemas,
+incomplete current v1 evidence, malformed/corrupt files, and safe inspection
+failures. Health neither creates a parent directory nor a database file, and it
+does not alter connection PRAGMAs, journal mode, migrations, metadata, or file
+contents.
+
+`migrate` is explicit. It delegates to `LocalStateDatabase::initialize`, which
+remains the sole owner of path creation, connection policy, version inspection,
+transactions, forward migration, and compatibility/corruption semantics. This
+admin boundary does not implement rebuild, replace, recovery, compact, or
+checkpoint operations.
+
+T2607-07 will own a Tauri command or other operator-facing surface that calls
+this library. That later command must keep health inspection separate from an
+explicit migrate or recovery request.
+
 Primary keys are `workflow_index(workflow_id)`,
 `artifact_index(artifact_id)`,
 `tracker_cache(workspace_runtime_id, repo_id, issue_ref)`,
@@ -218,8 +242,9 @@ Recommended shape:
 
 - `LocalStateReader` for App/Tauri backend reads;
 - `LocalStateProjector` for Activity/backend result projection writes;
-- `LocalStateAdmin` for later health, explicit rebuild/recovery, and compact
-  operations. Startup migration remains owned by `LocalStateDatabase`.
+- `LocalStateAdmin` for read-only health and explicit migration; rebuild,
+  recovery, and compact remain deferred. Startup migration remains owned by
+  `LocalStateDatabase`.
 
 Recommended initial methods:
 
@@ -238,9 +263,9 @@ LocalStateProjector:
   mark_stale(scope, reason)
 
 LocalStateAdmin:
-  check_health()
-  rebuild(scope)
-  compact()
+  check_health() -> LocalStateHealth
+  migrate() -> LocalStateInitialization | LocalStateError
+  # rebuild/recovery/compact are deferred
 ```
 
 The lifecycle boundary uses bundled `rusqlite`, SeaQuery SQLite schema
@@ -367,6 +392,9 @@ Do not full-rebuild SQLite on every App or worker start. Startup should perform
 lightweight schema and health checks. Rebuild should happen when the DB is
 missing, corrupt, schema-incompatible, or explicitly requested by the operator
 or a recovery path.
+
+The health portion of startup is inspection-only: it must not turn a missing or
+unhealthy database into a migrated, repaired, or rebuilt one.
 
 ## Memory Cache
 

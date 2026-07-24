@@ -1,7 +1,8 @@
 # T2607-02 Local State DB
 
-Status: Migration v1 and Describe-backed lifecycle projection implemented;
-query, admin, and integration slices deferred
+Status: Migration v1, Describe-backed lifecycle projection, and the
+LocalStateAdmin health/explicit-migration boundary implemented; query, recovery,
+and integration slices deferred
 
 ## Purpose
 
@@ -31,6 +32,25 @@ PR linkage, merging, or terminal writes.
   `activity_progress`, and `meta` atomically.
 - `meta` begins with RFC 3339 UTC `created_at` and `updated_at`; it never stores
   a duplicate schema version.
+
+## Implemented Admin Slice
+
+- `LocalStateAdmin` is a crate-internal library seam above
+  `LocalStateDatabase`, not a product CLI command, Tauri command, or Temporal
+  Activity.
+- `check_health` opens only an existing database in SQLite read-only mode. It
+  never creates a path, configures a connection, changes journal mode, runs a
+  migration, repairs state, or replaces a file.
+- Health returns typed current, migration-required, incompatible,
+  unversioned-conflict, incomplete-schema, corruption, and unavailable-path
+  outcomes. Current v1 readiness verifies the required table set and migration
+  metadata without becoming a database-wide schema audit.
+- `migrate` is explicit and delegates unchanged to
+  `LocalStateDatabase::initialize`; it is the only Admin operation that may
+  create a database or parent directory and apply supported forward migrations.
+- T2607-07 owns any future Tauri command or operator-facing surface over this
+  library. It must keep health read-only unless the caller explicitly requests
+  migration or a later recovery operation.
 
 ## Scope And Identity
 
@@ -119,8 +139,8 @@ require table reconstruction.
 ## Deferred Slices
 
 - `query`: workspace-scoped readers and dashboard snapshots;
-- `admin`: health, explicit rebuild/replace, compact, recovery, and manual
-  checkpoint operations;
+- `admin`: explicit rebuild/replace, compact, recovery, and manual checkpoint
+  operations beyond the implemented health/explicit-migration boundary;
 - `test/hardening`: measured contention, internal pooling decisions,
   corruption/rebuild, and performance work after real callers exist;
 - `integration`: layered config resolves the final path and passes it to this
@@ -138,6 +158,7 @@ threads when later integrations call it.
 Temporary-file tests cover initialization/no-op reinitialization, concurrent
 initializers, exact columns/nullability/keys/indexes, connection PRAGMAs,
 machine-wide active uniqueness, workspace-scoped tracker cache keys, future
-versions, unversioned drift, malformed files, bounded contention, and atomic
-rollback. Tests inject all paths and do not touch the operator database or the
-canonical worktree.
+versions, unversioned drift, malformed files, bounded contention, atomic
+rollback, read-only health diagnostics, and explicit admin migration re-entry.
+Tests inject all paths and do not touch the operator database or the canonical
+worktree.

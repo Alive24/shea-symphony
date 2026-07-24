@@ -148,19 +148,21 @@ Every lookup index begins with `workspace_runtime_id`. The deliberate exception
 is the partial unique active guard on `(repo_id, issue_ref)` for statuses
 `starting` and `running`: it is machine-wide across runtime scopes.
 
-Use `workflow_index` as the local active workflow index. It records the
-human-readable Temporal Workflow ID plus the Temporal-native `run_id` returned
-after start. The active index should let the Workflow Coordinator enforce one
-active `IssueWorkflow` execution per issue at a time without scanning tracker
-or Temporal history on every App refresh.
+Use `workflow_index` as a local lifecycle projection index. It records the
+human-readable Temporal Workflow ID plus the Temporal-native `run_id` and
+authoritative execution start time only after current-Describe evidence is
+available. It supports fast local diagnostics, active-execution hints, and
+reconciliation input; the Coordinator still uses Temporal start/idempotency and
+current execution evidence to decide whether an execution exists.
 
 `workflow_id` is the primary Symphony execution identity. `run_id` is stored
 for exact Temporal execution lookup, not as the product-level identity.
 
 For active statuses, v1 enforces one active workflow row per
 `(repo_id, issue_ref)` with a partial unique index.
-This is a local duplicate-start guard and App read model, not the authoritative
-workflow fact.
+This is a machine-wide local conflict signal and App read model, not the
+authoritative workflow fact. It cannot reserve a Temporal start, reject a
+start, or prove that no active execution exists.
 
 Initial `workflow_index.status` enum:
 
@@ -176,6 +178,11 @@ Initial `workflow_index.status` enum:
 Do not use `workflow_index.status` to represent static tracker waiting lanes.
 Static waits such as `Backlog`, `Human Review`, and normal `Need Human Input`
 belong in `tracker_cache.tracker_state`.
+
+The v1 lifecycle projector writes only `running`, `completed`, `failed`, and
+`closed_unknown` from Describe-backed observations. `starting` remains a schema
+spelling for v1 compatibility, not a SQLite-owned pre-start reservation. No
+v1 projection writer may create it from a start attempt or response.
 
 Do not add a dedicated `tracker_mutation_log` table in the initial schema.
 Temporal history is the durable mutation attempt ledger. SQLite projects only
@@ -249,7 +256,7 @@ LocalStateReader:
   list_artifacts(issue_ref) -> Vec<ArtifactRefSummary>
 
 LocalStateProjector:
-  project_workflow_summary(summary)
+  project_workflow_lifecycle(describe_backed_observation)
   project_tracker_cache(entry)
   project_artifact_ref(ref)
   project_activity_progress(progress)
@@ -298,10 +305,10 @@ Activity and backend code may read SQLite for non-authoritative optimization,
 but any state-changing decision must be validated through the proper Temporal
 or tracker boundary.
 
-SQLite projection may receive concurrent requests. Writes should use short,
-retryable transactions and remain non-authoritative. Projection failure should
-mark affected read-model rows stale or failed rather than changing Workflow
-truth.
+SQLite projection may receive concurrent requests. Writes use short bounded
+transactions and remain non-authoritative; callers reconcile a conflict or
+projection failure through Temporal/tracker boundaries rather than changing
+Workflow truth or adding a SQLite retry scheduler.
 
 ## Projection Model
 
@@ -317,6 +324,33 @@ recreating the hand-rolled orchestration machinery this milestone is removing.
 
 Keep projection code factored behind a small interface so a later milestone can
 add async replay, export, or cloud sync without changing workflow semantics.
+
+### Describe-Backed `workflow_index` V1
+
+`LocalStateProjector` is a synchronous, crate-private writer. It receives a
+typed observation from a caller that has already read Temporal; it performs no
+Temporal or tracker I/O itself.
+
+- A current Describe-backed open execution creates or updates a `running` row
+  with the described Run ID, authoritative `started_at`, `fresh` freshness,
+  `workflow_execution` active step, and the observation time as `updated_at`.
+- A current Describe-backed closed execution creates or transitions to
+  `completed`, `failed`, or `closed_unknown`. V1 keeps close time only as input
+  evidence; it does not add `closed_at`, failure-detail, or diagnostic columns.
+- A Temporal StartResponse can confirm only an already-projected identical Run
+  ID. A missing/different row returns `DescribeRequired` and makes no write.
+- A definitive start failure returns a bounded typed no-write result. It does
+  not create a start reservation, invent a Run ID or start timestamp, or store
+  its diagnostic in `workflow_index`.
+- Immutable activation facts are compared field-by-field. Stale Run evidence
+  and projection conflicts leave the existing row unchanged. `completed` and
+  `failed` do not regress; only `closed_unknown` may refine when a supported
+  close classification later becomes available.
+
+The partial active index remains a useful local duplicate diagnostic after a
+projection is observed. It is never a precondition or authority for Temporal
+start, progression, retry, cancellation, tracker transition, PR linkage, or
+terminal business state.
 
 ## Freshness Model
 

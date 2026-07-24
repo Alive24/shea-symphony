@@ -11,6 +11,7 @@ pub(crate) mod admin;
 mod database;
 mod identity;
 mod migration;
+pub(crate) mod projector;
 
 pub use database::{JournalMode, LocalStateDatabase, LocalStateError, LocalStateInitialization};
 pub use identity::{

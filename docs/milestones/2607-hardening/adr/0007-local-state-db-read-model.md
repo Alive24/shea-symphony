@@ -75,8 +75,11 @@ Default DB path:
 
 ## Follow-Up
 
-- Define small `LocalStateReader`, `LocalStateProjector`, and
-  `LocalStateAdmin` interfaces in their query, projection, and admin slices.
+- Keep the implemented `LocalStateProjector` limited to Describe-backed,
+  non-authoritative lifecycle projection; evolve it only through explicit
+  schema/compatibility contracts.
+- Define small `LocalStateReader` and `LocalStateAdmin` interfaces in their
+  query and admin slices.
 - Update App snapshot code to prefer SQLite materialized dashboard reads.
 - Keep issue detail state backed by Temporal Query with lazy artifact reads.
 - Add freshness markers and explicit refresh paths.

@@ -37,7 +37,8 @@ T2607-02 Local State DB
   -> provides SQLite read model, active workflow index, artifact/tracker cache
 
 T2607-03 Workflow Coordinator
-  -> uses Temporal client and SQLite active guard to start executable pulses
+  -> derives pure activation identity, then uses Temporal-authoritative start
+     and Describe-backed SQLite projection across #501-#505
 
 T2607-04 TrackerTransitionActivity
   -> provides durable tracker transition and PR-link write boundary

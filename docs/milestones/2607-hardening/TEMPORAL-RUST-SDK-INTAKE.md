@@ -187,10 +187,11 @@ execution pulse, while still carrying the issue identity.
 
 2607 implication:
 
-- use a human-readable, episode-scoped ID such as
-  `issue:<repo-slug>:<issue-number>:pulse:<from-state>-to-<target-kind>:<YYYYMMDD-HHMMSSZ>:<source-slug>`;
+- use the Coordinator-owned, human-readable, episode-scoped ID
+  `issue:<encoded-host>/<encoded-owner>/<encoded-repo>:<issue-number>:pulse:<from-state>-to-<target-kind>:<YYYYMMDDTHHMMSSZ>:<source-kind>-<encoded-source-ref>`;
 - use Temporal's returned `run_id` for exact Temporal execution lookup;
-- Tauri backend owns workflow ID construction;
+- Coordinator owns Workflow ID construction and enforces Shea's 256-byte
+  encoded limit;
 - App does not expose Temporal task queue or payload details;
 - CLI debug wrappers, if any, call the same client boundary.
 

@@ -104,8 +104,8 @@ That does not mean every issue keeps a live Workflow execution open from
 `Backlog` to `Done`.
 
 Use at most one active `IssueWorkflow` execution per issue at a time. Tracker
-is the durable queue between activations. `Backlog`, `Human Review`, and most
-`Need Human Input` cases are static tracker lanes by default.
+is the durable queue between activations. `Backlog`, `Need to Clarify`, `Need
+Human Input`, `Human Review`, and `Done` are static tracker lanes.
 
 Executable tracker states activate or resume workflow episodes:
 
@@ -113,8 +113,10 @@ Executable tracker states activate or resume workflow episodes:
 - `In Progress`;
 - `Agent Review`;
 - `Rework`;
-- `Merging`;
-- `Need Human Input` only when automatic doctor/reconcile work is required.
+- `Merging`.
+
+Doctor or reconciliation may later move `Need Human Input` to an executable
+tracker state, but Coordinator does not activate that static state directly.
 
 ## Activities
 

@@ -444,11 +444,12 @@ decisions; worker pools own parallel external work.
 Workflow population is based on executable tracker states, not every
 Shea-managed issue.
 
-Static tracker lanes do not start a live Workflow execution by default:
+Static tracker lanes do not start a live Workflow execution:
 
 - `Backlog`;
+- `Need to Clarify`;
+- `Need Human Input`;
 - `Human Review`;
-- `Need Human Input`, unless automatic doctor/reconcile work is required;
 - `Done`.
 
 Executable states can start a workflow execution or find an existing active
@@ -458,27 +459,28 @@ execution:
 - `In Progress`;
 - `Agent Review`;
 - `Rework`;
-- `Merging`;
-- `Need Human Input` only for automatic doctor/reconcile work.
+- `Merging`.
 
 Backlog promotion to `Todo` creates the executable condition. Human Review
 approval, request-rework, or human-fix actions arrive through the Operator
 Action Bridge and then start the appropriate validation, rework, or merging
 episode.
 
-The Workflow Coordinator/App start path reads tracker states, checks the local
-active workflow index, and starts executions only for executable states, up to
-configured capacity.
+Doctor or reconciliation may later move `Need Human Input` to an executable
+tracker state, but Coordinator does not activate the static state directly.
 
 ### How should Workflow identity work?
 
 Use a human-readable, episode-scoped Temporal `workflow_id`:
 
 ```text
-issue:<repo-slug>:<issue-number>:pulse:<from-state>-to-<target-kind>:<YYYYMMDD-HHMMSSZ>:<source-slug>
+issue:<encoded-host>/<encoded-owner>/<encoded-repo>:<issue-number>:pulse:<from-state>-to-<target-kind>:<YYYYMMDDTHHMMSSZ>:<source-kind>-<encoded-source-ref>
 ```
 
-The `workflow_id` is the Symphony execution identity.
+The `workflow_id` is the Symphony execution identity. Coordinator derives
+target kind, uses explicit UTC-second episode time, reversibly percent-encodes
+repository/source components, and enforces a 256-byte limit after encoding.
+Uncertain retries reuse the exact activation input and ID.
 
 Use Temporal's returned `run_id` only as the Temporal-native execution
 locator. SQLite, artifacts, logs, and App trace use `workflow_id` as the
@@ -501,26 +503,26 @@ Temporal Workflow owns orchestration decisions; Activities own side effects.
 
 ### How should Coordinator start a Workflow?
 
-Use an optimistic start with a local SQLite guard:
+Use an optimistic Temporal-authoritative start:
 
 ```text
 read tracker executable state
   -> derive workflow_id
-  -> insert workflow_index row with status=starting
   -> start Temporal Workflow
-  -> store run_id and set status=running
+  -> Describe the current execution
+  -> project Describe-backed lifecycle evidence
 ```
 
-SQLite makes startup observable and reduces duplicate starts. Temporal start
-success is the execution fact.
+Temporal start/idempotency, current Describe, and history are execution facts.
+SQLite is a diagnostic read model, not a reservation or start authority.
 
 Start conflicts:
 
-- SQLite insert conflict: inspect the active row and repair it if stale;
+- SQLite active-row conflict: reconcile it against current Temporal evidence;
 - Temporal open Workflow already exists: bind to the existing execution and
   repair `workflow_index`;
-- Temporal closed Workflow with the same `workflow_id`: generate a new
-  `workflow_id`.
+- Temporal closed Workflow with the same `workflow_id`: create a new activation
+  with a new explicit episode timestamp or source identity.
 
 ### How should Coordinator repair inconsistent local state?
 
@@ -528,13 +530,15 @@ Use this repair matrix:
 
 | Local State | Temporal State | Action |
 | --- | --- | --- |
-| `starting` without `run_id` | not started or unknown | mark `stale_start` after timeout; reread tracker before retry |
-| missing row | active execution exists | rebuild projection from Temporal visibility/query; do not start another execution |
-| active row | active execution exists | keep row, refresh progress/freshness |
-| active row | closed execution exists | mark `completed` or `failed` when close status is known; otherwise `closed_unknown` |
-| active row | execution not found | mark `stale_missing`; reread tracker before retry |
-| stale row | tracker still executable | generate a new `workflow_id` and start a new execution |
-| stale row | tracker is static | leave closed/stale projection; do not start |
+| missing row | current Describe is open | project `running` with described Run ID/start time |
+| missing row | current Describe is closed | project the bounded terminal classification |
+| running row | same or newer described Run | project the current Open observation |
+| running row | described Run is closed | project its bounded terminal classification |
+| any row | StartResponse only or definitive start failure | typed no-write outcome |
+| any row | conflicting, stale, or unavailable evidence | leave unchanged and reconcile outside the projector |
+
+The v1 projector does not create `starting`, `stale_start`, or `stale_missing`
+rows.
 
 Repair triggers:
 
@@ -554,8 +558,8 @@ Do boundary validation, not high-frequency tracker polling:
 - perform targeted readback after fact-changing writes;
 - treat external tracker edits as conflict or human-input paths.
 
-Normal in-flight decisions should rely on Temporal state, Activity results,
-SQLite active workflow index rows, and artifact references.
+Normal in-flight decisions should rely on Temporal state, Activity results, and
+artifact references. SQLite active-index rows are diagnostic hints only.
 
 ### How should a pulse terminate?
 
@@ -575,9 +579,8 @@ Workflow execution is not a terminal outcome.
 Yes. Executable lane handlers are independently startable and internally
 chainable.
 
-Coordinator can start from `Todo`, `In Progress`, `Agent Review`, `Rework`,
-`Merging`, or automatic doctor/reconcile work in `Need Human Input`. Workflow
-start chooses the handler from `from_tracker_state`.
+Coordinator can start from `Todo`, `In Progress`, `Agent Review`, `Rework`, or
+`Merging`. Workflow start chooses the handler from `from_tracker_state`.
 
 If a handler produces another executable state, the Workflow may continue in
 the same execution to reduce handoff overhead. If it produces a static state or

@@ -211,12 +211,14 @@ IssueRef {
   number
 }
 
-WorkflowId = "issue:<repo-slug>:<number>:pulse:<from-state>-to-<target-kind>:<YYYYMMDD-HHMMSSZ>:<source-slug>"
+WorkflowId = "issue:<encoded-host>/<encoded-owner>/<encoded-repo>:<number>:pulse:<from-state>-to-<target-kind>:<YYYYMMDDTHHMMSSZ>:<source-kind>-<encoded-source-ref>"
 ```
 
 SQLite may denormalize these values into text columns. Code boundaries should
 use typed DTOs. `workflow_id` is episode-scoped; issue identity should be
-carried separately through `repo_id` and `issue_ref`.
+carried separately through `repo_id` and `issue_ref`. The Coordinator owns this
+exact 256-byte-limited identity construction; SQLite stores the validated
+`WorkflowId` and must not reconstruct, truncate, hash, or slugify it.
 
 ## Freshness Enum
 

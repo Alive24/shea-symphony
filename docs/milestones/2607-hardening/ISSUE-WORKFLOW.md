@@ -84,8 +84,9 @@ This diagram shows the full state vocabulary, not every allowed edge.
 Executable lane handlers are independently startable and internally chainable.
 
 Coordinator may start an `IssueWorkflow` execution from any executable tracker
-state: `Todo`, `In Progress`, `Agent Review`, `Rework`, `Merging`, or the
-automatic doctor/reconcile subset of `Need Human Input`.
+state: `Todo`, `In Progress`, `Agent Review`, `Rework`, or `Merging`.
+`Need Human Input` remains static; Doctor/reconciliation must first establish
+and commit an executable tracker state before Coordinator evaluates activation.
 
 Workflow start selects the handler from `from_tracker_state`. When a handler
 finishes:
@@ -257,11 +258,11 @@ Exit:
 
 Notes:
 
-- `Need Human Input` is usually a static tracker lane after the workflow
+- `Need Human Input` is a static tracker lane after the workflow
   records the blocker and evidence.
 - Start an `IssueWorkflow` execution or find an existing active execution only
-  when a routed operator action arrives or automatic doctor/reconcile work is
-  required.
+  after a routed operator or Doctor/reconciliation action has established an
+  executable tracker state.
 
 ## Agent Review
 

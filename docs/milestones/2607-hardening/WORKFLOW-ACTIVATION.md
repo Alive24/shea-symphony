@@ -38,23 +38,42 @@ Use two identities:
 - `run_id`: the Temporal-native execution locator returned by Temporal after
   start.
 
-Recommended `workflow_id` shape:
+The Coordinator constructs `workflow_id` with this exact grammar:
 
 ```text
-issue:<repo-slug>:<issue-number>:pulse:<from-state>-to-<target-kind>:<YYYYMMDD-HHMMSSZ>:<source-slug>
+issue:<encoded-host>/<encoded-owner>/<encoded-repo>:<issue-number>:pulse:<from-state>-to-<target-kind>:<YYYYMMDDTHHMMSSZ>:<source-kind>-<encoded-source-ref>
 ```
 
 Examples:
 
 ```text
-issue:shea-symphony:123:pulse:todo-to-work:20260708-134218Z:project-rev-456
-issue:shea-symphony:123:pulse:human-review-to-merge:20260708-150012Z:operator-action-789
+issue:github.com/Alive24/shea-symphony:123:pulse:todo-to-work:20260708T134218Z:tracker-project-rev-456
+issue:github.com/Alive24/shea-symphony:123:pulse:merging-to-merge:20260708T150012Z:operator-action-action-789
 ```
 
 Use `target-kind` rather than guaranteed final state. A `Todo` pulse may end
 in `In Progress`, `Need to Clarify`, `Agent Review`, or `Need Human Input`.
 The Workflow ID should describe why the pulse started, not pretend to know its
-final state.
+final state. Coordinator exclusively derives `work`, `review`, `rework`, or
+`merge` from the observed executable tracker state; callers cannot supply a
+target kind.
+
+Repository components and `source-ref` use reversible URL-safe percent encoding
+of their UTF-8 bytes. ASCII letters, digits, `-`, `.`, `_`, and `~` remain
+readable; separators and other bytes are encoded without case folding,
+slugification, replacement, hashing, or truncation. Enum spellings are stable
+lowercase kebab-case.
+
+Episode time is explicit UTC input at second precision. Identity construction
+must not read a clock or regenerate the timestamp during an uncertain retry.
+The same issue, observed state, episode time, source kind, and source reference
+therefore produce the same ID. A new episode time or source identity produces a
+new ID.
+
+Shea limits the complete encoded Workflow ID to 256 UTF-8 bytes. Overflow is a
+typed validation error even when Temporal is configured with a larger limit.
+The audit reason is trimmed, non-empty provenance of at most 512 UTF-8 bytes;
+it is never embedded in the Workflow ID.
 
 SQLite, artifacts, logs, and App trace use `workflow_id` as the primary
 semantic key. Add `run_id` when exact Temporal execution lookup is required.
@@ -70,8 +89,9 @@ These lanes are tracker queues by default and do not automatically keep an
 active `IssueWorkflow` execution open:
 
 - `Backlog`;
+- `Need to Clarify`;
+- `Need Human Input`;
 - `Human Review`;
-- `Need Human Input`, unless automatic doctor/reconcile work is required;
 - `Done`.
 
 Static does not mean unmanaged. It means the tracker is holding the durable
@@ -86,11 +106,12 @@ execution:
 - `In Progress`: Main agent work;
 - `Agent Review`: agent review work;
 - `Rework`: rework agent work;
-- `Merging`: land/merge flow;
-- `Need Human Input`: only when automatic doctor/reconcile work is required.
+- `Merging`: land/merge flow.
 
 `Backlog` promotion to `Todo` creates an executable condition. `Todo` is the
-workflow activation point.
+workflow activation point. Doctor or reconciliation may perform a bounded
+operation that later moves the tracker to an executable state, but Coordinator
+does not treat `Need Human Input` itself as executable.
 
 ## Human Review And Operator Actions
 
@@ -107,6 +128,25 @@ appropriate executable episode:
 
 The App does not keep a live Workflow open merely because an issue is waiting
 for a human.
+
+## Pure Coordinator Activation Contract
+
+The first independently reviewable Coordinator slice accepts a validated
+activation request plus an already-observed tracker state and revision. It does
+not fetch tracker state or perform SQLite, Temporal, capacity, filesystem,
+network, process, or App I/O.
+
+An optional expected tracker state or revision is an optimistic precondition.
+The pure result is one of:
+
+- `Static`, with the observed static state and revision;
+- `Executable`, with the observed state/revision, Coordinator-derived target
+  kind, explicit episode time, source kind/reference, bounded audit reason, and
+  validated `WorkflowId`;
+- `StaleExpectation`, when either supplied expectation differs from the
+  observation.
+
+Only `Executable` contains executable activation facts or a Workflow ID.
 
 ## Workflow Coordinator
 
@@ -162,8 +202,9 @@ Start conflicts:
   reserve, reject, or retry a start;
 - Temporal open Workflow already exists: bind to the existing execution and
   project its current Describe observation;
-- Temporal closed Workflow with the same `workflow_id`: generate a new
-  `workflow_id` with a new timestamp/source or attempt suffix.
+- Temporal closed Workflow with the same `workflow_id`: create a new activation
+  episode with a new explicit timestamp or source identity; never invent a
+  retry-time suffix.
 
 ## Repair Contract
 
@@ -231,10 +272,9 @@ lane handler in the same execution. That continuation is not a terminal
 outcome and should not be exposed as a completed status.
 
 Executable lane handlers are independently startable and chainable. Coordinator
-can start from `Todo`, `In Progress`, `Agent Review`, `Rework`, `Merging`, or
-automatic doctor/reconcile work in `Need Human Input`. If one handler produces
-another executable state, continuing in the same execution is allowed and can
-reduce handoff overhead.
+can start from `Todo`, `In Progress`, `Agent Review`, `Rework`, or `Merging`.
+If one handler produces another executable state, continuing in the same
+execution is allowed and can reduce handoff overhead.
 
 Examples:
 
@@ -244,8 +284,7 @@ Examples:
 - `Agent Review` passes and commits `Human Review`, then completes because
   `Human Review` is static with `completed_static_handoff`;
 - `Merging` lands work and commits `Done`, then completes;
-- an operational blocker commits `Need Human Input`, then completes unless an
-  automatic doctor/reconcile episode is required.
+- an operational blocker commits `Need Human Input`, then completes.
 
 ## Non-Goals
 

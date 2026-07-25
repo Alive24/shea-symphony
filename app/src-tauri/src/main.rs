@@ -7,6 +7,7 @@ mod github;
 mod read_surfaces;
 mod target_context;
 mod target_runtime;
+mod temporal_health;
 mod workspace;
 
 use autoloop_state::LoopManager;
@@ -42,7 +43,8 @@ fn main() {
             external_links::open_handoff_target,
             external_links::open_codex_handoff,
             target_runtime::get_target_runtime_state,
-            target_runtime::initialize_target_runtime_state
+            target_runtime::initialize_target_runtime_state,
+            temporal_health::get_temporal_runtime_health
         ])
         .run(tauri::generate_context!())
         .expect("error while running Shea Symphony App");

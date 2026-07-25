@@ -17,8 +17,10 @@ typed DTO locations, worker registration, task queues, and client boundary.
 - workers register the starting task queues;
 - a no-op `IssueWorkflow` can start, query, and complete;
 - no-op Activities are registered under the intended names;
-- App/Tauri and CLI use the same Temporal client boundary without owning
-  workflow semantics.
+- App/Tauri reuses the Symphony-owned Temporal client boundary without owning
+  workflow semantics;
+- CLI wrappers remain optional admin/dev follow-up work rather than a package
+  completion requirement.
 
 ## Non-Goals
 
@@ -39,8 +41,8 @@ should aim for these ownership boundaries:
 - `src/main.rs` as the default 2607 Temporal worker runtime entrypoint;
 - `src/symphony/**` for Temporal client, workers, DTOs, and
   workflow/activity registration;
-- App/Tauri backend command layer for starting local runtime and reaching the
-  Temporal client boundary;
+- App/Tauri backend command layer for bounded, read-only Temporal readiness
+  through the active workspace configuration;
 - test/support utilities for local Temporal integration checks.
 
 Do not create a separate `temporal_runtime` product namespace unless codebase
@@ -185,7 +187,9 @@ workflow.
 
 ## Temporal Client Boundary
 
-Create one Symphony-owned Temporal client boundary used by App/Tauri and CLI.
+Create one Symphony-owned Temporal client boundary used by App/Tauri. Optional
+CLI admin/dev wrappers may reuse the same boundary later, but are not required
+to complete T2607-01.
 
 Required operations for this package:
 
@@ -195,10 +199,16 @@ Required operations for this package:
 - check worker/task queue health where possible;
 - return typed errors when Temporal is unavailable.
 
-The App should call Tauri backend commands that call this boundary. The App
-must not construct task queue names, raw payloads, or workflow semantics.
+The App calls a no-argument Tauri readiness command that snapshots the active
+workspace, resolves that workspace's exact workflow file, validates the shared
+runtime configuration, and calls `SymphonyTemporalClient::check_service()`.
+The service check is bounded to five seconds and returns the captured
+workspace/workflow identity with `ready`, `unavailable`, `timedOut`, or
+`invalidConfig`; it does not start or control a Workflow. The App must not
+construct task queue names, raw payloads, or workflow semantics.
 
-CLI may expose thin admin/dev wrappers over the same boundary.
+CLI may expose thin admin/dev wrappers over the same boundary in a later,
+explicitly scoped issue.
 
 ## Local Temporal Startup Strategy
 
@@ -269,8 +279,9 @@ Minimum acceptance checks:
 - no-op workflow start/query/complete check;
 - unavailable Temporal service returns a typed error;
 - App/Tauri command can call the runtime boundary without owning payload
-  details;
-- CLI debug wrapper, if present, calls the same runtime boundary.
+  details, and deterministically covers ready, unavailable, invalid-config,
+  timeout, active-workspace selection, and stale-response identity behavior;
+- any future CLI debug wrapper calls the same runtime boundary.
 
 If local Temporal integration tests are too heavy for default CI, mark them as
 explicit integration tests and keep unit tests around DTO construction and
@@ -294,5 +305,6 @@ Temporal-backed paths work.
 - Placeholder Activities are registered.
 - A local no-op Workflow can start, be queried, and complete.
 - The gated local smoke cleans up only the service and worker processes it owns.
-- App/Tauri and CLI share one Symphony runtime client boundary.
+- App/Tauri reuses the Symphony runtime client boundary for bounded readiness;
+  a CLI wrapper is optional admin/dev follow-up work.
 - No real business side effects occur through the skeleton.

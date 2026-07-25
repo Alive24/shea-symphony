@@ -770,9 +770,7 @@ fn has_active_review_worker(issue: &TrackerIssue, worker_key: &str) -> bool {
             .map(str::to_string)
             .unwrap_or_else(|| value.to_string());
         active_review_marker_matches(&value, worker_key)
-            || (is_review_agent_field
-                && !terminal_failure_marker
-                && structured_active_review_claim(&value))
+            || (is_review_agent_field && structured_active_review_claim(&value))
             || (is_review_agent_field
                 && !terminal_failure_marker
                 && fixed_review_agent_claim_matches(&value, worker_key))
@@ -798,19 +796,70 @@ fn fixed_review_agent_claim_matches(value: &str, worker_key: &str) -> bool {
 }
 
 fn active_review_marker_matches(value: &str, worker_key: &str) -> bool {
-    let value = value.to_lowercase();
     let worker_key = worker_key.to_lowercase();
-    if !value.contains(&worker_key) {
-        return false;
-    }
-    if terminal_review_failure_marker_matches(&value, &worker_key) {
-        return false;
+    active_review_evidence_blocks(value).any(|block| {
+        let mut block_worker_key = None;
+        let mut job_state = None;
+
+        for line in block.lines() {
+            if let Some(field_value) = markdown_list_field(line, "worker key") {
+                block_worker_key = Some(field_value);
+            } else if let Some(field_value) = markdown_list_field(line, "job state") {
+                job_state = Some(field_value);
+            }
+        }
+
+        block_worker_key
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case(&worker_key))
+            && job_state.as_deref().is_some_and(|state| {
+                state.eq_ignore_ascii_case("queued") || state.eq_ignore_ascii_case("running")
+            })
+    }) || value
+        .lines()
+        .any(|line| legacy_active_review_marker_matches(line, &worker_key))
+}
+
+fn active_review_evidence_blocks(value: &str) -> impl Iterator<Item = &str> {
+    value
+        .split("## Shea Symphony Agent Review Run")
+        .skip(1)
+        .map(|remainder| {
+            remainder
+                .find("\n## ")
+                .map_or(remainder, |end| &remainder[..end])
+        })
+}
+
+fn markdown_list_field(line: &str, expected_name: &str) -> Option<String> {
+    let line = line.trim().strip_prefix("- ").unwrap_or(line.trim());
+    let (name, value) = line.split_once(':')?;
+    if !name.trim().eq_ignore_ascii_case(expected_name) {
+        return None;
     }
 
-    value.contains("queued")
-        || value.contains("job state: running")
-        || value.contains("review worker running")
-        || value.contains("running review:")
+    Some(markdown_scalar(value))
+}
+
+fn legacy_active_review_marker_matches(line: &str, worker_key: &str) -> bool {
+    let line = markdown_scalar(line).to_lowercase();
+    [
+        format!("queued {worker_key}"),
+        format!("review worker running with key {worker_key}"),
+        format!("running review: {worker_key}"),
+    ]
+    .contains(&line)
+}
+
+fn markdown_scalar(value: &str) -> String {
+    value
+        .trim()
+        .trim_start_matches("- ")
+        .trim()
+        .trim_matches('`')
+        .trim_end_matches('.')
+        .trim()
+        .replace('`', "")
 }
 
 fn terminal_review_failure_marker_matches(value: &str, worker_key: &str) -> bool {
@@ -2894,6 +2943,108 @@ mod tests {
         let mut issue = issue();
         issue.description =
             Some("## Workpad\n\nReview worker running with key `review:#1:fake`.".into());
+
+        assert_eq!(
+            review_run_eligibility(&issue, "Agent Review", "fake"),
+            ReviewRunEligibility::AlreadyQueued {
+                worker_key: "review:#1:fake".into()
+            }
+        );
+    }
+
+    #[test]
+    fn review_run_eligibility_ignores_cross_section_queued_text_and_completed_review() {
+        let mut issue = issue();
+        issue.description = Some(
+            r#"## Expected Outcome
+
+- Requests remain durably queued until the provider accepts them.
+
+## Shea Symphony Agent Review Run
+
+- Worker key: `review:#1:fake`
+- Job state: `Completed`
+
+## Context Verification
+
+- Verify the queued request contract."#
+                .into(),
+        );
+
+        assert_eq!(
+            review_run_eligibility(&issue, "Agent Review", "fake"),
+            ReviewRunEligibility::Eligible {
+                worker_key: "review:#1:fake".into()
+            }
+        );
+    }
+
+    #[test]
+    fn review_run_eligibility_detects_queued_review_evidence_block() {
+        let mut issue = issue();
+        issue.description = Some(
+            r#"## Shea Symphony Agent Review Run
+
+- Worker key: `review:#1:fake`
+- Job state: `Queued`"#
+                .into(),
+        );
+
+        assert_eq!(
+            review_run_eligibility(&issue, "Agent Review", "fake"),
+            ReviewRunEligibility::AlreadyQueued {
+                worker_key: "review:#1:fake".into()
+            }
+        );
+    }
+
+    #[test]
+    fn review_run_eligibility_detects_running_review_evidence_block() {
+        let mut issue = issue();
+        issue.description = Some(
+            r#"## Shea Symphony Agent Review Run
+
+- Worker key: `review:#1:fake`
+- Job state: `Running`"#
+                .into(),
+        );
+
+        assert_eq!(
+            review_run_eligibility(&issue, "Agent Review", "fake"),
+            ReviewRunEligibility::AlreadyQueued {
+                worker_key: "review:#1:fake".into()
+            }
+        );
+    }
+
+    #[test]
+    fn review_run_eligibility_ignores_completed_review_evidence_block() {
+        let mut issue = issue();
+        issue.description = Some(
+            r#"## Shea Symphony Agent Review Run
+
+- Worker key: `review:#1:fake`
+- Job state: `Completed`"#
+                .into(),
+        );
+
+        assert_eq!(
+            review_run_eligibility(&issue, "Agent Review", "fake"),
+            ReviewRunEligibility::Eligible {
+                worker_key: "review:#1:fake".into()
+            }
+        );
+    }
+
+    #[test]
+    fn review_run_eligibility_detects_structured_active_review_claim() {
+        let mut issue = issue();
+        issue.project_fields.insert(
+            "Review Agent".into(),
+            serde_json::Value::String(
+                "v=1 lane=review actor=antigravity worker=\"review:#1:fake\" source=loop issue=#1 run=review-run state=active thread=unknown registry=run/review-run".into(),
+            ),
+        );
 
         assert_eq!(
             review_run_eligibility(&issue, "Agent Review", "fake"),

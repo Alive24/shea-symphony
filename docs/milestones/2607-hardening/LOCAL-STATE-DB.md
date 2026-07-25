@@ -246,6 +246,18 @@ Recommended shape:
   recovery, and compact remain deferred. Startup migration remains owned by
   `LocalStateDatabase`.
 
+The implemented first reader slice is intentionally narrower than the eventual
+dashboard surface. It can find one active `workflow_index` row by fully
+qualified repository and issue identity, or list at most 100 active rows for a
+workspace runtime and repository in stored issue/workflow identity order. It
+reuses the Admin readiness distinction, returns only persisted `starting` or
+`running` rows, and never infers latest execution, lifecycle, freshness,
+tracker state, or Temporal state.
+
+`tracker_cache`, `activity_progress`, and `artifact_index` reads remain
+deferred alongside the full `DashboardSnapshot`; their ownership ledger is in
+`implementation/T2607-02-local-state-db.md`.
+
 Recommended initial methods:
 
 ```text

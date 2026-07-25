@@ -1,8 +1,8 @@
 # T2607-02 Local State DB
 
-Status: Migration v1, Describe-backed lifecycle projection, and the
-LocalStateAdmin health/explicit-migration boundary implemented; query, recovery,
-and integration slices deferred
+Status: Migration v1, Describe-backed lifecycle projection, LocalStateAdmin
+health/explicit migration, and active-only workflow-index reads implemented;
+broader query, recovery, and integration slices deferred
 
 ## Purpose
 
@@ -136,9 +136,39 @@ require table reconstruction.
   supported close classification later arrives. Old-Run evidence and identity
   conflicts never overwrite a row.
 
+## Implemented Active Query Slice
+
+- `LocalStateReader` is a crate-internal, synchronous read boundary. It reuses
+  `LocalStateAdmin` readiness diagnostics and opens only an existing, current
+  database in SQLite read-only mode.
+- A fully qualified repository/issue lookup returns only the shared
+  `starting` or `running` status rows. A scoped list filters by
+  `workspace_runtime_id` and `repo_id`, orders by stored `issue_ref` then
+  `workflow_id` ascending, and returns at most 100 rows.
+- Successful absence is possible only after readiness is established. Missing,
+  uninitialized, corrupt, incomplete, unversioned-conflict, or incompatible
+  state remains a typed unavailable/not-ready result.
+- Reads do not infer lifecycle, freshness, latest Run, tracker state, or
+  Temporal state, and they do not initialize, migrate, repair, project, write,
+  or make network calls.
+
+## Deferred Read-Model Ledger
+
+Only active `workflow_index` reads are implemented in this slice. Absence from
+an unimplemented surface is not evidence that the underlying work is fresh,
+successful, or complete.
+
+| Deferred surface | Known downstream owner |
+| --- | --- |
+| `tracker_cache` reads/projection completion | T2607-04 Tracker Transition Activity |
+| `activity_progress` reads/projection completion | T2607-05 Agent Activity Boundary |
+| `artifact_index` reads/projection completion | T2607-05 Agent Activity Boundary |
+| Full `DashboardSnapshot` assembly and App exposure | T2607-07 App Integration |
+
 ## Deferred Slices
 
-- `query`: workspace-scoped readers and dashboard snapshots;
+- `query`: tracker cache, activity progress, artifact index, and complete
+  dashboard snapshots beyond the implemented active workflow index;
 - `admin`: explicit rebuild/replace, compact, recovery, and manual checkpoint
   operations beyond the implemented health/explicit-migration boundary;
 - `test/hardening`: measured contention, internal pooling decisions,

@@ -25,14 +25,38 @@ This package implements decisions from:
 - `LOCAL-STATE-DB.md`;
 - `adr/0006-temporal-local-runtime-spine.md`.
 
-## Goals
+## Implementation Slices And Deferred Work
+
+Issue #501 is the first independently reviewable slice. It owns only the
+crate-private pure activation and Workflow identity contract: request
+validation, optimistic expectation comparison, state classification, target
+derivation, provenance, encoding, and the 256-byte `WorkflowId` limit.
+
+TODO/backlog: the older start and repair design in this document described an
+SQLite pre-start reservation plus `starting`, `stale_start`, and
+`stale_missing` repair. Do not implement that model. `WORKFLOW-ACTIVATION.md`
+is the newer Temporal-authoritative contract: start is optimistic, current
+Describe evidence is projected after start, and SQLite conflicts are
+diagnostics rather than reservations or execution authority.
+
+Deferred ownership is explicit:
+
+- #502 owns Temporal start and already-open execution handling;
+- #503 owns Describe-backed targeted repair/reconciliation;
+- #504 owns capacity admission;
+- #505 owns the minimum real caller and App/backend entry surface.
+
+Those slices must consume the #501 activation facts and must not regenerate
+episode time, accept a caller-selected target kind, or reconstruct identity.
+
+## Full Coordinator Goals Across #501-#505
 
 - Start `IssueWorkflow` only for executable tracker states.
 - Enforce at most one active `IssueWorkflow` execution per issue at a time.
 - Use a human-readable episode-scoped `workflow_id` as the Temporal Workflow ID.
 - Store Temporal's native `run_id` after start for exact execution lookup.
-- Use SQLite `workflow_index` as the local active guard and App read model.
-- Use Temporal start/visibility/query as the execution fact.
+- Use SQLite `workflow_index` as a local diagnostic index and App read model.
+- Use Temporal start/idempotency and current Describe as execution facts.
 - Repair stale local rows without directly changing tracker business state.
 - Keep startup and refresh cheap enough for App use.
 
@@ -50,370 +74,235 @@ This package implements decisions from:
 
 ## Expected Code Areas
 
-Recommended package shape:
+The #501 package shape is intentionally small:
 
 ```text
 symphony/
   coordinator/
     mod.rs
-    start.rs
-    repair.rs
-    discovery.rs
-    identity.rs
-    capacity.rs
-    dto.rs
 ```
 
-Names are illustrative. Keep the implementation inside the `symphony` runtime
-boundary unless the existing codebase strongly suggests a better local module
-layout.
+Later slices may split files when real start, repair, capacity, and entrypoint
+behavior exists. Do not pre-create empty subsystems.
 
 ## Core DTOs
 
-Recommended DTOs:
+The pure #501 contract is:
 
 ```text
-CoordinatorStartRequest {
+CoordinatorActivationRequest {
   issue_ref
-  source
   expected_tracker_state?
-  target_kind?
-  reason
-  force_repair_before_start: bool
+  expected_tracker_revision?
+  episode_time
+  source_kind
+  source_ref
+  audit_reason
 }
 
-CoordinatorStartResult {
-  issue_ref
-  action
-  workflow_id?
-  run_id?
-  tracker_state
-  local_status
-  temporal_status?
-  freshness
-  message
+ObservedTrackerSnapshot {
+  state
+  revision
 }
 
-CoordinatorRepairRequest {
-  issue_ref
-  scope
-  reason
-}
-
-CoordinatorRepairResult {
-  issue_ref
-  before
-  after
-  action
-  message
-}
+CoordinatorActivationDecision =
+  Static
+  | Executable {
+      observed state/revision
+      Coordinator-derived target_kind
+      episode_time
+      source_kind/source_ref
+      audit_reason
+      workflow_id
+    }
+  | StaleExpectation
 ```
 
-Initial `CoordinatorStartResult.action` enum:
+`target_kind` is deliberately absent from `CoordinatorActivationRequest`.
+Static and stale-expectation results do not contain executable activation
+facts or a `WorkflowId`.
 
-- `started`;
-- `already_running`;
-- `static_state`;
-- `capacity_deferred`;
-- `repaired_and_started`;
-- `repair_required`;
-- `conflict`;
-- `failed`.
+Start, repair, capacity, and caller DTOs remain deferred to #502-#505. When
+added, they must reuse the existing identity wrappers:
 
-Initial repair action enum:
+```text
+RepoId
+IssueRef
+WorkflowId
+```
 
-- `no_op`;
-- `marked_stale_start`;
-- `marked_stale_missing`;
-- `marked_completed`;
-- `marked_failed`;
-- `marked_closed_unknown`;
-- `bound_existing_temporal_execution`;
-- `cleared_inactive_guard`;
-- `start_retry_allowed`;
-- `failed`.
+Plain strings are acceptable only inside persistence and Temporal client
+calls.
 
-Use typed `RepoId`, `IssueRef`, `WorkflowId`, and `RunId` wrappers at code
-boundaries. Plain strings are acceptable only inside persistence and Temporal
-client calls.
+## Request Validation
+
+Activation input requires:
+
+- non-empty repository host, owner, and repository components;
+- non-zero issue number;
+- explicit UTC episode time with exactly second precision;
+- stable source kind plus a non-empty source reference;
+- a trimmed, non-empty audit reason of at most 512 UTF-8 bytes;
+- a non-empty expected or observed tracker revision whenever present.
+
+The source reference is identity. The audit reason is bounded provenance and is
+never embedded in the Workflow ID.
 
 ## Executable State Policy
 
-The Coordinator should classify tracker states before attempting a start.
+The Coordinator classifies the already-observed tracker state without I/O.
 
-Executable states:
+| Observed tracker state | Classification | Derived target kind |
+| --- | --- | --- |
+| `Todo` | executable | `work` |
+| `In Progress` | executable | `work` |
+| `Agent Review` | executable | `review` |
+| `Rework` | executable | `rework` |
+| `Merging` | executable | `merge` |
+| `Backlog` | static | none |
+| `Need to Clarify` | static | none |
+| `Need Human Input` | static | none |
+| `Human Review` | static | none |
+| `Done` | static | none |
 
-- `Todo`;
-- `In Progress`;
-- `Agent Review`;
-- `Rework`;
-- `Merging`;
-- `Need Human Input` only when automatic doctor/reconcile work is explicitly
-  requested.
+Doctor or reconciliation may perform an operation that later changes the
+tracker to an executable state. That does not make `Need Human Input` itself
+executable.
 
-Static states:
-
-- `Backlog`;
-- `Need to Clarify`;
-- normal `Need Human Input`;
-- `Human Review`;
-- `Done`.
-
-`Backlog` promotion is a tracker/operator action that may create `Todo`.
-`Todo` is the executable activation point for `IssueWorkflow`.
+If an optional expected state or revision differs from the observation,
+`StaleExpectation` takes precedence over static/executable classification.
 
 ## Workflow ID Construction
 
-The Coordinator owns `workflow_id` construction.
-
-Recommended shape:
+The Coordinator owns `workflow_id` construction with this exact grammar:
 
 ```text
-issue:<repo-slug>:<issue-number>:pulse:<from-state>-to-<target-kind>:<YYYYMMDD-HHMMSSZ>:<source-slug>
+issue:<encoded-host>/<encoded-owner>/<encoded-repo>:<issue-number>:pulse:<from-state>-to-<target-kind>:<YYYYMMDDTHHMMSSZ>:<source-kind>-<encoded-source-ref>
 ```
 
 Rules:
 
 - `workflow_id` is the Temporal Workflow ID.
-- Store Temporal's returned `run_id` separately.
-- Use `target-kind`, not promised final state.
-- Include a human-readable UTC timestamp.
-- Include a source slug that explains why the pulse started.
-- If the same issue needs a later execution, generate a new `workflow_id`.
+- Store Temporal's returned `run_id` separately in later start work.
+- Tracker state, target kind, and source kind use stable lowercase kebab-case.
+- Coordinator derives target kind; callers cannot choose it.
+- Repository components and source reference use reversible URL-safe
+  percent-encoding of UTF-8 bytes. Preserve unreserved characters and case.
+- Episode time is explicit UTC-second input and is never generated inside
+  identity construction.
+- Identical activation input, including uncertain retries, reuses the exact ID.
+- A new episode timestamp or source identity creates a new ID.
+- The complete encoded ID is limited to 256 bytes. Overflow is a typed error;
+  never truncate, hash, slugify, or regenerate input.
 
 Examples:
 
 ```text
-issue:shea-symphony:123:pulse:todo-to-work:20260708-134218Z:project-rev-456
-issue:shea-symphony:123:pulse:human-review-to-merge:20260708-150012Z:operator-action-789
+issue:github.com/Alive24/shea-symphony:123:pulse:todo-to-work:20260708T134218Z:tracker-project-rev-456
+issue:github.com/Alive24/shea-symphony:123:pulse:merging-to-merge:20260708T150012Z:operator-action-action-789
 ```
-
-The source slug should be stable enough for audit but not contain secrets or
-large payloads. Good source examples:
-
-- `project-rev-456`;
-- `operator-action-789`;
-- `app-start-repair`;
-- `visible-refresh`;
-- `doctor-request`.
 
 ## Start Flow
 
-Normal start:
+TODO #502: implement the start contract from
+`WORKFLOW-ACTIVATION.md`. The future flow is:
 
 ```text
-read targeted tracker issue state
-  -> classify executable/static
-  -> check local active workflow guard
-  -> perform targeted repair if the guard may be stale
-  -> check configured capacity
-  -> construct workflow_id
-  -> insert workflow_index row with status=starting
-  -> start Temporal IssueWorkflow on symphony-core
-  -> capture run_id
-  -> update workflow_index status=running
-  -> return started
+receive already-observed executable activation facts
+  -> apply capacity policy owned by #504
+  -> start Temporal with the existing workflow_id
+  -> Describe the current execution
+  -> project only Describe-backed lifecycle evidence
 ```
 
-If the tracker state is static, return `static_state` and do not create a
-Workflow execution.
-
-If capacity is exhausted, return `capacity_deferred`. Do not create a local
-`starting` row before capacity is available.
-
-If SQLite insert fails because an active row already exists, inspect and repair
-the row before deciding whether to bind, defer, or start a new execution.
-
-If Temporal reports an already-open execution for the intended issue, bind the
-local row to that execution when it is safe to do so. Do not start a duplicate.
+Do not insert a SQLite `starting` reservation before Temporal start. If a
+Workflow with the same retry-stable ID is already open, establish that through
+Temporal and bind/project the described execution. A local active-row conflict
+is diagnostic input for #503 reconciliation, not authority to reject or
+authorize a start.
 
 ## Discovery Triggers
 
-2607 should keep discovery explicit and bounded.
-
-Allowed triggers:
-
-- App startup repair pass;
-- opening or refreshing a visible dashboard slice;
-- targeted start after an operator action;
-- targeted start after tracker refresh says an issue is executable;
-- targeted repair for a selected issue.
-
-Avoid:
-
-- full-time polling daemon;
-- full tracker scans on every App refresh;
-- App-owned start loops independent from the Coordinator;
-- Workflow starts for static lanes.
+Discovery remains deferred to #505 and should stay explicit and bounded.
+Allowed future triggers include tracker refresh, routed operator action, and a
+bounded visible/startup repair request. Static states never activate directly.
 
 ## Capacity Policy
 
-The Coordinator consults configured capacity before starting new executions.
-
-Initial caps come from `TASK-QUEUES.md`:
-
-- `symphony-core`: up to 3 concurrent control-plane Activities, while
-  serializing fact-changing writes per issue;
-- `symphony-agent`: up to 3 concurrent agent runs, while allowing only one
-  active agent attempt per issue;
-- `symphony-local`: higher local concurrency, initially 8.
-
-Coordinator capacity checks should focus on active `IssueWorkflow` starts and
-known agent-run pressure. Do not over-model task queue internals before there
-is measurement.
-
-If capacity is unavailable:
-
-- do not mutate tracker state;
-- do not create a `starting` workflow row;
-- return `capacity_deferred` with a visible reason;
-- let the next explicit refresh/start attempt retry.
+TODO #504: define and implement admission against the configured task-queue
+policy. Capacity deferral must not mutate tracker state, create a SQLite
+reservation, or regenerate activation identity. The next attempt reuses the
+same activation facts unless the caller intentionally creates a new episode.
 
 ## Repair Flow
 
-Repair reconciles local projection with Temporal and tracker. It does not
-repair business state by moving tracker lanes.
+TODO #503: implement targeted reconciliation from Temporal/current Describe
+evidence under the newer `WORKFLOW-ACTIVATION.md` and `LOCAL-STATE-DB.md`
+projection contract.
 
-Repair inputs:
-
-- local `workflow_index` row;
-- Temporal visibility/open execution lookup;
-- Temporal Query when an execution is active and queryable;
-- targeted tracker state read when needed.
-
-Repair matrix:
-
-| Local State | Temporal State | Action |
-| --- | --- | --- |
-| `starting` without `run_id` | not started or unknown | mark `stale_start` after timeout; reread tracker before retry |
-| missing row | active execution exists | rebuild projection from Temporal visibility/query; do not start another execution |
-| active row | active execution exists | keep row, refresh progress/freshness |
-| active row | closed execution exists | mark `completed` or `failed` when close status is known; otherwise `closed_unknown` |
-| active row | execution not found | mark `stale_missing`; reread tracker before retry |
-| stale row | tracker still executable | allow new `workflow_id` and start retry |
-| stale row | tracker is static | leave closed/stale projection; do not start |
-
-Repair should be conservative. If the Coordinator cannot prove that a new start
-is safe, return `repair_required` or `conflict` rather than creating a second
-active execution.
+The v1 projector does not create `starting`, `stale_start`, or `stale_missing`
+rows. Missing, conflicting, or stale local evidence must be reconciled against
+Temporal; no SQLite row may reserve a start or authorize a new execution.
+Repair does not move tracker business state directly.
 
 ## Temporal Interaction
 
-Coordinator uses Temporal client APIs for:
+#502 and #503 will use Temporal client APIs for start and current execution
+Describe. The pure #501 activation contract performs no Temporal I/O.
 
-- starting `IssueWorkflow`;
-- checking whether a workflow execution is open;
-- reading visibility/search attributes when available;
-- querying active execution summaries when needed.
-
-`IssueWorkflow` itself should run on `symphony-core`.
-
-Start attributes should include enough metadata for targeted lookup:
-
-- repo host/owner/name;
-- issue number;
-- tracker backend;
-- from state;
-- target kind;
-- source slug;
-- workflow start reason.
-
-Do not depend on Temporal visibility as the only local read path for dashboard
-views. SQLite remains the dashboard read model.
+Start attributes should carry the validated repository/issue identity, observed
+tracker state/revision, Coordinator-derived target kind, source kind/reference,
+episode time, and audit reason. `IssueWorkflow` runs on `symphony-core`.
 
 ## SQLite Interaction
 
-Coordinator writes only `workflow_index` and related freshness/progress fields
-through `LocalStateProjector` or a narrow Coordinator-owned store boundary.
+#503 may project current Describe-backed lifecycle evidence through
+`LocalStateProjector`. SQLite provides an App read model and diagnostic active
+index. It cannot reserve, reject, authorize, or prove a Temporal start.
 
-SQLite roles:
-
-- duplicate-start guard;
-- active workflow index for App and repair;
-- projection of `workflow_id`, `run_id`, status, current state, freshness, and
-  progress timestamps.
-
-SQLite must not authorize business progression. A local row can block duplicate
-starts, but it cannot prove that tracker transition, merge, PR link, or terminal
-write succeeded.
+The pure #501 activation contract performs no SQLite reads or writes.
 
 ## Tracker Interaction
 
-Coordinator may read tracker state at durable boundaries:
-
-- targeted start;
-- repair before retry;
-- explicit visible refresh;
-- operator-action activation.
-
-Coordinator must not write tracker state.
-
-Tracker writes belong to `TrackerTransitionActivity`.
-
-Manual tracker edits are treated as exception paths. Do not make every
-Coordinator refresh pay for repeated full tracker reads just to detect rare
-manual edits.
+#501 accepts an already-observed tracker snapshot and performs no tracker I/O.
+#502/#503/#505 may read at their durable boundaries, but Coordinator must not
+write tracker state. Tracker writes belong to `TrackerTransitionActivity`.
 
 ## App And Operator Interaction
 
-The App may ask the Coordinator to:
-
-- run an App-start repair pass;
-- start executable work for a selected issue;
-- repair a selected issue;
-- refresh visible dashboard rows through bounded local/tracker/Temporal reads.
-
-Human input, approve, request rework, and human-fix flows should still route to
-Codex/operator flow first. The routed flow submits a typed action through the
-Operator Action Bridge. The bridge then uses Temporal Update or a Coordinator
-start boundary as appropriate.
-
-The App should not directly choose lane transitions or run agents.
+TODO #505: expose only the minimum real caller after start, repair, and capacity
+contracts exist. The pure #501 module is crate-private and adds no App, Tauri,
+Svelte, or CLI surface.
 
 ## Error Handling
 
-Coordinator errors should be typed and observable.
+#501 uses typed validation errors for invalid issue/source/revision/audit/time
+input and Workflow ID overflow. #502-#505 own typed I/O, conflict, capacity, and
+entrypoint outcomes without changing this identity policy.
 
-Recommended error categories:
+## #501 Acceptance Checks
 
-- `tracker_read_failed`;
-- `local_guard_conflict`;
-- `temporal_start_failed`;
-- `temporal_lookup_failed`;
-- `capacity_unavailable`;
-- `static_state`;
-- `invalid_state_for_start`;
-- `repair_required`;
-- `conflict`;
-- `unhandled_error`.
+- All ten tracker states have one explicit classification.
+- Executable states have exactly one Coordinator-derived target kind.
+- `Need Human Input` is static.
+- Matching expectations can produce a static or executable decision.
+- Stale expectations produce no executable facts or Workflow ID.
+- URL-safe component encoding is reversible and preserves case and UTF-8.
+- Identical activation input produces the same retry-stable Workflow ID.
+- New episode time or source identity produces a different Workflow ID.
+- Complete encoded IDs over 256 bytes fail without fallback identity.
+- The module and its contract remain crate-private and reuse `RepoId`,
+  `IssueRef`, and `WorkflowId`.
+- No tracker, SQLite, Temporal, capacity, filesystem, network, process, CLI,
+  App, Svelte, or Tauri side effect exists.
 
-Use `unhandled_error` for unexpected implementation/runtime failures. Avoid
-calling this category `bug` in user-facing or tracker-facing state.
+## #501 Done Means
 
-## Acceptance Checks
-
-- Static tracker states do not start a Workflow by default.
-- Executable tracker states can start an `IssueWorkflow` through Coordinator.
-- Coordinator stores `workflow_id` and returned `run_id`.
-- Two concurrent start attempts for the same issue cannot create two active
-  workflow rows.
-- A Temporal already-open execution can be rebound into SQLite projection.
-- `starting` rows without `run_id` become `stale_start` after timeout.
-- Active rows whose Temporal execution is gone become `stale_missing` or a
-  closed status.
-- Capacity deferral does not create a false `starting` row.
-- Coordinator never calls agent runners directly.
-- Coordinator never writes tracker state directly.
-- App start repair works on bounded visible/configured scope, not an
-  unbounded full-time scanner.
-
-## Done Means
-
-- Coordinator start/repair DTOs exist;
-- executable/static classification is centralized;
-- `workflow_id` construction is centralized;
-- SQLite active guard is used before Temporal start;
-- Temporal `run_id` is captured after start;
-- targeted repair covers known stale local states;
-- App/backend has a narrow Coordinator entrypoint;
-- old autopilot start/resume behavior is not preserved as a second scheduler.
+- pure activation request, observation, decision, executable facts, enums, and
+  typed errors exist;
+- state classification and target derivation are centralized and table-tested;
+- Workflow ID grammar, encoding, validation, and retry behavior are centralized
+  and tested;
+- semantic Rustdoc and boundary comments explain the durable identity policy;
+- deferred #502-#505 work is explicit and the older SQLite reservation model is
+  not accidentally implemented.

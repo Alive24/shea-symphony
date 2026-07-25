@@ -102,25 +102,31 @@ Primary docs:
 
 Goal:
 
-- implement the thin launcher/registrar for executable tracker states.
+- implement the thin launcher/registrar for executable tracker states through
+  independently reviewable #501-#505 slices.
 
 Scope:
 
-- executable tracker state discovery;
-- human-readable `workflow_id` construction;
-- Temporal `run_id` capture;
-- optimistic start with `workflow_index` local guard;
-- targeted repair for a single issue;
-- App-start repair pass;
-- refresh/snapshot lightweight repair for visible issues.
+- #501: pure activation classification, Coordinator-derived target kind,
+  provenance validation, and exact episode-scoped Workflow ID construction;
+- #502: optimistic Temporal start and already-open execution handling;
+- #503: Describe-backed targeted repair/reconciliation;
+- #504: capacity admission;
+- #505: minimum real caller and App/backend entry surface.
 
 Acceptance:
 
-- Coordinator starts only executable states;
-- static states do not create live Workflow executions by default;
-- duplicate starts are blocked by local active index and Temporal visibility;
-- repair matrix handles `stale_start`, `stale_missing`, closed executions, and
-  missing local rows;
+- Coordinator classifies only `Todo`, `In Progress`, `Agent Review`, `Rework`,
+  and `Merging` as executable;
+- `Backlog`, `Need to Clarify`, `Need Human Input`, `Human Review`, and `Done`
+  remain static;
+- Coordinator alone derives target kind and constructs the retry-stable
+  `WorkflowId`;
+- Temporal start/idempotency and current Describe are execution authority;
+- SQLite active-row conflicts are diagnostics, not pre-start reservations or
+  start authority;
+- repair projects Describe-backed evidence without creating `starting`,
+  `stale_start`, or `stale_missing` lifecycle rows;
 - Coordinator does not run agents, choose business transitions, or write
   tracker state.
 

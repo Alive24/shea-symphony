@@ -162,9 +162,7 @@ Executable starts:
 - `In Progress`;
 - `Agent Review`;
 - `Rework`;
-- `Merging`;
-- `Need Human Input` only for automatic doctor/reconcile or routed operator
-  action handling.
+- `Merging`.
 
 Static waits:
 
@@ -173,6 +171,10 @@ Static waits:
 - normal `Need Human Input`;
 - `Human Review`;
 - `Done`.
+
+Doctor/reconciliation or a routed operator action must establish an executable
+tracker state before Coordinator starts a new episode; `Need Human Input` is
+never itself an activation state.
 
 ## Handler Model
 
@@ -403,12 +405,12 @@ Possible outcomes:
 
 Do not bounce merge-time semantic fix failure to `Rework` by default.
 
-## Need Human Input Handler
+## Need Human Input Resumption
 
 Purpose:
 
-- handle automatic doctor/reconcile or routed operator action after a static
-  human wait.
+- define how a Doctor/reconciliation or routed operator action may resolve a
+  static human wait before a later executable activation.
 
 Inputs:
 
@@ -422,7 +424,8 @@ Possible paths:
   if executable;
 - routed request-rework action: transition to `Rework` and continue;
 - routed cancellation/no-op: transition according to terminal policy;
-- automatic doctor safe repair succeeds: resume or retry targeted operation;
+- automatic Doctor safe repair succeeds: commit an executable resume state,
+  then allow Coordinator to evaluate that new tracker observation;
 - automatic doctor cannot repair safely: remain or transition to
   `Need Human Input` with updated evidence and complete.
 

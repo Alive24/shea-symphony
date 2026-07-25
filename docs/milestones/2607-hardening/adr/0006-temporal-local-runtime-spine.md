@@ -29,9 +29,10 @@ Use local Temporal as the 2607 Symphony runtime spine.
 - A thin Workflow Coordinator starts executable `IssueWorkflow` executions and
   records `workflow_id`/`run_id`; it does not run agents or choose business
   transitions.
-- Coordinator start uses SQLite as a local duplicate-start guard and Temporal
-  as the execution fact. Coordinator repair reconciles SQLite projection with
-  Temporal visibility/query and tracker state.
+- Coordinator start uses Temporal start/idempotency and current Describe as
+  execution facts. SQLite active-row conflicts are local diagnostics, never
+  pre-start reservations or start authority; Coordinator repair reconciles the
+  projection against current Temporal evidence and tracker policy.
 - Executable lane handlers are independently startable and internally
   chainable. Chaining is Workflow continuation, not a terminal outcome.
 - Coding/review/merge/doctor work uses coarse Agent Activities with typed

@@ -12,9 +12,12 @@ mod database;
 mod identity;
 mod migration;
 pub(crate) mod projector;
+pub(crate) mod reader;
+mod workflow_index;
 
 pub use database::{JournalMode, LocalStateDatabase, LocalStateError, LocalStateInitialization};
 pub use identity::{
     Freshness, IssueRef, RepoId, TrackerBackend, WorkflowId, WorkflowIndexStatus,
     WorkspaceRuntimeId, ACTIVE_WORKFLOW_STATUSES,
 };
+pub(crate) use workflow_index::{WorkflowIndexRow, WorkflowTerminalOutcome};

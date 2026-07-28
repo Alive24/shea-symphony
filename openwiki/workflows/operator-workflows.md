@@ -11,7 +11,7 @@ This page maps operator intent to canonical source material; it does not replace
 
 ## Normal 2606 lane workflow
 
-The mature operational flow exists in the protected 2606 runtime and legacy modules:
+The mature operational flow is currently executed by the [protected 2606 bootstrap runtime](../architecture/2606-bootstrap-runtime.md): protected-branch-built vendored App/CLI binaries operate against canonical main while also serving as recovery and acceptance baselines. The legacy modules visible on main are reference evidence, not the implementation architecture to carry into 2607:
 
 1. **Shape/inspect the contract.** Todo must be dispatchable; otherwise route to NTC.
 2. **Main implementation.** Claim the issue, prepare/resume its isolated worktree, run the configured agent, verify, publish/link the PR, record the Main workpad, and hand off to Agent Review.
@@ -38,7 +38,7 @@ sequenceDiagram
     UI-->>OP: Human Todo or next executable lane
 ```
 
-This is the implemented 2606 interaction pattern; the 2607 equivalent is planned to move lane attempts behind Temporal Activities.
+This is the implemented 2606 interaction pattern and an acceptance oracle for the replacement. The 2607 equivalent must re-express its safety and evidence semantics through new Workflow, Activity, Coordinator, Tauri, SQLite, and operator-action contracts rather than move or wrap the old lane implementation behind Temporal. Reviewed DTOs, parsers, tracker/Git adapters, event normalization, helpers, and focused tests may be extracted or reused when they fit those typed ownership boundaries; that does not carry forward 2606 lane or runtime ownership.
 
 ## Human Todo handoffs
 
@@ -66,7 +66,7 @@ Use Doctor for NHI, missing PR linkage, draft handoff, stale claim, dirty runtim
 5. Require explicit confirmation for tracker changes, PR-ready changes, claim repair, cleanup, runtime cleanup, or skill writes.
 6. Record durable evidence before terminal routing.
 
-Implemented deterministic repair is narrower than the operator spec: invalid Human Review can return to Agent Review, a draft PR can be marked ready only with explicit confirmation, and explicit escalation to NHI is supported. Doctor must never move an issue to Human Review or merge a PR.
+Implemented deterministic repair is narrower than the operator spec: invalid Human Review can return to Agent Review, a draft PR can be marked ready only with explicit confirmation, and explicit escalation to NHI is supported. Doctor must never move an issue to Human Review or merge a PR. #390 is Done and established the newer merge-agent policy; it is not an active Doctor-repair Issue. **Tracking:** retained 2606 Doctor repair is an unowned gap or removable under T2607-08, for which no Issue is promoted.
 
 ## Interrupted 2606 recovery
 
@@ -84,7 +84,7 @@ Do not apply these commands blindly on current `main`: the default binary is now
 
 ## 2607 operator target
 
-The **Draft** design makes the App primary, with Tauri calling Temporal start/query/signal/update and SQLite serving top-level snapshots. Operator flows submit structured actions through an Operator Action Bridge; tracker mutation remains inside Activities. That target is not implemented beyond readiness probing, pure contracts, and local-state foundations.
+The **Draft** design makes the App primary, with Tauri calling Temporal start/query/signal/update and SQLite serving top-level snapshots. Operator flows submit structured actions through an Operator Action Bridge; tracker mutation remains inside Activities. That target is not implemented beyond readiness probing, pure contracts, and local-state foundations. **Tracking (verified 2026-07-28):** T2607-07 owns product integration and no Issue is promoted. #505 is only a bounded Coordinator/App backend Backlog seed and explicitly excludes Svelte workflow UX; static-handoff action bootstrap remains with `OPERATOR-ACTION-BRIDGE.md` plus T2607-07.
 
 ## Change guidance
 

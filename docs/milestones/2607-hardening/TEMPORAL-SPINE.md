@@ -11,8 +11,12 @@ This is not a spike and not an adapter for later. Temporal becomes the
 Symphony runtime spine for executable workflow episodes, retries, signals,
 queries, activity history, and cancellation.
 
-The protected 2606 MVP branch is the fallback. 2607 does not need to preserve
-the old loop as a second durable runtime.
+The protected 2606 MVP branch supplies the active App/CLI bootstrap during
+development, the recovery baseline, and the acceptance oracle. It remains
+outside the 2607 architecture: the new runtime must not call or wrap its old
+loop as a compatibility or second durable runtime. This does not prohibit
+reviewed reuse of bounded Rust components that are extracted from that
+orchestration ownership and placed behind new typed boundaries.
 
 ## Hard Decision
 
@@ -269,9 +273,8 @@ active, it finds the active execution instead of creating another one.
 
 ## Deletion Target
 
-The old Symphony loop should end as:
-
-- deleted; or
-- reduced to compatibility shims that start/query/signal Temporal workflows.
-
-It should not remain a second retry/resume/state/history framework.
+The old Symphony loop should be deleted from the 2607 product path. If a thin
+admin/debug entrypoint is still needed, it should directly start, query, signal,
+or update Temporal workflows. It may reuse bounded shared types or helpers, but
+must not rewire the old loop or product command graph into a shim or retain a
+second retry/resume/state/history framework.

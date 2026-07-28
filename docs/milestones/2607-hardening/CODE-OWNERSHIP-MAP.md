@@ -22,10 +22,11 @@ command graph.
 New runtime behavior should land here first unless there is a stronger existing
 owner.
 
-## Shared Substrate
+## Shared Substrate And Contracts To Re-Express
 
-Some MVP-era modules remain useful substrate and may be reused by the Temporal
-runtime through typed boundaries:
+Some MVP-era modules contain proven behavior that must be captured as contracts,
+tests, and operational acceptance evidence. They may also contain bounded Rust
+components worth reusing:
 
 - `src/config.rs`
 - `src/workflow.rs`
@@ -34,10 +35,13 @@ runtime through typed boundaries:
 - `src/artifacts.rs`
 - focused helper modules with stable data or GitHub semantics
 
-2607 work may extract or narrow these boundaries, but should avoid turning
-Temporal workflow code into a direct caller of broad MVP command or lane APIs.
-External effects still belong in Activities or operator-facing client surfaces,
-not deterministic Workflow code.
+Reuse is a reviewed implementation choice, not a default migration strategy.
+Prefer small protocol-independent types, parsers, adapters, and helpers that can
+be extracted behind the new typed boundary with focused tests. Do not reuse an
+MVP module when that would preserve old lane/runtime ownership, broad command
+APIs, hidden state authority, or the product CLI command graph. External effects
+still belong in Activities or operator-facing client surfaces, not deterministic
+Workflow code.
 
 ## Legacy To Mine Or Delete
 
@@ -61,7 +65,8 @@ changes:
 
 - the protected `2606-MVP` branch remains the dogfood runtime reference;
 - git history preserves the previous `src/main.rs` dispatcher and related code;
-- old modules stay available as migration reference until explicitly removed;
+- old modules may stay temporarily as inactive migration reference until
+  explicitly removed, but are not runtime dependencies;
 - durable issue and PR review trails record intentional entrypoint decisions.
 
 Physical relocation of legacy code should be a separate mechanical issue after
@@ -74,6 +79,7 @@ When implementing 2607 hardening issues:
 
 - put new Temporal runtime code under `src/symphony/**`;
 - keep `src/main.rs` thin and runtime-entrypoint-shaped;
-- reuse shared substrate only through typed boundaries;
+- re-express required MVP behavior through new typed boundaries and tests,
+  selectively reusing bounded Rust components when the ownership review passes;
 - do not extend MVP CLI/autopilot lanes as the new architecture;
 - record deliberate exceptions in the issue or PR evidence.

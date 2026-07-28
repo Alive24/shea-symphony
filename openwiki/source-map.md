@@ -20,11 +20,11 @@ Start with the concept page matching the question, then use these anchors to ver
 | Activities | `src/symphony/activities.rs` | no-op health paths plus inert/placeholder product Activities |
 | Coordinator | `src/symphony/coordinator/mod.rs` | implemented pure activation and Workflow identity only |
 | SQLite | `src/symphony/local_state/**` | migration/admin/projector/reader foundations; not App/Coordinator-wired |
-| Legacy lane runtime | `src/commands/**`, `src/lanes/**`, `src/review.rs`, `src/merge_lane.rs` | 2606 proven behavior and migration reference |
+| Legacy implementation on main | `src/commands/**`, `src/lanes/**`, `src/review.rs`, `src/merge_lane.rs` | primarily reference/acceptance evidence, not the active protected binary source or 2607 target architecture; bounded protocol-independent components may be reused after ownership review when they fit new typed boundaries and focused tests |
 | Tracker adapters | `src/tracker.rs`, `src/tracker/**` | 2606 external-state access and mutation capabilities |
 | Doctor | `src/commands/doctor.rs`, `src/doctor/**` | diagnostics, topology, evidence gates, bounded repairs |
 
-Use [Architecture overview](architecture/overview.md) to understand how these pieces coexist, [Authority and state](architecture/authority-and-state.md) before interpreting storage code, and [2607 execution contracts](architecture/execution-contracts.md) when implementing the T2607-05/06 Workflow and Activity boundaries.
+Use [Architecture overview](architecture/overview.md) to understand how these pieces coexist, [Protected 2606 bootstrap runtime](architecture/2606-bootstrap-runtime.md) for the current self-hosting engine/target topology and retirement criteria, [Authority and state](architecture/authority-and-state.md) before interpreting storage code, and [2607 execution contracts](architecture/execution-contracts.md) when implementing the T2607-05/06 Workflow and Activity boundaries.
 
 ## Desktop application
 
@@ -35,7 +35,7 @@ Use [Architecture overview](architecture/overview.md) to understand how these pi
 - `app/src-tauri/src/temporal_health.rs` — direct read-only 2607 readiness.
 - `app/test/**` — Node tests for operator behavior and optional static build.
 
-The [Operator workflows](workflows/operator-workflows.md) page connects these surfaces to lane and human authority. [2607 App and operator integration](architecture/app-operator-integration.md) maps the Draft replacement boundary and its unresolved static-handoff action bootstrap.
+The [Operator workflows](workflows/operator-workflows.md) page connects these surfaces to lane and human authority. [2607 App and operator integration](architecture/app-operator-integration.md) maps the Draft replacement boundary and its unresolved static-handoff action bootstrap. **Tracking:** `OPERATOR-ACTION-BRIDGE.md` plus T2607-07 own that follow-up; no Issue is promoted, and #505 is only a bounded backend Backlog seed excluding Svelte UX.
 
 ## Workflow-owned files under `.shea`
 
@@ -82,12 +82,12 @@ History helps explain intent, but current source and explicit status still contr
 
 ## Known drift and conflicts
 
-- README/CLI/operator docs frequently describe the 2606 product runtime, while current `src/main.rs` starts 2607 workers.
-- The desktop's legacy Cargo fallback points at a root binary that is now Temporal-only.
+- README/CLI/operator docs describe the complete 2606 product runtime, while current `src/main.rs` starts partial 2607 workers. The operational bridge is the protected-2606-built vendored App/CLI bootstrap against canonical main, not current main's root binary.
+- The desktop's legacy Cargo fallback can point at a root binary that is now Temporal-only, so it is not equivalent to selecting the protected bootstrap CLI.
 - ADR 0006 is Proposed despite partial implementation; do not relabel it Accepted.
-- Planned 2607 App, tracker write, agent Activity, and state-machine behavior exceeds current implementation.
-- SQLite schema can represent lifecycle spellings the current projector intentionally never writes.
-- Doctor dirty-merge guidance appears stale relative to newer merge policy.
-- Parent/subissue docs contain some future-tense language for checks now present in code/tests.
+- Planned 2607 App, tracker write, agent Activity, and state-machine behavior exceeds current implementation. **Tracking:** T2607-07 owns App product integration, remaining tracker work belongs to T2607-04, and agent/state-machine behavior belongs to T2607-05/06; none has a promoted Issue. #505 is only a bounded Coordinator/App backend Backlog seed excluding Svelte UX.
+- SQLite schema can represent lifecycle spellings the current projector intentionally never writes; this is an intentional v1 projector boundary under ADR 0007 rather than an implementation-status claim.
+- Doctor dirty-merge guidance conflicts with the newer merge policy established by Done issue #390. **Tracking:** retained 2606 Doctor repair is an unowned gap or removable under T2607-08, for which no Issue is promoted.
+- Parent/subissue docs contain some future-tense language for checks now present in code/tests. **Tracking:** unowned documentation drift.
 
 When a conflict affects a change, report it and cite both sides; do not resolve it implicitly. [Operations](operations.md) provides the practical runtime warning.

@@ -9,8 +9,12 @@ orchestration loop creates runtime responsibilities that Temporal already
 solves: durable state, retry, waiting, signals, queries, activity history, and
 cancellation.
 
-The protected 2606 MVP branch is the fallback. 2607 should not preserve the old
-loop as a second durable runtime.
+The protected 2606 MVP branch supplies the active App/CLI bootstrap during
+development, the recovery baseline, and the acceptance oracle. It remains
+outside the 2607 architecture; 2607 should not call or wrap the old loop as a
+compatibility or second durable runtime. Reviewed reuse of bounded Rust
+components remains allowed when they are extracted from that orchestration
+ownership and placed behind new typed boundaries.
 
 ## Decision
 

@@ -49,13 +49,13 @@ sequenceDiagram
     WF-->>TE: Continue or complete at static handoff
 ```
 
-This is the **Draft planned contract** from `WORKFLOW-ACTIVATION.md`; only pure classification/identity and the projector mechanics are implemented. The production launcher and full Workflow are not.
+This is the **Draft planned contract** from `WORKFLOW-ACTIVATION.md`; only pure classification/identity and the projector mechanics are implemented. The production launcher and full Workflow are not. **Tracking (verified 2026-07-28):** #502 is Todo and is the next T2607-03 Temporal-authoritative start slice; full Workflow behavior belongs to T2607-05/06, with no promoted Issues.
 
 The episode Workflow ID is human-readable and Coordinator-derived from repository, issue, observed state, target kind, explicit UTC-second timestamp, and source identity. Temporal's `run_id` locates the exact execution. SQLite stores these values but must not construct or alter them (`src/symphony/coordinator/mod.rs`, `src/symphony/local_state/identity.rs`).
 
 ## Tracker commits
 
-The proposed authority is `TrackerTransitionActivity`: Workflow requests a change, the Activity checks `expected_from_state`, writes, and verifies through targeted readback. DTOs and deterministic `symphony.transition.v1` idempotency are implemented, and the Activity name is registered. The Activity itself currently returns an explicit rejected/not-implemented result and performs no side effect (`src/symphony/activities.rs`; `TRACKER-TRANSITION-ACTIVITY.md`, **Partially implemented**).
+The proposed authority is `TrackerTransitionActivity`: Workflow requests a change, the Activity checks `expected_from_state`, writes, and verifies through targeted readback. DTOs and deterministic `symphony.transition.v1` idempotency are implemented, and the Activity name is registered. The Activity itself currently returns an explicit rejected/not-implemented result and performs no side effect (`src/symphony/activities.rs`; `TRACKER-TRANSITION-ACTIVITY.md`, **Partially implemented**). **Tracking (verified 2026-07-28):** #494 is Done only for the T2607-04 transition DTO/idempotency contract; no Issue is promoted for the remaining T2607-04 mutation, evidence, and reconcile slices.
 
 Therefore:
 
@@ -123,7 +123,7 @@ Reconciliation observes facts and repairs projections; it does not silently repa
 3. Leave conflicting/stale/unavailable evidence unchanged.
 4. Route tracker/Temporal disagreement through explicit policy or [Doctor/operator recovery](../workflows/operator-workflows.md).
 
-Planned triggers are App startup, visible-item refresh, and targeted Coordinator start. No background Symphony scanner is intended in 2607. These triggers and Temporal Describe integration are not yet wired.
+Planned triggers are App startup, visible-item refresh, and targeted Coordinator start. No background Symphony scanner is intended in 2607. These triggers and Temporal Describe integration are not yet wired. **Tracking (verified 2026-07-28):** targeted Coordinator repair belongs to T2607-03; #504 is its Backlog seed, while #502 is the Todo start slice that precedes it. App-trigger wiring belongs to T2607-07, which has no promoted Issue; #505 is only a bounded backend Backlog seed. Tracker-side transition reconciliation remains separate T2607-04 work with no promoted Issue.
 
 ## Change guidance
 

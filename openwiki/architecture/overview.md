@@ -9,7 +9,7 @@ tags: ["architecture", "temporal", "rust", "tauri", "2607"]
 
 ## Two generations, one migration
 
-The reusable crate deliberately exposes both generations: legacy modules implement the 2606 MVP, while `src/symphony/**` establishes the 2607 Temporal execution boundary (`src/lib.rs`). [Lifecycle semantics](../domain/lifecycle.md) come from the proven 2606 workflow, but 2607 relocates durable orchestration into Temporal rather than preserving Autoloop as a second authority.
+The reusable crate currently exposes both generations: legacy modules remain in current main while `src/symphony/**` establishes the 2607 Temporal execution boundary (`src/lib.rs`). Operationally, however, the complete workflow comes from the [protected 2606 bootstrap runtime](2606-bootstrap-runtime.md): protected-branch-built vendored App and CLI binaries operate against canonical main while 2607 is incomplete. [Lifecycle semantics](../domain/lifecycle.md) come from that proven workflow, but 2607 must re-express them through new contracts and retire—not wrap—the Autoloop, product CLI, vendored-runtime assumptions, and legacy orchestration and authority implementation. This still permits deliberate, reviewed reuse of bounded Rust components when they fit the new typed ownership boundaries and have focused tests.
 
 2607 Hardening is explicitly **Draft** (`docs/milestones/2607-hardening/README.md`). ADR 0006, which proposes local Temporal as the runtime spine, remains **Proposed** even though current `src/main.rs` and `src/symphony/**` already realize parts of it. Preserve those statuses; implementation does not silently accept an ADR.
 
@@ -47,7 +47,7 @@ The queues separate latency-sensitive orchestration from expensive agents and sh
 | `symphony-agent` | Main, Rework, Review, Merge attempts | Registered Activities returning `not_implemented` |
 | `symphony-local` | projection, indexing, local health | projection/index placeholders; local health succeeds without writes |
 
-The workflow config declares concurrency 3/3/8. `task_queue_registrations` reports these limits, but the inspected `WorkerOptions` builders do not visibly apply them; treat enforcement as unproven rather than implemented.
+The workflow config declares concurrency 3/3/8. `task_queue_registrations` reports these limits, but the inspected `WorkerOptions` builders do not visibly apply them; treat enforcement as unproven rather than implemented. **Tracking:** worker concurrency enforcement is an unowned T2607-01 residual that must be settled before T2607-05/06 rely on it.
 
 ### IssueWorkflow
 
@@ -55,11 +55,11 @@ The workflow config declares concurrency 3/3/8. `task_queue_registrations` repor
 
 ### Workflow Coordinator
 
-`src/symphony/coordinator/mod.rs` implements the pure portion of [workflow activation](authority-and-state.md): classify an observed tracker state, enforce optional optimistic expectations, derive `work`, `review`, `rework`, or `merge`, and build a bounded episode Workflow ID from explicit inputs. It performs no I/O. Production tracker observation, Temporal start/Describe, capacity admission, and projection wiring remain absent.
+`src/symphony/coordinator/mod.rs` implements the pure portion of [workflow activation](authority-and-state.md): classify an observed tracker state, enforce optional optimistic expectations, derive `work`, `review`, `rework`, or `merge`, and build a bounded episode Workflow ID from explicit inputs. It performs no I/O. Production tracker observation, Temporal start/Describe, capacity admission, and projection wiring remain absent. **Tracking (verified 2026-07-28):** #502 is Todo and is the next T2607-03 Temporal-authoritative start slice; #504 is a Backlog seed for stale Coordinator-binding repair, and #505 is a Backlog seed for the bounded real caller/App backend. Capacity admission is an unowned T2607-03 gap. #503 is an older Backlog start seed now overlapped by #502, not another implementation slice. T2607-04 separately owns tracker mutation, transition evidence, and tracker-side reconciliation, with no promoted Issue.
 
 ### Local SQLite
 
-The local database is the most mature 2607 subsystem. ADR 0007 is **Accepted**. `src/symphony/local_state/**` implements schema/migration, typed identity, health/admin, Describe-backed projection, and narrow active-row reads. It is not yet connected to Coordinator or the App; see [Authority and state](authority-and-state.md).
+The local database is the most mature 2607 subsystem. ADR 0007 is **Accepted**. `src/symphony/local_state/**` implements schema/migration, typed identity, health/admin, Describe-backed projection, and narrow active-row reads. It is not yet connected to Coordinator or the App; see [Authority and state](authority-and-state.md). **Tracking (verified 2026-07-28):** Coordinator/Describe projection wiring belongs to T2607-03; #502 is Todo next and #504 is its Backlog repair seed. App wiring belongs to T2607-07, which has no promoted Issue; #505 is only a bounded backend Backlog seed.
 
 ### Desktop app
 
@@ -67,14 +67,9 @@ The local database is the most mature 2607 subsystem. ADR 0007 is **Accepted**. 
 
 ## 2606 relationship
 
-2606 is not synonymous with 2607 and is not a second supported durable runtime inside the 2607 design. It is:
+The [protected 2606 bootstrap runtime](2606-bootstrap-runtime.md) has three separate current roles: active App/CLI development bootstrap against canonical main, protected recovery baseline, and behavior/test/evidence acceptance oracle. Current main is the forward-development target and its root binary already hosts the partial 2607 worker topology; it is not yet the source of the complete operational product CLI.
 
-- the protected operational fallback;
-- the source of proven Main/Review/Merge/Doctor semantics;
-- migration reference code still present in legacy modules;
-- the runtime expected by many current app and operator docs.
-
-2607 aims to preserve behavior while changing ownership: [tracker commits become Activities](authority-and-state.md), executable progression becomes Workflow state, and top-level reads become local projections. Current `main` has crossed the binary-entrypoint boundary before the product workflow migration is complete.
+2607 preserves required behavior while replacing implementation and ownership: [tracker commits become Activities](authority-and-state.md), executable progression becomes Workflow state, top-level reads become local projections, and operator mutations use narrow Tauri/action contracts. Acceptance may be defined by 2606 tests and evidence, but invoking or wrapping old lane/CLI code does not satisfy the target architecture.
 
 ## Change guidance
 

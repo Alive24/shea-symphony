@@ -58,10 +58,11 @@ Delete, reduce, or quarantine:
 - custom retry/resume state files that duplicate Temporal history;
 - code paths that infer progress from local files instead of Workflow state.
 
-Allowed temporary shim:
+Allowed temporary admin/debug entrypoint:
 
-- a compatibility entrypoint that starts, queries, signals, or updates Temporal
-  and clearly logs that it is legacy-to-delete.
+- a thin 2607 boundary that starts, queries, signals, or updates Temporal. It may
+  reuse bounded shared Rust types and helpers, but must not call or wrap the old
+  loop or command graph.
 
 Not allowed:
 
@@ -148,18 +149,22 @@ Avoid broad movement that only changes names.
 
 ## Quarantine Rules
 
-If old code cannot be deleted immediately, quarantine it:
+If old code cannot be deleted immediately, quarantine it as inactive reference:
 
 - put it behind a clearly named `legacy` or `compat` module;
-- make it call Temporal start/query/signal/update boundaries;
-- remove direct tracker/worktree mutation from it;
+- prevent new Temporal, Activity, Tauri, CLI, and operator product paths from
+  calling it;
 - add comments naming the replacement package;
 - add tests or grep checks proving product paths do not call it directly;
 - track deletion in this milestone docs or a follow-up tracker issue when
   implementation begins.
 
-Compatibility shims are allowed only to preserve operator access during
-migration. They are not an alternate runtime.
+If operator access needs a temporary shim, implement a new thin 2607
+start/query/signal/update entrypoint outside the old product implementation.
+The protected 2606 App/CLI remains the external bootstrap until that entrypoint
+is ready. Selective reuse of extracted Rust components is allowed, but 2607
+does not turn the old runtime or product command graph into an alternate or
+compatibility runtime.
 
 ## Measurement Model
 

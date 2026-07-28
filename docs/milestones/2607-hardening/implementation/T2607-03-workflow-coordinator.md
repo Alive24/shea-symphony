@@ -41,15 +41,20 @@ diagnostics rather than reservations or execution authority.
 
 Deferred ownership is explicit:
 
-- #502 owns Temporal start and already-open execution handling;
-- #503 owns Describe-backed targeted repair/reconciliation;
-- #504 owns capacity admission;
-- #505 owns the minimum real caller and App/backend entry surface.
+- #502 (`Todo`) owns Temporal start, native Run ID, immediate Describe, and
+  already-open execution handling;
+- #503 (`Backlog`) is an older start/Run-ID seed now overlapped by promoted
+  #502, not another remaining implementation slice;
+- #504 (`Backlog`) owns Describe-backed targeted repair/reconciliation;
+- capacity admission is an unowned T2607-03 gap with no live Issue;
+- #505 (`Backlog`) owns the minimum real caller and App/backend entry surface.
 
-Those slices must consume the #501 activation facts and must not regenerate
-episode time, accept a caller-selected target kind, or reconstruct identity.
+The remaining slices must consume the #501 activation facts and must not
+regenerate episode time, accept a caller-selected target kind, or reconstruct
+identity. Tracker state above was verified on 2026-07-28; re-check it before
+promoting another slice.
 
-## Full Coordinator Goals Across #501-#505
+## Full Coordinator Goals And Current Tracking
 
 - Start `IssueWorkflow` only for executable tracker states.
 - Enforce at most one active `IssueWorkflow` execution per issue at a time.
@@ -122,8 +127,9 @@ CoordinatorActivationDecision =
 Static and stale-expectation results do not contain executable activation
 facts or a `WorkflowId`.
 
-Start, repair, capacity, and caller DTOs remain deferred to #502-#505. When
-added, they must reuse the existing identity wrappers:
+Start DTOs belong to #502, repair DTOs to #504, capacity DTOs to the unowned
+T2607-03 gap, and caller DTOs to #505. When added, they must reuse the existing
+identity wrappers:
 
 ```text
 RepoId
@@ -209,7 +215,7 @@ TODO #502: implement the start contract from
 
 ```text
 receive already-observed executable activation facts
-  -> apply capacity policy owned by #504
+  -> apply capacity policy (unowned T2607-03 gap)
   -> start Temporal with the existing workflow_id
   -> Describe the current execution
   -> project only Describe-backed lifecycle evidence
@@ -218,7 +224,7 @@ receive already-observed executable activation facts
 Do not insert a SQLite `starting` reservation before Temporal start. If a
 Workflow with the same retry-stable ID is already open, establish that through
 Temporal and bind/project the described execution. A local active-row conflict
-is diagnostic input for #503 reconciliation, not authority to reject or
+is diagnostic input for #504 reconciliation, not authority to reject or
 authorize a start.
 
 ## Discovery Triggers
@@ -229,14 +235,15 @@ bounded visible/startup repair request. Static states never activate directly.
 
 ## Capacity Policy
 
-TODO #504: define and implement admission against the configured task-queue
-policy. Capacity deferral must not mutate tracker state, create a SQLite
-reservation, or regenerate activation identity. The next attempt reuses the
-same activation facts unless the caller intentionally creates a new episode.
+TODO (unowned T2607-03 gap): define and implement admission against the
+configured task-queue policy. Capacity deferral must not mutate tracker state,
+create a SQLite reservation, or regenerate activation identity. The next
+attempt reuses the same activation facts unless the caller intentionally
+creates a new episode.
 
 ## Repair Flow
 
-TODO #503: implement targeted reconciliation from Temporal/current Describe
+TODO #504: implement targeted reconciliation from Temporal/current Describe
 evidence under the newer `WORKFLOW-ACTIVATION.md` and `LOCAL-STATE-DB.md`
 projection contract.
 
@@ -247,7 +254,7 @@ Repair does not move tracker business state directly.
 
 ## Temporal Interaction
 
-#502 and #503 will use Temporal client APIs for start and current execution
+#502 and #504 use Temporal client APIs for start and current execution
 Describe. The pure #501 activation contract performs no Temporal I/O.
 
 Start attributes should carry the validated repository/issue identity, observed
@@ -256,7 +263,7 @@ episode time, and audit reason. `IssueWorkflow` runs on `symphony-core`.
 
 ## SQLite Interaction
 
-#503 may project current Describe-backed lifecycle evidence through
+#504 may project current Describe-backed lifecycle evidence through
 `LocalStateProjector`. SQLite provides an App read model and diagnostic active
 index. It cannot reserve, reject, authorize, or prove a Temporal start.
 
@@ -265,20 +272,21 @@ The pure #501 activation contract performs no SQLite reads or writes.
 ## Tracker Interaction
 
 #501 accepts an already-observed tracker snapshot and performs no tracker I/O.
-#502/#503/#505 may read at their durable boundaries, but Coordinator must not
+#502/#504/#505 may read at their durable boundaries, but Coordinator must not
 write tracker state. Tracker writes belong to `TrackerTransitionActivity`.
 
 ## App And Operator Interaction
 
-TODO #505: expose only the minimum real caller after start, repair, and capacity
-contracts exist. The pure #501 module is crate-private and adds no App, Tauri,
-Svelte, or CLI surface.
+TODO #505: expose only the minimum real caller after #502 start, #504 repair,
+and the unowned capacity contract exist. The pure #501 module is crate-private
+and adds no App, Tauri, Svelte, or CLI surface.
 
 ## Error Handling
 
 #501 uses typed validation errors for invalid issue/source/revision/audit/time
-input and Workflow ID overflow. #502-#505 own typed I/O, conflict, capacity, and
-entrypoint outcomes without changing this identity policy.
+input and Workflow ID overflow. #502, #504, #505, and the unowned capacity
+slice own typed I/O, conflict, capacity, and entrypoint outcomes without
+changing this identity policy.
 
 ## #501 Acceptance Checks
 
@@ -304,5 +312,6 @@ entrypoint outcomes without changing this identity policy.
 - Workflow ID grammar, encoding, validation, and retry behavior are centralized
   and tested;
 - semantic Rustdoc and boundary comments explain the durable identity policy;
-- deferred #502-#505 work is explicit and the older SQLite reservation model is
-  not accidentally implemented.
+- deferred #502/#504/#505 and unowned capacity work is explicit, #503 is
+  recognized as an overlapped Backlog seed, and the older SQLite reservation
+  model is not accidentally implemented.

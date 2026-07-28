@@ -107,8 +107,11 @@ seam rather than a normal product CLI path.
 - become a second operation surface beside Temporal.
 
 Existing product commands such as autopilot, main loop, review loop, merge
-loop, and mutating doctor should be deleted, reduced to compatibility shims, or
-rewired to Temporal Signals/Queries/Updates as the Temporal paths land.
+loop, and mutating doctor should be deleted. If migration temporarily needs an
+admin/debug entrypoint, implement a thin 2607 wrapper over Temporal
+Signals/Queries/Updates. Bounded shared Rust types and helpers may be reused,
+but the 2606 product-command graph and its workflow ownership must not be
+retained or rewired.
 
 ## First App Target
 

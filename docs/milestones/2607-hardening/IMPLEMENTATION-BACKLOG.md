@@ -53,8 +53,8 @@ Acceptance:
 - a no-op `IssueWorkflow` can start, query, and complete locally;
 - App/Tauri can reach the Temporal client boundary without owning workflow
   semantics;
-- old autopilot/tick loop is marked legacy-to-delete in code comments or
-  compatibility shims.
+- old autopilot/tick loop is marked inactive and legacy-to-delete; new 2607
+  product paths do not call or wrap it.
 
 Primary docs:
 
@@ -103,16 +103,20 @@ Primary docs:
 Goal:
 
 - implement the thin launcher/registrar for executable tracker states through
-  independently reviewable #501-#505 slices.
+  independently reviewable slices, with tracker references kept current as
+  seeds are promoted or absorbed.
 
 Scope:
 
 - #501: pure activation classification, Coordinator-derived target kind,
   provenance validation, and exact episode-scoped Workflow ID construction;
-- #502: optimistic Temporal start and already-open execution handling;
-- #503: Describe-backed targeted repair/reconciliation;
-- #504: capacity admission;
-- #505: minimum real caller and App/backend entry surface.
+- #502 (`Todo`): optimistic Temporal start, native Run ID, immediate Describe,
+  and already-open execution handling;
+- #503 (`Backlog`): older start/Run-ID seed now overlapped by promoted #502; it
+  is not a separate remaining implementation slice;
+- #504 (`Backlog`): Describe-backed targeted repair/reconciliation;
+- capacity admission: unowned T2607-03 gap with no live Issue;
+- #505 (`Backlog`): minimum real caller and App/backend entry surface.
 
 Acceptance:
 

@@ -15,17 +15,20 @@ Shea Symphony is a Rust orchestration system with a Svelte/Tauri operator cockpi
 
 The repository is mid-migration:
 
-- **2606 MVP** is the proven CLI/lane implementation and protected fallback. Its code remains in `src/commands/**`, `src/lanes/**`, and related legacy modules.
-- **2607 Hardening** is a **Draft** milestone that replaces the hand-rolled durable loop with local Temporal while preserving 2606 workflow semantics (`docs/milestones/2607-hardening/README.md`).
+- **2606 MVP** preserves the complete proven workflow. Protected-2606-built vendored App and CLI binaries are the active bootstrap toolchain operating against canonical `main`, the protected recovery baseline, and the behavior/test/evidence acceptance oracle while 2607 is incomplete. They are not the 2607 implementation or a compatibility layer to retain.
+- **2607 Hardening** is a **Draft** milestone that replaces and ultimately deletes the 2606 Autoloop, product CLI orchestration, vendored-runtime assumptions, and legacy runtime ownership and orchestration by re-expressing required semantics through Temporal, Activities, Coordinator, Tauri, SQLite, and operator-action contracts. Deliberate, reviewed reuse of bounded Rust DTOs, parsers, adapters, event normalization, helpers, and focused tests remains allowed when it fits the new typed ownership boundaries (`docs/milestones/2607-hardening/README.md`).
 - Current `src/main.rs` starts the 2607 Temporal worker host; it no longer dispatches the legacy CLI.
 - The 2607 runtime has real worker/client scaffolding, pure Coordinator activation identity, and substantial SQLite foundations, but `IssueWorkflow` still runs a no-op Activity. Tracker transitions and agent/local Activities remain inert or placeholder implementations.
+  **Tracking (verified 2026-07-28):** #494 is Done only for the T2607-04 transition DTO/idempotency contract; #502 is Todo and is the next T2607-03 Temporal-authoritative start slice. Remaining tracker mutation/evidence/reconcile work has no promoted Issue; agent and Workflow implementation belongs to T2607-05/06, also with no promoted Issues.
 - The desktop app still reads most operational data and controls Autoloop through legacy CLI surfaces; its direct 2607 integration currently exposes read-only Temporal readiness.
+  **Tracking (verified 2026-07-28):** T2607-07 owns product integration, but no Issue is promoted for it. #505 is only a Backlog seed for a bounded Coordinator/App backend slice and explicitly excludes Svelte workflow UX.
 
 See [Architecture](architecture/overview.md) for the migration shape and [Source map](source-map.md) for the precise implementation anchors.
 
 ## Major concepts
 
 - [Architecture overview](architecture/overview.md) explains the Rust library/binary, Temporal workers, Tauri app, and the 2606-to-2607 boundary.
+- [Protected 2606 bootstrap runtime](architecture/2606-bootstrap-runtime.md) explains the current self-hosting topology, its three distinct roles, and the criteria for retiring it rather than wrapping it into 2607.
 - [Authority and state](architecture/authority-and-state.md) distinguishes tracker business state, Temporal runtime authority, SQLite projections, and filesystem evidence.
 - [2607 execution contracts](architecture/execution-contracts.md) separates the Draft T2607-05/06 target for Workflow state, agent Activities, leases, progress, failure routing, and lifecycle commits from the checked-in no-op skeleton.
 - [2607 App and operator integration](architecture/app-operator-integration.md) contrasts the Draft T2607-07 SQLite/Temporal/operator-action target with the checked-in CLI/Autoloop coupling and read-only Temporal seam.

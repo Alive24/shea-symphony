@@ -7,7 +7,7 @@ tags: ["2607", "app", "tauri", "operator", "temporal"]
 
 # Shea Symphony 2607 App and operator integration
 
-> **Status: Draft target, partially prepared but not implemented end to end.** The T2607-07 package and its input documents are labelled **Draft**. Checked-in code still couples the operator App to 2606 CLI/Autoloop behavior; its direct Temporal integration is a read-only readiness probe. Repository plans do not establish live issue progress.
+> **Status: Draft target, partially prepared but not implemented end to end.** The T2607-07 package and its input documents are labelled **Draft**. Checked-in code still couples the operator App to 2606 CLI/Autoloop behavior; its direct Temporal integration is a read-only readiness probe. **Tracking (verified 2026-07-28):** no Issue is promoted for T2607-07 product integration. #505 is only a Backlog seed for a bounded Coordinator/App backend slice and explicitly excludes Svelte workflow UX.
 
 T2607-07 makes the Svelte/Tauri App the primary operator surface over Temporal and SQLite without making it another workflow engine. This contract depends on the [runtime authority model](authority-and-state.md): the tracker remains the external business fact, an active Temporal Workflow owns ordered execution decisions, and SQLite is a rebuildable local projection. It also depends on the validation and side-effect boundaries in [2607 execution contracts](execution-contracts.md).
 
@@ -15,11 +15,11 @@ T2607-07 makes the Svelte/Tauri App the primary operator surface over Temporal a
 
 `app/src/OperatorDesk.svelte` builds lane boards and a combined Human Todo for Need to Clarify (NTC), Need Human Input (NHI), and Human Review. It derives handoff prompts from the checked-in `.shea/prompts/**` templates through `app/src/lib/viewModel/handoffPrompt.ts`, then copies them or opens Codex. This is prompt routing, not an `OperatorActionContext` capability or structured action submission.
 
-The Tauri backend remains coupled to the legacy product surface:
+The Tauri backend remains coupled to the legacy product surface supplied operationally by the [protected 2606 bootstrap runtime](2606-bootstrap-runtime.md):
 
 - `app/src-tauri/src/read_surfaces.rs` shells out to status, project, Doctor, review, Autopilot, and related CLI JSON commands; some readback also writes a local session-cache record. It is not the Draft SQLite dashboard reader.
-- `autoloop.rs` starts and stops an `autopilot loop` child process, parses its output, and exposes lane state to the App. `cli.rs` selects an explicit CLI path, a Cargo runner, or a built debug binary for those calls.
-- `workspace.rs` selects a target root and workflow path for the legacy commands. A launch `--workdir` wins over a stored profile; otherwise the stored profile wins over self-targeting. This implemented selection is narrower than the Draft configuration model described below.
+- `autoloop.rs` starts and stops an `autopilot loop` child process, parses its output, and exposes lane state to the App. `cli.rs` runs those commands in the selected target through an explicit CLI path, an engine-root Cargo runner, or an engine debug binary. In the current self-hosting topology, protected-2606-built vendored App/CLI binaries provide the complete engine/toolchain while canonical main is the target; current main's root binary is Temporal-only and incomplete as a product runtime.
+- `workspace.rs` keeps separate engine and target roots and selects the target/workflow path. A launch `--workdir` wins over a stored profile; otherwise the stored profile wins over self-targeting. This implemented selection is narrower than the Draft configuration model described below.
 - `temporal_health.rs` is the only direct 2607 Temporal seam. It captures the selected workspace, loads and validates that workflow configuration, and performs a bounded read-only service readiness check through `SymphonyTemporalClient`.
 - The registered Tauri commands in `app/src-tauri/src/main.rs` contain no Workflow start/query/signal/update command and no `prepare_operator_action` or `submit_operator_action` bridge.
 
@@ -42,7 +42,7 @@ This is the checked-in App path: operational reads and loop control remain legac
 
 ## Draft T2607-07 target
 
-The target removes normal product operation from CLI shell commands. The App calls a narrow Tauri allowlist that directly adapts the shared Symphony libraries and Temporal client; no independent local Symphony service is introduced. CLI remains an admin/development fallback for initialization, worker execution, self-checks, and thin Temporal debugging, but must not own Autopilot, lane policy, review, merge, Doctor mutation, or tracker transitions (`APP-CLI-SPLIT.md`; T2607-07).
+The target removes normal product operation from CLI shell commands. The App calls a narrow Tauri allowlist that directly adapts the new Symphony libraries and Temporal client; no independent local Symphony service is introduced. CLI remains an admin/development fallback for initialization, worker execution, self-checks, and thin Temporal debugging, but must not own Autopilot, lane policy, review, merge, Doctor mutation, or tracker transitions (`APP-CLI-SPLIT.md`; T2607-07). This is a replacement boundary: any thin admin/debug entrypoint is new 2607 code over Temporal Signals, Queries, and Updates, not a retained or rewired 2606 product command or lane implementation. It may share only bounded Rust types or helpers that pass ownership review and fit the new typed boundary.
 
 ### Reads: SQLite dashboard, Temporal selected detail
 
@@ -87,7 +87,7 @@ This is the Draft bridge flow **only when an appropriate Workflow execution is o
 
 `OperatorActionContext` is planned as short-lived local runtime state containing a context ID, Workflow and issue identity, current state, requested/allowed action enum, artifact references, expiry, and an opaque capability reference. The bridge exposes narrow operations such as `submit_operator_action(context_id, action, payload)` and rejects expired contexts, actions outside the allowlist, malformed payloads, and missing required evidence. The Workflow must validate the same facts again; local validation is not authorization.
 
-Initial Draft actions are `submit_human_input`, `approve_human_review`, `request_rework`, `submit_human_fix`, and `doctor_handoff_result`. The bridge must not grant the routed agent raw tracker, Temporal, SQLite, merge, or worktree authority. No `OperatorActionContext`, prepare command, submit bridge, capability enforcement, or Update handler exists in checked-in Rust code.
+Initial Draft actions are `submit_human_input`, `approve_human_review`, `request_rework`, `submit_human_fix`, and `doctor_handoff_result`. The bridge must not grant the routed agent raw tracker, Temporal, SQLite, merge, or worktree authority. No `OperatorActionContext`, prepare command, submit bridge, capability enforcement, or Update handler exists in checked-in Rust code. **Tracking:** `OPERATOR-ACTION-BRIDGE.md` plus T2607-07 own this work; no Issue is promoted, and #505 does not own Svelte/action UX.
 
 ## Unresolved activation tension
 
@@ -96,7 +96,7 @@ The Draft documents do not yet form a complete executable contract for actions f
 - `WORKFLOW-ACTIVATION.md` says NHI and Human Review are static tracker queues. A normal handoff to either state completes the active episode, and a routed action should establish an executable condition and start the appropriate episode.
 - `OPERATOR-ACTION-BRIDGE.md` and T2607-07 describe state-changing routed actions as Temporal Updates validated by `IssueWorkflow`.
 
-A Temporal Update cannot be sent to the prior Workflow after that execution has closed. The checked-in implementation does not establish whether the bridge first performs a bounded action-bootstrap transition and Coordinator start, starts a dedicated action Workflow, locates another open execution, or uses some other exact target. Therefore the action-bootstrap/new-episode target for approval, input, rework, fix, and Doctor results after static handoff is **unresolved and unimplemented**. Do not paper over this gap by keeping idle Workflows open—the activation design explicitly rejects that—or by sending an Update to a closed execution. The same constraint is recorded in [2607 execution contracts](execution-contracts.md).
+A Temporal Update cannot be sent to the prior Workflow after that execution has closed. The checked-in implementation does not establish whether the bridge first performs a bounded action-bootstrap transition and Coordinator start, starts a dedicated action Workflow, locates another open execution, or uses some other exact target. Therefore the action-bootstrap/new-episode target for approval, input, rework, fix, and Doctor results after static handoff is **unresolved and unimplemented**. **Tracking:** the follow-up home is `docs/milestones/2607-hardening/OPERATOR-ACTION-BRIDGE.md` plus T2607-07; no Issue is promoted. #505 is related only as a bounded Coordinator/App backend Backlog seed and is not the Svelte/action owner. Do not paper over this gap by keeping idle Workflows open—the activation design explicitly rejects that—or by sending an Update to a closed execution. The same constraint is recorded in [2607 execution contracts](execution-contracts.md).
 
 ## Workspace and configuration
 
@@ -106,7 +106,7 @@ The Draft distribution model separates an installed Symphony binary, a canonical
 2. repository `.shea/` team configuration;
 3. global machine-local configuration.
 
-Exact install lookup, runtime directory naming, and legacy workflow-file compatibility remain open in `WORKSPACE-CONFIG.md`. Checked-in `workspace.rs` does **not** implement this three-layer merge: it selects one target/workflow profile using launch `--workdir`, then stored App profile, then self-targeting, with environment variables affecting the profile storage location. Keep the implemented workspace-selection precedence distinct from the Draft config-content precedence.
+Exact install lookup, runtime directory naming, and legacy workflow-file compatibility remain open. **Tracking:** ADR 0005 is the design home, with implementation follow-up in T2607-07/T2607-08; no Issues are promoted for those packages. Legacy App Backlog issues #466 and #468 exist but are not current 2607 execution. Checked-in `workspace.rs` does **not** implement this three-layer merge: it selects one target/workflow profile using launch `--workdir`, then stored App profile, then self-targeting, with environment variables affecting the profile storage location. Keep the implemented workspace-selection precedence distinct from the Draft config-content precedence.
 
 ## Implementation checkpoints
 

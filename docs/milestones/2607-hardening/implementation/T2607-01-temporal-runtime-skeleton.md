@@ -289,14 +289,16 @@ client-boundary error mapping. The no-op smoke is ignored by default and
 requires the explicit repo-owned command described in
 [`TEMPORAL-NOOP-SMOKE.md`](../TEMPORAL-NOOP-SMOKE.md).
 
-## Rollback And Compatibility
+## Bootstrap, Rollback, And Compatibility
 
-The protected 2606 MVP branch remains the fallback.
+The protected 2606 MVP branch remains the active external App/CLI bootstrap,
+recovery baseline, and acceptance oracle while the 2607 path is incomplete.
 
-This package should not delete working MVP runtime behavior. It may add
-compatibility shims or mark old autopilot/tick/resume paths as
-legacy-to-delete, but deletion belongs in later implementation packages after
-Temporal-backed paths work.
+This package should not damage that protected runtime. In current main it should
+mark old autopilot/tick/resume paths as inactive legacy-to-delete; it must not
+turn them into compatibility shims or runtime dependencies. Deletion belongs in
+later implementation packages after Temporal-backed paths work. Bounded Rust
+types and helpers may still be reused after extraction and ownership review.
 
 ## Done Means
 

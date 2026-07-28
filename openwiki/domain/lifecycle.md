@@ -22,7 +22,7 @@ The checked-in workflow maps ten standard tracker states (`.shea/workflows/shea-
 | Merging | Executable | Land approved work and repair safe mechanical drift |
 | Done | Static/terminal | Completed external state |
 
-The Coordinator implementation classifies these groups now; the complete 2607 state machine remains **Draft** and unimplemented.
+The Coordinator implementation classifies these groups now; the complete 2607 state machine remains **Draft** and unimplemented. **Tracking:** implementation belongs to T2607-05/06; no Issues are promoted for either package.
 
 ```mermaid
 stateDiagram-v2
@@ -73,7 +73,7 @@ Current 2606 lane code implements these transitions through legacy tracker adapt
 
 ## Known policy drift
 
-`src/doctor/project_state.rs` still suggests moving a dirty/not-clean merging PR to Rework, while newer merge guidance keeps safe repair in `Merging` and sends unresolved semantic/unsafe blockers to NHI (`.shea/prompts/merge-agent.md`, `docs/operator-dogfood.md`). Surface this conflict when touching Doctor diagnostics; do not silently pick one policy.
+`src/doctor/project_state.rs` still suggests moving a dirty/not-clean merging PR to Rework, while newer merge guidance keeps safe repair in `Merging` and sends unresolved semantic/unsafe blockers to NHI (`.shea/prompts/merge-agent.md`, `docs/operator-dogfood.md`). #390 is Done and established that newer merge-agent policy; it is not an active repair Issue. **Tracking:** any retained 2606 Doctor repair is an unowned gap or removable under T2607-08, for which no Issue is promoted. Surface the conflict when touching Doctor diagnostics; do not silently pick one policy.
 
 ## Change guidance
 

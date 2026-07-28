@@ -663,7 +663,9 @@ thin debug wrappers. CLI does not own workflow product operations.
 
 Product commands such as autopilot, main loop, review loop, merge loop, and
 mutating doctor should become Temporal Signals, Queries, Updates, Activities,
-or compatibility shims while being removed from the CLI product surface.
+or new thin 2607 admin/debug wrappers while being removed from the CLI product
+surface. Bounded shared Rust code may be reused after ownership review, but do
+not rewire or wrap the 2606 command graph or its workflow ownership.
 
 ### What is the Activity grain for coding agents?
 

@@ -9,9 +9,9 @@ tags: ["operations", "runbook", "temporal", "build", "recovery"]
 
 ## Know which runtime you are operating
 
-Current `main` builds a local Temporal worker host (`src/main.rs`). The protected 2606 MVP contains the proven product CLI/autoloop behavior described by much of `docs/cli-command-reference.md` and `docs/operator-dogfood.md`. The desktop app also still expects legacy CLI read/autoloop commands unless a profile-specific runtime is configured.
+Current `main` builds a local Temporal worker host (`src/main.rs`), but it is not yet the complete operational product runtime. The [protected 2606 runtime](architecture/2606-bootstrap-runtime.md) supplies the active self-hosting bootstrap: vendored App and CLI binaries built from that branch operate against the canonical main checkout, while the same protected line remains the recovery baseline and acceptance oracle. **Tracking (verified 2026-07-28):** #502 is Todo and is the next T2607-03 Temporal-authoritative start slice; no Issues are promoted for the remaining T2607-04 slices, T2607-05/06, T2607-07 product integration, or T2607-08.
 
-Do not assume `cargo run -- doctor ...` or `cargo run -- autopilot ...` on current `main` invokes the old CLI. This is the most important operational drift in the repository. See [Architecture](architecture/overview.md).
+Do not assume `cargo run -- doctor ...` or `cargo run -- autopilot ...` on current `main` invokes the old CLI. Configure and use the protected-2606-built toolchain for current complete product operations; do not mistake this bootstrap dependency for the 2607 target architecture. Selective reuse of reviewed, bounded Rust components in new typed code does not authorize current-main product paths to call or wrap the protected runtime, Autoloop, lane ownership, or command graph. See [Architecture](architecture/overview.md).
 
 ## Current-main Temporal worker
 
@@ -58,7 +58,7 @@ The Tauri app calls legacy CLI JSON/read surfaces for most dashboard data and co
 
 ## Protected 2606 operations
 
-For supervised lane operation, use the protected 2606 runtime and follow `docs/operator-dogfood.md` rather than reconstructing commands here. Its safety pattern is:
+For supervised lane operation against canonical main, use the active protected-2606-built vendored runtime and follow `docs/operator-dogfood.md` rather than reconstructing commands here. Keep its three roles distinct: active bootstrap, protected recovery baseline, and behavior/test/evidence acceptance oracle. Its safety pattern is:
 
 1. run read-only status/Doctor/project inspection;
 2. preview plans or dry-runs;
@@ -87,7 +87,7 @@ Treat machine-specific command paths in the checked-in profile as local configur
 | Symptom | First check | Boundary |
 | --- | --- | --- |
 | Worker cannot start | workflow parse/config, Temporal service readiness | current 2607 host |
-| No real issue movement | expected: `IssueWorkflow` is no-op and transition/agent Activities are placeholders | implementation status |
+| No real issue movement | expected: `IssueWorkflow` is no-op and transition/agent Activities are placeholders. #494 is Done only for transition DTO/idempotency; remaining transition work is unpromoted T2607-04, and agent/Workflow behavior is unpromoted T2607-05/06 | implementation status |
 | App dashboard command failures | selected workspace and configured legacy CLI path | 2606 app integration |
 | Stuck issue or missing evidence | Doctor plus tracker/PR/runtime/worktree reads | operator recovery |
 | SQLite row conflicts | current Temporal Describe evidence; do not delete/reserve blindly | local projection |

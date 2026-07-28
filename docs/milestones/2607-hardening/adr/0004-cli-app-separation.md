@@ -25,8 +25,10 @@ schema before submitting a Temporal Update. CLI wrappers are debug/admin
 fallback only, not the primary submit channel.
 
 CLI is admin/dev fallback only. It does not own workflow product operations.
-Existing product commands should either disappear, become compatibility shims,
-or call the same Temporal start/query/signal/update boundary as the App.
+Existing product commands should disappear. Any temporary admin/debug wrapper
+must call the same Temporal start/query/signal/update boundary as the App. It
+may reuse bounded shared Rust types and helpers, but not the 2606 product
+command graph or its workflow ownership.
 
 ## Consequences
 

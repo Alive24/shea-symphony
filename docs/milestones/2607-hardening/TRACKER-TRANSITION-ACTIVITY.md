@@ -22,15 +22,19 @@ Define the 2607 contract for moving tracker state writes into Temporal without
 rebuilding tracker clients or preserving the old lane loop as a wrapper.
 
 `TrackerTransitionActivity` is the single commit authority for tracker state
-transitions. Existing tracker adapter capabilities should migrate into this
-Activity boundary rather than being wrapped by a legacy facade.
+transitions. Proven tracker behavior should be specified at this new Activity
+boundary. Bounded adapter and helper code may be reused after ownership review,
+but the old lane mutation owner must not migrate with it or be wrapped in a
+legacy facade.
 
 ## Non-Wrapper Decision
 
 Do not keep a compatibility wrapper around the old autopilot/lane mutation
 model as the target architecture.
 
-The migration should reuse existing proven code:
+The replacement should preserve these proven contracts and acceptance cases.
+It may reuse their bounded implementation where it already fits, or can be
+extracted to fit, the new Activity-owned boundary:
 
 - `TrackerAdapter`;
 - tracker recovery readback semantics;
@@ -309,7 +313,7 @@ The DTO/idempotency portion is complete in #494:
 ### TTA-3: Evidence And Workpad Commits
 
 - Move transition evidence writes into the Activity boundary.
-- Reuse workpad/timeline marker semantics.
+- Re-express workpad/timeline marker semantics in the new contract.
 - Keep large evidence in local artifacts and store refs in tracker-visible
   evidence.
 

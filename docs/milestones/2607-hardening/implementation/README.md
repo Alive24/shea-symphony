@@ -38,7 +38,7 @@ T2607-02 Local State DB
 
 T2607-03 Workflow Coordinator
   -> derives pure activation identity, then uses Temporal-authoritative start
-     and Describe-backed SQLite projection across #501-#505
+     and Describe-backed SQLite projection across the current tracked slices
 
 T2607-04 TrackerTransitionActivity
   -> provides durable tracker transition and PR-link write boundary

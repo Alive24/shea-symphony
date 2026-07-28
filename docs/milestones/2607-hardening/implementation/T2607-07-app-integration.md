@@ -343,8 +343,9 @@ CLI must not own product workflow semantics:
 
 ### APP-6: CLI Reduction
 
-- Mark old product CLI commands legacy-to-delete or rewire them to Temporal
-  admin/debug boundaries.
+- Mark old product CLI commands legacy-to-delete. If needed, add thin 2607
+  admin/debug wrappers over Temporal. They may reuse bounded shared Rust types
+  and helpers, but must not rewire the old command graph or workflow ownership.
 - Verify normal product operation no longer depends on CLI shell commands.
 
 ## Acceptance Checks

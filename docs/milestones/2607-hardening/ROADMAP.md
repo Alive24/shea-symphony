@@ -77,8 +77,10 @@ Success means a maintainer can answer:
 - Route tracker writes through `TrackerTransitionActivity`.
 - Use small DTOs for Workflow history and keep rich tracker evidence behind
   artifact refs or targeted Activity reads.
-- Reuse existing tracker adapter, recovery marker, readback, workpad, and audit
-  behavior inside the Activity boundary instead of wrapping the old lane loop.
+- Re-express existing tracker, recovery marker, readback, workpad, and audit
+  behavior as contracts and tests for the Activity-owned implementation.
+  Selectively reuse bounded adapter/helper code after ownership review; do not
+  move or wrap the old lane loop or its state authority.
 - Require transition evidence.
 - Add reconcile behavior for external tracker changes.
 - Define merge-time semantic fix behavior as part of `Merging`.
@@ -91,8 +93,9 @@ Success means a maintainer can answer:
 
 - Run agent, review, merge, doctor, tracker, and worktree side effects as
   Temporal Activities.
-- Prefer coarse Activity boundaries around existing lane/runtime behavior
-  instead of modeling every model turn or tool call as a workflow step.
+- Prefer coarse new Activity boundaries that reproduce required lane/runtime
+  semantics instead of modeling every model turn or tool call as a workflow
+  step.
 - Define shared Activity outcome classes for success, already-applied,
   retryable, wait-and-retry, need-human-input, conflict, rejected,
   terminal-noop, and unhandled-error.

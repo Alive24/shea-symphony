@@ -7,7 +7,7 @@ tags: ["testing", "rust", "temporal", "svelte", "tauri"]
 
 # Test strategy and verification map
 
-Shea Symphony has broad deterministic coverage around 2606 business rules and growing contract coverage around 2607 foundations. It does not yet have an end-to-end Temporal Main-to-Merge lifecycle test because that lifecycle is not implemented.
+Shea Symphony has broad deterministic coverage around 2606 business rules and growing contract coverage around 2607 foundations. The [protected 2606 runtime](architecture/2606-bootstrap-runtime.md) supplies behavior, tests, and operational evidence as an acceptance oracle, not an orchestration/runtime implementation that 2607 tests should keep alive. Focused test cases and bounded protocol-independent Rust components may be reused after ownership review when they fit the new typed boundary and retain focused coverage. The repository does not yet have an end-to-end Temporal Main-to-Merge lifecycle test because that lifecycle is not implemented. **Tracking:** lifecycle implementation belongs to T2607-05/06; no Issues are promoted for either package.
 
 ## Baseline commands
 
@@ -55,8 +55,9 @@ A pass proves only the current 2607 no-op runtime spine: normal worker registrat
 - **SQLite schema/projection:** run local-state migration, admin, projector, and reader tests; verify no StartResponse-only lifecycle writes.
 - **Review/Human Review routing:** run review decision, lane review, main lifecycle, Doctor project-state, and app operator-view tests.
 - **Handoff prompts:** update only permitted `.shea/prompts/**` sources and run `app/test/operator-view.test.mjs`.
-- **Doctor:** run Doctor unit/command tests and compare suggestions against current merge/review policies; known drift exists for dirty merging PR guidance.
-- **App/Tauri CLI bridge:** run Rust tests under `app/src-tauri` plus Node tests; validate both configured external CLI and Cargo fallback assumptions.
+- **Doctor:** run Doctor unit/command tests and compare suggestions against current merge/review policies. #390 is Done and established the newer merge-agent policy; any retained 2606 dirty-merge repair is an unowned gap or removable under T2607-08, for which no Issue is promoted.
+- **App/Tauri bootstrap bridge:** run Rust tests under `app/src-tauri` plus Node tests; validate separate engine/target roots and explicit protected-2606 CLI selection against canonical main. Verify that current-main Cargo fallback is not treated as a complete product CLI.
+- **2607 replacement acceptance:** translate protected-2606 behavior, safety, failure, and recovery evidence into tests of new Workflow, Activity, Coordinator, Tauri, SQLite, and operator-action contracts. A test that passes by invoking legacy CLI/lane implementation does not prove migration.
 
 ## Live-test boundaries
 
@@ -64,11 +65,11 @@ GitHub and Linear smoke tests are opt-in, credential-gated, and read-only. Never
 
 ## Gaps to keep visible
 
-- no end-to-end real Temporal lifecycle;
-- no real `TrackerTransitionActivity` write/readback test;
-- no Temporal agent Activity execution;
-- no App dashboard backed by SQLite plus selected-detail Temporal Query;
-- no demonstrated worker-option enforcement of configured queue concurrency;
-- live tracker tests do not prove write or recovery behavior.
+- no end-to-end real Temporal lifecycle — **Tracking:** T2607-05/06; no Issues promoted;
+- no real `TrackerTransitionActivity` write/readback test — **Tracking:** #494 is Done only for the transition DTO/idempotency contract; remaining T2607-04 mutation/evidence/reconcile work has no promoted Issue;
+- no Temporal agent Activity execution — **Tracking:** T2607-05; no Issue promoted;
+- no App dashboard backed by SQLite plus selected-detail Temporal Query — **Tracking:** T2607-07; no Issue promoted, and #505 is only a bounded backend Backlog seed excluding Svelte UX;
+- no demonstrated worker-option enforcement of configured queue concurrency — **Tracking:** unowned T2607-01 residual that must be settled before T2607-05/06 rely on it;
+- live tracker tests do not prove write or recovery behavior — **Tracking:** remaining transition behavior belongs to T2607-04 with no promoted Issue; wider recovery acceptance belongs to the relevant T2607-05/06/07/08 packages, also with no promoted Issues.
 
 These gaps follow directly from the [partial 2607 architecture](architecture/overview.md), not merely missing test effort. Use [Authority and state](architecture/authority-and-state.md) to avoid writing tests that accidentally bless the wrong owner.

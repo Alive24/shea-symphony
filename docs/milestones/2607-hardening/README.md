@@ -18,14 +18,27 @@ with Temporal.
 
 ## MVP Baseline
 
-The baseline is broad, not repo-specific:
+The protected 2606 branch is more than historical reference while 2607 is
+incomplete. It preserves a complete working Shea Symphony workflow, and App and
+CLI binaries built from that protected branch are the active bootstrap
+toolchain used to orchestrate development against the current canonical `main`
+checkout.
 
-- the protected 2606 MVP branch exists as the working baseline;
-- Shea can run complete issue workflows against its own project;
-- Shea can run complete workflows while developing other projects through a
-  vendored runtime, even though that distribution model is not ideal;
-- occasional human doctor/operator repair is acceptable in the MVP, but should
-  become clearer and less frequent.
+Keep its three roles distinct:
+
+- active development bootstrap while current `main` does not yet provide the
+  complete product runtime;
+- protected recovery baseline for the self-hosting workflow;
+- behavior, test, and operational-evidence oracle for 2607 acceptance.
+
+This operational dependency is not the 2607 architecture. 2607 and later do not
+carry the overall 2606 runtime forward as an embedded or wrapped compatibility
+layer. Deliberate reuse or extraction of bounded Rust types, parsers, adapters,
+helpers, and tests is allowed when ownership is reviewed and the code fits the
+new typed boundaries. Required lifecycle and safety semantics move to Temporal,
+Activity, Coordinator, Tauri, SQLite, and operator-action contracts; the
+vendored App/CLI bootstrap, Autoloop, lane/runtime ownership, and product CLI
+command graph are retired.
 
 ## Milestone Goal
 
@@ -65,7 +78,13 @@ Subtraction does not mean:
 - removing working Main, Review, or Merge flows;
 - removing human-in-the-loop states;
 - removing Shea extension capabilities;
-- rewriting the system from scratch.
+- discarding the behavior, tests, or operational evidence that define acceptance.
+
+Preserving those semantics does not authorize embedding or wrapping the overall
+2606 runtime beneath new interfaces. Old orchestration code may remain
+temporarily as inactive reference during migration. Bounded components may be
+reused only after explicit ownership review, extraction from legacy
+orchestration, and coverage at the new typed boundary.
 
 ## Success Criteria
 

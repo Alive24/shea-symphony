@@ -246,14 +246,20 @@ the durable runtime boundary is working.
 
 ## Implementation Bias
 
-Preserve working abstractions when possible:
+Preserve proven behavior without carrying the overall 2606 orchestration
+implementation into the new runtime:
 
-- move lane loops behind Activities before deleting behavior;
-- wrap existing tracker adapter calls before replacing adapters;
-- reuse existing Codex app-server event normalization;
-- reuse current review backend decisions before generalizing providers;
+- express lane semantics as new deterministic Workflow decisions and coarse
+  Activities; do not move or wrap the old lane loops;
+- implement tracker effects behind the new Activity contract; existing adapter,
+  readback, marker, and audit code may be reused selectively after extraction
+  and ownership review;
+- specify Codex app-server event normalization and review decisions as typed
+  contracts and tests; bounded protocol-independent implementation may be
+  retained behind that boundary;
 - keep App read models presentation-focused while replacing their data source
   with Temporal queries.
 
-The goal is to delete the duplicate orchestration loop, not to rewrite every
-module under a new vocabulary.
+The protected 2606 runtime remains the active bootstrap, recovery baseline, and
+acceptance oracle until the replacement is complete. Selective Rust code reuse
+does not make that runtime a compatibility layer for 2607 or later.

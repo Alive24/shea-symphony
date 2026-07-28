@@ -22,8 +22,8 @@ use shea_symphony::{
     RuntimeConfig, WorkflowStore,
 };
 use temporalio_client::{
-    Client, ClientOptions, Connection, ConnectionOptions, UntypedWorkflow, WorkflowDescribeOptions,
-    WorkflowExecutionInfo, WorkflowHandle,
+    Client, ClientOptions, Connection, ConnectionOptions, RetryOptions, UntypedWorkflow,
+    WorkflowDescribeOptions, WorkflowExecutionInfo, WorkflowHandle,
 };
 use temporalio_common::protos::temporal::api::enums::v1::WorkflowExecutionStatus;
 use temporalio_sdk_core::Url;
@@ -527,12 +527,16 @@ async fn describe_execution(
         workflow_id: workflow_id.to_string(),
         detail: error.to_string(),
     })?;
-    let connection = Connection::connect(ConnectionOptions::new(address).build())
-        .await
-        .map_err(|error| SmokeFailure::WorkflowDescribe {
-            workflow_id: workflow_id.to_string(),
-            detail: error.to_string(),
-        })?;
+    let connection = Connection::connect(
+        ConnectionOptions::new(address)
+            .retry_options(RetryOptions::no_retries())
+            .build(),
+    )
+    .await
+    .map_err(|error| SmokeFailure::WorkflowDescribe {
+        workflow_id: workflow_id.to_string(),
+        detail: error.to_string(),
+    })?;
     let client = Client::new(
         connection,
         ClientOptions::new(config.namespace.as_str()).build(),

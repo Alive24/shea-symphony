@@ -190,6 +190,8 @@ Start uses `WorkflowIdReusePolicy::RejectDuplicate` and
 successful start response, terminates an existing execution, generates a
 replacement ID, or retries the start internally. An uncertain caller retry
 resubmits the exact same validated activation and Workflow ID.
+The Coordinator disables the SDK operation retry loop for both the start and
+immediate Describe calls so those cardinality limits include transport retries.
 
 The result keeps two facts independent:
 

@@ -9,7 +9,7 @@ use std::str::FromStr;
 
 use temporalio_client::{
     errors::{ClientConnectError, WorkflowInteractionError, WorkflowStartError},
-    Client, ClientOptions, Connection, ConnectionOptions, WorkflowDescribeOptions,
+    Client, ClientOptions, Connection, ConnectionOptions, RetryOptions, WorkflowDescribeOptions,
     WorkflowExecutionInfo, WorkflowGetResultOptions, WorkflowHandle, WorkflowQueryOptions,
     WorkflowStartOptions,
 };
@@ -128,8 +128,23 @@ impl SymphonyTemporalClient {
     /// crate-visible so external consumers use the typed operations instead of
     /// bypassing Symphony's namespace and error semantics.
     pub(crate) async fn connect(&self) -> Result<Client, TemporalRuntimeError> {
+        self.connect_with_retry_options(RetryOptions::default())
+            .await
+    }
+
+    async fn connect_without_operation_retries(&self) -> Result<Client, TemporalRuntimeError> {
+        self.connect_with_retry_options(single_attempt_retry_options())
+            .await
+    }
+
+    async fn connect_with_retry_options(
+        &self,
+        retry_options: RetryOptions,
+    ) -> Result<Client, TemporalRuntimeError> {
         let address = endpoint_url(&self.config.address)?;
-        let connection_options = ConnectionOptions::new(address).build();
+        let connection_options = ConnectionOptions::new(address)
+            .retry_options(retry_options)
+            .build();
         let connection = Connection::connect(connection_options)
             .await
             .map_err(|error| TemporalRuntimeError::Unavailable {
@@ -163,7 +178,9 @@ impl SymphonyTemporalClient {
         &self,
         input: IssueWorkflowInput,
     ) -> Result<StartedIssueWorkflow, TemporalRuntimeError> {
-        let client = self.connect().await?;
+        // Start uncertainty is recovered through stable identity, not hidden
+        // transport retries inside this single caller invocation.
+        let client = self.connect_without_operation_retries().await?;
         let workflow_id = input.workflow_id.clone();
         let handle = client
             .start_workflow(
@@ -402,7 +419,11 @@ impl SymphonyTemporalClient {
                 None,
             )
         })?;
-        let connection_options = ConnectionOptions::new(address).build();
+        // Coordinator owns uncertain outcomes explicitly; hidden SDK retries
+        // would violate the one-start/one-Describe invocation contract.
+        let connection_options = ConnectionOptions::new(address)
+            .retry_options(single_attempt_retry_options())
+            .build();
         let connection = Connection::connect(connection_options)
             .await
             .map_err(|error| connect_failure(workflow_id, known_run_id.clone(), phase, error))?;
@@ -536,6 +557,10 @@ fn map_temporal_status(status: WorkflowExecutionStatus) -> Option<CoordinatorTem
     }
 }
 
+fn single_attempt_retry_options() -> RetryOptions {
+    RetryOptions::no_retries()
+}
+
 fn endpoint_url(address: &str) -> Result<Url, TemporalRuntimeError> {
     // Workflow config uses operator-friendly local addresses by default; the
     // SDK expects a URL, so normalize missing schemes at this boundary.
@@ -577,6 +602,14 @@ mod tests {
         let url = endpoint_url("localhost:7233").unwrap();
 
         assert_eq!(url.as_str(), "http://localhost:7233/");
+    }
+
+    #[test]
+    fn coordinator_side_effect_client_disables_sdk_operation_retries() {
+        let options = single_attempt_retry_options();
+
+        assert_eq!(options.max_retries, 1);
+        assert_eq!(options.max_elapsed_time, None);
     }
 
     #[tokio::test]

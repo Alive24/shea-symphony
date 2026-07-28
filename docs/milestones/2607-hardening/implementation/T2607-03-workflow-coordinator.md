@@ -225,6 +225,8 @@ Start sets `WorkflowIdReusePolicy::RejectDuplicate` and
 distinct from an indeterminate start operation. Accepted starts retain the real
 non-empty SDK handle Run ID. Start and Describe are orthogonal so a newly
 accepted Workflow that closes before Describe is still represented correctly.
+The Coordinator connection disables the SDK operation retry loop; retries occur
+only when a caller deliberately resubmits the exact activation.
 
 Do not insert a SQLite `starting` reservation before Temporal start. A local
 active-row conflict is diagnostic input for #504 reconciliation, not authority

@@ -19,6 +19,21 @@ fn skill_suite_lists_human_review_skill() {
     assert!(skill.contains("Native GitHub subissues are not routine Human Review surfaces"));
     assert!(skill.contains("Subissue Human Review Exception: <reason>"));
     assert!(skill.contains("Never mutate Project state until the operator explicitly confirms"));
+    assert!(
+        skill.lines().count() <= 150,
+        "Human Review core should stay compact"
+    );
+    for field in [
+        "**Problem**",
+        "**Delivered change**",
+        "**Resulting effect**",
+        "**Evidence**",
+        "**Human decision needed**",
+    ] {
+        assert!(skill.contains(field), "missing visible brief field {field}");
+    }
+    assert!(skill.contains("Internal reasoning, tool output"));
+    assert!(skill.contains("not satisfy this visible briefing contract"));
 }
 
 #[test]
@@ -50,10 +65,10 @@ fn skill_suite_documents_app_server_first_manual_boundaries() {
 
     assert!(human_review.contains("Match the operator-facing language"));
     assert!(human_review.contains("Do not force English"));
-    assert!(human_review.contains("run the freshness check automatically"));
+    assert!(human_review.contains("run the PR freshness preflight automatically"));
     assert!(human_review.contains("not an operator-owned UAT"));
-    assert!(human_review.contains("decision. After the orientation brief"));
-    assert!(human_review.contains("Do not ask for operator permission"));
+    assert!(human_review.contains("After the orientation brief"));
+    assert!(human_review.contains("A UAT result\nalone is not confirmation"));
     assert!(manual_main.contains("cargo run -- project state .shea/workflows/shea-symphony.md"));
     assert!(manual_main.contains("main_lane.backend: codex"));
     assert!(manual_main.contains("codex.command: codex app-server -c 'service_tier=\"fast\"'"));
@@ -74,6 +89,11 @@ fn human_review_template_supports_all_decisions() {
     assert!(template.contains("Need Human Input"));
     assert!(template.contains("Defer"));
     assert!(template.contains("Target state after explicit confirmation"));
+    assert!(template.contains("### Decision Context"));
+    assert!(template.contains("- Problem:"));
+    assert!(template.contains("- Delivered change:"));
+    assert!(template.contains("- Observed effect:"));
+    assert!(template.contains("- Human decision needed:"));
 }
 
 #[test]
@@ -82,17 +102,15 @@ fn parent_batch_human_review_brief_preserves_order_and_boundaries() {
     let brief = repo_file(".shea/template/workpad/parent-batch-human-review-brief.md");
     let decision = repo_file(".shea/template/workpad/human-review.md");
 
-    assert!(skill.contains("first Human Review action is to prepare a compact"));
-    assert!(skill.contains("parent-batch evidence brief from current readbacks"));
+    assert!(skill.contains(
+        "first Human\nReview action is to prepare a compact parent-batch evidence brief"
+    ));
     assert!(skill.contains(".shea/template/workpad/parent-batch-human-review-brief.md"));
     assert!(skill.contains("read-only and advisory"));
     assert!(skill.contains("Do not write tracker comments"));
     assert!(skill.contains("Child `Done`, child PR merge"));
-    assert!(skill.contains("parent Review Agent PASS are inputs to Human Review"));
-    assert!(skill.contains("proof that parent UAT passed"));
-    assert!(skill.contains("operator's explicit decision"));
-    assert!(skill.contains("parent PR #421"));
-    assert!(skill.contains("child #399/#383/#384"));
+    assert!(skill.contains("Agent Review PASS are inputs"));
+    assert!(skill.contains("not proof that parent UAT passed"));
 
     assert!(brief.contains("## Shea Symphony Parent-Batch Human Review Brief"));
     assert!(brief.contains("This brief is read-only and advisory"));
@@ -101,6 +119,11 @@ fn parent_batch_human_review_brief_preserves_order_and_boundaries() {
     assert!(brief.contains("Human Review-owned"));
     assert!(brief.contains("does not prove parent acceptance"));
     assert!(brief.contains("parent PR #421"));
+    assert!(brief.contains("### Decision Context"));
+    assert!(brief.contains("- Problem:"));
+    assert!(brief.contains("- Delivered change:"));
+    assert!(brief.contains("- Observed effect:"));
+    assert!(brief.contains("- Human decision needed:"));
 
     let required_order = [
         "### 1. Remaining Parent UAT",
@@ -120,6 +143,24 @@ fn parent_batch_human_review_brief_preserves_order_and_boundaries() {
 
     assert!(decision.contains("## Shea Symphony Human Review Decision"));
     assert!(!decision.contains("## Shea Symphony Parent-Batch Human Review Brief"));
+}
+
+#[test]
+fn human_review_handoff_requires_visible_operator_context() {
+    let prompt = repo_file(".shea/prompts/human-review-handoff.md");
+
+    for field in [
+        "Problem:",
+        "Delivered change:",
+        "Resulting effect:",
+        "Evidence:",
+        "Human decision needed:",
+    ] {
+        assert!(prompt.contains(field), "missing handoff field {field}");
+    }
+    assert!(prompt.contains("Internal reasoning, tool output"));
+    assert!(prompt.contains("do not satisfy this visible briefing requirement"));
+    assert!(prompt.contains("Never omit a field"));
 }
 
 #[test]

@@ -9,6 +9,13 @@ This brief is read-only and advisory. It prepares the operator for UAT on a nati
 - Current Project state: `Human Review`
 - Brief prepared from current readbacks at: <YYYY-MM-DD HH:MM timezone>
 
+### Decision Context
+
+- Problem: <the combined user, operator, or system problem>
+- Delivered change: <the parent result assembled from the child batch>
+- Observed effect: <combined before/after result, or explicitly intended/not evidenced>
+- Human decision needed: <remaining parent UAT or acceptance choice>
+
 ### 1. Remaining Parent UAT
 
 List the parent UAT checklist items that still need Human Review-owned pass/fail/deferred evidence. Do not mark parent UAT complete based only on child `Done`, Main lane evidence, Merge lane evidence, or Review Agent PASS.

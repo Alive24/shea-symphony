@@ -11,10 +11,17 @@
 - Decision: Approve for Merging | Request Rework | Need Human Input | Defer
 - Target state after explicit confirmation: Merging | Rework | Need Human Input | unchanged
 - Result: Approved | Rework requested | Blocked | Deferred
-- Evidence summary: <short summary of evidence checked>
+
+### Decision Context
+
+- Problem: <the user, operator, or system problem>
+- Delivered change: <the behavior changed and where>
+- Observed effect: <before/after result, or explicitly intended/not evidenced>
+- Human decision needed: <remaining UAT or acceptance choice>
 
 ### Evidence Reviewed
 
+- Evidence summary:
 - Issue body and checklist:
 - Workpad evidence:
 - Review Agent evidence:

@@ -13,13 +13,11 @@
   import { operatorOverviewStore, requestOperatorLocalArtifactsRefresh } from './lib/operatorOverviewStore.ts';
   import { humanTodoRefreshState } from './lib/viewModel/humanTodoRefresh.ts';
   import { buildLaneThroughputBoard } from './lib/viewModel/laneThroughput.ts';
-  import { buildHandoffPrompt } from './lib/viewModel/handoffPrompt.ts';
-  import needToClarifyHandoffPrompt from '../../.shea/prompts/need-to-clarify-handoff.md?raw';
-  import needHumanInputHandoffPrompt from '../../.shea/prompts/need-human-input-handoff.md?raw';
-  import humanReviewHandoffPrompt from '../../.shea/prompts/human-review-handoff.md?raw';
+  import { buildRuntimeHandoffPrompt } from './lib/viewModel/handoffPrompt.ts';
   import {
     appendAutoloopLine,
     defaultLoopState,
+    getHandoffPrompt,
     getLoopState,
     isTauriRuntime,
     laneWorkerFromAutoloop,
@@ -43,11 +41,6 @@
   let autoloopRefreshTimer: number | null = null;
   let lastStableHumanTodoIssues = [];
   let lastStableLaneBoard = [];
-  const handoffPromptTemplates = {
-    'Need to Clarify': needToClarifyHandoffPrompt,
-    'Need Human Input': needHumanInputHandoffPrompt,
-    'Human Review': humanReviewHandoffPrompt
-  };
 
   $: view = $operatorOverviewStore.view;
   $: liveError = $operatorOverviewStore.liveError;
@@ -190,18 +183,32 @@
     return handoffStatus[issue.id] ?? '';
   }
 
+  function handoffPromptForIssue(issue) {
+    return buildRuntimeHandoffPrompt(issue, getHandoffPrompt);
+  }
+
+  function handoffErrorMessage(error, fallback) {
+    if (error instanceof Error) return error.message;
+    if (typeof error === 'string' && error.trim()) return error;
+    return fallback;
+  }
+
   async function copyHandoffPrompt(issue) {
     try {
-      await navigator.clipboard.writeText(buildHandoffPrompt(issue, handoffPromptTemplates));
+      const prompt = await handoffPromptForIssue(issue);
+      await navigator.clipboard.writeText(prompt);
       copiedHandoffId = issue.id;
       handoffStatus = { ...handoffStatus, [issue.id]: '' };
       window.setTimeout(() => {
         if (copiedHandoffId === issue.id) copiedHandoffId = '';
       }, 1800);
       return true;
-    } catch (_) {
+    } catch (error) {
       copiedHandoffId = '';
-      handoffStatus = { ...handoffStatus, [issue.id]: 'Clipboard unavailable; prompt was not copied.' };
+      handoffStatus = {
+        ...handoffStatus,
+        [issue.id]: handoffErrorMessage(error, 'Unable to copy the handoff prompt.')
+      };
       return false;
     }
   }
@@ -218,22 +225,18 @@
 
   async function openHandoff(issue) {
     if (defaultHandoffTarget !== 'codex-app') {
-      const copied = await copyHandoffPrompt(issue);
-      handoffStatus = {
-        ...handoffStatus,
-        [issue.id]: copied ? '' : `Clipboard unavailable. Open ${handoffLabel(defaultHandoffTarget)} manually after copying the prompt.`
-      };
+      await copyHandoffPrompt(issue);
       return;
     }
     try {
-      const prompt = buildHandoffPrompt(issue, handoffPromptTemplates);
+      const prompt = await handoffPromptForIssue(issue);
       const worktreePath = issueWorktreePath(issue);
       await openCodexHandoff(prompt, worktreePath);
       handoffStatus = { ...handoffStatus, [issue.id]: '' };
     } catch (error) {
       handoffStatus = {
         ...handoffStatus,
-        [issue.id]: error instanceof Error ? error.message : 'Unable to open Codex handoff.'
+        [issue.id]: handoffErrorMessage(error, 'Unable to open Codex handoff.')
       };
     }
   }

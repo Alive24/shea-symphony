@@ -51,6 +51,8 @@ import {
 } from '../src/lib/viewModel/humanTodoRefresh.ts';
 import {
   buildHandoffPrompt,
+  buildRuntimeHandoffPrompt,
+  handoffPromptKeyForState,
   renderHandoffTemplate
 } from '../src/lib/viewModel/handoffPrompt.ts';
 import {
@@ -1143,7 +1145,7 @@ test('human handoff prompt is issue-specific and lane-boundary explicit', () => 
   const prompt = buildHandoffPrompt(issue, templates);
   assert.match(prompt, /Use the shea-symphony-human-review skill for #436/);
   assert.match(prompt, /State: Human Review/);
-  assert.match(prompt, /remaining human-owned checks/);
+  assert.match(prompt, /remaining human-owned check or acceptance choice/);
   assert.match(prompt, /until the operator gives explicit approval/);
   assert.match(prompt, /https:\/\/github\.com\/Alive24\/shea-symphony\/issues\/436/);
 });
@@ -1163,6 +1165,48 @@ test('human handoff prompt files own each state-specific skill', () => {
     buildHandoffPrompt({ id: '#3', state: 'Human Review' }, templates),
     /shea-symphony-human-review/
   );
+});
+
+test('human handoff states map to the three fixed runtime prompt keys', () => {
+  assert.equal(handoffPromptKeyForState('Need to Clarify'), 'needToClarify');
+  assert.equal(handoffPromptKeyForState('Need Human Input'), 'needHumanInput');
+  assert.equal(handoffPromptKeyForState('Human Review'), 'humanReview');
+  assert.throws(() => handoffPromptKeyForState('../../etc/passwd'), /No human handoff prompt/);
+});
+
+test('runtime handoff loading reflects prompt edits and target switches', async () => {
+  let target = 'A';
+  const prompts = {
+    A: { humanReview: 'runtime A sentinel {{ issue.identifier }}' },
+    B: { humanReview: 'runtime B sentinel {{ issue.identifier }}' }
+  };
+  const loadPrompt = async (kind) => prompts[target][kind];
+  const issue = { id: '#999', state: 'Human Review' };
+
+  assert.equal(
+    await buildRuntimeHandoffPrompt(issue, loadPrompt),
+    'runtime A sentinel #999'
+  );
+  prompts.A.humanReview = 'runtime A edited {{ issue.identifier }}';
+  assert.equal(
+    await buildRuntimeHandoffPrompt(issue, loadPrompt),
+    'runtime A edited #999'
+  );
+  target = 'B';
+  assert.equal(
+    await buildRuntimeHandoffPrompt(issue, loadPrompt),
+    'runtime B sentinel #999'
+  );
+});
+
+test('operator handoff actions share one runtime loader without raw prompt imports', () => {
+  const operatorDesk = readFileSync(new URL('../src/OperatorDesk.svelte', import.meta.url), 'utf8');
+  const tauriBridge = readFileSync(new URL('../src/lib/tauriAutoloop.ts', import.meta.url), 'utf8');
+
+  assert.doesNotMatch(operatorDesk, /handoff\.md\?raw|handoffPromptTemplates/);
+  assert.equal((operatorDesk.match(/await handoffPromptForIssue\(issue\)/g) ?? []).length, 2);
+  assert.match(tauriBridge, /invoke<string>\('get_handoff_prompt', \{ kind \}\)/);
+  assert.doesNotMatch(tauriBridge, /get_handoff_prompt[\s\S]{0,100}(path|filePath)/);
 });
 
 test('human handoff template rendering rejects unknown variables', () => {

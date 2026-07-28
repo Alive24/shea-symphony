@@ -2,6 +2,13 @@ import { normalizeStateName } from './issueState.ts';
 
 export type HumanHandoffState = 'Need to Clarify' | 'Need Human Input' | 'Human Review';
 export type HandoffPromptTemplates = Record<HumanHandoffState, string>;
+export type HandoffPromptKey = 'needToClarify' | 'needHumanInput' | 'humanReview';
+
+const handoffPromptKeys: Record<HumanHandoffState, HandoffPromptKey> = {
+  'Need to Clarify': 'needToClarify',
+  'Need Human Input': 'needHumanInput',
+  'Human Review': 'humanReview'
+};
 
 const humanHandoffStates = new Set<HumanHandoffState>([
   'Need to Clarify',
@@ -37,6 +44,20 @@ export function buildHandoffPrompt(
       url: String(issue?.url ?? '').trim()
     }
   });
+}
+
+export function handoffPromptKeyForState(stateValue: unknown): HandoffPromptKey {
+  const state = requireHumanHandoffState(stateValue);
+  return handoffPromptKeys[state];
+}
+
+export async function buildRuntimeHandoffPrompt(
+  issue: Record<string, any>,
+  loadPrompt: (kind: HandoffPromptKey) => Promise<string>
+) {
+  const state = requireHumanHandoffState(issue?.state);
+  const template = await loadPrompt(handoffPromptKeys[state]);
+  return buildHandoffPrompt(issue, { [state]: template } as HandoffPromptTemplates);
 }
 
 export function renderHandoffTemplate(
@@ -77,4 +98,12 @@ function templateValue(context: Record<string, any>, path: string) {
     value = value[segment];
   }
   return value;
+}
+
+function requireHumanHandoffState(stateValue: unknown): HumanHandoffState {
+  const state = normalizeStateName(stateValue);
+  if (!humanHandoffStates.has(state as HumanHandoffState)) {
+    throw new Error(`No human handoff prompt is defined for state "${state}".`);
+  }
+  return state as HumanHandoffState;
 }

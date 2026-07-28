@@ -4,6 +4,7 @@ mod autoloop_state;
 mod cli;
 mod external_links;
 mod github;
+mod handoff_prompts;
 mod read_surfaces;
 mod target_context;
 mod target_runtime;
@@ -38,6 +39,7 @@ fn main() {
             read_surfaces::get_read_surface,
             read_surfaces::get_codex_transcript,
             github::get_issue_timeline,
+            handoff_prompts::get_handoff_prompt,
             external_links::open_codex_thread,
             external_links::open_github_source,
             external_links::open_handoff_target,

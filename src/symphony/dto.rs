@@ -20,18 +20,41 @@ pub struct IssueWorkflowInput {
     pub workflow_id: String,
     /// Stable repository identity, normally host/owner/repository derived.
     pub repo_id: String,
+    /// Stable tracker adapter spelling that resolves the issue.
+    ///
+    /// Legacy histories omit this field, so replay defaults it to an empty
+    /// value. New Coordinator starts always populate it from the validated
+    /// issue identity.
+    #[serde(default)]
+    pub tracker_backend: String,
     /// Tracker-native issue reference such as `#477`.
     pub issue_ref: String,
     /// Authoritative tracker state that made this execution eligible to start.
     pub from_tracker_state: String,
     /// Requested orchestration target, such as contract check or agent work.
     pub target_kind: String,
+    /// Stable activation provenance category such as `tracker`.
+    ///
+    /// Legacy histories omit this field; newly constructed activation inputs
+    /// always carry the Coordinator-validated lowercase kebab-case spelling.
+    #[serde(default)]
+    pub source_kind: String,
     /// Reference to the tracker transition or operator action that activated work.
     pub source_ref: String,
     /// Tracker revision observed when the start decision was made.
     pub source_tracker_revision: String,
-    /// Human-readable UTC timestamp captured outside deterministic Workflow code.
+    /// Pre-start activation episode timestamp in RFC 3339 UTC second precision.
+    ///
+    /// The retained wire name is `started_at` for replay compatibility. This is
+    /// not Temporal's authoritative execution start time; current Describe
+    /// evidence supplies that separately as `temporal_started_at`.
     pub started_at: String,
+    /// Bounded human-readable provenance for why the activation was accepted.
+    ///
+    /// Legacy histories omit this field. It is diagnostic context rather than
+    /// Workflow identity and never contains tracker payloads or transcripts.
+    #[serde(default)]
+    pub audit_reason: String,
     /// Optional durable reference to the operator action that requested execution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operator_action_ref: Option<String>,
@@ -717,12 +740,15 @@ mod tests {
             workflow_id: "issue:shea-symphony:475:pulse:todo-to-work:20260709-175700Z:project"
                 .to_string(),
             repo_id: "Alive24/shea-symphony".to_string(),
+            tracker_backend: "github_project_v2".to_string(),
             issue_ref: "#475".to_string(),
             from_tracker_state: "Todo".to_string(),
             target_kind: "work".to_string(),
+            source_kind: "tracker".to_string(),
             source_ref: "project-v2".to_string(),
             source_tracker_revision: "rev-1".to_string(),
             started_at: "2026-07-09T17:57:00Z".to_string(),
+            audit_reason: "Activate the observed revision.".to_string(),
             operator_action_ref: None,
             capacity_policy_ref: Some("default-local".to_string()),
         }
@@ -752,6 +778,28 @@ mod tests {
             .as_object()
             .unwrap()
             .contains_key("repo_id"));
+    }
+
+    #[test]
+    fn legacy_issue_workflow_input_defaults_new_durable_fields() {
+        let legacy = json!({
+            "workflow_id": "issue:legacy",
+            "repo_id": "github.com/Alive24/shea-symphony",
+            "issue_ref": "#475",
+            "from_tracker_state": "todo",
+            "target_kind": "work",
+            "source_ref": "project-v2",
+            "source_tracker_revision": "rev-1",
+            "started_at": "2026-07-09T17:57:00Z"
+        });
+
+        let input: IssueWorkflowInput = serde_json::from_value(legacy).unwrap();
+
+        assert_eq!(input.tracker_backend, "");
+        assert_eq!(input.source_kind, "");
+        assert_eq!(input.audit_reason, "");
+        assert_eq!(input.operator_action_ref, None);
+        assert_eq!(input.capacity_policy_ref, None);
     }
 
     #[test]

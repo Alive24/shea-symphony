@@ -39,10 +39,10 @@ is the newer Temporal-authoritative contract: start is optimistic, current
 Describe evidence is projected after start, and SQLite conflicts are
 diagnostics rather than reservations or execution authority.
 
-Deferred ownership is explicit:
+Slice ownership is explicit:
 
-- #502 (`Todo`) owns Temporal start, native Run ID, immediate Describe, and
-  already-open execution handling;
+- #502 implements Temporal start, native Run ID, immediate Describe, and typed
+  duplicate execution handling without SQLite authority;
 - #503 (`Backlog`) is an older start/Run-ID seed now overlapped by promoted
   #502, not another remaining implementation slice;
 - #504 (`Backlog`) owns Describe-backed targeted repair/reconciliation;
@@ -210,22 +210,28 @@ issue:github.com/Alive24/shea-symphony:123:pulse:merging-to-merge:20260708T15001
 
 ## Start Flow
 
-TODO #502: implement the start contract from
-`WORKFLOW-ACTIVATION.md`. The future flow is:
+#502 implements the start contract from `WORKFLOW-ACTIVATION.md`:
 
 ```text
 receive already-observed executable activation facts
-  -> apply capacity policy (unowned T2607-03 gap)
-  -> start Temporal with the existing workflow_id
-  -> Describe the current execution
-  -> project only Describe-backed lifecycle evidence
+  -> build backward-compatible durable IssueWorkflowInput
+  -> start Temporal once with the exact existing workflow_id
+  -> Describe once by workflow_id and known run_id when available
+  -> return independent start evidence and execution observation
 ```
 
-Do not insert a SQLite `starting` reservation before Temporal start. If a
-Workflow with the same retry-stable ID is already open, establish that through
-Temporal and bind/project the described execution. A local active-row conflict
-is diagnostic input for #504 reconciliation, not authority to reject or
-authorize a start.
+Start sets `WorkflowIdReusePolicy::RejectDuplicate` and
+`WorkflowIdConflictPolicy::Fail`. Typed SDK `AlreadyStarted` evidence remains
+distinct from an indeterminate start operation. Accepted starts retain the real
+non-empty SDK handle Run ID. Start and Describe are orthogonal so a newly
+accepted Workflow that closes before Describe is still represented correctly.
+The Coordinator connection disables the SDK operation retry loop; retries occur
+only when a caller deliberately resubmits the exact activation.
+
+Do not insert a SQLite `starting` reservation before Temporal start. A local
+active-row conflict is diagnostic input for #504 reconciliation, not authority
+to reject or authorize a start. Capacity policy remains an unowned prerequisite
+for the future caller and is not implicitly implemented inside #502.
 
 ## Discovery Triggers
 
@@ -254,12 +260,20 @@ Repair does not move tracker business state directly.
 
 ## Temporal Interaction
 
-#502 and #504 use Temporal client APIs for start and current execution
-Describe. The pure #501 activation contract performs no Temporal I/O.
+#502 uses Temporal client APIs for one start and one current execution
+Describe. The pure #501 activation contract still performs no Temporal I/O.
 
 Start attributes should carry the validated repository/issue identity, observed
 tracker state/revision, Coordinator-derived target kind, source kind/reference,
 episode time, and audit reason. `IssueWorkflow` runs on `symphony-core`.
+
+`IssueWorkflowInput.started_at` is the RFC 3339 UTC-second activation episode
+time, not Temporal's authoritative start time. Describe returns the latter as
+`temporal_started_at`.
+
+TODO(T2607-03): Search Attributes/Visibility indexing is not designed or
+implemented by #502. Assign it only after #504/#505 establish repair/read-model
+and caller boundaries.
 
 ## SQLite Interaction
 
@@ -272,8 +286,10 @@ The pure #501 activation contract performs no SQLite reads or writes.
 ## Tracker Interaction
 
 #501 accepts an already-observed tracker snapshot and performs no tracker I/O.
-#502/#504/#505 may read at their durable boundaries, but Coordinator must not
-write tracker state. Tracker writes belong to `TrackerTransitionActivity`.
+#502 also performs no tracker I/O because it consumes the validated #501
+activation. #504/#505 may read at their assigned durable boundaries, but
+Coordinator must not write tracker state. Tracker writes belong to
+`TrackerTransitionActivity`.
 
 ## App And Operator Interaction
 
@@ -284,8 +300,11 @@ and adds no App, Tauri, Svelte, or CLI surface.
 ## Error Handling
 
 #501 uses typed validation errors for invalid issue/source/revision/audit/time
-input and Workflow ID overflow. #502, #504, #505, and the unowned capacity
-slice own typed I/O, conflict, capacity, and entrypoint outcomes without
+input and Workflow ID overflow. #502 distinguishes pre-dispatch
+input/configuration/payload failures, definitive server rejection,
+unavailable/indeterminate side-effect outcomes, and malformed/contradictory
+protocol evidence with Connect/Start/Describe attribution. #504, #505, and the
+unowned capacity slice own repair, entrypoint, and admission outcomes without
 changing this identity policy.
 
 ## #501 Acceptance Checks
@@ -315,3 +334,18 @@ changing this identity policy.
 - deferred #502/#504/#505 and unowned capacity work is explicit, #503 is
   recognized as an overlapped Backlog seed, and the older SQLite reservation
   model is not accidentally implemented.
+
+## #502 Acceptance Checks
+
+- Only `CoordinatorExecutableActivation` can enter the start boundary.
+- Durable input maps the exact Workflow ID, issue identity, observed state and
+  revision, derived target, source provenance, episode time, and audit reason.
+- Legacy durable input JSON without `tracker_backend`, `source_kind`, or
+  `audit_reason` still deserializes through Serde defaults.
+- Each invocation performs at most one start and one immediate Describe.
+- Accepted starts return the real SDK Run ID; duplicate starts remain typed.
+- Uncertain starts never become "not started" and may converge through Describe.
+- Open, Closed, and DescribeRequired observations remain independent of start
+  evidence.
+- No tracker, SQLite, capacity, Search Attribute, App, or Workflow business
+  state path is introduced.

@@ -21,6 +21,12 @@ use shea_symphony::{
     symphony::{IssueWorkflowInput, IssueWorkflowQueryResult, SymphonyTemporalClient},
     RuntimeConfig, WorkflowStore,
 };
+use temporalio_client::{
+    Client, ClientOptions, Connection, ConnectionOptions, RetryOptions, UntypedWorkflow,
+    WorkflowDescribeOptions, WorkflowExecutionInfo, WorkflowHandle,
+};
+use temporalio_common::protos::temporal::api::enums::v1::WorkflowExecutionStatus;
+use temporalio_sdk_core::Url;
 
 const SMOKE_ENABLED_ENV: &str = "SHEA_TEMPORAL_SMOKE";
 const WORKFLOW_PROFILE: &str = ".shea/workflows/shea-symphony.md";
@@ -71,6 +77,10 @@ enum SmokeFailure {
         diagnostic: String,
     },
     WorkflowStart {
+        workflow_id: String,
+        detail: String,
+    },
+    WorkflowDescribe {
         workflow_id: String,
         detail: String,
     },
@@ -139,6 +149,13 @@ impl fmt::Display for SmokeFailure {
             } => write!(
                 formatter,
                 "workflow-start diagnostic for {workflow_id}: {detail}"
+            ),
+            Self::WorkflowDescribe {
+                workflow_id,
+                detail,
+            } => write!(
+                formatter,
+                "workflow-describe diagnostic for {workflow_id}: {detail}"
             ),
             Self::QueryTimeout {
                 workflow_id,
@@ -482,15 +499,82 @@ fn synthetic_input() -> IssueWorkflowInput {
     IssueWorkflowInput {
         workflow_id,
         repo_id: "synthetic/temporal-smoke".to_string(),
+        tracker_backend: "synthetic".to_string(),
         issue_ref: format!("synthetic:temporal-smoke:{timestamp}"),
         from_tracker_state: "SyntheticSmoke".to_string(),
         target_kind: "noop-smoke".to_string(),
+        source_kind: "smoke".to_string(),
         source_ref: "test-owned:temporal-noop-smoke".to_string(),
         source_tracker_revision: "synthetic-revision-1".to_string(),
         started_at: format!("unix-millis:{timestamp}"),
+        audit_reason: "Exercise the explicit local Temporal smoke.".to_string(),
         operator_action_ref: None,
         capacity_policy_ref: None,
     }
+}
+
+async fn describe_execution(
+    config: &TemporalConfig,
+    workflow_id: &str,
+    run_id: Option<&str>,
+) -> Result<(String, String, SystemTime, WorkflowExecutionStatus), SmokeFailure> {
+    let normalized = if config.address.contains("://") {
+        config.address.clone()
+    } else {
+        format!("http://{}", config.address)
+    };
+    let address = Url::parse(&normalized).map_err(|error| SmokeFailure::WorkflowDescribe {
+        workflow_id: workflow_id.to_string(),
+        detail: error.to_string(),
+    })?;
+    let connection = Connection::connect(
+        ConnectionOptions::new(address)
+            .retry_options(RetryOptions::no_retries())
+            .build(),
+    )
+    .await
+    .map_err(|error| SmokeFailure::WorkflowDescribe {
+        workflow_id: workflow_id.to_string(),
+        detail: error.to_string(),
+    })?;
+    let client = Client::new(
+        connection,
+        ClientOptions::new(config.namespace.as_str()).build(),
+    )
+    .map_err(|error| SmokeFailure::WorkflowDescribe {
+        workflow_id: workflow_id.to_string(),
+        detail: error.to_string(),
+    })?;
+    let handle = WorkflowHandle::<_, UntypedWorkflow>::new(
+        client,
+        WorkflowExecutionInfo {
+            namespace: config.namespace.clone(),
+            workflow_id: workflow_id.to_string(),
+            run_id: run_id.map(str::to_string),
+            first_execution_run_id: None,
+        },
+    );
+    let description = handle
+        .describe(WorkflowDescribeOptions::default())
+        .await
+        .map_err(|error| SmokeFailure::WorkflowDescribe {
+            workflow_id: workflow_id.to_string(),
+            detail: error.to_string(),
+        })?;
+    let temporal_started_at =
+        description
+            .start_time()
+            .ok_or_else(|| SmokeFailure::WorkflowDescribe {
+                workflow_id: workflow_id.to_string(),
+                detail: "Describe omitted Temporal's authoritative start time".to_string(),
+            })?;
+
+    Ok((
+        description.id().to_string(),
+        description.run_id().to_string(),
+        temporal_started_at,
+        description.status(),
+    ))
 }
 
 async fn wait_for_query(
@@ -532,13 +616,69 @@ async fn exercise_noop_workflow(
 ) -> Result<(), SmokeFailure> {
     let input = synthetic_input();
     let workflow_id = input.workflow_id.clone();
-    client
+    let retry_input = input.clone();
+    let started = client
         .start_noop_issue_workflow(input)
         .await
         .map_err(|error| SmokeFailure::WorkflowStart {
             workflow_id: workflow_id.clone(),
             detail: error.to_string(),
         })?;
+    let run_id = started
+        .run_id
+        .filter(|run_id| !run_id.is_empty())
+        .ok_or_else(|| SmokeFailure::WorkflowStart {
+            workflow_id: workflow_id.clone(),
+            detail: "accepted start did not preserve the SDK Run ID".to_string(),
+        })?;
+    if started.workflow_id != workflow_id {
+        return Err(SmokeFailure::WorkflowStart {
+            workflow_id: workflow_id.clone(),
+            detail: format!(
+                "accepted start returned mismatched Workflow ID {}",
+                started.workflow_id
+            ),
+        });
+    }
+    println!("temporal smoke: accepted {workflow_id} with real Run ID {run_id}");
+
+    let (described_workflow_id, described_run_id, temporal_started_at, status) =
+        describe_execution(client.config(), &workflow_id, Some(&run_id)).await?;
+    if described_workflow_id != workflow_id
+        || described_run_id != run_id
+        || status == WorkflowExecutionStatus::Unspecified
+    {
+        return Err(SmokeFailure::WorkflowDescribe {
+            workflow_id: workflow_id.clone(),
+            detail: format!(
+                "unexpected immediate evidence: workflow_id={described_workflow_id}, \
+                 run_id={described_run_id}, start={temporal_started_at:?}, status={status:?}"
+            ),
+        });
+    }
+    println!(
+        "temporal smoke: immediate Describe matched {workflow_id}/{run_id} \
+         with server start {temporal_started_at:?} and status {status:?}"
+    );
+
+    // The exact retry-stable ID must be rejected while the first execution is
+    // open; the client must not bind to it or generate a replacement episode.
+    if let Ok(unexpected) = client.start_noop_issue_workflow(retry_input.clone()).await {
+        return Err(SmokeFailure::WorkflowStart {
+            workflow_id: workflow_id.clone(),
+            detail: format!("exact open-execution retry unexpectedly accepted: {unexpected:?}"),
+        });
+    }
+    let (_, retry_described_run_id, _, _) =
+        describe_execution(client.config(), &workflow_id, None).await?;
+    if retry_described_run_id != run_id {
+        return Err(SmokeFailure::WorkflowDescribe {
+            workflow_id: workflow_id.clone(),
+            detail: format!(
+                "exact retry changed current Run ID from {run_id} to {retry_described_run_id}"
+            ),
+        });
+    }
 
     let query = wait_for_query(client, &workflow_id, worker).await?;
     if query.workflow_id != workflow_id
@@ -580,6 +720,16 @@ async fn exercise_noop_workflow(
         });
     }
     println!("temporal smoke: observed completed NoopCoreActivity result for {workflow_id}");
+
+    // RejectDuplicate also forbids reusing the same episode-scoped ID after
+    // closure. A later caller may create a separately validated activation;
+    // this start boundary never invents one on retry.
+    if let Ok(unexpected) = client.start_noop_issue_workflow(retry_input).await {
+        return Err(SmokeFailure::WorkflowStart {
+            workflow_id,
+            detail: format!("exact closed-execution retry unexpectedly accepted: {unexpected:?}"),
+        });
+    }
 
     Ok(())
 }

@@ -1,3 +1,5 @@
+import type { HandoffPromptKey } from './viewModel/handoffPrompt.ts';
+
 export type LaneSnapshot = {
   lane: string;
   status: string;
@@ -168,6 +170,14 @@ export async function setActiveWorkspace(targetRoot: string | null): Promise<Wor
   if (!isTauriRuntime()) return defaultWorkspaceProfile();
   const { invoke } = await import('@tauri-apps/api/core');
   return invoke<WorkspaceProfile>('set_active_workspace', { targetRoot });
+}
+
+export async function getHandoffPrompt(kind: HandoffPromptKey): Promise<string> {
+  if (!isTauriRuntime()) {
+    throw new Error('Target-local handoff prompts are only available in the desktop shell.');
+  }
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<string>('get_handoff_prompt', { kind });
 }
 
 export async function getRuntimeSnapshot(): Promise<RuntimeSnapshot | null> {

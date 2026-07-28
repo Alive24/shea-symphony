@@ -34,12 +34,15 @@ Recommended input:
 IssueWorkflowInput {
   workflow_id
   repo_id
+  tracker_backend
   issue_ref
   from_tracker_state
   target_kind
+  source_kind
   source_ref
   source_tracker_revision
   started_at
+  audit_reason
   operator_action_ref?
   capacity_policy_ref?
 }
@@ -48,6 +51,13 @@ IssueWorkflowInput {
 The input tells the Workflow why this execution started and which tracker fact
 it observed. The Workflow should not infer its starting purpose by scanning
 tracker state again after start.
+
+`started_at` retains its durable wire name and records the pre-start activation
+episode timestamp in RFC 3339 UTC second precision. It is not Temporal's
+authoritative execution start time; Coordinator Describe observations call
+that separate value `temporal_started_at`. New fields use Serde defaults so
+histories containing the earlier input shape remain replay-compatible, while
+new Coordinator construction always populates them.
 
 ## Standard States
 

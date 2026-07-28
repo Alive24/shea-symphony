@@ -8,15 +8,28 @@
 use std::str::FromStr;
 
 use temporalio_client::{
-    Client, ClientOptions, Connection, ConnectionOptions, WorkflowGetResultOptions,
-    WorkflowQueryOptions, WorkflowStartOptions,
+    errors::{ClientConnectError, WorkflowInteractionError, WorkflowStartError},
+    Client, ClientOptions, Connection, ConnectionOptions, WorkflowDescribeOptions,
+    WorkflowExecutionInfo, WorkflowGetResultOptions, WorkflowHandle, WorkflowQueryOptions,
+    WorkflowStartOptions,
+};
+use temporalio_common::protos::proto_ts_to_system_time;
+use temporalio_common::protos::temporal::api::enums::v1::{
+    WorkflowExecutionStatus, WorkflowIdConflictPolicy, WorkflowIdReusePolicy,
 };
 use temporalio_sdk_core::Url;
 use thiserror::Error;
+use time::{OffsetDateTime, UtcOffset};
 
 use crate::config::TemporalConfig;
+use crate::symphony::coordinator::start::{
+    CoordinatorAdapterStart, CoordinatorDescribeEvidence, CoordinatorFailureKind,
+    CoordinatorSdkErrorVariant, CoordinatorStartFailure, CoordinatorTemporalAdapter,
+    CoordinatorTemporalPhase, CoordinatorTemporalStatus,
+};
 use crate::symphony::dto::{IssueWorkflowInput, IssueWorkflowQueryResult, IssueWorkflowState};
 use crate::symphony::workflows::IssueWorkflow;
+use crate::symphony::WorkflowId;
 
 #[derive(Debug, Clone)]
 /// High-level client for Symphony's local Temporal namespace.
@@ -35,9 +48,10 @@ pub struct StartedIssueWorkflow {
     pub workflow_id: String,
     /// Temporal Run ID when the SDK start response exposes one.
     ///
-    /// The 2607 skeleton currently returns `None`; callers must use
-    /// [`workflow_id`](Self::workflow_id) as the durable lookup identity rather
-    /// than inventing a local Run ID.
+    /// A successful accepted start always returns `Some` with the real,
+    /// non-empty SDK handle Run ID. The optional wire shape is retained for
+    /// compatibility with existing public callers; Symphony never fabricates a
+    /// fallback Run ID.
     pub run_id: Option<String>,
 }
 
@@ -151,7 +165,7 @@ impl SymphonyTemporalClient {
     ) -> Result<StartedIssueWorkflow, TemporalRuntimeError> {
         let client = self.connect().await?;
         let workflow_id = input.workflow_id.clone();
-        client
+        let handle = client
             .start_workflow(
                 IssueWorkflow::run,
                 input,
@@ -159,6 +173,8 @@ impl SymphonyTemporalClient {
                     self.config.task_queues.core.as_str(),
                     workflow_id.as_str(),
                 )
+                .id_reuse_policy(WorkflowIdReusePolicy::RejectDuplicate)
+                .id_conflict_policy(WorkflowIdConflictPolicy::Fail)
                 .build(),
             )
             .await
@@ -166,10 +182,18 @@ impl SymphonyTemporalClient {
                 workflow_id: workflow_id.clone(),
                 source_error: error.to_string(),
             })?;
+        let run_id = handle
+            .run_id()
+            .filter(|run_id| !run_id.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| TemporalRuntimeError::WorkflowOperation {
+                workflow_id: workflow_id.clone(),
+                source_error: "SDK accepted start without a non-empty Run ID".to_string(),
+            })?;
 
         Ok(StartedIssueWorkflow {
             workflow_id,
-            run_id: None,
+            run_id: Some(run_id),
         })
     }
 
@@ -217,6 +241,298 @@ impl SymphonyTemporalClient {
                 workflow_id: workflow_id.to_string(),
                 source_error: error.to_string(),
             })
+    }
+}
+
+impl CoordinatorTemporalAdapter for SymphonyTemporalClient {
+    async fn start_issue_workflow(
+        &self,
+        input: IssueWorkflowInput,
+    ) -> Result<CoordinatorAdapterStart, CoordinatorStartFailure> {
+        let workflow_id = WorkflowId::new(input.workflow_id.clone());
+        let client = self
+            .connect_for_coordinator(&workflow_id, None, CoordinatorTemporalPhase::Connect)
+            .await?;
+
+        // Reject both closed-ID reuse and running-ID conflict. Retrying an
+        // uncertain caller request must reuse this exact activation ID.
+        match client
+            .start_workflow(
+                IssueWorkflow::run,
+                input,
+                WorkflowStartOptions::new(
+                    self.config.task_queues.core.as_str(),
+                    workflow_id.as_str(),
+                )
+                .id_reuse_policy(WorkflowIdReusePolicy::RejectDuplicate)
+                .id_conflict_policy(WorkflowIdConflictPolicy::Fail)
+                // TODO(T2607-03): Temporal Search Attributes/Visibility
+                // indexing remains undesigned until #504/#505 establish
+                // repair/read-model and real caller boundaries.
+                .build(),
+            )
+            .await
+        {
+            Ok(handle) => Ok(CoordinatorAdapterStart::Accepted {
+                run_id: handle.run_id().unwrap_or_default().to_owned(),
+            }),
+            Err(WorkflowStartError::AlreadyStarted { run_id, source }) => {
+                Ok(typed_already_started(run_id, source.code()))
+            }
+            Err(WorkflowStartError::PayloadConversion(_)) => Err(CoordinatorStartFailure::new(
+                CoordinatorTemporalPhase::Start,
+                CoordinatorFailureKind::InputConfigurationPayload,
+                workflow_id,
+                None,
+                CoordinatorSdkErrorVariant::PayloadConversion,
+                None,
+            )),
+            Err(WorkflowStartError::Rpc(status)) => {
+                let code = status.code();
+                let failure = CoordinatorStartFailure::new(
+                    CoordinatorTemporalPhase::Start,
+                    if start_rpc_is_indeterminate(code) {
+                        CoordinatorFailureKind::UnavailableOrIndeterminate
+                    } else if code == temporalio_client::tonic::Code::AlreadyExists {
+                        CoordinatorFailureKind::MalformedProtocolEvidence
+                    } else {
+                        CoordinatorFailureKind::DefinitiveServerRejection
+                    },
+                    workflow_id,
+                    None,
+                    CoordinatorSdkErrorVariant::Rpc,
+                    Some(code),
+                );
+                if start_rpc_is_indeterminate(code) {
+                    Ok(CoordinatorAdapterStart::Indeterminate(failure))
+                } else {
+                    Err(failure)
+                }
+            }
+            Err(_) => Ok(CoordinatorAdapterStart::Indeterminate(
+                CoordinatorStartFailure::new(
+                    CoordinatorTemporalPhase::Start,
+                    CoordinatorFailureKind::UnavailableOrIndeterminate,
+                    workflow_id,
+                    None,
+                    CoordinatorSdkErrorVariant::Other,
+                    None,
+                ),
+            )),
+        }
+    }
+
+    async fn describe_issue_workflow(
+        &self,
+        workflow_id: &WorkflowId,
+        run_id: Option<&str>,
+    ) -> Result<CoordinatorDescribeEvidence, CoordinatorStartFailure> {
+        let workflow_id = workflow_id.clone();
+        let run_id = run_id.map(str::to_owned);
+        let client = self
+            .connect_for_coordinator(
+                &workflow_id,
+                run_id.clone(),
+                CoordinatorTemporalPhase::Describe,
+            )
+            .await?;
+        let handle = WorkflowHandle::<_, IssueWorkflow>::new(
+            client,
+            WorkflowExecutionInfo {
+                namespace: self.config.namespace.clone(),
+                workflow_id: workflow_id.as_str().to_owned(),
+                // A known Run ID pins Describe to the accepted or duplicate
+                // execution; otherwise Temporal resolves the current run.
+                run_id: run_id.clone(),
+                first_execution_run_id: None,
+            },
+        );
+
+        let description = handle
+            .describe(WorkflowDescribeOptions::default())
+            .await
+            .map_err(|error| describe_failure(&workflow_id, run_id.clone(), error))?;
+
+        // SDK convenience accessors assume required protobuf fields exist.
+        // Inspect raw evidence so a malformed response becomes a typed
+        // Coordinator result instead of panicking the caller.
+        let Some(info) = description.raw().workflow_execution_info.as_ref() else {
+            return Ok(CoordinatorDescribeEvidence {
+                workflow_id: String::new(),
+                run_id: String::new(),
+                temporal_started_at: None,
+                status: None,
+            });
+        };
+        let execution = info.execution.as_ref();
+        Ok(CoordinatorDescribeEvidence {
+            workflow_id: execution
+                .map(|value| value.workflow_id.clone())
+                .unwrap_or_default(),
+            run_id: execution
+                .map(|value| value.run_id.clone())
+                .unwrap_or_default(),
+            temporal_started_at: info
+                .start_time
+                .as_ref()
+                .and_then(proto_ts_to_system_time)
+                .map(OffsetDateTime::from)
+                .map(|value| value.to_offset(UtcOffset::UTC)),
+            status: WorkflowExecutionStatus::try_from(info.status)
+                .ok()
+                .and_then(map_temporal_status),
+        })
+    }
+}
+
+impl SymphonyTemporalClient {
+    async fn connect_for_coordinator(
+        &self,
+        workflow_id: &WorkflowId,
+        known_run_id: Option<String>,
+        phase: CoordinatorTemporalPhase,
+    ) -> Result<Client, CoordinatorStartFailure> {
+        let address = endpoint_url(&self.config.address).map_err(|_| {
+            CoordinatorStartFailure::new(
+                phase,
+                CoordinatorFailureKind::InputConfigurationPayload,
+                workflow_id.clone(),
+                known_run_id.clone(),
+                CoordinatorSdkErrorVariant::InvalidConfiguration,
+                None,
+            )
+        })?;
+        let connection_options = ConnectionOptions::new(address).build();
+        let connection = Connection::connect(connection_options)
+            .await
+            .map_err(|error| connect_failure(workflow_id, known_run_id.clone(), phase, error))?;
+
+        Client::new(
+            connection,
+            ClientOptions::new(self.config.namespace.as_str()).build(),
+        )
+        .map_err(|_| {
+            CoordinatorStartFailure::new(
+                phase,
+                CoordinatorFailureKind::InputConfigurationPayload,
+                workflow_id.clone(),
+                known_run_id,
+                CoordinatorSdkErrorVariant::ClientConstruction,
+                None,
+            )
+        })
+    }
+}
+
+fn connect_failure(
+    workflow_id: &WorkflowId,
+    known_run_id: Option<String>,
+    phase: CoordinatorTemporalPhase,
+    error: ClientConnectError,
+) -> CoordinatorStartFailure {
+    let (kind, grpc_code) = match &error {
+        ClientConnectError::InvalidUri(_)
+        | ClientConnectError::InvalidHeaders(_)
+        | ClientConnectError::InvalidConfig(_) => {
+            (CoordinatorFailureKind::InputConfigurationPayload, None)
+        }
+        ClientConnectError::SystemInfoCallError(status) => (
+            CoordinatorFailureKind::UnavailableOrIndeterminate,
+            Some(status.code()),
+        ),
+        _ => (CoordinatorFailureKind::UnavailableOrIndeterminate, None),
+    };
+    CoordinatorStartFailure::new(
+        phase,
+        kind,
+        workflow_id.clone(),
+        known_run_id,
+        CoordinatorSdkErrorVariant::ClientConnect,
+        grpc_code,
+    )
+}
+
+fn describe_failure(
+    workflow_id: &WorkflowId,
+    run_id: Option<String>,
+    error: WorkflowInteractionError,
+) -> CoordinatorStartFailure {
+    let (kind, variant, grpc_code) = match error {
+        WorkflowInteractionError::NotFound(status) => (
+            // Not-found after an uncertain start cannot prove that no start
+            // occurred; retain it as an unresolved Describe observation.
+            CoordinatorFailureKind::UnavailableOrIndeterminate,
+            CoordinatorSdkErrorVariant::NotFound,
+            Some(status.code()),
+        ),
+        WorkflowInteractionError::PayloadConversion(_) => (
+            CoordinatorFailureKind::MalformedProtocolEvidence,
+            CoordinatorSdkErrorVariant::PayloadConversion,
+            None,
+        ),
+        WorkflowInteractionError::Rpc(status) => (
+            if start_rpc_is_indeterminate(status.code()) {
+                CoordinatorFailureKind::UnavailableOrIndeterminate
+            } else {
+                CoordinatorFailureKind::DefinitiveServerRejection
+            },
+            CoordinatorSdkErrorVariant::Rpc,
+            Some(status.code()),
+        ),
+        WorkflowInteractionError::Other(_) => (
+            CoordinatorFailureKind::UnavailableOrIndeterminate,
+            CoordinatorSdkErrorVariant::Other,
+            None,
+        ),
+        _ => (
+            CoordinatorFailureKind::UnavailableOrIndeterminate,
+            CoordinatorSdkErrorVariant::Other,
+            None,
+        ),
+    };
+    CoordinatorStartFailure::new(
+        CoordinatorTemporalPhase::Describe,
+        kind,
+        workflow_id.clone(),
+        run_id,
+        variant,
+        grpc_code,
+    )
+}
+
+fn typed_already_started(
+    run_id: Option<String>,
+    grpc_code: temporalio_client::tonic::Code,
+) -> CoordinatorAdapterStart {
+    CoordinatorAdapterStart::AlreadyStarted { run_id, grpc_code }
+}
+
+fn start_rpc_is_indeterminate(code: temporalio_client::tonic::Code) -> bool {
+    use temporalio_client::tonic::Code;
+
+    matches!(
+        code,
+        Code::Cancelled
+            | Code::Unknown
+            | Code::DeadlineExceeded
+            | Code::Aborted
+            | Code::Internal
+            | Code::Unavailable
+            | Code::DataLoss
+    )
+}
+
+fn map_temporal_status(status: WorkflowExecutionStatus) -> Option<CoordinatorTemporalStatus> {
+    match status {
+        WorkflowExecutionStatus::Unspecified => None,
+        WorkflowExecutionStatus::Running => Some(CoordinatorTemporalStatus::Running),
+        WorkflowExecutionStatus::Completed => Some(CoordinatorTemporalStatus::Completed),
+        WorkflowExecutionStatus::Failed => Some(CoordinatorTemporalStatus::Failed),
+        WorkflowExecutionStatus::Canceled => Some(CoordinatorTemporalStatus::Canceled),
+        WorkflowExecutionStatus::Terminated => Some(CoordinatorTemporalStatus::Terminated),
+        WorkflowExecutionStatus::ContinuedAsNew => Some(CoordinatorTemporalStatus::ContinuedAsNew),
+        WorkflowExecutionStatus::TimedOut => Some(CoordinatorTemporalStatus::TimedOut),
+        WorkflowExecutionStatus::Paused => Some(CoordinatorTemporalStatus::Paused),
     }
 }
 
@@ -272,5 +588,49 @@ mod tests {
         let error = result.err().unwrap();
         assert!(matches!(error, TemporalRuntimeError::Unavailable { .. }));
         assert!(error.to_string().contains("temporal-noop-smoke"));
+    }
+
+    #[tokio::test]
+    async fn coordinator_describe_connect_failure_retains_phase_identity_and_known_run() {
+        let client = SymphonyTemporalClient::new(config("http://["));
+        let workflow_id = WorkflowId::new("issue:502");
+
+        let result = client
+            .connect_for_coordinator(
+                &workflow_id,
+                Some("run-known".to_string()),
+                CoordinatorTemporalPhase::Describe,
+            )
+            .await;
+        let Err(failure) = result else {
+            panic!("invalid endpoint unexpectedly connected");
+        };
+
+        assert_eq!(failure.phase(), CoordinatorTemporalPhase::Describe);
+        assert_eq!(
+            failure.kind(),
+            CoordinatorFailureKind::InputConfigurationPayload
+        );
+        assert_eq!(failure.workflow_id(), &workflow_id);
+        assert_eq!(failure.known_run_id(), Some("run-known"));
+        assert_eq!(
+            failure.sdk_error_variant(),
+            CoordinatorSdkErrorVariant::InvalidConfiguration
+        );
+        assert_eq!(failure.grpc_code(), None);
+    }
+
+    #[test]
+    fn typed_duplicate_mapping_preserves_run_id_and_grpc_code() {
+        assert_eq!(
+            typed_already_started(
+                Some("run-existing".to_string()),
+                temporalio_client::tonic::Code::AlreadyExists,
+            ),
+            CoordinatorAdapterStart::AlreadyStarted {
+                run_id: Some("run-existing".to_string()),
+                grpc_code: temporalio_client::tonic::Code::AlreadyExists,
+            }
+        );
     }
 }

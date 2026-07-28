@@ -178,12 +178,37 @@ the tracker.
 Coordinator start is optimistic with Temporal as the authority:
 
 ```text
-read tracker executable state
-  -> derive workflow_id
-  -> start Temporal Workflow
-  -> Describe the current Temporal execution
-  -> project the Describe-backed Open observation into workflow_index
+consume one validated executable activation
+  -> serialize its durable IssueWorkflowInput
+  -> start Temporal Workflow once with the exact workflow_id
+  -> Describe once by workflow_id and known run_id when available
+  -> return independent start evidence and current execution observation
 ```
+
+Start uses `WorkflowIdReusePolicy::RejectDuplicate` and
+`WorkflowIdConflictPolicy::Fail`. It never uses an existing execution as a
+successful start response, terminates an existing execution, generates a
+replacement ID, or retries the start internally. An uncertain caller retry
+resubmits the exact same validated activation and Workflow ID.
+
+The result keeps two facts independent:
+
+```text
+start evidence =
+  Accepted { run_id }
+  | AlreadyStarted { run_id? }
+  | Indeterminate
+
+execution observation =
+  Open { workflow_id, run_id, temporal_started_at, status }
+  | Closed { workflow_id, run_id, temporal_started_at, status }
+  | DescribeRequired
+```
+
+This separation is required because an accepted no-op Workflow can close before
+Describe, while an indeterminate start can later converge to an Open or Closed
+current observation. Not-found or unavailable Describe evidence after an
+uncertain start never means "not started."
 
 The start response can prove that Temporal accepted a request and may carry a
 Run ID, but it cannot supply the authoritative execution `started_at` required
@@ -201,10 +226,20 @@ Start conflicts:
   Temporal evidence, and project/reconcile only that evidence; do not use it to
   reserve, reject, or retry a start;
 - Temporal open Workflow already exists: bind to the existing execution and
-  project its current Describe observation;
-- Temporal closed Workflow with the same `workflow_id`: create a new activation
-  episode with a new explicit timestamp or source identity; never invent a
+  return its current Describe observation; #504 owns local projection;
+- Temporal closed Workflow with the same `workflow_id`: reject the exact retry.
+  This start slice cannot create a new activation. A future discovery/caller
+  boundary may separately validate a genuinely new executable condition with a
+  new explicit episode timestamp or source identity; it must never invent a
   retry-time suffix.
+
+`IssueWorkflowInput.started_at` retains its existing wire name but means the
+pre-start activation episode timestamp. Temporal's authoritative execution
+start time is returned only as `temporal_started_at` from Describe.
+
+TODO(T2607-03): assign Temporal Search Attributes/Visibility indexing after
+#504/#505 establish the repair/read-model and real caller boundaries. This
+start slice does not register, write, or query Search Attributes.
 
 ## Repair Contract
 

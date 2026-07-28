@@ -1,10 +1,9 @@
-//! Pure activation and identity policy for Coordinator workflow episodes.
+//! Activation, identity, and Temporal start policy for Coordinator episodes.
 //!
-//! This module classifies tracker snapshots that a caller has already
-//! observed. It performs no tracker, SQLite, Temporal, capacity, filesystem,
-//! process, or App I/O. Later Coordinator slices may consume these facts, but
-//! they must not bypass this module's state policy or construct their own
-//! Workflow IDs.
+//! The activation contract classifies tracker snapshots that a caller has
+//! already observed without I/O. The start boundary consumes only those
+//! validated executable facts and performs one Temporal start plus one
+//! immediate Describe. Neither boundary reads tracker or SQLite state.
 
 #![warn(missing_docs)]
 #![warn(rustdoc::broken_intra_doc_links)]
@@ -16,6 +15,8 @@ use thiserror::Error;
 use time::{OffsetDateTime, UtcOffset};
 
 use super::{IssueRef, WorkflowId};
+
+pub(crate) mod start;
 
 /// Maximum accepted byte length of an activation's audit reason.
 pub(crate) const MAX_AUDIT_REASON_BYTES: usize = 512;

@@ -110,8 +110,8 @@ Scope:
 
 - #501: pure activation classification, Coordinator-derived target kind,
   provenance validation, and exact episode-scoped Workflow ID construction;
-- #502 (`Todo`): optimistic Temporal start, native Run ID, immediate Describe,
-  and already-open execution handling;
+- #502: optimistic Temporal start, native Run ID, immediate Describe, and typed
+  duplicate execution handling;
 - #503 (`Backlog`): older start/Run-ID seed now overlapped by promoted #502; it
   is not a separate remaining implementation slice;
 - #504 (`Backlog`): Describe-backed targeted repair/reconciliation;

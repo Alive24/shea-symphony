@@ -9,6 +9,9 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 
+use crate::config::StateMap;
+use crate::tracker::{resolve_configured_tracker_state, TrackerStateResolutionError};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 /// Durable input used to start one executable Issue Workflow episode.
 ///
@@ -180,6 +183,17 @@ pub(crate) enum TrackerTransitionContractError {
     /// A serialized idempotency key did not carry the current format version.
     #[error("idempotency_key must use the {TRANSITION_IDEMPOTENCY_KEY_VERSION} format")]
     UnsupportedIdempotencyKeyVersion,
+}
+
+/// Construction failure for a transition request before it enters Temporal history.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub(crate) enum TrackerTransitionRequestError {
+    /// The supplied state input was not uniquely declared by the active tracker configuration.
+    #[error(transparent)]
+    StateResolution(#[from] TrackerStateResolutionError),
+    /// A compact transition DTO field violated its stable wire contract.
+    #[error(transparent)]
+    Contract(#[from] TrackerTransitionContractError),
 }
 
 /// Small validated string used by the transition DTO's opaque references.
@@ -578,21 +592,30 @@ impl TrackerTransitionRequest {
     /// Builds a compact transition intent and its deterministic retry identity.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
+        state_map: &StateMap,
         workflow_id: impl Into<String>,
         run_id: Option<String>,
         issue_ref: TrackerTransitionIssueRef,
-        expected_from_state: TrackerState,
-        requested_to_state: TrackerState,
+        expected_from_state: &str,
+        requested_to_state: &str,
         transition_kind: TrackerTransitionKind,
         requester: TrackerTransitionRequester,
         reason: TrackerTransitionReason,
         evidence_refs: TrackerTransitionEvidenceRefs,
         attempt_slot: u32,
-    ) -> Result<Self, TrackerTransitionContractError> {
+    ) -> Result<Self, TrackerTransitionRequestError> {
         let workflow_id = TrackerTransitionWorkflowId::new(workflow_id)?;
         let run_id = run_id
             .map(|value| CompactTransitionValue::new("run_id", value))
             .transpose()?;
+        // Resolve before deriving the retry key so equivalent configured inputs
+        // cannot represent different durable transition intents.
+        let expected_from_state = TrackerState::new(
+            resolve_configured_tracker_state(state_map, expected_from_state)?.canonical_key(),
+        )?;
+        let requested_to_state = TrackerState::new(
+            resolve_configured_tracker_state(state_map, requested_to_state)?.canonical_key(),
+        )?;
         let idempotency_key = TransitionIdempotencyKey::for_transition(
             &workflow_id,
             &issue_ref,
@@ -735,6 +758,21 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn default_state_map() -> StateMap {
+        StateMap {
+            backlog: "Backlog".to_string(),
+            todo: "Todo".to_string(),
+            need_to_clarify: "Need to Clarify".to_string(),
+            in_progress: "In Progress".to_string(),
+            need_human_input: "Need Human Input".to_string(),
+            agent_review: "Agent Review".to_string(),
+            human_review: "Human Review".to_string(),
+            rework: "Rework".to_string(),
+            merging: "Merging".to_string(),
+            done: "Done".to_string(),
+        }
+    }
+
     fn input() -> IssueWorkflowInput {
         IssueWorkflowInput {
             workflow_id: "issue:shea-symphony:475:pulse:todo-to-work:20260709-175700Z:project"
@@ -826,6 +864,7 @@ mod tests {
         attempt_slot: u32,
     ) -> TrackerTransitionRequest {
         TrackerTransitionRequest::new(
+            &default_state_map(),
             workflow_id,
             Some("temporal-run-494".to_string()),
             TrackerTransitionIssueRef::new(
@@ -834,8 +873,8 @@ mod tests {
                 issue,
             )
             .unwrap(),
-            TrackerState::new(expected_from_state).unwrap(),
-            TrackerState::new(requested_to_state).unwrap(),
+            expected_from_state,
+            requested_to_state,
             TrackerTransitionKind::new(transition_kind).unwrap(),
             TrackerTransitionRequester::new("issue_workflow").unwrap(),
             TrackerTransitionReason::new(
@@ -878,8 +917,8 @@ mod tests {
                 "issue": "#494",
             })
         );
-        assert_eq!(value["expected_from_state"], "In Progress");
-        assert_eq!(value["requested_to_state"], "Agent Review");
+        assert_eq!(value["expected_from_state"], "in_progress");
+        assert_eq!(value["requested_to_state"], "agent_review");
         assert!(value["idempotency_key"]
             .as_str()
             .unwrap()
@@ -1054,27 +1093,52 @@ mod tests {
     }
 
     #[test]
-    fn transition_idempotency_key_length_prefixes_opaque_delimiters() {
-        let delimiter_in_requested_state = transition_request_with(
+    fn equivalent_configured_inputs_share_canonical_transition_states_and_idempotency() {
+        let display_inputs = transition_request_with(
             "workflow",
             "#494",
-            "Todo",
-            "In Progress:state",
+            "  TODO  ",
+            " agent review ",
             "handoff",
             0,
         );
-        let delimiter_in_expected_state = transition_request_with(
-            "workflow",
+        let canonical_inputs =
+            transition_request_with("workflow", "#494", "todo", "AGENT_REVIEW", "handoff", 0);
+
+        assert_eq!(display_inputs.expected_from_state.as_str(), "todo");
+        assert_eq!(display_inputs.requested_to_state.as_str(), "agent_review");
+        assert_eq!(display_inputs, canonical_inputs);
+    }
+
+    #[test]
+    fn transition_idempotency_key_length_prefixes_opaque_delimiters() {
+        let workflow_id = TrackerTransitionWorkflowId::new("workflow").unwrap();
+        let issue_ref = TrackerTransitionIssueRef::new(
+            "github_project_v2",
+            "github.com/Alive24/shea-symphony",
             "#494",
-            "Todo:In Progress",
-            "state",
-            "handoff",
+        )
+        .unwrap();
+        let transition_kind = TrackerTransitionKind::new("handoff").unwrap();
+        let delimiter_in_requested_state = TransitionIdempotencyKey::for_transition(
+            &workflow_id,
+            &issue_ref,
+            &TrackerState::new("Todo").unwrap(),
+            &TrackerState::new("In Progress:state").unwrap(),
+            &transition_kind,
+            0,
+        );
+        let delimiter_in_expected_state = TransitionIdempotencyKey::for_transition(
+            &workflow_id,
+            &issue_ref,
+            &TrackerState::new("Todo:In Progress").unwrap(),
+            &TrackerState::new("state").unwrap(),
+            &transition_kind,
             0,
         );
 
         assert_ne!(
-            delimiter_in_requested_state.idempotency_key,
-            delimiter_in_expected_state.idempotency_key,
+            delimiter_in_requested_state, delimiter_in_expected_state,
             "length prefixes prevent the collision a delimiter-only key would allow"
         );
     }
@@ -1085,6 +1149,9 @@ mod tests {
         assert_eq!(state.as_str(), "Provider Managed: Awaiting Review");
         assert!(TrackerState::new("\n").is_err());
         assert!(serde_json::from_str::<TrackerState>(r#""\n""#).is_err());
+
+        let legacy_state: TrackerState = serde_json::from_str(r#""Agent Review""#).unwrap();
+        assert_eq!(legacy_state.as_str(), "Agent Review");
 
         let too_many_refs = (0..=MAX_TRANSITION_EVIDENCE_REFS)
             .map(|index| format!("artifact://run/494/{index}"))

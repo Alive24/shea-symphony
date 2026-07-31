@@ -1,7 +1,12 @@
 use thiserror::Error;
 
+use super::TrackerStateResolutionError;
+
 #[derive(Debug, Error)]
 pub enum TrackerError {
+    /// A requested tracker state was unknown or ambiguously declared by `state_map`.
+    #[error(transparent)]
+    StateResolution(#[from] TrackerStateResolutionError),
     #[error("tracker fixture failed: {0}")]
     Fixture(String),
     #[error("tracker payload failed: {0}")]
@@ -45,6 +50,7 @@ impl ProjectStateFailureKind {
 
 pub fn classify_project_state_error(error: &TrackerError) -> ProjectStateFailureKind {
     match error {
+        TrackerError::StateResolution(_) => ProjectStateFailureKind::Schema,
         TrackerError::Fixture(_) => ProjectStateFailureKind::Payload,
         TrackerError::Payload(message) => classify_project_state_failure_message(message),
         TrackerError::IntegrationUnavailable(message) => {

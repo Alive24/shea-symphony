@@ -25,8 +25,8 @@ use crate::tracker::follow_up::follow_up_issue_body;
 use crate::tracker::state::status_update_required;
 use crate::tracker::workpad::{duplicate_workpad_body, ensure_workpad_marker, merge_workpad_body};
 use crate::tracker::{
-    relationship_readback_from_issue, FollowUpIssueInput, IssueRelationshipReadback,
-    ProjectFieldAssignment, TrackerError,
+    relationship_readback_from_issue, resolve_configured_tracker_state, FollowUpIssueInput,
+    IssueRelationshipReadback, ProjectFieldAssignment, TrackerError,
 };
 
 #[derive(Debug, Clone)]
@@ -483,26 +483,12 @@ impl GithubProjectV2GhClient {
             })
     }
 
-    fn state_option_name(&self, normalized_state: &str) -> Result<String, TrackerError> {
-        let state_map = &self.config.tracker.state_map;
-        let option = match normalized_state {
-            "backlog" => &state_map.backlog,
-            "todo" => &state_map.todo,
-            "need_to_clarify" | "need to clarify" => &state_map.need_to_clarify,
-            "in_progress" | "in progress" => &state_map.in_progress,
-            "need_human_input" | "need human input" => &state_map.need_human_input,
-            "agent_review" | "agent review" => &state_map.agent_review,
-            "human_review" | "human review" => &state_map.human_review,
-            "rework" => &state_map.rework,
-            "merging" => &state_map.merging,
-            "done" => &state_map.done,
-            other => {
-                return Err(TrackerError::IntegrationUnavailable(format!(
-                    "unsupported normalized state {other:?}"
-                )))
-            }
-        };
-        Ok(option.clone())
+    fn state_option_name(&self, state_input: &str) -> Result<String, TrackerError> {
+        Ok(
+            resolve_configured_tracker_state(&self.config.tracker.state_map, state_input)?
+                .display_value()
+                .to_string(),
+        )
     }
 
     pub(in crate::tracker) fn link_pull_request(

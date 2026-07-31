@@ -1,0 +1,4 @@
+interface:
+  display_name: "Shea Halo Research Seed"
+  short_description: "Shape evidence-bound Halo research seeds"
+  default_prompt: "Use $shea-halo-research-seed to guide me interactively from a rough research idea to an approved Halo Research seed."

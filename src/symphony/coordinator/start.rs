@@ -311,13 +311,15 @@ pub(crate) async fn start_executable_activation<A: CoordinatorTemporalAdapter>(
         .describe_issue_workflow(&workflow_id, known_run_id.as_deref())
         .await;
     let (execution_observation, describe_failure) = match described {
-        Ok(evidence) => match normalize_describe(&workflow_id, known_run_id.as_deref(), evidence) {
-            Ok(observation) => (observation, None),
-            Err(failure) => (
-                CoordinatorExecutionObservation::DescribeRequired,
-                Some(failure),
-            ),
-        },
+        Ok(evidence) => {
+            match normalize_current_describe(&workflow_id, known_run_id.as_deref(), evidence) {
+                Ok(observation) => (observation, None),
+                Err(failure) => (
+                    CoordinatorExecutionObservation::DescribeRequired,
+                    Some(failure),
+                ),
+            }
+        }
         Err(failure) => (
             CoordinatorExecutionObservation::DescribeRequired,
             Some(failure),
@@ -424,7 +426,12 @@ fn normalize_start(
     }
 }
 
-fn normalize_describe(
+/// Validates one current Describe response against the requested execution.
+///
+/// Passing no Run ID deliberately asks Temporal for the current execution. The
+/// targeted repair boundary uses that form so stale local Run IDs cannot pin a
+/// repair to an older execution.
+pub(crate) fn normalize_current_describe(
     expected_workflow_id: &WorkflowId,
     expected_run_id: Option<&str>,
     described: CoordinatorDescribeEvidence,

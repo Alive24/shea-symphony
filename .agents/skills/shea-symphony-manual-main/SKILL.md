@@ -143,17 +143,58 @@ or resumable `In Progress`:
    ```
 
 3. Read the issue back and confirm the claim and `In Progress` status.
-4. Reuse the single canonical issue worktree and PR branch when evidence is
-   consistent. If none exists, create one isolated worktree and feature branch
-   from the confirmed target base branch. Never implement in the canonical
-   checkout.
-5. Inspect `git worktree list --porcelain`, the existing Main Workpad, linked PR
-   evidence, and branch state before adopting or creating anything. Stop for
-   operator choice when multiple strong candidates disagree.
+4. Inspect `git worktree list --porcelain`, the current task workspace, the
+   existing Main Workpad, linked PR evidence, session/runtime ownership, and
+   branch state before adopting or creating anything.
+5. Reuse the single canonical issue worktree and PR branch when evidence is
+   consistent. Otherwise evaluate the current task worktree for adoption before
+   creating another worktree.
+6. Create a new isolated worktree and feature branch from the confirmed target
+   base only when neither an existing canonical issue worktree nor the current
+   task worktree is safe to use. Never implement in the canonical checkout.
 
-The configured workspace root controls where a new worktree belongs. One issue
-has one implementation branch, one canonical worktree, and one PR. Do not push
-unrelated canonical-checkout changes into the issue branch.
+### Current-task worktree adoption
+
+Codex App and other operator harnesses may start this task in an isolated git
+worktree. Treat that worktree as a reuse candidate, not as a parent directory
+in which Shea should automatically create another worktree.
+
+1. Resolve the current top-level path and common git directory, then correlate
+   them with `git worktree list --porcelain` and the target repository.
+2. Adopt the current worktree only when it is a registered worktree for the
+   target repository, is not the canonical checkout, has no active git
+   operation, and has no ownership or issue evidence that conflicts with the
+   selected issue. For new work, require a clean tracked and untracked status.
+   For resume, allow existing changes only when the issue branch, claim,
+   workpad, and PR evidence consistently identify them as this issue's work.
+3. If the current worktree already uses the one intended issue branch, keep it.
+   For new work in a clean detached worktree, first prove that `HEAD` has no
+   unique work relative to the confirmed target base, then create or switch to
+   the intended issue branch from that base only after verifying the branch is
+   not checked out elsewhere. Preserve detached commits only through the resume
+   path when issue evidence identifies them. Do not repurpose a branch owned by
+   another issue.
+4. Record the chosen path through the supported workspace surface:
+
+   ```bash
+   "$SHEA_CLI" workspace adopt "$SHEA_WORKFLOW" "$ISSUE" \
+     "<current-worktree-path>" --write
+   "$SHEA_CLI" workspace show "$SHEA_WORKFLOW" "$ISSUE"
+   ```
+
+5. Continue only when readback exposes that path as the single canonical issue
+   workspace. Adoption transfers issue-workspace evidence, not cleanup
+   ownership: an external harness remains responsible for removing its own
+   task worktree.
+
+Stop for operator choice when multiple strong candidates disagree, the current
+branch or changes belong to another task, or the target base cannot be proven.
+The configured workspace root controls genuinely new Shea-owned worktrees, but
+if that root resolves inside an already isolated current task worktree, do not
+create a nested worktree there. Adopt the current worktree or stop and resolve
+the workspace root. One issue has one implementation branch, one canonical
+worktree, and one PR. Do not push unrelated canonical-checkout changes into the
+issue branch.
 
 ### Operator-confirmed Backlog fast path
 
@@ -234,7 +275,9 @@ Maintain exactly one `Shea Symphony Main Agent Workpad` in place. It contains:
 - scope boundary and changed files;
 - verification commands and results;
 - boundary-comment and Rustdoc/public-visibility audit, or `not applicable`;
-- branch, worktree, commit, PR URL, ready/not-draft state, and linked-PR readback;
+- branch, worktree, workspace origin (`reused`, `current-task adopted`, or
+  `Shea-created`), adoption readback when applicable, commit, PR URL,
+  ready/not-draft state, and linked-PR readback;
 - final handoff summary.
 
 For Main-lane Rework, add the new round to this workpad instead of creating a
@@ -253,6 +296,8 @@ readback verification.
 - Never implement a Backlog issue without explicit operator execution authority
   and a passing Todo-grade contract validation.
 - Never bypass issue quality, dependency, subissue, or target-branch gates.
+- Never create a nested issue worktree before evaluating a safe current task
+  worktree for adoption.
 - Never move an issue to `Human Review`.
 - Never merge a PR or use the `Merging Agent` field.
 - Never turn merge-lane repair into Main work.

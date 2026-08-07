@@ -130,14 +130,30 @@ fn smoke_query_hold_from_values(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::StateMap;
     use crate::symphony::dto::{
-        TrackerState, TrackerTransitionEvidenceRefs, TrackerTransitionIssueRef,
-        TrackerTransitionKind, TrackerTransitionOutcome, TrackerTransitionReason,
-        TrackerTransitionRequester,
+        TrackerTransitionEvidenceRefs, TrackerTransitionIssueRef, TrackerTransitionKind,
+        TrackerTransitionOutcome, TrackerTransitionReason, TrackerTransitionRequester,
     };
+
+    fn default_state_map() -> StateMap {
+        StateMap {
+            backlog: "Backlog".to_string(),
+            todo: "Todo".to_string(),
+            need_to_clarify: "Need to Clarify".to_string(),
+            in_progress: "In Progress".to_string(),
+            need_human_input: "Need Human Input".to_string(),
+            agent_review: "Agent Review".to_string(),
+            human_review: "Human Review".to_string(),
+            rework: "Rework".to_string(),
+            merging: "Merging".to_string(),
+            done: "Done".to_string(),
+        }
+    }
 
     fn tracker_transition_request() -> TrackerTransitionRequest {
         TrackerTransitionRequest::new(
+            &default_state_map(),
             "issue:shea-symphony:494:pulse:handoff",
             Some("temporal-run-494".to_string()),
             TrackerTransitionIssueRef::new(
@@ -146,8 +162,8 @@ mod tests {
                 "#494",
             )
             .unwrap(),
-            TrackerState::new("In Progress").unwrap(),
-            TrackerState::new("Agent Review").unwrap(),
+            "In Progress",
+            "Agent Review",
             TrackerTransitionKind::new("main_handoff").unwrap(),
             TrackerTransitionRequester::new("issue_workflow").unwrap(),
             TrackerTransitionReason::new(

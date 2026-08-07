@@ -363,8 +363,8 @@ dogfood.
 For live Agent Review, make the selected backend command visible to the worker
 process. `review loop` owns the Review Agent claim and final routing; the
 backend process is report-only. The canonical workflow continues to use `agy`
-headlessly, while `codex-app-server` is available as an independent structured,
-read-only reviewer.
+headlessly, while `codex-app-server` and `claude-code` are available as
+independent structured, read-only reviewers.
 
 Prefer an absolute `agy` path for automatic review workers:
 
@@ -402,18 +402,41 @@ of that same job may resume its recorded thread. Inspect the review output
 artifact and ledger for the backend/thread identity plus raw protocol, stderr,
 normalized-event, workspace-integrity, and routing evidence.
 
+Claude Review follows the same independent-job boundary through the shared
+Claude stream-json transport. The Review-specific command overrides
+`claude.command`; omit it to use the shared command. The command or wrapper owns
+Claude's read-only permission arguments:
+
+```yaml
+claude:
+  command: claude
+review_lane:
+  backend: claude-code
+  claude_command: claude --permission-mode plan
+  timeout_ms: 1200000
+```
+
+Every new Claude Review job starts fresh. Only its own initialized session may
+resume one interrupted attempt. Shea rejects workspace mutation and missing,
+malformed, truncated, schema-incomplete, timed-out, cancelled, or ambiguous
+terminal output. Artifacts and the existing Review ledger preserve the command
+preview, session ID, protocol/stderr/event paths, attempt count, structured
+report, workspace-integrity result, and routing outcome.
+
 Before live dogfood, run the bounded local read-only UAT fixtures:
 
 ```bash
 cargo test review::codex::tests::pass_and_confirmed_finding_preserve_structured_evidence_and_workspace --lib
 cargo test review::codex::tests::new_jobs_are_fresh_and_parallel_artifacts_and_threads_are_isolated --lib
+cargo test review::claude::tests::pass_and_confirmed_finding_preserve_structured_evidence_and_workspace --lib
+cargo test review::claude::tests::new_jobs_are_fresh_and_parallel_artifacts_and_sessions_are_isolated --lib
 ```
 
-The first fixture exercises both a clean pass and a confirmed finding with
-severity, location, and evidence. The second exercises parallel fresh-thread
-and artifact isolation. Both use disposable Git repositories and assert the
-reviewed workspace content remains unchanged; they perform no GitHub or
-Project mutation.
+The pass/finding fixtures exercise a clean pass and a confirmed finding with
+severity, location, evidence, provider session, artifacts, and ledger output.
+The parallel fixtures exercise fresh-session, artifact, and ledger isolation.
+All use disposable Git repositories and assert the reviewed workspace content
+remains unchanged; they perform no GitHub or Project mutation.
 
 ```bash
 target/debug/shea-symphony review loop workflows/shea-symphony.md --max-iterations 1 --write

@@ -560,6 +560,31 @@ struct ClaudeProtocolState {
 }
 
 fn run_claude_stream_json_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError> {
+    run_claude_stream_json_backend_with_cancel(prepared, None)
+}
+
+/// Runs the shared Claude stream-json transport for one independently owned
+/// Review job. Cancellation remains an adapter concern; parsing, process
+/// supervision, timeout handling, and artifacts stay in the canonical transport.
+pub(crate) fn run_claude_stream_json_review(
+    prepared: PreparedRun,
+    cancel: &AtomicBool,
+) -> Result<Vec<AgentEvent>, AgentError> {
+    run_claude_stream_json_backend_with_cancel(prepared, Some(cancel))
+}
+
+/// Binds a resumed Claude session to the current prepared run. Callers must
+/// validate issue, lane, run, and workspace ownership before using this helper.
+pub(crate) fn set_claude_resume_session(prepared: &mut PreparedRun, session_id: String) {
+    prepared
+        .env
+        .insert(CLAUDE_RESUME_SESSION_ENV.into(), session_id);
+}
+
+fn run_claude_stream_json_backend_with_cancel(
+    prepared: PreparedRun,
+    cancel: Option<&AtomicBool>,
+) -> Result<Vec<AgentEvent>, AgentError> {
     let mut events = Vec::new();
     if !prepared.workspace.is_dir() {
         events.push(AgentEvent::Failed {
@@ -690,7 +715,7 @@ fn run_claude_stream_json_backend(prepared: PreparedRun) -> Result<Vec<AgentEven
         .iter()
         .any(|event| matches!(event, AgentEvent::Failed { .. }));
     while !force_stop {
-        match next_claude_stdout_line(&mut child, &stdout_rx, deadline) {
+        match next_claude_stdout_line(&mut child, &stdout_rx, deadline, cancel) {
             Ok(Some(line)) => {
                 append_protocol_record(&mut protocol_log, "stdout", &line);
                 if let Err(error) = normalize_claude_stream_line(
@@ -799,11 +824,27 @@ fn run_claude_stream_json_backend(prepared: PreparedRun) -> Result<Vec<AgentEven
     Ok(events)
 }
 
+/// Protocol arguments appended to every configured Claude Code command.
+pub(crate) fn claude_stream_json_args() -> Vec<String> {
+    [
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
 fn claude_stream_json_command(base_command: &str, resume_session_id: Option<&str>) -> String {
-    let mut command = format!(
-        "exec {} -p --input-format stream-json --output-format stream-json --verbose",
-        base_command.trim()
-    );
+    let mut command = format!("exec {}", base_command.trim());
+    for argument in claude_stream_json_args() {
+        command.push(' ');
+        command.push_str(&argument);
+    }
     if let Some(session_id) = resume_session_id.filter(|value| !value.trim().is_empty()) {
         command.push_str(" --resume ");
         command.push_str(&shell_quote_str(session_id));
@@ -845,8 +886,15 @@ fn next_claude_stdout_line(
     child: &mut Child,
     stdout_rx: &Receiver<Result<String, String>>,
     deadline: Instant,
+    cancel: Option<&AtomicBool>,
 ) -> Result<Option<String>, String> {
     loop {
+        if cancel.is_some_and(|cancel| cancel.load(AtomicOrdering::Relaxed)) {
+            terminate_child_process_group(child);
+            return Err(
+                "Claude Code execution was cancelled before a terminal result event".into(),
+            );
+        }
         let now = Instant::now();
         if now >= deadline {
             terminate_child_process_group(child);
@@ -1143,10 +1191,17 @@ fn claude_artifact_paths(
         .and_then(Path::parent)
         .unwrap_or_else(|| Path::new("/tmp"))
         .join("claude-stream-json");
+    let run_identity = prepared
+        .run_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| safe_path_component(Some(value)))
+        .unwrap_or_else(|| current_time_ms().to_string());
     let base = format!(
-        "{}-{}",
+        "{}-{}-attempt-{}",
         safe_path_component(prepared.issue_identifier.as_deref()),
-        current_time_ms()
+        run_identity,
+        prepared.attempt.max(1)
     );
     ClaudeArtifactPaths {
         protocol_path: artifact_dir.join(format!("{base}.protocol.jsonl")),

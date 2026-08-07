@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    mpsc, Arc,
+    mpsc, Arc, Condvar, Mutex,
 };
 use std::thread;
 use std::time::Duration;
@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 use shea_symphony::config::RuntimeConfig;
 use shea_symphony::model::PollingSnapshot;
 use shea_symphony::orchestrator::Orchestrator;
+use shea_symphony::tracker::with_github_graphql_request_context;
 use shea_symphony::workflow::WorkflowDefinition;
 
 use crate::cli::DisplayMode;
@@ -256,7 +257,11 @@ fn autopilot_loop_with_cancellation(
         let settings = AutopilotLoopSettings::from_config(&config, &options);
         let tick_settings = AutopilotLoopTickSettings::from_options(&config, &options);
 
-        let plan = match build_autopilot_plan(&options.workflow_path) {
+        let plan = match with_github_graphql_request_context(
+            "autopilot.supervisor.selection_refresh",
+            Some(Arc::clone(&cancellation)),
+            || build_autopilot_plan(&options.workflow_path),
+        ) {
             Ok(plan) => plan,
             Err(error) => {
                 let error_text = error.to_string();
@@ -458,6 +463,7 @@ fn autopilot_loop_with_cancellation(
             &options,
             settings,
             tick_settings,
+            plan,
             work_unit_limit,
             &mut completed_work_units,
             &cancellation,
@@ -563,6 +569,151 @@ struct AutopilotLaneWorkerFinished {
 }
 
 #[derive(Debug)]
+struct SharedPlanRead<T> {
+    generation: u64,
+    snapshot: Option<Arc<T>>,
+    error: Option<String>,
+    refreshed: bool,
+}
+
+#[derive(Debug)]
+struct SharedPlanCacheState<T> {
+    generation: u64,
+    snapshot: Option<Arc<T>>,
+    error: Option<String>,
+    retry_after_ms: u64,
+    refresh_in_flight: bool,
+}
+
+#[derive(Debug)]
+struct SharedPlanCache<T> {
+    state: Mutex<SharedPlanCacheState<T>>,
+    ready: Condvar,
+}
+
+impl<T> SharedPlanCache<T> {
+    fn seeded(snapshot: T) -> Self {
+        Self {
+            state: Mutex::new(SharedPlanCacheState {
+                generation: 1,
+                snapshot: Some(Arc::new(snapshot)),
+                error: None,
+                retry_after_ms: 0,
+                refresh_in_flight: false,
+            }),
+            ready: Condvar::new(),
+        }
+    }
+
+    fn read_or_refresh(
+        &self,
+        cancellation: &Arc<AtomicBool>,
+        refresh: impl FnOnce() -> Result<T, String>,
+    ) -> SharedPlanRead<T> {
+        let mut refresh = Some(refresh);
+        loop {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            if let Some(snapshot) = &state.snapshot {
+                return SharedPlanRead {
+                    generation: state.generation,
+                    snapshot: Some(Arc::clone(snapshot)),
+                    error: None,
+                    refreshed: false,
+                };
+            }
+            let now_ms = current_time_ms();
+            if let Some(error) = &state.error {
+                if now_ms < state.retry_after_ms {
+                    return SharedPlanRead {
+                        generation: state.generation,
+                        snapshot: None,
+                        error: Some(error.clone()),
+                        refreshed: false,
+                    };
+                }
+            }
+            if state.refresh_in_flight {
+                if cancellation.load(Ordering::SeqCst) {
+                    return SharedPlanRead {
+                        generation: state.generation,
+                        snapshot: None,
+                        error: Some("shared selection refresh cancelled".into()),
+                        refreshed: false,
+                    };
+                }
+                let (next_state, _) = self
+                    .ready
+                    .wait_timeout(state, Duration::from_millis(250))
+                    .unwrap_or_else(|poison| poison.into_inner());
+                drop(next_state);
+                continue;
+            }
+
+            state.refresh_in_flight = true;
+            state.error = None;
+            let generation = state.generation.saturating_add(1);
+            drop(state);
+
+            let result = refresh
+                .take()
+                .expect("shared plan refresh closure is consumed once")();
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            state.generation = generation;
+            state.refresh_in_flight = false;
+            let read = match result {
+                Ok(snapshot) => {
+                    let snapshot = Arc::new(snapshot);
+                    state.snapshot = Some(Arc::clone(&snapshot));
+                    state.error = None;
+                    state.retry_after_ms = 0;
+                    SharedPlanRead {
+                        generation,
+                        snapshot: Some(snapshot),
+                        error: None,
+                        refreshed: true,
+                    }
+                }
+                Err(error) => {
+                    state.snapshot = None;
+                    state.error = Some(error.clone());
+                    state.retry_after_ms = current_time_ms().saturating_add(1_000);
+                    SharedPlanRead {
+                        generation,
+                        snapshot: None,
+                        error: Some(error),
+                        refreshed: true,
+                    }
+                }
+            };
+            self.ready.notify_all();
+            return read;
+        }
+    }
+
+    fn invalidate(&self, generation: u64) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if state.generation != generation || state.snapshot.is_none() {
+            return false;
+        }
+        state.snapshot = None;
+        state.error = None;
+        state.retry_after_ms = 0;
+        true
+    }
+}
+
+type SharedAutopilotPlan = SharedPlanCache<AutopilotPlanSnapshot>;
+
+#[derive(Debug)]
 enum AutopilotLaneWorkerMessage {
     Running {
         lane: AutopilotLaneKind,
@@ -587,6 +738,7 @@ fn run_independent_autopilot_lane_supervisor(
     options: &AutopilotLoopOptions,
     settings: AutopilotLoopSettings,
     tick_settings: AutopilotLoopTickSettings,
+    initial_plan: AutopilotPlanSnapshot,
     work_unit_limit: Option<usize>,
     completed_work_units: &mut AutopilotWorkUnitCounters,
     cancellation: &Arc<AtomicBool>,
@@ -632,20 +784,25 @@ fn run_independent_autopilot_lane_supervisor(
         }),
     )?;
 
+    let shared_plan = Arc::new(SharedAutopilotPlan::seeded(initial_plan));
     let (sender, receiver) = mpsc::channel();
     let mut handles = Vec::new();
     for lane in lanes {
         let sender = sender.clone();
         let options = options.clone();
         let cancellation = Arc::clone(cancellation);
+        let shared_plan = Arc::clone(&shared_plan);
         let handle = thread::spawn(move || {
             run_autopilot_lane_worker(
                 lane,
                 options,
-                settings,
-                tick_settings,
-                work_unit_limit,
+                AutopilotLaneWorkerSettings {
+                    loop_settings: settings,
+                    tick_settings,
+                    max_iterations: work_unit_limit,
+                },
                 cancellation,
+                shared_plan,
                 sender,
             );
         });
@@ -783,19 +940,28 @@ fn run_independent_autopilot_lane_supervisor(
     })
 }
 
+#[derive(Debug, Clone, Copy)]
+struct AutopilotLaneWorkerSettings {
+    loop_settings: AutopilotLoopSettings,
+    tick_settings: AutopilotLoopTickSettings,
+    max_iterations: Option<usize>,
+}
+
 fn run_autopilot_lane_worker(
     lane: AutopilotLaneKind,
     options: AutopilotLoopOptions,
-    settings: AutopilotLoopSettings,
-    tick_settings: AutopilotLoopTickSettings,
-    max_iterations: Option<usize>,
+    settings: AutopilotLaneWorkerSettings,
     cancellation: Arc<AtomicBool>,
+    shared_plan: Arc<SharedAutopilotPlan>,
     sender: mpsc::Sender<AutopilotLaneWorkerMessage>,
 ) {
     let mut iteration = 1usize;
     let mut error_attempt = 0u32;
     loop {
-        if max_iterations.is_some_and(|limit| iteration > limit) {
+        if settings
+            .max_iterations
+            .is_some_and(|limit| iteration > limit)
+        {
             let _ = sender.send(AutopilotLaneWorkerMessage::Stopped {
                 lane,
                 reason: "max_iterations".into(),
@@ -812,11 +978,14 @@ fn run_autopilot_lane_worker(
             break;
         }
 
-        let (plan, plan_error) = match build_autopilot_plan(&options.workflow_path) {
-            Ok(plan) => (Some(plan), None),
-            Err(error) => (None, Some(error.to_string())),
-        };
-        let lane_plan = autopilot_plan_lane(plan.as_ref(), lane.name()).cloned();
+        let plan_read = shared_plan.read_or_refresh(&cancellation, || {
+            with_github_graphql_request_context(
+                format!("autopilot.{}.selection_refresh", lane.name()),
+                Some(Arc::clone(&cancellation)),
+                || build_autopilot_plan(&options.workflow_path).map_err(|error| error.to_string()),
+            )
+        });
+        let lane_plan = autopilot_plan_lane(plan_read.snapshot.as_deref(), lane.name()).cloned();
         if sender
             .send(AutopilotLaneWorkerMessage::Running {
                 lane,
@@ -828,11 +997,43 @@ fn run_autopilot_lane_worker(
             break;
         }
 
-        let mut result = lane.tick(&options, &tick_settings, plan.as_ref());
-        if let Some(error) = plan_error {
+        let mut result = with_github_graphql_request_context(
+            format!("autopilot.{}.targeted_tick", lane.name()),
+            Some(Arc::clone(&cancellation)),
+            || {
+                lane.tick(
+                    &options,
+                    &settings.tick_settings,
+                    plan_read.snapshot.as_deref(),
+                )
+            },
+        );
+        result.evidence.push(format!(
+            "selection_snapshot_generation={} source={} scope=process",
+            plan_read.generation,
+            if plan_read.refreshed {
+                "shared_refresh"
+            } else {
+                "shared_snapshot"
+            }
+        ));
+        if let Some(error) = plan_read.error {
             result
                 .evidence
                 .push(format!("plan_snapshot_error={}", compact_evidence(&error)));
+        }
+        let snapshot_invalidated = options.write
+            && lane_plan
+                .as_ref()
+                .and_then(|plan| plan.selected_issue.as_ref())
+                .is_some()
+            && shared_plan.invalidate(plan_read.generation);
+        if snapshot_invalidated {
+            result.evidence.push(format!(
+                "selection_snapshot_invalidated generation={} lane={} reason=write_capable_tick",
+                plan_read.generation,
+                lane.name()
+            ));
         }
         let had_error = result.status == "error";
         if had_error {
@@ -840,8 +1041,9 @@ fn run_autopilot_lane_worker(
         } else {
             error_attempt = 0;
         }
-        let parked_queues = plan
-            .map(|snapshot| snapshot.parked_queues)
+        let parked_queues = plan_read
+            .snapshot
+            .map(|snapshot| snapshot.parked_queues.clone())
             .unwrap_or_default();
         if sender
             .send(AutopilotLaneWorkerMessage::Finished(
@@ -857,14 +1059,14 @@ fn run_autopilot_lane_worker(
             break;
         }
 
-        if !autopilot_should_continue(iteration, max_iterations) {
+        if !autopilot_should_continue(iteration, settings.max_iterations) {
             iteration = iteration.saturating_add(1);
             continue;
         }
         let delay_ms = if had_error {
-            autopilot_lane_error_backoff_ms(settings.poll_interval_ms, error_attempt)
+            autopilot_lane_error_backoff_ms(settings.loop_settings.poll_interval_ms, error_attempt)
         } else {
-            settings.poll_interval_ms
+            settings.loop_settings.poll_interval_ms
         };
         if autopilot_sleep_or_cancel(delay_ms, &cancellation) {
             let _ = sender.send(AutopilotLaneWorkerMessage::Stopped {
@@ -2228,6 +2430,8 @@ fn print_autopilot_stopped(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Barrier;
 
     #[test]
     fn autopilot_lane_tick_requires_ready_selected_issue() {
@@ -2654,6 +2858,89 @@ mod tests {
         assert!(quiet.is_empty());
         assert!(verbose.contains("autopilot_loop_result supervisor_cycle=3"));
         assert!(verbose.contains("autopilot_loop_lane lane=merge status=completed"));
+    }
+
+    #[test]
+    fn shared_plan_refresh_is_single_flight_for_three_lanes() {
+        let cache = Arc::new(SharedPlanCache::seeded(1usize));
+        assert!(cache.invalidate(1));
+        let refreshes = Arc::new(AtomicUsize::new(0));
+        let barrier = Arc::new(Barrier::new(3));
+
+        let handles = (0..3)
+            .map(|_| {
+                let cache = Arc::clone(&cache);
+                let refreshes = Arc::clone(&refreshes);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    let cancellation = Arc::new(AtomicBool::new(false));
+                    barrier.wait();
+                    cache.read_or_refresh(&cancellation, || {
+                        refreshes.fetch_add(1, Ordering::SeqCst);
+                        thread::sleep(Duration::from_millis(25));
+                        Ok(2usize)
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let reads = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(refreshes.load(Ordering::SeqCst), 1);
+        assert_eq!(reads.iter().filter(|read| read.refreshed).count(), 1);
+        assert!(reads.iter().all(|read| read.generation == 2));
+        assert!(reads
+            .iter()
+            .all(|read| read.snapshot.as_deref() == Some(&2usize)));
+    }
+
+    #[test]
+    fn stale_generation_cannot_invalidate_a_newer_snapshot() {
+        let cache = SharedPlanCache::seeded(1usize);
+        assert!(cache.invalidate(1));
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let refreshed = cache.read_or_refresh(&cancellation, || Ok(2usize));
+        assert_eq!(refreshed.generation, 2);
+        assert!(!cache.invalidate(1));
+
+        let cached = cache.read_or_refresh(&cancellation, || -> Result<usize, String> {
+            panic!("newer shared snapshot should not refresh")
+        });
+        assert_eq!(cached.generation, 2);
+        assert_eq!(cached.snapshot.as_deref(), Some(&2usize));
+    }
+
+    #[test]
+    fn shared_plan_waiter_can_cancel_while_refresh_is_in_flight() {
+        let cache = Arc::new(SharedPlanCache::seeded(1usize));
+        assert!(cache.invalidate(1));
+        let refresh_started = Arc::new(Barrier::new(2));
+        let cache_for_refresh = Arc::clone(&cache);
+        let started_for_refresh = Arc::clone(&refresh_started);
+        let refresh_handle = thread::spawn(move || {
+            let cancellation = Arc::new(AtomicBool::new(false));
+            cache_for_refresh.read_or_refresh(&cancellation, || {
+                started_for_refresh.wait();
+                thread::sleep(Duration::from_millis(100));
+                Ok(2usize)
+            })
+        });
+
+        refresh_started.wait();
+        let cancellation = Arc::new(AtomicBool::new(true));
+        let cancelled = cache.read_or_refresh(&cancellation, || Ok(3usize));
+        assert_eq!(cancelled.snapshot, None);
+        assert!(cancelled
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("cancelled")));
+        assert_eq!(
+            refresh_handle.join().unwrap().snapshot.as_deref(),
+            Some(&2usize)
+        );
     }
 }
 

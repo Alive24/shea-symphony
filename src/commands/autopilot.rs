@@ -5,7 +5,9 @@ use shea_symphony::config::RuntimeConfig;
 use shea_symphony::doctor::ProjectAuditReport;
 use shea_symphony::model::{normalize_state, TrackerIssue};
 use shea_symphony::runtime_state::load_runtime_states;
-use shea_symphony::tracker::{adapter_from_config, TrackerAdapter};
+use shea_symphony::tracker::{
+    adapter_from_config, with_github_graphql_request_context, TrackerAdapter,
+};
 use shea_symphony::workflow::WorkflowDefinition;
 
 use crate::commands::doctor::hydrate_issues_for_doctor;
@@ -33,7 +35,10 @@ pub(crate) fn autopilot_plan(
     workflow_path: PathBuf,
     json: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let snapshot = build_autopilot_plan(&workflow_path)?;
+    let snapshot =
+        with_github_graphql_request_context("autopilot.plan.selection_refresh", None, || {
+            build_autopilot_plan(&workflow_path)
+        })?;
     if json {
         println!("{}", serde_json::to_string_pretty(&snapshot)?);
     } else {

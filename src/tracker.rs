@@ -22,7 +22,7 @@ pub use error::{
     TrackerError,
 };
 pub use follow_up::FollowUpIssueInput;
-pub use github::GithubProjectReadMode;
+pub use github::{with_github_graphql_request_context, GithubProjectReadMode};
 pub use linear::LinearAdapter;
 pub use memory::MemoryTracker;
 pub use project_field::ProjectFieldAssignment;

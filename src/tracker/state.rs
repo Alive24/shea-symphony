@@ -47,7 +47,7 @@ pub(in crate::tracker) fn issue_matches_assignee_filter(
     let allowed: Vec<String> = current_login
         .into_iter()
         .chain(filter.additional_assignees.iter().map(String::as_str))
-        .map(|assignee| normalize_state(assignee))
+        .map(normalize_state)
         .collect();
 
     issue

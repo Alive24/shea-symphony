@@ -329,6 +329,24 @@ fn run_loop_claim_action_uses_tracker_claim_decision() {
 }
 
 #[test]
+fn targeted_claim_revalidation_refuses_state_changed_after_cached_selection() {
+    let config = test_config();
+    let selected_from_snapshot = tracker_issue("Todo");
+    let targeted_live_read = tracker_issue("Agent Review");
+
+    assert_eq!(
+        run_loop_claim_action(&selected_from_snapshot, &config),
+        RunLoopClaimAction::Claim
+    );
+    assert_eq!(
+        run_loop_claim_action(&targeted_live_read, &config),
+        RunLoopClaimAction::StopAndReplan {
+            current_state: "Agent Review".into()
+        }
+    );
+}
+
+#[test]
 fn live_gate_blocks_missing_assignee_without_override() {
     let config = live_github_config();
     let issue = tracker_issue("Todo");

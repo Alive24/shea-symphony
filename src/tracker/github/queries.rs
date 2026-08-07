@@ -26,6 +26,11 @@ pub(in crate::tracker) fn github_project_query(
     format!(
         r#"
 query SheaSymphonyProject($owner: String!, $number: Int!, $cursor: String) {{
+  rateLimit {{
+    cost
+    remaining
+    resetAt
+  }}
   {owner_field}(login: $owner) {{
     projectV2(number: $number) {{
       items(first: {GITHUB_PROJECT_ITEM_PAGE_SIZE}, after: $cursor) {{
@@ -143,6 +148,11 @@ pub(in crate::tracker) fn github_issue_evidence_query() -> String {
     format!(
         r#"
 query SheaSymphonyIssueEvidence($owner: String!, $repo: String!, $number: Int!) {{
+  rateLimit {{
+    cost
+    remaining
+    resetAt
+  }}
   repository(owner: $owner, name: $repo) {{
     issue(number: $number) {{
       id
@@ -191,6 +201,11 @@ pub(in crate::tracker) fn github_issue_project_item_query() -> String {
     format!(
         r#"
 query SheaSymphonyIssueProjectItem($owner: String!, $repo: String!, $number: Int!) {{
+  rateLimit {{
+    cost
+    remaining
+    resetAt
+  }}
   repository(owner: $owner, name: $repo) {{
     issue(number: $number) {{
       __typename
@@ -296,6 +311,11 @@ pub(in crate::tracker) fn github_project_metadata_query(owner_field: &str) -> St
     format!(
         r#"
 query SheaSymphonyProjectMetadata($owner: String!, $number: Int!) {{
+  rateLimit {{
+    cost
+    remaining
+    resetAt
+  }}
   {owner_field}(login: $owner) {{
     projectV2(number: $number) {{
       id
@@ -371,6 +391,11 @@ pub(in crate::tracker) fn github_issue_comments_query() -> String {
     format!(
         r#"
 query SheaSymphonyIssueComments($issueId: ID!) {{
+  rateLimit {{
+    cost
+    remaining
+    resetAt
+  }}
   node(id: $issueId) {{
     ... on Issue {{
       comments(first: {GITHUB_WORKPAD_COMMENT_PAGE_SIZE}) {{
@@ -421,6 +446,11 @@ mutation SheaSymphonyCloseIssue($issueId: ID!) {
 
 pub(in crate::tracker) const GITHUB_REPOSITORY_ID_QUERY: &str = r#"
 query SheaSymphonyRepositoryId($owner: String!, $repo: String!) {
+  rateLimit {
+    cost
+    remaining
+    resetAt
+  }
   repository(owner: $owner, name: $repo) {
     id
   }
@@ -448,3 +478,33 @@ mutation SheaSymphonyAddProjectItem($projectId: ID!, $contentId: ID!) {
   }
 }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn graphql_read_queries_request_rate_limit_evidence() {
+        let queries = [
+            github_project_query("user", GithubProjectReadMode::QueueScan),
+            github_issue_evidence_query(),
+            github_issue_project_item_query(),
+            github_project_metadata_query("user"),
+            github_issue_comments_query(),
+            GITHUB_REPOSITORY_ID_QUERY.to_string(),
+        ];
+
+        for query in queries {
+            assert!(
+                query.contains("rateLimit"),
+                "query omitted rateLimit: {query}"
+            );
+            assert!(query.contains("cost"), "query omitted cost: {query}");
+            assert!(
+                query.contains("remaining"),
+                "query omitted remaining: {query}"
+            );
+            assert!(query.contains("resetAt"), "query omitted resetAt: {query}");
+        }
+    }
+}

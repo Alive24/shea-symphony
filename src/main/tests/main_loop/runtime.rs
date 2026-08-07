@@ -191,6 +191,50 @@ fn main_recovery_plan_prefers_native_thread() {
 }
 
 #[test]
+fn main_recovery_plan_resumes_claude_only_at_matching_run_and_worktree_boundary() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = runtime_reconcile_test_config(temp.path());
+    let issue = tracker_issue("In Progress");
+    let workspace = temp.path().join("issue-29");
+    std::fs::create_dir_all(&workspace).unwrap();
+    init_clean_git_workspace(&workspace);
+    let mut state = active_runtime_state("#29");
+    state.backend = "claude-code".into();
+    state.backend_session_id = Some("claude-session-29".into());
+    state.workspace_path = Some(workspace.clone());
+    state.run_id = Some("run-29".into());
+    let mut record = main_tmux_session_record("#29", SessionStatus::Failed);
+    record.issue_id = Some(issue.id.clone());
+    record.backend = "claude-code".into();
+    record.session_source = Some("claude-code-stream-json".into());
+    record.session_name = "claude-session-29".into();
+    record.thread = Some("claude-session-29".into());
+    record.run_id = Some("run-29".into());
+    record.worktree = workspace;
+    save_session_registry(
+        &session_registry_path(&config),
+        &shea_symphony::session_registry::SessionRegistry {
+            sessions: vec![record],
+        },
+    )
+    .unwrap();
+
+    let plan = main_recovery_plan(&config, &issue, &state).unwrap();
+
+    assert_eq!(plan.mode, MainRecoveryMode::NativeThread);
+    assert_eq!(
+        plan.claude_resume_session_id.as_deref(),
+        Some("claude-session-29")
+    );
+    assert_eq!(plan.app_server_resume_thread_id, None);
+    assert_eq!(plan.prompt_override, None);
+
+    state.run_id = Some("different-run".into());
+    let mismatched = main_recovery_plan(&config, &issue, &state).unwrap();
+    assert_eq!(mismatched.claude_resume_session_id, None);
+}
+
+#[test]
 fn main_recovery_plan_applicable_rejects_fresh_claim_state() {
     let mut state = active_runtime_state("#29");
     state.backend = "codex".into();

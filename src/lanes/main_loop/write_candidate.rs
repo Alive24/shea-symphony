@@ -468,8 +468,9 @@ pub(crate) fn run_loop_dispatch_write_candidate(
         Some(MainSessionReconciliation::Active { .. }) => unreachable!(),
         None => {
             let recovery_plan = if recover
-                && runtime_state.backend == "codex"
-                && config.codex.command.contains("app-server")
+                && ((runtime_state.backend == "codex"
+                    && config.codex.command.contains("app-server"))
+                    || runtime_state.backend == "claude-code")
                 && main_recovery_plan_applicable(&runtime_state)
             {
                 Some(main_recovery_plan(config, &latest, &runtime_state)?)
@@ -513,6 +514,25 @@ pub(crate) fn run_loop_dispatch_write_candidate(
                         ),
                     )?;
                 }
+                if let Some(session_id) = recovery_plan.claude_resume_session_id.as_deref() {
+                    println!(
+                        "run_loop_action=claude_resume issue={} session={} mode={} input=Continue",
+                        latest.identifier,
+                        session_id,
+                        recovery_plan.mode.as_str()
+                    );
+                    append_runtime_supervision_event(
+                        config,
+                        Some(&runtime_state),
+                        "ClaudeStreamJsonResume",
+                        &format!(
+                            "issue={} session={} mode={} input=Continue",
+                            latest.identifier,
+                            session_id,
+                            recovery_plan.mode.as_str()
+                        ),
+                    )?;
+                }
             }
             execute_issue_once_with_options(
                 workflow,
@@ -525,6 +545,9 @@ pub(crate) fn run_loop_dispatch_write_candidate(
                     app_server_resume_thread_id: recovery_plan
                         .as_ref()
                         .and_then(|plan| plan.app_server_resume_thread_id.clone()),
+                    claude_resume_session_id: recovery_plan
+                        .as_ref()
+                        .and_then(|plan| plan.claude_resume_session_id.clone()),
                     prompt_override: recovery_plan
                         .as_ref()
                         .and_then(|plan| plan.prompt_override.clone()),

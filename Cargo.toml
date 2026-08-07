@@ -11,6 +11,7 @@ crossterm = "0.28"
 futures = "0.3.32"
 futures-util = "0.3.32"
 liquid = "0.26.11"
+libc = "0.2"
 ratatui = "0.29"
 rusqlite = { version = "0.38", features = ["bundled"] }
 sea-query = { version = "1.0", default-features = false, features = ["backend-sqlite"] }

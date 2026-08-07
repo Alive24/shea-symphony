@@ -47,6 +47,14 @@ Fixture workflows can still use inline prompt bodies. If the canonical workflow
 declares lane prompts, all three lane paths must exist before agent
 initialization continues.
 
+Main and semantic Merge-agent repair may instead select the shared Claude Code
+stream-json transport with `main_lane.backend: claude-code` and/or
+`merge_lane.agent_backend: claude-code`. Shea owns the protocol flags, JSONL
+input, parsing, artifacts, timeout cleanup, and safe resume; the configured
+`claude.command` or wrapper owns model, gateway, authentication, environment,
+and permission policy. See `docs/claude-code-stream-json.md` for configuration,
+failure semantics, and the no-remote-write local UAT.
+
 After preflight, dry-run mode executes the all-lane foreground preview:
 
 ```bash

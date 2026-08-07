@@ -1,6 +1,6 @@
 ---
 name: shea-symphony-manual-review
-description: Use when the operator wants to trigger one Shea Symphony review for a named issue through the external Review backend configured by the active workflow. Resolve the active CLI and workflow, validate the targeted handoff, invoke `review once`, and read back the result. Do not review the code or manufacture manual review evidence in the current agent.
+description: Use when the operator wants to trigger one Shea Symphony review for a named issue through the external Review backend configured by the active workflow, including an explicitly operator-authorized standalone implementation with a ready PR. Resolve the active CLI and workflow, validate or prepare the targeted handoff, invoke `review once`, and read back the result. Do not review the code or manufacture manual review evidence in the current agent.
 metadata:
   short-description: Trigger one workflow-backed external review
   suite-version: 2026.08.07
@@ -9,9 +9,9 @@ metadata:
 # Shea Symphony Manual Review
 
 Trigger one operator-selected Review run through the external backend configured
-by the repository workflow. The current task is only the operator-side launcher:
-the configured backend owns diff inspection, review judgment, evidence, and
-routing.
+by the repository workflow. The current task is the operator-side launcher and,
+when explicitly requested, the preparer of a safe standalone review handoff. The
+configured backend owns diff inspection, review judgment, evidence, and routing.
 
 Do not perform the review in the current agent. Do not replace a failed external
 launch with direct diff inspection, a current-session conclusion, or fake/manual
@@ -74,16 +74,65 @@ Use `gh issue view` and `gh pr view` only for the named issue and linked PR.
 Confirm before launch that:
 
 - Project Status is `Agent Review`, unless the operator explicitly requests a
-  supported re-review;
+  supported re-review or standalone handoff preparation;
 - the PR closes or clearly links to the issue and is ready rather than draft;
-- the Main handoff and canonical issue workspace are present and consistent;
+- the Main handoff and canonical issue workspace are present and consistent, or
+  one unambiguous standalone workspace and ready PR satisfy the fast path below;
 - no active `Review Agent` claim or conflicting review job already owns the
   issue;
 - the workflow selects a supported non-fake external Review backend.
 
+For routine native subissues, passing review routes to `Merging`, not `Human Review`;
+the parent owns final Human Review unless a recorded exception says otherwise.
+
 Do not use a whole-Project scan or an all-lane loop for routine preflight. Stop
 on ambiguous issue, PR, workspace, claim, or backend identity instead of
 guessing.
+
+## Operator-Authorized Standalone Fast Path
+
+Use this path only when the operator explicitly asks to review a named
+standalone implementation that did not run through Main. Do not require a Main
+claim, assignee, automated Main workpad, or prior `Agent Review` state merely to
+launch that manual review.
+
+Before mutating anything, require all of the following:
+
+- exactly one open, ready PR is explicitly named or unambiguously associated
+  with the issue;
+- the PR head matches the selected clean issue worktree and pushed commit;
+- the PR base matches the issue's explicit target branch, when present,
+  otherwise the workflow base;
+- the issue is not terminal, has no active lane claim, and has no active or
+  queued Review job;
+- dependency and native-subissue gates are terminal or non-blocking;
+- the external Review backend passes the gate above.
+
+Then prepare the handoff through supported Shea commands in this order:
+
+```bash
+"$SHEA_CLI" project link-pr "$SHEA_WORKFLOW" "$ISSUE" "#<pr>" --write
+"$SHEA_CLI" workspace adopt "$SHEA_WORKFLOW" "$ISSUE" "<worktree>" --write
+"$SHEA_CLI" project issue "$SHEA_WORKFLOW" "$ISSUE" --json
+"$SHEA_CLI" workspace show "$SHEA_WORKFLOW" "$ISSUE"
+"$SHEA_CLI" project set-state "$SHEA_WORKFLOW" "$ISSUE" agent_review --write
+"$SHEA_CLI" project issue "$SHEA_WORKFLOW" "$ISSUE" --json
+```
+
+Treat the PR linkage and Workspace Evidence as the standalone equivalent of a
+Main handoff. Preserve the issue's assignee and do not manufacture a Main Agent
+claim. Make `Agent Review` the final preparation mutation, then perform only
+readback before launching `review once`. If linkage, adoption, status write, or
+readback fails, stop without launching the backend.
+
+For a PR targeting an explicit non-default base, GitHub may not expose a native
+closing relationship. If `project link-pr` writes its one fallback comment but
+reports missing native readback, do not retry the mutation. Continue only when
+targeted `project issue` readback exposes exactly that PR number and URL as
+`fallback_diagnostic` and targeted `gh pr view` independently confirms the
+expected ready state, base, head branch, and head commit. Record the native-link
+gap. Any missing, additional, draft, closed, or mismatched PR remains a hard
+stop.
 
 ## Launch One External Review
 
@@ -123,9 +172,13 @@ review outcome.
 - Do not edit implementation code.
 - Do not run `review fake`.
 - Do not create a manual `Review Agent` claim or evidence file.
-- Do not call `review pass`, `review reject`, or raw Project status mutation.
+- Do not call `review pass`, `review reject`, or raw Project GraphQL mutation.
+  The supported `project set-state` command is allowed only for the explicit
+  standalone fast path above.
 - Do not let the current agent review the diff, execute reviewer verification,
   classify findings, update checklists, or choose the next state.
 - Do not retry configuration or authentication failures in a loop.
 - Do not claim automatic-loop worker-pool, concurrency, or retry semantics;
   this skill intentionally triggers the targeted `review once` surface.
+- Do not present this targeted launcher as `autopilot plan` or `autopilot loop`;
+  those are separate all-lane planning and foreground-supervision surfaces.

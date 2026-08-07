@@ -1,3 +1,4 @@
-display_name: Shea Symphony Manual Main
-short_description: Run a supervised Codex Main Agent session for Shea Symphony implementation work.
-default_prompt: Claim and work one Shea Symphony Main Agent issue, preserve issue gates and dependencies, open or update a ready PR, and hand off only to Agent Review.
+interface:
+  display_name: "Shea Symphony Manual Main"
+  short_description: "Execute one supervised Main issue end to end"
+  default_prompt: "Use $shea-symphony-manual-main to execute one operator-selected Todo or explicitly authorized Backlog issue in this task and stop at Agent Review."

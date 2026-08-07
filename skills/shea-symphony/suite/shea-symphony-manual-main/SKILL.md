@@ -1,251 +1,260 @@
 ---
 name: shea-symphony-manual-main
-description: Use when manually running a Codex Main Agent session for Shea Symphony implementation or Main-lane Rework from a fresh Codex session. This skill claims Todo, Main-lane Rework, or resumable In Progress work through the Main Agent lane, preserves issue quality and dependency gates, creates or resumes isolated workspaces and PRs, and hands off only to Agent Review.
+description: Use when the operator wants this agent to execute one Shea Symphony Main-lane issue now, including Todo implementation, explicitly authorized Backlog pickup without promotion, Main-lane Rework, or resumable In Progress work. Perform the isolated worktree work, verification, PR publication, tracker evidence, and Agent Review handoff in the current task. Do not use this skill merely to write a prompt or delegate Main work to another task.
 metadata:
-  short-description: Shea Symphony manual Main Agent
-  suite-version: 2026.05.22
+  short-description: Execute one manual Shea Symphony Main lane
+  suite-version: 2026.08.07
 ---
 
 # Shea Symphony Manual Main Agent
 
-Use this skill to operate a human-supervised Shea Symphony Main Agent session.
-The Main Agent owns implementation work. It does not own review approval, human
-approval, or merging.
+Execute one operator-selected Main issue in the current task. This is an
+operational skill, not a prompt generator: inspect the real tracker, mutate the
+selected issue only after its gates pass, edit the issue worktree, verify the
+change, publish a ready PR, and stop at `Agent Review`.
 
-For normal all-lane dogfood, prefer the CLI foreground path first:
+Do not create another task, produce a handoff prompt, or invoke a configured
+agent backend in place of doing the work. Use another lane skill only when the
+selected issue is genuinely outside Main authority.
 
-```bash
-cargo run -- autopilot plan .shea/workflows/shea-symphony.md
-cargo run -- autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --write
-```
+## Authority
 
-Use this manual skill only for operator-selected Main implementation, Main-lane
-`Rework`, focused debugging, or break-glass recovery. Do not replace normal
-long-running dogfood with three separate manual lane loops.
+Main owns:
 
-## Runtime Topology
+- `Todo` implementation;
+- an operator-named Backlog issue when the operator explicitly says to execute
+  it without promotion and its body passes the Todo-grade contract gate;
+- Main-lane `Rework` caused by Agent Review findings or a Human Review contract
+  revision;
+- clearly resumable `In Progress` work already claimed by this Main worker;
+- recovery of the issue worktree, branch, commit, PR, and workpad when that
+  recovery is within the accepted issue scope.
 
-Live Shea Symphony lane work still runs through the protected 2606 MVP runtime
-until 2607 replaces the runtime spine. Use the MVP worktree for CLI/App
-execution and the active Shea Symphony development worktree only as source
-context.
+Main does not own:
 
-MVP runtime worktree:
+- shaping, promoting, or selecting an ordinary Backlog item without explicit
+  operator execution authority;
+- independent review, UAT approval, or Human Review decisions;
+- `Merging`, merge-lane `Rework`, or merging a PR.
 
-```bash
-//Volumes/Bohemialive/GitHub/shea-symphony/.shea/
-```
+Use `$shea-symphony-issue-forge` for ordinary Backlog shaping or promotion,
+`$shea-symphony-manual-review` for review, and
+`$shea-symphony-manual-merge` for merge-lane work. A Backlog issue is not an
+implementation instruction by itself. Execute it only through the explicit
+operator-confirmed fast path below.
 
-Canonical workflow inside the MVP runtime:
+## Bind the Active Repository
 
-```bash
-.shea/workflows/shea-symphony.md
-```
+Never depend on hard-coded user names, volumes, checkout paths, or a historical
+MVP worktree. From the target repository root:
 
-If the Tauri App is needed, start it from the MVP runtime `app/` directory with
-the local MVP profile:
+1. Read the profile selected by `SHEA_SYMPHONY_APP_PROFILE_PATH`, when set.
+   Otherwise prefer `.shea/app-profile.local.json` over
+   `.shea/app-profile.json`. Use it for `workflow_path` and `cli_path`.
+2. Otherwise prefer `.shea/workflows/shea-symphony.md` and
+   `.shea/bin/shea-symphony` when they exist.
+3. Resolve both paths to absolute paths and verify the CLI with `--help` before
+   any mutation.
+4. Read the workflow's repository, Project, workspace root, and
+   `git.base_branch`. Also read any explicit target or backport branch in the
+   issue contract. An explicit issue target wins over a generic workflow
+   default and must be confirmed before creating a branch or PR.
 
-```bash
-cd //Volumes/Bohemialive/GitHub/shea-symphony/.shea//app
-SHEA_SYMPHONY_APP_PROFILE_PATH=/Users/chuntengxiao/Documents/GitHub/shea-symphony/.shea/app-profile.local.json npm run tauri -- dev
-```
-
-The profile points at the Shea Symphony target checkout and the MVP CLI binary.
-Do not assume `npm run tauri -- dev -- --workdir <path>` alone keeps the backend
-on MVP code.
-
-Canonical Main Agent prompt:
-
-```bash
-workflows/prompts/main-agent.md
-```
-
-## Operating Rule
-
-Before doing any work:
-
-1. Refresh tracker state from GitHub Project v2 and local runtime state.
-2. Respect the `Main Agent` Project field as the claim lock.
-3. Treat native Project relationships such as `blocked by` as dependency gates.
-4. Run the issue quality gate before implementation.
-5. Use one isolated worktree, one branch, and one PR per issue.
-
-Handle only:
-
-- `Todo` issues that pass the issue quality gate and dependency checks.
-- `Rework` issues that are Main-lane repair work after Agent Review or
-  Human Review contract revision, once dependencies and issue quality pass.
-- `In Progress` issues already claimed by this Main Agent session or clearly
-  resumable from prior interrupted Main Agent work.
-
-Parent issues with native GitHub subissues are not claimable just because they
-are `Todo` or Main-lane `Rework`. Treat the native subissue set as dynamic and
-require every native subissue to have Project status `Done` before selecting or
-claiming the parent. A GitHub issue `closed` state is not enough for this gate.
-Native subissues still use normal Main implementation and Agent Review handoff,
-but routine Review PASS routes to `Merging`; the parent owns final Human Review
-and UAT unless a child records `Subissue Human Review Exception: <reason>`.
-
-Do not use this skill for merge-lane `Rework` or `Merging` work. Use
-`$shea-symphony-manual-merge` for those. When `Rework` came from
-`forge rework`, missing linked PR or missing local worktree evidence is not a
-claim blocker; the Main Agent owns PR/workspace recovery inside the issue
-scope.
-
-## Preflight
-
-Run or equivalent-check:
+Use concise shell variables in subsequent commands, for example:
 
 ```bash
-cargo run -- project state .shea/workflows/shea-symphony.md
-cargo run -- autopilot plan .shea/workflows/shea-symphony.md
-cargo run -- doctor .shea/workflows/shea-symphony.md
-cargo run -- project inspect .shea/workflows/shea-symphony.md '#<issue>'
-cargo run -- project issue .shea/workflows/shea-symphony.md '#<issue>' --json
-cargo run -- forge validate --workflow .shea/workflows/shea-symphony.md --issue '#<issue>'
+SHEA_CLI="<resolved-cli-path>"
+SHEA_WORKFLOW="<resolved-workflow-path>"
+ISSUE="#<number>"
 ```
 
-Use the Shea Symphony CLI Project read surface instead of raw Project GraphQL.
+Do not substitute `cargo run` without checking what the current checkout
+builds. In the current 2607 topology, plain `cargo run` starts the Temporal
+worker and is not the protected 2606 operational CLI. Use the resolved vendored
+CLI when the profile selects it.
+
+## Quota-Safe Preflight
+
+Use targeted reads for the operator-selected issue:
+
+```bash
+"$SHEA_CLI" project issue "$SHEA_WORKFLOW" "$ISSUE" --json
+"$SHEA_CLI" project inspect "$SHEA_WORKFLOW" "$ISSUE" --lane main
+"$SHEA_CLI" forge validate --workflow "$SHEA_WORKFLOW" --issue "$ISSUE"
+"$SHEA_CLI" workspace show "$SHEA_WORKFLOW" "$ISSUE"
+```
+
 Raw `gh issue view` and `gh pr view` are acceptable for ordinary issue and PR
-content. Raw Project field/status/claim reads or mutations are break-glass only;
-record the reason if they are needed.
+content. Shea's targeted Project read surface remains authoritative for status,
+claims, dependencies, native subissues, and linked PRs.
 
-If `autopilot plan` shows the same Main issue as the next lane action and there
-is no need to isolate Main, run `autopilot loop --write` from clean canonical
-`main` instead of starting a manual Main session. Write-mode lane/control
-commands may automatically refresh the canonical checkout when clean local
-`main` is only behind upstream; implementation edits, PR branch freshness, and
-review/merge work still belong in the isolated issue or PR worktree.
+Do not make `project state`, `autopilot plan`, a global `doctor`, or an
+all-lane loop part of routine Manual Main preflight. Those commands scan the
+whole Project and can consume disproportionate GraphQL quota. Use one only when
+its global information is necessary to resolve a concrete ambiguity. If GitHub
+reports exhausted or nearly exhausted GraphQL quota, record the limit/reset
+evidence and stop instead of retrying scans.
 
-## Selection
+## Selection Gates
 
-Pick the issue only when all are true:
+Proceed only when all are true:
 
-- Status is `Todo`, Main-lane `Rework`, or `In Progress` with
-  matching/resumable Main Agent evidence.
-- If status is `Rework`, the trigger must be Agent Review findings or Human
-  Review contract revision that requires Main implementation repair. Merge-lane
-  conflicts, stale-base repair, Merging failures, or any issue with an active
-  `Merging Agent` claim are not Main-lane Rework.
-- `Main Agent` field is empty or belongs to this session.
-- Dependency relationships are terminal or explicitly non-blocking.
-- If it is a native parent issue, every native GitHub subissue has Project
-  status `Done`.
-- Issue Quality Gate is `Ready` or `ReadyWithAssumptions`.
-- The issue body has enough context to implement without inventing product
-  decisions.
+- status is `Todo`, Main-lane `Rework`, matching/resumable `In Progress`, or an
+  explicitly operator-authorized Backlog pickup;
+- the `Main Agent` field is empty or identifies this worker/session;
+- native `blocked by` relationships are terminal or explicitly non-blocking;
+- every native subissue of a parent issue has Project status `Done`;
+- Issue Quality Gate is `Ready` or `ReadyWithAssumptions`;
+- the issue contract is implementable without inventing product decisions;
+- the target base branch and existing workspace/PR identity are unambiguous.
 
-If the issue contract is incomplete, route or recommend routing to
-`Need to Clarify` with evidence. If implementation needs external human input,
-credentials, product decisions, or missing samples, route or recommend routing
-to `Need Human Input` with evidence.
-
-## Implementation Loop
-
-For the selected issue:
-
-1. Claim through the `Main Agent` field and transition to `In Progress`.
-2. Create or resume the isolated worktree and feature branch.
-3. Read the issue body, Main Agent Workpad, append-only timeline comments,
-   canonical docs, and relevant code.
-4. Implement only the accepted issue scope.
-5. Add concise comments for non-obvious runtime, tracker, schema, retry,
-   idempotency, compatibility, or external-service boundaries introduced or
-   materially changed by the issue. Avoid comments that merely restate obvious
-   assignments, names, or one-line control flow.
-6. When adding or changing Rust public API, add semantic crate/module `//!` and
-   item-level `///` Rustdoc, audit whether each item should remain `pub`, and
-   keep `missing_docs` enforcement scoped to the owned module. Ordinary `//`
-   boundary comments do not satisfy Rustdoc coverage. Use only the narrowest
-   justified `#[allow(missing_docs)]` for unavoidable macro-generated API.
-7. Run the strongest practical verification for the touched area. Rust public
-   API changes require `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` in
-   addition to formatting, tests, and strict clippy.
-8. Update issue or PR evidence with changes, verification, risks, follow-ups,
-   and any intentionally commented boundary.
-9. Open or update the PR.
-10. Verify the issue Project item exposes the PR under linked pull requests.
-11. Confirm the PR is ready for review, not draft.
-12. Move the issue to `Agent Review`.
-
-The Main Agent must stop at `Agent Review`. Draft PRs must not be handed off.
-
-## Runtime Boundary
-
-The canonical loop path is app-server-first: `main_lane.backend: codex` with
-`codex.command: codex app-server -c 'service_tier="fast"'`. Manual Main work should preserve the same
-single-issue claim, workspace, workpad, PR, linked-PR, and `Agent Review`
-handoff semantics as `main loop --write`; it is not a looser alternate
-workflow. Use `session start --lane main --run <RUN_ID> --write` only when an
-operator wants the configured Main runtime to run from the existing claim.
-`main_lane.backend: tmux` is an explicit fallback/debug setting, not the default
-unattended substrate.
-
-## Status Transition Ordering
-
-Project `Status` changes must be the final mutating step of each state-changing
-session phase. Before moving an issue to `In Progress`, `Need to Clarify`,
-`Need Human Input`, or `Agent Review`, finish every required claim,
-worktree/PR update, workpad write, PR readiness check, linked-PR verification,
-and evidence update that justifies that state. After the status changes, do only
-readback verification such as `project issue` or `doctor`.
-
-## Main Agent Workpad Evidence
-
-Keep exactly one durable Shea Symphony workpad updated in place. It must include:
-
-- `### Plan` before implementation, as issue-specific checkboxes for reading,
-  implementation, verification, PR readiness, and Agent Review handoff.
-- `### Work Log` with timestamped progress notes.
-- changed files and scope boundary.
-- comment coverage for any new or changed non-obvious runtime, tracker,
-  schema, retry/idempotency, compatibility, or external-service boundary.
-- Rustdoc coverage for new or changed Rust public API, or `not applicable`.
-- public visibility audit results, including any item narrowed to `pub(crate)`
-  or private, or `not applicable`.
-- verification commands and results.
-- PR URL, linked-PR confirmation, and ready/not-draft status.
-- final handoff summary explaining why Main stops at `Agent Review`.
-
-Main-lane `Rework` is still Main implementation work. If the issue was returned
-from Agent Review or revised from Human Review, update this same Main Agent
-Workpad with the new rework round, current plan/work log, changed files,
-verification, PR readiness, and handoff evidence. Do not create a second
-canonical Main Workpad for Main-lane rework.
-
-Standalone `Shea Symphony Rework Run` comments are append-only trigger or
-diagnostic records explaining why the issue entered `Rework`; they are not the
-current-state implementation evidence surface. Review, Merge, Human Review, and
-Doctor runs write their own append-only Shea Symphony timeline comments and
-must not overwrite, restructure, or fold their run logs into the Main Agent
-Workpad.
-
-Do not treat the workpad as a replacement for the issue body's Review checklist.
-The issue body should retain unchecked `Expected Outcome`, `Completion Criteria`,
-`Functional Verification`, `UAT`, and `Context Verification` items for the
-independent Review Agent to evaluate and check.
-
-## PR Linkage Check
-
-Before handoff, do not rely on a workpad comment or `project link-pr` output alone.
-Confirm the CLI Project read surface exposes the PR under linked pull requests:
+For a Backlog pickup, additionally validate the current title and body as a
+Todo-grade draft without changing tracker state:
 
 ```bash
-cargo run -- project issue .shea/workflows/shea-symphony.md '#<issue>' --json
-gh pr view <pr-number> --repo Alive24/shea-symphony --json number,isDraft,url
+"$SHEA_CLI" forge validate --workflow "$SHEA_WORKFLOW" --status todo \
+  --title "<current-title>" --body-file "<current-body.md>"
 ```
 
-Prefer a GitHub closing keyword such as `Closes #<issue>` in the PR body when
-the PR is intended to close the issue after merge.
+Do not use the relaxed Backlog validation result as proof that the issue is
+implementation-ready.
 
-## Hard Boundaries
+An issue being closed is not proof that its Project dependency or subissue gate
+is terminal. For Main-lane `Rework` created by `forge rework`, a missing linked
+PR or missing worktree record is recoverable evidence, not automatically a
+claim blocker.
 
+If the contract is incomplete, record evidence and route or recommend
+`Need to Clarify`. If work requires credentials, samples, external authority,
+or a product decision, route or recommend `Need Human Input`. Do not claim first
+and ask basic scope questions afterward.
+
+## Claim and Workspace
+
+After all read-only gates pass, use the normal claim path for `Todo`, `Rework`,
+or resumable `In Progress`:
+
+1. Choose a stable worker identity for this task.
+2. Claim through the supported CLI, not raw Project GraphQL:
+
+   ```bash
+   "$SHEA_CLI" main claim "$SHEA_WORKFLOW" "$ISSUE" \
+     --worker "<worker-id>" --source manual --write
+   ```
+
+3. Read the issue back and confirm the claim and `In Progress` status.
+4. Reuse the single canonical issue worktree and PR branch when evidence is
+   consistent. If none exists, create one isolated worktree and feature branch
+   from the confirmed target base branch. Never implement in the canonical
+   checkout.
+5. Inspect `git worktree list --porcelain`, the existing Main Workpad, linked PR
+   evidence, and branch state before adopting or creating anything. Stop for
+   operator choice when multiple strong candidates disagree.
+
+The configured workspace root controls where a new worktree belongs. One issue
+has one implementation branch, one canonical worktree, and one PR. Do not push
+unrelated canonical-checkout changes into the issue branch.
+
+### Operator-confirmed Backlog fast path
+
+Use this only when the operator names the issue and explicitly chooses direct
+Manual Main execution without promotion:
+
+1. Keep Project Status `Backlog` during implementation so unattended Main does
+   not compete for the issue.
+2. Do not call `main claim` and do not move the issue to `In Progress`; those
+   commands implement the normal dispatchable-state path.
+3. Confirm there is no existing Main claim, conflicting worktree, branch, or PR.
+4. Record the operator confirmation, Todo-grade validation result, and the
+   intentional skipped states in the canonical Main Workpad.
+5. Follow the same isolated worktree, implementation, verification, ready PR,
+   linked-PR, and evidence requirements as normal Main.
+6. If work cannot reach a ready PR, leave the issue in Backlog and record the
+   blocker. Do not manufacture a partial handoff.
+7. Once every Main handoff gate passes, move directly from Backlog to
+   `Agent Review` as the final mutation and verify the readback. This is the
+   only status skip authorized by this fast path.
+
+## Execute the Main Loop
+
+Perform the work yourself:
+
+1. Read the issue body, canonical Main Workpad, append-only timeline comments,
+   relevant repository instructions, authoritative docs, and current code.
+2. Update the one canonical Main Workpad with an issue-specific checkbox plan
+   before implementation.
+3. Implement only the accepted scope in the issue worktree.
+4. Add focused tests and documentation required by the issue. Add comments only
+   for non-obvious runtime, tracker, schema, retry/idempotency, compatibility,
+   or external-service boundaries.
+5. Run the strongest practical repository-owned verification for the touched
+   area. Repair in-scope lint, formatting, type, build, or test failures and
+   repeat verification; do not declare completion while a repairable in-scope
+   check fails.
+6. For changed Rust public API, also run
+   `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`, add semantic Rustdoc, audit
+   whether each item must remain public, and use only narrowly justified
+   `#[allow(missing_docs)]` annotations.
+7. Update the workpad with changed files, verification commands and results,
+   risks, follow-ups, and compatibility/comment/Rustdoc evidence.
+8. Commit and push the issue branch. Open or update one PR against the confirmed
+   target base, include `Closes #<issue>` when merge should close it, and make
+   the PR ready for review rather than draft.
+9. If necessary, record PR linkage through the supported CLI:
+
+   ```bash
+   "$SHEA_CLI" project link-pr "$SHEA_WORKFLOW" "$ISSUE" "#<pr>" --write
+   ```
+
+10. Read back the issue and PR. Confirm that Shea exposes the linked PR and that
+    GitHub reports it ready and not draft.
+11. Complete the workpad with the PR URL, linked-PR confirmation, verification,
+    and why Main stops at `Agent Review`.
+12. Move to `Agent Review` only as the final mutation, then perform read-only
+    verification:
+
+    ```bash
+    "$SHEA_CLI" project set-state "$SHEA_WORKFLOW" "$ISSUE" agent_review --write
+    "$SHEA_CLI" project issue "$SHEA_WORKFLOW" "$ISSUE" --json
+    ```
+
+Use the CLI's workpad command to upsert the canonical workpad from a local
+Markdown file whenever the skill performs a workpad write:
+
+```bash
+"$SHEA_CLI" project workpad "$SHEA_WORKFLOW" "$ISSUE" "<workpad.md>" --write
+```
+
+## Workpad Contract
+
+Maintain exactly one `Shea Symphony Main Agent Workpad` in place. It contains:
+
+- `### Plan` with issue-specific checkboxes;
+- `### Work Log` with timestamped progress;
+- scope boundary and changed files;
+- verification commands and results;
+- boundary-comment and Rustdoc/public-visibility audit, or `not applicable`;
+- branch, worktree, commit, PR URL, ready/not-draft state, and linked-PR readback;
+- final handoff summary.
+
+For Main-lane Rework, add the new round to this workpad instead of creating a
+second one. Other lane run comments remain append-only and must not be folded
+into or overwritten by Main. The workpad is evidence; it does not replace the
+unchecked Review, completion, functional verification, UAT, or context
+checklists in the issue body.
+
+## Mutation Ordering and Hard Boundaries
+
+Project `Status` is the final mutation of each state-changing phase. Finish the
+claim, workspace/PR updates, workpad write, PR readiness check, linkage check,
+and supporting evidence before the status transition. Afterward, perform only
+readback verification.
+
+- Never implement a Backlog issue without explicit operator execution authority
+  and a passing Todo-grade contract validation.
+- Never bypass issue quality, dependency, subissue, or target-branch gates.
 - Never move an issue to `Human Review`.
-- Never merge a PR.
-- Never use the `Merging Agent` field.
-- Never bypass the issue quality gate.
-- Never continue when a dependency relationship blocks the issue.
-- Never convert merge-lane rework into a new implementation issue unless the
-  operator explicitly asks.
-- Never hide usage-limit, trust, permission, or backend failures; record
-  evidence and stop or route state conservatively.
+- Never merge a PR or use the `Merging Agent` field.
+- Never turn merge-lane repair into Main work.
+- Never hide quota, usage-limit, trust, permission, or backend failures.
+- Never finish by merely giving the operator a prompt for another agent.

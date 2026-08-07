@@ -1,8 +1,8 @@
 suite_name = "Shea Symphony skill suite"
-version = "2026.06.09"
-release_date = "2026-06-09"
+version = "2026.08.07"
+release_date = "2026-08-07"
 repository = "Alive24/shea-symphony"
-minimum_shea_symphony_cli = "repo main as of 2026-06-09"
+minimum_shea_symphony_cli = "2606 MVP CLI with targeted project reads and main claim"
 
 [[skills]]
 name = "shea-symphony-issue-forge"

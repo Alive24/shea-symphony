@@ -318,6 +318,7 @@ fn review_loop_terminal_claim_records_pass_result() {
         state: ReviewJobState::Completed,
         artifact_path: None,
         ledger_path: None,
+        backend_session_id: None,
         report: None,
         error: None,
     };
@@ -427,6 +428,7 @@ fn review_pass_updates_issue_body_checkboxes_before_human_review_transition() {
         state: ReviewJobState::Completed,
         artifact_path: None,
         ledger_path: None,
+        backend_session_id: None,
         report: Some(shea_symphony::review::AgentReviewReport {
             summary: Some("Review Result: PASS".into()),
             ..Default::default()
@@ -454,6 +456,56 @@ fn review_pass_updates_issue_body_checkboxes_before_human_review_transition() {
             "comment:#67",
             "set_state:#67:human_review"
         ]
+    );
+}
+
+#[test]
+fn targeted_review_persists_ledger_before_result_routing() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = test_config();
+    config.observability.logs_root = temp.path().to_path_buf();
+    let adapter = RecordingAdapter::default();
+    let issue = review_issue_with_ref("#67", "Targeted review ledger");
+    adapter
+        .issues
+        .borrow_mut()
+        .insert(issue.identifier.clone(), issue.clone());
+    let mut job = ReviewJob {
+        id: "agy-targeted-67".into(),
+        issue_ref: "#67".into(),
+        backend: "agy-cli".into(),
+        state: ReviewJobState::Completed,
+        artifact_path: Some(temp.path().join("agy-targeted-67.output.json")),
+        ledger_path: None,
+        backend_session_id: None,
+        report: Some(shea_symphony::review::AgentReviewReport {
+            reviewer_backend: "agy-cli".into(),
+            summary: Some("Review Result: PASS".into()),
+            ..Default::default()
+        }),
+        error: None,
+    };
+
+    let ledger_path = persist_review_job_ledger(&config, &issue, &mut job).unwrap();
+    apply_review_result(None, &config, &adapter, "#67", &issue, &job, None, None).unwrap();
+
+    assert_eq!(job.ledger_path.as_ref(), Some(&ledger_path));
+    assert!(ledger_path.is_file());
+    let ledger: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&ledger_path).unwrap()).unwrap();
+    assert_eq!(ledger["job_id"], "agy-targeted-67");
+    assert_eq!(ledger["backend"], "agy-cli");
+    assert_eq!(ledger["decision_outcome"], "PassedToHumanReview");
+    let recorded = adapter
+        .issues
+        .borrow()
+        .get("#67")
+        .and_then(|issue| issue.description.clone())
+        .unwrap();
+    assert!(recorded.contains(&ledger_path.display().to_string()));
+    assert_eq!(
+        adapter.operations(),
+        vec!["comment:#67", "set_state:#67:human_review"]
     );
 }
 

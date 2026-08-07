@@ -69,11 +69,11 @@ use super::lanes::merge::{
 };
 use super::lanes::review::{
     apply_review_result, canonical_issue_body_without_workpad,
-    check_review_verified_issue_body_checkboxes, render_automatic_review_prompt,
-    render_manual_review_workpad, review_claim_for_issue, review_workspace_for_issue,
-    select_review_worker_issues, terminal_review_claim_value, terminal_review_loop_claim_value,
-    transition_issue_to_rework_with_diagnostic, validate_active_manual_review_claim,
-    validate_manual_review_pass_claim,
+    check_review_verified_issue_body_checkboxes, persist_review_job_ledger,
+    render_automatic_review_prompt, render_manual_review_workpad, review_claim_for_issue,
+    review_workspace_for_issue, select_review_worker_issues, terminal_review_claim_value,
+    terminal_review_loop_claim_value, transition_issue_to_rework_with_diagnostic,
+    validate_active_manual_review_claim, validate_manual_review_pass_claim,
 };
 use super::orchestration::canonical_checkout::{
     canonical_checkout_report, CanonicalCheckoutReport,

@@ -638,7 +638,7 @@ changes.
 | --- | --- | --- |
 | `review fake` | Fixture/fake review transition helper. | Local testing path. |
 | `review once` | Run one configured review backend for one issue. | Direct backend command for one issue. |
-| `review loop` | Bounded review worker selection/reconciliation. | For the canonical `agy-cli` backend, runs `agy --print --mode plan` headlessly with the configured model and sandbox to keep automatic review plan-oriented. Its inner print deadline intentionally precedes the Shea watchdog by up to one minute so terminal output can be captured as durable review-job evidence. The legacy `gemini-cli` backend remains available for fallback workflows. |
+| `review loop` | Bounded review worker selection/reconciliation. | The canonical `agy-cli` backend runs `agy --print --mode plan` headlessly. `codex-app-server` runs an independent fresh, read-only/non-interactive Codex thread with schema-validated output and fail-closed protocol handling. The legacy `gemini-cli` backend remains available. Every backend reuses the existing claims, worker pool, artifacts, ledgers, and routing. |
 | `review status` | Read review-loop and review-runner status from local ledgers, runtime/session registry, and Project claim cross-checks. | Read-only; never claims, repairs, retries, kills jobs, writes workpads, or changes Project state. |
 | `review claim` | Claim one `Agent Review` item's `Review Agent` text field for manual/operator review. | Requires `--worker` and `--write`; refuses non-`Agent Review` issues and writes a structured, round-trip-validated claim pointer. |
 | `review pass` | Record manual independent review pass evidence and route to the correct next state. | Requires `--write`, a durable evidence file containing the exact current `Review Agent` claim, and preserves the field as terminal pass evidence. Ordinary issues and parent final issues route to `Human Review`; routine native subissues route directly to `Merging` unless they record `Subissue Human Review Exception: <reason>`. |
@@ -655,6 +655,12 @@ diagnostics, stdout parsing, and artifact shaping. The current canonical
 workflow selects `review_lane.backend: agy-cli` with `agy_command` and
 `agy_model`. Legacy `gemini-cli` workflows can still use `gemini_command`,
 `gemini_model`, and `gemini_allowed_tools`.
+
+Codex Review uses `review_lane.backend: codex-app-server`. Its optional
+`codex_command` overrides and otherwise falls back to `codex.command`;
+`codex_approval_policy` must be `never`, `codex_thread_sandbox` must be
+`read-only`/`readOnly`, and an optional `codex_turn_sandbox_policy` must have
+type `readOnly`. A fresh Review job never resumes Main or Merge state.
 
 Example:
 

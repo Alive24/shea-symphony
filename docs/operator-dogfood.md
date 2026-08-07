@@ -360,11 +360,11 @@ dogfood.
 
 ## Review Backend Setup
 
-For live Agent Review, make the `agy` command visible to the worker process.
-`review loop` claims the Review Agent field and runs `agy` headlessly by
-default with `--print`, the configured model, the configured print timeout,
-`--sandbox --dangerously-skip-permissions`, and durable stdout/stderr/job
-evidence.
+For live Agent Review, make the selected backend command visible to the worker
+process. `review loop` owns the Review Agent claim and final routing; the
+backend process is report-only. The canonical workflow continues to use `agy`
+headlessly, while `codex-app-server` is available as an independent structured,
+read-only reviewer.
 
 Prefer an absolute `agy` path for automatic review workers:
 
@@ -381,6 +381,39 @@ review_lane:
   agy_command: /Users/chuntengxiao/.local/bin/agy
   agy_model: gemini-3.1-pro-preview
 ```
+
+For Codex Review, the Review-specific command overrides `codex.command`; omit
+it to use the shared command. The safe capability defaults are also shown
+explicitly here:
+
+```yaml
+codex:
+  command: codex app-server -c 'service_tier="fast"'
+review_lane:
+  backend: codex-app-server
+  codex_approval_policy: never
+  codex_thread_sandbox: read-only
+  # codex_turn_sandbox_policy:
+  #   type: readOnly
+```
+
+Each new Codex Review job starts a fresh thread. Only one interrupted attempt
+of that same job may resume its recorded thread. Inspect the review output
+artifact and ledger for the backend/thread identity plus raw protocol, stderr,
+normalized-event, workspace-integrity, and routing evidence.
+
+Before live dogfood, run the bounded local read-only UAT fixtures:
+
+```bash
+cargo test review::codex::tests::pass_and_confirmed_finding_preserve_structured_evidence_and_workspace --lib
+cargo test review::codex::tests::new_jobs_are_fresh_and_parallel_artifacts_and_threads_are_isolated --lib
+```
+
+The first fixture exercises both a clean pass and a confirmed finding with
+severity, location, and evidence. The second exercises parallel fresh-thread
+and artifact isolation. Both use disposable Git repositories and assert the
+reviewed workspace content remains unchanged; they perform no GitHub or
+Project mutation.
 
 ```bash
 target/debug/shea-symphony review loop workflows/shea-symphony.md --max-iterations 1 --write

@@ -1,29 +1,61 @@
+//! Backend-neutral review reports and legacy text-output classification.
+#![deny(missing_docs)]
+
 use serde::{Deserialize, Serialize};
 
+/// Evidence classification used by every Review backend.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReviewFindingClass {
+    /// Verified defect that blocks progress until Main-lane rework.
     Confirmed,
+    /// Credible concern that was not independently confirmed.
     Plausible,
+    /// Considered concern that review evidence disproved.
     Rejected,
+    /// Missing or ambiguous evidence that prevents a conclusive review.
     NeedsContext,
 }
 
+/// One normalized Review finding with optional structured source evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewFinding {
+    /// Review authority classification used by routing.
     pub class: ReviewFindingClass,
+    /// Concise finding title.
     pub title: String,
+    /// Human-readable explanation and impact.
     pub body: String,
+    /// Backend-supplied severity; routing remains based on `class`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub severity: Option<String>,
+    /// Repository-relative file containing the evidence, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// One-based source line associated with `file`, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u64>,
+    /// Concrete command, diff, or code evidence supporting the finding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<String>,
 }
 
+/// Backend-neutral terminal Review report consumed by existing routing logic.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct AgentReviewReport {
+    /// Backend that produced the report.
     pub reviewer_backend: String,
+    /// Normalized findings from the backend response.
     #[serde(default)]
     pub findings: Vec<ReviewFinding>,
+    /// Concise review summary.
     pub summary: Option<String>,
+    /// Raw or reconstructed backend result text.
     pub stdout: Option<String>,
+    /// Backend stderr captured for diagnostics.
     pub stderr: Option<String>,
+    /// Process exit status captured by the backend.
     pub exit_status: Option<String>,
+    /// Provider session or thread identity used by this review.
     pub session_id: Option<String>,
 }
 
@@ -39,14 +71,17 @@ impl AgentReviewReport {
         .any(|text| parse_review_result(text).is_some())
     }
 
+    /// Returns whether a confirmed non-UAT finding requires implementation rework.
     pub fn blocks_progress(&self) -> bool {
         self.findings.iter().any(review_finding_blocks_progress)
     }
 
+    /// Returns whether missing context prevents a conclusive review pass.
     pub fn is_inconclusive(&self) -> bool {
         self.inconclusive_reason().is_some()
     }
 
+    /// Explains why this report cannot support a pass, when applicable.
     pub fn inconclusive_reason(&self) -> Option<String> {
         if self
             .findings
@@ -69,6 +104,7 @@ impl AgentReviewReport {
         inconclusive_review_text_reason(&text)
     }
 
+    /// Compatibility alias for callers that gate Human Review directly.
     pub fn blocks_human_review(&self) -> bool {
         self.blocks_progress()
     }
@@ -111,6 +147,7 @@ fn human_owned_uat_finding(finding: &ReviewFinding) -> bool {
     !implementation_deliverable
 }
 
+/// Parses the legacy bracketed text protocol used by Gemini and agy backends.
 pub fn classify_findings(output: &str) -> Vec<ReviewFinding> {
     let result = parse_review_result(output);
     let mut findings = output
@@ -185,6 +222,10 @@ fn parse_finding_line(line: &str) -> Option<ReviewFinding> {
         class,
         title: title.trim().to_string(),
         body: body.trim().to_string(),
+        severity: None,
+        file: None,
+        line: None,
+        evidence: None,
     })
 }
 
@@ -246,6 +287,10 @@ fn parse_loose_finding_line(line: &str) -> Option<ReviewFinding> {
         class,
         title: summarize_finding_title(rest),
         body: rest.to_string(),
+        severity: None,
+        file: None,
+        line: None,
+        evidence: None,
     })
 }
 
@@ -269,6 +314,10 @@ fn synthetic_review_result_finding(
         body: first_review_result_body_line(output)
             .unwrap_or("Review backend returned this routing result without a parseable finding.")
             .into(),
+        severity: None,
+        file: None,
+        line: None,
+        evidence: None,
     }
 }
 

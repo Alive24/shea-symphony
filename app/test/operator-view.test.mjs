@@ -1128,7 +1128,7 @@ test('lane board rendering omits handoff actions and manual skill labels', () =>
   assert.doesNotMatch(operatorDesk, /Prompt copied\. Codex App opened\./);
 });
 
-test('human handoff prompt is issue-specific and lane-boundary explicit', () => {
+test('human handoff prompt launches the authoritative skill with refreshable issue context', () => {
   const issue = {
     id: '#436',
     title: 'Add strict Liquid-compatible rendering for prompt and workpad templates',
@@ -1145,8 +1145,10 @@ test('human handoff prompt is issue-specific and lane-boundary explicit', () => 
   const prompt = buildHandoffPrompt(issue, templates);
   assert.match(prompt, /Use the shea-symphony-human-review skill for #436/);
   assert.match(prompt, /State: Human Review/);
-  assert.match(prompt, /remaining human-owned check or acceptance choice/);
-  assert.match(prompt, /until the operator gives explicit approval/);
+  assert.match(prompt, /refresh them before relying on them/);
+  assert.match(prompt, /sole authoritative Human Review contract/);
+  assert.match(prompt, /onboarding\/configuration drift/);
+  assert.doesNotMatch(prompt, /Delivered change:|Human decision needed:/);
   assert.match(prompt, /https:\/\/github\.com\/Alive24\/shea-symphony\/issues\/436/);
 });
 

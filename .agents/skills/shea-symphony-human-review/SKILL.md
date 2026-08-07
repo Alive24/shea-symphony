@@ -11,8 +11,8 @@ Accepted Human Review routes to `Merging`, never directly to `Done`.
 
 ## Mandatory visible brief
 
-Before freshness work, UAT, or a routing question, visibly explain the review in
-the operator's language. The operator must not need to open GitHub to understand:
+After current reads and freshness preflight, but before UAT or routing, visibly
+explain the review in the operator's language without requiring a GitHub read:
 
 - **Problem**: what user, operator, or system problem the issue addresses.
 - **Delivered change**: what behavior changed and where, not a raw diff.
@@ -23,10 +23,10 @@ the operator's language. The operator must not need to open GitHub to understand
 - **Human decision needed**: the remaining UAT or acceptance choice and the
   available routes.
 
-Also name the issue, PR, branch/base, and current state. Never omit a field:
-write `unknown`, `not evidenced`, or `not applicable` when necessary.
-Internal reasoning, tool output, links, freshness status, and test summaries do
-not satisfy this visible briefing contract.
+Also name the issue, PR, branch/base, and current state. Never omit a field; use
+`unknown`, `not evidenced`, or `not applicable` when necessary. Internal
+reasoning, tool output, links, freshness status, and test summaries do not
+satisfy this visible briefing contract.
 
 ## Bind and inspect
 
@@ -71,11 +71,10 @@ for approval.
 
 ## Review flow
 
-1. Inspect the decision surfaces and give the mandatory visible brief.
-2. After the orientation brief, run the PR freshness preflight automatically;
-   it is not an operator-owned UAT decision.
-3. If preflight changes the branch or evidence, re-present the five-field brief
-   as a compact post-preflight packet and include a running note draft.
+1. Inspect the decision surfaces.
+2. Run the PR freshness preflight automatically; it is not operator-owned UAT.
+3. Present one current five-field brief and include a running note draft. If
+   preflight is blocked, label that evidence gap and stop before UAT.
 4. Give exactly one next UAT action, why it matters, where to run it, and ask for
    `pass`, `fail`, `deferred`, or the smallest blocker.
 5. Wait for the operator result; do not infer acceptance from tests or tone.
@@ -114,9 +113,8 @@ a substitute for the local ancestry check.
 
 ## Operator-authorized UAT remediation
 
-When UAT reveals a concrete defect, repair it in place only when the operator
-explicitly asks, the change stays narrow and local to the linked PR, and it does
-not revise the issue contract:
+When UAT reveals a concrete defect, repair it only when the operator explicitly
+asks, it stays narrow and local to the linked PR, and the contract is unchanged:
 
 1. State the defect, intended repair, and affected verification before editing.
 2. Work only in the linked issue/PR worktree.
@@ -127,8 +125,7 @@ not revise the issue contract:
    review, so do not resume acceptance on the changed revision.
 6. Draft an append-only UAT Remediation note and obtain explicit confirmation
    before writing it and routing to `Agent Review` as the final mutation.
-
-A fresh independent Agent Review pass is required before Human Review resumes.
+   A fresh independent Agent Review pass is required before Human Review resumes.
 
 ## Decision evidence and routing
 

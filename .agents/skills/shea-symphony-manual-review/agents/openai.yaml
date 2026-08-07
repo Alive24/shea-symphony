@@ -1,3 +1,4 @@
-display_name: Shea Symphony Manual Review
-short_description: Run an evidence-backed manual Review Agent pass for Shea Symphony.
-default_prompt: Review one Shea Symphony issue or PR as an independent Review Agent, preserve Main evidence, evaluate issue checklists from evidence, and route only through review commands.
+interface:
+  display_name: "Shea Symphony Manual Review"
+  short_description: "Trigger one workflow-backed external review"
+  default_prompt: "Use $shea-symphony-manual-review to trigger the configured external Review backend for one named Shea Symphony issue and read back its result."

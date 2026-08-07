@@ -1680,7 +1680,7 @@ mod tests {
         assert_eq!(backend.kind(), "claude-code");
         assert_eq!(preview.mode, "stream-json");
         assert!(!preview.command.contains("secret"));
-        assert_eq!(preview.args, crate::agent::claude_stream_json_args());
+        assert_eq!(preview.args, claude::claude_review_command_args());
         assert!(backend.prelaunch_error().unwrap().contains("was not found"));
     }
 

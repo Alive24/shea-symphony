@@ -23,6 +23,7 @@ use super::{
 };
 
 const BACKEND_NAME: &str = "claude-code";
+const REVIEW_SCHEMA_PREVIEW: &str = "<Shea Review JSON schema>";
 
 pub(super) struct ClaudeCodeReviewBackend {
     command: String,
@@ -187,7 +188,7 @@ impl ReviewBackend for ClaudeCodeReviewBackend {
         Some(ReviewBackendCommand {
             mode: "stream-json",
             command: redact_command_preview(&self.command),
-            args: claude_stream_json_args(),
+            args: claude_review_command_args(),
         })
     }
 
@@ -239,12 +240,13 @@ struct ClaudeReviewExecution {
 }
 
 fn execute_claude_review(input: ClaudeReviewExecution) -> Result<ClaudeReviewOutcome, String> {
+    let command = claude_review_command(&input.command)?;
     let mut prepared = PreparedRun {
         backend: BACKEND_NAME.into(),
         workspace: input.workspace.clone(),
         prompt: input.prompt,
         prompt_artifact_path: Some(input.prompt_path.clone()),
-        command: Some(input.command.clone()),
+        command: Some(command),
         timeout_ms: input.timeout_ms,
         stall_timeout_ms: 0,
         model: None,
@@ -329,6 +331,7 @@ fn execute_claude_review(input: ClaudeReviewExecution) -> Result<ClaudeReviewOut
         "issue_ref": input.issue_ref,
         "backend": BACKEND_NAME,
         "command_preview": redact_command_preview(&input.command),
+        "native_json_schema": true,
         "session_id": reviewer_session_id,
         "workspace": input.workspace.display().to_string(),
         "workspace_unchanged": workspace_unchanged,
@@ -366,6 +369,28 @@ fn claude_review_prompt(prompt: &str) -> String {
          A pass must contain no confirmed or needs_context findings. Rework requires at least one confirmed finding. \
          needs_context requires at least one needs_context finding."
     )
+}
+
+/// Review-specific arguments shown without embedding the full schema in
+/// operator-facing command previews.
+pub(super) fn claude_review_command_args() -> Vec<String> {
+    let mut args = vec!["--json-schema".into(), REVIEW_SCHEMA_PREVIEW.into()];
+    args.extend(claude_stream_json_args());
+    args
+}
+
+fn claude_review_command(command: &str) -> Result<String, String> {
+    let schema = serde_json::to_string(&review_output_schema())
+        .map_err(|error| format!("could not serialize Claude Review schema: {error}"))?;
+    Ok(format!(
+        "{} --json-schema {}",
+        command.trim(),
+        shell_quote(&schema)
+    ))
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 fn claude_review_resume_prompt() -> String {
@@ -410,7 +435,9 @@ mod tests {
     use std::process::Command;
     use std::time::Duration;
 
+    use crate::config::RuntimeConfig;
     use crate::model::TrackerIssue;
+    use crate::workflow::WorkflowDefinition;
 
     use super::*;
 
@@ -549,10 +576,13 @@ esac
 
     fn run(backend: &ClaudeCodeReviewBackend, request: ReviewRequest) -> ReviewJob {
         let job = backend.start(request).unwrap();
+        // Keep the test watchdog outside the configured backend deadline so a
+        // real provider receives the same timeout contract as production.
+        let watchdog_ms = backend.timeout_ms.saturating_add(5_000);
         super::super::poll_review_job_until_terminal(
             backend,
             job,
-            Duration::from_secs(10),
+            Duration::from_millis(watchdog_ms),
             Duration::from_millis(5),
         )
         .unwrap()
@@ -636,6 +666,8 @@ esac
         }
         let requests = fs::read_to_string(temp.path().join("pass.requests.log")).unwrap();
         assert_eq!(requests.matches("--input-format stream-json").count(), 2);
+        assert_eq!(requests.matches("--json-schema").count(), 2);
+        assert!(requests.contains("terminal_classification"));
         assert!(!requests.contains("--resume"));
     }
 
@@ -712,7 +744,7 @@ esac
         let preview = missing.command_preview().unwrap();
         assert_eq!(preview.mode, "stream-json");
         assert!(preview.command.contains("API_TOKEN=[redacted]"));
-        assert_eq!(preview.args, claude_stream_json_args());
+        assert_eq!(preview.args, claude_review_command_args());
         assert!(missing.prelaunch_error().unwrap().contains("was not found"));
     }
 
@@ -722,6 +754,11 @@ esac
         let command = std::env::var("SHEA_CLAUDE_REVIEW_UAT_COMMAND").expect(
             "set SHEA_CLAUDE_REVIEW_UAT_COMMAND to a read-only Claude executable or wrapper",
         );
+        let workflow_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(".shea/workflows/shea-symphony.md");
+        let workflow = WorkflowDefinition::load(&workflow_path).unwrap();
+        let config = RuntimeConfig::from_workflow(&workflow, &workflow_path).unwrap();
+        config.validate().unwrap();
 
         for (identifier, contents, prompt, expect_finding) in [
             (
@@ -743,11 +780,8 @@ esac
             git(&workspace, &["add", "tracked.txt"]);
             git(&workspace, &["commit", "-qm", "prepare review fixture"]);
             let before = workspace_state(&workspace).unwrap();
-            let backend = ClaudeCodeReviewBackend {
-                command: command.clone(),
-                timeout_ms: 120_000,
-                runs: Arc::new(Mutex::new(BTreeMap::new())),
-            };
+            let mut backend = ClaudeCodeReviewBackend::from_config(&config.review);
+            backend.command = command.clone();
             let mut request = request(&temp, &workspace, identifier);
             request.prompt = prompt.into();
             let job = run(&backend, request);

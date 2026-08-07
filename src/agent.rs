@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -542,6 +543,45 @@ fn run_subprocess_backend(
 }
 
 fn run_codex_app_server_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError> {
+    run_codex_app_server_backend_with_options(prepared, AppServerRunOptions::default())
+}
+
+pub(crate) fn run_codex_app_server_review(
+    prepared: PreparedRun,
+    output_schema: &serde_json::Value,
+    cancel: &AtomicBool,
+) -> Result<Vec<AgentEvent>, AgentError> {
+    run_codex_app_server_backend_with_options(
+        prepared,
+        AppServerRunOptions {
+            output_schema: Some(output_schema),
+            cancel: Some(cancel),
+        },
+    )
+}
+
+#[derive(Clone, Copy, Default)]
+struct AppServerRunOptions<'a> {
+    output_schema: Option<&'a serde_json::Value>,
+    cancel: Option<&'a AtomicBool>,
+}
+
+#[derive(Clone, Copy)]
+struct AppServerWaitOptions<'a> {
+    timeout: Duration,
+    cancel: Option<&'a AtomicBool>,
+}
+
+impl<'a> AppServerWaitOptions<'a> {
+    fn new(timeout: Duration, cancel: Option<&'a AtomicBool>) -> Self {
+        Self { timeout, cancel }
+    }
+}
+
+fn run_codex_app_server_backend_with_options(
+    prepared: PreparedRun,
+    options: AppServerRunOptions<'_>,
+) -> Result<Vec<AgentEvent>, AgentError> {
     let mut events = Vec::new();
 
     if !prepared.workspace.is_dir() {
@@ -630,6 +670,7 @@ fn run_codex_app_server_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>
         AppServerRegistryContext {
             artifacts: &artifacts,
             prompt_artifact_path: &prompt_artifact_path,
+            options,
         },
         &mut protocol_log,
         &mut events,
@@ -652,6 +693,22 @@ fn run_codex_app_server_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>
         events.push(AgentEvent::Failed {
             backend: prepared.backend.clone(),
             error,
+        });
+    }
+    if exit_status
+        .as_ref()
+        .and_then(ExitStatus::code)
+        .is_some_and(|code| code != 0)
+        && !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::Failed { .. }))
+    {
+        events.push(AgentEvent::Failed {
+            backend: prepared.backend.clone(),
+            error: format!(
+                "Codex app-server exited unexpectedly with status {}",
+                display_exit_status(exit_status.as_ref())
+            ),
         });
     }
     if let Some(session_id) = terminal_session_id.as_deref() {
@@ -711,7 +768,15 @@ fn run_codex_app_server_protocol(
         }),
         protocol_log,
     )?;
-    await_app_server_response(child, stdout_rx, protocol_log, events, 1, None, timeout)?;
+    await_app_server_response(
+        child,
+        stdout_rx,
+        protocol_log,
+        events,
+        1,
+        None,
+        AppServerWaitOptions::new(timeout, registry_context.options.cancel),
+    )?;
 
     send_app_server_message(
         stdin,
@@ -763,9 +828,9 @@ fn run_codex_app_server_protocol(
                 events,
                 2,
                 None,
-                timeout,
+                AppServerWaitOptions::new(timeout, registry_context.options.cancel),
             )?;
-            thread_response
+            let resumed_thread_id = thread_response
                 .pointer("/result/thread/id")
                 .or_else(|| thread_response.pointer("/thread/id"))
                 .and_then(serde_json::Value::as_str)
@@ -773,8 +838,13 @@ fn run_codex_app_server_protocol(
                     format!(
                         "Codex app-server thread/resume response missing thread id: {thread_response}"
                     )
-                })?
-                .to_string()
+                })?;
+            if resumed_thread_id != thread_id {
+                return Err(format!(
+                    "Codex app-server thread/resume returned `{resumed_thread_id}` for requested thread `{thread_id}`"
+                ));
+            }
+            resumed_thread_id.to_string()
         }
         None => {
             let mut thread_params = serde_json::json!({
@@ -812,7 +882,7 @@ fn run_codex_app_server_protocol(
                 events,
                 2,
                 None,
-                timeout,
+                AppServerWaitOptions::new(timeout, registry_context.options.cancel),
             )?;
             thread_response
                 .pointer("/result/thread/id")
@@ -856,6 +926,9 @@ fn run_codex_app_server_protocol(
     if let Some(policy) = prepared.turn_sandbox_policy.clone() {
         turn_params["sandboxPolicy"] = policy;
     }
+    if let Some(output_schema) = registry_context.options.output_schema {
+        turn_params["outputSchema"] = output_schema.clone();
+    }
     let turn_request_id = 3;
     send_app_server_message(
         stdin,
@@ -873,7 +946,7 @@ fn run_codex_app_server_protocol(
         events,
         turn_request_id,
         None,
-        timeout,
+        AppServerWaitOptions::new(timeout, registry_context.options.cancel),
     )?;
     let turn_id = turn_response
         .pointer("/result/turn/id")
@@ -884,6 +957,11 @@ fn run_codex_app_server_protocol(
         })?
         .to_string();
     let session_id = format!("{thread_id}-{turn_id}");
+    events.push(AgentEvent::Message {
+        backend: crate::codex_app_server::BACKEND_NAME.into(),
+        session_id: Some(session_id.clone()),
+        text: format!("app_server_identity thread_id={thread_id} turn_id={turn_id}"),
+    });
     events.push(AgentEvent::SessionStarted {
         backend: prepared.backend.clone(),
         session_id: session_id.clone(),
@@ -910,8 +988,8 @@ fn run_codex_app_server_protocol(
         protocol_log,
         events,
         &session_id,
-        timeout,
         stall_timeout,
+        AppServerWaitOptions::new(timeout, registry_context.options.cancel),
     )
 }
 
@@ -937,15 +1015,16 @@ fn await_app_server_response(
     events: &mut Vec<AgentEvent>,
     expected_id: u64,
     session_id: Option<&str>,
-    timeout: Duration,
+    wait: AppServerWaitOptions<'_>,
 ) -> Result<serde_json::Value, String> {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + wait.timeout;
     loop {
         let Some(line) = next_app_server_stdout_line(
             child,
             stdout_rx,
             deadline,
             "Codex app-server timed out waiting for protocol output",
+            wait.cancel,
         )?
         else {
             return Err(format!(
@@ -983,11 +1062,11 @@ fn await_app_server_terminal_event(
     protocol_log: &mut String,
     events: &mut Vec<AgentEvent>,
     session_id: &str,
-    timeout: Duration,
     stall_timeout: Duration,
+    wait: AppServerWaitOptions<'_>,
 ) -> Result<(), String> {
-    let deadline = Instant::now() + timeout;
-    let mut idle_deadline = Instant::now() + stall_timeout.min(timeout);
+    let deadline = Instant::now() + wait.timeout;
+    let mut idle_deadline = Instant::now() + stall_timeout.min(wait.timeout);
     loop {
         let next_deadline = deadline.min(idle_deadline);
         let timeout_message = if next_deadline == deadline {
@@ -995,8 +1074,13 @@ fn await_app_server_terminal_event(
         } else {
             "Codex app-server stalled waiting for turn event"
         };
-        let Some(line) =
-            next_app_server_stdout_line(child, stdout_rx, next_deadline, timeout_message)?
+        let Some(line) = next_app_server_stdout_line(
+            child,
+            stdout_rx,
+            next_deadline,
+            timeout_message,
+            wait.cancel,
+        )?
         else {
             return Err("Codex app-server exited before a terminal turn event".into());
         };
@@ -1021,8 +1105,14 @@ fn next_app_server_stdout_line(
     stdout_rx: &Receiver<Result<String, String>>,
     deadline: Instant,
     timeout_message: &str,
+    cancel: Option<&AtomicBool>,
 ) -> Result<Option<String>, String> {
     loop {
+        if cancel.is_some_and(|cancel| cancel.load(AtomicOrdering::Relaxed)) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Codex app-server review was cancelled".into());
+        }
         let now = Instant::now();
         if now >= deadline {
             let _ = child.kill();
@@ -1078,6 +1168,7 @@ fn is_terminal_or_fail_closed_app_server_event(kind: CodexAppServerEventKind) ->
         CodexAppServerEventKind::TurnFailed
             | CodexAppServerEventKind::TurnCancelled
             | CodexAppServerEventKind::TurnInputRequired
+            | CodexAppServerEventKind::UnsupportedRequest
             | CodexAppServerEventKind::Malformed
     )
 }
@@ -1139,6 +1230,7 @@ struct AppServerArtifactPaths {
 struct AppServerRegistryContext<'a> {
     artifacts: &'a AppServerArtifactPaths,
     prompt_artifact_path: &'a Path,
+    options: AppServerRunOptions<'a>,
 }
 
 fn app_server_artifact_paths(
@@ -1151,8 +1243,10 @@ fn app_server_artifact_paths(
         .unwrap_or_else(|| Path::new("/tmp"))
         .join("app-server");
     let base = format!(
-        "{}-{}",
+        "{}-{}-attempt{}-{}",
         safe_path_component(prepared.issue_identifier.as_deref()),
+        safe_path_component(prepared.run_id.as_deref()),
+        prepared.attempt,
         current_time_ms()
     );
     AppServerArtifactPaths {
@@ -1833,7 +1927,7 @@ fn shell_quote_str(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-fn message_field(events: &[AgentEvent], prefix: &str) -> Option<String> {
+pub(crate) fn message_field(events: &[AgentEvent], prefix: &str) -> Option<String> {
     events.iter().find_map(|event| {
         let AgentEvent::Message { text, .. } = event else {
             return None;
@@ -1918,7 +2012,11 @@ fn session_id_with_profile(base: &str, prepared: &PreparedRun) -> String {
         .unwrap_or_else(|| base.into())
 }
 
-fn is_codex_app_server_command(command: &str) -> bool {
+pub(crate) fn is_codex_app_server_command(command: &str) -> bool {
+    codex_app_server_executable(command).is_some()
+}
+
+pub(crate) fn codex_app_server_executable(command: &str) -> Option<String> {
     let tokens = command
         .split_whitespace()
         .map(clean_shell_token)
@@ -1934,14 +2032,10 @@ fn is_codex_app_server_command(command: &str) -> bool {
         }
     }
 
-    let Some(executable) = tokens.get(index) else {
-        return false;
-    };
-    let Some(first_arg) = tokens.get(index + 1) else {
-        return false;
-    };
+    let executable = tokens.get(index)?;
+    let first_arg = tokens.get(index + 1)?;
 
-    is_codex_executable(executable) && *first_arg == "app-server"
+    (is_codex_executable(executable) && *first_arg == "app-server").then(|| executable.to_string())
 }
 
 fn clean_shell_token(token: &str) -> &str {

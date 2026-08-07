@@ -1014,6 +1014,7 @@ mod tests {
                 updated_at_ms: Some(2_000),
                 artifact_path: Some(PathBuf::from("/tmp/missing-artifact.json")),
                 ledger_path: PathBuf::from(format!("/tmp/{job_id}.json")),
+                backend_session_id: None,
                 decision_outcome: ReviewOutcome::StillRunning,
                 decision_target_state: Some("agent_review".into()),
                 summary: Some("Review is running".into()),

@@ -14,6 +14,7 @@ use crate::model::{normalize_state, TrackerIssue};
 use crate::workflow::WorkflowDefinition;
 use crate::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 
+mod codex;
 mod decision;
 mod freshness;
 mod gemini_health;
@@ -42,6 +43,7 @@ pub use job::{
 };
 pub use report::{classify_findings, AgentReviewReport, ReviewFinding, ReviewFindingClass};
 
+use codex::CodexAppServerReviewBackend;
 use gemini_health::{diagnose_agy_spawn_failure, diagnose_gemini_spawn_failure};
 use job::review_job_id;
 
@@ -95,6 +97,7 @@ impl ReviewBackend for FakeReviewBackend {
             state: ReviewJobState::Queued,
             artifact_path: None,
             ledger_path: None,
+            backend_session_id: None,
             report: None,
             error: None,
         })
@@ -122,6 +125,10 @@ impl ReviewBackend for FakeReviewBackend {
                         class: ReviewFindingClass::Confirmed,
                         title: "Confirmed fake finding".into(),
                         body: "Fake reviewer was configured to require rework.".into(),
+                        severity: None,
+                        file: None,
+                        line: None,
+                        evidence: None,
                     }],
                     summary: Some("Fake reviewer produced one confirmed finding.".into()),
                     stdout: None,
@@ -141,6 +148,7 @@ impl ReviewBackend for FakeReviewBackend {
 
 pub fn review_backend_from_config(config: &ReviewConfig) -> Box<dyn ReviewBackend> {
     match config.backend.as_str() {
+        "codex-app-server" => Box::new(CodexAppServerReviewBackend::from_config(config)),
         "gemini-cli" => Box::new(GeminiCliReviewBackend::from_config(config)),
         "agy-cli" => Box::new(GeminiCliReviewBackend::from_agy_config(config)),
         _ => Box::new(FakeReviewBackend::new(FakeReviewOutcome::Pass)),
@@ -149,6 +157,7 @@ pub fn review_backend_from_config(config: &ReviewConfig) -> Box<dyn ReviewBacken
 
 pub fn review_backend_kind_from_config(config: &ReviewConfig) -> &'static str {
     match config.backend.as_str() {
+        "codex-app-server" => "codex-app-server",
         "gemini-cli" => "gemini-cli",
         "agy-cli" => "agy-cli",
         _ => "fake-reviewer",
@@ -305,6 +314,7 @@ impl ReviewBackend for GeminiCliReviewBackend {
             state: ReviewJobState::Running,
             artifact_path: Some(prompt_path),
             ledger_path: None,
+            backend_session_id: None,
             report: None,
             error: None,
         })
@@ -1082,7 +1092,17 @@ fn review_evidence_summary(job: &ReviewJob) -> String {
     } else {
         "ledger not recorded"
     };
-    format!("{finding_count} parsed finding(s); {artifact}; {ledger}.")
+    let provider_session = job
+        .backend_session_id
+        .as_deref()
+        .or_else(|| {
+            job.report
+                .as_ref()
+                .and_then(|report| report.session_id.as_deref())
+        })
+        .map(|session| format!("provider session `{session}`"))
+        .unwrap_or_else(|| "provider session not recorded".into());
+    format!("{finding_count} parsed finding(s); {artifact}; {ledger}; {provider_session}.")
 }
 
 fn render_parsed_findings_section(
@@ -1101,10 +1121,24 @@ fn render_parsed_findings_section(
             .findings
             .iter()
             .map(|finding| {
-                format!(
+                let mut line = format!(
                     "- {:?}: {} - {}",
                     finding.class, finding.title, finding.body
-                )
+                );
+                if let Some(severity) = finding.severity.as_deref() {
+                    line.push_str(&format!("\n  - Severity: `{severity}`"));
+                }
+                if let Some(file) = finding.file.as_deref() {
+                    let location = finding
+                        .line
+                        .map(|number| format!("{file}:{number}"))
+                        .unwrap_or_else(|| file.to_string());
+                    line.push_str(&format!("\n  - Location: `{location}`"));
+                }
+                if let Some(evidence) = finding.evidence.as_deref() {
+                    line.push_str(&format!("\n  - Evidence: {evidence}"));
+                }
+                line
             })
             .collect::<Vec<_>>()
             .join("\n"),
@@ -1313,7 +1347,7 @@ fn review_required_operator_actions(job: &ReviewJob) -> Option<Vec<String>> {
     {
         return Some(vec![
             "- Fix the Review Agent backend command or worker PATH shown in the error above.".into(),
-            "- Prefer an absolute `review_lane.agy_command` or `review_lane.gemini_command` path, or export a worker PATH that resolves the configured command.".into(),
+            "- Prefer an absolute backend command (`review_lane.agy_command`, `review_lane.gemini_command`, or `review_lane.codex_command`), or export a worker PATH that resolves it.".into(),
             "- This issue must not move to `Human Review` until an independent Review Agent records passing review evidence.".into(),
             "- Retry: rerun `review loop` for this issue after updating the workflow or environment.".into(),
         ]);
@@ -1404,6 +1438,7 @@ mod tests {
             state: ReviewJobState::Completed,
             artifact_path: Some("/tmp/reviews/gemini.prompt.md".into()),
             ledger_path: None,
+            backend_session_id: None,
             report: Some(AgentReviewReport {
                 reviewer_backend: "gemini-cli".into(),
                 findings: classify_findings(output),
@@ -1476,6 +1511,7 @@ mod tests {
                 state: ReviewJobState::Running,
                 artifact_path: None,
                 ledger_path: None,
+                backend_session_id: None,
                 report: None,
                 error: None,
             })
@@ -1563,6 +1599,10 @@ mod tests {
             gemini_allowed_tools: vec!["run_shell_command".into()],
             agy_command: "/Users/example/.local/bin/agy".into(),
             agy_model: Some("gemini-3.1-pro-preview".into()),
+            codex_command: "codex app-server".into(),
+            codex_approval_policy: serde_json::json!("never"),
+            codex_thread_sandbox: "read-only".into(),
+            codex_turn_sandbox_policy: None,
             timeout_ms: 600_000,
             max_concurrent_workers: 1,
         }
@@ -1604,6 +1644,21 @@ mod tests {
         assert_eq!(backend.kind(), "gemini-cli");
         assert!(error.contains("Review backend health check classified"));
         assert!(error.contains("reason=command_not_found"));
+    }
+
+    #[test]
+    fn configured_review_backend_selects_codex_app_server_boundary() {
+        let mut config = gemini_review_config();
+        config.backend = "codex-app-server".into();
+        config.codex_command = "/missing/codex app-server --api-key secret".into();
+        let backend = review_backend_from_config(&config);
+        let preview = backend.command_preview().unwrap();
+
+        assert_eq!(review_backend_kind_from_config(&config), "codex-app-server");
+        assert_eq!(backend.kind(), "codex-app-server");
+        assert_eq!(preview.mode, "app-server");
+        assert!(!preview.command.contains("secret"));
+        assert!(backend.prelaunch_error().unwrap().contains("was not found"));
     }
 
     #[test]
@@ -1811,6 +1866,10 @@ mod tests {
             gemini_allowed_tools: Vec::new(),
             agy_command: reviewer.display().to_string(),
             agy_model: Some("gemini-3.1-pro-preview".into()),
+            codex_command: "codex app-server".into(),
+            codex_approval_policy: serde_json::json!("never"),
+            codex_thread_sandbox: "read-only".into(),
+            codex_turn_sandbox_policy: None,
             timeout_ms: 1_200_000,
             max_concurrent_workers: 1,
         };
@@ -2434,6 +2493,7 @@ mod tests {
                 state: ReviewJobState::Completed,
                 artifact_path: None,
                 ledger_path: None,
+                backend_session_id: None,
                 report: Some(AgentReviewReport {
                     reviewer_backend: "fake-reviewer".into(),
                     findings: Vec::new(),
@@ -2469,6 +2529,7 @@ mod tests {
             state: ReviewJobState::Completed,
             artifact_path: None,
             ledger_path: None,
+            backend_session_id: None,
             report: Some(AgentReviewReport {
                 reviewer_backend: "fake-reviewer".into(),
                 findings: Vec::new(),
@@ -2497,6 +2558,7 @@ mod tests {
             state: ReviewJobState::Completed,
             artifact_path: Some("/tmp/review-output.json".into()),
             ledger_path: Some("/tmp/reviews/jobs/1-gemini.json".into()),
+            backend_session_id: None,
             report: Some(AgentReviewReport {
                 reviewer_backend: "gemini-cli".into(),
                 findings: Vec::new(),
@@ -2523,9 +2585,7 @@ mod tests {
         assert!(body.contains("- PR: `https://github.com/Alive24/shea-symphony/pull/1`"));
         assert!(body.contains("Target state after review routing: `human_review`"));
         assert!(body.contains("- Result: `PassedToHumanReview`"));
-        assert!(body.contains(
-            "- Evidence summary: 0 parsed finding(s); artifact recorded; ledger recorded."
-        ));
+        assert!(body.contains("- Evidence summary: 0 parsed finding(s); artifact recorded; ledger recorded; provider session `gemini-session`."));
         assert!(body.contains("### Review Response"));
         assert!(body.contains("Agent note body."));
         assert!(body.contains("### Stdout"));
@@ -2590,6 +2650,7 @@ mod tests {
             state: ReviewJobState::Completed,
             artifact_path: Some("/tmp/review-artifact.json".into()),
             ledger_path: None,
+            backend_session_id: None,
             report: Some(AgentReviewReport {
                 reviewer_backend: "fake-reviewer".into(),
                 findings: Vec::new(),
@@ -2626,6 +2687,7 @@ mod tests {
             state: ReviewJobState::Completed,
             artifact_path: None,
             ledger_path: None,
+            backend_session_id: None,
             report: Some(AgentReviewReport {
                 reviewer_backend: "fake-reviewer".into(),
                 findings: Vec::new(),
@@ -2659,6 +2721,7 @@ mod tests {
             state: ReviewJobState::Completed,
             artifact_path: None,
             ledger_path: Some("/tmp/reviews/jobs/1-job.json".into()),
+            backend_session_id: None,
             report: Some(AgentReviewReport {
                 reviewer_backend: "fake-reviewer".into(),
                 findings: Vec::new(),
@@ -2694,12 +2757,17 @@ mod tests {
             state: ReviewJobState::Completed,
             artifact_path: None,
             ledger_path: None,
+            backend_session_id: None,
             report: Some(AgentReviewReport {
                 reviewer_backend: "fake-reviewer".into(),
                 findings: vec![ReviewFinding {
                     class: ReviewFindingClass::NeedsContext,
                     title: "Need context".into(),
                     body: "Review cannot decide yet.".into(),
+                    severity: None,
+                    file: None,
+                    line: None,
+                    evidence: None,
                 }],
                 summary: None,
                 stdout: None,
@@ -3103,6 +3171,7 @@ mod tests {
             state: ReviewJobState::Failed,
             artifact_path: None,
             ledger_path: None,
+            backend_session_id: None,
             report: None,
             error: Some("rate limit exceeded; retry later".into()),
         };

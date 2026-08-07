@@ -19,6 +19,7 @@ pub enum CodexAppServerEventKind {
     TurnFailed,
     TurnCancelled,
     TurnInputRequired,
+    UnsupportedRequest,
     TokenUsage,
     Notification,
     OtherMessage,
@@ -67,6 +68,9 @@ pub fn normalize_json_rpc_line(line: &str, session_id: Option<&str>) -> CodexApp
         method if input_required_method(method) => {
             input_required_event(method, session_id, &payload)
         }
+        method if payload.get("id").is_some() => {
+            unsupported_request_event(method, session_id, &payload)
+        }
         _ => notification_event(method, session_id, &payload),
     }
 }
@@ -76,6 +80,35 @@ fn completed_event(
     session_id: Option<&str>,
     payload: &serde_json::Value,
 ) -> CodexAppServerEvent {
+    let status = turn_status(payload);
+    if let Some(status) = status.as_deref() {
+        match status {
+            "completed" => {}
+            "interrupted" | "cancelled" => {
+                return failed_event(
+                    CodexAppServerEventKind::TurnCancelled,
+                    method,
+                    session_id,
+                    payload,
+                );
+            }
+            "failed" => {
+                return failed_event(
+                    CodexAppServerEventKind::TurnFailed,
+                    method,
+                    session_id,
+                    payload,
+                );
+            }
+            other => {
+                return malformed_event(
+                    &compact_json(payload),
+                    session_id,
+                    &format!("unsupported app-server terminal turn status {other}"),
+                );
+            }
+        }
+    }
     CodexAppServerEvent {
         event: CodexAppServerEventKind::TurnCompleted,
         method: Some(method.into()),
@@ -84,9 +117,27 @@ fn completed_event(
         agent_event: Some(AgentEvent::Completed {
             backend: BACKEND_NAME.into(),
             session_id: session_id.map(str::to_string),
-            summary: turn_status(payload)
+            summary: status
                 .map(|status| format!("Codex app-server turn completed with status {status}."))
                 .unwrap_or_else(|| "Codex app-server turn completed.".into()),
+        }),
+    }
+}
+
+fn unsupported_request_event(
+    method: &str,
+    session_id: Option<&str>,
+    payload: &serde_json::Value,
+) -> CodexAppServerEvent {
+    let message = format!("unsupported app-server request `{method}`");
+    CodexAppServerEvent {
+        event: CodexAppServerEventKind::UnsupportedRequest,
+        method: Some(method.into()),
+        session_id: session_id.map(str::to_string),
+        message: message.clone(),
+        agent_event: Some(AgentEvent::Failed {
+            backend: BACKEND_NAME.into(),
+            error: format!("{message}: {}", compact_json(payload)),
         }),
     }
 }
@@ -287,6 +338,24 @@ mod tests {
     }
 
     #[test]
+    fn completed_notification_with_non_completed_status_fails_closed() {
+        for (status, expected) in [
+            ("failed", CodexAppServerEventKind::TurnFailed),
+            ("interrupted", CodexAppServerEventKind::TurnCancelled),
+            ("future-status", CodexAppServerEventKind::Malformed),
+        ] {
+            let event = normalize_json_rpc_line(
+                &format!(
+                    r#"{{"method":"turn/completed","params":{{"turn":{{"status":"{status}"}}}}}}"#
+                ),
+                Some("s1"),
+            );
+            assert_eq!(event.event, expected, "{status}");
+            assert!(matches!(event.agent_event, Some(AgentEvent::Failed { .. })));
+        }
+    }
+
+    #[test]
     fn maps_input_required_to_failed_agent_event() {
         let event = normalize_json_rpc_line(
             r#"{"method":"item/tool/requestUserInput","id":7,"params":{"prompt":"Continue?"}}"#,
@@ -321,6 +390,20 @@ mod tests {
                     if error.contains("requires unavailable user input")
             ));
         }
+    }
+
+    #[test]
+    fn maps_unknown_server_request_to_failed_agent_event() {
+        let event = normalize_json_rpc_line(
+            r#"{"method":"item/tool/newCapability","id":7,"params":{}}"#,
+            Some("s1"),
+        );
+
+        assert_eq!(event.event, CodexAppServerEventKind::UnsupportedRequest);
+        assert!(matches!(
+            event.agent_event,
+            Some(AgentEvent::Failed { ref error, .. }) if error.contains("unsupported app-server request")
+        ));
     }
 
     #[test]

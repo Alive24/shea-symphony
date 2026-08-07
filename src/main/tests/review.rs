@@ -318,6 +318,7 @@ fn review_loop_terminal_claim_records_pass_result() {
         state: ReviewJobState::Completed,
         artifact_path: None,
         ledger_path: None,
+        backend_session_id: None,
         report: None,
         error: None,
     };
@@ -427,6 +428,7 @@ fn review_pass_updates_issue_body_checkboxes_before_human_review_transition() {
         state: ReviewJobState::Completed,
         artifact_path: None,
         ledger_path: None,
+        backend_session_id: None,
         report: Some(shea_symphony::review::AgentReviewReport {
             summary: Some("Review Result: PASS".into()),
             ..Default::default()

@@ -76,6 +76,8 @@ review_lane:
   backend: agy-cli
   agy_command: /Users/chuntengxiao/.local/bin/agy
   agy_model: "Gemini 3.1 Pro (High)"
+  codex_approval_policy: never
+  codex_thread_sandbox: read-only
   timeout_ms: 1200000
   max_concurrent_workers: 2
 merge_lane:

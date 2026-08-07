@@ -1,3 +1,6 @@
+//! Review job lifecycle, backend contract, and durable ledger records.
+#![deny(missing_docs)]
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -16,70 +19,119 @@ use super::{
     AgentReviewReport, GeminiReviewHealthDiagnostic, ReviewOutcome,
 };
 
+/// Lifecycle states shared by every Review backend.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReviewJobState {
+    /// Accepted by a backend but not yet executing.
     Queued,
+    /// Backend execution is active.
     Running,
+    /// Backend execution produced a valid report.
     Completed,
+    /// Backend execution ended without a valid report.
     Failed,
+    /// The Review watchdog exhausted its configured deadline.
     TimedOut,
+    /// The Review job was explicitly cancelled.
     Cancelled,
 }
 
+/// Provider-neutral state and evidence for one Review backend invocation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewJob {
+    /// Unique Review job identifier.
     pub id: String,
+    /// Tracker issue identifier.
     pub issue_ref: String,
+    /// Selected Review backend identifier.
     pub backend: String,
+    /// Current job lifecycle state.
     pub state: ReviewJobState,
+    /// Primary backend evidence artifact.
     pub artifact_path: Option<PathBuf>,
+    /// Durable Review job ledger path after reconciliation.
     #[serde(default)]
     pub ledger_path: Option<PathBuf>,
+    /// Provider thread or session identity, including for a failed started job.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_session_id: Option<String>,
+    /// Validated backend-neutral report, when one was produced.
     pub report: Option<AgentReviewReport>,
+    /// Actionable failure detail for non-successful jobs.
     pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Durable backend-neutral record written after a Review job reaches a terminal state.
 pub struct ReviewJobLedgerRecord {
+    /// Tracker issue identifier.
     pub issue_ref: String,
+    /// Tracker issue title captured with the job.
     pub issue_title: String,
+    /// Unique Review job identifier.
     pub job_id: String,
+    /// Existing scheduler worker key for the issue and backend.
     pub worker_key: String,
+    /// Review backend identifier.
     pub backend: String,
+    /// Terminal or observed Review job state.
     pub state: ReviewJobState,
+    /// Backend process identifier when the backend exposes one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
+    /// Job start timestamp in Unix milliseconds when recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at_ms: Option<u64>,
+    /// Last job update timestamp in Unix milliseconds when recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at_ms: Option<u64>,
+    /// Primary backend artifact containing pointers to detailed evidence.
     pub artifact_path: Option<PathBuf>,
+    /// Path of this ledger record.
     pub ledger_path: PathBuf,
+    /// Provider thread or session identity recorded by the backend.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_session_id: Option<String>,
+    /// Backend-neutral routing outcome.
     pub decision_outcome: ReviewOutcome,
+    /// Normalized Project target state selected by existing Review routing.
     pub decision_target_state: Option<String>,
+    /// Concise Review summary.
     pub summary: Option<String>,
+    /// Backend failure detail, when present.
     pub error: Option<String>,
+    /// Number of normalized findings.
     pub finding_count: usize,
+    /// Legacy Gemini/agy health classification, when applicable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gemini_health: Option<GeminiReviewHealthDiagnostic>,
 }
 
+/// Errors returned at the Review backend and artifact boundaries.
 #[derive(Debug, Error)]
 pub enum ReviewError {
+    /// Backend setup or execution failure.
     #[error("review backend failed: {0}")]
     Backend(String),
+    /// Evidence artifact persistence failure.
     #[error("review artifact failed: {0}")]
     Artifact(String),
 }
 
+/// Immutable input boundary passed from Review orchestration to a backend.
 pub struct ReviewRequest {
+    /// Normalized tracker issue being reviewed.
     pub issue: TrackerIssue,
+    /// Fully rendered independent Review prompt.
     pub prompt: String,
+    /// Existing isolated Review workspace, treated as read-only.
     pub workspace: PathBuf,
+    /// Directory in which the backend records Review evidence.
     pub artifact_root: PathBuf,
 }
 
 impl ReviewJob {
+    /// Constructs a terminal failed job when backend prelaunch is unavailable.
     pub fn failed_unavailable(
         issue_ref: impl Into<String>,
         backend: impl Into<String>,
@@ -92,34 +144,47 @@ impl ReviewJob {
             state: ReviewJobState::Failed,
             artifact_path: None,
             ledger_path: None,
+            backend_session_id: None,
             report: None,
             error: Some(error.into()),
         }
     }
 }
 
+/// Provider adapter consumed by the existing Review scheduler and routing loop.
 pub trait ReviewBackend {
+    /// Stable backend identifier recorded in jobs and ledgers.
     fn kind(&self) -> &'static str;
+    /// Starts one independent Review job.
     fn start(&self, request: ReviewRequest) -> Result<ReviewJob, ReviewError>;
+    /// Polls a job without changing scheduler ownership or routing semantics.
     fn poll(&self, job: ReviewJob) -> Result<ReviewJob, ReviewError>;
+    /// Returns a sanitized launch preview for operator evidence.
     fn command_preview(&self) -> Option<ReviewBackendCommand> {
         None
     }
+    /// Returns an actionable launch diagnostic without starting a job.
     fn prelaunch_error(&self) -> Option<String> {
         None
     }
+    /// Cancels an active job and returns its terminal local state.
     fn cancel(&self, job: ReviewJob) -> Result<ReviewJob, ReviewError> {
         Ok(job)
     }
 }
 
+/// Sanitized backend launch description recorded before execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewBackendCommand {
+    /// Launch protocol, such as `print` or `app-server`.
     pub mode: &'static str,
+    /// Sanitized configured executable command.
     pub command: String,
+    /// Sanitized arguments supplied separately by the backend.
     pub args: Vec<String>,
 }
 
+/// Returns whether the job has reached a terminal lifecycle state.
 pub fn review_job_is_terminal(job: &ReviewJob) -> bool {
     matches!(
         job.state,
@@ -130,6 +195,7 @@ pub fn review_job_is_terminal(job: &ReviewJob) -> bool {
     )
 }
 
+/// Polls a backend until its job is terminal or the outer deadline expires.
 pub fn poll_review_job_until_terminal(
     backend: &dyn ReviewBackend,
     mut job: ReviewJob,
@@ -162,6 +228,7 @@ pub fn poll_review_job_until_terminal(
     }
 }
 
+/// Persists one terminal Review job ledger record and returns its path.
 pub fn write_review_job_ledger_record(
     logs_root: &Path,
     issue: &TrackerIssue,
@@ -180,6 +247,7 @@ pub fn write_review_job_ledger_record(
     Ok(path)
 }
 
+/// Constructs the durable ledger record consumed by Review status surfaces.
 pub fn review_job_ledger_record(
     issue: &TrackerIssue,
     job: &ReviewJob,
@@ -198,6 +266,11 @@ pub fn review_job_ledger_record(
         updated_at_ms: None,
         artifact_path: job.artifact_path.clone(),
         ledger_path,
+        backend_session_id: job.backend_session_id.clone().or_else(|| {
+            job.report
+                .as_ref()
+                .and_then(|report| report.session_id.clone())
+        }),
         decision_outcome: decision.outcome,
         decision_target_state: decision.target_state.map(str::to_string),
         summary: job
@@ -214,6 +287,7 @@ pub fn review_job_ledger_record(
     }
 }
 
+/// Extracts a normalized usage-limit pause from backend failure evidence.
 pub fn review_usage_limit_pause(job: &ReviewJob) -> Option<UsageLimitPause> {
     job.error
         .as_deref()

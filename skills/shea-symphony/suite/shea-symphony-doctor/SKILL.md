@@ -1,6 +1,6 @@
 ---
 name: shea-symphony-doctor
-description: Use when diagnosing Shea Symphony doctor findings, Need Human Input items, issue or PR blockers, install-health gaps, and interrupted workflow state, then leading the smallest confirmed recovery in the same session when the workflow contract allows it.
+description: Use when diagnosing a concrete Shea Symphony doctor finding, Need Human Input item, issue/PR blocker, install-health gap, or interrupted workflow state, then leading the smallest confirmed recovery. Do not use for routine project checkpoints, progress summaries, next-work prioritization, or Backlog mining; use shea-symphony-issue-forge-reflect for those.
 metadata:
   short-description: Shea Symphony doctor triage
   suite-version: 2026.05.23
@@ -14,6 +14,12 @@ After diagnosis, give one explicit repair recommendation and say whether it can
 be executed in the current Codex session. Doctor is the operator-facing owner
 of abnormal recovery: do not require a second recovery skill merely because the
 repair touches work normally owned by a lane.
+
+Routine project checkpoints, progress summaries, next-work prioritization, and
+Backlog mining belong to `$shea-symphony-issue-forge-reflect` when no concrete
+malfunction is reported. If a checkpoint uncovers a specific failure, diagnose
+only that bounded symptom with Doctor; do not convert the whole checkpoint into
+Doctor triage.
 
 ## Repository
 

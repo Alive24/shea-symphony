@@ -72,6 +72,29 @@ fn skill_suite_records_parent_owned_subissue_contract() {
 }
 
 #[test]
+fn skill_suite_routes_checkpoints_to_reflect_and_failures_to_doctor() {
+    let doctor = repo_file("skills/shea-symphony/suite/shea-symphony-doctor/SKILL.md");
+    let installed_doctor = repo_file(".agents/skills/shea-symphony-doctor/SKILL.md");
+    let reflect =
+        repo_file("skills/shea-symphony/suite/shea-symphony-issue-forge-reflect/SKILL.md");
+    let installed_reflect = repo_file(".agents/skills/shea-symphony-issue-forge-reflect/SKILL.md");
+
+    for skill in [&doctor, &installed_doctor] {
+        assert!(skill.contains("routine project checkpoints"));
+        assert!(skill.contains("next-work prioritization"));
+        assert!(skill.contains("belong to `$shea-symphony-issue-forge-reflect`"));
+        assert!(skill.contains("do not convert the whole checkpoint into"));
+    }
+
+    for skill in [&reflect, &installed_reflect] {
+        assert!(skill.contains("routine operator checkpoints"));
+        assert!(skill.contains("what can proceed next"));
+        assert!(skill.contains("route only that bounded symptom"));
+        assert!(skill.contains("do not convert a routine checkpoint into Doctor triage"));
+    }
+}
+
+#[test]
 fn skill_suite_documents_app_server_first_manual_boundaries() {
     let human_review = repo_file("skills/shea-symphony/suite/shea-symphony-human-review/SKILL.md");
     let manual_merge = repo_file("skills/shea-symphony/suite/shea-symphony-manual-merge/SKILL.md");
@@ -94,7 +117,10 @@ fn skill_suite_documents_app_server_first_manual_boundaries() {
     );
     assert!(human_review.contains("A UAT result\nalone is not confirmation"));
     assert!(manual_main.contains("Execute one operator-selected Main issue in the current task"));
-    assert_eq!(manual_main, installed_manual_main, "repo-local Manual Main skill drifted");
+    assert_eq!(
+        manual_main, installed_manual_main,
+        "repo-local Manual Main skill drifted"
+    );
     assert!(manual_main.contains("Do not create another task"));
     assert!(manual_main.contains("workspace adopt"));
     assert!(manual_main.contains("do not\ncreate a nested worktree there"));

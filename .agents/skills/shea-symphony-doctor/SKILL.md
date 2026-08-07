@@ -1,11 +1,17 @@
 ---
 name: shea-symphony-doctor
-description: Diagnose Shea Symphony workflow, install-health, and blocked-issue findings; recommend one concrete repair and perform only the explicitly confirmed, bounded repair.
+description: Diagnose a concrete Shea Symphony failure, install-health gap, interrupted workflow, Need Human Input item, or issue/PR blocker; recommend one repair and perform only the explicitly confirmed bounded recovery. Do not use for routine project checkpoints, progress summaries, next-work prioritization, or Backlog mining; use shea-symphony-issue-forge-reflect for those.
 ---
 
 # Shea Symphony Doctor
 
 Use this skill for read-first operator triage of Doctor findings, debug output, install-health drift, stuck Need Human Input items, and issue or PR blockers. It diagnoses and hands off; it does not silently become a Main, Review, or Merge lane.
+
+Routine project checkpoints, progress summaries, next-work prioritization, and
+Backlog mining belong to `$shea-symphony-issue-forge-reflect` when no concrete
+malfunction is reported. If a checkpoint uncovers a specific failure, diagnose
+only that bounded symptom with Doctor; do not convert the whole checkpoint into
+Doctor triage.
 
 ## Bind the runtime first
 

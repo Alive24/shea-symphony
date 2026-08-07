@@ -1,11 +1,17 @@
 ---
 name: shea-symphony-issue-forge-reflect
-description: Extract evidence-backed Shea Symphony Backlog seeds from recent work, or promote a selected Backlog item into a confirmed, quality-gated Todo contract.
+description: Review current Shea Symphony progress, issue/PR/run evidence, blockers, and next actions when the operator asks for a status checkpoint, what can proceed, or what remains; extract evidence-backed Backlog seeds or promote a selected Backlog item into a quality-gated Todo contract. Route only concrete failures to shea-symphony-doctor.
 ---
 
 # Shea Symphony Issue Forge Reflect
 
 Use this skill to turn recent conversations, dogfood findings, Project state, and work records into a manageable Backlog, then help promote one selected Backlog seed into executable work.
+
+Use Reflect for routine operator checkpoints: current progress, what can
+proceed next, what remains blocked, and which residual work belongs in Backlog.
+If a checkpoint uncovers a concrete failure requiring cause analysis or repair,
+keep the overall checkpoint in Reflect and route only that bounded symptom to
+`$shea-symphony-doctor`.
 
 Reflection is a skill behavior, not a CLI subcommand.
 
@@ -19,8 +25,11 @@ Promotion is the conversion point: re-check the seed against current code and Pr
 
 Resolve the active repository, workflow, tracker project, default assignee, and supported workflow actions. Do not assume a checkout path, workflow filename, repository, or account.
 
-- Use Reflect when the operator wants candidates extracted or organized.
+- Use Reflect when the operator asks for current status, what can proceed next,
+  remaining blockers, candidates, or Backlog ideas to extract or organize.
 - Use Promote when the operator selects an existing Backlog item.
+- Use Doctor only for a concrete malfunction, failed invariant, or bounded
+  recovery question; do not convert a routine checkpoint into Doctor triage.
 - Ask one short question if the requested mode is ambiguous.
 
 Use configured workflow surfaces for Project fields, state, relationships, and claim locks. Ordinary issue and PR reads may use the configured provider.

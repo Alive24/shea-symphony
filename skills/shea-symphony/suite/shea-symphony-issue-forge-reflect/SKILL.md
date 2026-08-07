@@ -1,6 +1,6 @@
 ---
 name: shea-symphony-issue-forge-reflect
-description: Use when reflecting over recent Shea Symphony conversations, Project state, dogfood logs, or work records to extract issue backlog candidates, create them as non-dispatchable Project Backlog drafts, or promote existing Backlog drafts through conversational Issue Forge into executable Todo issues.
+description: Use when reviewing current Shea Symphony progress, blockers, next actions, conversations, Project state, dogfood logs, or work records; extract non-dispatchable Backlog candidates or promote existing Backlog drafts into executable Todo issues. Route only concrete failures to shea-symphony-doctor.
 metadata:
   short-description: Reflect Shea Symphony backlog into forgeable issues
   suite-version: 2026.05.23
@@ -10,6 +10,12 @@ metadata:
 
 Turn loose recent context into a manageable Shea Symphony Backlog, then help
 promote selected Backlog drafts into executable issues.
+
+Use Reflect for routine operator checkpoints: current progress, what can
+proceed next, what remains blocked, and which residual work belongs in Backlog.
+If a checkpoint uncovers a concrete failure requiring cause analysis or repair,
+keep the overall checkpoint in Reflect and route only that bounded symptom to
+`$shea-symphony-doctor`.
 
 Reflection is a skill behavior, not a Shea Symphony CLI subcommand. Do not
 expect or ask for `shea-symphony forge reflect`.
@@ -70,9 +76,12 @@ Alive24
 
 ## Mode Selection
 
-- Use Reflect mode when the user asks to extract, organize, or seed Backlog ideas.
+- Use Reflect mode when the user asks for current status, what can proceed next,
+  remaining blockers, or Backlog ideas to extract, organize, or seed.
 - Use Promote mode when the user points at a Backlog item and wants to refine or
   make it executable.
+- Use Doctor only for a concrete malfunction, failed invariant, or bounded
+  recovery question; do not convert a routine checkpoint into Doctor triage.
 - If unclear, ask one short question about reflect versus promote.
 
 ## Reflect Mode

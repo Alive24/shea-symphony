@@ -107,7 +107,8 @@ pub(crate) fn review_once(
         artifact_root: config.observability.logs_root.join("reviews"),
     };
     let backend = review_backend_from_config(&config.review);
-    let job = run_configured_review_backend(&config, &issue, backend.as_ref(), request)?;
+    let mut job = run_configured_review_backend(&config, &issue, backend.as_ref(), request)?;
+    let ledger_path = persist_review_job_ledger(&config, &issue, &mut job)?;
     apply_review_result(
         Some(&workflow),
         &config,
@@ -121,8 +122,11 @@ pub(crate) fn review_once(
 
     let decision = review_gate_decision_for_issue(&job, &issue);
     println!(
-        "review_once=ok issue_ref={issue_ref} backend={} outcome={:?} target_state={:?}",
-        job.backend, decision.outcome, decision.target_state
+        "review_once=ok issue_ref={issue_ref} backend={} outcome={:?} target_state={:?} ledger={}",
+        job.backend,
+        decision.outcome,
+        decision.target_state,
+        ledger_path.display()
     );
     println!("{}", decision.message);
     Ok(())
@@ -547,9 +551,7 @@ pub(crate) fn review_loop_with_summary(
                     "review worker thread panicked",
                 ),
             };
-            let ledger_path =
-                write_review_job_ledger_record(&config.observability.logs_root, &latest, &job)?;
-            job.ledger_path = Some(ledger_path.clone());
+            let ledger_path = persist_review_job_ledger(&config, &latest, &mut job)?;
             let repeat_evidence =
                 review_loop_repeated_failure_evidence(&mut failure_memory, &latest, &job);
             apply_review_result(
@@ -895,6 +897,16 @@ pub(crate) struct ReviewLoopOptions {
     pub(crate) fake_outcome: Option<FakeReviewOutcome>,
     pub(crate) max_concurrent: Option<usize>,
     pub(crate) quiet_idle: bool,
+}
+
+pub(crate) fn persist_review_job_ledger(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    job: &mut ReviewJob,
+) -> Result<PathBuf, shea_symphony::review::ReviewError> {
+    let ledger_path = write_review_job_ledger_record(&config.observability.logs_root, issue, job)?;
+    job.ledger_path = Some(ledger_path.clone());
+    Ok(ledger_path)
 }
 
 impl ReviewLoopOptions {

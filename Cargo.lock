@@ -2690,6 +2690,7 @@ dependencies = [
  "crossterm",
  "futures",
  "futures-util",
+ "libc",
  "liquid",
  "ratatui",
  "rusqlite",

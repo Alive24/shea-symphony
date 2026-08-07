@@ -34,7 +34,7 @@ memory-backed. They do not mutate live GitHub Project v2 state.
 | Workflow | Purpose | Notes |
 | --- | --- | --- |
 | `codex-subprocess-workflow.md` | Conservative Codex subprocess backend fixture. | Runs the configured command in the prepared workspace. |
-| `claude-subprocess-workflow.md` | Conservative Claude Code subprocess backend fixture. | Separate backend path from Codex; not full protocol parity. |
+| `claude-stream-json-workflow.md` | Claude Code stream-json backend fixture shared by Main and Merge-agent selection. | Credential-free structured protocol evidence; live command policy remains operator-owned. |
 | `cockpit-profiles-workflow.md` | Execution profile discovery from a cockpit-tools-style fixture. | Reads `fixtures/cockpit-tools-codex-instances.json`; no secrets are used. |
 
 ## Review And Quality Gate Fixtures
@@ -55,7 +55,8 @@ memory-backed. They do not mutate live GitHub Project v2 state.
 
 | Fixture | Used by |
 | --- | --- |
-| `fixtures/dry-run-issues.json` | `dry-run-workflow.md`, `codex-subprocess-workflow.md`, `claude-subprocess-workflow.md`, `review-fake-workflow.md`, `cockpit-profiles-workflow.md` |
+| `fixtures/dry-run-issues.json` | `dry-run-workflow.md`, `codex-subprocess-workflow.md`, `claude-stream-json-workflow.md`, `review-fake-workflow.md`, `cockpit-profiles-workflow.md` |
+| `fixtures/claude-stream-json-*.jsonl` | Claude structured success, error, cancellation, malformed, and truncated transport tests |
 | `fixtures/source-alignment-issues.json` | `source-alignment-workflow.md` |
 | `fixtures/usage-limit-issues.json` | `usage-limit-workflow.md` |
 | `fixtures/git-identity-issues.json` | `git-identity-workflow.md` |

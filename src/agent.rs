@@ -304,12 +304,12 @@ impl AgentBackend for ClaudeCodeBackend {
             run_id: None,
             attempt: 1,
             branch_name: None,
-            session_registry_path: None,
+            session_registry_path: Some(session_registry_path(config)),
         })
     }
 
     fn run(&self, prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError> {
-        run_subprocess_backend(prepared, "claude-code-subprocess", "Claude Code subprocess")
+        run_claude_stream_json_backend(prepared)
     }
 
     fn stop(&self, _reason: &str) -> Result<(), AgentError> {
@@ -540,6 +540,712 @@ fn run_subprocess_backend(
 
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+const CLAUDE_STREAM_JSON_SOURCE: &str = "claude-code-stream-json";
+const CLAUDE_RESUME_SESSION_ENV: &str = "SHEA_SYMPHONY_CLAUDE_RESUME_SESSION_ID";
+
+#[derive(Debug, Clone)]
+struct ClaudeArtifactPaths {
+    protocol_path: PathBuf,
+    stderr_path: PathBuf,
+    events_path: PathBuf,
+}
+
+#[derive(Default)]
+struct ClaudeProtocolState {
+    session_id: Option<String>,
+    initialized: bool,
+    terminal: bool,
+}
+
+fn run_claude_stream_json_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError> {
+    let mut events = Vec::new();
+    if !prepared.workspace.is_dir() {
+        events.push(AgentEvent::Failed {
+            backend: prepared.backend,
+            error: format!("workspace does not exist: {}", prepared.workspace.display()),
+        });
+        return Ok(events);
+    }
+    let Some(base_command) = prepared.command.as_deref() else {
+        events.push(AgentEvent::Failed {
+            backend: prepared.backend,
+            error: "missing Claude Code command".into(),
+        });
+        return Ok(events);
+    };
+
+    let prompt_artifact_path = persist_prompt_artifact(&prepared)?;
+    let artifacts = claude_artifact_paths(&prepared, &prompt_artifact_path);
+    if let Some(parent) = artifacts.protocol_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let invocation = claude_stream_json_command(
+        base_command,
+        prepared
+            .env
+            .get(CLAUDE_RESUME_SESSION_ENV)
+            .map(String::as_str),
+    );
+    let mut command = Command::new("sh");
+    command
+        .arg("-lc")
+        .arg(&invocation)
+        .current_dir(&prepared.workspace)
+        .env("SHEA_SYMPHONY_PROMPT_PATH", &prompt_artifact_path)
+        .envs(prepared.env.iter())
+        .env(
+            "SHEA_SYMPHONY_ACTOR_ROLE",
+            prepared.actor_role.as_deref().unwrap_or_default(),
+        )
+        .env(
+            "SHEA_SYMPHONY_ACTOR_LABEL",
+            prepared.actor_label.as_deref().unwrap_or_default(),
+        )
+        .env(
+            "SHEA_SYMPHONY_GIT_AUTHOR",
+            prepared.git_author.as_deref().unwrap_or_default(),
+        )
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    configure_child_process_group(&mut command);
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            fs::write(&artifacts.protocol_path, "")?;
+            fs::write(&artifacts.stderr_path, error.to_string())?;
+            events.push(AgentEvent::Failed {
+                backend: prepared.backend.clone(),
+                error: format!("Claude Code startup failed: {error}"),
+            });
+            finish_claude_artifacts(
+                &prepared,
+                &prompt_artifact_path,
+                &artifacts,
+                &mut events,
+                None,
+            )?;
+            return Ok(events);
+        }
+    };
+
+    let process_id = child.id();
+    let Some(mut stdin) = child.stdin.take() else {
+        terminate_child_process_group(&mut child);
+        events.push(AgentEvent::Failed {
+            backend: prepared.backend.clone(),
+            error: "Claude Code stdin was unavailable".into(),
+        });
+        finish_claude_artifacts(
+            &prepared,
+            &prompt_artifact_path,
+            &artifacts,
+            &mut events,
+            None,
+        )?;
+        return Ok(events);
+    };
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| AgentError::Unavailable("Claude Code stdout was unavailable".into()))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| AgentError::Unavailable("Claude Code stderr was unavailable".into()))?;
+    let stdout_rx = spawn_app_server_stdout_reader(stdout);
+    let (stderr_tx, stderr_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut stderr_text = String::new();
+        let _ = BufReader::new(stderr).read_to_string(&mut stderr_text);
+        let _ = stderr_tx.send(stderr_text);
+    });
+
+    let input = serde_json::json!({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [{"type": "text", "text": prepared.prompt}]
+        },
+        "parent_tool_use_id": null
+    });
+    let input_line = serde_json::to_string(&input)
+        .map_err(|error| AgentError::Unavailable(error.to_string()))?;
+    let mut protocol_log = String::new();
+    append_protocol_record(&mut protocol_log, "stdin", &input_line);
+    if let Err(error) = writeln!(stdin, "{input_line}").and_then(|_| stdin.flush()) {
+        terminate_child_process_group(&mut child);
+        events.push(AgentEvent::Failed {
+            backend: prepared.backend.clone(),
+            error: format!("Claude Code input write failed: {error}"),
+        });
+    }
+    drop(stdin);
+
+    let deadline = Instant::now() + Duration::from_millis(prepared.timeout_ms.max(1));
+    let mut state = ClaudeProtocolState::default();
+    let mut force_stop = events
+        .iter()
+        .any(|event| matches!(event, AgentEvent::Failed { .. }));
+    while !force_stop {
+        match next_claude_stdout_line(&mut child, &stdout_rx, deadline) {
+            Ok(Some(line)) => {
+                append_protocol_record(&mut protocol_log, "stdout", &line);
+                if let Err(error) = normalize_claude_stream_line(
+                    &prepared,
+                    &artifacts,
+                    &prompt_artifact_path,
+                    process_id,
+                    &line,
+                    &mut state,
+                    &mut events,
+                ) {
+                    events.push(AgentEvent::Failed {
+                        backend: prepared.backend.clone(),
+                        error,
+                    });
+                    force_stop = true;
+                }
+            }
+            Ok(None) => break,
+            Err(error) => {
+                events.push(AgentEvent::Failed {
+                    backend: prepared.backend.clone(),
+                    error,
+                });
+                force_stop = true;
+            }
+        }
+    }
+
+    let exit_status = if force_stop {
+        terminate_child_process_group(&mut child)
+    } else {
+        child.wait().ok()
+    };
+    if !state.terminal
+        && !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::Failed { .. }))
+    {
+        events.push(AgentEvent::Failed {
+            backend: prepared.backend.clone(),
+            error: if !state.initialized
+                && exit_status.as_ref().is_some_and(|status| !status.success())
+            {
+                format!(
+                    "Claude Code startup failed with status {} before initialization",
+                    display_exit_status(exit_status.as_ref())
+                )
+            } else {
+                "Claude Code stream ended before a terminal result event".into()
+            },
+        });
+    }
+    if exit_status.as_ref().is_some_and(|status| !status.success())
+        && !events.iter().any(|event| {
+            matches!(event, AgentEvent::Failed { error, .. } if error.contains("timed out"))
+        })
+    {
+        events.push(AgentEvent::Failed {
+            backend: prepared.backend.clone(),
+            error: format!(
+                "Claude Code exited with status {}",
+                display_exit_status(exit_status.as_ref())
+            ),
+        });
+    }
+
+    fs::write(&artifacts.protocol_path, &protocol_log)?;
+    let stderr_text = stderr_rx
+        .recv_timeout(Duration::from_millis(500))
+        .unwrap_or_default();
+    fs::write(&artifacts.stderr_path, &stderr_text)?;
+    if !stderr_text.trim().is_empty() {
+        events.push(AgentEvent::Message {
+            backend: prepared.backend.clone(),
+            session_id: state.session_id.clone(),
+            text: stderr_text,
+        });
+    }
+    if let Some(session_id) = state.session_id.as_deref() {
+        update_claude_session_status(
+            prepared.session_registry_path.as_deref(),
+            session_id,
+            if events
+                .iter()
+                .any(|event| matches!(event, AgentEvent::Completed { .. }))
+                && !events
+                    .iter()
+                    .any(|event| matches!(event, AgentEvent::Failed { .. }))
+            {
+                SessionStatus::Completed
+            } else if usage_limit_pause_from_events(&events).is_some() {
+                SessionStatus::UsageLimited
+            } else {
+                SessionStatus::Failed
+            },
+        )?;
+    }
+    finish_claude_artifacts(
+        &prepared,
+        &prompt_artifact_path,
+        &artifacts,
+        &mut events,
+        exit_status.as_ref(),
+    )?;
+    Ok(events)
+}
+
+fn claude_stream_json_command(base_command: &str, resume_session_id: Option<&str>) -> String {
+    let mut command = format!(
+        "exec {} -p --input-format stream-json --output-format stream-json --verbose",
+        base_command.trim()
+    );
+    if let Some(session_id) = resume_session_id.filter(|value| !value.trim().is_empty()) {
+        command.push_str(" --resume ");
+        command.push_str(&shell_quote_str(session_id));
+    }
+    command
+}
+
+fn configure_child_process_group(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+}
+
+fn terminate_child_process_group(child: &mut Child) -> Option<ExitStatus> {
+    if let Ok(Some(status)) = child.try_wait() {
+        return Some(status);
+    }
+    #[cfg(unix)]
+    {
+        // The child is its process-group leader, so a negative PID reaches wrappers and
+        // descendants together. A stale descendant must never outlive a failed lane run.
+        unsafe {
+            libc::kill(-(child.id() as i32), libc::SIGTERM);
+        }
+        for _ in 0..10 {
+            if let Ok(Some(status)) = child.try_wait() {
+                return Some(status);
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+    let _ = child.kill();
+    child.wait().ok()
+}
+
+fn next_claude_stdout_line(
+    child: &mut Child,
+    stdout_rx: &Receiver<Result<String, String>>,
+    deadline: Instant,
+) -> Result<Option<String>, String> {
+    loop {
+        let now = Instant::now();
+        if now >= deadline {
+            terminate_child_process_group(child);
+            return Err("Claude Code timed out waiting for a terminal result event".into());
+        }
+        match stdout_rx.recv_timeout(
+            deadline
+                .saturating_duration_since(now)
+                .min(Duration::from_millis(50)),
+        ) {
+            Ok(Ok(line)) => return Ok(Some(line)),
+            Ok(Err(error)) => return Err(format!("Claude Code stdout read failed: {error}")),
+            Err(RecvTimeoutError::Timeout) => {
+                if child
+                    .try_wait()
+                    .map_err(|error| error.to_string())?
+                    .is_some()
+                {
+                    return Ok(None);
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => return Ok(None),
+        }
+    }
+}
+
+fn normalize_claude_stream_line(
+    prepared: &PreparedRun,
+    artifacts: &ClaudeArtifactPaths,
+    prompt_artifact_path: &Path,
+    process_id: u32,
+    line: &str,
+    state: &mut ClaudeProtocolState,
+    events: &mut Vec<AgentEvent>,
+) -> Result<(), String> {
+    // Claude may add progress event kinds over time. Preserve unknown non-terminal
+    // kinds as evidence, but accept success only from the explicit final result.
+    if state.terminal {
+        return Err("Claude Code emitted data after its terminal result event".into());
+    }
+    let value: serde_json::Value = serde_json::from_str(line.trim())
+        .map_err(|error| format!("Claude Code emitted malformed stream-json: {error}"))?;
+    let event_type = value
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            "Claude Code stream-json event is missing string field `type`".to_string()
+        })?;
+    validate_claude_event_session(state, &value)?;
+
+    match event_type {
+        "system" if value.get("subtype").and_then(serde_json::Value::as_str) == Some("init") => {
+            if state.initialized {
+                return Err("Claude Code emitted more than one initialization event".into());
+            }
+            let session_id = value
+                .get("session_id")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "Claude Code initialization is missing session_id".to_string())?
+                .to_string();
+            state.initialized = true;
+            state.session_id = Some(session_id.clone());
+            events.push(AgentEvent::SessionStarted {
+                backend: prepared.backend.clone(),
+                session_id: session_id.clone(),
+            });
+            save_claude_session_record(
+                prepared,
+                artifacts,
+                prompt_artifact_path,
+                &session_id,
+                process_id,
+            )
+            .map_err(|error| error.to_string())?;
+            events.push(AgentEvent::Message {
+                backend: prepared.backend.clone(),
+                session_id: Some(session_id),
+                text: "claude_event type=system subtype=init".into(),
+            });
+        }
+        "assistant" => {
+            require_claude_initialization(state, event_type)?;
+            normalize_claude_assistant(prepared, &value, state, events);
+        }
+        "user" => {
+            require_claude_initialization(state, event_type)?;
+            normalize_claude_tool_results(prepared, &value, state, events);
+        }
+        "result" => {
+            require_claude_initialization(state, event_type)?;
+            state.terminal = true;
+            let subtype = value
+                .get("subtype")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown");
+            let is_error = value
+                .get("is_error")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(subtype != "success");
+            if is_error || subtype != "success" {
+                let detail = value
+                    .get("result")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or(subtype);
+                events.push(AgentEvent::Failed {
+                    backend: prepared.backend.clone(),
+                    error: format!("Claude Code result failed ({subtype}): {detail}"),
+                });
+            } else {
+                let summary = value
+                    .get("result")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or("Claude Code completed successfully.")
+                    .to_string();
+                events.push(AgentEvent::Completed {
+                    backend: prepared.backend.clone(),
+                    session_id: state.session_id.clone(),
+                    summary,
+                });
+            }
+        }
+        "error" => {
+            state.terminal = true;
+            events.push(AgentEvent::Failed {
+                backend: prepared.backend.clone(),
+                error: format!(
+                    "Claude Code error event: {}",
+                    value
+                        .get("error")
+                        .and_then(serde_json::Value::as_str)
+                        .or_else(|| value.get("message").and_then(serde_json::Value::as_str))
+                        .unwrap_or("unspecified error")
+                ),
+            });
+        }
+        _ => {
+            events.push(AgentEvent::Message {
+                backend: prepared.backend.clone(),
+                session_id: state.session_id.clone(),
+                text: format!(
+                    "claude_event type={event_type} subtype={}",
+                    value
+                        .get("subtype")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("n/a")
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_claude_event_session(
+    state: &ClaudeProtocolState,
+    value: &serde_json::Value,
+) -> Result<(), String> {
+    let Some(actual) = value
+        .get("session_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(());
+    };
+    if let Some(expected) = state.session_id.as_deref() {
+        if actual != expected {
+            return Err(format!(
+                "Claude Code session changed within one stream: expected {expected}, got {actual}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn require_claude_initialization(
+    state: &ClaudeProtocolState,
+    event_type: &str,
+) -> Result<(), String> {
+    if state.initialized {
+        Ok(())
+    } else {
+        Err(format!(
+            "Claude Code emitted {event_type} before initialization"
+        ))
+    }
+}
+
+fn normalize_claude_assistant(
+    prepared: &PreparedRun,
+    value: &serde_json::Value,
+    state: &ClaudeProtocolState,
+    events: &mut Vec<AgentEvent>,
+) {
+    if let Some(content) = value
+        .pointer("/message/content")
+        .and_then(serde_json::Value::as_array)
+    {
+        for block in content {
+            match block.get("type").and_then(serde_json::Value::as_str) {
+                Some("text") => {
+                    if let Some(text) = block.get("text").and_then(serde_json::Value::as_str) {
+                        events.push(AgentEvent::Message {
+                            backend: prepared.backend.clone(),
+                            session_id: state.session_id.clone(),
+                            text: text.to_string(),
+                        });
+                    }
+                }
+                Some("tool_use") => events.push(AgentEvent::Message {
+                    backend: prepared.backend.clone(),
+                    session_id: state.session_id.clone(),
+                    text: format!(
+                        "claude_tool_use name={} id={}",
+                        block
+                            .get("name")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("unknown"),
+                        block
+                            .get("id")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("unknown")
+                    ),
+                }),
+                Some(kind) => events.push(AgentEvent::Message {
+                    backend: prepared.backend.clone(),
+                    session_id: state.session_id.clone(),
+                    text: format!("claude_assistant_block type={kind}"),
+                }),
+                None => {}
+            }
+        }
+    }
+    if let Some(usage) = value.pointer("/message/usage") {
+        let input_tokens = json_u64(usage.get("input_tokens"));
+        let output_tokens = json_u64(usage.get("output_tokens"));
+        if input_tokens > 0 || output_tokens > 0 {
+            events.push(AgentEvent::TokenUsage {
+                backend: prepared.backend.clone(),
+                input_tokens,
+                output_tokens,
+                total_tokens: input_tokens.saturating_add(output_tokens),
+            });
+        }
+    }
+}
+
+fn normalize_claude_tool_results(
+    prepared: &PreparedRun,
+    value: &serde_json::Value,
+    state: &ClaudeProtocolState,
+    events: &mut Vec<AgentEvent>,
+) {
+    let Some(content) = value
+        .pointer("/message/content")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return;
+    };
+    for block in content {
+        if block.get("type").and_then(serde_json::Value::as_str) == Some("tool_result") {
+            events.push(AgentEvent::Message {
+                backend: prepared.backend.clone(),
+                session_id: state.session_id.clone(),
+                text: format!(
+                    "claude_tool_result tool_use_id={} is_error={}",
+                    block
+                        .get("tool_use_id")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown"),
+                    block
+                        .get("is_error")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false)
+                ),
+            });
+        }
+    }
+}
+
+fn json_u64(value: Option<&serde_json::Value>) -> u64 {
+    value
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default()
+}
+
+fn claude_artifact_paths(
+    prepared: &PreparedRun,
+    prompt_artifact_path: &Path,
+) -> ClaudeArtifactPaths {
+    let artifact_dir = prompt_artifact_path
+        .parent()
+        .and_then(Path::parent)
+        .unwrap_or_else(|| Path::new("/tmp"))
+        .join("claude-stream-json");
+    let base = format!(
+        "{}-{}",
+        safe_path_component(prepared.issue_identifier.as_deref()),
+        current_time_ms()
+    );
+    ClaudeArtifactPaths {
+        protocol_path: artifact_dir.join(format!("{base}.protocol.jsonl")),
+        stderr_path: artifact_dir.join(format!("{base}.stderr.log")),
+        events_path: artifact_dir.join(format!("{base}.events.json")),
+    }
+}
+
+fn save_claude_session_record(
+    prepared: &PreparedRun,
+    artifacts: &ClaudeArtifactPaths,
+    prompt_artifact_path: &Path,
+    session_id: &str,
+    process_id: u32,
+) -> Result<(), AgentError> {
+    let Some(registry_path) = prepared.session_registry_path.as_deref() else {
+        return Ok(());
+    };
+    let now_ms = unix_timestamp_ms();
+    save_session_record(
+        registry_path,
+        AgentSessionRecord {
+            issue_id: prepared.issue_id.clone(),
+            issue_identifier: prepared.issue_identifier.clone(),
+            issue_title: prepared.issue_title.clone(),
+            lane: prepared.lane.clone().unwrap_or_else(|| "main".into()),
+            run_id: prepared.run_id.clone(),
+            thread: Some(session_id.to_string()),
+            session_source: Some(CLAUDE_STREAM_JSON_SOURCE.into()),
+            claim_value: prepared.env.get("SHEA_SYMPHONY_CLAIM").cloned(),
+            actor_role: prepared.actor_role.clone(),
+            actor_label: prepared.actor_label.clone(),
+            git_author: prepared.git_author.clone(),
+            profile_id: prepared.profile_id.clone(),
+            instance_name: prepared.instance_name.clone(),
+            worktree: prepared.workspace.clone(),
+            branch: prepared.branch_name.clone(),
+            backend: prepared.backend.clone(),
+            session_name: session_id.to_string(),
+            process_id: Some(process_id),
+            pane_target: String::new(),
+            prompt_artifact_path: prompt_artifact_path.to_path_buf(),
+            log_path: artifacts.events_path.clone(),
+            attach_command: format!(
+                "not an interactive session; inspect Claude artifacts: protocol={} stderr={} events={}",
+                artifacts.protocol_path.display(),
+                artifacts.stderr_path.display(),
+                artifacts.events_path.display()
+            ),
+            attempt: prepared.attempt.max(1),
+            status: SessionStatus::Running,
+            started_at_ms: now_ms,
+            updated_at_ms: now_ms,
+        },
+    )
+    .map_err(|error| AgentError::Unavailable(format!("Claude session registry failed: {error}")))
+}
+
+fn update_claude_session_status(
+    registry_path: Option<&Path>,
+    session_id: &str,
+    status: SessionStatus,
+) -> Result<(), AgentError> {
+    let Some(registry_path) = registry_path else {
+        return Ok(());
+    };
+    update_session_record_status(registry_path, session_id, status, unix_timestamp_ms()).map_err(
+        |error| AgentError::Unavailable(format!("Claude session registry failed: {error}")),
+    )
+}
+
+fn finish_claude_artifacts(
+    prepared: &PreparedRun,
+    prompt_artifact_path: &Path,
+    artifacts: &ClaudeArtifactPaths,
+    events: &mut Vec<AgentEvent>,
+    exit_status: Option<&ExitStatus>,
+) -> Result<(), AgentError> {
+    events.push(AgentEvent::Message {
+        backend: prepared.backend.clone(),
+        session_id: events.iter().find_map(|event| match event {
+            AgentEvent::SessionStarted { session_id, .. } => Some(session_id.clone()),
+            _ => None,
+        }),
+        text: format!(
+            "claude_stream_json_artifacts prompt_artifact={} protocol_artifact={} stderr_artifact={} normalized_events_artifact={} exit_status={}",
+            prompt_artifact_path.display(),
+            artifacts.protocol_path.display(),
+            artifacts.stderr_path.display(),
+            artifacts.events_path.display(),
+            display_exit_status(exit_status)
+        ),
+    });
+    fs::write(
+        &artifacts.events_path,
+        serde_json::to_string_pretty(events)
+            .map_err(|error| AgentError::Unavailable(error.to_string()))?,
+    )?;
+    Ok(())
 }
 
 fn run_codex_app_server_backend(prepared: PreparedRun) -> Result<Vec<AgentEvent>, AgentError> {
@@ -2882,6 +3588,51 @@ exit 0
         RuntimeConfig::from_workflow(&workflow, std::path::Path::new("/tmp/WORKFLOW.md")).unwrap()
     }
 
+    #[cfg(unix)]
+    fn fake_claude_stream_json(root: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let script = root.join("fake-claude");
+        fs::write(
+            &script,
+            r#"#!/bin/sh
+trace="${FAKE_CLAUDE_TRACE:?}"
+mode="${FAKE_CLAUDE_MODE:-fixture}"
+mkdir -p "$trace"
+pwd > "$trace/cwd"
+printf 'ARG=%s\n' "$@" > "$trace/args"
+if [ "$mode" = timeout ]; then
+  sleep 5 &
+  child=$!
+  printf '%s' "$child" > "$trace/child-pid"
+  wait "$child"
+  exit 0
+fi
+cat > "$trace/input.jsonl"
+case "$mode" in
+  fixture)
+    cat "${FAKE_CLAUDE_FIXTURE:?}"
+    ;;
+  startup_failure)
+    printf '%s\n' 'fake Claude startup failed' >&2
+    exit 23
+    ;;
+esac
+"#,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions).unwrap();
+        script
+    }
+
+    fn claude_fixture(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("examples/fixtures")
+            .join(name)
+    }
+
     fn codex_config_with_profile(command: &str) -> RuntimeConfig {
         let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("examples/fixtures/cockpit-tools-codex-instances.json");
@@ -3428,60 +4179,291 @@ done
         assert!(summary.message.contains("timed out"));
     }
 
+    #[cfg(unix)]
     #[test]
-    fn claude_code_backend_runs_subprocess_in_workspace() {
+    fn claude_code_backend_runs_stream_json_and_records_session_evidence() {
         let temp = tempfile::tempdir().unwrap();
-        let config = claude_config("cat > claude-subprocess-output.md", 5_000);
+        let claude = fake_claude_stream_json(temp.path());
+        let config = claude_config(&claude.display().to_string(), 5_000);
         let backend = ClaudeCodeBackend;
-        let prepared = backend
-            .prepare(temp.path().to_path_buf(), "hello claude".into(), &config)
+        let workspace = temp.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let trace = temp.path().join("trace");
+        let registry_path = temp.path().join("sessions/session-registry.json");
+        let mut prepared = backend
+            .prepare(workspace.clone(), "hello claude".into(), &config)
             .unwrap();
+        prepared.prompt_artifact_path = Some(temp.path().join("logs/prompts/claude.prompt.md"));
+        prepared.session_registry_path = Some(registry_path.clone());
+        prepared.issue_id = Some("issue-510".into());
+        prepared.issue_identifier = Some("#510".into());
+        prepared.issue_title = Some("Run Claude Code stream-json sessions".into());
+        prepared.lane = Some("main".into());
+        prepared.run_id = Some("run-510".into());
+        prepared.branch_name = Some("feature/issue-510".into());
+        prepared
+            .env
+            .insert("FAKE_CLAUDE_TRACE".into(), trace.display().to_string());
+        prepared.env.insert(
+            "FAKE_CLAUDE_FIXTURE".into(),
+            claude_fixture("claude-stream-json-success.jsonl")
+                .display()
+                .to_string(),
+        );
         let events = backend.run(prepared).unwrap();
         let summary = backend.summarize(&events);
 
         assert!(summary.success);
         assert_eq!(summary.backend, "claude-code");
+        assert_eq!(summary.session_id.as_deref(), Some("claude-session-510"));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AgentEvent::Message { text, .. } if text.contains("claude_tool_use name=Read")
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AgentEvent::Message { text, .. } if text.contains("claude_tool_result")
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AgentEvent::TokenUsage {
+                input_tokens: 12,
+                output_tokens: 7,
+                total_tokens: 19,
+                ..
+            }
+        )));
+        let args = fs::read_to_string(trace.join("args")).unwrap();
+        for argument in [
+            "ARG=-p",
+            "ARG=--input-format",
+            "ARG=stream-json",
+            "ARG=--output-format",
+            "ARG=--verbose",
+        ] {
+            assert!(args.contains(argument), "{args}");
+        }
         assert_eq!(
-            summary.session_id.as_deref(),
-            Some("claude-code-subprocess")
+            fs::canonicalize(fs::read_to_string(trace.join("cwd")).unwrap().trim()).unwrap(),
+            fs::canonicalize(&workspace).unwrap()
+        );
+        let input: serde_json::Value = serde_json::from_str(
+            fs::read_to_string(trace.join("input.jsonl"))
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
+        assert_eq!(
+            input.pointer("/type").and_then(serde_json::Value::as_str),
+            Some("user")
         );
         assert_eq!(
-            std::fs::read_to_string(temp.path().join("claude-subprocess-output.md")).unwrap(),
-            "hello claude"
+            input
+                .pointer("/message/content/0/text")
+                .and_then(serde_json::Value::as_str),
+            Some("hello claude")
         );
+
+        let registry = crate::session_registry::load_session_registry(&registry_path).unwrap();
+        let record = registry.sessions.first().unwrap();
+        assert_eq!(record.session_name, "claude-session-510");
+        assert_eq!(record.thread.as_deref(), Some("claude-session-510"));
+        assert_eq!(
+            record.session_source.as_deref(),
+            Some(CLAUDE_STREAM_JSON_SOURCE)
+        );
+        assert_eq!(record.issue_identifier.as_deref(), Some("#510"));
+        assert_eq!(record.run_id.as_deref(), Some("run-510"));
+        assert_eq!(record.worktree, workspace);
+        assert_eq!(record.status, SessionStatus::Completed);
+        let protocol_path = message_field(&events, "protocol_artifact=").unwrap();
+        assert!(fs::read_to_string(protocol_path)
+            .unwrap()
+            .contains("claude-session-510"));
     }
 
+    #[cfg(unix)]
     #[test]
-    fn claude_code_backend_reports_subprocess_failure() {
+    fn claude_code_backend_resumes_recorded_session_through_cli_contract() {
         let temp = tempfile::tempdir().unwrap();
-        let config = claude_config("echo claude-nope >&2; exit 9", 5_000);
+        let claude = fake_claude_stream_json(temp.path());
+        let config = claude_config(&claude.display().to_string(), 5_000);
         let backend = ClaudeCodeBackend;
-        let prepared = backend
-            .prepare(temp.path().to_path_buf(), "prompt".into(), &config)
+        let workspace = temp.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let trace = temp.path().join("trace");
+        let mut prepared = backend
+            .prepare(workspace, "Continue".into(), &config)
             .unwrap();
+        prepared.session_registry_path = Some(temp.path().join("sessions/session-registry.json"));
+        prepared.env.insert(
+            CLAUDE_RESUME_SESSION_ENV.into(),
+            "claude-session-510".into(),
+        );
+        prepared
+            .env
+            .insert("FAKE_CLAUDE_TRACE".into(), trace.display().to_string());
+        prepared.env.insert(
+            "FAKE_CLAUDE_FIXTURE".into(),
+            claude_fixture("claude-stream-json-success.jsonl")
+                .display()
+                .to_string(),
+        );
         let events = backend.run(prepared).unwrap();
         let summary = backend.summarize(&events);
 
-        assert!(!summary.success);
-        assert!(summary.message.contains("status 9"));
-        assert!(events.iter().any(|event| matches!(
-            event,
-            AgentEvent::Message { text, .. } if text.contains("claude-nope")
-        )));
+        assert!(summary.success);
+        let args = fs::read_to_string(trace.join("args")).unwrap();
+        assert!(args.contains("ARG=--resume"), "{args}");
+        assert!(args.contains("ARG=claude-session-510"), "{args}");
     }
 
+    #[cfg(unix)]
     #[test]
-    fn claude_code_backend_reports_timeout() {
+    fn claude_code_backend_fails_closed_for_protocol_and_process_failures() {
+        for (mode, fixture, expected) in [
+            (
+                "fixture",
+                "claude-stream-json-error.jsonl",
+                "permission was denied",
+            ),
+            ("fixture", "claude-stream-json-cancelled.jsonl", "cancelled"),
+            ("fixture", "claude-stream-json-malformed.jsonl", "malformed"),
+            (
+                "fixture",
+                "claude-stream-json-truncated.jsonl",
+                "before a terminal result",
+            ),
+            (
+                "startup_failure",
+                "claude-stream-json-success.jsonl",
+                "startup failed with status 23",
+            ),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let claude = fake_claude_stream_json(temp.path());
+            let config = claude_config(&claude.display().to_string(), 5_000);
+            let workspace = temp.path().join("workspace");
+            fs::create_dir_all(&workspace).unwrap();
+            let trace = temp.path().join("trace");
+            let backend = ClaudeCodeBackend;
+            let mut prepared = backend
+                .prepare(workspace, "prompt".into(), &config)
+                .unwrap();
+            prepared.session_registry_path =
+                Some(temp.path().join("sessions/session-registry.json"));
+            prepared
+                .env
+                .insert("FAKE_CLAUDE_TRACE".into(), trace.display().to_string());
+            prepared.env.insert("FAKE_CLAUDE_MODE".into(), mode.into());
+            prepared.env.insert(
+                "FAKE_CLAUDE_FIXTURE".into(),
+                claude_fixture(fixture).display().to_string(),
+            );
+
+            let events = backend.run(prepared).unwrap();
+            let summary = backend.summarize(&events);
+
+            assert!(!summary.success, "{mode} {fixture}: {summary:?}");
+            assert!(
+                summary.message.contains(expected),
+                "{mode} {fixture}: {summary:?}"
+            );
+            assert!(message_field(&events, "protocol_artifact=").is_some());
+            assert!(message_field(&events, "normalized_events_artifact=").is_some());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claude_code_backend_times_out_and_terminates_process_group() {
         let temp = tempfile::tempdir().unwrap();
-        let config = claude_config("sleep 1", 10);
+        let claude = fake_claude_stream_json(temp.path());
+        let config = claude_config(&claude.display().to_string(), 1_000);
+        let workspace = temp.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let trace = temp.path().join("trace");
         let backend = ClaudeCodeBackend;
-        let prepared = backend
-            .prepare(temp.path().to_path_buf(), "prompt".into(), &config)
+        let mut prepared = backend
+            .prepare(workspace, "prompt".into(), &config)
             .unwrap();
+        prepared.session_registry_path = Some(temp.path().join("sessions/session-registry.json"));
+        prepared
+            .env
+            .insert("FAKE_CLAUDE_TRACE".into(), trace.display().to_string());
+        prepared
+            .env
+            .insert("FAKE_CLAUDE_MODE".into(), "timeout".into());
+
         let events = backend.run(prepared).unwrap();
         let summary = backend.summarize(&events);
 
         assert!(!summary.success);
         assert!(summary.message.contains("timed out"));
+        let child_pid = fs::read_to_string(trace.join("child-pid"))
+            .unwrap()
+            .parse::<i32>()
+            .unwrap();
+        let mut process_exists = true;
+        for _ in 0..20 {
+            // Signal 0 performs a read-only existence check for the former descendant.
+            process_exists = unsafe { libc::kill(child_pid, 0) == 0 };
+            if !process_exists {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            !process_exists,
+            "timed-out descendant {child_pid} is still alive"
+        );
+    }
+
+    #[ignore = "requires an operator-configured local Claude Code command"]
+    #[test]
+    fn claude_code_live_local_worktree_uat() {
+        let command = std::env::var("SHEA_CLAUDE_UAT_COMMAND")
+            .expect("set SHEA_CLAUDE_UAT_COMMAND to a local Claude executable or wrapper");
+        let temp = tempfile::tempdir().unwrap();
+        let config = claude_config(&command, 600_000);
+        let backend = ClaudeCodeBackend;
+
+        for (lane, initial, expected, prompt) in [
+            (
+                "main",
+                "before\n",
+                "main stream-json uat\n",
+                "Replace uat.txt with exactly `main stream-json uat` followed by a newline, then verify it with a shell command.",
+            ),
+            (
+                "merge",
+                "<<<<<<< HEAD\napproved\n=======\nstale\n>>>>>>> origin/main\n",
+                "approved\n",
+                "Resolve the conflict markers in uat.txt by preserving `approved`, then verify that no conflict markers remain.",
+            ),
+        ] {
+            let workspace = temp.path().join(lane);
+            fs::create_dir_all(&workspace).unwrap();
+            fs::write(workspace.join("uat.txt"), initial).unwrap();
+            let mut prepared = backend
+                .prepare(workspace.clone(), prompt.into(), &config)
+                .unwrap();
+            prepared.prompt_artifact_path =
+                Some(temp.path().join(format!("logs/prompts/{lane}.prompt.md")));
+            prepared.session_registry_path =
+                Some(temp.path().join("sessions/session-registry.json"));
+            prepared.issue_id = Some(format!("local-{lane}-uat"));
+            prepared.issue_identifier = Some(format!("local-{lane}-uat"));
+            prepared.lane = Some(lane.into());
+            prepared.run_id = Some(format!("local-{lane}-uat"));
+
+            let events = backend.run(prepared).unwrap();
+            let summary = backend.summarize(&events);
+
+            assert!(summary.success, "{lane}: {summary:?}");
+            assert_eq!(fs::read_to_string(workspace.join("uat.txt")).unwrap(), expected);
+            assert!(summary.session_id.is_some(), "{lane}: {summary:?}");
+            assert!(summary.log_path.as_ref().is_some_and(|path| path.is_file()));
+        }
     }
 }

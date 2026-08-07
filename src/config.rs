@@ -475,6 +475,13 @@ impl RuntimeConfig {
                 "tmux.agent_command must not be empty".into(),
             ));
         }
+        if (self.backend.kind == "claude-code" || self.merge_lane.agent_backend == "claude-code")
+            && self.claude.command.trim().is_empty()
+        {
+            return Err(ConfigError::Invalid(
+                "claude.command must not be empty when a lane selects claude-code".into(),
+            ));
+        }
         match self.review.backend.as_str() {
             "fake" | "gemini-cli" | "agy-cli" => {}
             other => return Err(ConfigError::UnsupportedBackend(other.to_string())),
@@ -514,6 +521,7 @@ impl RuntimeConfig {
             self.agent.max_retry_backoff_ms,
         )?;
         require_positive("review_lane.timeout_ms", self.review.timeout_ms)?;
+        require_positive("claude.turn_timeout_ms", self.claude.turn_timeout_ms)?;
         require_positive(
             "review_lane.max_concurrent_workers",
             self.review.max_concurrent_workers as u64,
@@ -1140,6 +1148,43 @@ mod tests {
 
         assert_eq!(config.merge_lane.agent_backend, "tmux");
         assert_eq!(config.merge_lane.max_concurrent_workers, 2);
+    }
+
+    #[test]
+    fn parses_claude_wrapper_for_main_and_merge_lanes() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nmain_lane:\n  backend: claude-code\nmerge_lane:\n  agent_backend: claude-code\nclaude:\n  command: /opt/bin/claude-wrapper --profile shea\n  turn_timeout_ms: 9000\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.backend.kind, "claude-code");
+        assert_eq!(config.merge_lane.agent_backend, "claude-code");
+        assert_eq!(
+            config.claude.command,
+            "/opt/bin/claude-wrapper --profile shea"
+        );
+        assert_eq!(config.claude.turn_timeout_ms, 9_000);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn selected_claude_lane_rejects_empty_command() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nmain_lane:\n  backend: claude-code\nclaude:\n  command: '   '\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert!(config
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("claude.command must not be empty"));
     }
 
     #[test]

@@ -358,7 +358,14 @@ the current local app-server approval-policy schema. `autopilot loop` itself is
 neither backend; it is the foreground CLI supervisor that invokes Main, Review,
 and Merge lane commands. `main loop --write` records prompt, protocol, stderr,
 normalized-event, runtime-state, and session-registry evidence for that
-app-server turn before any `Agent Review` handoff. If `main_lane.backend: tmux`
+app-server turn before any `Agent Review` handoff. Selecting
+`main_lane.backend: claude-code` or `merge_lane.agent_backend: claude-code`
+uses the same lane result contract through Claude Code's non-interactive
+stream-json CLI. Shea appends the protocol and resume flags to
+`claude.command`, persists raw and normalized evidence, and fails closed unless
+an initialized session produces an explicit successful result. The command or
+wrapper retains model, authentication, gateway, environment, and permission
+ownership; see `docs/claude-code-stream-json.md`. If `main_lane.backend: tmux`
 is selected as explicit fallback/debug, the tmux path records its session name,
 log path, workspace, branch, attach command, prompt artifact, actor, lane,
 attempt, and running status in the durable session registry under the configured
@@ -389,7 +396,8 @@ starts the configured lane runtime with the lane-specific prompt only after
 confirming that the Project claim field already matches the issue, lane, and
 run. Manual claim evidence is truthful non-runtime registry evidence; `session
 start` never writes claim fields. Main and Merge-agent sessions default to Codex
-app-server in the canonical workflow, while Review session start remains the
+app-server in the canonical workflow and may both select the shared Claude
+stream-json backend, while Review session start remains the
 supervised tmux fallback; set `main_lane.backend: tmux` or
 `merge_lane.agent_backend: tmux` only for explicit fallback/debug. Clean
 `merge once` / `merge loop` does not use this agent-session backend and remains

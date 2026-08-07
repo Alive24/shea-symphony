@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"claude-session-truncated"}
+{"type":"assistant","session_id":"claude-session-truncated","message":{"role":"assistant","content":[{"type":"text","text":"Work began but no result followed."}],"usage":{"input_tokens":3,"output_tokens":2}}}

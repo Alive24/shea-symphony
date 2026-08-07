@@ -17,19 +17,23 @@ tracker:
   terminal_states:
     - Done
 workspace:
-  root: /tmp/shea-symphony-claude-subprocess-workspaces
+  root: /tmp/shea-symphony-claude-stream-json-workspaces
 main_lane:
   backend: claude-code
   max_concurrent_agents: 1
   max_turns: 1
   max_retry_backoff_ms: 300000
+merge_lane:
+  agent_backend: claude-code
+  max_concurrent_workers: 1
 claude:
-  command: "cat > claude-subprocess-output.md"
+  # Shea appends -p, stream-json input/output, --verbose, and --resume when needed.
+  command: sh examples/fixtures/claude-stream-json-wrapper.sh
   turn_timeout_ms: 1000
 observability:
   logs_root: log
 ---
 
-You are running a safe Claude Code fixture task for {{ issue.identifier }}.
+You are running a deterministic Claude Code stream-json fixture for {{ issue.identifier }}.
 
 Title: {{ issue.title }}

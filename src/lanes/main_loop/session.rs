@@ -52,6 +52,7 @@ impl MainRecoveryMode {
 pub(crate) struct MainRecoveryPlan {
     pub(crate) mode: MainRecoveryMode,
     pub(crate) app_server_resume_thread_id: Option<String>,
+    pub(crate) claude_resume_session_id: Option<String>,
     pub(crate) prompt_override: Option<String>,
     pub(crate) evidence: String,
 }
@@ -106,8 +107,19 @@ pub(crate) fn main_recovery_plan(
         return Ok(MainRecoveryPlan {
             mode: MainRecoveryMode::NativeThread,
             app_server_resume_thread_id: Some(thread_id.clone()),
+            claude_resume_session_id: None,
             prompt_override: None,
             evidence: format!("thread={thread_id}"),
+        });
+    }
+
+    if let Some(session_id) = claude_resume_session_for_state(config, issue, state)? {
+        return Ok(MainRecoveryPlan {
+            mode: MainRecoveryMode::NativeThread,
+            app_server_resume_thread_id: None,
+            claude_resume_session_id: Some(session_id.clone()),
+            prompt_override: None,
+            evidence: format!("claude_session={session_id}"),
         });
     }
 
@@ -116,6 +128,7 @@ pub(crate) fn main_recovery_plan(
         return Ok(MainRecoveryPlan {
             mode: MainRecoveryMode::TranscriptReplay,
             app_server_resume_thread_id: None,
+            claude_resume_session_id: None,
             prompt_override: Some(prompt),
             evidence: "local_conversation_artifacts=present".into(),
         });
@@ -124,9 +137,55 @@ pub(crate) fn main_recovery_plan(
     Ok(MainRecoveryPlan {
         mode: MainRecoveryMode::WorktreeOnly,
         app_server_resume_thread_id: None,
+        claude_resume_session_id: None,
         prompt_override: Some(worktree_only_recovery_prompt(issue, state)?),
         evidence: "local_conversation_artifacts=missing".into(),
     })
+}
+
+fn claude_resume_session_for_state(
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+    state: &RuntimeState,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    if state.backend != "claude-code" {
+        return Ok(None);
+    }
+    let Some(worktree) = state.workspace_path.as_deref() else {
+        return Ok(None);
+    };
+    let Some(run_id) = state
+        .run_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(None);
+    };
+    let registry = load_session_registry(&session_registry_path(config))?;
+    // Native resume is safe only inside the original durable ownership tuple;
+    // any mismatch falls back to transcript/worktree recovery instead.
+    let matches_boundary = |record: &&AgentSessionRecord| {
+        record.session_source.as_deref() == Some("claude-code-stream-json")
+            && record.backend == "claude-code"
+            && record.lane.eq_ignore_ascii_case("main")
+            && record.issue_id.as_deref() == Some(issue.id.as_str())
+            && record.issue_identifier.as_deref() == Some(issue.identifier.as_str())
+            && record.run_id.as_deref() == Some(run_id)
+            && record.worktree == worktree
+            && !record.session_name.trim().is_empty()
+    };
+    let record = state
+        .backend_session_id
+        .as_deref()
+        .and_then(|session_id| {
+            registry
+                .sessions
+                .iter()
+                .rev()
+                .find(|record| record.session_name == session_id && matches_boundary(record))
+        })
+        .or_else(|| registry.sessions.iter().rev().find(matches_boundary));
+    Ok(record.map(|record| record.session_name.clone()))
 }
 
 fn codex_app_server_session_record_for_state(

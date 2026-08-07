@@ -49,6 +49,7 @@ pub(crate) struct IssueExecutionResult {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct IssueExecutionOptions {
     pub(crate) app_server_resume_thread_id: Option<String>,
+    pub(crate) claude_resume_session_id: Option<String>,
     pub(crate) prompt_override: Option<String>,
 }
 
@@ -130,9 +131,17 @@ fn execute_issue_once_in_workspace(
     if options.app_server_resume_thread_id.is_some() {
         prompt = CODEX_APP_SERVER_CONTINUE_PROMPT.into();
     }
+    if options.claude_resume_session_id.is_some() {
+        prompt = "Continue".into();
+    }
     let backend = backend_from_config(config);
     let mut prepared = backend.prepare(workspace.path.clone(), prompt, config)?;
     prepared.app_server_resume_thread_id = options.app_server_resume_thread_id.clone();
+    if let Some(session_id) = options.claude_resume_session_id.clone() {
+        prepared
+            .env
+            .insert("SHEA_SYMPHONY_CLAUDE_RESUME_SESSION_ID".into(), session_id);
+    }
     prepared.prompt_artifact_path = Some(rendered_prompt_artifact_path(
         config,
         issue,

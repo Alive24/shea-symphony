@@ -76,6 +76,7 @@ fn skill_suite_documents_app_server_first_manual_boundaries() {
     let human_review = repo_file("skills/shea-symphony/suite/shea-symphony-human-review/SKILL.md");
     let manual_merge = repo_file("skills/shea-symphony/suite/shea-symphony-manual-merge/SKILL.md");
     let manual_main = repo_file("skills/shea-symphony/suite/shea-symphony-manual-main/SKILL.md");
+    let installed_manual_main = repo_file(".agents/skills/shea-symphony-manual-main/SKILL.md");
 
     assert!(human_review.contains("Match the operator-facing language"));
     assert!(human_review.contains("Do not force English"));
@@ -93,11 +94,18 @@ fn skill_suite_documents_app_server_first_manual_boundaries() {
     );
     assert!(human_review.contains("A UAT result\nalone is not confirmation"));
     assert!(manual_main.contains("Execute one operator-selected Main issue in the current task"));
+    assert_eq!(manual_main, installed_manual_main, "repo-local Manual Main skill drifted");
     assert!(manual_main.contains("Do not create another task"));
     assert!(manual_main.contains("workspace adopt"));
     assert!(manual_main.contains("do not\ncreate a nested worktree there"));
     assert!(manual_main
         .contains("Adoption transfers issue-workspace evidence, not cleanup\n   ownership"));
+    assert!(manual_main.contains("source=github_native"));
+    assert!(manual_main.contains("source=fallback_diagnostic"));
+    assert!(manual_main.contains("target base is not the default branch"));
+    assert!(manual_main.contains("GitHub's Development sidebar"));
+    assert!(manual_main.contains("Do not retry it"));
+    assert!(manual_main.contains("Never treat `fallback_diagnostic`"));
     assert!(manual_merge.contains("cargo run -- merge loop .shea/workflows/shea-symphony.md"));
     assert!(manual_merge.contains("app-server"));
     assert!(!manual_merge.contains("merge-once"));

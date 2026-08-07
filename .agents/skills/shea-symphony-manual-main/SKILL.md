@@ -238,20 +238,40 @@ Perform the work yourself:
    `#[allow(missing_docs)]` annotations.
 7. Update the workpad with changed files, verification commands and results,
    risks, follow-ups, and compatibility/comment/Rustdoc evidence.
-8. Commit and push the issue branch. Open or update one PR against the confirmed
-   target base, include `Closes #<issue>` when merge should close it, and make
-   the PR ready for review rather than draft.
-9. If necessary, record PR linkage through the supported CLI:
+8. Commit and push the issue branch. Resolve the repository's default branch,
+   then open or update one ready PR against the confirmed target base:
+
+   - When the target base is the default branch, include `Closes #<issue>` in
+     the PR body.
+   - When the target base is not the default branch, do not rely on a closing
+     keyword: GitHub ignores it for native issue linkage. Use a non-closing
+     reference such as `Refs #<issue>` and follow the non-default-base linkage
+     rule below.
+
+9. Read back the issue and PR. Confirm that GitHub reports the PR ready and not
+   draft, and inspect the exact linked-PR `source` exposed by Shea:
+
+   - For a default-base PR, require the exact PR with `source=github_native`.
+     Repair an incorrect or missing closing reference in the PR body and read
+     back again. Do not hand off while native linkage is missing.
+   - For a non-default-base PR, prefer an operator-created native link through
+     GitHub's Development sidebar. If the issue contract or operator explicitly
+     accepts diagnostic fallback evidence for this backport/protected-branch
+     run, record it through the supported CLI:
 
    ```bash
    "$SHEA_CLI" project link-pr "$SHEA_WORKFLOW" "$ISSUE" "#<pr>" --write
    ```
 
-10. Read back the issue and PR. Confirm that Shea exposes the linked PR and that
-    GitHub reports it ready and not draft.
-11. Complete the workpad with the PR URL, linked-PR confirmation, verification,
-    and why Main stops at `Agent Review`.
-12. Move to `Agent Review` only as the final mutation, then perform read-only
+   This command may report that native readback is missing after recording the
+   diagnostic comment. Do not retry it. Perform one targeted issue readback,
+   record `source=fallback_diagnostic` exactly, and never describe it as
+   GitHub-native or as verified native linkage. Without explicit fallback
+   acceptance, stop for the operator to create the native Development link.
+10. Complete the workpad with the PR URL, target/default base, exact linked-PR
+    source, any authorized fallback exception, verification, and why Main stops
+    at `Agent Review`.
+11. Move to `Agent Review` only as the final mutation, then perform read-only
     verification:
 
     ```bash
@@ -298,6 +318,8 @@ readback verification.
 - Never bypass issue quality, dependency, subissue, or target-branch gates.
 - Never create a nested issue worktree before evaluating a safe current task
   worktree for adoption.
+- Never treat `fallback_diagnostic` PR evidence as GitHub-native linkage or use
+  it for a default-base PR handoff.
 - Never move an issue to `Human Review`.
 - Never merge a PR or use the `Merging Agent` field.
 - Never turn merge-lane repair into Main work.

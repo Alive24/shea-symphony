@@ -75,14 +75,27 @@ Merge lane work; use `--no-recover` only for focused debugging. Per-lane
 capacity uses `--main-max-concurrent`, `--review-max-concurrent`, and
 `--merge-max-concurrent`.
 
-Lane throughput is independent inside each foreground supervisor iteration. The
-supervisor checks Main, Review, and Merge in that order, refreshes the plan
-between lanes, and records one lane work-unit result for each lane. A slow,
-blocked, idle, or busy lane remains visible in the status and result output, but
-it is not a shared global iteration gate when another lane has ready work. A
-global readiness blocker such as an unsafe canonical checkout, Doctor blocker,
-or non-recoverable runtime ambiguity still blocks write-mode Autoloop before
-lane mutation.
+Lane throughput is independent inside each foreground supervisor iteration.
+Concurrently enabled Main, Review, and Merge workers consume one immutable,
+process-local selection snapshot generation instead of rebuilding the same
+Doctor-hydrated Project plan per lane. A write-capable selected lane invalidates
+that generation after its tick, so the next selection cycle performs one new
+single-flight refresh. The snapshot only selects candidates: each lane keeps
+its targeted live issue/PR read and refuses changed state immediately before a
+claim, review transition, merge, or other mutation. A slow, blocked, idle, or
+busy lane remains visible in status and result output without becoming a global
+throughput gate. A global readiness blocker such as an unsafe canonical
+checkout, Doctor blocker, or non-recoverable runtime ambiguity still blocks
+write-mode Autoloop before lane mutation.
+
+GitHub GraphQL reads emit secret-free `github_graphql_budget` evidence with the
+operation, initiating Autopilot/lane action, provider-reported cost and
+remaining budget, and reset time when available. Exhaustion establishes one
+process-local `github_graphql_cooldown` decision shared by all lane threads.
+Shea waits until the provider reset deadline; missing or malformed reset
+evidence uses a bounded conservative fallback, and cancellation interrupts the
+wait. The scope is deliberately one Shea process/runtime profile—there is no
+durable cache, cross-process lock, or cross-repository quota coordinator.
 
 The iteration budget controls the supervisor lifetime, not the total number of
 Main, Review, or Merge items that may complete. Lane-specific worker limits

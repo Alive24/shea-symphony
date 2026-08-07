@@ -884,6 +884,7 @@ dependencies = [
  "signal-hook",
  "tempfile",
  "thiserror",
+ "time",
 ]
 
 [[package]]

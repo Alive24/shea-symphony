@@ -5,6 +5,7 @@ mod project_v2;
 mod queries;
 mod topology;
 
+pub use cli::with_github_graphql_request_context;
 pub use queries::GithubProjectReadMode;
 
 pub(in crate::tracker) use cli::{

@@ -85,6 +85,26 @@ Supervisor cycles remain visible as lifecycle evidence through
 `supervisor_cycle`; lane events and result events carry `completed_work_units`
 and per-lane counters so operators can see which lane actually completed work.
 
+Within one Autoloop process, enabled lanes share an immutable selection-plan
+generation. `selection_snapshot_generation=... source=shared_snapshot` evidence
+identifies reuse; the one lane that performs a later single-flight refresh uses
+`source=shared_refresh`. Write-capable selected ticks invalidate their consumed
+generation, while a stale finishing lane cannot invalidate a newer generation.
+This saves repeated global Project/Doctor hydration without authorizing work
+from stale data: Main, Review, and Merge still perform their existing targeted
+live issue/PR reads immediately before mutations and stop when status, claim,
+handoff, or PR evidence changed after selection.
+
+Tracker stderr/logs expose GraphQL budget state as
+`github_graphql_budget operation=... action=... cost=... remaining=...
+reset_at=...`. If the provider reports exhaustion, all lane threads observe one
+`github_graphql_cooldown scope=process decision=wait_until_reset` deadline.
+Provider reset evidence is preferred; unavailable or malformed reset evidence
+falls back to a bounded delay, and Ctrl-C cancels the wait. This is per-process
+coordination only. Separate Shea Symphony, Shea Halo, and FailureReport
+processes report and manage their own budgets; operators should compare their
+evidence rather than expect a cross-repository lock.
+
 For a more scannable operator view, keep the same dry-run boundary and opt into
 the terminal panel:
 

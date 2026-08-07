@@ -1,3 +1,5 @@
+//! Typed workflow configuration and validation for Shea Symphony runtimes.
+
 use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -181,14 +183,31 @@ pub struct TmuxConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Provider-neutral Review lane settings plus backend-specific launch options.
 pub struct ReviewConfig {
+    /// Selected Review backend identifier.
     pub backend: String,
+    /// Gemini CLI executable used by the legacy Gemini backend.
     pub gemini_command: String,
+    /// Optional Gemini model override.
     pub gemini_model: Option<String>,
+    /// Additional read-oriented Gemini tools allowed during review.
     pub gemini_allowed_tools: Vec<String>,
+    /// agy CLI executable used by the agy backend.
     pub agy_command: String,
+    /// Optional agy model override.
     pub agy_model: Option<String>,
+    /// Codex app-server command, falling back to the shared Codex command.
+    pub codex_command: String,
+    /// Non-interactive Codex approval policy; Review currently requires `never`.
+    pub codex_approval_policy: Value,
+    /// Codex thread sandbox; Review currently requires a read-only sandbox.
+    pub codex_thread_sandbox: String,
+    /// Optional read-only turn sandbox policy passed to Codex app-server.
+    pub codex_turn_sandbox_policy: Option<Value>,
+    /// Maximum wall-clock duration for one Review backend job.
     pub timeout_ms: u64,
+    /// Maximum number of Review jobs scheduled concurrently by the existing lane.
     pub max_concurrent_workers: usize,
 }
 
@@ -420,6 +439,17 @@ impl RuntimeConfig {
                 "agy",
             ),
             agy_model: get_string(review_lane_config, "agy_model"),
+            codex_command: resolve_command_token(
+                get_string(review_lane_config, "codex_command"),
+                &codex.command,
+            ),
+            codex_approval_policy: get_value(review_lane_config, "codex_approval_policy")
+                .cloned()
+                .unwrap_or_else(default_codex_approval_policy),
+            codex_thread_sandbox: get_string(review_lane_config, "codex_thread_sandbox")
+                .unwrap_or_else(|| "read-only".to_string()),
+            codex_turn_sandbox_policy: get_value(review_lane_config, "codex_turn_sandbox_policy")
+                .cloned(),
             timeout_ms: get_u64(review_lane_config, "timeout_ms").unwrap_or(600_000),
             max_concurrent_workers: get_u64(review_lane_config, "max_concurrent_workers")
                 .unwrap_or(1)
@@ -501,8 +531,43 @@ impl RuntimeConfig {
             ));
         }
         match self.review.backend.as_str() {
-            "fake" | "gemini-cli" | "agy-cli" => {}
+            "fake" | "gemini-cli" | "agy-cli" | "codex-app-server" => {}
             other => return Err(ConfigError::UnsupportedBackend(other.to_string())),
+        }
+        if self.review.backend == "codex-app-server" {
+            require_present(
+                "review_lane.codex_command",
+                Some(self.review.codex_command.as_str()),
+            )?;
+            if !crate::agent::is_codex_app_server_command(&self.review.codex_command) {
+                return Err(ConfigError::Invalid(
+                    "review_lane.codex_command must launch the Codex app-server subcommand".into(),
+                ));
+            }
+            if self.review.codex_approval_policy.as_str() != Some("never") {
+                return Err(ConfigError::Invalid(
+                    "review_lane.codex_approval_policy must be never for codex-app-server review"
+                        .into(),
+                ));
+            }
+            if !matches!(
+                self.review.codex_thread_sandbox.trim(),
+                "read-only" | "readOnly"
+            ) {
+                return Err(ConfigError::Invalid(
+                    "review_lane.codex_thread_sandbox must be read-only for codex-app-server review"
+                        .into(),
+                ));
+            }
+            if let Some(policy) = self.review.codex_turn_sandbox_policy.as_ref() {
+                let policy_type = policy.get("type").and_then(Value::as_str);
+                if !matches!(policy_type, Some("readOnly" | "read-only")) {
+                    return Err(ConfigError::Invalid(
+                        "review_lane.codex_turn_sandbox_policy.type must be readOnly when configured"
+                            .into(),
+                    ));
+                }
+            }
         }
         match self.quality_gate.llm.mode.as_str() {
             "disabled" | "advisory" | "required" => {}
@@ -1376,6 +1441,88 @@ mod tests {
         assert_eq!(
             config.review.agy_model.as_deref(),
             Some("gemini-3.1-pro-preview")
+        );
+    }
+
+    #[test]
+    fn codex_review_defaults_to_shared_command_and_read_only_policy() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\ncodex:\n  command: /opt/bin/codex app-server\nreview_lane:\n  backend: codex-app-server\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert_eq!(config.review.codex_command, "/opt/bin/codex app-server");
+        assert_eq!(
+            config.review.codex_approval_policy,
+            serde_json::json!("never")
+        );
+        assert_eq!(config.review.codex_thread_sandbox, "read-only");
+        assert_eq!(config.review.codex_turn_sandbox_policy, None);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn codex_review_accepts_safe_override_and_turn_sandbox() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\ncodex:\n  command: codex app-server\nreview_lane:\n  backend: codex-app-server\n  codex_command: /opt/review/bin/codex app-server -c 'service_tier=\"fast\"'\n  codex_approval_policy: never\n  codex_thread_sandbox: readOnly\n  codex_turn_sandbox_policy:\n    type: readOnly\n    access:\n      type: fullAccess\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert!(config
+            .review
+            .codex_command
+            .starts_with("/opt/review/bin/codex app-server"));
+        assert_eq!(
+            config
+                .review
+                .codex_turn_sandbox_policy
+                .as_ref()
+                .and_then(|policy| policy.get("type"))
+                .and_then(Value::as_str),
+            Some("readOnly")
+        );
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn codex_review_rejects_interactive_or_writable_policy() {
+        for config_fragment in [
+            "codex_approval_policy: on-request",
+            "codex_thread_sandbox: workspace-write",
+            "codex_turn_sandbox_policy:\n    type: workspaceWrite",
+        ] {
+            let workflow = WorkflowDefinition::parse(
+                "/tmp/WORKFLOW.md",
+                &format!(
+                    "---\ntracker:\n  kind: memory\nreview_lane:\n  backend: codex-app-server\n  {config_fragment}\n---\nPrompt"
+                ),
+            )
+            .unwrap();
+            let config =
+                RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+            assert!(config.validate().is_err(), "{config_fragment}");
+        }
+    }
+
+    #[test]
+    fn codex_review_rejects_a_non_app_server_command() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nreview_lane:\n  backend: codex-app-server\n  codex_command: codex exec\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+        assert!(
+            matches!(config.validate(), Err(ConfigError::Invalid(message)) if message.contains("app-server subcommand"))
         );
     }
 

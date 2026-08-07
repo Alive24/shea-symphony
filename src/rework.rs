@@ -366,12 +366,17 @@ mod tests {
             state: ReviewJobState::Completed,
             artifact_path: Some("/tmp/review-artifact.json".into()),
             ledger_path: Some("/tmp/reviews/jobs/50-review-1.json".into()),
+            backend_session_id: None,
             report: Some(AgentReviewReport {
                 reviewer_backend: "fake-reviewer".into(),
                 findings: vec![ReviewFinding {
                     class: ReviewFindingClass::Confirmed,
                     title: "Missing test".into(),
                     body: "Add ordering coverage.".into(),
+                    severity: None,
+                    file: None,
+                    line: None,
+                    evidence: None,
                 }],
                 summary: Some("Confirmed finding requires rework.".into()),
                 stdout: Some("review stdout".into()),
@@ -411,6 +416,7 @@ mod tests {
             state: ReviewJobState::Completed,
             artifact_path: Some("/tmp/review-artifact.md".into()),
             ledger_path: Some("/tmp/reviews/jobs/50-review-1.json".into()),
+            backend_session_id: None,
             report: Some(AgentReviewReport {
                 reviewer_backend: "gemini-cli".into(),
                 findings: Vec::new(),

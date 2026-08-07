@@ -6,6 +6,7 @@
 project_items.json
 .codex/config.toml
 .shea/*.local.json
+.shea/runtime-profile.json
 .shea/local/
 web/node_modules/
 web/build/

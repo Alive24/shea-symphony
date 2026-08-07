@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -203,7 +204,18 @@ pub fn run_workspace_command(
     path: &Path,
     timeout_ms: u64,
 ) -> Result<HookResult, WorkspaceError> {
-    run_hook(label, command, path, timeout_ms)
+    run_hook_with_env(label, command, path, timeout_ms, &BTreeMap::new())
+}
+
+/// Run one shell command in a workspace with an explicit bounded environment overlay.
+pub fn run_workspace_command_with_env(
+    label: &str,
+    command: &str,
+    path: &Path,
+    timeout_ms: u64,
+    environment: &BTreeMap<String, String>,
+) -> Result<HookResult, WorkspaceError> {
+    run_hook_with_env(label, command, path, timeout_ms, environment)
 }
 
 pub fn remove_issue_workspace(
@@ -275,10 +287,21 @@ fn run_hook(
     cwd: &Path,
     timeout_ms: u64,
 ) -> Result<HookResult, WorkspaceError> {
+    run_hook_with_env(hook, command, cwd, timeout_ms, &BTreeMap::new())
+}
+
+fn run_hook_with_env(
+    hook: &str,
+    command: &str,
+    cwd: &Path,
+    timeout_ms: u64,
+    environment: &BTreeMap<String, String>,
+) -> Result<HookResult, WorkspaceError> {
     let mut child = Command::new("sh")
         .arg("-lc")
         .arg(command)
         .current_dir(cwd)
+        .envs(environment)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;

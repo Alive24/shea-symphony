@@ -7,6 +7,9 @@ use shea_symphony::lane_claim::{LaneClaimActor, LaneClaimSource};
 use shea_symphony::model::{normalize_state, LatestStatus, TrackerIssue};
 use shea_symphony::ownership::{runtime_ownership_decision, RuntimeOwnershipDecision};
 use shea_symphony::progress::run_with_progress_heartbeat;
+use shea_symphony::runtime_profile::{
+    persist_runtime_readiness_failure, resolve_runtime_readiness,
+};
 use shea_symphony::runtime_state::{
     load_runtime_states, mark_runtime_state_updated, runtime_state_for_issue, upsert_runtime_state,
 };
@@ -56,7 +59,7 @@ pub(crate) fn run_loop_dispatch_write_candidate(
     worker_id: &str,
     options: &RunLoopOptions,
 ) -> Result<RunLoopWorkerOutcome, Box<dyn std::error::Error>> {
-    let latest = if recover && normalize_state(&issue.state) == "in progress" {
+    let mut latest = if recover && normalize_state(&issue.state) == "in progress" {
         issue.clone()
     } else {
         run_with_progress_heartbeat(
@@ -177,6 +180,121 @@ pub(crate) fn run_loop_dispatch_write_candidate(
         );
     }
 
+    // A Main worktree is local preparation, not a tracker claim. Resolve or
+    // adopt it first so readiness observes the exact filesystem that the
+    // backend and handoff verification will use.
+    let live_worktree = if run_loop_live_handoff_enabled(config) {
+        let runner = ProcessHandoffCommandRunner;
+        let repo_root = std::env::current_dir()?;
+        let worktree = prepare_issue_worktree(&repo_root, &handoff, &runner)?;
+        println!(
+            "run_loop_action=worktree issue={} workspace={} branch={} created={} phase=pre_claim",
+            latest.identifier,
+            worktree.workspace_path.display(),
+            worktree.branch_name,
+            worktree.created
+        );
+        print_latest_status(&LatestStatus {
+            lane: "main".into(),
+            category: "preflight".into(),
+            action: "worktree_ready".into(),
+            issue_identifier: Some(latest.identifier.clone()),
+            issue_title: Some(latest.title.clone()),
+            actor_label: Some(config.identity.actor_label.clone()),
+            workspace: Some(worktree.workspace_path.display().to_string()),
+            branch: Some(worktree.branch_name.clone()),
+            session_id: None,
+            next: Some("runtime readiness".into()),
+        });
+        Some(worktree)
+    } else {
+        None
+    };
+    let readiness_workspace = live_worktree
+        .as_ref()
+        .map(|worktree| worktree.workspace_path.as_path())
+        .unwrap_or(handoff.workspace_path.as_path());
+    let readiness = match resolve_runtime_readiness(
+        &config.runtime_profile,
+        &config.tracker,
+        readiness_workspace,
+    ) {
+        Ok(readiness) => readiness,
+        Err(error) => {
+            let evidence_path = persist_runtime_readiness_failure(
+                &config.observability.logs_root,
+                &latest.identifier,
+                &config.runtime_profile,
+                readiness_workspace,
+                &error,
+            )?;
+            println!(
+                "run_loop_action=skip issue={} reason=runtime_readiness detail={} evidence={} tracker_mutation=false",
+                latest.identifier,
+                compact_evidence(&error.to_string()),
+                evidence_path.display()
+            );
+            print_latest_status(&latest_status_for_issue(
+                config,
+                &latest,
+                "main",
+                "blocked",
+                "runtime_readiness",
+                Some("rerun repository onboarding".into()),
+            ));
+            return Ok(RunLoopWorkerOutcome::Completed);
+        }
+    };
+    for evidence in &readiness.report.evidence {
+        println!(
+            "run_loop_action=runtime_readiness issue={} status={} evidence={}",
+            latest.identifier,
+            readiness.report.status,
+            compact_evidence(evidence)
+        );
+    }
+
+    // Read tracker truth again only after local readiness succeeds. The claim
+    // below is based on this fresh ownership/dependency/status snapshot.
+    let post_readiness_issue_ref = latest.identifier.clone();
+    latest = run_with_progress_heartbeat(
+        progress_spec_with_event_log(config, "github_project_read")
+            .issue(post_readiness_issue_ref.clone())
+            .backend(tracker_backend_label(config))
+            .next("main_post_readiness_issue_read"),
+        || adapter.get_issue(&post_readiness_issue_ref),
+    )?
+    .ok_or_else(|| format!("issue disappeared after readiness: {post_readiness_issue_ref}"))?;
+    let eligibility = pool_claim_eligibility(&latest, WorkerLane::Main, worker_id, config);
+    if !eligibility.is_claimable() {
+        println!(
+            "run_loop_action=skip issue={} reason=post_readiness_{}",
+            latest.identifier,
+            eligibility.skip_reason()
+        );
+        return Ok(RunLoopWorkerOutcome::Completed);
+    }
+    let refreshed_gate = evaluate_issue_for_current_source(config, &latest)?;
+    if !refreshed_gate.is_dispatchable() {
+        handle_run_loop_gate_failure(adapter, &latest, &refreshed_gate, options, config)?;
+        return Ok(RunLoopWorkerOutcome::Completed);
+    }
+    match run_loop_assignee_ownership_decision(
+        &latest,
+        config,
+        active_login.as_deref(),
+        profile_login.as_deref(),
+    ) {
+        AssigneeOwnershipDecision::Allowed => {}
+        AssigneeOwnershipDecision::Block { reason } => {
+            println!(
+                "run_loop_action=skip issue={} reason=post_readiness_assignee_ownership detail={}",
+                latest.identifier, reason
+            );
+            return Ok(RunLoopWorkerOutcome::Completed);
+        }
+    }
+
     let ownership = run_loop_runtime_ownership(&latest, config, &handoff)?;
     let claim_action = run_loop_claim_action(&latest, config);
     let main_claim = lane_claim_for_issue(
@@ -289,7 +407,22 @@ pub(crate) fn run_loop_dispatch_write_candidate(
             return Ok(RunLoopWorkerOutcome::Completed);
         }
     };
-    let ownership_workpad = run_loop_ownership_workpad(&latest, &ownership, event, &main_claim);
+    let mut ownership_workpad = run_loop_ownership_workpad(&latest, &ownership, event, &main_claim);
+    ownership_workpad.push_str("\n\n### Runtime Readiness\n");
+    ownership_workpad.push_str(&format!(
+        "- Status: `{}`\n- Profile: `{}`\n- Profile path: `{}`\n- Workspace: `{}`\n",
+        readiness.report.status,
+        readiness
+            .report
+            .profile_id
+            .as_deref()
+            .unwrap_or("not_configured"),
+        readiness.report.profile_path.display(),
+        readiness.report.workspace.display()
+    ));
+    for evidence in &readiness.report.evidence {
+        ownership_workpad.push_str(&format!("- Evidence: `{}`\n", compact_evidence(evidence)));
+    }
     let ownership_key = recovery_key(
         "main-ownership-workpad",
         &latest.identifier,
@@ -343,34 +476,6 @@ pub(crate) fn run_loop_dispatch_write_candidate(
         "run_loop_runtime_state action=saved issue={} event={event}",
         latest.identifier
     );
-
-    let live_worktree = if run_loop_live_handoff_enabled(config) {
-        let runner = ProcessHandoffCommandRunner;
-        let repo_root = std::env::current_dir()?;
-        let worktree = prepare_issue_worktree(&repo_root, &handoff, &runner)?;
-        println!(
-            "run_loop_action=worktree issue={} workspace={} branch={} created={}",
-            latest.identifier,
-            worktree.workspace_path.display(),
-            worktree.branch_name,
-            worktree.created
-        );
-        print_latest_status(&LatestStatus {
-            lane: "main".into(),
-            category: "running".into(),
-            action: "worktree_ready".into(),
-            issue_identifier: Some(latest.identifier.clone()),
-            issue_title: Some(latest.title.clone()),
-            actor_label: Some(config.identity.actor_label.clone()),
-            workspace: Some(worktree.workspace_path.display().to_string()),
-            branch: Some(worktree.branch_name.clone()),
-            session_id: runtime_state.backend_session_id.clone(),
-            next: Some("run backend".into()),
-        });
-        Some(worktree)
-    } else {
-        None
-    };
 
     let mut session_reconciliation =
         reconcile_pending_main_session(config, &latest, &handoff, &runtime_state)?;
@@ -551,6 +656,8 @@ pub(crate) fn run_loop_dispatch_write_candidate(
                     prompt_override: recovery_plan
                         .as_ref()
                         .and_then(|plan| plan.prompt_override.clone()),
+                    runtime_profile_was_resolved: true,
+                    runtime_profile: readiness.profile.clone(),
                 },
             )?
         }
@@ -585,6 +692,7 @@ pub(crate) fn run_loop_dispatch_write_candidate(
             &latest,
             &handoff,
             live_worktree,
+            readiness.profile.as_ref(),
             &mut result,
         )?;
     }

@@ -544,6 +544,16 @@ Manual Merge owns approved merge-lane work. `doctor` reports read-only local
 install-health warnings and points operators back to the #242 install/update
 path rather than repairing skill files itself.
 
+Repository execution readiness is a separate local contract from App/backend
+profiles. Run `shea-symphony-runtime-onboarding` to discover repository-owned
+requirements and propose `.shea/runtime-profile.json`; the skill must receive
+operator confirmation before writing. Then run
+`shea-symphony profiles /absolute/path/to/.shea/workflows/target.md` from the
+repository or exact issue worktree. Main blocks a required missing, malformed,
+drifted, or incompatible
+profile before claim and records failure evidence only under the configured
+local logs root. See [Repository Runtime Profiles](runtime-profiles.md).
+
 ## Inspect And Resume
 
 ```bash

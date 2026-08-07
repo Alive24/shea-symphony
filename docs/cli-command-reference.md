@@ -40,7 +40,7 @@ workflows may still use an inline prompt body.
 | `doctor` | Audit Project/workflow/runtime invariants. | `cargo run -- doctor` |
 | `audit-project` | Compatibility alias for `doctor`. | `cargo run -- audit-project workflows/shea-symphony.md` |
 | `skills status` | Read-only per-repo skill readiness matrix across source suite, Codex, Gemini, metadata, links, and optional session input. | `cargo run -- skills status workflows/shea-symphony.md` |
-| `profiles` | List configured/discovered execution profiles. | `cargo run -- profiles examples/cockpit-profiles-workflow.md` |
+| `profiles` | List configured/discovered backend profiles and validate repository runtime readiness in the current worktree. | `shea-symphony profiles /absolute/path/to/.shea/workflows/target.md` |
 | `debug` | Read-only human report combining Project, doctor, smoke readiness, runtime/session, cleanup, and lane next-action signals. | `cargo run -- debug workflows/shea-symphony.md` |
 | `autopilot plan` | Read-only Main/Review/Merge lane preflight with parked operator queues and foreground Autoloop readiness. | `cargo run -- autopilot plan workflows/shea-symphony.md` |
 | `autopilot loop` | Bounded foreground all-lane supervisor tick that runs Main, Review, and Merge lane loops in order. | `cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --write` |

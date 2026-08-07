@@ -7,6 +7,10 @@ artifacts:
   root: artifacts
 observability:
   logs_root: logs
+runtime_profile:
+  path: ../runtime-profile.json
+  required: false
+  timeout_ms: 10000
 ---
 
 # Target Repository Shea Workflow

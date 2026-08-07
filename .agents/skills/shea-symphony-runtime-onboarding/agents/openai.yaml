@@ -1,0 +1,3 @@
+display_name: Shea Symphony Runtime Onboarding
+short_description: Discover repository requirements and prepare a confirmed local runtime profile.
+default_prompt: Inspect this repository's execution requirements and installed compatible tools, present a credential-free `.shea/runtime-profile.json` proposal, and wait for my confirmation before writing it.

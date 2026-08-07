@@ -75,6 +75,7 @@ After setting up Shea Symphony, the desired human workflow looks like this:
 - parent/subissue branch topology;
 - Doctor diagnostics for stuck states;
 - repo-owned skills for conversational operator workflows;
+- repository onboarding for confirmed, credential-free Main runtime profiles;
 
 ---
 

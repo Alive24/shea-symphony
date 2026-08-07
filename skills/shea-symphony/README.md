@@ -1,6 +1,6 @@
 # Shea Symphony Skill Suite
 
-Release: `2026.06.09`
+Release: `2026.08.07`
 
 This directory contains the repo-owned Shea Symphony skills used by local Codex
 and Gemini operator sessions. The suite is intentionally versioned in the repo
@@ -71,6 +71,7 @@ operator confirmation before writing.
 - `shea-symphony-issue-forge-reflect`
 - `shea-symphony-issue-forge-dream`
 - `shea-symphony-manual-main`
+- `shea-symphony-runtime-onboarding`
 - `shea-symphony-manual-review`
 - `shea-symphony-human-review`
 - `shea-symphony-manual-merge`
@@ -97,6 +98,12 @@ The Doctor skill is a read-first operator triage slot. The Shea Symphony CLI
 `doctor` command reports local install-health warnings, while automatic repair
 remains out of scope and install/update writes stay behind the confirmed #242
 installer path.
+
+Runtime Onboarding inspects repository-owned requirement evidence and existing
+installed tools, reports conflicts, and prepares a credential-free
+`.shea/runtime-profile.json` proposal. It requires operator confirmation before
+writing the machine-local profile and never installs tools or edits shell or
+system configuration.
 
 ## Dogfood Entry Points
 

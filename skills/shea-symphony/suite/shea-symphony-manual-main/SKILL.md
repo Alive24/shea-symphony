@@ -135,20 +135,26 @@ After all read-only gates pass, use the normal claim path for `Todo`, `Rework`,
 or resumable `In Progress`:
 
 1. Choose a stable worker identity for this task.
-2. Claim through the supported CLI, not raw Project GraphQL:
+2. Inspect the current task workspace, existing Main Workpad, linked PR
+   evidence, session/runtime ownership, branch state, and `git worktree list
+   --porcelain` before claiming. Reuse the single canonical issue worktree when
+   evidence is consistent; otherwise evaluate the current task worktree for
+   adoption before creating anything.
+3. Record the selected workspace through `workspace adopt --write` and verify
+   `workspace show` exposes it as the single canonical candidate. The current
+   CLI uses that exact worktree for runtime readiness and refuses a live Main
+   claim without adoption evidence.
+4. Claim through the supported CLI, not raw Project GraphQL:
 
    ```bash
    "$SHEA_CLI" main claim "$SHEA_WORKFLOW" "$ISSUE" \
      --worker "<worker-id>" --source manual --write
    ```
 
-3. Read the issue back and confirm the claim and `In Progress` status.
-4. Inspect `git worktree list --porcelain`, the current task workspace, the
-   existing Main Workpad, linked PR evidence, session/runtime ownership, and
-   branch state before adopting or creating anything.
-5. Reuse the single canonical issue worktree and PR branch when evidence is
-   consistent. Otherwise evaluate the current task worktree for adoption before
-   creating another worktree.
+5. Read the issue back and confirm the claim. Record successful runtime
+   readiness and ownership evidence in the canonical workpad, then make Project
+   Status the phase's final mutation with `project set-state ... in_progress
+   --write` and verify the readback.
 6. Create a new isolated worktree and feature branch from the confirmed target
    base only when neither an existing canonical issue worktree nor the current
    task worktree is safe to use. Never implement in the canonical checkout.

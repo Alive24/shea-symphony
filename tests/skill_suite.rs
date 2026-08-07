@@ -51,6 +51,36 @@ fn skill_suite_lists_human_review_skill() {
 }
 
 #[test]
+fn skill_suite_lists_runtime_onboarding_skill_and_rendered_copy() {
+    let manifest = repo_file("skills/shea-symphony/manifest.toml");
+    let readme = repo_file("skills/shea-symphony/README.md");
+    let skill = repo_file("skills/shea-symphony/suite/shea-symphony-runtime-onboarding/SKILL.md");
+    let installed = repo_file(".agents/skills/shea-symphony-runtime-onboarding/SKILL.md");
+    let metadata =
+        repo_file("skills/shea-symphony/suite/shea-symphony-runtime-onboarding/agents/openai.yaml");
+    let installed_metadata =
+        repo_file(".agents/skills/shea-symphony-runtime-onboarding/agents/openai.yaml");
+
+    assert!(manifest.contains("name = \"shea-symphony-runtime-onboarding\""));
+    assert!(manifest.contains("path = \"suite/shea-symphony-runtime-onboarding\""));
+    assert!(readme.contains("`shea-symphony-runtime-onboarding`"));
+    assert_eq!(
+        skill, installed,
+        "repo-local Runtime Onboarding skill drifted"
+    );
+    assert_eq!(
+        metadata, installed_metadata,
+        "repo-local Runtime Onboarding metadata drifted"
+    );
+    assert!(skill.contains("Ask one explicit confirmation"));
+    assert!(skill.contains("Do not install or mutate shell/system configuration"));
+    assert!(skill.contains("Never copy the complete parent process"));
+    assert!(skill.contains("hash-object"));
+    assert!(skill.contains("FailureReport #29 Operator UAT"));
+    assert!(skill.contains("does not authorize an implementation agent"));
+}
+
+#[test]
 fn skill_suite_records_parent_owned_subissue_contract() {
     let forge = repo_file("skills/shea-symphony/suite/shea-symphony-issue-forge/SKILL.md");
     let reflect =

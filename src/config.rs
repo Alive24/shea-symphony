@@ -31,6 +31,7 @@ pub struct RuntimeConfig {
     pub quality_gate: QualityGateConfig,
     pub verification: VerificationConfig,
     pub profiles: ProfilesConfig,
+    pub runtime_profile: RuntimeProfileConfig,
     pub identity: IdentityConfig,
     pub artifacts: ArtifactConfig,
     pub observability: ObservabilityConfig,
@@ -227,6 +228,17 @@ pub struct QualityGateConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct VerificationConfig {
     pub commands: Vec<String>,
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Machine-local repository runtime-profile selection and probe limits.
+pub struct RuntimeProfileConfig {
+    /// Path to the credential-free JSON profile produced by onboarding.
+    pub path: PathBuf,
+    /// Whether Main must fail closed when the profile does not exist.
+    pub required: bool,
+    /// Maximum duration of each direct executable readiness probe.
     pub timeout_ms: u64,
 }
 
@@ -471,6 +483,7 @@ impl RuntimeConfig {
         let quality_gate = parse_quality_gate(root.get("quality_gate"));
         let verification = parse_verification(root.get("verification"));
         let profiles = parse_profiles(root.get("profiles"), workflow_dir);
+        let runtime_profile = parse_runtime_profile(root.get("runtime_profile"), workflow_dir);
         let identity = parse_identity(root.get("identity"));
         let artifacts = parse_artifacts(root.get("artifacts"), workflow_dir);
         let observability = ObservabilityConfig {
@@ -508,6 +521,7 @@ impl RuntimeConfig {
             quality_gate,
             verification,
             profiles,
+            runtime_profile,
             identity,
             artifacts,
             observability,
@@ -663,6 +677,10 @@ impl RuntimeConfig {
             self.quality_gate.llm.timeout_ms,
         )?;
         require_positive("verification.timeout_ms", self.verification.timeout_ms)?;
+        require_positive(
+            "runtime_profile.timeout_ms",
+            self.runtime_profile.timeout_ms,
+        )?;
 
         if self.tracker.kind == "github_project_v2" {
             require_present("tracker.owner", self.tracker.owner.as_deref())?;
@@ -840,6 +858,17 @@ fn parse_profiles(value: Option<&Value>, workflow_dir: &Path) -> ProfilesConfig 
             .map(|path| resolve_path(Some(&path), workflow_dir, Path::new(""))),
         },
         entries: parse_execution_profiles(get_value(value, "entries"), workflow_dir),
+    }
+}
+
+fn parse_runtime_profile(value: Option<&Value>, workflow_dir: &Path) -> RuntimeProfileConfig {
+    let runtime_root = workflow_dir.parent().unwrap_or(workflow_dir);
+    RuntimeProfileConfig {
+        path: get_string(value, "path")
+            .map(|path| resolve_path(Some(&path), workflow_dir, Path::new("")))
+            .unwrap_or_else(|| runtime_root.join("runtime-profile.json")),
+        required: get_bool(value, "required").unwrap_or(false),
+        timeout_ms: get_u64(value, "timeout_ms").unwrap_or(10_000),
     }
 }
 
@@ -1729,6 +1758,50 @@ mod tests {
             vec!["cargo test".to_string(), "cargo fmt --check".to_string()]
         );
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn parses_runtime_profile_config_separately_from_execution_profiles() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/repository/.shea/workflows/target.md",
+            "---\ntracker:\n  kind: memory\nruntime_profile:\n  path: ../machine-runtime.json\n  required: true\n  timeout_ms: 2500\n---\nPrompt",
+        )
+        .unwrap();
+        let config = RuntimeConfig::from_workflow(
+            &workflow,
+            Path::new("/tmp/repository/.shea/workflows/target.md"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.runtime_profile.path,
+            PathBuf::from("/tmp/repository/.shea/workflows/../machine-runtime.json")
+        );
+        assert!(config.runtime_profile.required);
+        assert_eq!(config.runtime_profile.timeout_ms, 2_500);
+        assert!(config.profiles.entries.is_empty());
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn runtime_profile_defaults_to_optional_target_runtime_file() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/repository/.shea/workflows/target.md",
+            "---\ntracker:\n  kind: memory\n---\nPrompt",
+        )
+        .unwrap();
+        let config = RuntimeConfig::from_workflow(
+            &workflow,
+            Path::new("/tmp/repository/.shea/workflows/target.md"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.runtime_profile.path,
+            PathBuf::from("/tmp/repository/.shea/runtime-profile.json")
+        );
+        assert!(!config.runtime_profile.required);
+        assert_eq!(config.runtime_profile.timeout_ms, 10_000);
     }
 
     #[test]

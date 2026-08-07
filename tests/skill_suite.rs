@@ -11,10 +11,20 @@ fn skill_suite_lists_human_review_skill() {
     let manifest = repo_file("skills/shea-symphony/manifest.toml");
     let readme = repo_file("skills/shea-symphony/README.md");
     let skill = repo_file("skills/shea-symphony/suite/shea-symphony-human-review/SKILL.md");
+    let installed = repo_file(".agents/skills/shea-symphony-human-review/SKILL.md");
+    let metadata =
+        repo_file("skills/shea-symphony/suite/shea-symphony-human-review/agents/openai.yaml");
+    let installed_metadata =
+        repo_file(".agents/skills/shea-symphony-human-review/agents/openai.yaml");
 
     assert!(manifest.contains("name = \"shea-symphony-human-review\""));
     assert!(manifest.contains("path = \"suite/shea-symphony-human-review\""));
     assert!(readme.contains("`shea-symphony-human-review`"));
+    assert_eq!(skill, installed, "repo-local Human Review skill drifted");
+    assert_eq!(
+        metadata, installed_metadata,
+        "repo-local Human Review metadata drifted"
+    );
     assert!(skill.contains("Accepted Human Review routes to `Merging`"));
     assert!(skill.contains("Native GitHub subissues are not routine Human Review surfaces"));
     assert!(skill.contains("Subissue Human Review Exception: <reason>"));
@@ -32,8 +42,12 @@ fn skill_suite_lists_human_review_skill() {
     ] {
         assert!(skill.contains(field), "missing visible brief field {field}");
     }
-    assert!(skill.contains("Internal reasoning, tool output"));
-    assert!(skill.contains("not satisfy this visible briefing contract"));
+    assert!(skill.contains("reasoning, tool output"));
+    assert!(skill.contains("test summaries do not"));
+    assert!(skill.contains("satisfy this visible briefing contract"));
+    assert!(skill.contains("## Operator-authorized UAT remediation"));
+    assert!(skill.contains("Mark the prior Agent Review PASS stale"));
+    assert!(skill.contains("Self-verification is not independent"));
 }
 
 #[test]
@@ -65,9 +79,18 @@ fn skill_suite_documents_app_server_first_manual_boundaries() {
 
     assert!(human_review.contains("Match the operator-facing language"));
     assert!(human_review.contains("Do not force English"));
-    assert!(human_review.contains("run the PR freshness preflight automatically"));
-    assert!(human_review.contains("not an operator-owned UAT"));
-    assert!(human_review.contains("After the orientation brief"));
+    assert!(human_review.contains("Run the PR freshness preflight automatically"));
+    assert!(human_review.contains("not operator-owned UAT"));
+    let freshness = human_review
+        .find("Run the PR freshness preflight automatically")
+        .expect("missing freshness step");
+    let brief = human_review
+        .find("Present one current five-field brief")
+        .expect("missing visible brief step");
+    assert!(
+        freshness < brief,
+        "freshness must precede the decision brief"
+    );
     assert!(human_review.contains("A UAT result\nalone is not confirmation"));
     assert!(manual_main.contains("Execute one operator-selected Main issue in the current task"));
     assert!(manual_main.contains("Do not create another task"));
@@ -149,21 +172,24 @@ fn parent_batch_human_review_brief_preserves_order_and_boundaries() {
 }
 
 #[test]
-fn human_review_handoff_requires_visible_operator_context() {
+fn human_review_handoff_launches_the_authoritative_skill_with_stale_context() {
     let prompt = repo_file(".shea/prompts/human-review-handoff.md");
 
-    for field in [
-        "Problem:",
+    assert!(prompt.contains("Use the shea-symphony-human-review skill"));
+    assert!(prompt.contains("{{ issue.identifier }} {{ issue.title }}"));
+    assert!(prompt.contains("refresh them before relying on them"));
+    assert!(prompt.contains("sole authoritative Human Review contract"));
+    assert!(prompt.contains("onboarding/configuration drift"));
+    for duplicated_contract in [
         "Delivered change:",
-        "Resulting effect:",
-        "Evidence:",
         "Human decision needed:",
+        "until the operator gives explicit approval",
     ] {
-        assert!(prompt.contains(field), "missing handoff field {field}");
+        assert!(
+            !prompt.contains(duplicated_contract),
+            "handoff duplicates skill behavior: {duplicated_contract}"
+        );
     }
-    assert!(prompt.contains("Internal reasoning, tool output"));
-    assert!(prompt.contains("do not satisfy this visible briefing requirement"));
-    assert!(prompt.contains("Never omit a field"));
 }
 
 #[test]

@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"claude-review-fixture"}
+{"type":"result","subtype":"success","is_error":false,"session_id":"claude-review-fixture","result":"{\"summary\":\"One confirmed defect.\",\"terminal_classification\":\"rework\",\"findings\":[{\"class\":\"confirmed\",\"severity\":\"high\",\"title\":\"Seeded defect\",\"body\":\"The fixture contains the seeded defect.\",\"file\":\"tracked.txt\",\"line\":1,\"evidence\":\"Fixture evidence\"}]}"}

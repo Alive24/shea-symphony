@@ -247,6 +247,18 @@ pub fn write_review_job_ledger_record(
     Ok(path)
 }
 
+/// Persists a terminal Review job ledger and attaches its path to the job used
+/// by downstream evidence and routing surfaces.
+pub fn persist_review_job_ledger_record(
+    logs_root: &Path,
+    issue: &TrackerIssue,
+    job: &mut ReviewJob,
+) -> Result<PathBuf, ReviewError> {
+    let path = write_review_job_ledger_record(logs_root, issue, job)?;
+    job.ledger_path = Some(path.clone());
+    Ok(path)
+}
+
 /// Constructs the durable ledger record consumed by Review status surfaces.
 pub fn review_job_ledger_record(
     issue: &TrackerIssue,

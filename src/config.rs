@@ -197,6 +197,8 @@ pub struct ReviewConfig {
     pub agy_command: String,
     /// Optional agy model override.
     pub agy_model: Option<String>,
+    /// Claude Code command, falling back to the shared Claude command.
+    pub claude_command: String,
     /// Codex app-server command, falling back to the shared Codex command.
     pub codex_command: String,
     /// Non-interactive Codex approval policy; Review currently requires `never`.
@@ -439,6 +441,10 @@ impl RuntimeConfig {
                 "agy",
             ),
             agy_model: get_string(review_lane_config, "agy_model"),
+            claude_command: resolve_command_token(
+                get_string(review_lane_config, "claude_command"),
+                &claude.command,
+            ),
             codex_command: resolve_command_token(
                 get_string(review_lane_config, "codex_command"),
                 &codex.command,
@@ -538,8 +544,14 @@ impl RuntimeConfig {
             ));
         }
         match self.review.backend.as_str() {
-            "fake" | "gemini-cli" | "agy-cli" | "codex-app-server" => {}
+            "fake" | "gemini-cli" | "agy-cli" | "codex-app-server" | "claude-code" => {}
             other => return Err(ConfigError::UnsupportedBackend(other.to_string())),
+        }
+        if self.review.backend == "claude-code" {
+            require_present(
+                "review_lane.claude_command",
+                Some(self.review.claude_command.as_str()),
+            )?;
         }
         if self.review.backend == "codex-app-server" {
             require_present(
@@ -1507,6 +1519,35 @@ mod tests {
         assert_eq!(config.review.codex_thread_sandbox, "read-only");
         assert_eq!(config.review.codex_turn_sandbox_policy, None);
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn claude_review_command_overrides_and_falls_back_to_shared_command() {
+        let fallback = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nclaude:\n  command: /opt/bin/claude --permission-mode plan\nreview_lane:\n  backend: claude-code\n---\nPrompt",
+        )
+        .unwrap();
+        let fallback =
+            RuntimeConfig::from_workflow(&fallback, Path::new("/tmp/WORKFLOW.md")).unwrap();
+        assert_eq!(
+            fallback.review.claude_command,
+            "/opt/bin/claude --permission-mode plan"
+        );
+        assert!(fallback.validate().is_ok());
+
+        let overridden = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\nclaude:\n  command: claude\nreview_lane:\n  backend: claude-code\n  claude_command: /opt/review/bin/claude --permission-mode plan\n---\nPrompt",
+        )
+        .unwrap();
+        let overridden =
+            RuntimeConfig::from_workflow(&overridden, Path::new("/tmp/WORKFLOW.md")).unwrap();
+        assert_eq!(
+            overridden.review.claude_command,
+            "/opt/review/bin/claude --permission-mode plan"
+        );
+        assert!(overridden.validate().is_ok());
     }
 
     #[test]

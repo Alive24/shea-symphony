@@ -14,12 +14,14 @@ use crate::model::{normalize_state, TrackerIssue};
 use crate::workflow::WorkflowDefinition;
 use crate::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 
+mod claude;
 mod codex;
 mod decision;
 mod freshness;
 mod gemini_health;
 mod job;
 mod report;
+mod structured;
 
 pub use decision::{
     main_agent_completion_decision, review_gate_decision, review_gate_decision_for_actor,
@@ -37,12 +39,14 @@ pub use gemini_health::{
     GeminiReviewHealthDiagnostic, GeminiReviewRecoveryPolicy,
 };
 pub use job::{
-    poll_review_job_until_terminal, review_job_is_terminal, review_job_ledger_record,
-    review_usage_limit_pause, write_review_job_ledger_record, ReviewBackend, ReviewBackendCommand,
-    ReviewError, ReviewJob, ReviewJobLedgerRecord, ReviewJobState, ReviewRequest,
+    persist_review_job_ledger_record, poll_review_job_until_terminal, review_job_is_terminal,
+    review_job_ledger_record, review_usage_limit_pause, write_review_job_ledger_record,
+    ReviewBackend, ReviewBackendCommand, ReviewError, ReviewJob, ReviewJobLedgerRecord,
+    ReviewJobState, ReviewRequest,
 };
 pub use report::{classify_findings, AgentReviewReport, ReviewFinding, ReviewFindingClass};
 
+use claude::ClaudeCodeReviewBackend;
 use codex::CodexAppServerReviewBackend;
 use gemini_health::{diagnose_agy_spawn_failure, diagnose_gemini_spawn_failure};
 use job::review_job_id;
@@ -148,6 +152,7 @@ impl ReviewBackend for FakeReviewBackend {
 
 pub fn review_backend_from_config(config: &ReviewConfig) -> Box<dyn ReviewBackend> {
     match config.backend.as_str() {
+        "claude-code" => Box::new(ClaudeCodeReviewBackend::from_config(config)),
         "codex-app-server" => Box::new(CodexAppServerReviewBackend::from_config(config)),
         "gemini-cli" => Box::new(GeminiCliReviewBackend::from_config(config)),
         "agy-cli" => Box::new(GeminiCliReviewBackend::from_agy_config(config)),
@@ -157,6 +162,7 @@ pub fn review_backend_from_config(config: &ReviewConfig) -> Box<dyn ReviewBacken
 
 pub fn review_backend_kind_from_config(config: &ReviewConfig) -> &'static str {
     match config.backend.as_str() {
+        "claude-code" => "claude-code",
         "codex-app-server" => "codex-app-server",
         "gemini-cli" => "gemini-cli",
         "agy-cli" => "agy-cli",
@@ -1599,6 +1605,7 @@ mod tests {
             gemini_allowed_tools: vec!["run_shell_command".into()],
             agy_command: "/Users/example/.local/bin/agy".into(),
             agy_model: Some("gemini-3.1-pro-preview".into()),
+            claude_command: "claude --permission-mode plan".into(),
             codex_command: "codex app-server".into(),
             codex_approval_policy: serde_json::json!("never"),
             codex_thread_sandbox: "read-only".into(),
@@ -1658,6 +1665,22 @@ mod tests {
         assert_eq!(backend.kind(), "codex-app-server");
         assert_eq!(preview.mode, "app-server");
         assert!(!preview.command.contains("secret"));
+        assert!(backend.prelaunch_error().unwrap().contains("was not found"));
+    }
+
+    #[test]
+    fn configured_review_backend_selects_claude_stream_json_boundary() {
+        let mut config = gemini_review_config();
+        config.backend = "claude-code".into();
+        config.claude_command = "/missing/claude --api-key secret".into();
+        let backend = review_backend_from_config(&config);
+        let preview = backend.command_preview().unwrap();
+
+        assert_eq!(review_backend_kind_from_config(&config), "claude-code");
+        assert_eq!(backend.kind(), "claude-code");
+        assert_eq!(preview.mode, "stream-json");
+        assert!(!preview.command.contains("secret"));
+        assert_eq!(preview.args, claude::claude_review_command_args());
         assert!(backend.prelaunch_error().unwrap().contains("was not found"));
     }
 
@@ -1866,6 +1889,7 @@ mod tests {
             gemini_allowed_tools: Vec::new(),
             agy_command: reviewer.display().to_string(),
             agy_model: Some("gemini-3.1-pro-preview".into()),
+            claude_command: "claude --permission-mode plan".into(),
             codex_command: "codex app-server".into(),
             codex_approval_policy: serde_json::json!("never"),
             codex_thread_sandbox: "read-only".into(),
@@ -2710,6 +2734,44 @@ mod tests {
             record.decision_target_state.as_deref(),
             Some("human_review")
         );
+    }
+
+    #[test]
+    fn persists_review_job_ledger_path_for_downstream_status_and_evidence() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut job = ReviewJob {
+            id: "agy-one-shot".into(),
+            issue_ref: "#1".into(),
+            backend: "agy-cli".into(),
+            state: ReviewJobState::Completed,
+            artifact_path: Some(temp.path().join("agy.output.json")),
+            ledger_path: None,
+            backend_session_id: None,
+            report: Some(AgentReviewReport {
+                reviewer_backend: "agy-cli".into(),
+                findings: Vec::new(),
+                summary: Some("Review Result: PASS".into()),
+                stdout: None,
+                stderr: None,
+                exit_status: Some("0".into()),
+                session_id: None,
+            }),
+            error: None,
+        };
+
+        let path = persist_review_job_ledger_record(temp.path(), &issue(), &mut job).unwrap();
+        let record: ReviewJobLedgerRecord =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+
+        assert_eq!(job.ledger_path.as_ref(), Some(&path));
+        assert_eq!(record.job_id, "agy-one-shot");
+        assert_eq!(record.backend, "agy-cli");
+        assert_eq!(record.decision_outcome, ReviewOutcome::PassedToHumanReview);
+        assert_eq!(
+            record.decision_target_state.as_deref(),
+            Some("human_review")
+        );
+        assert_eq!(record.artifact_path, job.artifact_path);
     }
 
     #[test]

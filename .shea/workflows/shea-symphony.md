@@ -82,6 +82,8 @@ review_lane:
   backend: agy-cli
   agy_command: /Users/chuntengxiao/.local/bin/agy
   agy_model: "Gemini 3.1 Pro (High)"
+  # Alternative: backend: claude-code. Optional claude_command overrides
+  # claude.command and should carry the operator's read-only permission policy.
   codex_approval_policy: never
   codex_thread_sandbox: read-only
   timeout_ms: 1200000

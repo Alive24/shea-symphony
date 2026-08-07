@@ -35,6 +35,7 @@ memory-backed. They do not mutate live GitHub Project v2 state.
 | --- | --- | --- |
 | `codex-subprocess-workflow.md` | Conservative Codex subprocess backend fixture. | Runs the configured command in the prepared workspace. |
 | `claude-stream-json-workflow.md` | Claude Code stream-json backend fixture shared by Main and Merge-agent selection. | Credential-free structured protocol evidence; live command policy remains operator-owned. |
+| `claude-review-workflow.md` | Independent Claude Code stream-json ReviewBackend fixture. | Credential-free pass/finding report evidence; the wrapper never modifies the reviewed workspace. |
 | `cockpit-profiles-workflow.md` | Execution profile discovery from a cockpit-tools-style fixture. | Reads `fixtures/cockpit-tools-codex-instances.json`; no secrets are used. |
 
 ## Review And Quality Gate Fixtures
@@ -43,6 +44,7 @@ memory-backed. They do not mutate live GitHub Project v2 state.
 | --- | --- | --- |
 | `review-fixture-workflow.md` | Review-loop fixture backed by `fixtures/review-issues.json`. | Uses configured review flow without live reviewer credentials. |
 | `review-fake-workflow.md` | Fake review backend smoke path over dry-run issues. | Useful for role-bound transition checks. |
+| `claude-review-workflow.md` | Claude Review adapter and structured-report fixture. | Set `SHEA_CLAUDE_REVIEW_FIXTURE=finding` for the confirmed-finding response. |
 | `llm-gate-workflow.md` | Optional command-backed LLM quality gate fixtures. | Uses shell fixtures in `fixtures/llm-gate-*.sh`; no hosted provider is called. |
 
 ## Topology Fixtures
@@ -57,6 +59,7 @@ memory-backed. They do not mutate live GitHub Project v2 state.
 | --- | --- |
 | `fixtures/dry-run-issues.json` | `dry-run-workflow.md`, `codex-subprocess-workflow.md`, `claude-stream-json-workflow.md`, `review-fake-workflow.md`, `cockpit-profiles-workflow.md` |
 | `fixtures/claude-stream-json-*.jsonl` | Claude structured success, error, cancellation, malformed, and truncated transport tests |
+| `fixtures/claude-review-*.jsonl` | Backend-neutral Claude Review pass and confirmed-finding reports |
 | `fixtures/source-alignment-issues.json` | `source-alignment-workflow.md` |
 | `fixtures/usage-limit-issues.json` | `usage-limit-workflow.md` |
 | `fixtures/git-identity-issues.json` | `git-identity-workflow.md` |

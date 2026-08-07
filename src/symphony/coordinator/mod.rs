@@ -16,6 +16,7 @@ use time::{OffsetDateTime, UtcOffset};
 
 use super::{IssueRef, WorkflowId};
 
+pub(crate) mod reconcile;
 pub(crate) mod start;
 
 /// Maximum accepted byte length of an activation's audit reason.

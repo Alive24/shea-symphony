@@ -523,7 +523,8 @@ impl LocalStateProjector {
                     operator_action_ref.as_deref(),
                 )?;
                 validate_required("run_id", &run_id)?;
-                let started_at = format_timestamp(started_at)?;
+                let described_started_at = started_at;
+                let started_at = format_timestamp(described_started_at)?;
                 let observed_at = format_timestamp(observed_at)?;
                 // V1 intentionally retains close time as Describe input only;
                 // it must not be overloaded into `started_at` or an outcome.
@@ -574,17 +575,30 @@ impl LocalStateProjector {
                         );
                     }
 
-                    if row.run_id.as_deref() != Some(run_id.as_str())
-                        || row.started_at != started_at
-                    {
-                        // A closed observation for another Run cannot terminate
-                        // the newer Run stored under this Workflow ID.
+                    let same_run = row.run_id.as_deref() == Some(run_id.as_str());
+                    if same_run && row.started_at != started_at {
                         return Ok(WorkflowLifecycleProjectionOutcome::StaleObservation { row });
+                    }
+                    if !same_run {
+                        // Current Describe may report a newer Run which has
+                        // already closed. It can replace a stale local running
+                        // locator only when Temporal's authoritative start time
+                        // proves it is newer; it never reclassifies terminal
+                        // rows or closes a newer stored Run.
+                        if row.status != WorkflowIndexStatus::Running
+                            || described_started_at <= parse_persisted_timestamp(&row.started_at)?
+                        {
+                            return Ok(WorkflowLifecycleProjectionOutcome::StaleObservation {
+                                row,
+                            });
+                        }
                     }
 
                     match row.status {
                         WorkflowIndexStatus::Running => {
                             let mut closed = row;
+                            closed.run_id = Some(run_id);
+                            closed.started_at = started_at;
                             closed.current_state = current_state;
                             closed.active_step = WORKFLOW_CLOSED_STEP.to_string();
                             closed.waiting_kind = None;
@@ -1392,6 +1406,34 @@ mod tests {
             completed.updated_at,
             format_timestamp(timestamp(60)).unwrap()
         );
+    }
+
+    #[test]
+    fn newer_current_closed_describe_replaces_a_stale_running_run() {
+        let fixture = fixture();
+        let _ = applied(
+            fixture
+                .projector
+                .project(open("workflow-a", "run-old", 10, 20))
+                .unwrap(),
+        );
+
+        let closed = applied(
+            fixture
+                .projector
+                .project(closed(
+                    "workflow-a",
+                    "run-current",
+                    30,
+                    40,
+                    Some(WorkflowCloseStatus::Completed),
+                ))
+                .unwrap(),
+        );
+
+        assert_eq!(closed.run_id.as_deref(), Some("run-current"));
+        assert_eq!(closed.started_at, format_timestamp(timestamp(30)).unwrap());
+        assert_eq!(closed.status, WorkflowIndexStatus::Completed);
     }
 
     #[test]

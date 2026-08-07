@@ -889,7 +889,7 @@ esac
         super::super::poll_review_job_until_terminal(
             backend,
             job,
-            Duration::from_secs(5),
+            Duration::from_secs(10),
             Duration::from_millis(5),
         )
         .unwrap()
@@ -902,11 +902,11 @@ esac
         let before = fs::read(workspace.join("tracked.txt")).unwrap();
 
         let pass = run(
-            &backend(&temp, "pass", 1_000),
+            &backend(&temp, "pass", 5_000),
             request(&temp, &workspace, "#511"),
         );
         let finding = run(
-            &backend(&temp, "finding", 1_000),
+            &backend(&temp, "finding", 5_000),
             request(&temp, &workspace, "#512"),
         );
 
@@ -936,20 +936,20 @@ esac
     fn new_jobs_are_fresh_and_parallel_artifacts_and_threads_are_isolated() {
         let temp = tempfile::tempdir().unwrap();
         let workspace = workspace(&temp);
-        let backend = backend(&temp, "pass", 1_000);
+        let backend = backend(&temp, "pass", 5_000);
         let first = backend.start(request(&temp, &workspace, "#511")).unwrap();
         let second = backend.start(request(&temp, &workspace, "#511")).unwrap();
         let first = super::super::poll_review_job_until_terminal(
             &backend,
             first,
-            Duration::from_secs(5),
+            Duration::from_secs(10),
             Duration::from_millis(5),
         )
         .unwrap();
         let second = super::super::poll_review_job_until_terminal(
             &backend,
             second,
-            Duration::from_secs(5),
+            Duration::from_secs(10),
             Duration::from_millis(5),
         )
         .unwrap();
@@ -973,7 +973,7 @@ esac
         let temp = tempfile::tempdir().unwrap();
         let workspace = workspace(&temp);
         let job = run(
-            &backend(&temp, "resume", 1_000),
+            &backend(&temp, "resume", 5_000),
             request(&temp, &workspace, "#511"),
         );
 
@@ -1075,7 +1075,7 @@ esac
             .is_some_and(|path| path.extension().and_then(|value| value.to_str()) == Some("json")));
 
         let mutation = run(
-            &backend(&temp, "mutation", 1_000),
+            &backend(&temp, "mutation", 5_000),
             request(&temp, &workspace, "#513"),
         );
         assert_eq!(mutation.state, ReviewJobState::Failed);

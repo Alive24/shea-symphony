@@ -14,12 +14,14 @@ use crate::model::{normalize_state, TrackerIssue};
 use crate::workflow::WorkflowDefinition;
 use crate::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 
+mod claude;
 mod codex;
 mod decision;
 mod freshness;
 mod gemini_health;
 mod job;
 mod report;
+mod structured;
 
 pub use decision::{
     main_agent_completion_decision, review_gate_decision, review_gate_decision_for_actor,
@@ -43,6 +45,7 @@ pub use job::{
 };
 pub use report::{classify_findings, AgentReviewReport, ReviewFinding, ReviewFindingClass};
 
+use claude::ClaudeCodeReviewBackend;
 use codex::CodexAppServerReviewBackend;
 use gemini_health::{diagnose_agy_spawn_failure, diagnose_gemini_spawn_failure};
 use job::review_job_id;
@@ -148,6 +151,7 @@ impl ReviewBackend for FakeReviewBackend {
 
 pub fn review_backend_from_config(config: &ReviewConfig) -> Box<dyn ReviewBackend> {
     match config.backend.as_str() {
+        "claude-code" => Box::new(ClaudeCodeReviewBackend::from_config(config)),
         "codex-app-server" => Box::new(CodexAppServerReviewBackend::from_config(config)),
         "gemini-cli" => Box::new(GeminiCliReviewBackend::from_config(config)),
         "agy-cli" => Box::new(GeminiCliReviewBackend::from_agy_config(config)),
@@ -157,6 +161,7 @@ pub fn review_backend_from_config(config: &ReviewConfig) -> Box<dyn ReviewBacken
 
 pub fn review_backend_kind_from_config(config: &ReviewConfig) -> &'static str {
     match config.backend.as_str() {
+        "claude-code" => "claude-code",
         "codex-app-server" => "codex-app-server",
         "gemini-cli" => "gemini-cli",
         "agy-cli" => "agy-cli",
@@ -1599,6 +1604,7 @@ mod tests {
             gemini_allowed_tools: vec!["run_shell_command".into()],
             agy_command: "/Users/example/.local/bin/agy".into(),
             agy_model: Some("gemini-3.1-pro-preview".into()),
+            claude_command: "claude --permission-mode plan".into(),
             codex_command: "codex app-server".into(),
             codex_approval_policy: serde_json::json!("never"),
             codex_thread_sandbox: "read-only".into(),
@@ -1658,6 +1664,22 @@ mod tests {
         assert_eq!(backend.kind(), "codex-app-server");
         assert_eq!(preview.mode, "app-server");
         assert!(!preview.command.contains("secret"));
+        assert!(backend.prelaunch_error().unwrap().contains("was not found"));
+    }
+
+    #[test]
+    fn configured_review_backend_selects_claude_stream_json_boundary() {
+        let mut config = gemini_review_config();
+        config.backend = "claude-code".into();
+        config.claude_command = "/missing/claude --api-key secret".into();
+        let backend = review_backend_from_config(&config);
+        let preview = backend.command_preview().unwrap();
+
+        assert_eq!(review_backend_kind_from_config(&config), "claude-code");
+        assert_eq!(backend.kind(), "claude-code");
+        assert_eq!(preview.mode, "stream-json");
+        assert!(!preview.command.contains("secret"));
+        assert_eq!(preview.args, crate::agent::claude_stream_json_args());
         assert!(backend.prelaunch_error().unwrap().contains("was not found"));
     }
 
@@ -1866,6 +1888,7 @@ mod tests {
             gemini_allowed_tools: Vec::new(),
             agy_command: reviewer.display().to_string(),
             agy_model: Some("gemini-3.1-pro-preview".into()),
+            claude_command: "claude --permission-mode plan".into(),
             codex_command: "codex app-server".into(),
             codex_approval_policy: serde_json::json!("never"),
             codex_thread_sandbox: "read-only".into(),

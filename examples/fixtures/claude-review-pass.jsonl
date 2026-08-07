@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"claude-review-fixture"}
+{"type":"result","subtype":"success","is_error":false,"session_id":"claude-review-fixture","result":"{\"summary\":\"No confirmed findings.\",\"terminal_classification\":\"pass\",\"findings\":[]}"}

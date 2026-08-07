@@ -38,7 +38,7 @@ summary = "Manual Main Agent lane for implementation work that stops at Agent Re
 name = "shea-symphony-manual-review"
 path = "suite/shea-symphony-manual-review"
 targets = ["codex", "gemini"]
-summary = "Manual Review Agent lane for evidence-backed review and Human Review routing."
+summary = "Operator-triggered review through the external backend configured by the active workflow."
 
 [[skills]]
 name = "shea-symphony-human-review"

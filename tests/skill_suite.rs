@@ -69,9 +69,12 @@ fn skill_suite_documents_app_server_first_manual_boundaries() {
     assert!(human_review.contains("not an operator-owned UAT"));
     assert!(human_review.contains("After the orientation brief"));
     assert!(human_review.contains("A UAT result\nalone is not confirmation"));
-    assert!(manual_main.contains("cargo run -- project state .shea/workflows/shea-symphony.md"));
-    assert!(manual_main.contains("main_lane.backend: codex"));
-    assert!(manual_main.contains("codex.command: codex app-server -c 'service_tier=\"fast\"'"));
+    assert!(manual_main.contains("Execute one operator-selected Main issue in the current task"));
+    assert!(manual_main.contains("Do not create another task"));
+    assert!(manual_main.contains("workspace adopt"));
+    assert!(manual_main.contains("do not\ncreate a nested worktree there"));
+    assert!(manual_main
+        .contains("Adoption transfers issue-workspace evidence, not cleanup\n   ownership"));
     assert!(manual_merge.contains("cargo run -- merge loop .shea/workflows/shea-symphony.md"));
     assert!(manual_merge.contains("app-server"));
     assert!(!manual_merge.contains("merge-once"));
@@ -170,7 +173,6 @@ fn autoloop_dogfood_docs_prefer_foreground_loop() {
     let supervised_runbook = repo_file("docs/supervised-live-dogfood.md");
     let launcher = repo_file("scripts/shea-dogfood");
     let suite_readme = repo_file("skills/shea-symphony/README.md");
-    let manual_main = repo_file("skills/shea-symphony/suite/shea-symphony-manual-main/SKILL.md");
     let manual_review =
         repo_file("skills/shea-symphony/suite/shea-symphony-manual-review/SKILL.md");
     let manual_merge = repo_file("skills/shea-symphony/suite/shea-symphony-manual-merge/SKILL.md");
@@ -180,7 +182,6 @@ fn autoloop_dogfood_docs_prefer_foreground_loop() {
         &operator_dogfood,
         &supervised_runbook,
         &suite_readme,
-        &manual_main,
         &manual_review,
         &manual_merge,
     ] {

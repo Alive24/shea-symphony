@@ -1,6 +1,6 @@
 ---
 name: shea-symphony-manual-main
-description: Use when the operator wants this agent to execute one Shea Symphony Main-lane issue now, including Todo implementation, Main-lane Rework, or resumable In Progress work. Perform the claim, isolated worktree work, verification, PR publication, tracker evidence, and Agent Review handoff in the current task. Do not use this skill merely to write a prompt or delegate Main work to another task.
+description: Use when the operator wants this agent to execute one Shea Symphony Main-lane issue now, including Todo implementation, explicitly authorized Backlog pickup without promotion, Main-lane Rework, or resumable In Progress work. Perform the isolated worktree work, verification, PR publication, tracker evidence, and Agent Review handoff in the current task. Do not use this skill merely to write a prompt or delegate Main work to another task.
 metadata:
   short-description: Execute one manual Shea Symphony Main lane
   suite-version: 2026.08.07
@@ -22,6 +22,8 @@ selected issue is genuinely outside Main authority.
 Main owns:
 
 - `Todo` implementation;
+- an operator-named Backlog issue when the operator explicitly says to execute
+  it without promotion and its body passes the Todo-grade contract gate;
 - Main-lane `Rework` caused by Agent Review findings or a Human Review contract
   revision;
 - clearly resumable `In Progress` work already claimed by this Main worker;
@@ -30,15 +32,16 @@ Main owns:
 
 Main does not own:
 
-- Backlog shaping or promotion;
+- shaping, promoting, or selecting an ordinary Backlog item without explicit
+  operator execution authority;
 - independent review, UAT approval, or Human Review decisions;
 - `Merging`, merge-lane `Rework`, or merging a PR.
 
-Use `$shea-symphony-issue-forge` for Backlog promotion,
+Use `$shea-symphony-issue-forge` for ordinary Backlog shaping or promotion,
 `$shea-symphony-manual-review` for review, and
 `$shea-symphony-manual-merge` for merge-lane work. A Backlog issue is not an
-implementation instruction: report that it must be promoted and stop without
-claiming or editing code.
+implementation instruction by itself. Execute it only through the explicit
+operator-confirmed fast path below.
 
 ## Bind the Active Repository
 
@@ -96,13 +99,25 @@ evidence and stop instead of retrying scans.
 
 Proceed only when all are true:
 
-- status is `Todo`, Main-lane `Rework`, or matching/resumable `In Progress`;
+- status is `Todo`, Main-lane `Rework`, matching/resumable `In Progress`, or an
+  explicitly operator-authorized Backlog pickup;
 - the `Main Agent` field is empty or identifies this worker/session;
 - native `blocked by` relationships are terminal or explicitly non-blocking;
 - every native subissue of a parent issue has Project status `Done`;
 - Issue Quality Gate is `Ready` or `ReadyWithAssumptions`;
 - the issue contract is implementable without inventing product decisions;
 - the target base branch and existing workspace/PR identity are unambiguous.
+
+For a Backlog pickup, additionally validate the current title and body as a
+Todo-grade draft without changing tracker state:
+
+```bash
+"$SHEA_CLI" forge validate --workflow "$SHEA_WORKFLOW" --status todo \
+  --title "<current-title>" --body-file "<current-body.md>"
+```
+
+Do not use the relaxed Backlog validation result as proof that the issue is
+implementation-ready.
 
 An issue being closed is not proof that its Project dependency or subissue gate
 is terminal. For Main-lane `Rework` created by `forge rework`, a missing linked
@@ -116,7 +131,8 @@ and ask basic scope questions afterward.
 
 ## Claim and Workspace
 
-After all read-only gates pass:
+After all read-only gates pass, use the normal claim path for `Todo`, `Rework`,
+or resumable `In Progress`:
 
 1. Choose a stable worker identity for this task.
 2. Claim through the supported CLI, not raw Project GraphQL:
@@ -138,6 +154,26 @@ After all read-only gates pass:
 The configured workspace root controls where a new worktree belongs. One issue
 has one implementation branch, one canonical worktree, and one PR. Do not push
 unrelated canonical-checkout changes into the issue branch.
+
+### Operator-confirmed Backlog fast path
+
+Use this only when the operator names the issue and explicitly chooses direct
+Manual Main execution without promotion:
+
+1. Keep Project Status `Backlog` during implementation so unattended Main does
+   not compete for the issue.
+2. Do not call `main claim` and do not move the issue to `In Progress`; those
+   commands implement the normal dispatchable-state path.
+3. Confirm there is no existing Main claim, conflicting worktree, branch, or PR.
+4. Record the operator confirmation, Todo-grade validation result, and the
+   intentional skipped states in the canonical Main Workpad.
+5. Follow the same isolated worktree, implementation, verification, ready PR,
+   linked-PR, and evidence requirements as normal Main.
+6. If work cannot reach a ready PR, leave the issue in Backlog and record the
+   blocker. Do not manufacture a partial handoff.
+7. Once every Main handoff gate passes, move directly from Backlog to
+   `Agent Review` as the final mutation and verify the readback. This is the
+   only status skip authorized by this fast path.
 
 ## Execute the Main Loop
 
@@ -214,7 +250,8 @@ claim, workspace/PR updates, workpad write, PR readiness check, linkage check,
 and supporting evidence before the status transition. Afterward, perform only
 readback verification.
 
-- Never implement a Backlog issue.
+- Never implement a Backlog issue without explicit operator execution authority
+  and a passing Todo-grade contract validation.
 - Never bypass issue quality, dependency, subissue, or target-branch gates.
 - Never move an issue to `Human Review`.
 - Never merge a PR or use the `Merging Agent` field.

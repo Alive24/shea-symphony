@@ -48,7 +48,7 @@ must not be edited by Shea Symphony implementation work.
 | Issue Quality Gate | Landed | `src/quality_gate.rs`, `docs/bootstrap/ISSUE_QUALITY_GATE_TEMPLATE.md` | Semantic/LLM-assisted checks remain optional and conservative. |
 | Issue Forge | Partial | `src/issue_forge.rs`, README command docs | Tracker creation exists; richer field setup and conversational UI remain follow-ups. |
 | Workspace lifecycle | Partial | `src/workspace.rs`, `src/handoff.rs`, `src/git_handoff.rs`, `clean plan` command | Terminal cleanup planning exists; automatic runtime cleanup and remote/SSH parity are not complete. |
-| Agent backend abstraction | Partial | `src/agent.rs`, Codex/Claude subprocess workflows | Full Codex app-server and Claude Code protocol parity are deferred. |
+| Agent backend abstraction | Implemented | `src/agent.rs`, Codex app-server transport, Claude Code stream-json workflow | Codex and Claude expose the same normalized lane lifecycle through their native structured transports. |
 | Run loop/orchestrator | Partial | `src/orchestrator.rs`, `src/main.rs`, `src/runtime_state.rs`, `autopilot plan`, `autopilot loop` | Bounded foreground all-lane supervision exists; unbounded daemon/background operation, richer reconciliation, and fully autonomous operation are not complete. |
 | Agent Review boundary | Partial | `src/review.rs`, `review loop`, review job ledger docs | Bounded `review loop` and durable review evidence exist; persistent background reviewer supervision is still incomplete. |
 | Merging lane | Partial | `src/merge_lane.rs`, `merge once`, `merge loop` command | Guarded one-shot and bounded pool landing exist; unbounded continuous merge polling and richer reconciliation are not complete. |
@@ -74,7 +74,7 @@ These items remain blockers for claiming broad self-running parity:
 
 1. Full Codex app-server protocol parity with session, turn, usage, and
    rate-limit accounting.
-2. Full Claude Code protocol parity beyond conservative subprocess execution.
+2. Richer optional dynamic-tool integration beyond the current structured lane transports.
 3. Persistent or unbounded worker supervision with retry, continuation, stall
    recovery, and terminal workspace cleanup wired into reconciliation. Bounded
    foreground Autoloop is not a daemon and does not close this obligation

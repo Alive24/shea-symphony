@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"claude-session-510","cwd":"/fixture/worktree","tools":["Read","Edit","Bash"]}
+{"type":"assistant","session_id":"claude-session-510","message":{"role":"assistant","content":[{"type":"text","text":"Inspecting the issue worktree."},{"type":"tool_use","id":"tool-1","name":"Read","input":{"file_path":"README.md"}}],"usage":{"input_tokens":12,"output_tokens":7}}}
+{"type":"user","session_id":"claude-session-510","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"fixture","is_error":false}]}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"claude-session-510","result":"Claude completed the fixture task.","duration_ms":25,"num_turns":1}

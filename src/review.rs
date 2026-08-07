@@ -39,9 +39,10 @@ pub use gemini_health::{
     GeminiReviewHealthDiagnostic, GeminiReviewRecoveryPolicy,
 };
 pub use job::{
-    poll_review_job_until_terminal, review_job_is_terminal, review_job_ledger_record,
-    review_usage_limit_pause, write_review_job_ledger_record, ReviewBackend, ReviewBackendCommand,
-    ReviewError, ReviewJob, ReviewJobLedgerRecord, ReviewJobState, ReviewRequest,
+    persist_review_job_ledger_record, poll_review_job_until_terminal, review_job_is_terminal,
+    review_job_ledger_record, review_usage_limit_pause, write_review_job_ledger_record,
+    ReviewBackend, ReviewBackendCommand, ReviewError, ReviewJob, ReviewJobLedgerRecord,
+    ReviewJobState, ReviewRequest,
 };
 pub use report::{classify_findings, AgentReviewReport, ReviewFinding, ReviewFindingClass};
 
@@ -2733,6 +2734,44 @@ mod tests {
             record.decision_target_state.as_deref(),
             Some("human_review")
         );
+    }
+
+    #[test]
+    fn persists_review_job_ledger_path_for_downstream_status_and_evidence() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut job = ReviewJob {
+            id: "agy-one-shot".into(),
+            issue_ref: "#1".into(),
+            backend: "agy-cli".into(),
+            state: ReviewJobState::Completed,
+            artifact_path: Some(temp.path().join("agy.output.json")),
+            ledger_path: None,
+            backend_session_id: None,
+            report: Some(AgentReviewReport {
+                reviewer_backend: "agy-cli".into(),
+                findings: Vec::new(),
+                summary: Some("Review Result: PASS".into()),
+                stdout: None,
+                stderr: None,
+                exit_status: Some("0".into()),
+                session_id: None,
+            }),
+            error: None,
+        };
+
+        let path = persist_review_job_ledger_record(temp.path(), &issue(), &mut job).unwrap();
+        let record: ReviewJobLedgerRecord =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+
+        assert_eq!(job.ledger_path.as_ref(), Some(&path));
+        assert_eq!(record.job_id, "agy-one-shot");
+        assert_eq!(record.backend, "agy-cli");
+        assert_eq!(record.decision_outcome, ReviewOutcome::PassedToHumanReview);
+        assert_eq!(
+            record.decision_target_state.as_deref(),
+            Some("human_review")
+        );
+        assert_eq!(record.artifact_path, job.artifact_path);
     }
 
     #[test]

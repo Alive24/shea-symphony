@@ -17,10 +17,9 @@ use shea_symphony::review::{
     render_repeated_review_failure_workpad, render_review_workpad_with_workflow,
     review_backend_from_config, review_backend_kind_from_config, review_failure_signature,
     review_gate_decision_for_issue, review_run_eligibility, review_worker_key,
-    transition_allowed_for_review_agent, write_review_job_ledger_record, FakeReviewBackend,
+    persist_review_job_ledger_record, transition_allowed_for_review_agent, FakeReviewBackend,
     FakeReviewOutcome, GeminiReviewRecoveryPolicy, ReviewBackend, ReviewGateDecision, ReviewJob,
-    ReviewJobState, ReviewOutcome, ReviewRepeatedFailureEvidence, ReviewRequest,
-    ReviewRunEligibility,
+    ReviewJobState, ReviewOutcome, ReviewRepeatedFailureEvidence, ReviewRequest, ReviewRunEligibility,
 };
 use shea_symphony::rework::rework_transition_expected;
 #[cfg(test)]
@@ -66,7 +65,9 @@ pub(crate) fn review_fake(
         artifact_root: config.observability.logs_root.join("reviews"),
     };
     let backend = FakeReviewBackend::new(outcome);
-    let job = backend.poll(backend.start(request)?)?;
+    let mut job = backend.poll(backend.start(request)?)?;
+    let ledger_path =
+        persist_review_job_ledger_record(&config.observability.logs_root, &issue, &mut job)?;
     apply_review_result(
         Some(&workflow),
         &config,
@@ -80,8 +81,10 @@ pub(crate) fn review_fake(
 
     let decision = review_gate_decision_for_issue(&job, &issue);
     println!(
-        "review_fake=ok issue_ref={issue_ref} outcome={:?} target_state={:?}",
-        decision.outcome, decision.target_state
+        "review_fake=ok issue_ref={issue_ref} outcome={:?} target_state={:?} ledger={}",
+        decision.outcome,
+        decision.target_state,
+        ledger_path.display()
     );
     println!("{}", decision.message);
     Ok(())
@@ -107,7 +110,9 @@ pub(crate) fn review_once(
         artifact_root: config.observability.logs_root.join("reviews"),
     };
     let backend = review_backend_from_config(&config.review);
-    let job = run_configured_review_backend(&config, &issue, backend.as_ref(), request)?;
+    let mut job = run_configured_review_backend(&config, &issue, backend.as_ref(), request)?;
+    let ledger_path =
+        persist_review_job_ledger_record(&config.observability.logs_root, &issue, &mut job)?;
     apply_review_result(
         Some(&workflow),
         &config,
@@ -121,8 +126,11 @@ pub(crate) fn review_once(
 
     let decision = review_gate_decision_for_issue(&job, &issue);
     println!(
-        "review_once=ok issue_ref={issue_ref} backend={} outcome={:?} target_state={:?}",
-        job.backend, decision.outcome, decision.target_state
+        "review_once=ok issue_ref={issue_ref} backend={} outcome={:?} target_state={:?} ledger={}",
+        job.backend,
+        decision.outcome,
+        decision.target_state,
+        ledger_path.display()
     );
     println!("{}", decision.message);
     Ok(())
@@ -547,9 +555,11 @@ pub(crate) fn review_loop_with_summary(
                     "review worker thread panicked",
                 ),
             };
-            let ledger_path =
-                write_review_job_ledger_record(&config.observability.logs_root, &latest, &job)?;
-            job.ledger_path = Some(ledger_path.clone());
+            let ledger_path = persist_review_job_ledger_record(
+                &config.observability.logs_root,
+                &latest,
+                &mut job,
+            )?;
             let repeat_evidence =
                 review_loop_repeated_failure_evidence(&mut failure_memory, &latest, &job);
             apply_review_result(

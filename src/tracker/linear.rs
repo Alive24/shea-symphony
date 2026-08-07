@@ -7,8 +7,9 @@ use crate::model::{normalize_state, BlockerRef, LinkedPullRequest, TrackerIssue}
 use super::follow_up::follow_up_issue_body;
 use super::workpad::ensure_workpad_marker;
 use super::{
-    issue_matches_assignee_filter, json_number_to_i64, load_fixture, string_nodes,
-    FollowUpIssueInput, MemoryTracker, TrackerAdapter, TrackerError,
+    issue_matches_assignee_filter, json_number_to_i64, load_fixture,
+    resolve_configured_tracker_state, string_nodes, FollowUpIssueInput, MemoryTracker,
+    TrackerAdapter, TrackerError,
 };
 
 #[derive(Debug, Clone)]
@@ -784,27 +785,13 @@ fn linear_blocker_refs(issue: &serde_json::Value) -> Vec<BlockerRef> {
 
 pub(super) fn linear_state_option_name(
     config: &RuntimeConfig,
-    normalized_state: &str,
+    state_input: &str,
 ) -> Result<String, TrackerError> {
-    let state_map = &config.tracker.state_map;
-    let option = match normalized_state {
-        "backlog" => &state_map.backlog,
-        "todo" => &state_map.todo,
-        "need_to_clarify" | "need to clarify" => &state_map.need_to_clarify,
-        "in_progress" | "in progress" => &state_map.in_progress,
-        "need_human_input" | "need human input" => &state_map.need_human_input,
-        "agent_review" | "agent review" => &state_map.agent_review,
-        "human_review" | "human review" => &state_map.human_review,
-        "rework" => &state_map.rework,
-        "merging" => &state_map.merging,
-        "done" => &state_map.done,
-        other => {
-            return Err(TrackerError::IntegrationUnavailable(format!(
-                "unsupported normalized Linear state {other:?}"
-            )))
-        }
-    };
-    Ok(option.clone())
+    Ok(
+        resolve_configured_tracker_state(&config.tracker.state_map, state_input)?
+            .display_value()
+            .to_string(),
+    )
 }
 
 fn expect_linear_success(

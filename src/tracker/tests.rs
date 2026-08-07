@@ -1488,7 +1488,7 @@ Prompt
 fn status_update_required_skips_same_mapped_state() {
     assert!(!status_update_required(
         &issue("In Progress"),
-        "in_progress"
+        " in progress "
     ));
     assert!(!status_update_required(
         &issue("Agent Review"),
@@ -1573,7 +1573,7 @@ tracker:
   fixture_path: issues.json
   state_map:
     in_progress: Started
-    agent_review: Agent Review
+    agent_review: Verification Queue
 ---
 Prompt
 "#,
@@ -1584,8 +1584,8 @@ Prompt
         "Started"
     );
     assert_eq!(
-        linear_state_option_name(&config, "agent review").unwrap(),
-        "Agent Review"
+        linear_state_option_name(&config, " verification queue ").unwrap(),
+        "Verification Queue"
     );
     assert!(linear_state_option_name(&config, "unknown").is_err());
 }

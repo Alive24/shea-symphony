@@ -26,7 +26,10 @@ pub use github::GithubProjectReadMode;
 pub use linear::LinearAdapter;
 pub use memory::MemoryTracker;
 pub use project_field::ProjectFieldAssignment;
-pub use state::{claim_decision, ClaimDecision};
+pub use state::{
+    claim_decision, resolve_configured_tracker_state, ClaimDecision, ResolvedTrackerState,
+    TrackerStateResolutionError,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct IssueRelationshipRef {
@@ -93,7 +96,7 @@ use github::{
 use linear::{linear_graphql_error_message, linear_issues_from_response, linear_state_option_name};
 #[cfg(test)]
 use state::status_update_required;
-use state::{issue_matches_assignee_filter, status_is_mapped, tracker_state_key};
+use state::{configured_state_has_key, issue_matches_assignee_filter, status_is_mapped};
 #[cfg(test)]
 use workpad::duplicate_workpad_body;
 
@@ -388,9 +391,7 @@ fn github_issue_needs_native_blocker_prefetch(
     issue: &TrackerIssue,
     config: &RuntimeConfig,
 ) -> bool {
-    let state = tracker_state_key(&issue.state);
-    state == tracker_state_key(&config.tracker.state_map.todo)
-        || state == tracker_state_key(&config.tracker.state_map.rework)
+    configured_state_has_key(&config.tracker.state_map, &issue.state, &["todo", "rework"])
 }
 
 fn github_issue_needs_native_subissue_prefetch(
@@ -400,10 +401,11 @@ fn github_issue_needs_native_subissue_prefetch(
     if has_native_subissue_fields(issue) {
         return false;
     }
-    let state = tracker_state_key(&issue.state);
-    let main_lane_state = state == tracker_state_key(&config.tracker.state_map.todo)
-        || state == tracker_state_key(&config.tracker.state_map.rework)
-        || state == tracker_state_key(&config.tracker.state_map.in_progress);
+    let main_lane_state = configured_state_has_key(
+        &config.tracker.state_map,
+        &issue.state,
+        &["todo", "rework", "in_progress"],
+    );
     main_lane_state
         && issue
             .description

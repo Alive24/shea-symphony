@@ -95,6 +95,108 @@ fn skill_suite_routes_checkpoints_to_reflect_and_failures_to_doctor() {
 }
 
 #[test]
+fn doctor_skill_defines_bounded_repository_contract_repair() {
+    let doctor = repo_file("skills/shea-symphony/suite/shea-symphony-doctor/SKILL.md");
+    let installed = repo_file(".agents/skills/shea-symphony-doctor/SKILL.md");
+    let metadata = repo_file("skills/shea-symphony/suite/shea-symphony-doctor/agents/openai.yaml");
+    let installed_metadata = repo_file(".agents/skills/shea-symphony-doctor/agents/openai.yaml");
+    let reference = repo_file(
+        "skills/shea-symphony/suite/shea-symphony-doctor/references/repository-contract-repair.md",
+    );
+    let installed_reference =
+        repo_file(".agents/skills/shea-symphony-doctor/references/repository-contract-repair.md");
+    let manifest = repo_file("skills/shea-symphony/manifest.toml");
+    let installer = repo_file("scripts/install-shea-symphony-skills.js");
+    let operator_doc = repo_file("docs/operator-doctor.md");
+
+    assert_eq!(doctor, installed, "repo-local Doctor skill drifted");
+    assert_eq!(metadata, installed_metadata, "Doctor metadata drifted");
+    assert_eq!(reference, installed_reference, "Doctor reference drifted");
+    for marker in [
+        "repository_contract_repair",
+        "Observed evidence",
+        "Doctor inference",
+        "missing_completion_invariant",
+        "duplicated_instruction",
+        "contradictory_instruction",
+        "wrong_layer_instruction",
+        "lane_leakage",
+        "excessive_procedure",
+        "unused_workpad_structure",
+        "unsafe_simplification",
+        "no_change",
+        "Show a focused unified diff before writing",
+        "complete allowed path set",
+        "subset of the confirmed set",
+        "repair in-scope lint, format, type, build, or test failures",
+        "runtime envelopes and tracker mutation mechanics are not editable contracts",
+        "Repository-contract repair itself must not change Project status",
+        "Shea Symphony Doctor Contract Repair",
+    ] {
+        assert!(doctor.contains(marker), "Doctor skill missing {marker}");
+    }
+    assert!(reference.contains("## Shea Symphony Contract Repair Plan"));
+    assert!(reference.contains("## Shea Symphony Doctor Contract Repair"));
+    assert!(metadata.contains("$shea-symphony-doctor"));
+    assert!(manifest.contains("confirmed bounded repair for repository-owned contracts"));
+    assert!(installer.contains("validateSourceSuite"));
+    assert!(installer.contains("manifest/source skill mismatch"));
+    assert!(operator_doc.contains("Status: Doctor v2"));
+    assert!(operator_doc.contains("Tracker state: unchanged"));
+}
+
+#[test]
+fn doctor_contract_repair_fixtures_cover_safe_refused_and_no_change_results() {
+    let cases = [
+        (
+            "bloated-contradictory.md",
+            &[
+                "duplicated_instruction",
+                "contradictory_instruction",
+                "lane_leakage",
+            ][..],
+            "`proposal`",
+        ),
+        (
+            "implicit-completion.md",
+            &["missing_completion_invariant"][..],
+            "`proposal`",
+        ),
+        (
+            "safe-simplification.md",
+            &["duplicated_instruction", "stale_or_unreachable_text"][..],
+            "`proposal`",
+        ),
+        (
+            "unsafe-removal.md",
+            &["unsafe_simplification"][..],
+            "`refused_unsafe`",
+        ),
+        ("no-change.md", &["no_change"][..], "`no_change`"),
+    ];
+
+    for (name, classifications, disposition) in cases {
+        let source = repo_file(&format!(
+            "skills/shea-symphony/suite/shea-symphony-doctor/fixtures/repository-contract-repair/{name}"
+        ));
+        let installed = repo_file(&format!(
+            ".agents/skills/shea-symphony-doctor/fixtures/repository-contract-repair/{name}"
+        ));
+        assert_eq!(source, installed, "rendered Doctor fixture drifted: {name}");
+        assert!(source.contains("## Observed evidence"));
+        assert!(source.contains("## Expected classification"));
+        assert!(source.contains("## Expected disposition"));
+        for classification in classifications {
+            assert!(
+                source.contains(classification),
+                "{name} missing {classification}"
+            );
+        }
+        assert!(source.contains(disposition), "{name} missing {disposition}");
+    }
+}
+
+#[test]
 fn skill_suite_documents_app_server_first_manual_boundaries() {
     let human_review = repo_file("skills/shea-symphony/suite/shea-symphony-human-review/SKILL.md");
     let manual_merge = repo_file("skills/shea-symphony/suite/shea-symphony-manual-merge/SKILL.md");

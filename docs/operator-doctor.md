@@ -1,6 +1,6 @@
 # Shea Symphony Doctor Operator Spec
 
-Status: Doctor v1
+Status: Doctor v2
 
 The Shea Symphony Doctor skill is a repo-owned Codex operator workflow for
 diagnosing stuck tracker, PR, claim, worktree, runtime, and skill-install
@@ -10,6 +10,11 @@ Doctor v1 complements the existing `doctor`, `project state`, `project issue`,
 `debug`, `workspace`, and `session` commands. It does not replace them. After
 diagnosis, it must give a concrete repair recommendation and may execute the
 confirmed repair in the same Codex session when the workflow contract allows it.
+
+Doctor v2 also defines `repository_contract_repair` for repository-owned
+workflow, lane-prompt, workpad-template, and skill contracts. It remains a
+read-first, confirmation-gated skill workflow rather than an automatic CLI
+rewriter.
 
 ## Entry Points
 
@@ -25,6 +30,10 @@ Use Doctor v1 when:
   writes.
 - installable skill suite packaging questions appear, while dated suite
   packaging remains owned by #242.
+- observed runs or repository contracts show missing completion boundaries,
+  duplicated or contradictory instructions, wrong-layer text, lane leakage,
+  excessive procedure, unused workpad structure, or a likely safe
+  simplification.
 
 Doctor v1 should not scan or mutate the whole Project by default when the
 operator selected one issue. Whole-Project reads are allowed only as context for
@@ -50,6 +59,90 @@ Shea Symphony CLI remains the normal authority for Project status, claim locks,
 relationships, workpads, and workflow status. Raw `gh project` or GraphQL writes
 are break-glass repairs only when the CLI lacks a surface for the exact repair;
 the triage note must record why the break-glass path was used.
+
+Repository-contract repair has a stricter boundary: it never mutates Project
+status, and operator confirmation covers only the exact displayed paths and
+diff. It does not authorize commits, pushes, PR creation, issue promotion,
+global skill installation, or unrelated cleanup.
+
+## Repository Contract Repair
+
+Use the canonical Doctor skill's `repository_contract_repair` path. Resolve the
+active repository and configured workflow first, then inspect:
+
+- configured lane prompts and workpad templates;
+- repository-owned Shea skills and their rendered repo-local copies;
+- rendered prompt and runtime-envelope readback;
+- required variables and referenced files; and
+- relevant run, model, harness, Review, and recovery evidence.
+
+Runtime-envelope readback is evidence only. CLI-owned runtime envelopes,
+tracker mechanics, and separately installed/global skills are not editable
+repository-agent contracts.
+
+### Diagnosis
+
+Every diagnosis separates `Observed evidence` from `Doctor inference`, includes
+confidence and alternatives, and uses one or more of:
+
+- `missing_completion_invariant`
+- `duplicated_instruction`
+- `contradictory_instruction`
+- `stale_or_unreachable_text`
+- `wrong_layer_instruction`
+- `lane_leakage`
+- `excessive_procedure`
+- `unused_workpad_structure`
+- `unsafe_simplification`
+- `no_change`
+
+Prompt length or duplication alone is not a failure. Confirm the behavior or
+consumer affected when that fact changes the repair. A single model or harness
+run is evidence for that context, not a universal preference.
+
+### Plan, preview, and confirmation
+
+Produce the `Shea Symphony Contract Repair Plan` from
+`skills/shea-symphony/suite/shea-symphony-doctor/references/repository-contract-repair.md`.
+It records the observed failure, inference/confidence, affected lane/model/
+harness, exact paths, removals/merges/relocations/additions, preserved
+invariants, expected improvement, verification, rollback, and confirmation
+boundary.
+
+Prefer subtraction, consolidation, relocation, or shorter wording. Add one
+concise rule only when evidence shows an execution-critical boundary is
+missing. Show a focused unified diff and the complete allowed path set before
+writing. Refuse a simplification that removes the only effective authority,
+safety, claim, verification, PR, review, or state-transition invariant.
+
+For Main completion, preserve the behavior that repairable in-scope lint,
+format, type, build, or test failures are fixed and rerun, and that completion
+waits for required verification, a ready linked PR, workpad evidence, and Agent
+Review handoff.
+
+### Apply and validate
+
+After exact path-and-diff confirmation, re-read the approved bytes and stop on
+drift. Apply only the confirmed diff. Then validate workflow parsing,
+referenced files, prompt/workpad rendering and variables, runtime-envelope
+readback, skill frontmatter/metadata/manifest, installer dry-run/validation,
+fixture expectations, and the changed-path subset. Compare unrelated target
+customizations byte-for-byte.
+
+Do not add an autonomous optimizer, opaque score, production self-modifying
+loop, automatic rewrite, model-specific universal rule, or tracker mutation.
+If validation fails, repair only inside the confirmed diff or roll it back.
+
+### Durable evidence and outcomes
+
+Append the `Shea Symphony Doctor Contract Repair` evidence format from the same
+reference file through the configured timeline surface. Never use or overwrite
+the persistent Main Agent Workpad. Record the confirmed paths, before/after
+summary, validation, preserved invariants, unchanged-path evidence, rollback,
+and `Tracker state: unchanged`.
+
+Return one outcome: `repaired`, `no_change`, `refused_unsafe`,
+`confirmation_needed`, or `blocked`.
 
 ## Required Evidence Reads
 

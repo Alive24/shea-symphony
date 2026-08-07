@@ -56,4 +56,4 @@ summary = "Manual Merging Agent lane for approved merge and merge-lane repair wo
 name = "shea-symphony-doctor"
 path = "suite/shea-symphony-doctor"
 targets = ["codex", "gemini"]
-summary = "Doctor triage for Need Human Input, issue or PR blockers, install-health gaps, and confirmed same-session repairs."
+summary = "Doctor diagnosis and confirmed bounded repair for repository-owned contracts, Need Human Input, issue or PR blockers, and install-health gaps."

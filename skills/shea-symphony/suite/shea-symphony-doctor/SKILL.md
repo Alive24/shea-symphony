@@ -1,6 +1,6 @@
 ---
 name: shea-symphony-doctor
-description: Use when diagnosing Shea Symphony doctor findings, Need Human Input items, issue or PR blockers, and install-health gaps, then giving an explicit repair recommendation and executing confirmed safe repairs in the same session when the workflow contract allows it.
+description: Use when diagnosing Shea Symphony doctor findings, Need Human Input items, issue or PR blockers, install-health gaps, and interrupted workflow state, then leading the smallest confirmed recovery in the same session when the workflow contract allows it.
 metadata:
   short-description: Shea Symphony doctor triage
   suite-version: 2026.05.23
@@ -11,7 +11,9 @@ metadata:
 Use this skill for read-first operator triage around `doctor`, `debug`,
 install-health, local recovery findings, and stuck `Need Human Input` issues.
 After diagnosis, give one explicit repair recommendation and say whether it can
-be executed in the current Codex session.
+be executed in the current Codex session. Doctor is the operator-facing owner
+of abnormal recovery: do not require a second recovery skill merely because the
+repair touches work normally owned by a lane.
 
 ## Repository
 
@@ -52,6 +54,7 @@ Report:
 - the safest CLI-owned or installer-owned repair path;
 - the exact target issue, PR, worktree, or local skill path;
 - whether the repair can be executed in this same session;
+- whether the work is bounded recovery or new lane execution;
 - any operator decision still needed before writing.
 
 When an operator has already asked for a specific repair, such as updating the
@@ -72,8 +75,7 @@ git worktree list --porcelain
 Do not stop at "route to #242", "use manual merge", or "needs operator". End
 with one concrete next action:
 
-- a lane handoff command, such as `$shea-symphony-manual-main`,
-  `$shea-symphony-manual-review`, or `$shea-symphony-manual-merge`;
+- a bounded same-session recovery plan led by this Doctor skill;
 - the normal all-lane foreground command, when no focused repair is needed:
   `cargo run -- autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --write`;
 - a Shea Symphony CLI repair command, such as `project set-state`,
@@ -83,12 +85,55 @@ with one concrete next action:
 - one operator question when the evidence still depends on a human decision.
 
 If the repair is confirmed and fits the workflow contract, continue in the same
-Codex session. Switch to the owning skill or lane workflow before doing normal
-Main, Review, Human Review, or Merging work.
+Codex session. Use Shea Symphony CLI commands as deterministic inspection and
+mutation primitives; the skill owns diagnosis, sequencing, safety decisions,
+and final readback. Do not hand the recovery to another skill simply to finish
+the repair.
+
+## Bounded Same-Session Recovery
+
+A recovery is bounded when all of the following are true:
+
+- it keeps the selected issue and its accepted scope unchanged;
+- it reuses or safely reconciles the issue's existing session, worktree,
+  branch, PR, and tracker evidence;
+- it performs only the smallest code, configuration, publication, or tracker
+  changes needed to restore a valid workflow boundary; and
+- it stops at the next normal lane boundary without performing independent
+  review, human approval, or merge work.
+
+After the operator confirms the printed repair targets, Doctor may inspect and
+repair the existing work, run proportionate verification, create or repair the
+expected PR, link it through the configured Project surface, append standalone
+Doctor triage evidence, reconcile stale runtime state, and apply the documented
+Project transition. Read back every external mutation before reporting success.
+
+For an interrupted Main handoff, prefer this sequence:
+
+1. Inspect the issue, runtime/session ownership, worktree, branch, commits, and
+   linked PR without writing.
+2. Decide whether the existing work satisfies the unchanged issue scope. If it
+   does not, describe the smallest remaining repair and obtain confirmation
+   before editing.
+3. Repair and verify the existing branch in its owned worktree.
+4. Create or repair the ready PR and link it using the configured Project
+   command surface.
+5. Append a `Shea Symphony Doctor Triage` note containing the observed failure,
+   repair actions, verification, and intended terminal state.
+6. Reconcile stale runtime/session evidence and move the issue to the next
+   contract-valid state only after all handoff invariants pass.
+7. Read back the issue, PR, Project state, and runtime state.
+
+This does not turn Doctor into a normal Main, Review, or Merge entrypoint. If
+the request changes product scope, starts unrelated implementation, requires
+independent review judgment, requires human UAT, or authorizes a merge, stop and
+use the normal workflow lane rather than stretching the recovery boundary.
 
 ## Boundaries
 
-- Do not start Main, Review, or Merge lane work from this skill.
+- Do not start normal queued Main work, conduct independent Review or Human
+  Review, or merge from this skill. Bounded recovery of already selected work is
+  explicitly allowed as described above.
 - Do not mutate Project state unless the operator explicitly approves a
   documented Shea Symphony CLI repair command.
 - Doctor triage or repair evidence belongs in a standalone append-only

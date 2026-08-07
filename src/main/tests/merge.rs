@@ -31,6 +31,27 @@ fn merge_session_keeps_tmux_as_explicit_fallback() {
 }
 
 #[test]
+fn main_and_merge_sessions_share_configured_claude_backend() {
+    let workflow = WorkflowDefinition::parse(
+        "/tmp/WORKFLOW.md",
+        "---\ntracker:\n  kind: memory\nmain_lane:\n  backend: claude-code\nmerge_lane:\n  agent_backend: claude-code\nclaude:\n  command: /opt/bin/company-claude-wrapper --profile shea\n---\nPrompt",
+    )
+    .unwrap();
+    let config = RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+
+    let main = agent_session_backend_spec(&config, AgentSessionLaneArg::Main).unwrap();
+    let merge = agent_session_backend_spec(&config, AgentSessionLaneArg::Merge).unwrap();
+
+    assert_eq!(main.backend, "claude-code");
+    assert_eq!(merge.backend, "claude-code");
+    assert_eq!(main.command, merge.command);
+    assert_eq!(
+        main.command,
+        "/opt/bin/company-claude-wrapper --profile shea"
+    );
+}
+
+#[test]
 fn clean_merge_tick_does_not_require_merge_agent_backend() {
     let temp = tempfile::tempdir().unwrap();
     let workflow_path = temp.path().join("WORKFLOW.md");

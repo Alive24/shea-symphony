@@ -22,7 +22,7 @@ Shea Symphony is not a daemon or unattended background service yet.
 | Orchestrator | Deterministic dispatch planning and a CLI `main loop` skeleton with bounded modes, idle polling, claim-helper use, dependency preflight for `Todo` / `Rework`, parent execution gating that skips or rejects native parent issues until every native subissue has Project status `Done`, runtime-state persistence, tracker-visible advisory ownership markers, resume preflight, retry backoff records, stall detection, `main loop --write` default recover-first restart for interrupted Main runtime slots, live PR handoff plus tracker PR link recording in non-fixture GitHub mode, ready/non-draft PR enforcement before Agent Review handoff, parent/subissue branch target selection for native subissues and parent final PRs, guarded `merge once` and bounded `merge loop` lanes for `Merging` issues, `merge loop --write` default tracker-first recovery for interrupted structured merge-loop/goal claims, read-only `autopilot plan` that composes Main/Review/Merge lane preflight and parked operator queues without launching workers, bounded foreground Autoloop (`autopilot loop`) that runs Main, Review, and Merge ticks in order with explicit `--write`, per-lane concurrency flags, recover-first Main/Merge handling, status/backoff/cancellation reporting, `--max-concurrent` selection guarded by `Main Agent` / `Merging Agent` Project fields, multi-entry Main runtime slot persistence with backwards-compatible single-state loading, per-issue Main runtime preflight, read-only `debug` readiness reporting, and a bounded operator launcher script exist. Remaining gaps: no daemon/background Autoloop, no persistent app-server service mode, no unbounded merge idle polling, and full state reconciliation is still evolving. |
 | Workspace | Local path sanitization, creation, timeout-aware hooks, stdout/stderr capture, `before_remove`, safe cleanup helpers, grouped read-only `clean plan` / `clean audit` cleanup and persistence classification, guarded terminal cleanup planning, repository-local git identity application, workspace/branch/PR handoff planning with explicit branch target evidence, live git worktree/branch creation, issue-level `workspace list` / `workspace show` / `workspace adopt` discovery across registry, workpad, PR, and local git worktree evidence, reuse-first `workspace ensure` preparation for Review/Merge inspection under the configured workspace root with durable Workspace Evidence, dirty/no-op guards before branch push, optional configured verification commands before PR handoff, branch push, PR create-or-reuse, tracker PR link recording, main loop handoff evidence, profile-scoped workspace keys, parsed-but-unused SSH worker host config, a namespaced artifact layout, and dry-run cleanup planning exist. Automatic runtime cleanup, write-mode artifact cleanup, and live SSH execution are not wired yet. |
 | Execution profiles | First-slice profile discovery exists. Workflow config can point to a cockpit-tools Codex `codex_instances.json` file, and Shea Symphony treats each instance `name` as a profile/worker identity while ignoring account binding fields. If the cockpit-tools file is missing, explicit `profiles.entries` are used. This is not a full account manager. |
-| Agent backends | Dry-run backend plus Codex app-server, tmux fallback, and conservative Claude Code subprocess backends exist. The canonical Main runtime now defaults to Codex app-server through `main_lane.backend: codex` and `codex.command: codex app-server -c 'service_tier="fast"'`; `main loop --write` records prompt, raw protocol, stderr, normalized event, exit-status, runtime-state, and session-registry evidence for app-server turns before normal PR/handoff reconciliation. Autoloop (`autopilot loop`) is not an app-server, tmux session, or backend process by itself. It invokes the configured lane commands and preserves each lane runtime boundary. A local `tmux` backend remains available as explicit fallback/debug with attachable lane sessions and backend-aware status evidence. Manual break-glass recovery still claims with `main claim`, `review claim`, or `merge claim`, which records truthful registry evidence, before optional `session start --run <RUN_ID>`. Main and Merge-agent sessions default to Codex app-server, while clean `merge once` / `merge loop` remains direct CLI behavior and does not launch an agent runtime. Dynamic-tool execution and Claude Code protocol parity remain follow-ups. |
+| Agent backends | Dry-run, Codex app-server, Claude Code stream-json, and tmux fallback backends exist. The canonical Main runtime defaults to Codex app-server; operators may select `claude-code` for Main and semantic Merge-agent repair through one structured transport. Both structured backends record prompt, raw protocol, stderr, normalized events, exit status, runtime state, and session-registry evidence; Claude recovery additionally validates issue, lane, run, worktree, and session identity before `--resume`. Model, authentication, gateway, environment, and permission policy remain in the configured `claude.command` or wrapper. Autoloop is the foreground controller rather than a backend. Clean merge remains direct CLI behavior and never launches Claude. Review has its own backend abstraction and no Claude support here. Dynamic-tool execution remains a follow-up. |
 | Prompt rendering | Strict prompt rendering supports `issue.*`, `attempt`, and basic `{% if %}` / `{% else %}` blocks. The supported subset is documented in `docs/prompt-template-contract.md`; full Liquid compatibility remains a parity gap. |
 | Dynamic tools | A first-slice dynamic-tool registry can describe planned backend-specific tools such as Codex `linear_graphql` without coupling them to the orchestrator. Tool execution and Codex app-server dynamic-tool protocol wiring are not implemented yet. |
 | Agent Review | Finding classes, fake reviewer lifecycle, headless `agy` CLI review support, legacy Gemini CLI fallback support, and independent Codex app-server Review support exist. Codex Review starts a fresh read-only/non-interactive thread per job, permits only a same-job interrupted resume, validates structured reports, preserves provider/protocol evidence, and fails closed on interactive, malformed, missing, timed-out, cancelled, or workspace-mutating runs. All backends reuse the same role-bound transition decisions, evidence-first Rework diagnostics, invalid-handoff checks, parent/subissue-aware routing, bounded worker pool, Project claim markers, health classification, durable job ledger, and workpad/status evidence. Persistent background review worker supervision is not implemented yet. |
@@ -241,8 +241,8 @@ Project v2 issues:
      boundary, and stop conditions.
    - Keep the prompt aligned with `docs/bootstrap/SHEA_WORKFLOW.md` as the
      bootstrap contract evolves.
-   - Harden the Codex and Claude Code subprocess backends, then implement full
-     protocol transports.
+   - Keep ordinary Codex subprocess compatibility separate from the dedicated
+     Codex app-server and Claude Code stream-json transports.
    - Route configured `codex app-server` commands through the dedicated stdio
      JSON-RPC transport and keep ordinary Codex commands on the subprocess path.
    - Use the app-server event normalizer as the protocol boundary for Codex
@@ -424,18 +424,18 @@ Acceptance:
 - handles failures without stalling the orchestrator.
 - keeps live tests credential/tool gated.
 
-### 2b. Implement Full Claude Code Protocol Backend
+### 2b. Claude Code stream-json protocol backend (implemented)
 
-Goal: evolve the conservative Claude Code subprocess path into the configured
-Claude Code protocol flow while preserving the normalized backend interface.
+Claude Code now uses the configured command or wrapper plus Shea-owned
+stream-json invocation, parsing, artifacts, timeout cleanup, and safe resume
+while preserving the normalized backend interface.
 
 Acceptance:
 
 - launches configured Claude Code command in workspace cwd.
-- starts a session or equivalent turn.
-- emits normalized backend events.
-- handles failures without stalling the orchestrator.
-- keeps live tests credential/tool gated.
+- records Claude and Shea session identity for Main and semantic Merge repair.
+- rejects malformed, truncated, cancelled, timed-out, and unexpected-exit runs.
+- keeps the local live UAT ignored and credential/operator-command gated.
 
 ### 3. Harden Workspace Hooks And Cleanup
 

@@ -97,7 +97,7 @@ pub(super) fn recover_registered_main_sessions(
                     continue;
                 };
                 let termination = if matches!(probe.status, SessionStatus::Stale) {
-                    terminate_stale_codex_app_server_session(config, record)?
+                    terminate_stale_structured_agent_session(config, record)?
                 } else {
                     None
                 };
@@ -156,11 +156,14 @@ pub(super) fn recover_registered_main_sessions(
     Ok(())
 }
 
-fn terminate_stale_codex_app_server_session(
+fn terminate_stale_structured_agent_session(
     config: &RuntimeConfig,
     record: &AgentSessionRecord,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    if record.session_source.as_deref() != Some(codex_app_server::BACKEND_NAME) {
+    if !matches!(
+        record.session_source.as_deref(),
+        Some(codex_app_server::BACKEND_NAME | "claude-code-stream-json")
+    ) {
         return Ok(None);
     }
     let Some(process_id) = record.process_id else {

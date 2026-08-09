@@ -11,6 +11,31 @@ Use this skill to turn a rough idea into a dispatchable Shea Symphony issue. Con
 
 Resolve the target repository, workflow configuration, tracker project, default assignee, and supported quality-gate/create/rework actions. Do not assume a repository slug, local path, workflow filename, account, or command. Ask for a missing binding before making a tracker write.
 
+## Canonical Checkout And Draft Hygiene
+
+Before claiming repository freshness or running Forge create, promote, or
+rework:
+
+1. Record the canonical checkout status, current revision, configured remote,
+   and base branch.
+2. Fetch the configured remote and base branch. If the canonical checkout is
+   clean, strictly behind, and fast-forwardable, update it with a fast-forward-
+   only operation. If it is dirty or diverged, do not pull, merge, move, or
+   clean user files; use the fetched ref for freshness evidence and report the
+   checkout condition.
+3. Store draft bodies only under a unique, marker-bearing run directory at
+   `.shea/local/forge/<run-id>/`. Prove the directory is ignored with
+   `git check-ignore` before writing. Never treat an arbitrary `.shea/` path or
+   the repository root as temporary storage.
+4. Do not scan historical Forge drafts into issue context. On normal success or
+   a handled failure, remove the current run directory. At the start of a later
+   run, cleanup may remove only marker-bearing Forge run directories older than
+   24 hours; never traverse or delete other `.shea/local/` content.
+5. Record Forge temporary-directory size and canonical checkout status before
+   and after the operation. Stop and report any new repository-visible file or
+   unrelated byte change. Issue creation or status routing remains the final
+   mutation; readback must not create repository files.
+
 ## Discuss before creating
 
 Start from the operator's intent and ask only one to three focused questions per turn. Ask another short round only while an ambiguity would change execution. Act as a thinking partner rather than a form:

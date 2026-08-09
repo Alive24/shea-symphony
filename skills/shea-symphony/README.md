@@ -94,10 +94,14 @@ Logs under `docs/dream-log/`, updates the compact Dream index, and creates
 enriched `Backlog` seeds by default unless the operator asks for report-only
 mode. It never creates `Todo` issues directly.
 
-The Doctor skill is a read-first operator triage slot. The Shea Symphony CLI
-`doctor` command reports local install-health warnings, while automatic repair
-remains out of scope and install/update writes stay behind the confirmed #242
-installer path.
+The Doctor skill is a read-first operator triage slot. Its
+`repository_contract_repair` path diagnoses repository-owned workflow, prompt,
+workpad-template, and skill contracts, previews the smallest safe diff, and
+applies only an explicitly confirmed path-bounded edit. Automatic rewriting,
+tracker mutation, global skill changes, and CLI-owned runtime-envelope edits
+remain out of scope. The installer now validates that every source skill is
+manifest-backed and has matching frontmatter and OpenAI metadata before any
+preview, validation, or install.
 
 Runtime Onboarding inspects repository-owned requirement evidence and existing
 installed tools, reports conflicts, and prepares a credential-free

@@ -254,13 +254,20 @@ done
             ),
         )
         .unwrap();
-    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path).unwrap();
+    let mut config = RuntimeConfig::from_workflow(&workflow, &workflow_path).unwrap();
     let mut first = tracker_issue_with_ref("#362", "Recover first", "In Progress");
     first.id = "ISSUE_362".into();
     first.description = Some(forge_contract());
     let mut second = tracker_issue_with_ref("#363", "Start second", "In Progress");
     second.id = "ISSUE_363".into();
     second.description = Some(forge_contract());
+    let fixture_path = temp.path().join("issues.json");
+    std::fs::write(
+        &fixture_path,
+        serde_json::to_string(&vec![first.clone(), second.clone()]).unwrap(),
+    )
+    .unwrap();
+    config.tracker.fixture_path = Some(fixture_path);
     let options = RunLoopOptions {
         workflow_path,
         max_iterations: Some(1),

@@ -6,6 +6,7 @@ mod external_links;
 mod github;
 mod handoff_prompts;
 mod read_surfaces;
+mod runtime;
 mod target_context;
 mod target_runtime;
 mod temporal_health;
@@ -15,6 +16,8 @@ use autoloop_state::LoopManager;
 use workspace::{default_profile_path, initial_workspace_profile, WorkspaceManager};
 
 fn main() {
+    runtime::publish_installed_discovery_if_available()
+        .expect("failed to prepare the bundled Shea Symphony Legacy runtime");
     let engine_root = cli::repo_root();
     let profile_path = default_profile_path();
     let args = std::env::args_os().collect::<Vec<_>>();

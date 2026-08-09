@@ -33,6 +33,7 @@ pub mod quality_gate;
 pub mod review;
 pub mod review_status;
 pub mod rework;
+pub mod runtime_identity;
 pub mod runtime_profile;
 pub mod runtime_state;
 pub mod session_registry;

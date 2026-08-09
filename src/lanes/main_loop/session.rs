@@ -154,7 +154,11 @@ fn claude_resume_session_for_state(
     let Some(worktree) = state.workspace_path.as_deref() else {
         return Ok(None);
     };
-    let Some(run_id) = state.run_id.as_deref().filter(|value| !value.trim().is_empty()) else {
+    let Some(run_id) = state
+        .run_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    else {
         return Ok(None);
     };
     let registry = load_session_registry(&session_registry_path(config))?;

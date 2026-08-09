@@ -16,9 +16,9 @@ use shea_symphony::lane_claim::LaneClaim;
 use shea_symphony::model::{LinkedPullRequest, TrackerIssue};
 use shea_symphony::ownership::{render_runtime_ownership_marker, RuntimeOwnershipMarker};
 use shea_symphony::profiles::selected_execution_profile;
-use shea_symphony::runtime_profile::{
-    apply_runtime_profile_environment, load_runtime_profile, RuntimeProfile,
-};
+#[cfg(test)]
+use shea_symphony::runtime_profile::load_runtime_profile;
+use shea_symphony::runtime_profile::{apply_runtime_profile_environment, RuntimeProfile};
 use shea_symphony::runtime_state::RuntimeState;
 use shea_symphony::tracker::TrackerAdapter;
 use shea_symphony::workpad_templates::{render_workpad_template, WorkpadTemplateId};
@@ -556,6 +556,7 @@ pub(crate) fn run_loop_live_handoff_enabled(config: &RuntimeConfig) -> bool {
     config.tracker.kind == "github_project_v2" && config.tracker.fixture_path.is_none()
 }
 
+#[cfg(test)]
 pub(crate) fn run_handoff_verification(
     workspace_path: &Path,
     config: &RuntimeConfig,

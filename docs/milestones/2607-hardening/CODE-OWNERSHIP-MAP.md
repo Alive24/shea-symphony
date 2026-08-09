@@ -58,6 +58,13 @@ These modules may be read to preserve proven tracker, handoff, review, merge,
 and recovery semantics. Do not add new 2607 runtime features there unless the
 issue explicitly says it is maintaining the protected MVP line.
 
+The issue #534 Legacy sidecar is the explicit migration exception. Its
+`src/legacy.rs` composition root may dispatch the existing command modules so
+the App can stop depending on a protected-branch binary. Changes there are
+limited to compatibility, packaging, identity, and migration safety. New 2607
+runtime behavior still belongs under `src/symphony/**`, and
+`shea-symphony-legacy` must never become a second orchestration spine.
+
 ## Context Preservation
 
 The old entrypoint and CLI behavior are not lost when the 2607 default binary

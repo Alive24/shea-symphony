@@ -7,6 +7,7 @@ use std::{
 use serde::Serialize;
 use serde_json::{json, Value};
 
+use crate::runtime;
 use crate::workspace::WorkspaceProfile;
 
 pub const DEFAULT_WORKFLOW_PATH: &str = ".shea/workflows/shea-symphony.md";
@@ -33,7 +34,10 @@ pub struct CommandRun {
 pub fn run_shea_read_for_workspace(args: &[String], workspace: &WorkspaceProfile) -> CommandRun {
     let started_at = Instant::now();
     let string_args = args.iter().map(String::as_str).collect::<Vec<_>>();
-    let mut command = shea_command_for_workspace(&string_args, workspace);
+    let mut command = match shea_command_for_workspace(&string_args, workspace) {
+        Ok(command) => command,
+        Err(error) => return command_run_from_error(args, started_at, error),
+    };
     match command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -80,8 +84,11 @@ pub fn now_ms() -> u128 {
         .unwrap_or(0)
 }
 
-pub fn shea_command_for_workspace(args: &[&str], workspace: &WorkspaceProfile) -> Command {
-    command_from_spec(shea_command_spec(args, workspace))
+pub fn shea_command_for_workspace(
+    args: &[&str],
+    workspace: &WorkspaceProfile,
+) -> Result<Command, String> {
+    Ok(command_from_spec(shea_command_spec(args, workspace)?))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,7 +98,18 @@ pub struct SheaCommandSpec {
     pub current_dir: PathBuf,
 }
 
-pub fn shea_command_spec(args: &[&str], workspace: &WorkspaceProfile) -> SheaCommandSpec {
+pub fn shea_command_spec(
+    args: &[&str],
+    workspace: &WorkspaceProfile,
+) -> Result<SheaCommandSpec, String> {
+    shea_command_spec_with_discovery(args, workspace, &runtime::default_discovery_path())
+}
+
+fn shea_command_spec_with_discovery(
+    args: &[&str],
+    workspace: &WorkspaceProfile,
+    discovery_path: &Path,
+) -> Result<SheaCommandSpec, String> {
     let engine_root = workspace.engine_path();
     let target_root = workspace.target_path();
     if let Some(cli_path) = workspace
@@ -101,63 +119,64 @@ pub fn shea_command_spec(args: &[&str], workspace: &WorkspaceProfile) -> SheaCom
         .filter(|value| !value.is_empty())
     {
         let path = PathBuf::from(cli_path);
-        return SheaCommandSpec {
-            program: if path.is_absolute() {
-                path
-            } else {
-                target_root.join(path)
-            },
+        let program = if path.is_absolute() {
+            path
+        } else {
+            target_root.join(path)
+        };
+        runtime::validate_explicit_runtime(&program)?;
+        return Ok(SheaCommandSpec {
+            program,
             args: args.iter().map(|arg| (*arg).to_string()).collect(),
             current_dir: target_root,
-        };
+        });
     }
-    if should_use_cargo_runner_for_engine(&engine_root) {
+    if let Some(program) = runtime::resolve_installed_runtime(discovery_path)? {
+        return Ok(SheaCommandSpec {
+            program,
+            args: args.iter().map(|arg| (*arg).to_string()).collect(),
+            current_dir: target_root,
+        });
+    }
+    if cfg!(debug_assertions) {
         let mut command_args = vec![
             "run".into(),
             "--quiet".into(),
+            "--bin".into(),
+            "shea-symphony-legacy".into(),
             "--manifest-path".into(),
             engine_root.join("Cargo.toml").display().to_string(),
             "--".into(),
         ];
         command_args.extend(args.iter().map(|arg| (*arg).to_string()));
-        SheaCommandSpec {
+        Ok(SheaCommandSpec {
             program: PathBuf::from("cargo"),
             args: command_args,
             current_dir: target_root,
-        }
+        })
     } else {
-        SheaCommandSpec {
-            program: engine_root
-                .join("target")
-                .join("debug")
-                .join("shea-symphony"),
-            args: args.iter().map(|arg| (*arg).to_string()).collect(),
-            current_dir: target_root,
-        }
+        Err(format!(
+            "no validated installed Legacy runtime was found at {}; configure explicit cli_path or reinstall the App bundle",
+            discovery_path.display()
+        ))
     }
 }
 
-pub fn command_preview_for_workspace(args: &[String], workspace: &WorkspaceProfile) -> Vec<String> {
+pub fn command_preview_for_workspace(
+    args: &[String],
+    workspace: &WorkspaceProfile,
+) -> Result<Vec<String>, String> {
     let string_args = args.iter().map(String::as_str).collect::<Vec<_>>();
-    let spec = shea_command_spec(&string_args, workspace);
+    let spec = shea_command_spec(&string_args, workspace)?;
     let mut preview = vec![spec.program.display().to_string()];
     preview.extend(spec.args);
-    preview
+    Ok(preview)
 }
 
 fn command_from_spec(spec: SheaCommandSpec) -> Command {
     let mut command = Command::new(spec.program);
     command.args(spec.args).current_dir(spec.current_dir);
     command
-}
-
-fn should_use_cargo_runner_for_engine(engine_root: &Path) -> bool {
-    cfg!(debug_assertions)
-        || !engine_root
-            .join("target")
-            .join("debug")
-            .join("shea-symphony")
-            .exists()
 }
 
 fn command_run_from_output(
@@ -254,9 +273,10 @@ fn parse_canonical_main_worktree(text: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_canonical_main_worktree, shea_command_spec};
+    use super::{parse_canonical_main_worktree, shea_command_spec_with_discovery};
     use crate::workspace::WorkspaceProfile;
     use std::path::PathBuf;
+    use tempfile::TempDir;
 
     #[test]
     fn parses_main_worktree_from_git_porcelain_output() {
@@ -289,10 +309,13 @@ branch refs/heads/main
             error: None,
         };
 
-        let spec = shea_command_spec(
+        let temp = TempDir::new().unwrap();
+        let spec = shea_command_spec_with_discovery(
             &["autopilot", "plan", ".shea/workflows/shea-symphony.md"],
             &profile,
-        );
+            &temp.path().join("missing-discovery.json"),
+        )
+        .unwrap();
 
         assert_eq!(spec.program, PathBuf::from("cargo"));
         assert_eq!(spec.current_dir, target_root);
@@ -301,6 +324,8 @@ branch refs/heads/main
             vec![
                 "run",
                 "--quiet",
+                "--bin",
+                "shea-symphony-legacy",
                 "--manifest-path",
                 "/engine/shea-symphony/Cargo.toml",
                 "--",
@@ -313,6 +338,9 @@ branch refs/heads/main
 
     #[test]
     fn command_spec_uses_profile_cli_path_relative_to_target() {
+        let temp = TempDir::new().unwrap();
+        let invalid_discovery = temp.path().join("invalid-discovery.json");
+        std::fs::write(&invalid_discovery, "not json").unwrap();
         let target_root = PathBuf::from("/target/repo");
         let profile = WorkspaceProfile {
             engine_root: "/engine/shea-symphony".into(),
@@ -323,7 +351,12 @@ branch refs/heads/main
             error: None,
         };
 
-        let spec = shea_command_spec(&["doctor", ".shea/workflows/shea-symphony.md"], &profile);
+        let spec = shea_command_spec_with_discovery(
+            &["doctor", ".shea/workflows/shea-symphony.md"],
+            &profile,
+            &invalid_discovery,
+        )
+        .unwrap();
 
         assert_eq!(spec.program, target_root.join(".shea/bin/shea-symphony"));
         assert_eq!(spec.current_dir, target_root);

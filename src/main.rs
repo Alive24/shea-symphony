@@ -8,15 +8,25 @@
 
 use std::path::PathBuf;
 
-use shea_symphony::{symphony::run_symphony_workers, RuntimeConfig, WorkflowStore};
+use shea_symphony::{
+    runtime_identity::{print_if_requested, RuntimeRole},
+    symphony::run_symphony_workers,
+    RuntimeConfig, WorkflowStore,
+};
 
 const DEFAULT_WORKFLOW_PATH: &str = ".shea/workflows/shea-symphony.md";
 const WORKFLOW_PATH_ENV: &str = "SHEA_WORKFLOW_PATH";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if print_if_requested(RuntimeRole::TemporalWorker, &args)? {
+        return Ok(());
+    }
+
     // In 2607 the default binary is the local Temporal worker runtime.
-    // Legacy CLI dogfooding remains pinned to the protected 2606-MVP branch.
+    // Transitional Legacy CLI dogfooding uses the separately identified
+    // shea-symphony-legacy sidecar; this composition root stays Temporal-only.
     let workflow_path = workflow_path();
     let workflow_store = WorkflowStore::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(workflow_store.active(), &workflow_path)?;

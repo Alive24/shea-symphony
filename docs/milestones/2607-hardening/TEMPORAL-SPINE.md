@@ -18,6 +18,12 @@ loop as a compatibility or second durable runtime. This does not prohibit
 reviewed reuse of bounded Rust components that are extracted from that
 orchestration ownership and placed behind new typed boundaries.
 
+The transitional `shea-symphony-legacy` App sidecar is not part of this spine.
+It is a separately identified executable for the App surfaces that have not yet
+migrated, and it replaces their routine dependence on a protected-branch build.
+Neither `IssueWorkflow` nor any Activity may invoke it. The default
+`shea-symphony` executable remains exclusively the Temporal worker.
+
 ## Hard Decision
 
 Use Temporal local-first:

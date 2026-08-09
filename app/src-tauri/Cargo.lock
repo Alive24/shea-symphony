@@ -4289,6 +4289,7 @@ dependencies = [
  "crossterm",
  "futures",
  "futures-util",
+ "libc",
  "liquid",
  "ratatui",
  "rusqlite",
@@ -4313,8 +4314,10 @@ dependencies = [
 name = "shea-symphony-app"
 version = "0.1.0"
 dependencies = [
+ "hex",
  "serde",
  "serde_json",
+ "sha2",
  "shea-symphony",
  "tauri",
  "tauri-build",

@@ -40,6 +40,22 @@ Activity, Coordinator, Tauri, SQLite, and operator-action contracts; the
 vendored App/CLI bootstrap, Autoloop, lane/runtime ownership, and product CLI
 command graph are retired.
 
+Issue #534 establishes one bounded transition exception: `main` also builds a
+versioned `shea-symphony-legacy` executable for the current App's allowlisted
+operator commands. It reuses the already-present legacy CLI modules but is a
+separate composition root from the default `shea-symphony` Temporal worker.
+The App bundles and validates this sidecar; Temporal never invokes it. This
+exception replaces day-to-day App dependence on a protected-branch build and
+does not authorize new product behavior in the legacy command graph.
+
+Stop producing new protected-2606 bootstrap builds once the `main` Legacy
+sidecar and App bundle have passed release validation, the dogfood App has
+migrated to that bundle, and no 2606-only operational blocker remains. Keep the
+protected branch as a recovery and behavior oracle until the Temporal product
+path covers the operator surfaces and the remaining bootstrap-retirement work
+is closed. Delete the Legacy sidecar when those surfaces no longer call the old
+command graph and documented recovery no longer requires it.
+
 ## Milestone Goal
 
 Separate the reliable runtime named `Symphony` from the extension layer named
@@ -178,6 +194,7 @@ orchestration, and coverage at the new typed boundary.
 - `docs/milestones/2607-hardening/adr/0006-temporal-local-runtime-spine.md`
 - `docs/milestones/2607-hardening/adr/0007-local-state-db-read-model.md`
 - `docs/milestones/2608-workflow-graph-extension/README.md`
+- `docs/legacy-runtime-distribution.md`
 
 ## Open Questions
 

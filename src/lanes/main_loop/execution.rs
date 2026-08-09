@@ -12,6 +12,9 @@ use shea_symphony::progress::run_with_progress_heartbeat;
 use shea_symphony::prompt_runtime::{
     CODEX_APP_SERVER_CONTINUE_PROMPT, CODEX_APP_SERVER_HANDOFF_BOUNDARY,
 };
+use shea_symphony::runtime_profile::{
+    apply_runtime_profile_environment, load_runtime_profile, RuntimeProfile,
+};
 use shea_symphony::workflow::{AgentLane, WorkflowDefinition};
 use shea_symphony::workspace::{
     apply_local_git_identity, prepare_workspace, profile_scoped_identifier, run_after_run,
@@ -51,6 +54,8 @@ pub(crate) struct IssueExecutionOptions {
     pub(crate) app_server_resume_thread_id: Option<String>,
     pub(crate) claude_resume_session_id: Option<String>,
     pub(crate) prompt_override: Option<String>,
+    pub(crate) runtime_profile_was_resolved: bool,
+    pub(crate) runtime_profile: Option<RuntimeProfile>,
 }
 
 pub(crate) fn execute_issue_once(
@@ -136,12 +141,17 @@ fn execute_issue_once_in_workspace(
     }
     let backend = backend_from_config(config);
     let mut prepared = backend.prepare(workspace.path.clone(), prompt, config)?;
+    let runtime_profile = if options.runtime_profile_was_resolved {
+        options.runtime_profile.clone()
+    } else {
+        load_runtime_profile(&config.runtime_profile)?
+    };
+    apply_runtime_profile_environment(&mut prepared.env, runtime_profile.as_ref());
     prepared.app_server_resume_thread_id = options.app_server_resume_thread_id.clone();
     if let Some(session_id) = options.claude_resume_session_id.clone() {
-        prepared.env.insert(
-            "SHEA_SYMPHONY_CLAUDE_RESUME_SESSION_ID".into(),
-            session_id,
-        );
+        prepared
+            .env
+            .insert("SHEA_SYMPHONY_CLAUDE_RESUME_SESSION_ID".into(), session_id);
     }
     prepared.prompt_artifact_path = Some(rendered_prompt_artifact_path(
         config,
@@ -191,7 +201,14 @@ fn execute_issue_once_in_workspace(
         actor_label: Some(config.identity.actor_label.clone()),
         git_author: config.identity.git.author(),
         tracker_mutation: None,
-        message: format!("prompt_artifact={}", prompt_artifact_path.display()),
+        message: format!(
+            "prompt_artifact={} runtime_profile={}",
+            prompt_artifact_path.display(),
+            runtime_profile
+                .as_ref()
+                .map(|profile| profile.profile_id.as_str())
+                .unwrap_or("not_configured")
+        ),
     })?;
     for event in &events {
         log.append(&EventRecord {

@@ -1,8 +1,12 @@
 use std::path::PathBuf;
 
 use shea_symphony::config::RuntimeConfig;
+use shea_symphony::issue_workspace::discover_issue_workspaces;
 use shea_symphony::lane_claim::{LaneClaim, LaneClaimActor, LaneClaimSource, LaneClaimState};
 use shea_symphony::model::{native_subissue_gate_blocker, TrackerIssue};
+use shea_symphony::runtime_profile::{
+    persist_runtime_readiness_failure, resolve_runtime_readiness,
+};
 use shea_symphony::session_registry::{
     save_session_record, session_registry_path, unix_timestamp_ms, AgentSessionRecord,
     SessionStatus,
@@ -40,10 +44,65 @@ pub(crate) fn lane_claim_command(
     )?;
 
     let adapter = adapter_from_config(&config);
-    let issue = adapter
+    let mut issue = adapter
         .get_issue(&issue_ref)?
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
     validate_lane_claim_state(&issue, lane, &config)?;
+
+    if lane == AgentSessionLaneArg::Main {
+        let repository_root = std::env::current_dir()?;
+        let workspace = if config.tracker.kind == "github_project_v2"
+            && config.tracker.fixture_path.is_none()
+        {
+            let report = discover_issue_workspaces(&config, &issue, &repository_root)?;
+            let candidate = report
+                .canonical_index
+                .and_then(|index| report.candidates.get(index))
+                .ok_or_else(|| {
+                    format!(
+                        "main claim requires one adopted canonical workspace for {}; run `workspace show` then `workspace adopt` before claiming",
+                        issue.identifier
+                    )
+                })?;
+            candidate.path.clone()
+        } else {
+            repository_root
+        };
+        let readiness =
+            match resolve_runtime_readiness(&config.runtime_profile, &config.tracker, &workspace) {
+                Ok(readiness) => readiness,
+                Err(error) => {
+                    let evidence = persist_runtime_readiness_failure(
+                        &config.observability.logs_root,
+                        &issue.identifier,
+                        &config.runtime_profile,
+                        &workspace,
+                        &error,
+                    )?;
+                    return Err(format!(
+                        "main claim blocked before tracker mutation: {error}; local evidence={}",
+                        evidence.display()
+                    )
+                    .into());
+                }
+            };
+        println!(
+            "main_claim_readiness=ok issue_ref={} profile={} status={} workspace={} tracker_mutation=false",
+            issue.identifier,
+            readiness
+                .report
+                .profile_id
+                .as_deref()
+                .unwrap_or("not_configured"),
+            readiness.report.status,
+            workspace.display()
+        );
+
+        issue = adapter
+            .get_issue(&issue_ref)?
+            .ok_or_else(|| format!("issue disappeared after Main readiness: {issue_ref}"))?;
+        validate_lane_claim_state(&issue, lane, &config)?;
+    }
 
     let existing_value = project_text_field(&issue, lane.claim_field());
     let claim = lane_claim_for_manual_worker(

@@ -35,6 +35,12 @@ targets = ["codex", "gemini"]
 summary = "Manual Main Agent lane for implementation work that stops at Agent Review."
 
 [[skills]]
+name = "shea-symphony-runtime-onboarding"
+path = "suite/shea-symphony-runtime-onboarding"
+targets = ["codex", "gemini"]
+summary = "Repository requirement discovery and operator-confirmed credential-free local runtime profiles."
+
+[[skills]]
 name = "shea-symphony-manual-review"
 path = "suite/shea-symphony-manual-review"
 targets = ["codex", "gemini"]

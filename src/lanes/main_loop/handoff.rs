@@ -16,10 +16,13 @@ use shea_symphony::lane_claim::LaneClaim;
 use shea_symphony::model::{LinkedPullRequest, TrackerIssue};
 use shea_symphony::ownership::{render_runtime_ownership_marker, RuntimeOwnershipMarker};
 use shea_symphony::profiles::selected_execution_profile;
+use shea_symphony::runtime_profile::{
+    apply_runtime_profile_environment, load_runtime_profile, RuntimeProfile,
+};
 use shea_symphony::runtime_state::RuntimeState;
 use shea_symphony::tracker::TrackerAdapter;
 use shea_symphony::workpad_templates::{render_workpad_template, WorkpadTemplateId};
-use shea_symphony::workspace::run_workspace_command;
+use shea_symphony::workspace::run_workspace_command_with_env;
 
 use super::IssueExecutionResult;
 use crate::orchestration::current_git_branch;
@@ -557,6 +560,26 @@ pub(crate) fn run_handoff_verification(
     workspace_path: &Path,
     config: &RuntimeConfig,
 ) -> HandoffVerification {
+    let runtime_profile = match load_runtime_profile(&config.runtime_profile) {
+        Ok(profile) => profile,
+        Err(error) => {
+            return HandoffVerification {
+                success: false,
+                summary: format!(
+                    "failed runtime_profile={}",
+                    compact_evidence(&error.to_string())
+                ),
+            };
+        }
+    };
+    run_handoff_verification_with_runtime_profile(workspace_path, config, runtime_profile.as_ref())
+}
+
+pub(crate) fn run_handoff_verification_with_runtime_profile(
+    workspace_path: &Path,
+    config: &RuntimeConfig,
+    runtime_profile: Option<&RuntimeProfile>,
+) -> HandoffVerification {
     if config.verification.commands.is_empty() {
         return HandoffVerification {
             success: true,
@@ -564,13 +587,16 @@ pub(crate) fn run_handoff_verification(
         };
     }
 
+    let mut environment = std::collections::BTreeMap::new();
+    apply_runtime_profile_environment(&mut environment, runtime_profile);
     for (index, command) in config.verification.commands.iter().enumerate() {
         let label = format!("verification:{}", index + 1);
-        if let Err(error) = run_workspace_command(
+        if let Err(error) = run_workspace_command_with_env(
             &label,
             command,
             workspace_path,
             config.verification.timeout_ms,
+            &environment,
         ) {
             return HandoffVerification {
                 success: false,
@@ -586,7 +612,13 @@ pub(crate) fn run_handoff_verification(
 
     HandoffVerification {
         success: true,
-        summary: format!("passed:{} command(s)", config.verification.commands.len()),
+        summary: format!(
+            "passed:{} command(s) runtime_profile={}",
+            config.verification.commands.len(),
+            runtime_profile
+                .map(|profile| profile.profile_id.as_str())
+                .unwrap_or("not_configured")
+        ),
     }
 }
 

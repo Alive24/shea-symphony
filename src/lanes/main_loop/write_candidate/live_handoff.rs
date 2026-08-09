@@ -5,6 +5,7 @@ use shea_symphony::git_handoff::{
 };
 use shea_symphony::handoff::IssueHandoffPlan;
 use shea_symphony::model::{LatestStatus, TrackerIssue};
+use shea_symphony::runtime_profile::RuntimeProfile;
 use shea_symphony::tracker::TrackerAdapter;
 
 use crate::orchestration::{
@@ -13,7 +14,7 @@ use crate::orchestration::{
 };
 
 use super::super::{
-    apply_live_handoff_pr_link, run_handoff_verification, HandoffVerification,
+    apply_live_handoff_pr_link, run_handoff_verification_with_runtime_profile, HandoffVerification,
     IssueExecutionResult, RunLoopLiveHandoff,
 };
 
@@ -23,6 +24,7 @@ pub(super) fn apply_live_handoff_steps(
     latest: &TrackerIssue,
     handoff: &IssueHandoffPlan,
     live_worktree: Option<LiveWorktreeResult>,
+    runtime_profile: Option<&RuntimeProfile>,
     result: &mut IssueExecutionResult,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(worktree) = live_worktree {
@@ -49,7 +51,11 @@ pub(super) fn apply_live_handoff_steps(
             }
         }
         let verification = if result.success {
-            run_handoff_verification(&handoff.workspace_path, config)
+            run_handoff_verification_with_runtime_profile(
+                &handoff.workspace_path,
+                config,
+                runtime_profile,
+            )
         } else {
             HandoffVerification {
                 success: false,

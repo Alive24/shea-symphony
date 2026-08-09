@@ -3,14 +3,18 @@ use std::path::{Path, PathBuf};
 use shea_symphony::agent::AgentSummary;
 use shea_symphony::config::RuntimeConfig;
 use shea_symphony::event_log::{EventLog, EventRecord};
+use shea_symphony::issue_workspace::discover_issue_workspaces;
 use shea_symphony::lane_claim::LaneClaim;
 use shea_symphony::model::{AgentEvent, TrackerIssue};
 use shea_symphony::profiles::selected_execution_profile;
+use shea_symphony::runtime_profile::{
+    apply_runtime_profile_environment, resolve_runtime_readiness,
+};
 use shea_symphony::tracker::{adapter_from_config, TrackerAdapter};
 use shea_symphony::workflow::WorkflowDefinition;
 use shea_symphony::workspace::{
     apply_local_git_identity, prepare_workspace, profile_scoped_identifier, safe_identifier,
-    GitIdentityApplyResult,
+    GitIdentityApplyResult, Workspace,
 };
 
 use crate::lanes::claim::render_prompt_with_claim;
@@ -112,7 +116,38 @@ fn start_agent_session_with_claim(
     let workspace_key = agent_session_workspace_key(config, issue, lane)?;
     let prompt_path =
         rendered_lane_prompt_artifact_path(config, issue, lane, 1, &backend_spec.backend);
-    let workspace = prepare_workspace(&config.workspace.root, &workspace_key, &config.hooks)?;
+    let workspace = if lane == AgentSessionLaneArg::Main
+        && config.tracker.kind == "github_project_v2"
+        && config.tracker.fixture_path.is_none()
+    {
+        let repository_root = std::env::current_dir()?;
+        let report = discover_issue_workspaces(config, issue, &repository_root)?;
+        let candidate = report
+            .canonical_index
+            .and_then(|index| report.candidates.get(index))
+            .ok_or_else(|| {
+                format!(
+                    "Main session requires one adopted canonical workspace for {}; run `workspace show` then `workspace adopt`",
+                    issue.identifier
+                )
+            })?;
+        Workspace {
+            path: candidate.path.clone(),
+            workspace_key: workspace_key.clone(),
+            created_now: false,
+        }
+    } else {
+        prepare_workspace(&config.workspace.root, &workspace_key, &config.hooks)?
+    };
+    let runtime_profile = if lane == AgentSessionLaneArg::Main {
+        Some(resolve_runtime_readiness(
+            &config.runtime_profile,
+            &config.tracker,
+            &workspace.path,
+        )?)
+    } else {
+        None
+    };
     let git_identity = apply_local_git_identity(&workspace.path, &config.identity.git)?;
     let prompt = render_prompt_with_claim(
         workflow.prompt_for_lane(lane.workflow_lane()),
@@ -122,6 +157,9 @@ fn start_agent_session_with_claim(
     )?;
     let backend = agent_session_backend(&backend_spec.backend)?;
     let mut prepared = backend.prepare(workspace.path.clone(), prompt, config)?;
+    if let Some(runtime_profile) = runtime_profile.as_ref() {
+        apply_runtime_profile_environment(&mut prepared.env, runtime_profile.profile.as_ref());
+    }
     prepared.command = Some(backend_spec.command.clone());
     prepared
         .env

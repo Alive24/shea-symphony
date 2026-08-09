@@ -71,6 +71,7 @@ operator confirmation before writing.
 - `shea-symphony-issue-forge-reflect`
 - `shea-symphony-issue-forge-dream`
 - `shea-symphony-manual-main`
+- `shea-symphony-runtime-onboarding`
 - `shea-symphony-manual-review`
 - `shea-symphony-human-review`
 - `shea-symphony-manual-merge`
@@ -101,6 +102,12 @@ tracker mutation, global skill changes, and CLI-owned runtime-envelope edits
 remain out of scope. The installer now validates that every source skill is
 manifest-backed and has matching frontmatter and OpenAI metadata before any
 preview, validation, or install.
+
+Runtime Onboarding inspects repository-owned requirement evidence and existing
+installed tools, reports conflicts, and prepares a credential-free
+`.shea/runtime-profile.json` proposal. It requires operator confirmation before
+writing the machine-local profile and never installs tools or edits shell or
+system configuration.
 
 ## Dogfood Entry Points
 

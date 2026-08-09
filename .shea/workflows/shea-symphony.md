@@ -94,6 +94,10 @@ merge_lane:
 verification:
   timeout_ms: 600000
   commands: []
+runtime_profile:
+  path: ../runtime-profile.json
+  required: false
+  timeout_ms: 10000
 observability:
   logs_root: ../logs
 ---

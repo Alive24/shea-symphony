@@ -126,9 +126,9 @@ pub fn start_autoloop(
     let mut command = shea_command_for_workspace(
         &args.iter().map(String::as_str).collect::<Vec<_>>(),
         &workspace_profile,
-    );
+    )?;
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let command_for_event = command_preview_for_workspace(&args, &workspace_profile);
+    let command_for_event = command_preview_for_workspace(&args, &workspace_profile)?;
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {

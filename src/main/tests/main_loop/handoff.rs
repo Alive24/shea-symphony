@@ -534,7 +534,10 @@ fn handoff_verification_runs_configured_commands() {
     let verification = run_handoff_verification(temp.path(), &config);
 
     assert!(verification.success);
-    assert_eq!(verification.summary, "passed:1 command(s)");
+    assert_eq!(
+        verification.summary,
+        "passed:1 command(s) runtime_profile=not_configured"
+    );
     assert_eq!(
         std::fs::read_to_string(temp.path().join("verification.txt")).unwrap(),
         "verified"

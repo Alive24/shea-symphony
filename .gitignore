@@ -19,6 +19,7 @@ app/dist/
 app/.npm-cache/
 app/src-tauri/target/
 app/src-tauri/gen/
+app/src-tauri/binaries/
 .playwright-mcp
 .shea-symphony
 *storybook.log

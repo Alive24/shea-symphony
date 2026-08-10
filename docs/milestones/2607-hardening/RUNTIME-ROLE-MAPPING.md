@@ -35,6 +35,22 @@ The current repo already has useful seams:
 2607 should migrate these behaviors into Temporal-backed boundaries without
 renaming every existing concept first.
 
+## Executable Roles
+
+The crate has two explicit composition roots during migration:
+
+- `shea-symphony` has role `temporal_worker` and compatibility
+  `shea-temporal-worker-v1`;
+- `shea-symphony-legacy` has role `legacy_cli` and compatibility
+  `shea-legacy-cli-v1`.
+
+Both expose exact `--runtime-info` JSON containing schema, role, package
+version, source revision, target, platform, architecture, and compatibility.
+The shared build identity lets the App reject a Temporal worker, stale binary,
+wrong target, or mismatched Legacy sidecar before launching a command. The
+Legacy role is an App bootstrap boundary only: it does not own Temporal
+workflow durability and Temporal does not launch or wrap it.
+
 ## Temporal
 
 Temporal is the durable local control plane.

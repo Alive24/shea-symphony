@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 description = "Rust implementation of an OpenAI Symphony-style orchestration harness with Shea Symphony extensions"
 license = "Apache-2.0"
+default-run = "shea-symphony"
+
+[[bin]]
+name = "shea-symphony-legacy"
+path = "src/legacy.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

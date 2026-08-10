@@ -24,8 +24,11 @@
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
     "targets": "all",
-    "icon": []
+    "icon": [],
+    "externalBin": [
+      "binaries/shea-symphony-legacy"
+    ]
   }
 }

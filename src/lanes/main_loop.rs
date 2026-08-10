@@ -45,18 +45,20 @@ pub(crate) use execution::{
 };
 pub(crate) use failure::{handle_run_loop_gate_failure, handle_run_loop_handoff_failure};
 #[cfg(test)]
+pub(crate) use handoff::run_handoff_verification;
+#[cfg(test)]
 pub(crate) use handoff::run_loop_apply_launch_workspace_report;
 #[cfg(test)]
 pub(crate) use handoff::run_loop_apply_recovery_workspace_report;
 pub(crate) use handoff::{
     apply_live_handoff_pr_link, compact_evidence, linked_pull_requests_contain,
-    native_linked_pull_requests_contain, pull_request_number_from_url, run_handoff_verification,
-    run_loop_agent_review_handoff_evidence, run_loop_apply_recovery_handoff,
-    run_loop_assignee_ownership_workpad, run_loop_handoff_failure_workpad, run_loop_handoff_plan,
-    run_loop_handoff_workpad, run_loop_live_handoff_enabled, run_loop_ownership_workpad,
-    run_loop_preflight_launch_workspace, run_loop_recovery_preflight_launch_workspace,
-    run_loop_runtime_ownership, run_loop_usage_limit_pause_workpad, HandoffVerification,
-    RunLoopLiveHandoff,
+    native_linked_pull_requests_contain, pull_request_number_from_url,
+    run_handoff_verification_with_runtime_profile, run_loop_agent_review_handoff_evidence,
+    run_loop_apply_recovery_handoff, run_loop_assignee_ownership_workpad,
+    run_loop_handoff_failure_workpad, run_loop_handoff_plan, run_loop_handoff_workpad,
+    run_loop_live_handoff_enabled, run_loop_ownership_workpad, run_loop_preflight_launch_workspace,
+    run_loop_recovery_preflight_launch_workspace, run_loop_runtime_ownership,
+    run_loop_usage_limit_pause_workpad, HandoffVerification, RunLoopLiveHandoff,
 };
 pub(crate) use preflight::{ensure_write_mode_main_agent_backend, main_app_server_smoke_gate};
 #[cfg(test)]

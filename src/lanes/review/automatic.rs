@@ -13,13 +13,14 @@ use shea_symphony::progress::{run_with_progress_heartbeat, ProgressHeartbeatSpec
 use shea_symphony::prompt::render_prompt;
 use shea_symphony::prompt_runtime::AUTOMATIC_HEADLESS_REVIEW_BOUNDARY;
 use shea_symphony::review::{
-    gemini_review_health_diagnostic, poll_review_job_until_terminal,
-    render_repeated_review_failure_workpad, render_review_workpad_with_workflow,
-    review_backend_from_config, review_backend_kind_from_config, review_failure_signature,
-    review_gate_decision_for_issue, review_run_eligibility, review_worker_key,
-    persist_review_job_ledger_record, transition_allowed_for_review_agent, FakeReviewBackend,
-    FakeReviewOutcome, GeminiReviewRecoveryPolicy, ReviewBackend, ReviewGateDecision, ReviewJob,
-    ReviewJobState, ReviewOutcome, ReviewRepeatedFailureEvidence, ReviewRequest, ReviewRunEligibility,
+    gemini_review_health_diagnostic, persist_review_job_ledger_record,
+    poll_review_job_until_terminal, render_repeated_review_failure_workpad,
+    render_review_workpad_with_workflow, review_backend_from_config,
+    review_backend_kind_from_config, review_failure_signature, review_gate_decision_for_issue,
+    review_run_eligibility, review_worker_key, transition_allowed_for_review_agent,
+    FakeReviewBackend, FakeReviewOutcome, GeminiReviewRecoveryPolicy, ReviewBackend,
+    ReviewGateDecision, ReviewJob, ReviewJobState, ReviewOutcome, ReviewRepeatedFailureEvidence,
+    ReviewRequest, ReviewRunEligibility,
 };
 use shea_symphony::rework::rework_transition_expected;
 #[cfg(test)]

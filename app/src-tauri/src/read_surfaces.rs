@@ -42,6 +42,7 @@ pub async fn get_runtime_snapshot(
             ],
             &workspace_profile,
         )
+        .map_err(|error| format!("failed to resolve Shea runtime: {error}"))?
         .output()
         .map_err(|error| format!("failed to run status snapshot: {error}"))?;
         if !output.status.success() {
@@ -1159,6 +1160,7 @@ fn project_issue_readback(issue: &str, workspace: &WorkspaceProfile) -> Option<V
         ],
         workspace,
     )
+    .ok()?
     .output()
     .ok()?;
     let stderr = String::from_utf8_lossy(&output.stderr);

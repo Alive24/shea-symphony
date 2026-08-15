@@ -90,6 +90,18 @@ pub fn review_gate_decision_for_actor(job: &ReviewJob, actor: ReviewActor) -> Re
                 target_state: Some("rework"),
                 message: "Confirmed Agent Review findings require Rework.".into(),
             },
+            Some(report) if report.legacy_backend_access_failure_reason().is_some() => {
+                ReviewGateDecision {
+                    outcome: ReviewOutcome::BackendUnavailable,
+                    target_state: Some("agent_review"),
+                    message: format!(
+                        "Review backend is unavailable: {}; issue remains in Agent Review because no review verdict was produced.",
+                        report.legacy_backend_access_failure_reason().unwrap_or(
+                            "the backend could not access the issue workspace"
+                        )
+                    ),
+                }
+            }
             Some(report) if report.is_inconclusive() => ReviewGateDecision {
                 outcome: ReviewOutcome::InconclusiveNeedsRework,
                 target_state: Some("rework"),

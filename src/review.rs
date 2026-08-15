@@ -2238,6 +2238,38 @@ mod tests {
     }
 
     #[test]
+    fn quoted_future_pass_after_prose_keeps_issue_in_agent_review() {
+        let job = completed_gemini_review(
+            "I reviewed the Workpad because the workspace is outside the sandbox.\n\nOnce you approve the plan, I will output the final result (`Review Result: PASS` with checklist evidence).",
+        );
+
+        let decision = review_gate_decision(&job);
+
+        assert_eq!(decision.outcome, ReviewOutcome::BackendUnavailable);
+        assert_eq!(decision.target_state, Some("agent_review"));
+        assert!(decision
+            .message
+            .contains("sandbox could not access the issue workspace"));
+        assert!(transition_allowed_for_review_agent(
+            "agent_review",
+            &decision
+        ));
+        assert!(!transition_allowed_for_review_agent("rework", &decision));
+    }
+
+    #[test]
+    fn exact_first_line_pass_still_routes_to_human_review() {
+        let job = completed_gemini_review(
+            "Review Result: PASS\n\nThe diff and required verification were independently inspected.",
+        );
+
+        let decision = review_gate_decision(&job);
+
+        assert_eq!(decision.outcome, ReviewOutcome::PassedToHumanReview);
+        assert_eq!(decision.target_state, Some("human_review"));
+    }
+
+    #[test]
     fn human_owned_uat_finding_does_not_block_agent_review_pass() {
         let job = completed_gemini_review(
             "Review Result: REWORK\n\n[Confirmed] Missing UAT: Live UAT with `main loop --write` was not run.",

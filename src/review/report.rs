@@ -61,14 +61,41 @@ pub struct AgentReviewReport {
 
 impl AgentReviewReport {
     pub(crate) fn has_parsed_review_result(&self) -> bool {
-        [
+        [self.summary.as_deref(), self.stdout.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(|text| parse_review_result(text).is_some())
+    }
+
+    pub(crate) fn legacy_backend_access_failure_reason(&self) -> Option<&'static str> {
+        if !matches!(self.reviewer_backend.as_str(), "agy-cli" | "gemini-cli")
+            || self.has_parsed_review_result()
+        {
+            return None;
+        }
+
+        let text = [
             self.summary.as_deref(),
             self.stdout.as_deref(),
             self.stderr.as_deref(),
         ]
         .into_iter()
         .flatten()
-        .any(|text| parse_review_result(text).is_some())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .to_ascii_lowercase();
+
+        [
+            "workspace is outside the sandbox",
+            "workspace was outside the sandbox",
+            "workspace is outside sandbox",
+            "workspace was outside sandbox",
+            "sandbox denied access to the workspace",
+            "sandbox prevented access to the workspace",
+        ]
+        .iter()
+        .any(|pattern| text.contains(pattern))
+        .then_some("review backend sandbox could not access the issue workspace")
     }
 
     /// Returns whether a confirmed non-UAT finding requires implementation rework.
@@ -89,6 +116,15 @@ impl AgentReviewReport {
             .any(|finding| finding.class == ReviewFindingClass::NeedsContext)
         {
             return Some("review produced Needs Context findings".into());
+        }
+
+        if matches!(self.reviewer_backend.as_str(), "agy-cli" | "gemini-cli")
+            && !self.has_parsed_review_result()
+        {
+            return Some(
+                "legacy review backend did not start with a required terminal Review Result line"
+                    .into(),
+            );
         }
 
         let text = [
@@ -237,26 +273,21 @@ enum ParsedReviewResult {
 }
 
 fn parse_review_result(output: &str) -> Option<ParsedReviewResult> {
-    output.lines().find_map(|line| {
-        let normalized = line
-            .trim()
-            .trim_matches(|ch: char| ch == '*' || ch == '_' || ch == '`')
-            .to_ascii_lowercase();
-        let (_, value) = normalized.split_once("review result:")?;
-        let value = value.trim();
-        if value.starts_with("pass") {
-            Some(ParsedReviewResult::Pass)
-        } else if value.starts_with("rework") {
-            Some(ParsedReviewResult::Rework)
-        } else if value.starts_with("needs_context")
-            || value.starts_with("needs context")
-            || value.starts_with("need context")
-        {
-            Some(ParsedReviewResult::NeedsContext)
-        } else {
-            None
-        }
-    })
+    let line = output
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())?;
+    let normalized = line
+        .trim_matches(|ch: char| ch == '*' || ch == '_' || ch == '`')
+        .to_ascii_lowercase();
+    match normalized.as_str() {
+        "review result: pass" => Some(ParsedReviewResult::Pass),
+        "review result: rework" => Some(ParsedReviewResult::Rework),
+        "review result: needs_context"
+        | "review result: needs context"
+        | "review result: need context" => Some(ParsedReviewResult::NeedsContext),
+        _ => None,
+    }
 }
 
 fn parse_loose_finding_line(line: &str) -> Option<ReviewFinding> {

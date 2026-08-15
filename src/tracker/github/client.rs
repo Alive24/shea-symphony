@@ -473,14 +473,29 @@ impl GithubProjectV2GhClient {
     }
 
     fn resolve_issue(&self, issue_ref: &str) -> Result<TrackerIssue, TrackerError> {
-        self.fetch_project_issues(GithubProjectReadMode::QueueScan)?
-            .into_iter()
-            .find(|issue| issue.id == issue_ref || issue.identifier == issue_ref)
-            .ok_or_else(|| {
-                TrackerError::IntegrationUnavailable(format!(
-                    "issue {issue_ref} was not found in configured ProjectV2"
-                ))
-            })
+        resolve_project_issue_with_reads(
+            issue_ref,
+            || self.fetch_project_issue(issue_ref),
+            || self.fetch_project_issues(GithubProjectReadMode::QueueScan),
+        )
+    }
+
+    fn resolve_issue_with_native_blockers(
+        &self,
+        issue_ref: &str,
+    ) -> Result<TrackerIssue, TrackerError> {
+        let mut issue = self.resolve_issue(issue_ref)?;
+        self.enrich_native_issue_blockers(std::slice::from_mut(&mut issue))?;
+        Ok(issue)
+    }
+
+    fn resolve_issue_with_native_subissues(
+        &self,
+        issue_ref: &str,
+    ) -> Result<TrackerIssue, TrackerError> {
+        let mut issue = self.resolve_issue(issue_ref)?;
+        self.enrich_native_subissues(std::slice::from_mut(&mut issue))?;
+        Ok(issue)
     }
 
     fn state_option_name(&self, state_input: &str) -> Result<String, TrackerError> {
@@ -534,7 +549,9 @@ impl GithubProjectV2GhClient {
     ) -> Result<IssueRelationshipReadback, TrackerError> {
         let issue = self.resolve_github_rest_issue_identity(issue_ref)?;
         let blocker = self.resolve_github_rest_issue_identity(blocker_ref)?;
-        let readback = relationship_readback_from_issue(&self.resolve_issue(&issue.identifier)?);
+        let readback = relationship_readback_from_issue(
+            &self.resolve_issue_with_native_blockers(&issue.identifier)?,
+        );
         if readback.has_blocker(&blocker.identifier) {
             return Ok(readback);
         }
@@ -556,7 +573,9 @@ impl GithubProjectV2GhClient {
             "github issue dependency add",
         )?;
 
-        let verified = relationship_readback_from_issue(&self.resolve_issue(&issue.identifier)?);
+        let verified = relationship_readback_from_issue(
+            &self.resolve_issue_with_native_blockers(&issue.identifier)?,
+        );
         if verified.has_blocker(&blocker.identifier) {
             Ok(verified)
         } else {
@@ -574,7 +593,9 @@ impl GithubProjectV2GhClient {
     ) -> Result<IssueRelationshipReadback, TrackerError> {
         let parent = self.resolve_github_rest_issue_identity(parent_ref)?;
         let subissue = self.resolve_github_rest_issue_identity(subissue_ref)?;
-        let readback = relationship_readback_from_issue(&self.resolve_issue(&parent.identifier)?);
+        let readback = relationship_readback_from_issue(
+            &self.resolve_issue_with_native_subissues(&parent.identifier)?,
+        );
         if readback.has_native_subissue(&subissue.identifier) {
             return Ok(readback);
         }
@@ -596,7 +617,9 @@ impl GithubProjectV2GhClient {
             "github native subissue add",
         )?;
 
-        let verified = relationship_readback_from_issue(&self.resolve_issue(&parent.identifier)?);
+        let verified = relationship_readback_from_issue(
+            &self.resolve_issue_with_native_subissues(&parent.identifier)?,
+        );
         if verified.has_native_subissue(&subissue.identifier) {
             Ok(verified)
         } else {
@@ -714,6 +737,30 @@ impl GithubProjectV2GhClient {
     }
 }
 
+fn resolve_project_issue_with_reads<TargetedRead, ProjectScan>(
+    issue_ref: &str,
+    targeted_read: TargetedRead,
+    project_scan: ProjectScan,
+) -> Result<TrackerIssue, TrackerError>
+where
+    TargetedRead: FnOnce() -> Result<Option<TrackerIssue>, TrackerError>,
+    ProjectScan: FnOnce() -> Result<Vec<TrackerIssue>, TrackerError>,
+{
+    let issue = if github_issue_number(issue_ref).is_some() {
+        targeted_read()?
+    } else {
+        project_scan()?
+            .into_iter()
+            .find(|issue| issue.id == issue_ref || issue.identifier == issue_ref)
+    };
+
+    issue.ok_or_else(|| {
+        TrackerError::IntegrationUnavailable(format!(
+            "issue {issue_ref} was not found in configured ProjectV2"
+        ))
+    })
+}
+
 pub(in crate::tracker) fn project_owner_query_order(
     config: &RuntimeConfig,
 ) -> Result<Vec<ProjectV2OwnerType>, TrackerError> {
@@ -807,4 +854,70 @@ fn github_add_subissue_args(
         "-F".into(),
         format!("sub_issue_id={subissue_rest_id}"),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn issue(id: &str, identifier: &str) -> TrackerIssue {
+        TrackerIssue {
+            tracker_kind: "github_project_v2".into(),
+            id: id.into(),
+            item_id: Some("PROJECT_ITEM".into()),
+            identifier: identifier.into(),
+            title: "Title".into(),
+            description: None,
+            url: None,
+            state: "Backlog".into(),
+            labels: Vec::new(),
+            assignees: Vec::new(),
+            priority: None,
+            branch_name: None,
+            linked_pull_requests: Vec::new(),
+            blocked_by: Vec::new(),
+            project_fields: BTreeMap::new(),
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn numeric_issue_resolution_uses_targeted_read_without_project_scan() {
+        let resolved = resolve_project_issue_with_reads(
+            "#542",
+            || Ok(Some(issue("ISSUE_NODE", "#542"))),
+            || panic!("numeric issue resolution must not scan the whole project"),
+        )
+        .unwrap();
+
+        assert_eq!(resolved.identifier, "#542");
+        assert_eq!(resolved.item_id.as_deref(), Some("PROJECT_ITEM"));
+    }
+
+    #[test]
+    fn node_id_resolution_falls_back_to_project_scan() {
+        let resolved = resolve_project_issue_with_reads(
+            "ISSUE_NODE",
+            || panic!("node id resolution cannot use the numeric issue query"),
+            || Ok(vec![issue("ISSUE_NODE", "#542")]),
+        )
+        .unwrap();
+
+        assert_eq!(resolved.id, "ISSUE_NODE");
+    }
+
+    #[test]
+    fn missing_targeted_issue_keeps_project_membership_error() {
+        let error = resolve_project_issue_with_reads(
+            "542",
+            || Ok(None),
+            || panic!("numeric issue resolution must not scan the whole project"),
+        )
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("issue 542 was not found in configured ProjectV2"));
+    }
 }

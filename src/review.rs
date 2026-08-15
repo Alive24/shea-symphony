@@ -2238,6 +2238,73 @@ mod tests {
     }
 
     #[test]
+    fn quoted_future_pass_after_sandbox_denial_keeps_issue_in_agent_review() {
+        let job = completed_gemini_review(
+            "I reviewed the Workpad because the workspace is outside the sandbox.\n\nOnce you approve the plan, I will output the final result (`Review Result: PASS` with checklist evidence).",
+        );
+
+        let decision = review_gate_decision(&job);
+
+        assert_eq!(decision.outcome, ReviewOutcome::BackendUnavailable);
+        assert_eq!(decision.target_state, Some("agent_review"));
+        assert!(decision
+            .message
+            .contains("sandbox could not access the issue workspace"));
+        assert!(transition_allowed_for_review_agent(
+            "agent_review",
+            &decision
+        ));
+        assert!(!transition_allowed_for_review_agent("rework", &decision));
+    }
+
+    #[test]
+    fn leading_prose_and_confirmed_finding_without_result_cannot_route_to_rework() {
+        let job = completed_gemini_review(
+            "Review could not be completed.\n[Confirmed] Bug: broken\nReview Result: REWORK",
+        );
+
+        let decision = review_gate_decision(&job);
+
+        assert_eq!(decision.outcome, ReviewOutcome::BackendUnavailable);
+        assert_eq!(decision.target_state, Some("agent_review"));
+        assert!(!transition_allowed_for_review_agent("rework", &decision));
+    }
+
+    #[test]
+    fn missing_legacy_result_keeps_issue_in_agent_review() {
+        let job = completed_gemini_review("Review completed without a terminal result.");
+
+        let decision = review_gate_decision(&job);
+
+        assert_eq!(decision.outcome, ReviewOutcome::BackendUnavailable);
+        assert_eq!(decision.target_state, Some("agent_review"));
+    }
+
+    #[test]
+    fn exact_first_line_pass_still_routes_to_human_review() {
+        let job = completed_gemini_review(
+            "Review Result: PASS\n\nThe diff and required verification were independently inspected.",
+        );
+
+        let decision = review_gate_decision(&job);
+
+        assert_eq!(decision.outcome, ReviewOutcome::PassedToHumanReview);
+        assert_eq!(decision.target_state, Some("human_review"));
+    }
+
+    #[test]
+    fn exact_first_line_needs_context_still_routes_to_rework() {
+        let job = completed_gemini_review(
+            "Review Result: NEEDS_CONTEXT\n\nThe linked PR could not be inspected.",
+        );
+
+        let decision = review_gate_decision(&job);
+
+        assert_eq!(decision.outcome, ReviewOutcome::InconclusiveNeedsRework);
+        assert_eq!(decision.target_state, Some("rework"));
+    }
+
+    #[test]
     fn human_owned_uat_finding_does_not_block_agent_review_pass() {
         let job = completed_gemini_review(
             "Review Result: REWORK\n\n[Confirmed] Missing UAT: Live UAT with `main loop --write` was not run.",
@@ -2849,7 +2916,7 @@ mod tests {
     }
 
     #[test]
-    fn completed_review_with_missing_workspace_routes_to_rework() {
+    fn completed_legacy_review_with_missing_workspace_stays_in_agent_review() {
         let job = completed_gemini_review(
             "I could not complete the review because the workspace is empty.",
         );
@@ -2858,29 +2925,33 @@ mod tests {
         let record = review_job_ledger_record(&issue(), &job, "/tmp/review-ledger.json".into());
         let workpad = render_review_workpad(&issue(), &job);
 
-        assert_eq!(decision.outcome, ReviewOutcome::InconclusiveNeedsRework);
-        assert_eq!(decision.target_state, Some("rework"));
+        assert_eq!(decision.outcome, ReviewOutcome::BackendUnavailable);
+        assert_eq!(decision.target_state, Some("agent_review"));
+        assert_eq!(record.decision_outcome, ReviewOutcome::BackendUnavailable);
         assert_eq!(
-            record.decision_outcome,
-            ReviewOutcome::InconclusiveNeedsRework
+            record.decision_target_state.as_deref(),
+            Some("agent_review")
         );
-        assert_eq!(record.decision_target_state.as_deref(), Some("rework"));
         assert!(workpad.contains("### Inconclusive Review Diagnostic"));
         assert!(workpad.contains("workspace is empty"));
         assert!(!workpad.contains("Review pass evidence: `recorded`"));
     }
 
     #[test]
-    fn completed_review_with_missing_pr_evidence_routes_to_rework() {
+    fn completed_legacy_review_with_missing_pr_evidence_stays_in_agent_review() {
         let job = completed_gemini_review(
             "Review could not be completed: expected code changes and PR evidence were missing from the workspace.",
         );
 
         let decision = review_gate_decision(&job);
 
-        assert_eq!(decision.outcome, ReviewOutcome::InconclusiveNeedsRework);
-        assert_eq!(decision.target_state, Some("rework"));
-        assert!(transition_allowed_for_review_agent("rework", &decision));
+        assert_eq!(decision.outcome, ReviewOutcome::BackendUnavailable);
+        assert_eq!(decision.target_state, Some("agent_review"));
+        assert!(transition_allowed_for_review_agent(
+            "agent_review",
+            &decision
+        ));
+        assert!(!transition_allowed_for_review_agent("rework", &decision));
         assert!(!transition_allowed_for_review_agent(
             "human_review",
             &decision
@@ -2888,15 +2959,15 @@ mod tests {
     }
 
     #[test]
-    fn completed_review_that_cannot_inspect_pr_routes_to_rework() {
+    fn completed_legacy_review_that_cannot_inspect_pr_stays_in_agent_review() {
         let job = completed_gemini_review(
             "Unable to inspect the PR or required handoff evidence, so this review is inconclusive.",
         );
 
         let decision = review_gate_decision(&job);
 
-        assert_eq!(decision.outcome, ReviewOutcome::InconclusiveNeedsRework);
-        assert_eq!(decision.target_state, Some("rework"));
+        assert_eq!(decision.outcome, ReviewOutcome::BackendUnavailable);
+        assert_eq!(decision.target_state, Some("agent_review"));
     }
 
     #[test]

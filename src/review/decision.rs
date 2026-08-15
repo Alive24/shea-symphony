@@ -85,6 +85,20 @@ pub fn review_gate_decision_for_actor(job: &ReviewJob, actor: ReviewActor) -> Re
             message: "Agent review is still running; issue remains in Agent Review.".into(),
         },
         ReviewJobState::Completed => match &job.report {
+            // Legacy text findings are advisory until an exact first-line result
+            // proves that the backend produced a terminal Review verdict.
+            Some(report) if report.legacy_backend_missing_review_result() => {
+                ReviewGateDecision {
+                    outcome: ReviewOutcome::BackendUnavailable,
+                    target_state: Some("agent_review"),
+                    message: format!(
+                        "Review backend is unavailable: {}; issue remains in Agent Review because no terminal review verdict was produced.",
+                        report.legacy_backend_access_failure_reason().unwrap_or(
+                            "legacy review backend did not start with a required Review Result line"
+                        )
+                    ),
+                }
+            }
             Some(report) if report.blocks_progress() => ReviewGateDecision {
                 outcome: ReviewOutcome::NeedsRework,
                 target_state: Some("rework"),

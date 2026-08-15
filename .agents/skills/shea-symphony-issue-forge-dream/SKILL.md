@@ -34,7 +34,7 @@ Start from current Project, plan, debug, and Doctor surfaces, then sample only t
 - run logs, session evidence, and Doctor reports;
 - the Dream Log index plus the most recent five run directories;
 - repository skills, design docs, and recent code/docs/skill drift;
-- local installed skills only when installation drift matters; and
+- repository-local skills only when a concrete discovery or loading problem matters; and
 - available rollout or conversation summaries.
 
 Do not reread unlimited history. Reopen older material only when the index or a current theme points to it.

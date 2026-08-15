@@ -6,16 +6,13 @@ use shea_symphony::canonical_checkout::{
 };
 use shea_symphony::config::RuntimeConfig;
 use shea_symphony::doctor::{
-    append_local_skill_install_doctor_violations, audit_project_issues_with_context,
-    default_shea_symphony_skill_targets, AuditSeverity, ProjectAuditReport, ProjectDoctorContext,
+    audit_project_issues_with_context, AuditSeverity, ProjectAuditReport, ProjectDoctorContext,
 };
 use shea_symphony::model::{normalize_state, SessionStatusSnapshot, TrackerIssue};
 use shea_symphony::runtime_state::RuntimeState;
-use shea_symphony::skill_status::{doctor_skill_readiness_summary, SkillStatusInput};
 
 use crate::commands::doctor::{
     append_canonical_checkout_doctor_violations, append_workspace_doctor_violations,
-    discover_skill_suite_repo_root,
 };
 use crate::orchestration::current_time_ms;
 
@@ -80,7 +77,7 @@ pub(crate) struct AutopilotRetryRecord {
 }
 
 pub(crate) fn autopilot_doctor_report(
-    workflow_path: &Path,
+    _workflow_path: &Path,
     config: &RuntimeConfig,
     issues: &[TrackerIssue],
     runtime_states: &[RuntimeState],
@@ -98,19 +95,6 @@ pub(crate) fn autopilot_doctor_report(
     report.integration_gaps = integration_gaps;
     append_canonical_checkout_doctor_violations(&mut report, config);
     append_workspace_doctor_violations(&mut report, config, issues);
-    if let Ok(skill_repo_root) = discover_skill_suite_repo_root(workflow_path) {
-        let skill_targets = default_shea_symphony_skill_targets();
-        append_local_skill_install_doctor_violations(&mut report, &skill_repo_root, &skill_targets);
-        report.skill_readiness_summary = Some(doctor_skill_readiness_summary(SkillStatusInput {
-            workflow_path: workflow_path.to_path_buf(),
-            suite_path: None,
-            codex_dir: None,
-            gemini_dir: None,
-            require_gemini: false,
-            session_skills: Vec::new(),
-            session_skills_file: None,
-        }));
-    }
     report
 }
 
@@ -255,9 +239,6 @@ impl AutopilotDoctorSummary {
                 "{} severity={:?} code={} message={}",
                 violation.issue_ref, violation.severity, violation.code, violation.message
             ));
-        }
-        if let Some(summary) = &report.skill_readiness_summary {
-            evidence.push(summary.clone());
         }
         Self {
             blockers: report.blocker_count(),

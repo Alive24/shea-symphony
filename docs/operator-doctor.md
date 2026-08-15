@@ -25,11 +25,9 @@ Use Doctor v1 when:
 - a lane handoff cannot proceed because linked PR, draft PR, claim, session, or
   runtime evidence is incomplete.
 - cleanup could discard useful worktree or runtime evidence.
-- local Shea Symphony skill install symptoms are blocking an operator, while
-  `doctor` owns read-only integrity warnings and #242 owns install/update
-  writes.
-- installable skill suite packaging questions appear, while dated suite
-  packaging remains owned by #242.
+- a repository-local Shea Skill cannot be discovered or loaded as configured;
+  Doctor may diagnose the concrete contract but does not restore it from an
+  upstream copy.
 - observed runs or repository contracts show missing completion boundaries,
   duplicated or contradictory instructions, wrong-layer text, lane leakage,
   excessive procedure, unused workpad structure, or a likely safe
@@ -51,7 +49,7 @@ Doctor v1 defaults to:
 6. list any repair actions that still need explicit confirmation.
 
 Doctor v1 must not perform automatic Project mutation, PR linkage repair, stale
-claim repair, worktree cleanup, runtime cleanup, local skill writes, or PR ready
+claim repair, worktree cleanup, runtime cleanup, repository-local skill writes, or PR ready
 transitions. Those actions require an explicit operator request, an explicit
 operator confirmation, or a documented command with a `--write` flag.
 
@@ -63,7 +61,7 @@ the triage note must record why the break-glass path was used.
 Repository-contract repair has a stricter boundary: it never mutates Project
 status, and operator confirmation covers only the exact displayed paths and
 diff. It does not authorize commits, pushes, PR creation, issue promotion,
-global skill installation, or unrelated cleanup.
+changes outside the repository, or unrelated cleanup.
 
 ## Repository Contract Repair
 
@@ -71,7 +69,7 @@ Use the canonical Doctor skill's `repository_contract_repair` path. Resolve the
 active repository and configured workflow first, then inspect:
 
 - configured lane prompts and workpad templates;
-- repository-owned Shea skills and their rendered repo-local copies;
+- repository-owned Shea Skills and their referenced resources;
 - rendered prompt and runtime-envelope readback;
 - required variables and referenced files; and
 - relevant run, model, harness, Review, and recovery evidence.
@@ -103,7 +101,7 @@ run is evidence for that context, not a universal preference.
 ### Plan, preview, and confirmation
 
 Produce the `Shea Symphony Contract Repair Plan` from
-`skills/shea-symphony/suite/shea-symphony-doctor/references/repository-contract-repair.md`.
+`.agents/skills/shea-symphony-doctor/references/repository-contract-repair.md`.
 It records the observed failure, inference/confidence, affected lane/model/
 harness, exact paths, removals/merges/relocations/additions, preserved
 invariants, expected improvement, verification, rollback, and confirmation
@@ -200,8 +198,7 @@ Every Doctor session should choose one primary classification:
 | `draft_pr_handoff` | A linked PR is draft before Agent Review handoff. | Use documented ready repair only after confirmation. |
 | `stale_lane_claim` | A lane claim is stale, mismatched, failed, superseded, or missing registry evidence. | Preserve prior claim and request confirmation before superseding it. |
 | `dirty_runtime_or_worktree` | Runtime state, session registry, or issue worktree is dirty or ambiguous. | Inspect, preserve evidence, and avoid cleanup until confirmed. |
-| `skill_install_symptom` | Local skill alias, path, metadata, or discoverability is broken. | Show target paths and recommend the exact suite validate/install or targeted local-copy repair; execute only after request or confirmation. |
-| `installable_suite_followup` | Packaging as a dated installable skill suite is relevant. | Patch the repo-owned suite when requested, then validate before local install. |
+| `skill_loading_symptom` | A repository-local Skill path, frontmatter, metadata file, or referenced resource is concretely broken. | Diagnose the repository-owned contract and propose a targeted confirmed repair without comparing it to upstream text or versions. |
 | `issue_contract_gap` | The issue contract lacks execution-critical scope, verification, or dependency facts. | Move or recommend moving to `Need to Clarify`. |
 | `no_repair_needed` | Evidence shows the item is healthy. | Return to the normal lane flow. |
 
@@ -242,8 +239,7 @@ operator-authored notes with `project timeline-comment`; do not use
 - Safe no-write commands to run next:
   - ...
 - Related follow-ups:
-  - `doctor` covers full local skill install integrity checks and those findings are related but non-blocking.
-  - #242 covers dated installable skill suite packaging and is related but non-blocking.
+  - Record only concrete repository-local Skill loading or contract problems; vendored customization is not drift.
 ```
 
 The note must separate observed evidence from inference. If evidence is stale,
@@ -259,7 +255,7 @@ These repairs require explicit confirmation or a documented `--write` path:
 - marking draft PRs ready.
 - archiving, deleting, or cleaning worktrees.
 - runtime state cleanup.
-- local skill install writes.
+- repository-local Skill contract writes.
 
 Prefer the smallest repair that preserves issue, PR, worktree, session, and
 workpad context. Do not reset when repair can preserve evidence.
@@ -283,19 +279,13 @@ Use the owning skill or lane workflow before doing normal Main, Review, Human
 Review, or Merging work. Doctor coordinates the repair path; it does not turn a
 diagnosis-only step into hidden implementation or merge authority.
 
-## Relationship To #256 And #242
+## Repository-Owned Skill Boundary
 
-`doctor` verifies local Shea Symphony skill install health by reporting
-warning-level Codex and Gemini root findings for aliases, symlinks, missing
-files, stale metadata, and stale naming. Doctor triage may classify a symptom as
-`skill_install_symptom`, collect evidence, show target paths, and recommend a
-targeted install/update. It may perform that local write only after operator
-request or confirmation.
-
-#242 remains the owning track for broad dated skill-suite packaging. If the
-operator asks for a bounded installable-skill update, Doctor may patch the
-repo-owned suite copy and validate/install that specific skill without turning
-the task into a full suite release.
+Doctor may diagnose a concrete repository-local Skill discovery, frontmatter,
+metadata, or referenced-resource failure. It treats the repository's vendored
+files as authoritative and must not compare them with upstream text or versions,
+restore them from a source copy, or interpret intentional customization as drift.
+A targeted repository-local repair still requires the normal confirmation gate.
 
 ## Outcomes
 

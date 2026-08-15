@@ -78,10 +78,6 @@ pub fn render_project_audit_report(report: &ProjectAuditReport) -> String {
         format!("violations={}", report.violations.len()),
         format!("blockers={}", report.blocker_count()),
     ];
-    if let Some(summary) = &report.skill_readiness_summary {
-        lines.push(format!("skill_readiness_summary={summary}"));
-    }
-
     if report.is_clean() {
         lines.push("summary=Project invariants look clean.".into());
     } else {

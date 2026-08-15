@@ -1,5 +1,5 @@
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 mod repair;
 
@@ -8,8 +8,7 @@ use shea_symphony::canonical_checkout::{
 };
 use shea_symphony::config::RuntimeConfig;
 use shea_symphony::doctor::{
-    append_local_skill_install_doctor_violations, audit_project_issues_with_context,
-    default_shea_symphony_skill_targets, render_project_audit_report,
+    audit_project_issues_with_context, render_project_audit_report,
     render_project_audit_report_json, AuditSeverity, ProjectAuditReport, ProjectAuditViolation,
     ProjectDoctorContext, AGENT_REVIEW_DRAFT_PR,
 };
@@ -19,7 +18,6 @@ use shea_symphony::presentation::render_doctor_panel;
 use shea_symphony::progress::run_with_progress_heartbeat;
 use shea_symphony::runtime_state::load_runtime_states;
 use shea_symphony::session_registry::{load_session_registry, session_registry_path};
-use shea_symphony::skill_status::{doctor_skill_readiness_summary, SkillStatusInput};
 use shea_symphony::tracker::{adapter_from_config, TrackerAdapter, TrackerError};
 use shea_symphony::workflow::WorkflowDefinition;
 
@@ -169,19 +167,6 @@ pub(crate) fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::E
     report.integration_gaps = integration_gaps;
     append_canonical_checkout_doctor_violations(&mut report, &config);
     append_workspace_doctor_violations(&mut report, &config, &issues);
-    let skill_repo_root = discover_skill_suite_repo_root(&workflow_path)?;
-    let skill_targets = default_shea_symphony_skill_targets();
-    append_local_skill_install_doctor_violations(&mut report, &skill_repo_root, &skill_targets);
-    report.skill_readiness_summary = Some(doctor_skill_readiness_summary(SkillStatusInput {
-        workflow_path: workflow_path.clone(),
-        suite_path: None,
-        codex_dir: None,
-        gemini_dir: None,
-        require_gemini: false,
-        session_skills: Vec::new(),
-        session_skills_file: None,
-    }));
-
     match &options.action {
         Some(DoctorAction::Repair(repair)) => {
             repair::doctor_repair_issue(&config, adapter.as_ref(), &issues, &report, repair)?;
@@ -232,34 +217,6 @@ pub(crate) fn resolve_doctor_workflow_path(explicit: Option<PathBuf>) -> PathBuf
     } else {
         PathBuf::from("WORKFLOW.md")
     }
-}
-
-pub(crate) fn discover_skill_suite_repo_root(
-    workflow_path: &Path,
-) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let start = if workflow_path.is_absolute() {
-        workflow_path.to_path_buf()
-    } else {
-        std::env::current_dir()?.join(workflow_path)
-    };
-    let mut cursor = start
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-    loop {
-        if cursor
-            .join("skills")
-            .join("shea-symphony")
-            .join("manifest.toml")
-            .exists()
-        {
-            return Ok(cursor);
-        }
-        if !cursor.pop() {
-            break;
-        }
-    }
-    Ok(std::env::current_dir()?)
 }
 
 fn print_doctor_interactive_plan(report: &ProjectAuditReport) {

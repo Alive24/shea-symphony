@@ -54,16 +54,16 @@ Recent history made these prompts file-defined so operator wording is versioned 
 
 Doctor has two related surfaces:
 
-- The deterministic 2606 `doctor` command hydrates tracker evidence, runtime/session state, workspaces/topology, canonical checkout, and skill installation health; it supports human, JSON, TUI, strict, and limited write paths (`src/commands/doctor.rs`).
+- The deterministic 2606 `doctor` command hydrates tracker evidence, runtime/session state, workspaces/topology, and canonical checkout; it supports human, JSON, TUI, strict, and limited write paths (`src/commands/doctor.rs`).
 - Doctor v1 is a repo-owned operator workflow (`docs/operator-doctor.md`, **Status: Doctor v1**) that is read-first, evidence-preserving, and confirmation-gated.
 
-Use Doctor for NHI, missing PR linkage, draft handoff, stale claim, dirty runtime/worktree, skill install symptoms, or other stuck-state diagnosis. A safe run:
+Use Doctor for NHI, missing PR linkage, draft handoff, stale claim, dirty runtime/worktree, concrete repository-local Skill loading failures, or other stuck-state diagnosis. A safe run:
 
 1. Read live tracker, PR, runtime/session, worktree, and existing workpad evidence.
 2. Separate observation from inference and classify one primary blocker.
 3. Recommend the smallest repair that preserves evidence.
 4. State whether it can run in the current session.
-5. Require explicit confirmation for tracker changes, PR-ready changes, claim repair, cleanup, runtime cleanup, or skill writes.
+5. Require explicit confirmation for tracker changes, PR-ready changes, claim repair, cleanup, runtime cleanup, or repository-local Skill writes.
 6. Record durable evidence before terminal routing.
 
 Implemented deterministic repair is narrower than the operator spec: invalid Human Review can return to Agent Review, a draft PR can be marked ready only with explicit confirmation, and explicit escalation to NHI is supported. Doctor must never move an issue to Human Review or merge a PR. #390 is Done and established the newer merge-agent policy; it is not an active Doctor-repair Issue. **Tracking:** retained 2606 Doctor repair is an unowned gap or removable under T2607-08, for which no Issue is promoted.

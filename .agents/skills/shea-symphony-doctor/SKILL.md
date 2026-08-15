@@ -1,12 +1,12 @@
 ---
 name: shea-symphony-doctor
-description: Diagnose concrete Shea Symphony failures, repository-contract problems, install-health gaps, interrupted workflows, Need Human Input items, and issue or PR blockers; propose the smallest evidence-backed repair and apply only an explicitly confirmed bounded change. Do not use for routine project checkpoints, progress summaries, next-work prioritization, or Backlog mining; use shea-symphony-issue-forge-reflect for those.
+description: Diagnose concrete Shea Symphony failures, repository-contract problems, operational inconsistencies, interrupted workflows, Need Human Input items, and issue or PR blockers; propose the smallest evidence-backed repair and apply only an explicitly confirmed bounded change. Do not use for routine project checkpoints, progress summaries, next-work prioritization, or Backlog mining; use shea-symphony-issue-forge-reflect for those.
 ---
 
 # Shea Symphony Doctor
 
 Use read-first diagnosis for Doctor findings, repository-owned workflow and
-agent contracts, debug output, install drift, stuck `Need Human Input` items,
+agent contracts, debug output, operational inconsistencies, stuck `Need Human Input` items,
 and issue or PR blockers. Keep Doctor outside normal Main, Review, Merge, and
 Issue Forge authority.
 
@@ -41,14 +41,14 @@ smallest missing fact. Do not guess an editable path.
 For every Doctor finding, report:
 
 - exact observed evidence and whether it is a blocker or warning;
-- affected issue, PR, worktree, session, contract, or installed-skill path;
+- affected issue, PR, worktree, session, contract, or repository-local skill path;
 - inference, confidence, and plausible alternatives, kept separate from facts;
 - the smallest workflow-owned repair path;
 - whether the repair is safe in this session; and
 - the one operator decision still needed, if any.
 
 End with one concrete next step: a named lane handoff, the configured foreground
-workflow action, a documented state/PR/worktree/install repair, a
+workflow action, a documented state/PR/worktree/skill-loading repair, a
 `repository_contract_repair` plan, or one focused operator question.
 
 ## Repository Contract Repair
@@ -150,8 +150,8 @@ as applicable:
 - workflow parsing and referenced-file resolution;
 - lane-prompt and workpad-template rendering with required variables;
 - runtime-envelope readback without editing the envelope;
-- skill frontmatter, metadata, manifest, installer dry-run/validation, and
-  source/rendered-copy synchronization;
+- repository-local skill frontmatter, metadata, referenced resources, and
+  discovery;
 - focused fixture checks and relevant repository tests; and
 - changed-path and unrelated-byte comparison.
 
@@ -186,8 +186,9 @@ merge authority. Read back every external mutation.
 - Do not start normal Main, Review, Human Review, or Merge work from Doctor.
 - Do not change Project state without separate explicit authorization for the
   documented repair. Contract repair never changes Project state.
-- Do not overwrite local or repo-scoped skills silently. Use a targeted,
-  confirmed update; use a whole-suite installer only when requested.
+- Vendored repository skills are owned by that repository. Do not compare them
+  with upstream text or versions, overwrite them silently, or treat intentional
+  customization as drift. Use only a targeted, confirmed repository-local repair.
 - Inspect grouped workspace/session evidence and local Git metadata before
   repairing ambiguous ownership.
 - Never merge a PR or make an independent acceptance decision.

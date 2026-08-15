@@ -34,7 +34,7 @@ Use `npm --prefix app run test:build` when validating the static production buil
 | Parent/subissue | `tests/parent_subissue_topology.rs` | branch/merge-base and parent-owned final review rules |
 | App/operator UI | `app/test/*.mjs`, Tauri module tests | Human Todo, handoff prompts, freshness, CLI command construction, events |
 | Tracker integrations | `tests/live_github_smoke.rs`, `tests/live_linear_smoke.rs` | opt-in credentialed read-only adapter smoke |
-| Skill suite | `tests/skill_suite.rs` | repo-owned skill packaging/contract checks |
+| Repository-owned Skills | `tests/skill_suite.rs` | canonical `.agents/skills` inventory, frontmatter, metadata, resources, and lane contracts |
 
 ## Temporal smoke
 

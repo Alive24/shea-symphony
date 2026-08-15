@@ -4,7 +4,6 @@ mod lane_claims;
 mod project_state;
 mod report;
 mod runtime;
-mod skills;
 mod topology;
 
 use crate::model::{SessionStatusSnapshot, TrackerIssue};
@@ -23,11 +22,6 @@ pub use report::{
     render_human_review_repair_workpad, render_project_audit_report,
     render_project_audit_report_json,
 };
-pub use skills::{
-    append_local_skill_install_doctor_violations, default_shea_symphony_skill_targets,
-    SkillInstallTarget,
-};
-
 pub const HUMAN_REVIEW_MISSING_REVIEW_EVIDENCE: &str = "human_review_missing_review_evidence";
 pub const AGENT_REVIEW_DRAFT_PR: &str = "agent_review_draft_pr";
 
@@ -54,8 +48,6 @@ pub struct ProjectAuditReport {
     pub violations: Vec<ProjectAuditViolation>,
     #[serde(default)]
     pub integration_gaps: Vec<String>,
-    #[serde(default)]
-    pub skill_readiness_summary: Option<String>,
 }
 
 impl ProjectAuditReport {
@@ -117,7 +109,6 @@ pub fn audit_project_issues_with_context(
         total_issues: issues.len(),
         violations,
         integration_gaps: Vec::new(),
-        skill_readiness_summary: None,
     }
 }
 
@@ -175,7 +166,6 @@ mod tests {
     mod project_state;
     mod report;
     mod runtime;
-    mod skills;
     mod support;
     mod topology;
 }

@@ -32,7 +32,7 @@ impl TargetContext {
         let workspace_path = Some(workspace.target_root.clone());
         let skills_path = workspace_path
             .as_deref()
-            .map(|path| Path::new(path).join(".codex").join("skills"))
+            .map(|path| Path::new(path).join(".agents").join("skills"))
             .map(|path| path.display().to_string());
 
         Self {
@@ -218,7 +218,7 @@ mod tests {
         );
         assert_eq!(
             context.skills_path.as_deref(),
-            Some(dir.join(".codex/skills").to_str().unwrap())
+            Some(dir.join(".agents/skills").to_str().unwrap())
         );
     }
 }

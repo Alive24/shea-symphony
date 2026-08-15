@@ -31,7 +31,7 @@ fn reports_missing_local_skill_root_as_warning() {
     assert_eq!(report.violations[0].code, "local_skill_root_missing");
     assert!(report.violations[0]
         .suggestion
-        .contains("install-shea-symphony-skills.js --dry-run"));
+        .contains("standard project-local Skills CLI targets"));
 }
 
 #[test]
@@ -115,6 +115,49 @@ fn accepts_healthy_local_skill_directory() {
     .unwrap();
     let target = SkillInstallTarget {
         label: "Gemini".into(),
+        root: target_root,
+    };
+    let mut report = ProjectAuditReport {
+        total_issues: 0,
+        violations: Vec::new(),
+        integration_gaps: Vec::new(),
+        skill_readiness_summary: None,
+    };
+
+    append_local_skill_install_doctor_violations(&mut report, temp.path(), &[target]);
+
+    assert!(report.violations.is_empty());
+}
+
+#[test]
+fn ignores_skills_excluded_from_the_normal_install_set() {
+    let temp = tempfile::tempdir().unwrap();
+    write_skill_suite(
+        temp.path(),
+        &[
+            ("shea-symphony-doctor", "suite/shea-symphony-doctor"),
+            (
+                "shea-symphony-issue-forge-dream",
+                "suite/shea-symphony-issue-forge-dream",
+            ),
+        ],
+    );
+    let manifest_path = temp.path().join("skills/shea-symphony/manifest.toml");
+    let manifest = fs::read_to_string(&manifest_path).unwrap().replace(
+        "path = \"suite/shea-symphony-issue-forge-dream\"",
+        "path = \"suite/shea-symphony-issue-forge-dream\"\ndefault_install = false",
+    );
+    fs::write(manifest_path, manifest).unwrap();
+    let target_root = temp.path().join(".agents/skills");
+    let destination = target_root.join("shea-symphony-doctor");
+    fs::create_dir_all(&destination).unwrap();
+    fs::write(
+        destination.join("SKILL.md"),
+        skill_text("shea-symphony-doctor", "2026.05.17"),
+    )
+    .unwrap();
+    let target = SkillInstallTarget {
+        label: "Codex/Antigravity".into(),
         root: target_root,
     };
     let mut report = ProjectAuditReport {

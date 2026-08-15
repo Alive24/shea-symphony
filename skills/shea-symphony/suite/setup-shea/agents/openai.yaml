@@ -1,0 +1,4 @@
+interface:
+  display_name: "Setup Shea"
+  short_description: "Install or reconcile Shea in the active repository"
+  default_prompt: "Use $setup-shea to plan, confirm, apply, and verify Shea Symphony setup for this repository without claiming an issue."

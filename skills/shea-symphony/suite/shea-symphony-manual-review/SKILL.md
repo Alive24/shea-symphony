@@ -3,7 +3,7 @@ name: shea-symphony-manual-review
 description: Use when the operator wants to trigger one Shea Symphony review for a named issue through the external Review backend configured by the active workflow, including an explicitly operator-authorized standalone implementation with a ready PR. Resolve the active CLI and workflow, validate or prepare the targeted handoff, invoke `review once`, and read back the result. Do not review the code or manufacture manual review evidence in the current agent.
 metadata:
   short-description: Trigger one workflow-backed external review
-  suite-version: 2026.08.07
+  suite-version: 2026.08.15
 ---
 
 # Shea Symphony Manual Review

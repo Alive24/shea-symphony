@@ -349,11 +349,22 @@ fn read_source_suite(path: &Path, source: &str) -> Result<SkillSuite, String> {
         .unwrap_or_default();
     let manifest_by_name = manifest_entries
         .iter()
+        .filter(|entry| entry.default_install)
         .map(|entry| (entry.name.clone(), entry.path.clone()))
         .collect::<BTreeMap<_, _>>();
+    let excluded_manifest_names = manifest_entries
+        .iter()
+        .filter(|entry| !entry.default_install)
+        .map(|entry| entry.name.clone())
+        .collect::<BTreeSet<_>>();
 
     let mut names = BTreeSet::new();
-    names.extend(manifest_entries.iter().map(|entry| entry.name.clone()));
+    names.extend(
+        manifest_entries
+            .iter()
+            .filter(|entry| entry.default_install)
+            .map(|entry| entry.name.clone()),
+    );
     for entry in fs::read_dir(&suite_dir).map_err(|error| error.to_string())? {
         let entry = entry.map_err(|error| error.to_string())?;
         if entry
@@ -361,7 +372,10 @@ fn read_source_suite(path: &Path, source: &str) -> Result<SkillSuite, String> {
             .map_err(|error| error.to_string())?
             .is_dir()
         {
-            names.insert(entry.file_name().to_string_lossy().to_string());
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !excluded_manifest_names.contains(&name) {
+                names.insert(name);
+            }
         }
     }
 
@@ -437,25 +451,39 @@ fn manifest_root(suite_dir: &Path) -> PathBuf {
 struct ManifestSkillEntry {
     name: String,
     path: PathBuf,
+    default_install: bool,
 }
 
 fn parse_manifest_entries(text: &str) -> Vec<ManifestSkillEntry> {
     let mut entries = Vec::new();
     let mut current_name: Option<String> = None;
     let mut current_path: Option<PathBuf> = None;
+    let mut current_default_install = true;
     for line in text.lines() {
         let trimmed = line.trim();
         if trimmed == "[[skills]]" {
-            push_manifest_entry(&mut entries, &mut current_name, &mut current_path);
+            push_manifest_entry(
+                &mut entries,
+                &mut current_name,
+                &mut current_path,
+                &mut current_default_install,
+            );
             continue;
         }
         if let Some(value) = manifest_line_value(trimmed, "name") {
             current_name = Some(value);
         } else if let Some(value) = manifest_line_value(trimmed, "path") {
             current_path = Some(PathBuf::from(value));
+        } else if trimmed == "default_install = false" {
+            current_default_install = false;
         }
     }
-    push_manifest_entry(&mut entries, &mut current_name, &mut current_path);
+    push_manifest_entry(
+        &mut entries,
+        &mut current_name,
+        &mut current_path,
+        &mut current_default_install,
+    );
     entries
 }
 
@@ -463,13 +491,19 @@ fn push_manifest_entry(
     entries: &mut Vec<ManifestSkillEntry>,
     current_name: &mut Option<String>,
     current_path: &mut Option<PathBuf>,
+    current_default_install: &mut bool,
 ) {
     if let (Some(name), Some(path)) = (current_name.take(), current_path.take()) {
-        entries.push(ManifestSkillEntry { name, path });
+        entries.push(ManifestSkillEntry {
+            name,
+            path,
+            default_install: *current_default_install,
+        });
     } else {
         *current_name = None;
         *current_path = None;
     }
+    *current_default_install = true;
 }
 
 fn manifest_string_value(text: &str, key: &str) -> Option<String> {
@@ -515,10 +549,10 @@ fn default_codex_root(input: &SkillStatusInput) -> PathBuf {
         return path;
     }
     if let Some(path) = profile_working_dir_from_workflow(&input.workflow_path) {
-        return path.join(".codex").join("skills");
+        return path.join(".agents").join("skills");
     }
     workflow_repo_root(&input.workflow_path)
-        .join(".codex")
+        .join(".agents")
         .join("skills")
 }
 
@@ -1372,6 +1406,31 @@ path = "suite/shea-symphony-issue-forge-dream"
     }
 
     #[test]
+    fn excludes_manifest_skills_marked_out_of_normal_install() {
+        let temp = TempDir::new().unwrap();
+        let repo = temp.path().join("repo");
+        let source_suite = suite(&repo);
+        let manifest_path = source_suite.parent().unwrap().join("manifest.toml");
+        let manifest = fs::read_to_string(&manifest_path).unwrap().replace(
+            "path = \"suite/shea-symphony-issue-forge-dream\"",
+            "path = \"suite/shea-symphony-issue-forge-dream\"\ndefault_install = false",
+        );
+        fs::write(manifest_path, manifest).unwrap();
+
+        let report = build_skill_readiness_report(input(
+            &repo,
+            Some(source_suite),
+            temp.path().join("codex"),
+            temp.path().join("gemini"),
+        ));
+
+        assert!(!report
+            .rows
+            .iter()
+            .any(|row| row.skill_name == "shea-symphony-issue-forge-dream"));
+    }
+
+    #[test]
     fn reports_broken_symlink_file_alias_and_missing_skill_md() {
         let temp = TempDir::new().unwrap();
         let repo = temp.path().join("repo");
@@ -1430,7 +1489,7 @@ path = "suite/shea-symphony-issue-forge-dream"
         fs::create_dir_all(repo.join(".git")).unwrap();
         write(&repo.join("workflows/shea-symphony.md"), "---\n---\nPrompt");
         let source_suite = suite(&repo);
-        let repo_codex = repo.join(".codex/skills");
+        let repo_codex = repo.join(".agents/skills");
         write(
             &repo_codex.join("shea-symphony-doctor/SKILL.md"),
             &fs::read_to_string(source_suite.join("shea-symphony-doctor/SKILL.md")).unwrap(),
@@ -1470,7 +1529,7 @@ path = "suite/shea-symphony-issue-forge-dream"
                 target.display().to_string()
             ),
         );
-        let target_codex = target.join(".codex/skills");
+        let target_codex = target.join(".agents/skills");
         write(
             &target_codex.join("shea-symphony-doctor/SKILL.md"),
             &fs::read_to_string(source_suite.join("shea-symphony-doctor/SKILL.md")).unwrap(),

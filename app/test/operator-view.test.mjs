@@ -1761,7 +1761,7 @@ test('view model surfaces external target readiness and workflow path', () => {
       workflowPath: '/tmp/target/WORKFLOW.md',
       repository: 'Alive24/3D-RAMS',
       workspacePath: '/tmp/target',
-      skillsPath: '/tmp/target/.codex/skills',
+      skillsPath: '/tmp/target/.agents/skills',
       selfWorkspace: false,
       readiness: { status: 'ready', blockers: [] }
     },

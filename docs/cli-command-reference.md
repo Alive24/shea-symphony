@@ -183,7 +183,8 @@ cargo run -- doctor repair 194 --mark-pr-ready --confirm-handoff-ready --write
 ```
 
 For operator-selected stuck states and `Need Human Input` triage, use the
-repo-owned Doctor skill at `.codex/skills/shea-symphony-doctor/SKILL.md` with
+repo-owned Doctor skill at `.agents/skills/shea-symphony-doctor/SKILL.md` (or
+`.claude/skills/shea-symphony-doctor/SKILL.md` for Claude Code) with
 the supporting spec in `docs/operator-doctor.md`. The skill is a read-first
 diagnostic workflow that produces a structured `Doctor Triage Note`; it does
 not replace the CLI repair commands or authorize automatic Project mutation.
@@ -216,7 +217,7 @@ current-session visibility. Without `--session-skills` or
 `--session-skills-file`, current-session visibility is `unknown` and is not a
 failure. Gemini absence is a blocker only when `--require-gemini` is used.
 Codex readiness defaults to the selected profile working directory's
-`.codex/skills`, then the workflow repo's `.codex/skills`; it does not read
+`.agents/skills`, then the workflow repo's `.agents/skills`; it does not read
 `CODEX_HOME`. Use an explicit `--codex-dir` only for an intentional override.
 
 ## Main Implementation Runtime
@@ -690,28 +691,25 @@ failures append compact repeat evidence instead of duplicating full logs.
 ## Local Skill Suite
 
 Repo-packaged Shea Symphony skills live under `skills/shea-symphony/` with
-release metadata in `skills/shea-symphony/manifest.toml`. The installer previews
-and updates local Codex and Gemini skill directories:
+release metadata in `skills/shea-symphony/manifest.toml`. Install `setup-shea`
+first through the standard project-local Skills CLI:
 
 ```bash
-node scripts/install-shea-symphony-skills.js --dry-run
-node scripts/install-shea-symphony-skills.js
-node scripts/install-shea-symphony-skills.js --validate
-node scripts/install-shea-symphony-skills.js --codex-dir "$HOME/.codex/skills" --gemini-dir "$HOME/.gemini/local-skills" --yes
+npx skills add https://github.com/Alive24/shea-symphony/tree/main/skills/shea-symphony/suite/setup-shea
 ```
 
-Normal install mode is interactive: it prints detected target paths and requires
-operator confirmation before writing. Use `--skip-codex`, `--skip-gemini`,
-`--codex-dir`, and `--gemini-dir` for manual target control. Validation compares
-the active local skill files with the repo-owned dated suite.
-`doctor` also reports read-only install-health warnings for the detected Codex
-and Gemini skill roots, including missing roots, broken links, file-shaped
-aliases, missing `SKILL.md`, stale metadata, and stale Shea Symphony CLI naming.
-It points back to this installer path for repair instead of mutating local
-skills directly.
+The setup skill detects Codex, Claude Code, and Antigravity independently,
+shows the exact pinned source revision and standard CLI link/copy shape, and
+requires plan confirmation before invoking `npx skills add` with each named
+normal skill for the selected harnesses. Updates and removals remain standard
+`skills update` and named `skills remove` operations. Shea keeps no custom
+installer or harness-path table. `doctor` reports read-only install-health
+warnings and points back to the standard Skills CLI; it never rewrites
+installed skills.
 
-The suite packages Issue Forge, Issue Forge Reflect, Issue Forge Dream, Manual
-Main, Manual Review, Human Review, Manual Merge, and a Doctor/Fix stub. Human
+The normal suite packages Setup Shea, Runtime Onboarding, Doctor, Issue Forge,
+Investigate, Reflect, Manual Main, Manual Review, Human Review, and Manual
+Merge. Dream and HALO research are explicit additions. Human
 Review is an operator-owned briefing and UAT decision skill: it records a
 structured decision note and routes to `Merging`, `Rework`, or
 `Need Human Input` only after explicit operator confirmation. `forge reflect`
@@ -721,7 +719,7 @@ deterministic CLI executor surfaces.
 
 ## Issue Forge Dream
 
-Issue Forge Dream is a Codex/Gemini skill workflow for slow, deep backlog
+Issue Forge Dream is an explicit cross-harness skill workflow for slow, deep backlog
 mining. It reads broader Shea Symphony context, writes bounded advisory logs,
 runs a lightweight Gemini review by default when available, and creates
 evidence-backed `Backlog` seeds unless the operator asks for report-only mode.

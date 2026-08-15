@@ -1,6 +1,9 @@
 ---
 name: shea-symphony-doctor
 description: Diagnose concrete Shea Symphony failures, repository-contract problems, install-health gaps, interrupted workflows, Need Human Input items, and issue or PR blockers; propose the smallest evidence-backed repair and apply only an explicitly confirmed bounded change. Do not use for routine project checkpoints, progress summaries, next-work prioritization, or Backlog mining; use shea-symphony-issue-forge-reflect for those.
+metadata:
+  short-description: Diagnose and repair Shea safely
+  suite-version: 2026.08.15
 ---
 
 # Shea Symphony Doctor

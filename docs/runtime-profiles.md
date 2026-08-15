@@ -11,6 +11,13 @@ produced by `shea-symphony-runtime-onboarding` after repository-specific
 discovery and explicit operator confirmation. Shea core never discovers Node,
 pnpm, Python, Rust, Conda, Docker, Nix, or another ecosystem itself.
 
+`setup-shea` uses this same contract during first installation and ordinary
+reconciliation. It gathers Runtime Onboarding evidence before the write plan,
+stores the confirmed profile only at the ignored machine-local path, and runs
+the read-only `profiles <workflow>` surface during no-claim readiness. A missing
+or stale required profile blocks readiness before any issue claim or status
+transition.
+
 ## Workflow Configuration
 
 For a workflow at `.shea/workflows/target.md`, the default profile path is

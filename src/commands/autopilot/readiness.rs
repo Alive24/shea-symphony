@@ -99,7 +99,7 @@ pub(crate) fn autopilot_doctor_report(
     append_canonical_checkout_doctor_violations(&mut report, config);
     append_workspace_doctor_violations(&mut report, config, issues);
     if let Ok(skill_repo_root) = discover_skill_suite_repo_root(workflow_path) {
-        let skill_targets = default_shea_symphony_skill_targets();
+        let skill_targets = default_shea_symphony_skill_targets(&skill_repo_root);
         append_local_skill_install_doctor_violations(&mut report, &skill_repo_root, &skill_targets);
         report.skill_readiness_summary = Some(doctor_skill_readiness_summary(SkillStatusInput {
             workflow_path: workflow_path.to_path_buf(),

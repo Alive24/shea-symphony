@@ -26,7 +26,47 @@ The Temporal worker reports `temporal_worker` and
 `shea-legacy-cli-v1`. This output is credential-free build metadata. It is used
 for local role and integrity checks, not as a code-signing claim.
 
-## Bundle Pipeline
+## Standalone Release Pipeline
+
+Tags named `legacy-v<crate-version>` run
+`.github/workflows/release-legacy-cli.yml`. The workflow builds and executes the
+Legacy binary natively on the documented first-slice matrix:
+
+| Target | GitHub runner | Archive support |
+| --- | --- | --- |
+| `aarch64-apple-darwin` | `macos-15` | supported |
+| `x86_64-apple-darwin` | `macos-15-intel` | supported while GitHub provides the Intel runner |
+| `x86_64-unknown-linux-gnu` | `ubuntu-24.04` | supported |
+
+Windows, Linux ARM, code signing, notarization, App installers, and OS package
+managers are not claimed by this first slice. A target is supported only when a
+native runner built it and executed its `--runtime-info` output.
+
+`scripts/package-legacy-release.py` checks schema, `legacy_cli` role,
+`shea-legacy-cli-v1` compatibility, target, platform, architecture, crate
+version, release tag, and exact source revision before producing a deterministic
+archive. The release also contains `SHA256SUMS` and `legacy-release.json`; the
+latter repeats the pinned release revision and the verified identity/checksum of
+every target artifact. Publication fails when any matrix entry or identity is
+missing.
+
+For a native local archive smoke:
+
+```sh
+target="$(rustc -vV | sed -n 's/^host: //p')"
+revision="$(git rev-parse HEAD)"
+version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
+SHEA_SOURCE_REVISION="$revision" cargo build --locked --release \
+  --bin shea-symphony-legacy --target "$target"
+python3 scripts/package-legacy-release.py \
+  --binary "target/$target/release/shea-symphony-legacy" \
+  --target "$target" \
+  --release-tag "legacy-v$version" \
+  --source-revision "$revision" \
+  --output-dir dist
+```
+
+## App Bundle Pipeline
 
 Run the release pipeline from `app/`:
 
@@ -45,6 +85,38 @@ ignored by Git.
 Use `scripts/stage-legacy-sidecar.sh --check` to test for the expected staged
 artifact without building it. Setting `SHEA_LEGACY_SIDECAR_TARGET` makes target
 selection explicit for cross-target packaging.
+
+## Setup Installation And Trust
+
+`setup-shea` first preserves a compatible explicit `cli_path`, then checks a
+validated App discovery record. Only when neither is suitable does it propose a
+pinned GitHub Release download. The visible plan includes release tag, source
+revision, target, architecture, archive URL, digest, and versioned user-local
+destination. Download and installation require confirmation.
+
+The executable is installed under
+`~/.local/share/shea-symphony/runtimes/<version>/<target>/` rather than the
+target repository. Existing versions remain available for rollback. Setup never
+tracks `latest`, edits shell startup files, or stores the runtime in `.shea`.
+The exact resolved executable path is recorded only in ignored
+`.shea/app-profile.local.json`.
+
+Installation fails closed unless all of the following agree:
+
+1. `legacy-release.json` selects the requested target and release revision;
+2. `SHA256SUMS` authenticates the exact archive digest repeated by that
+   metadata;
+3. the downloaded archive digest matches its 64-character SHA-256 value;
+4. the archive contains only the expected `shea-symphony-legacy` executable;
+5. the extracted and installed executable each report schema 1, `legacy_cli`,
+   `shea-legacy-cli-v1`, and the expected version, revision, target, platform,
+   and architecture.
+
+Missing releases/checksums, wrong digests, malformed JSON, stale revisions,
+Temporal-role binaries, and mismatched targets or architectures are rejected.
+Checksums and embedded identity are integrity/compatibility evidence, not code
+signatures; operators who require publisher signing must wait for a later
+distribution slice.
 
 ## Discovery And Resolution
 

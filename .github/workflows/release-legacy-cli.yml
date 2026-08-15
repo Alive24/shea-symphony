@@ -1,0 +1,122 @@
+name: Release Legacy CLI
+
+on:
+  push:
+    tags:
+      - "legacy-v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing or new legacy-v* release tag
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Resolve release identity
+        id: identity
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          release_tag="$RELEASE_TAG"
+          if [[ ! "$release_tag" =~ ^legacy-v[0-9]+\.[0-9]+\.[0-9]+([.+-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "release tag must be a concrete legacy-v semantic version" >&2
+            exit 1
+          fi
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "source_revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "source_date_epoch=$(git show -s --format=%ct HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Verify toolchain and tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup target add "${{ matrix.target }}"
+          cargo test --locked runtime_identity
+      - name: Build marked Legacy role
+        shell: bash
+        env:
+          SHEA_SOURCE_REVISION: ${{ steps.identity.outputs.source_revision }}
+        run: cargo build --locked --release --bin shea-symphony-legacy --target "${{ matrix.target }}"
+      - name: Package deterministic archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/package-legacy-release.py \
+            --binary "target/${{ matrix.target }}/release/shea-symphony-legacy" \
+            --target "${{ matrix.target }}" \
+            --release-tag "${{ steps.identity.outputs.release_tag }}" \
+            --source-revision "${{ steps.identity.outputs.source_revision }}" \
+            --source-date-epoch "${{ steps.identity.outputs.source_date_epoch }}" \
+            --output-dir dist
+          archive="$(ls dist/*.tar.gz)"
+          extract="$(mktemp -d)"
+          tar -xzf "$archive" -C "$extract"
+          "$extract/shea-symphony-legacy" --runtime-info
+      - uses: actions/upload-artifact@v4
+        with:
+          name: legacy-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: legacy-*
+          path: dist
+          merge-multiple: true
+      - name: Build release manifest and checksum list
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          release_tag="$RELEASE_TAG"
+          node scripts/build-legacy-release-manifest.mjs \
+            --input-dir dist \
+            --release-tag "$release_tag" \
+            --output dist/legacy-release.json
+          sort dist/*.sha256 > dist/SHA256SUMS
+          test "$(wc -l < dist/SHA256SUMS | tr -d ' ')" = "3"
+      - name: Publish release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          release_tag="$RELEASE_TAG"
+          if gh release view "$release_tag" >/dev/null 2>&1; then
+            gh release upload "$release_tag" dist/*.tar.gz dist/SHA256SUMS dist/legacy-release.json --clobber
+          else
+            gh release create "$release_tag" dist/*.tar.gz dist/SHA256SUMS dist/legacy-release.json \
+              --target "${{ github.sha }}" \
+              --title "Shea Symphony Legacy CLI $release_tag" \
+              --notes "Target-specific compatibility CLI archives. Verify SHA256SUMS and --runtime-info before use."
+          fi

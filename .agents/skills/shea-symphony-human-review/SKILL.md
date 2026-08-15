@@ -1,12 +1,14 @@
 ---
 name: shea-symphony-human-review
 description: Brief a Shea Symphony operator after independent review evidence, guide operator-owned UAT and explicitly authorized narrow remediation, record append-only evidence, and route only after explicit confirmation. Use for issues waiting in Human Review, including parent-batch acceptance.
+metadata:
+  short-description: Brief and route Human Review
+  suite-version: 2026.08.15
 ---
 
 # Shea Symphony Human Review
 
-Human Review is the operator-owned acceptance checkpoint before merge-lane work.
-It is not implementation, independent Agent Review, or merge execution.
+Human Review is the operator-owned acceptance checkpoint, not implementation, Agent Review, or merge execution.
 Accepted Human Review routes to `Merging`, never directly to `Done`.
 
 ## Mandatory visible brief
@@ -30,19 +32,16 @@ satisfy this visible briefing contract.
 
 ## Bind and inspect
 
-Resolve the active repository, workflow, tracker project, canonical harness
-checkout, linked PR worktree, decision-note template, and supported read/write
-actions from current configuration. Never assume repo-specific paths or command
-topology.
+Resolve the active repository, workflow, tracker project, canonical harness,
+linked PR worktree, decision-note template, and supported actions from current
+configuration. Never assume repo-specific paths or command topology.
 
 Use the configured Shea workflow surface for Project reads, append-only notes,
 and guarded routing. Use provider views read-only for ordinary issue and PR
 content; never bypass the workflow with raw Project mutations.
 
-Before briefing, inspect the issue goal, scope, expected outcome, completion
-criteria, UAT, Main Workpad, append-only evidence, Agent Review pass, linked PR
-identity and checks, Project state, and any stale assumption or blocker.
-Summarize decision-relevant facts instead of dumping raw JSON.
+Before briefing, inspect the goal, scope, completion criteria, UAT, Main Workpad, evidence, Agent Review pass,
+linked PR/checks, Project state, and stale assumptions. Summarize decision-relevant facts, not raw JSON.
 
 Native GitHub subissues are not routine Human Review surfaces. Without recorded
 `Subissue Human Review Exception: <reason>` evidence, explain that a passing

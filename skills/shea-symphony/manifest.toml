@@ -1,65 +1,82 @@
 suite_name = "Shea Symphony skill suite"
-version = "2026.08.07"
-release_date = "2026-08-07"
+version = "2026.08.15"
+release_date = "2026-08-15"
 repository = "Alive24/shea-symphony"
-minimum_shea_symphony_cli = "2606 MVP CLI with targeted project reads and main claim"
+minimum_shea_symphony_cli = "0.1.0 Legacy CLI with runtime identity, runtime profiles, and targeted project reads"
+
+[[skills]]
+name = "setup-shea"
+path = "suite/setup-shea"
+targets = ["codex", "claude-code", "antigravity"]
+default_install = true
+summary = "Continuous plan, confirm, reconcile, and no-claim readiness flow for target repositories."
 
 [[skills]]
 name = "shea-symphony-issue-forge"
 path = "suite/shea-symphony-issue-forge"
-targets = ["codex", "gemini"]
+targets = ["codex", "claude-code", "antigravity"]
+default_install = true
 summary = "Conversational Issue Forge flow that validates and creates issues through Shea Symphony CLI."
 
 [[skills]]
 name = "shea-symphony-investigate"
 path = "suite/shea-symphony-investigate"
-targets = ["codex", "gemini"]
+targets = ["codex", "claude-code", "antigravity"]
+default_install = true
 summary = "Pre-Forge investigation flow that gathers evidence, classifies ambiguity, and recommends the next route."
 
 [[skills]]
 name = "shea-symphony-issue-forge-reflect"
 path = "suite/shea-symphony-issue-forge-reflect"
-targets = ["codex", "gemini"]
+targets = ["codex", "claude-code", "antigravity"]
+default_install = true
 summary = "Reflect recent work into Backlog seeds and promote them through Issue Forge discussion."
 
 [[skills]]
 name = "shea-symphony-issue-forge-dream"
 path = "suite/shea-symphony-issue-forge-dream"
-targets = ["codex", "gemini"]
+targets = ["codex", "claude-code", "antigravity"]
+default_install = false
 summary = "Slowly mine broader Shea Symphony history into evidence-backed Backlog seeds and Dream Logs."
 
 [[skills]]
 name = "shea-symphony-manual-main"
 path = "suite/shea-symphony-manual-main"
-targets = ["codex", "gemini"]
+targets = ["codex", "claude-code", "antigravity"]
+default_install = true
 summary = "Manual Main Agent lane for implementation work that stops at Agent Review."
 
 [[skills]]
 name = "shea-symphony-runtime-onboarding"
 path = "suite/shea-symphony-runtime-onboarding"
-targets = ["codex", "gemini"]
+targets = ["codex", "claude-code", "antigravity"]
+default_install = true
 summary = "Repository requirement discovery and operator-confirmed credential-free local runtime profiles."
 
 [[skills]]
 name = "shea-symphony-manual-review"
 path = "suite/shea-symphony-manual-review"
-targets = ["codex", "gemini"]
+targets = ["codex", "claude-code", "antigravity"]
+default_install = true
 summary = "Operator-triggered review through the external backend configured by the active workflow."
 
 [[skills]]
 name = "shea-symphony-human-review"
 path = "suite/shea-symphony-human-review"
-targets = ["codex", "gemini"]
+targets = ["codex", "claude-code", "antigravity"]
+default_install = true
 summary = "Human Review briefing flow for operator-owned UAT, decision notes, and confirmed routing."
 
 [[skills]]
 name = "shea-symphony-manual-merge"
 path = "suite/shea-symphony-manual-merge"
-targets = ["codex", "gemini"]
+targets = ["codex", "claude-code", "antigravity"]
+default_install = true
 summary = "Manual Merging Agent lane for approved merge and merge-lane repair work."
 
 [[skills]]
 name = "shea-symphony-doctor"
 path = "suite/shea-symphony-doctor"
-targets = ["codex", "gemini"]
+targets = ["codex", "claude-code", "antigravity"]
+default_install = true
 summary = "Doctor diagnosis and confirmed bounded repair for repository-owned contracts, Need Human Input, issue or PR blockers, and install-health gaps."

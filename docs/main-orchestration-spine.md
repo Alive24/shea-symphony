@@ -159,8 +159,9 @@ Library Doctor checks should be grouped by the invariant they audit:
 - `src/doctor/tests/runtime.rs`: focused Doctor runtime/session diagnostics
   tests and runtime-state/session fixtures.
 - `src/doctor/skills.rs`: local Shea Symphony skill install diagnostics. It
-  owns suite manifest parsing, Codex/Gemini target discovery, installed skill
-  shape checks, metadata freshness, and local skill drift warning records.
+  owns suite manifest parsing, standard project-local install discovery,
+  installed skill shape checks, metadata freshness, and local skill drift
+  warning records. Installation remains owned by the standard Skills CLI.
 - `src/doctor/tests/skills.rs`: focused Doctor skill-install diagnostics tests
   and their local skill-suite filesystem fixtures.
 - `src/doctor/tests/support.rs`: shared Doctor test fixtures for tracker

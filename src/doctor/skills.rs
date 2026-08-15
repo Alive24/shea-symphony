@@ -21,25 +21,24 @@ struct SkillSuiteEntry {
     path: PathBuf,
 }
 
-pub fn default_shea_symphony_skill_targets() -> Vec<SkillInstallTarget> {
+/// Returns the standard project-local skill roots supported by setup-shea.
+///
+/// Codex and Antigravity intentionally share the public `.agents/skills`
+/// contract, while Claude Code uses `.claude/skills`. Installation and updates
+/// remain owned by the standard Skills CLI.
+pub fn default_shea_symphony_skill_targets(repo_root: &Path) -> Vec<SkillInstallTarget> {
     vec![
         SkillInstallTarget {
-            label: "Codex".into(),
-            root: env_skill_root(
-                "SHEA_SYMPHONY_CODEX_SKILLS_DIR",
-                "CODEX_HOME",
-                ".codex",
-                "skills",
-            ),
+            label: "Codex/Antigravity".into(),
+            root: nonempty_env("SHEA_SYMPHONY_AGENTS_SKILLS_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| repo_root.join(".agents").join("skills")),
         },
         SkillInstallTarget {
-            label: "Gemini".into(),
-            root: env_skill_root(
-                "SHEA_SYMPHONY_GEMINI_SKILLS_DIR",
-                "GEMINI_HOME",
-                ".gemini",
-                "local-skills",
-            ),
+            label: "Claude Code".into(),
+            root: nonempty_env("SHEA_SYMPHONY_CLAUDE_SKILLS_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| repo_root.join(".claude").join("skills")),
         },
     ]
 }
@@ -69,24 +68,6 @@ pub fn append_local_skill_install_doctor_violations(
     }
 }
 
-fn env_skill_root(
-    explicit_env: &str,
-    home_env: &str,
-    default_home_child: &str,
-    target_child: &str,
-) -> PathBuf {
-    if let Some(value) = nonempty_env(explicit_env) {
-        return PathBuf::from(value);
-    }
-    if let Some(value) = nonempty_env(home_env) {
-        return PathBuf::from(value).join(target_child);
-    }
-    let home = nonempty_env("HOME").unwrap_or_else(|| ".".into());
-    PathBuf::from(home)
-        .join(default_home_child)
-        .join(target_child)
-}
-
 fn nonempty_env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
 }
@@ -99,20 +80,33 @@ fn read_skill_suite_manifest(suite_root: &Path) -> Result<SkillSuiteManifest, St
     let mut skills = Vec::new();
     let mut current_name: Option<String> = None;
     let mut current_path: Option<PathBuf> = None;
+    let mut current_default_install = true;
 
     for line in text.lines() {
         let trimmed = line.trim();
         if trimmed == "[[skills]]" {
-            push_manifest_skill(&mut skills, &mut current_name, &mut current_path);
+            push_manifest_skill(
+                &mut skills,
+                &mut current_name,
+                &mut current_path,
+                &mut current_default_install,
+            );
             continue;
         }
         if let Some(value) = manifest_line_value(trimmed, "name") {
             current_name = Some(value);
         } else if let Some(value) = manifest_line_value(trimmed, "path") {
             current_path = Some(PathBuf::from(value));
+        } else if trimmed == "default_install = false" {
+            current_default_install = false;
         }
     }
-    push_manifest_skill(&mut skills, &mut current_name, &mut current_path);
+    push_manifest_skill(
+        &mut skills,
+        &mut current_name,
+        &mut current_path,
+        &mut current_default_install,
+    );
 
     if skills.is_empty() {
         return Err(format!(
@@ -128,13 +122,17 @@ fn push_manifest_skill(
     skills: &mut Vec<SkillSuiteEntry>,
     current_name: &mut Option<String>,
     current_path: &mut Option<PathBuf>,
+    current_default_install: &mut bool,
 ) {
     if let (Some(name), Some(path)) = (current_name.take(), current_path.take()) {
-        skills.push(SkillSuiteEntry { name, path });
+        if *current_default_install {
+            skills.push(SkillSuiteEntry { name, path });
+        }
     } else {
         *current_name = None;
         *current_path = None;
     }
+    *current_default_install = true;
 }
 
 fn manifest_string_value(text: &str, key: &str) -> Option<String> {
@@ -164,7 +162,7 @@ fn audit_skill_target(
                 target.label,
                 target.root.display()
             ),
-            "Run `node scripts/install-shea-symphony-skills.js --dry-run` to inspect targets, or configure SHEA_SYMPHONY_CODEX_SKILLS_DIR / SHEA_SYMPHONY_GEMINI_SKILLS_DIR before rerunning `doctor`.",
+            "Run `setup-shea` to preview the standard project-local Skills CLI targets, or configure SHEA_SYMPHONY_AGENTS_SKILLS_DIR / SHEA_SYMPHONY_CLAUDE_SKILLS_DIR before rerunning `doctor`.",
         ));
         return;
     }
@@ -204,7 +202,7 @@ fn audit_skill_install(
                     skill.name,
                     destination.display()
                 ),
-                "Run `node scripts/install-shea-symphony-skills.js --dry-run` to preview the #242 install/update path, then install or validate intentionally.",
+                "Run `setup-shea` to preview and confirm the standard Skills CLI install/update path.",
             ));
             return;
         }
@@ -238,7 +236,7 @@ fn audit_skill_install(
                 "{label} skill `{}` is a file where a skill directory is expected; this commonly happens when a macOS Finder alias points at `SKILL.md`.",
                 skill.name
             ),
-            "Replace it through the #242 install/update path; doctor is diagnostic and will not overwrite aliases or files.",
+            "Replace it through setup-shea and the standard Skills CLI; doctor is diagnostic and will not overwrite aliases or files.",
         ));
         return;
     }
@@ -267,7 +265,7 @@ fn audit_skill_symlink(
                     "{label} skill `{}` symlink target could not be read: {error}.",
                     skill.name
                 ),
-                "Inspect the symlink manually or run the #242 install/update path; doctor will not rewrite it.",
+                "Inspect the symlink manually or rerun setup-shea; doctor will not rewrite it.",
             ));
             return;
         }
@@ -292,7 +290,7 @@ fn audit_skill_symlink(
                     skill.name,
                     destination.display()
                 ),
-                "Run the #242 install/update path or point the symlink at the skill directory; doctor will not repair it.",
+                "Rerun setup-shea or point the symlink at the skill directory; doctor will not repair it.",
             ));
             return;
         }
@@ -305,7 +303,7 @@ fn audit_skill_symlink(
                     "{label} skill `{}` symlink target could not be inspected: {error}.",
                     skill.name
                 ),
-                "Inspect local permissions or run the #242 install/update path; doctor will not repair it.",
+                "Inspect local permissions or rerun setup-shea; doctor will not repair it.",
             ));
             return;
         }
@@ -320,7 +318,7 @@ fn audit_skill_symlink(
                 "{label} skill `{}` symlink points at a file instead of the skill directory.",
                 skill.name
             ),
-            "Point the symlink at the skill directory or reinstall through `node scripts/install-shea-symphony-skills.js`; doctor will not rewrite it.",
+            "Point the symlink at the skill directory or reinstall through the standard Skills CLI; doctor will not rewrite it.",
         ));
         return;
     }
@@ -349,7 +347,7 @@ fn audit_skill_directory(
                     skill.name,
                     destination.display()
                 ),
-                "Reinstall or validate through the #242 skill suite path; doctor does not create missing files.",
+                "Reinstall through setup-shea and the standard Skills CLI; doctor does not create missing files.",
             ));
             return;
         }
@@ -377,7 +375,7 @@ fn audit_skill_directory(
                 "{label} skill `{}` has stale or mismatched `name:` metadata.",
                 skill.name
             ),
-            "Run `node scripts/install-shea-symphony-skills.js --validate` to compare against the repo-owned suite.",
+            "Run `npx skills list` and rerun setup-shea against the pinned repo-owned suite.",
         ));
     }
 
@@ -390,7 +388,7 @@ fn audit_skill_directory(
                 "{label} skill `{}` does not advertise suite-version `{}`.",
                 skill.name, manifest.version
             ),
-            "Run the #242 install/update path or validate command to refresh stale local skill metadata.",
+            "Rerun setup-shea to review and confirm a standard Skills CLI update.",
         ));
     }
 
@@ -417,7 +415,7 @@ fn audit_skill_directory(
                     "{label} skill `{}` differs from the repo-owned suite copy.",
                     skill.name
                 ),
-                "Run `node scripts/install-shea-symphony-skills.js --validate` for the full file diff, then use the #242 install/update path intentionally.",
+                "Use the standard Skills CLI update path through setup-shea after reviewing the source revision and diff.",
             ));
         }
     }

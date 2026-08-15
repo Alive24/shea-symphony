@@ -26,10 +26,10 @@ Use Doctor v1 when:
   runtime evidence is incomplete.
 - cleanup could discard useful worktree or runtime evidence.
 - local Shea Symphony skill install symptoms are blocking an operator, while
-  `doctor` owns read-only integrity warnings and #242 owns install/update
-  writes.
-- installable skill suite packaging questions appear, while dated suite
-  packaging remains owned by #242.
+  `doctor` owns read-only integrity warnings and `$setup-shea` owns confirmed
+  install/update writes through the standard Skills CLI.
+- installable skill suite packaging questions appear, while `setup-shea` owns
+  the normal project-local reconcile contract.
 - observed runs or repository contracts show missing completion boundaries,
   duplicated or contradictory instructions, wrong-layer text, lane leakage,
   excessive procedure, unused workpad structure, or a likely safe
@@ -243,7 +243,7 @@ operator-authored notes with `project timeline-comment`; do not use
   - ...
 - Related follow-ups:
   - `doctor` covers full local skill install integrity checks and those findings are related but non-blocking.
-  - #242 covers dated installable skill suite packaging and is related but non-blocking.
+  - `$setup-shea` owns confirmed project-local skill reconciliation and is related but non-blocking.
 ```
 
 The note must separate observed evidence from inference. If evidence is stale,
@@ -283,19 +283,19 @@ Use the owning skill or lane workflow before doing normal Main, Review, Human
 Review, or Merging work. Doctor coordinates the repair path; it does not turn a
 diagnosis-only step into hidden implementation or merge authority.
 
-## Relationship To #256 And #242
+## Relationship To Doctor And Setup Shea
 
 `doctor` verifies local Shea Symphony skill install health by reporting
-warning-level Codex and Gemini root findings for aliases, symlinks, missing
-files, stale metadata, and stale naming. Doctor triage may classify a symptom as
+warning-level standard project-local root findings for aliases, symlinks,
+missing files, stale metadata, and stale naming. Doctor triage may classify a symptom as
 `skill_install_symptom`, collect evidence, show target paths, and recommend a
 targeted install/update. It may perform that local write only after operator
 request or confirmation.
 
-#242 remains the owning track for broad dated skill-suite packaging. If the
-operator asks for a bounded installable-skill update, Doctor may patch the
-repo-owned suite copy and validate/install that specific skill without turning
-the task into a full suite release.
+`$setup-shea` remains the owning path for normal suite installation and
+reconciliation. If the operator asks for a bounded repository-contract repair,
+Doctor may patch the repo-owned suite copy, but install writes still return to
+the standard Skills CLI setup path.
 
 ## Outcomes
 

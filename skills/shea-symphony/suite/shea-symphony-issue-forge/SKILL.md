@@ -3,7 +3,7 @@ name: shea-symphony-issue-forge
 description: Use when creating, shaping, or validating Shea Symphony GitHub issues from rough operator intent. Runs a conversation-first discuss flow, resolves gate-critical ambiguity, drafts a quality-gated issue, asks for explicit confirmation, then creates it through Shea Symphony forge create.
 metadata:
   short-description: Conversational Shea Symphony issue forge
-  suite-version: 2026.05.22
+  suite-version: 2026.08.15
 ---
 
 # Shea Symphony Issue Forge

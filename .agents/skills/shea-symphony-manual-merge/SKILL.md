@@ -3,7 +3,7 @@ name: shea-symphony-manual-merge
 description: Use when manually running a Merging Agent session for Shea Symphony merge-lane work from a fresh session. Claims Merging issues or operator-selected historical merge-lane recovery issues, repairs existing PR branches when safe, records evidence, and lands approved PRs without sending merge-lane repair back through Agent Review.
 metadata:
   short-description: Shea Symphony manual Merging Agent
-  suite-version: 2026.05.23
+  suite-version: 2026.08.15
 ---
 
 # Shea Symphony Manual Merging Agent

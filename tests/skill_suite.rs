@@ -136,7 +136,8 @@ fn doctor_skill_defines_bounded_repository_contract_repair() {
     let installed_reference =
         repo_file(".agents/skills/shea-symphony-doctor/references/repository-contract-repair.md");
     let manifest = repo_file("skills/shea-symphony/manifest.toml");
-    let installer = repo_file("scripts/install-shea-symphony-skills.js");
+    let setup_controller =
+        repo_file("skills/shea-symphony/suite/setup-shea/scripts/setup-shea-lib.mjs");
     let operator_doc = repo_file("docs/operator-doctor.md");
 
     assert_eq!(doctor, installed, "repo-local Doctor skill drifted");
@@ -169,10 +170,37 @@ fn doctor_skill_defines_bounded_repository_contract_repair() {
     assert!(reference.contains("## Shea Symphony Doctor Contract Repair"));
     assert!(metadata.contains("$shea-symphony-doctor"));
     assert!(manifest.contains("confirmed bounded repair for repository-owned contracts"));
-    assert!(installer.contains("validateSourceSuite"));
-    assert!(installer.contains("manifest/source skill mismatch"));
+    assert!(setup_controller.contains("standard_skills_cli"));
+    assert!(setup_controller.contains("operator edit overlaps a managed file"));
     assert!(operator_doc.contains("Status: Doctor v2"));
     assert!(operator_doc.contains("Tracker state: unchanged"));
+}
+
+#[test]
+fn setup_shea_is_installable_and_owns_the_normal_skill_set() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest = repo_file("skills/shea-symphony/manifest.toml");
+    let skill = repo_file("skills/shea-symphony/suite/setup-shea/SKILL.md");
+    let metadata = repo_file("skills/shea-symphony/suite/setup-shea/agents/openai.yaml");
+    let normal = repo_file("skills/shea-symphony/suite/setup-shea/assets/normal-skills.json");
+    let controller = repo_file("skills/shea-symphony/suite/setup-shea/scripts/setup-shea-lib.mjs");
+
+    assert!(manifest.contains("name = \"setup-shea\""));
+    assert!(manifest.contains("targets = [\"codex\", \"claude-code\", \"antigravity\"]"));
+    assert!(manifest.contains("name = \"shea-symphony-issue-forge-dream\""));
+    assert!(manifest.contains("default_install = false"));
+    assert!(skill.contains("npx skills add"));
+    assert!(skill.contains("No-Claim Hard Boundary"));
+    assert!(metadata.contains("$setup-shea"));
+    assert!(normal.contains("\"setup-shea\""));
+    assert!(!normal.contains("shea-symphony-issue-forge-dream"));
+    assert!(!normal.contains("shea-halo-research-seed"));
+    assert!(controller.contains("SHA256SUMS"));
+    assert!(controller.contains("remove_named_shea_set_then_reinstall_selected_harnesses"));
+    assert!(!controller.contains("[\"skills\", \"remove\", \"--skill\", \"*\""));
+    assert!(!root
+        .join("scripts/install-shea-symphony-skills.js")
+        .exists());
 }
 
 #[test]

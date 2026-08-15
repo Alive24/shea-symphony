@@ -114,7 +114,7 @@ function baseFixtureOverview() {
       workflowPath,
       repository: 'Alive24/shea-symphony',
       workspacePath: null,
-      skillsPath: '.codex/skills',
+      skillsPath: '.agents/skills',
       mode: 'self',
       selfWorkspace: true,
       readiness: { status: 'ready', blockers: [] }

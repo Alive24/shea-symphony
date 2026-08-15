@@ -1,9 +1,10 @@
 ---
 name: shea-symphony-issue-forge-dream
 description: Use when slowly mining broader Shea Symphony history, recent runs, workpads, skills, docs, Project state, and memory summaries for evidence-backed Backlog seeds and bounded Dream Logs.
+internal: true
 metadata:
   short-description: Deep Shea Symphony backlog mining
-  suite-version: 2026.05.23
+  suite-version: 2026.08.15
 ---
 
 # Shea Symphony Issue Forge Dream

@@ -3,7 +3,7 @@ name: shea-symphony-investigate
 description: Use when exploring Shea Symphony symptoms, rough ideas, workflow doubts, surprising tracker or runtime behavior, or possible issue candidates before deciding whether to forge or rework a GitHub issue. Gather evidence, separate hypotheses, classify the problem, and recommend whether to keep investigating, use Issue Forge, route Human Review or Doctor, or take no action.
 metadata:
   short-description: Shea Symphony pre-Forge investigation
-  suite-version: 2026.06.09
+  suite-version: 2026.08.15
 ---
 
 # Shea Symphony Investigate

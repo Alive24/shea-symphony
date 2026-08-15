@@ -3,7 +3,7 @@ name: shea-symphony-runtime-onboarding
 description: Discover a target repository's execution requirements, propose a credential-free machine-local Shea runtime profile, and write it only after operator confirmation.
 metadata:
   short-description: Prepare repository runtime readiness
-  suite-version: 2026.08.07
+  suite-version: 2026.08.15
 ---
 
 # Shea Symphony Runtime Onboarding

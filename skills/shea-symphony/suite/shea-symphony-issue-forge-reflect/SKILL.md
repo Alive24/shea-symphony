@@ -3,7 +3,7 @@ name: shea-symphony-issue-forge-reflect
 description: Use when reviewing current Shea Symphony progress, blockers, next actions, conversations, Project state, dogfood logs, or work records; extract non-dispatchable Backlog candidates or promote existing Backlog drafts into executable Todo issues. Route only concrete failures to shea-symphony-doctor.
 metadata:
   short-description: Reflect Shea Symphony backlog into forgeable issues
-  suite-version: 2026.05.23
+  suite-version: 2026.08.15
 ---
 
 # Shea Symphony Issue Forge Reflect

@@ -1,6 +1,7 @@
 ---
 name: shea-symphony-issue-forge-dream
 description: Mine broader Shea Symphony history, run evidence, docs, and Project state for bounded, evidence-backed Backlog seeds and durable Dream Logs.
+internal: true
 ---
 
 # Shea Symphony Issue Forge Dream

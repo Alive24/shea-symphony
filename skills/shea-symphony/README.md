@@ -1,81 +1,99 @@
 # Shea Symphony Skill Suite
 
-Release: `2026.08.07`
+Release: `2026.08.15`
 
-This directory contains the repo-owned Shea Symphony skills used by local Codex
-and Gemini operator sessions. The suite is intentionally versioned in the repo
-so skill behavior can be reviewed with workflow docs, prompts, and CLI changes.
+This directory is the single auditable source for Shea Symphony's installable
+skills. The standard open Skills CLI installs project-local copies or links for
+Codex, Claude Code, Antigravity, and other compatible harnesses; Shea does not
+maintain a second installer or its own harness-path table.
 
-## Install Or Preview
+## Install `setup-shea` First
 
-Preview the detected local targets without writing:
+From a target repository, install the one conversational entry skill without a
+Shea checkout:
 
 ```bash
-node scripts/install-shea-symphony-skills.js --dry-run
+npx skills add https://github.com/Alive24/shea-symphony/tree/main/skills/shea-symphony/suite/setup-shea
 ```
 
-Install or update after an interactive confirmation:
+Project scope is the Skills CLI default. It detects available harnesses and asks
+which project-local surfaces to configure. Do not add `-g` for repository setup.
+Invoke `setup-shea` after installation; it keeps the operator in one
+conversation while it discovers the target, previews a complete plan, obtains
+confirmation, invokes the standard Skills CLI for the selected normal set,
+installs or reuses a verified Legacy runtime, reconciles repository-owned
+contracts, and performs no-claim readiness.
+
+For source-suite inspection, list the exact pinned revision before installing:
 
 ```bash
-node scripts/install-shea-symphony-skills.js
+npx skills add https://github.com/Alive24/shea-symphony/tree/<revision>/skills/shea-symphony/suite --list
 ```
 
-Install non-interactively only after choosing explicit targets:
+After the `setup-shea` plan is visible and explicitly confirmed, its standard
+non-interactive install shape is:
 
 ```bash
-node scripts/install-shea-symphony-skills.js \
-  --codex-dir "$HOME/.codex/skills" \
-  --gemini-dir "$HOME/.gemini/local-skills" \
-  --yes
+npx skills add https://github.com/Alive24/shea-symphony/tree/<revision>/skills/shea-symphony/suite \
+  --skill setup-shea \
+  --skill shea-symphony-runtime-onboarding \
+  --skill shea-symphony-doctor \
+  --skill shea-symphony-issue-forge \
+  --skill shea-symphony-investigate \
+  --skill shea-symphony-issue-forge-reflect \
+  --skill shea-symphony-manual-main \
+  --skill shea-symphony-manual-review \
+  --skill shea-symphony-human-review \
+  --skill shea-symphony-manual-merge \
+  --agent codex \
+  --agent claude-code \
+  --agent antigravity \
+  -y
 ```
 
-Validate active local copies against the repo-owned suite:
+Only selected, available agents are included. The standard CLI owns update and
+removal as well:
 
 ```bash
-node scripts/install-shea-symphony-skills.js --validate
+npx skills list
+npx skills update -p -y
+npx skills remove <skill> --agent <agent> -y
 ```
 
 Before installing or starting a skill-dependent session, inspect readiness
 without writing local skill roots:
 
 ```bash
-cargo run -- skills status .shea/workflows/shea-symphony.md
-cargo run -- skills status .shea/workflows/shea-symphony.md --json
-cargo run -- skills status .shea/workflows/shea-symphony.md --session-skills "shea-symphony-manual-main,shea-symphony-doctor"
+<resolved-shea-symphony-legacy> skills status .shea/workflows/shea-symphony.md
+<resolved-shea-symphony-legacy> skills status .shea/workflows/shea-symphony.md --json
+<resolved-shea-symphony-legacy> skills status .shea/workflows/shea-symphony.md --session-skills "shea-symphony-manual-main,shea-symphony-doctor"
 ```
 
-`skills status` treats this suite as the expected source, then compares Codex
-and Gemini local installs, rendered metadata, symlink or alias shape, and
+`skills status` treats this suite as the expected source, then compares the
+configured project-local install, rendered metadata, symlink or alias shape, and
 optional current-session skill visibility. Source suite discovery is
 `--suite-path`, `SHEA_SYMPHONY_SKILL_SUITE`, current repo
 `skills/shea-symphony/suite`, then installed-only mode. Missing session input is
-reported as `unknown`, not as a failure. Gemini is optional unless the operator
-passes `--require-gemini` or otherwise configures a Gemini skill root.
-Codex readiness defaults to the selected profile working directory's
-`.codex/skills`, or this workflow repo's `.codex/skills` when no target profile
-working directory is configured. It does not use `CODEX_HOME`.
+reported as `unknown`, not as a failure. `setup-shea` also reads the standard
+project paths chosen by the Skills CLI: `.agents/skills` for Codex and
+Antigravity, and `.claude/skills` for Claude Code.
 
-The legacy self-repo installer detects:
+## Normal Skill Set
 
-- Codex target from `CODEX_HOME/skills`, then `$HOME/.codex/skills`.
-- Gemini target from `GEMINI_HOME/local-skills`, then `$HOME/.gemini/local-skills`.
-
-Use `--skip-codex`, `--skip-gemini`, `--codex-dir`, or `--gemini-dir` to make
-the target set explicit. Normal install mode shows every target and requires
-operator confirmation before writing.
-
-## Packaged Skills
-
+- `setup-shea`
 - `shea-symphony-issue-forge`
 - `shea-symphony-investigate`
 - `shea-symphony-issue-forge-reflect`
-- `shea-symphony-issue-forge-dream`
 - `shea-symphony-manual-main`
 - `shea-symphony-runtime-onboarding`
 - `shea-symphony-manual-review`
 - `shea-symphony-human-review`
 - `shea-symphony-manual-merge`
 - `shea-symphony-doctor`
+
+`shea-symphony-issue-forge-dream` and HALO research are explicit additions,
+not normal setup. Dream is marked internal and the controller always names the
+normal skills explicitly, so research skills are never added implicitly.
 
 Investigate is the pre-Forge exploration slot. It gathers read-only evidence,
 keeps competing hypotheses visible, classifies ambiguous Shea Symphony symptoms
@@ -99,9 +117,8 @@ The Doctor skill is a read-first operator triage slot. Its
 workpad-template, and skill contracts, previews the smallest safe diff, and
 applies only an explicitly confirmed path-bounded edit. Automatic rewriting,
 tracker mutation, global skill changes, and CLI-owned runtime-envelope edits
-remain out of scope. The installer now validates that every source skill is
-manifest-backed and has matching frontmatter and OpenAI metadata before any
-preview, validation, or install.
+remain out of scope. `setup-shea` uses the normal-skill manifest and the
+standard Skills CLI rather than maintaining a separate source-copy validator.
 
 Runtime Onboarding inspects repository-owned requirement evidence and existing
 installed tools, reports conflicts, and prepares a credential-free

@@ -44,7 +44,10 @@ project-local target. Never add `-g`; setup is project-local by default.
    `temporal_worker`, incompatible contracts, target/architecture/version/source
    mismatch, and unavailable versions.
 5. Build a schema-v1 request outside committed repository state and run the
-   bundled controller's read-only `plan`. The plan must show source revision,
+   bundled controller's read-only `plan`. The normal-set source is the exact
+   GitHub commit archive for that revision; the standard Skills CLI receives
+   it with explicit skill names, `--full-depth`, and bounded trusted-archive
+   limits. The plan must show source revision,
    normal skills, harness targets, link/copy ownership, runtime URL/digest/target
    and versioned user-local path, repository file classifications, verification,
    conflicts, staging boundary, and every proposed Project write.

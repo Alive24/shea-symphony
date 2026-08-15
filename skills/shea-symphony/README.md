@@ -24,17 +24,27 @@ confirmation, invokes the standard Skills CLI for the selected normal set,
 installs or reuses a verified Legacy runtime, reconciles repository-owned
 contracts, and performs no-claim readiness.
 
-For source-suite inspection, list the exact pinned revision before installing:
+For source-suite inspection, list the exact pinned commit archive before
+installing. The bounded environment values apply only to this trusted Shea
+source:
 
 ```bash
-npx skills add https://github.com/Alive24/shea-symphony/tree/<revision>/skills/shea-symphony/suite --list
+SKILLS_DOWNLOAD_MAX_BYTES=134217728 \
+SKILLS_EXTRACT_MAX_BYTES=268435456 \
+SKILLS_EXTRACT_MAX_FILES=10000 \
+npx skills add https://github.com/Alive24/shea-symphony/archive/<revision>.tar.gz \
+  --full-depth --list
 ```
 
 After the `setup-shea` plan is visible and explicitly confirmed, its standard
 non-interactive install shape is:
 
 ```bash
-npx skills add https://github.com/Alive24/shea-symphony/tree/<revision>/skills/shea-symphony/suite \
+SKILLS_DOWNLOAD_MAX_BYTES=134217728 \
+SKILLS_EXTRACT_MAX_BYTES=268435456 \
+SKILLS_EXTRACT_MAX_FILES=10000 \
+npx skills add https://github.com/Alive24/shea-symphony/archive/<revision>.tar.gz \
+  --full-depth \
   --skill setup-shea \
   --skill shea-symphony-runtime-onboarding \
   --skill shea-symphony-doctor \

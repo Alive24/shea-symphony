@@ -16,8 +16,10 @@ npx skills add https://github.com/Alive24/shea-symphony/tree/main/skills/shea-sy
 
 The Skills CLI detects compatible agents and prompts for the project-local
 destination. Project scope is the default. The setup skill later invokes the
-same CLI with a pinned source revision for every selected normal skill; no Shea
-checkout or custom installer is required.
+same CLI against the exact GitHub commit archive for every selected normal
+skill, with explicit names, full-depth discovery, and bounded trusted-archive
+limits. This avoids treating a commit SHA as a branch while retaining an
+immutable source; no Shea checkout or custom installer is required.
 
 ## Discovery And Selection
 
@@ -77,7 +79,9 @@ Investigate, Reflect, Manual Main, Manual Review, Human Review, and Manual
 Merge. Dream and HALO research are explicit additions.
 
 After confirmation, the controller invokes the standard CLI with the pinned
-suite URL and selected agents. Current project-local paths are owned by the
+commit archive and selected agents. It raises the CLI's archive limits only for
+this exact trusted GitHub source, to 128 MiB download, 256 MiB extracted content,
+and 10,000 files. Current project-local paths are owned by the
 standard CLI: `.agents/skills` for Codex and Antigravity, and `.claude/skills`
 for Claude Code. Setup does not copy skills itself or maintain an alternate path
 registry. `npx skills update -p -y` and `npx skills remove` remain the update and

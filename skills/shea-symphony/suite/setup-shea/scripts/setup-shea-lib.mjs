@@ -37,6 +37,12 @@ export const SUPPORTED_HARNESSES = ["codex", "claude-code", "antigravity"];
 export const SUPPORTED_MAIN_BACKENDS = ["codex", "claude-code"];
 export const SUPPORTED_REVIEW_BACKENDS = ["codex-app-server", "claude-code", "agy-cli"];
 
+const SUITE_ARCHIVE_LIMITS = {
+  SKILLS_DOWNLOAD_MAX_BYTES: String(128 * 1024 * 1024),
+  SKILLS_EXTRACT_MAX_BYTES: String(256 * 1024 * 1024),
+  SKILLS_EXTRACT_MAX_FILES: "10000",
+};
+
 const skillAssetPath = fileURLToPath(
   new URL("../assets/normal-skills.json", import.meta.url),
 );
@@ -376,16 +382,14 @@ function normalizeRequest(input) {
   if (!request.source.suite_version || !request.source.source_revision) {
     throw new Error("request.source requires suite_version and source_revision");
   }
-  if (!/^[a-f0-9]{7,64}$/.test(request.source.source_revision)) {
-    throw new Error("request.source.source_revision must be a pinned git revision");
+  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(request.source.source_revision)) {
+    throw new Error("request.source.source_revision must be a full pinned git revision");
   }
-  if (
-    request.source.suite_url
-    && !request.source.suite_url.includes(`/tree/${request.source.source_revision}/`)
-  ) {
-    throw new Error("request.source.suite_url must use the pinned GitHub tree revision");
+  const suiteArchiveUrl = `https://github.com/Alive24/shea-symphony/archive/${request.source.source_revision}.tar.gz`;
+  if (request.source.suite_url && request.source.suite_url !== suiteArchiveUrl) {
+    throw new Error("request.source.suite_url must use the exact pinned GitHub commit archive");
   }
-  request.source.suite_url ||= `https://github.com/Alive24/shea-symphony/tree/${request.source.source_revision}/skills/shea-symphony/suite`;
+  request.source.suite_url ||= suiteArchiveUrl;
   request.harnesses = [...new Set(request.harnesses)].sort();
   for (const harness of request.harnesses) {
     if (!SUPPORTED_HARNESSES.includes(harness)) throw new Error(`unsupported harness: ${harness}`);
@@ -835,7 +839,8 @@ function skillActions(repo, request, previous) {
       classification: complete && unchanged && removedHarnesses.length === 0 ? "no-op" : complete ? "update" : "create",
       root,
       ownership: "standard_skills_cli",
-      installation_method: "symlink_or_cli_managed_copy",
+      installation_method: "pinned_commit_archive_via_standard_skills_cli",
+      archive_limits: SUITE_ARCHIVE_LIMITS,
       skills,
     });
   }
@@ -980,18 +985,23 @@ function runSkills(repo, request, actions) {
   }
   const selected = changed.filter((action) => action.classification !== "remove").map((action) => action.harness);
   if (selected.length) {
-    const source = request.source.suite_url || `https://github.com/Alive24/shea-symphony/tree/${request.source.source_revision}/skills/shea-symphony/suite`;
+    const source = request.source.suite_url;
     command(
       "npx",
       [
         "skills",
         "add",
         source,
+        "--full-depth",
         ...skills.flatMap((skill) => ["--skill", skill]),
         ...selected.flatMap((harness) => ["--agent", harness]),
         "-y",
       ],
-      { cwd: repo, inherit: true },
+      {
+        cwd: repo,
+        inherit: true,
+        env: { ...process.env, ...SUITE_ARCHIVE_LIMITS },
+      },
     );
     results.push({ harnesses: selected, skills, action: "installed_or_updated", source });
   }

@@ -54,7 +54,7 @@ function fixture() {
     source: {
       suite_version: "2026.08.15",
       source_revision: REVISION,
-      suite_url: `https://github.com/Alive24/shea-symphony/tree/${REVISION}/skills/shea-symphony/suite`,
+      suite_url: `https://github.com/Alive24/shea-symphony/archive/${REVISION}.tar.gz`,
     },
     runtime: {
       cli_path: cli,
@@ -233,11 +233,62 @@ test("normal skill metadata includes setup and excludes research-only Dream and 
   assert.deepEqual([...skills].sort(), defaults);
 });
 
-test("setup source URL must carry the declared pinned revision", async () => {
+test("setup source URL must be the exact pinned commit archive", async () => {
   const data = fixture();
   data.request.source.suite_url =
     "https://github.com/Alive24/shea-symphony/tree/main/skills/shea-symphony/suite";
-  await assert.rejects(buildSetupPlan(data), /must use the pinned GitHub tree revision/);
+  await assert.rejects(buildSetupPlan(data), /must use the exact pinned GitHub commit archive/);
+  data.request.source.source_revision = REVISION.slice(0, 12);
+  await assert.rejects(buildSetupPlan(data), /must be a full pinned git revision/);
+});
+
+test("standard Skills CLI receives the pinned archive, full-depth discovery, and bounded limits", async () => {
+  const data = fixture();
+  const bin = join(data.repo, "fake-bin");
+  const invocation = join(data.repo, "npx-invocation.json");
+  const fakeNpx = join(bin, "npx");
+  mkdirSync(bin);
+  writeFileSync(
+    fakeNpx,
+    `#!/usr/bin/env node
+const { mkdirSync, writeFileSync } = require("node:fs");
+const { join } = require("node:path");
+const args = process.argv.slice(2);
+writeFileSync(${JSON.stringify(invocation)}, JSON.stringify({
+  args,
+  download: process.env.SKILLS_DOWNLOAD_MAX_BYTES,
+  extract: process.env.SKILLS_EXTRACT_MAX_BYTES,
+  files: process.env.SKILLS_EXTRACT_MAX_FILES,
+}));
+for (let index = 0; index < args.length; index += 1) {
+  if (args[index] !== "--skill") continue;
+  const name = args[index + 1];
+  const root = join(process.cwd(), ".agents", "skills", name);
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(root, "SKILL.md"), "---\\nname: " + name + "\\ndescription: fixture\\n---\\n");
+}
+`,
+  );
+  chmodSync(fakeNpx, 0o755);
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${bin}:${originalPath}`;
+  try {
+    const plan = await buildSetupPlan(data);
+    const applied = await applySetup({ ...data, confirm: plan.plan_id });
+    assert.equal(applied.readiness.status, "ready");
+  } finally {
+    process.env.PATH = originalPath;
+  }
+  const observed = JSON.parse(readFileSync(invocation, "utf8"));
+  assert.deepEqual(observed.args.slice(0, 4), [
+    "skills",
+    "add",
+    data.request.source.suite_url,
+    "--full-depth",
+  ]);
+  assert.equal(observed.download, String(128 * 1024 * 1024));
+  assert.equal(observed.extract, String(256 * 1024 * 1024));
+  assert.equal(observed.files, "10000");
 });
 
 test("release resolution rejects missing checksums, missing targets, unavailable metadata, and wrong digests", async () => {

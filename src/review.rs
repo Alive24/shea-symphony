@@ -281,7 +281,7 @@ impl ReviewBackend for GeminiCliReviewBackend {
             .map_err(|error| ReviewError::Artifact(error.to_string()))?;
 
         let headless_config = self.headless_config();
-        let args = headless_config.args_for_prompt(&request.prompt);
+        let args = headless_config.args_for_request(&request.prompt, &request.workspace);
         let mut command = Command::new(&self.command);
         command
             .args(&args)
@@ -500,6 +500,20 @@ impl GeminiCliHeadlessConfig<'_> {
             CliReviewKind::Gemini => gemini_cli_headless_args(self.model, self.allowed_tools),
             CliReviewKind::Agy => agy_cli_headless_args(prompt, self.model, self.timeout_ms),
         }
+    }
+
+    fn args_for_request(&self, prompt: &str, workspace: &Path) -> Vec<String> {
+        let mut args = self.args_for_prompt(prompt);
+        if self.kind == CliReviewKind::Agy {
+            // agy print mode runs tools from its persistent Antigravity control project and does
+            // not treat the process cwd as an inspection root. Bind the already-validated Review
+            // workspace explicitly so the independent reviewer can inspect the linked PR checkout.
+            args.extend([
+                "--add-dir".to_string(),
+                workspace.to_string_lossy().into_owned(),
+            ]);
+        }
+        args
     }
 
     fn uses_stdin_prompt(&self) -> bool {
@@ -1926,7 +1940,10 @@ mod tests {
         assert_eq!(job.state, ReviewJobState::Completed);
         assert_eq!(
             fs::read_to_string(workspace.join("args.txt")).unwrap(),
-            "--print\nReview this prompt.\n--print-timeout\n1140000ms\n--mode\nplan\n--sandbox\n--dangerously-skip-permissions\n--model\ngemini-3.1-pro-preview\n"
+            format!(
+                "--print\nReview this prompt.\n--print-timeout\n1140000ms\n--mode\nplan\n--sandbox\n--dangerously-skip-permissions\n--model\ngemini-3.1-pro-preview\n--add-dir\n{}\n",
+                workspace.display()
+            )
         );
         let report = job.report.as_ref().unwrap();
         assert_eq!(report.summary.as_deref(), Some("Review completed."));

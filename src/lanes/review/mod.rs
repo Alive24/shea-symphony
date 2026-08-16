@@ -16,7 +16,7 @@ pub(crate) use automatic::{
 #[cfg(test)]
 pub(crate) use manual::{
     render_manual_review_workpad, terminal_review_claim_value, validate_active_manual_review_claim,
-    validate_manual_review_pass_claim,
+    validate_manual_review_pass_claim, ManualReviewWorkpadInput,
 };
 pub(crate) use manual::{
     review_claim, review_clear_claim, review_manual_pass, review_manual_reject,

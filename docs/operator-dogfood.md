@@ -30,14 +30,15 @@ The launcher checks:
 - in write mode, `autopilot plan` and the bounded `autopilot loop --dry-run`
   preflight pass.
 
-The canonical supervised operator workflow is `workflows/shea-symphony.md`. It
+The canonical supervised operator workflow is `.shea/workflows/shea-symphony.md`. It
 defaults durable worktrees, logs, and runtime artifacts under
 `~/.shea-symphony/artifacts`; set
 `SHEA_SYMPHONY_ARTIFACT_ROOT` before running commands to move the whole local
 artifact tree.
 
 The workflow file is an index/config, not a single prompt for every role. It
-references lane prompt contracts under `workflows/prompts/`:
+references lane prompt contracts under `.shea/prompts/` and the complete
+workpad template registry under `.shea/template/workpad/`:
 
 - `main-agent.md` for implementation ticks that stop at `Agent Review`;
 - `review-agent.md` for independent review and review evidence;
@@ -45,7 +46,9 @@ references lane prompt contracts under `workflows/prompts/`:
 
 Fixture workflows can still use inline prompt bodies. If the canonical workflow
 declares lane prompts, all three lane paths must exist before agent
-initialization continues.
+initialization continues. Once `workpad_templates` is declared, every required
+template must exist, be non-empty, readable, and valid Liquid. Validation fails
+closed instead of substituting embedded Rust prose.
 
 Main and semantic Merge-agent repair may instead select the shared Claude Code
 stream-json transport with `main_lane.backend: claude-code` and/or
@@ -517,6 +520,12 @@ final acceptance but waits for explicit confirmation before any state change;
 Manual Merge owns approved merge-lane work. Doctor may diagnose a concrete
 repository-local loading or contract problem, but it never restores or rewrites
 Skills from an upstream copy.
+
+Normal operational Skills are concise capability consumers. They resolve
+`.shea/contracts/workflow-capability.v1.md`, keep lane-specific authority and
+completion rules, and defer concrete commands to the selected adapter. Shared
+targeted-read ordering, uncertain-write handling, and state-last mutation rules
+belong to the capability contract, not duplicated Skill runbooks.
 
 Repository execution readiness is a separate local contract from App/backend
 profiles. Run `shea-symphony-runtime-onboarding` to discover repository-owned

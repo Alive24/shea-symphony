@@ -4,6 +4,7 @@ use shea_symphony::model::{
     normalize_state, BlockerRef, GateDecision, GateDecisionKind, TrackerIssue,
 };
 use shea_symphony::tracker::{adapter_from_config, TrackerAdapter};
+use shea_symphony::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 use shea_symphony::{
     handoff::parent_integration_branch_name,
     workspace::safe_identifier as workspace_safe_identifier,
@@ -355,23 +356,30 @@ fn render_forge_parent_topology_workpad(
         "issue-{}",
         parent_issue.identifier.trim_start_matches('#')
     ));
-    [
-        "## Shea Symphony Workpad".to_string(),
-        String::new(),
-        "### Parent Topology".to_string(),
-        format!("- Parent issue: {} {}", parent_issue.identifier, parent_issue.title),
-        format!("- First observed subissue: {first_subissue_ref}"),
-        format!("- Parent integration branch: `{parent_integration_branch}`"),
-        format!("- Parent final base branch: `{parent_final_base_branch}`"),
-        "- Source: `shea-symphony forge relationship parent topology ensure`".to_string(),
-        "- Purpose: durable branch evidence immediately after native subissue relationship creation.".to_string(),
-        String::new(),
-        "### Runtime Ownership".to_string(),
-        format!("- Issue: `{}`", parent_issue.identifier),
-        format!("- Workspace key: `{workspace_key}`"),
-        format!("- Branch: `{parent_integration_branch}`"),
-    ]
-    .join("\n")
+    render_workpad_template(
+        None,
+        WorkpadTemplateId::ParentTopology,
+        &[
+            ("parent_issue_ref", parent_issue.identifier.clone()),
+            ("parent_issue_title", parent_issue.title.clone()),
+            ("issue_ref", first_subissue_ref.into()),
+            ("issue_title", "first native subissue".into()),
+            ("parent_integration_branch", parent_integration_branch.into()),
+            ("parent_final_base_branch", parent_final_base_branch.into()),
+            (
+                "source",
+                "`shea-symphony forge relationship parent topology ensure`".into(),
+            ),
+            (
+                "runtime_identity",
+                format!(
+                    "- Issue: `{}`\n- Workspace key: `{workspace_key}`\n- Branch: `{parent_integration_branch}`",
+                    parent_issue.identifier
+                ),
+            ),
+        ],
+    )
+    .expect("repository Markdown parent topology template must render")
 }
 
 pub(crate) fn render_promotion_note(

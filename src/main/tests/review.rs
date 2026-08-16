@@ -107,13 +107,16 @@ fn manual_review_pass_workpad_records_doctor_evidence_marker() {
             .render()
     );
     let workpad = render_manual_review_workpad(
+        None,
         &issue,
-        "passed",
-        "human_review",
-        "Gemini: pass",
-        true,
-        &claim,
-        &terminal,
+        ManualReviewWorkpadInput {
+            decision: "passed",
+            target_state: "human_review",
+            evidence: "Gemini: pass",
+            pass: true,
+            current_claim_value: &claim,
+            terminal_claim_value: &terminal,
+        },
     );
 
     assert!(workpad.contains("Reviewer backend: manual-operator"));
@@ -134,13 +137,16 @@ fn manual_review_reject_workpad_does_not_record_pass_marker() {
             .render()
     );
     let workpad = render_manual_review_workpad(
+        None,
         &issue,
-        "not passed",
-        "agent_review",
-        "Gemini: inconclusive",
-        false,
-        &claim,
-        &terminal,
+        ManualReviewWorkpadInput {
+            decision: "not passed",
+            target_state: "agent_review",
+            evidence: "Gemini: inconclusive",
+            pass: false,
+            current_claim_value: &claim,
+            terminal_claim_value: &terminal,
+        },
     );
 
     assert!(!workpad.contains("Review pass evidence: `recorded`"));

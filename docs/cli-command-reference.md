@@ -19,10 +19,13 @@ break-glass recovery actions, not the standard path. See
 `docs/github-access-policy.md` for the current raw GitHub inventory and
 REST-first / GraphQL-required boundaries.
 
-The canonical `workflows/shea-symphony.md` file is a workflow index/config. It
-references lane-specific prompts in `workflows/prompts/` so Main, Review, and
-Merge commands initialize with their own authority contracts. Older fixture
-workflows may still use an inline prompt body.
+The canonical `.shea/workflows/shea-symphony.md` file is a workflow index/config.
+It references lane-specific prompts in `.shea/prompts/` and required workpad
+templates in `.shea/template/workpad/`. Main, Review, and Merge commands load
+repository Markdown as the prose source; Rust supplies typed interpolation,
+validation, section-aware merge mechanics, and tracker transport. Older fixture
+workflows may still use an inline prompt body. Configured template failures are
+readiness failures and never silently fall back to embedded Rust prose.
 
 ## Read-Only Planning And Inspection
 
@@ -690,6 +693,10 @@ structured decision note and routes to `Merging`, `Rework`, or
 and `forge dream` remain skill behaviors, not Shea Symphony CLI subcommands.
 `forge create`, `forge promote`, `forge rework`, and `forge validate` remain
 deterministic CLI executor surfaces.
+
+The normal operational Skills consume semantic names from
+`.shea/contracts/workflow-capability.v1.md`; command spellings in this reference
+belong to the Legacy adapter and are intentionally not copied into those Skills.
 
 ## Issue Forge Dream
 

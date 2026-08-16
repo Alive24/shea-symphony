@@ -12,6 +12,7 @@ use shea_symphony::runtime_profile::{
 };
 use shea_symphony::tracker::{adapter_from_config, TrackerAdapter};
 use shea_symphony::workflow::WorkflowDefinition;
+use shea_symphony::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 use shea_symphony::workspace::{
     apply_local_git_identity, prepare_workspace, profile_scoped_identifier, safe_identifier,
     GitIdentityApplyResult, Workspace,
@@ -198,16 +199,19 @@ fn start_agent_session_with_claim(
     record_agent_session_events(config, issue, lane, &summary, &events, &prompt_path)?;
 
     let claim_value = claim.render();
-    let workpad = agent_session_workpad(AgentSessionWorkpadInput {
-        issue,
-        lane,
-        workspace_path: &workspace.path,
-        summary: &summary,
-        prompt_path: &prompt_path,
-        claim_value: &claim_value,
-        agent_command: &backend_spec.command,
-        git_identity: &git_identity,
-    });
+    let workpad = agent_session_workpad(
+        workflow,
+        AgentSessionWorkpadInput {
+            issue,
+            lane,
+            workspace_path: &workspace.path,
+            summary: &summary,
+            prompt_path: &prompt_path,
+            claim_value: &claim_value,
+            agent_command: &backend_spec.command,
+            git_identity: &git_identity,
+        },
+    )?;
     let (mutation_type, outcome) = if lane == AgentSessionLaneArg::Main {
         let key = recovery_key(
             "session-start-workpad",
@@ -369,7 +373,10 @@ struct AgentSessionWorkpadInput<'a> {
     git_identity: &'a GitIdentityApplyResult,
 }
 
-fn agent_session_workpad(input: AgentSessionWorkpadInput<'_>) -> String {
+fn agent_session_workpad(
+    workflow: &WorkflowDefinition,
+    input: AgentSessionWorkpadInput<'_>,
+) -> Result<String, Box<dyn std::error::Error>> {
     let attach_command = input.summary.attach_command.as_deref().unwrap_or("n/a");
     let log_path = input
         .summary
@@ -377,91 +384,76 @@ fn agent_session_workpad(input: AgentSessionWorkpadInput<'_>) -> String {
         .as_ref()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "n/a".into());
-    let title = match input.lane {
-        AgentSessionLaneArg::Main => "## Shea Symphony Workpad",
-        AgentSessionLaneArg::Review => "## Shea Symphony Agent Review Run",
-        AgentSessionLaneArg::Merge => "## Shea Symphony Merge Run",
-    };
-    let session_heading = if input.summary.backend == "tmux" {
-        "### Local tmux Agent Session"
-    } else {
-        "### Local Agent Session"
-    };
-    let evidence_summary = if input.summary.backend == "tmux" {
-        "tmux session, prompt artifact, log path, workspace, and claim metadata recorded."
-    } else {
-        "backend session, prompt artifact, workspace, and claim metadata recorded."
-    };
-    [
-        title.to_string(),
-        String::new(),
-        session_heading.to_string(),
-        format!("- Generated at: `{}`", current_gmt_timestamp()),
-        format!("- Issue: {} {}", input.issue.identifier, input.issue.title),
-        format!("- Lane: `{}`", input.lane.label()),
-        format!(
-            "- Actor role: `{}`",
-            match input.lane {
-                AgentSessionLaneArg::Main => "implementation_agent",
-                AgentSessionLaneArg::Review => "review_agent",
-                AgentSessionLaneArg::Merge => "merge_agent",
-            }
-        ),
-        format!(
-            "- Actor: `{}`",
-            timeline_claim_actor(input.claim_value).unwrap_or_else(|| "not recorded".into())
-        ),
-        format!(
-            "- Run ID: `{}`",
-            timeline_claim_run(input.claim_value).unwrap_or_else(|| "not recorded".into())
-        ),
-        format!(
-            "- Input state: `{}`",
-            match input.lane {
-                AgentSessionLaneArg::Main => input.issue.state.as_str(),
-                AgentSessionLaneArg::Review => "Agent Review",
-                AgentSessionLaneArg::Merge => "Merging",
-            }
-        ),
-        format!(
-            "- Target state after run: `{}`",
-            match input.lane {
-                AgentSessionLaneArg::Main => "Agent Review",
-                AgentSessionLaneArg::Review => {
-                    "Human Review | Merging | Rework | Need Human Input | unchanged"
+    Ok(render_workpad_template(
+        Some(workflow),
+        WorkpadTemplateId::LaneSession,
+        &[
+            ("generated_at", current_gmt_timestamp()),
+            ("issue_ref", input.issue.identifier.clone()),
+            ("issue_title", input.issue.title.clone()),
+            ("lane", input.lane.label().into()),
+            (
+                "actor_role",
+                match input.lane {
+                    AgentSessionLaneArg::Main => "implementation_agent",
+                    AgentSessionLaneArg::Review => "review_agent",
+                    AgentSessionLaneArg::Merge => "merge_agent",
                 }
-                AgentSessionLaneArg::Merge => "Done | Need Human Input | unchanged",
-            }
-        ),
-        format!(
-            "- Result: `{}`",
-            if input.summary.pending_session {
-                "session_started"
-            } else {
-                "session_recorded"
-            }
-        ),
-        format!("- PR: `{}`", timeline_pr_summary(input.issue)),
-        format!(
-            "- Claim field: `{}` = `{}`",
-            input.lane.claim_field(),
-            input.claim_value
-        ),
-        format!("- Backend: `{}`", input.summary.backend),
-        format!("- Agent command: `{}`", input.agent_command),
-        format!(
-            "- Session: `{}`",
-            input.summary.session_id.as_deref().unwrap_or("n/a")
-        ),
-        format!("- Pending session: `{}`", input.summary.pending_session),
-        format!("- Workspace: `{}`", input.workspace_path.display()),
-        format!("- Prompt artifact: `{}`", input.prompt_path.display()),
-        format!("- Session log: `{log_path}`"),
-        format!("- Attach command: `{attach_command}`"),
-        format!("- Git identity: `{}`", input.git_identity.summary()),
-        format!("- Evidence summary: {evidence_summary}"),
-        String::new(),
-        input.summary.message.clone(),
-    ]
-    .join("\n")
+                .into(),
+            ),
+            (
+                "actor",
+                timeline_claim_actor(input.claim_value).unwrap_or_else(|| "not recorded".into()),
+            ),
+            (
+                "run_id",
+                timeline_claim_run(input.claim_value).unwrap_or_else(|| "not recorded".into()),
+            ),
+            (
+                "input_state",
+                match input.lane {
+                    AgentSessionLaneArg::Main => input.issue.state.as_str(),
+                    AgentSessionLaneArg::Review => "Agent Review",
+                    AgentSessionLaneArg::Merge => "Merging",
+                }
+                .into(),
+            ),
+            (
+                "target_state",
+                match input.lane {
+                    AgentSessionLaneArg::Main => "Agent Review",
+                    AgentSessionLaneArg::Review => {
+                        "Human Review | Merging | Rework | Need Human Input | unchanged"
+                    }
+                    AgentSessionLaneArg::Merge => "Done | Need Human Input | unchanged",
+                }
+                .into(),
+            ),
+            (
+                "result",
+                if input.summary.pending_session {
+                    "session_started"
+                } else {
+                    "session_recorded"
+                }
+                .into(),
+            ),
+            ("pr", timeline_pr_summary(input.issue)),
+            ("claim_field", input.lane.claim_field().into()),
+            ("claim_value", input.claim_value.into()),
+            ("backend", input.summary.backend.clone()),
+            ("agent_command", input.agent_command.into()),
+            (
+                "session_id",
+                input.summary.session_id.as_deref().unwrap_or("n/a").into(),
+            ),
+            ("pending_session", input.summary.pending_session.to_string()),
+            ("workspace_path", input.workspace_path.display().to_string()),
+            ("prompt_path", input.prompt_path.display().to_string()),
+            ("log_path", log_path),
+            ("attach_command", attach_command.into()),
+            ("git_identity", input.git_identity.summary()),
+            ("message", input.summary.message.clone()),
+        ],
+    )?)
 }

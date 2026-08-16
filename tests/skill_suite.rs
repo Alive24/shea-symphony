@@ -240,9 +240,47 @@ fn lane_skills_preserve_review_workspace_and_subissue_boundaries() {
     assert!(manual_merge.contains("Do not route native subissue merge repair to `Rework`"));
     assert!(manual_main.contains("Execute one operator-selected Main issue in the current task"));
     assert!(manual_main.contains("Do not create another task"));
-    assert!(manual_main.contains("workspace adopt"));
+    assert!(manual_main.contains("workspace.adopt"));
     assert!(manual_main.contains("source=github_native"));
     assert!(manual_main.contains("source=fallback_diagnostic"));
+}
+
+#[test]
+fn normal_operational_skills_are_compact_capability_consumers() {
+    let skills = [
+        "shea-symphony-manual-main",
+        "shea-symphony-manual-review",
+        "shea-symphony-manual-merge",
+        "shea-symphony-human-review",
+        "shea-symphony-doctor",
+    ];
+    let mut total_lines = 0;
+
+    for skill in skills {
+        let source = skill_file(skill, "SKILL.md");
+        let lines = source.lines().count();
+        total_lines += lines;
+        assert!(lines < 70, "{skill} expanded into a command runbook");
+        assert!(source.contains(".shea/contracts/workflow-capability.v1.md"));
+        for syntax in [
+            "project issue",
+            "project inspect",
+            "gh pr view",
+            "cargo run",
+            ".shea/bin",
+            "--write",
+        ] {
+            assert!(
+                !source.contains(syntax),
+                "{skill} duplicates adapter syntax {syntax}"
+            );
+        }
+    }
+
+    assert!(
+        total_lines < 225,
+        "operational skills regressed into runbooks"
+    );
 }
 
 #[test]

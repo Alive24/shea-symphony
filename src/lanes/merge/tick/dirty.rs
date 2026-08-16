@@ -56,6 +56,7 @@ pub(super) fn handle_dirty_merge(
         repaired_decision.reason = repair.reason.clone();
         let evidence = mechanical_merge_repair_evidence(&repair, expected_base);
         let workpad = merge_lane_workpad_with_repair_evidence(
+            Some(workflow),
             issue,
             &repaired_decision,
             Some(&repair.output),
@@ -99,6 +100,7 @@ pub(super) fn handle_dirty_merge(
             Some("need_human_input")
         };
         let workpad = merge_lane_workpad_with_repair_evidence(
+            Some(workflow),
             issue,
             &agent_decision,
             Some(&agent_repair.output),
@@ -160,6 +162,7 @@ pub(super) fn handle_dirty_merge(
     failed_repair.reason = repair.reason.clone();
     let evidence = ineligible_merge_agent_repair_evidence(&repair);
     let workpad = merge_lane_workpad_with_repair_evidence(
+        Some(workflow),
         issue,
         &failed_repair,
         Some(&repair.output),

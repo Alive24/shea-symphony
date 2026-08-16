@@ -2,6 +2,7 @@ use shea_symphony::config::RuntimeConfig;
 use shea_symphony::handoff::HandoffError;
 use shea_symphony::model::{GateDecision, TrackerIssue};
 use shea_symphony::tracker::TrackerAdapter;
+use shea_symphony::workflow::WorkflowDefinition;
 
 use super::RunLoopOptions;
 use crate::commands::gate::{gate_target_state, gate_workpad};
@@ -9,6 +10,7 @@ use crate::lanes::main_loop::run_loop_handoff_failure_workpad;
 use crate::orchestration::{latest_status_for_issue, print_latest_status};
 
 pub(crate) fn handle_run_loop_gate_failure(
+    workflow: &WorkflowDefinition,
     adapter: &dyn TrackerAdapter,
     issue: &TrackerIssue,
     decision: &GateDecision,
@@ -28,7 +30,10 @@ pub(crate) fn handle_run_loop_gate_failure(
         issue.identifier, decision.kind
     );
     if options.write {
-        adapter.upsert_workpad(&issue.identifier, &gate_workpad(issue, decision))?;
+        adapter.upsert_workpad(
+            &issue.identifier,
+            &gate_workpad(Some(workflow), issue, decision),
+        )?;
         adapter.set_state(&issue.identifier, gate_target_state(decision))?;
     } else {
         println!(
@@ -45,6 +50,7 @@ pub(crate) fn handle_run_loop_gate_failure(
 }
 
 pub(crate) fn handle_run_loop_handoff_failure(
+    workflow: &WorkflowDefinition,
     adapter: &dyn TrackerAdapter,
     issue: &TrackerIssue,
     error: &HandoffError,
@@ -63,7 +69,7 @@ pub(crate) fn handle_run_loop_handoff_failure(
         "run_loop_handoff=failed issue={} error={}",
         issue.identifier, error
     );
-    let workpad = run_loop_handoff_failure_workpad(issue, error);
+    let workpad = run_loop_handoff_failure_workpad(Some(workflow), issue, error);
     if options.write {
         adapter.upsert_workpad(&issue.identifier, &workpad)?;
         adapter.set_state(&issue.identifier, "need_human_input")?;

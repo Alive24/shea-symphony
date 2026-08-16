@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::model::{LinkedPullRequest, TrackerIssue};
+use crate::workflow::WorkflowDefinition;
+use crate::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 use crate::workspace::safe_identifier;
 
 const DEFAULT_BRANCH_PREFIX: &str = "feature";
@@ -247,23 +249,13 @@ pub fn evaluate_agent_review_handoff(
 }
 
 pub fn render_agent_review_handoff_workpad(
+    workflow: Option<&WorkflowDefinition>,
     issue: &TrackerIssue,
     evidence: &AgentReviewHandoffEvidence,
     report: &AgentReviewHandoffReport,
 ) -> String {
-    let mut lines = vec![
-        "## Agent Review Handoff".to_string(),
-        String::new(),
-        "### Agent Review Handoff Invariant".to_string(),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        format!("- Status: `{:?}`", report.status),
+    let mut validation = vec![
         format!("- Message: {}", report.message),
-        format!(
-            "- Target state: `{}`",
-            report.target_state.as_deref().unwrap_or("none")
-        ),
-        String::new(),
-        "### Evidence".to_string(),
         format!("- Workspace key: `{}`", evidence.workspace_key),
         format!("- Workspace path: `{}`", evidence.workspace_path.display()),
         format!("- Branch: `{}`", evidence.branch_name),
@@ -309,36 +301,70 @@ pub fn render_agent_review_handoff_workpad(
     ];
 
     if let Some(blocker) = &evidence.no_pr_blocker {
-        lines.push(format!("- No-PR blocker: {blocker}"));
+        validation.push(format!("- No-PR blocker: {blocker}"));
     }
     if let Some(parent_issue) = &evidence.branch_target.parent_issue {
-        lines.push(format!("- Native parent issue: `{parent_issue}`"));
+        validation.push(format!("- Native parent issue: `{parent_issue}`"));
     }
     if let Some(parent_integration_branch) = &evidence.branch_target.parent_integration_branch {
-        lines.push(format!(
+        validation.push(format!(
             "- Parent integration branch: `{parent_integration_branch}`"
         ));
     }
     if let Some(parent_final_base_branch) = &evidence.branch_target.parent_final_base_branch {
-        lines.push(format!(
+        validation.push(format!(
             "- Parent final PR base branch: `{parent_final_base_branch}`"
         ));
     }
-
-    if !report.missing.is_empty() {
-        lines.push(String::new());
-        lines.push("### Missing Handoff Evidence".into());
-        for item in &report.missing {
-            lines.push(format!("- {item}"));
-        }
-    }
-
-    lines.push(String::new());
-    lines.push("### Boundary".into());
-    lines.push("- Main implementation agent may move complete work to `Agent Review` only after this invariant passes.".into());
-    lines.push("- Main implementation agent must never set `Human Review`.".into());
-
-    lines.join("\n")
+    let missing = if report.missing.is_empty() {
+        "- None.".into()
+    } else {
+        report
+            .missing
+            .iter()
+            .map(|item| format!("- {item}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    render_workpad_template(
+        workflow,
+        WorkpadTemplateId::AgentReviewHandoff,
+        &[
+            ("issue_ref", issue.identifier.clone()),
+            ("issue_title", issue.title.clone()),
+            ("status", format!("{:?}", report.status)),
+            (
+                "target_state",
+                report.target_state.as_deref().unwrap_or("none").into(),
+            ),
+            (
+                "pull_request",
+                evidence
+                    .pull_request_url
+                    .as_deref()
+                    .unwrap_or("missing")
+                    .into(),
+            ),
+            (
+                "project_pr_link_verified",
+                evidence
+                    .project_pr_link_verified
+                    .map(|verified| verified.to_string())
+                    .unwrap_or_else(|| "unknown".into()),
+            ),
+            (
+                "pull_request_is_draft",
+                evidence
+                    .pull_request_is_draft
+                    .map(|draft| draft.to_string())
+                    .unwrap_or_else(|| "unknown".into()),
+            ),
+            ("validation_summary", validation.join("\n")),
+            ("last_transition", evidence.last_transition.clone()),
+            ("missing", missing),
+        ],
+    )
+    .expect("configured Agent Review handoff workpad template must render")
 }
 
 fn markdown_has_heading(markdown: &str, heading: &str) -> bool {
@@ -1235,7 +1261,7 @@ mod tests {
             AgentReviewHandoffEvidence::from_plan(&plan, "cargo test passed", "completed");
         let report = evaluate_agent_review_handoff(&evidence);
 
-        let workpad = render_agent_review_handoff_workpad(&issue, &evidence, &report);
+        let workpad = render_agent_review_handoff_workpad(None, &issue, &evidence, &report);
 
         assert!(workpad.contains("## Agent Review Handoff"));
         assert!(!workpad.contains("## Shea Symphony Workpad"));

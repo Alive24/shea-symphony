@@ -73,7 +73,7 @@ use super::lanes::review::{
     render_manual_review_workpad, review_claim_for_issue, review_workspace_for_issue,
     select_review_worker_issues, terminal_review_claim_value, terminal_review_loop_claim_value,
     transition_issue_to_rework_with_diagnostic, validate_active_manual_review_claim,
-    validate_manual_review_pass_claim,
+    validate_manual_review_pass_claim, ManualReviewWorkpadInput,
 };
 use super::orchestration::canonical_checkout::{
     canonical_checkout_report, CanonicalCheckoutReport,

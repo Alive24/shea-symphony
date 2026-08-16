@@ -10,6 +10,7 @@ use shea_symphony::runtime_state::{
     upsert_runtime_state, RuntimeState,
 };
 use shea_symphony::tracker::TrackerAdapter;
+use shea_symphony::workflow::WorkflowDefinition;
 
 use super::super::dispatch::RunLoopWorkerOutcome;
 use super::super::{
@@ -25,6 +26,7 @@ use crate::orchestration::{
 };
 
 pub(super) struct TerminalTransitionContext<'a> {
+    pub(super) workflow: &'a WorkflowDefinition,
     pub(super) config: &'a RuntimeConfig,
     pub(super) adapter: &'a dyn TrackerAdapter,
     pub(super) latest: &'a TrackerIssue,
@@ -51,6 +53,7 @@ fn complete_successful_run(
     result: &IssueExecutionResult,
 ) -> Result<RunLoopWorkerOutcome, Box<dyn std::error::Error>> {
     let TerminalTransitionContext {
+        workflow,
         config,
         adapter,
         latest,
@@ -64,7 +67,8 @@ fn complete_successful_run(
     }
     let evidence = run_loop_agent_review_handoff_evidence(latest, result, handoff, Some(workpad));
     let handoff_report = evaluate_agent_review_handoff(&evidence);
-    let handoff_workpad = render_agent_review_handoff_workpad(latest, &evidence, &handoff_report);
+    let handoff_workpad =
+        render_agent_review_handoff_workpad(Some(workflow), latest, &evidence, &handoff_report);
     let review_handoff_key = recovery_key(
         "agent-review-handoff-workpad",
         &latest.identifier,
@@ -216,6 +220,7 @@ fn complete_failed_run(
     result: &IssueExecutionResult,
 ) -> Result<RunLoopWorkerOutcome, Box<dyn std::error::Error>> {
     let TerminalTransitionContext {
+        workflow,
         config,
         adapter,
         latest,
@@ -233,8 +238,13 @@ fn complete_failed_run(
             format!("usage-limit pause: {}", pause.evidence),
         );
         upsert_runtime_state(config, &runtime_state)?;
-        let pause_workpad =
-            run_loop_usage_limit_pause_workpad(latest, result, pause, retry_delay_ms);
+        let pause_workpad = run_loop_usage_limit_pause_workpad(
+            Some(workflow),
+            latest,
+            result,
+            pause,
+            retry_delay_ms,
+        );
         let pause_key = recovery_key(
             "main-usage-limit-workpad",
             &latest.identifier,

@@ -16,7 +16,8 @@ permission grant or a command runbook.
 ## Ownership
 
 - The active workflow owns repository, tracker, state, lane, workspace,
-  verification, and backend policy.
+  verification, backend policy, and repository Markdown paths for lane prompts
+  and workpad templates.
 - Machine-local profiles own executable paths and environment requirements.
 - An adapter maps these semantics to a runtime surface and reports which
   capabilities it supports.
@@ -43,7 +44,9 @@ scan is not a substitute for a targeted read.
 
 - `workspace.adopt`: record the selected canonical issue workspace.
 - `lane.claim`: record one lane's ownership after eligibility and readiness.
-- `workpad.upsert`: replace only the canonical lane workpad section.
+- `workpad.upsert`: merge named stable sections into the one canonical Main
+  workpad without erasing unrelated evidence; append-only lane records remain
+  separate.
 - `timeline.append`: add immutable evidence outside the canonical workpad.
 - `issue.transition`: request one allowed workflow state transition.
 - `pull_request.link`: record or verify the issue's pull request relationship.
@@ -88,3 +91,12 @@ is the final mutation after its supporting evidence is durable.
 
 Adapters may document idempotent recovery mechanics, but cannot weaken these
 classification, confirmation, or readback rules.
+
+## Markdown Source Authority
+
+Repository Markdown owns operator- and agent-facing prose for lane prompts and
+workpads. Runtime code owns selection, typed interpolation values, rendering,
+section-aware idempotent merge mechanics, validation, and tracker transport.
+When an active workflow declares Markdown templates, missing, empty, unreadable,
+or malformed required files make that workflow unready; runtime code must not
+silently substitute an embedded prose copy.

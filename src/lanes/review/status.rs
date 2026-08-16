@@ -50,7 +50,7 @@ pub(crate) fn review_freshness(
     );
     println!("rationale={}", report.decision.rationale);
     println!("\n--- review freshness evidence ---\n");
-    println!("{}", render_review_freshness_workpad(&report));
+    println!("{}", render_review_freshness_workpad(None, &report)?);
     Ok(())
 }
 

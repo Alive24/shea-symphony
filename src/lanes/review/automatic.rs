@@ -27,6 +27,7 @@ use shea_symphony::rework::rework_transition_expected;
 use shea_symphony::rework::{render_rework_diagnostic_workpad, ReworkDiagnostic};
 use shea_symphony::tracker::{adapter_from_config, ProjectFieldAssignment, TrackerAdapter};
 use shea_symphony::workflow::{AgentLane, WorkflowDefinition};
+use shea_symphony::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 
 use super::manual::{terminal_review_claim_value, write_terminal_review_claim};
 use crate::lanes::claim::{lane_claim_for_issue, project_text_field, render_parseable_lane_claim};
@@ -330,6 +331,7 @@ pub(crate) fn review_loop_with_summary(
                             issue.identifier
                         );
                         record_review_invalid_handoff(
+                            &workflow,
                             &config,
                             adapter.as_ref(),
                             &issue,
@@ -503,6 +505,7 @@ pub(crate) fn review_loop_with_summary(
                             latest.identifier
                         );
                             record_review_invalid_handoff(
+                                &workflow,
                                 &config,
                                 adapter.as_ref(),
                                 &latest,
@@ -537,6 +540,7 @@ pub(crate) fn review_loop_with_summary(
                         selected_issue.identifier
                     );
                     record_review_invalid_handoff(
+                        &workflow,
                         &config,
                         adapter.as_ref(),
                         &selected_issue,
@@ -649,27 +653,22 @@ pub(crate) fn review_backend_kind(
 }
 
 fn record_review_invalid_handoff(
+    workflow: &WorkflowDefinition,
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
     issue: &TrackerIssue,
     reason: &str,
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let workpad = [
-        "## Shea Symphony Agent Review Run".to_string(),
-        String::new(),
-        "### Agent Review Invalid Handoff".to_string(),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        "- Lane: `review`".to_string(),
-        "- Input state: `Agent Review`".to_string(),
-        "- Target state after review routing: `unchanged`".to_string(),
-        "- Actor role: `review_agent`".to_string(),
-        "- Decision: `inconclusive_invalid_handoff`".to_string(),
-        format!("- Reason: {reason}"),
-        "- Review did not start because the Main Agent handoff invariant is not satisfied.".to_string(),
-        "- Draft PRs must be marked ready by the Main Agent lane or an operator-confirmed doctor repair before normal Agent Review.".to_string(),
-    ]
-    .join("\n");
+    let workpad = render_workpad_template(
+        Some(workflow),
+        WorkpadTemplateId::ReviewInvalidHandoff,
+        &[
+            ("issue_ref", issue.identifier.clone()),
+            ("issue_title", issue.title.clone()),
+            ("reason", reason.into()),
+        ],
+    )?;
 
     if write {
         adapter.add_issue_comment(&issue.identifier, &workpad)?;
@@ -965,7 +964,7 @@ pub(crate) fn apply_review_result(
     }
 
     let workpad = repeat_evidence
-        .map(|evidence| render_repeated_review_failure_workpad(issue, job, evidence))
+        .map(|evidence| render_repeated_review_failure_workpad(workflow, issue, job, evidence))
         .unwrap_or_else(|| render_review_workpad_with_workflow(workflow, issue, job));
     let evidence_key = recovery_key(
         "review-result",
@@ -1175,7 +1174,7 @@ pub(crate) fn transition_issue_to_rework_with_diagnostic(
     issue: &TrackerIssue,
     diagnostic: &ReworkDiagnostic,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let workpad = render_rework_diagnostic_workpad(issue, diagnostic);
+    let workpad = render_rework_diagnostic_workpad(None, issue, diagnostic)?;
     adapter.add_issue_comment(&issue.identifier, &workpad)?;
     append_tracker_mutation_audit(
         config,

@@ -1,29 +1,30 @@
 ## Shea Symphony Merge Run
 
-- Generated at: `<YYYY-MM-DD HH:MM:SS GMT>`
-- Issue: #<issue> <title>
+- Generated at: `{{generated_at}}`
+- Issue: {{issue_ref}} {{issue_title}}
 - Lane: `merge`
 - Actor role: `merge_agent`
-- Actor: <worker>
-- Run ID: `<run-id>`
-- Input state: `Merging`
-- Target state after merge routing: `Done` | `Need Human Input` | unchanged
-- Result: Merged | Routed | Skipped | Blocked
-- PR: #<pr> <url>
-- Evidence summary: <mergeability, approval, checks, and command evidence checked>
+- Result: `{{result}}`
+- Target state after merge routing: `{{target_state}}`
+- PR: `{{pr}}`
+- Decision: `{{decision}}`
+- Evidence summary: {{evidence_summary}}
 
 ### Preflight
 
-- ...
+{{preflight}}
 
 ### Merge Action
 
-- ...
+{{merge_action}}
 
 ### Post-Merge Readback
 
-- ...
+{{post_merge_readback}}
+
+### Merge Repair Evidence
+{{merge_repair_evidence}}
 
 ### Required Human Input
 
-- ...
+{{required_human_input}}

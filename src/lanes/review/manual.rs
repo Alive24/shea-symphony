@@ -8,6 +8,7 @@ use shea_symphony::model::{normalize_state, TrackerIssue};
 use shea_symphony::progress::run_with_progress_heartbeat;
 use shea_symphony::review::review_pass_target_state;
 use shea_symphony::tracker::{adapter_from_config, ProjectFieldAssignment, TrackerAdapter};
+use shea_symphony::workflow::WorkflowDefinition;
 use shea_symphony::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 
 use crate::commands::session::{
@@ -154,7 +155,9 @@ pub(crate) fn review_manual_pass(
     evidence: String,
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let config = load_config(&workflow_path)?;
+    let workflow = WorkflowDefinition::load(&workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
+    config.validate()?;
     preflight_canonical_checkout_for_write_mode(&config, "review pass", write)?;
     let adapter = adapter_from_config(&config);
     let issue = adapter
@@ -174,13 +177,16 @@ pub(crate) fn review_manual_pass(
         terminal_review_claim_value(&current_claim, LaneClaimState::Done, "passed");
     let target_state = review_pass_target_state(&issue);
     let workpad = render_manual_review_workpad(
+        Some(&workflow),
         &issue,
-        "passed",
-        target_state,
-        &evidence,
-        true,
-        &current_claim_value,
-        &terminal_claim_value,
+        ManualReviewWorkpadInput {
+            decision: "passed",
+            target_state,
+            evidence: &evidence,
+            pass: true,
+            current_claim_value: &current_claim_value,
+            terminal_claim_value: &terminal_claim_value,
+        },
     );
     if !write {
         println!(
@@ -285,7 +291,9 @@ pub(crate) fn review_manual_reject(
         );
     }
 
-    let config = load_config(&workflow_path)?;
+    let workflow = WorkflowDefinition::load(&workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
+    config.validate()?;
     preflight_canonical_checkout_for_write_mode(&config, "review reject", write)?;
     let adapter = adapter_from_config(&config);
     let issue = adapter
@@ -305,13 +313,16 @@ pub(crate) fn review_manual_reject(
     let terminal_claim_value =
         terminal_review_claim_value(&current_claim, terminal_state, terminal_result);
     let workpad = render_manual_review_workpad(
+        Some(&workflow),
         &issue,
-        "not passed",
-        &target_state,
-        &evidence,
-        false,
-        &current_claim_value,
-        &terminal_claim_value,
+        ManualReviewWorkpadInput {
+            decision: "not passed",
+            target_state: &target_state,
+            evidence: &evidence,
+            pass: false,
+            current_claim_value: &current_claim_value,
+            terminal_claim_value: &terminal_claim_value,
+        },
     );
     if !write {
         println!(
@@ -396,17 +407,22 @@ pub(crate) fn review_manual_reject(
     Ok(())
 }
 
+pub(crate) struct ManualReviewWorkpadInput<'a> {
+    pub(crate) decision: &'a str,
+    pub(crate) target_state: &'a str,
+    pub(crate) evidence: &'a str,
+    pub(crate) pass: bool,
+    pub(crate) current_claim_value: &'a str,
+    pub(crate) terminal_claim_value: &'a str,
+}
+
 pub(crate) fn render_manual_review_workpad(
+    workflow: Option<&WorkflowDefinition>,
     issue: &TrackerIssue,
-    decision: &str,
-    target_state: &str,
-    evidence: &str,
-    pass: bool,
-    current_claim_value: &str,
-    terminal_claim_value: &str,
+    input: ManualReviewWorkpadInput<'_>,
 ) -> String {
-    let result_note = if pass {
-        if normalize_state(target_state) == "merging" {
+    let result_note = if input.pass {
+        if normalize_state(input.target_state) == "merging" {
             "- Review pass evidence: `recorded`\nEvidence recorded. Independent Review Agent may move this native subissue directly to Merging; final Human Review and UAT remain owned by the parent issue.".into()
         } else {
             "- Review pass evidence: `recorded`\nEvidence recorded. Independent Review Agent may move this issue to Human Review; the main implementation agent must not.".into()
@@ -416,7 +432,7 @@ pub(crate) fn render_manual_review_workpad(
             .into()
     };
     render_workpad_template(
-        None,
+        workflow,
         WorkpadTemplateId::ManualReview,
         &[
             ("generated_at", current_gmt_timestamp()),
@@ -424,19 +440,22 @@ pub(crate) fn render_manual_review_workpad(
             ("issue_title", issue.title.clone()),
             (
                 "actor",
-                timeline_claim_actor(current_claim_value).unwrap_or("manual-operator".into()),
+                timeline_claim_actor(input.current_claim_value).unwrap_or("manual-operator".into()),
             ),
             (
                 "run_id",
-                timeline_claim_run(current_claim_value).unwrap_or("not recorded".into()),
+                timeline_claim_run(input.current_claim_value).unwrap_or("not recorded".into()),
             ),
-            ("decision", decision.into()),
-            ("target_state", target_state.into()),
-            ("result", if pass { "passed" } else { "rework" }.into()),
+            ("decision", input.decision.into()),
+            ("target_state", input.target_state.into()),
+            (
+                "result",
+                if input.pass { "passed" } else { "rework" }.into(),
+            ),
             ("pr", timeline_pr_summary(issue)),
-            ("current_claim", current_claim_value.into()),
-            ("terminal_claim", terminal_claim_value.into()),
-            ("evidence", evidence.trim().into()),
+            ("current_claim", input.current_claim_value.into()),
+            ("terminal_claim", input.terminal_claim_value.into()),
+            ("evidence", input.evidence.trim().into()),
             ("result_note", result_note),
         ],
     )

@@ -82,18 +82,18 @@ pub(crate) fn run_loop_dispatch_write_candidate(
     }
     let latest_gate = evaluate_issue_for_current_source(config, &latest)?;
     if !latest_gate.is_dispatchable() {
-        handle_run_loop_gate_failure(adapter, &latest, &latest_gate, options, config)?;
+        handle_run_loop_gate_failure(workflow, adapter, &latest, &latest_gate, options, config)?;
         return Ok(RunLoopWorkerOutcome::Completed);
     }
 
     let mut handoff = match run_loop_handoff_plan(config, &latest) {
         Ok(handoff) => handoff,
         Err(error) => {
-            handle_run_loop_handoff_failure(adapter, &latest, &error, options, config)?;
+            handle_run_loop_handoff_failure(workflow, adapter, &latest, &error, options, config)?;
             return Ok(RunLoopWorkerOutcome::Completed);
         }
     };
-    ensure_parent_integration_branch_evidence(config, adapter, &latest, &handoff)?;
+    ensure_parent_integration_branch_evidence(workflow, config, adapter, &latest, &handoff)?;
 
     let profile_login = selected_profile_github_login(config)?;
     let active_login = if live_github_tracker(config) && profile_login.is_none() {
@@ -109,7 +109,7 @@ pub(crate) fn run_loop_dispatch_write_candidate(
     ) {
         AssigneeOwnershipDecision::Allowed => {}
         AssigneeOwnershipDecision::Block { reason } => {
-            let workpad = run_loop_assignee_ownership_workpad(&latest, &reason);
+            let workpad = run_loop_assignee_ownership_workpad(Some(workflow), &latest, &reason);
             let workpad_key = recovery_key(
                 "main-assignee-ownership-workpad",
                 &latest.identifier,
@@ -169,7 +169,7 @@ pub(crate) fn run_loop_dispatch_write_candidate(
     let workspace_preflight = match workspace_preflight_result {
         Ok(preflight) => preflight,
         Err(error) => {
-            handle_run_loop_handoff_failure(adapter, &latest, &error, options, config)?;
+            handle_run_loop_handoff_failure(workflow, adapter, &latest, &error, options, config)?;
             return Ok(RunLoopWorkerOutcome::Completed);
         }
     };
@@ -276,7 +276,7 @@ pub(crate) fn run_loop_dispatch_write_candidate(
     }
     let refreshed_gate = evaluate_issue_for_current_source(config, &latest)?;
     if !refreshed_gate.is_dispatchable() {
-        handle_run_loop_gate_failure(adapter, &latest, &refreshed_gate, options, config)?;
+        handle_run_loop_gate_failure(workflow, adapter, &latest, &refreshed_gate, options, config)?;
         return Ok(RunLoopWorkerOutcome::Completed);
     }
     match run_loop_assignee_ownership_decision(
@@ -407,7 +407,8 @@ pub(crate) fn run_loop_dispatch_write_candidate(
             return Ok(RunLoopWorkerOutcome::Completed);
         }
     };
-    let mut ownership_workpad = run_loop_ownership_workpad(&latest, &ownership, event, &main_claim);
+    let mut ownership_workpad =
+        run_loop_ownership_workpad(Some(workflow), &latest, &ownership, event, &main_claim);
     ownership_workpad.push_str("\n\n### Runtime Readiness\n");
     ownership_workpad.push_str(&format!(
         "- Status: `{}`\n- Profile: `{}`\n- Profile path: `{}`\n- Workspace: `{}`\n",
@@ -705,7 +706,8 @@ pub(crate) fn run_loop_dispatch_write_candidate(
         runtime_state.last_event.as_deref().unwrap_or("unknown")
     );
 
-    let workpad = run_loop_handoff_workpad(&latest, &result, &handoff, Some(&ownership));
+    let workpad =
+        run_loop_handoff_workpad(Some(workflow), &latest, &result, &handoff, Some(&ownership));
     let handoff_key = recovery_key(
         "main-handoff-workpad",
         &latest.identifier,
@@ -790,6 +792,7 @@ pub(crate) fn run_loop_dispatch_write_candidate(
 
     apply_terminal_transition(
         TerminalTransitionContext {
+            workflow,
             config,
             adapter,
             latest: &latest,
@@ -826,6 +829,7 @@ fn failed_backend_has_salvageable_transport_evidence(result: &IssueExecutionResu
 }
 
 fn ensure_parent_integration_branch_evidence(
+    workflow: &WorkflowDefinition,
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
     issue: &TrackerIssue,
@@ -863,7 +867,7 @@ fn ensure_parent_integration_branch_evidence(
         return Ok(());
     }
 
-    let workpad = run_loop_parent_topology_workpad(issue, &parent_issue, handoff);
+    let workpad = run_loop_parent_topology_workpad(workflow, issue, &parent_issue, handoff);
     let topology_key = recovery_key(
         "main-parent-topology-workpad",
         parent_issue_ref,
@@ -929,6 +933,7 @@ fn project_field_contains_branch(value: &serde_json::Value, branch: &str) -> boo
 }
 
 fn run_loop_parent_topology_workpad(
+    workflow: &WorkflowDefinition,
     issue: &TrackerIssue,
     parent_issue: &TrackerIssue,
     handoff: &IssueHandoffPlan,
@@ -944,7 +949,7 @@ fn run_loop_parent_topology_workpad(
         .as_deref()
         .unwrap_or("n/a");
     render_workpad_template(
-        None,
+        Some(workflow),
         WorkpadTemplateId::ParentTopology,
         &[
             ("parent_issue_ref", parent_issue.identifier.clone()),
@@ -956,6 +961,11 @@ fn run_loop_parent_topology_workpad(
                 parent_integration_branch.into(),
             ),
             ("parent_final_base_branch", parent_final_base_branch.into()),
+            (
+                "source",
+                "`shea-symphony main loop parent topology ensure`".into(),
+            ),
+            ("runtime_identity", String::new()),
         ],
     )
     .expect("centralized parent topology workpad template must render")

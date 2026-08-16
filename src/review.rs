@@ -651,51 +651,60 @@ fn write_gemini_review_artifact(
 }
 
 pub fn render_repeated_review_failure_workpad(
+    workflow: Option<&WorkflowDefinition>,
     issue: &TrackerIssue,
     job: &ReviewJob,
     repeat: &ReviewRepeatedFailureEvidence,
 ) -> String {
     let decision = review_gate_decision_for_actor(job, ReviewActor::IndependentReviewAgent);
     let diagnostic = gemini_review_health_diagnostic(job);
-    let mut lines = vec![
-        "## Shea Symphony Agent Review Run".to_string(),
-        String::new(),
-        "### Repeated Backend Failure".into(),
-        format!("- Generated at: `{}`", current_gmt_timestamp()),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        format!("- Worker key: `{}`", review_worker_key(issue, &job.backend)),
-        format!("- Reviewer backend: `{}`", job.backend),
-        format!("- Job state: `{:?}`", job.state),
-        format!("- Current job id: `{}`", job.id),
-        format!("- First same-cause job id: `{}`", repeat.first_job_id),
-        format!("- Previous same-cause job id: `{}`", repeat.previous_job_id),
-        format!("- Same-cause repeat count: `{}`", repeat.repeat_count),
-        format!("- Failure signature: `{}`", repeat.signature),
-        format!("- Decision: {}", decision.message),
-        format!(
-            "- Target state after review routing: `{}`",
-            decision.target_state.unwrap_or("none")
-        ),
-        "- Evidence policy: compact repeat line only; full diagnostic was already recorded for the first same-cause attempt.".into(),
-    ];
+    let ledger_line = job
+        .ledger_path
+        .as_ref()
+        .map(|path| format!("- Review job ledger: `{}`", path.display()))
+        .unwrap_or_default();
+    let gemini_health_lines = diagnostic
+        .map(|diagnostic| {
+            let mut lines = vec![
+                format!(
+                    "- Review backend health: `{}` / `{}`",
+                    diagnostic.category.as_str(),
+                    diagnostic.recovery_policy.as_str()
+                ),
+                format!("- Operator status: {}", diagnostic.operator_status),
+            ];
+            if let Some(retry_after_ms) = diagnostic.retry_after_ms {
+                lines.push(format!("- Retry-after: `{retry_after_ms}ms`"));
+            }
+            lines.join("\n")
+        })
+        .unwrap_or_default();
 
-    if let Some(path) = job.ledger_path.as_ref() {
-        lines.push(format!("- Review job ledger: `{}`", path.display()));
-    }
-
-    if let Some(diagnostic) = diagnostic {
-        lines.push(format!(
-            "- Review backend health: `{}` / `{}`",
-            diagnostic.category.as_str(),
-            diagnostic.recovery_policy.as_str()
-        ));
-        lines.push(format!("- Operator status: {}", diagnostic.operator_status));
-        if let Some(retry_after_ms) = diagnostic.retry_after_ms {
-            lines.push(format!("- Retry-after: `{retry_after_ms}ms`"));
-        }
-    }
-
-    lines.join("\n")
+    render_workpad_template(
+        workflow,
+        WorkpadTemplateId::RepeatedReviewFailure,
+        &[
+            ("generated_at", current_gmt_timestamp()),
+            ("issue_ref", issue.identifier.clone()),
+            ("issue_title", issue.title.clone()),
+            ("worker_key", review_worker_key(issue, &job.backend)),
+            ("reviewer_backend", job.backend.clone()),
+            ("job_state", format!("{:?}", job.state)),
+            ("job_id", job.id.clone()),
+            ("first_job_id", repeat.first_job_id.clone()),
+            ("previous_job_id", repeat.previous_job_id.clone()),
+            ("repeat_count", repeat.repeat_count.to_string()),
+            ("signature", repeat.signature.clone()),
+            ("decision", decision.message),
+            (
+                "target_state",
+                decision.target_state.unwrap_or("none").into(),
+            ),
+            ("ledger_line", ledger_line),
+            ("gemini_health_lines", gemini_health_lines),
+        ],
+    )
+    .expect("configured repeated Review failure workpad template must render")
 }
 
 pub fn render_gemini_health_section(job: &ReviewJob) -> String {
@@ -2138,7 +2147,7 @@ mod tests {
             signature: "quota_rate_limit:http_429".into(),
         };
 
-        let workpad = render_repeated_review_failure_workpad(&issue(), &job, &repeat);
+        let workpad = render_repeated_review_failure_workpad(None, &issue(), &job, &repeat);
 
         assert!(workpad.contains("### Repeated Backend Failure"));
         assert!(workpad.contains("compact repeat line only"));
@@ -3037,7 +3046,7 @@ mod tests {
             rework_class: ReviewReworkClass::BaseRefresh,
             patch_summary: None,
         });
-        let workpad = render_review_freshness_workpad(&report);
+        let workpad = render_review_freshness_workpad(None, &report).unwrap();
 
         assert!(workpad.contains("Prior Human Review still valid: `true`"));
         assert!(workpad.contains("Main implementation agent still stops at `Agent Review`"));

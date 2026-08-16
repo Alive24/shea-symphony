@@ -18,7 +18,7 @@ fn human_review_repair_candidates_are_specific_to_missing_review_evidence() {
 #[test]
 fn human_review_repair_workpad_preserves_authority_boundary() {
     let report = audit_project_issues(&[issue("#41", "Human Review")]);
-    let workpad = render_human_review_repair_workpad(&report.violations[0]);
+    let workpad = render_human_review_repair_workpad(None, &report.violations[0]);
 
     assert!(workpad.contains("## Shea Symphony Doctor Triage"));
     assert!(workpad.contains("moving this issue back to `Agent Review`"));

@@ -674,19 +674,29 @@ The standard Skills CLI can discover that tree and vendor selected Skills into
 another repository:
 
 ```bash
-npx skills add https://github.com/Alive24/shea-symphony/tree/main/.agents/skills --list
-npx skills add https://github.com/Alive24/shea-symphony/tree/main/.agents/skills \
-  --skill shea-symphony-doctor
+npx skills add https://github.com/Alive24/shea-symphony/tree/<stable-tag>/.agents/skills \
+  --skill setup-shea --agent codex --copy --yes
 ```
+
+Invoke `setup-shea` as the only public onboarding entrypoint. It resolves the
+latest stable release once to a full commit, verifies a detached checkout at
+that commit, and runs the standard Skills CLI in a temporary project-local
+staging root to plan selected normal Skills. Only copied Skill directories—not
+temporary `skills-lock.json` metadata—enter target reconciliation. Setup also
+plans workflow, prompt, template, workpad, GitHub Project, and runtime-profile
+changes. Existing differing target files are operator-owned conflicts; setup
+never silently replaces them and never claims or launches an agent lane.
 
 Vendoring is an initial copy operation, not a managed Shea package lifecycle.
 Afterward the target repository owns those files and may customize them. Shea's
 CLI and Doctor do not install, update, remove, restore, version-check, or compare
-vendored Skill text with upstream.
+vendored Skill text with upstream. Setup uses the standard CLI's `--copy` mode
+in temporary staging for selected harnesses and does not invoke its later
+`check` or `update` lifecycle.
 
-The canonical inventory includes Issue Forge, Issue Forge Reflect, Issue Forge
-Dream, Runtime Onboarding, Manual Main, Manual Review, Human Review, Manual
-Merge, Doctor, and the HALO research seed. Human
+The canonical inventory includes Setup Shea, Issue Forge, Issue Forge Reflect,
+Issue Forge Dream, Manual Main, Manual Review, Human Review, Manual Merge,
+Doctor, and the HALO research seed. Human
 Review is an operator-owned briefing and UAT decision skill: it records a
 structured decision note and routes to `Merging`, `Rework`, or
 `Need Human Input` only after explicit operator confirmation. `forge reflect`

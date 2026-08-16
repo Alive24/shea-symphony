@@ -501,14 +501,24 @@ under `.agents/skills`. Use the standard Skills CLI to inspect that upstream
 tree or vendor selected Skills into another repository:
 
 ```bash
-npx skills add https://github.com/Alive24/shea-symphony/tree/main/.agents/skills --list
-npx skills add https://github.com/Alive24/shea-symphony/tree/main/.agents/skills \
-  --skill shea-symphony-manual-main
+npx skills add https://github.com/Alive24/shea-symphony/tree/<stable-tag>/.agents/skills \
+  --skill setup-shea --agent codex --copy --yes
 ```
+
+Use `setup-shea` as the only onboarding and reconciliation entrypoint. It pins
+the latest stable release to a full commit, verifies a detached checkout, and
+uses the standard Skills CLI in temporary project-local staging before planning
+selected normal Skills or repository Markdown. It preserves differing local
+files for operator judgment, integrates runtime-profile discovery, and finishes
+with read-only no-claim readiness. GitHub or resource failure before
+confirmation leaves the target and external Project unchanged.
 
 This is vendor-once behavior. Once copied, the target repository owns its Skill
 files and may change them. Shea CLI and Doctor do not synchronize those files,
 compare them with upstream, or offer install/update/remove/version operations.
+Setup uses the standard CLI's project-local `--copy` mode in temporary staging
+for each selected harness, does not transfer temporary `skills-lock.json`
+metadata, and does not invoke its later `check` or `update` lifecycle.
 
 The repository-owned Skills preserve the same lane boundaries as the Shea Symphony CLI:
 Issue Forge, Reflect, and Dream handle conversation, draft shaping, backlog
@@ -528,9 +538,9 @@ targeted-read ordering, uncertain-write handling, and state-last mutation rules
 belong to the capability contract, not duplicated Skill runbooks.
 
 Repository execution readiness is a separate local contract from App/backend
-profiles. Run `shea-symphony-runtime-onboarding` to discover repository-owned
-requirements and propose `.shea/runtime-profile.json`; the skill must receive
-operator confirmation before writing. Then run
+profiles. Use `setup-shea` to discover repository-owned requirements and
+propose `.shea/runtime-profile.json`; the skill must receive operator
+confirmation before writing. Then run
 `shea-symphony profiles /absolute/path/to/.shea/workflows/target.md` from the
 repository or exact issue worktree. Main blocks a required missing, malformed,
 drifted, or incompatible

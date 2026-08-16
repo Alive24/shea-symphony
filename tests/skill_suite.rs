@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const CANONICAL_SKILLS: &[&str] = &[
+    "setup-shea",
     "shea-halo-research-seed",
     "shea-symphony-doctor",
     "shea-symphony-human-review",
@@ -12,7 +13,6 @@ const CANONICAL_SKILLS: &[&str] = &[
     "shea-symphony-manual-main",
     "shea-symphony-manual-merge",
     "shea-symphony-manual-review",
-    "shea-symphony-runtime-onboarding",
 ];
 
 fn repo_path(path: &str) -> PathBuf {
@@ -127,6 +127,119 @@ fn canonical_skill_frontmatter_metadata_and_resources_are_structurally_valid() {
                     );
                 }
             }
+        }
+    }
+}
+
+#[test]
+fn setup_shea_is_a_modular_immutable_release_workflow() {
+    let skill = skill_file("setup-shea", "SKILL.md");
+    let discovery = skill_file("setup-shea", "references/target-discovery.md");
+    let release = skill_file("setup-shea", "references/immutable-release.md");
+    let workflow = skill_file("setup-shea", "references/workflow-project.md");
+    let reconciliation = skill_file("setup-shea", "references/reconciliation.md");
+    let runtime = skill_file("setup-shea", "references/runtime-profile.md");
+    let readiness = skill_file("setup-shea", "references/readiness.md");
+
+    assert!(
+        skill.lines().count() < 90,
+        "setup-shea must stay a concise router"
+    );
+    for reference in [
+        "target-discovery.md",
+        "immutable-release.md",
+        "workflow-project.md",
+        "reconciliation.md",
+        "runtime-profile.md",
+        "readiness.md",
+    ] {
+        assert!(
+            skill.contains(&format!("references/{reference}")),
+            "setup-shea does not route to {reference}"
+        );
+    }
+
+    for harness in ["Codex", "Claude Code", "Antigravity"] {
+        assert!(discovery.contains(harness), "missing harness {harness}");
+    }
+    for marker in [
+        "latest-release endpoint",
+        "full 40-character commit",
+        "Do not fall back to `main`",
+        "only resource revision for this run",
+        "check out that commit detached",
+        "leave the target repository and external Project unchanged",
+    ] {
+        assert!(
+            release.contains(marker),
+            "release contract missing {marker}"
+        );
+    }
+    assert!(workflow.contains("supported deterministic surface"));
+    assert!(workflow.contains("Do not create or rename Project fields/statuses"));
+    for marker in [
+        "standard Skills CLI",
+        "temporary project-local staging root",
+        "<detached-checkout>/.agents/skills",
+        "--agent <selected-agent> --copy --yes",
+        "do not transfer its temporary\n`skills-lock.json`",
+        "must not invoke `skills check` or `skills update`",
+        "conflict_keep",
+        "upstream-hash registry",
+        "planned preimage",
+    ] {
+        assert!(
+            reconciliation.contains(marker),
+            "reconciliation contract missing {marker}"
+        );
+    }
+    for marker in [
+        "credential-free",
+        "git hash-object",
+        "Write atomically",
+        "routes repository discovery or profile\nreconciliation back to `setup-shea`",
+    ] {
+        assert!(
+            runtime.contains(marker),
+            "runtime contract missing {marker}"
+        );
+    }
+    assert!(readiness.contains("Prove No Claim"));
+    assert!(readiness.contains("launched no Main, Review, or Merge agent"));
+    assert!(!repo_path(".agents/skills/setup-shea/assets").exists());
+    assert!(!repo_path(".agents/skills/setup-shea/scripts").exists());
+    assert!(!repo_path(".agents/skills/shea-symphony-runtime-onboarding/SKILL.md").exists());
+}
+
+#[test]
+fn setup_shea_fixtures_cover_initial_repeat_conflict_failure_and_pin_cases() {
+    let cases = [
+        ("clean-target.md", &["`add`", "no lane claim"][..]),
+        (
+            "repeated-no-change.md",
+            &["`unchanged`", "preserve every target byte"][..],
+        ),
+        (
+            "customized-conflict.md",
+            &["`conflict_keep`", "Never overwrite"][..],
+        ),
+        (
+            "github-unavailable.md",
+            &["leave repository", "lane claims unchanged"][..],
+        ),
+        (
+            "immutable-release.md",
+            &["one tag", "one full commit", "containing `main`"][..],
+        ),
+    ];
+
+    for (name, markers) in cases {
+        let source = skill_file("setup-shea", &format!("fixtures/{name}"));
+        assert!(source.contains("## Observed input"));
+        assert!(source.contains("## Expected plan"));
+        assert!(source.contains("## Expected result"));
+        for marker in markers {
+            assert!(source.contains(marker), "{name} missing {marker}");
         }
     }
 }

@@ -98,8 +98,6 @@ clear owner:
 - `src/commands/session/start.rs`: `session start` execution. It owns explicit
   run validation, workspace preparation, prompt artifact paths, backend launch,
   event-log capture, and session-start workpad/timeline evidence.
-- `src/commands/skills.rs`: skill readiness status rendering for the grouped
-  `skills status` surface.
 - `src/commands/status.rs`: read-only runtime status surfaces for `plan` and
   `status serve`. It owns snapshot assembly, JSON/human rendering, and loopback
   status serving while reusing shared session inspection.
@@ -158,11 +156,6 @@ Library Doctor checks should be grouped by the invariant they audit:
   cross-reference drift.
 - `src/doctor/tests/runtime.rs`: focused Doctor runtime/session diagnostics
   tests and runtime-state/session fixtures.
-- `src/doctor/skills.rs`: local Shea Symphony skill install diagnostics. It
-  owns suite manifest parsing, Codex/Gemini target discovery, installed skill
-  shape checks, metadata freshness, and local skill drift warning records.
-- `src/doctor/tests/skills.rs`: focused Doctor skill-install diagnostics tests
-  and their local skill-suite filesystem fixtures.
 - `src/doctor/tests/support.rs`: shared Doctor test fixtures for tracker
   issues, linked PRs, session snapshots, and topology metadata.
 - `src/doctor/topology.rs`: Project parent/subissue topology diagnostics. It

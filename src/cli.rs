@@ -7,7 +7,6 @@ use shea_symphony::review::{
     FakeReviewOutcome, ReviewFreshnessInput, ReviewReworkClass, ReviewStaleReason,
 };
 use shea_symphony::review_status::DEFAULT_RECENT_REVIEW_JOBS;
-use shea_symphony::skill_status::SkillStatusInput;
 use shea_symphony::tracker::ProjectFieldAssignment;
 
 use crate::commands::autopilot::AutopilotLoopOptions;
@@ -89,21 +88,11 @@ pub(crate) enum Command {
         workflow_path: PathBuf,
         write: bool,
     },
-    SkillsStatus {
-        input: SkillStatusInput,
-        json: bool,
-    },
     Profiles {
         workflow_path: PathBuf,
     },
     Debug {
         workflow_path: PathBuf,
-    },
-    TargetRuntimeStatus {
-        path: PathBuf,
-    },
-    TargetRuntimeInit {
-        path: PathBuf,
     },
     CleanupPlan {
         workflow_path: PathBuf,
@@ -389,15 +378,8 @@ enum CliCommand {
     Doctor(DoctorArgs),
     #[command(name = "doctor-repair-human-review")]
     DoctorRepairHumanReview(DoctorRepairArgs),
-    #[command(next_help_heading = "Human / Operator operations")]
-    Skills(SkillsArgs),
     Profiles(WorkflowPathArgs),
     Debug(WorkflowPathArgs),
-    #[command(
-        name = "target-runtime",
-        about = "Inspect or initialize a target repository .shea runtime"
-    )]
-    TargetRuntime(TargetRuntimeArgs),
     #[command(
         next_help_heading = "Lane orchestration",
         name = "autopilot",
@@ -429,7 +411,7 @@ enum CliCommand {
         about = "Reserved for future all-lane automatic orchestration"
     )]
     Run,
-    #[command(about = "Reserved for future Shea Symphony binary and skill upgrades")]
+    #[command(about = "Reserved for future Shea Symphony binary upgrades")]
     Upgrade,
 }
 
@@ -449,26 +431,6 @@ struct WorkflowPathArgs {
 struct AutopilotArgs {
     #[command(subcommand)]
     command: AutopilotCommandArgs,
-}
-
-#[derive(Debug, Args)]
-struct TargetRuntimeArgs {
-    #[command(subcommand)]
-    command: TargetRuntimeCommandArgs,
-}
-
-#[derive(Debug, Subcommand)]
-enum TargetRuntimeCommandArgs {
-    #[command(about = "Inspect .shea-example/.shea initialization state")]
-    Status(TargetRuntimePathArgs),
-    #[command(about = "Initialize .shea from .shea-example without overwriting")]
-    Init(TargetRuntimePathArgs),
-}
-
-#[derive(Debug, Args)]
-struct TargetRuntimePathArgs {
-    #[arg(help = "Target repository workspace path")]
-    path: PathBuf,
 }
 
 #[derive(Debug, Subcommand)]
@@ -625,42 +587,6 @@ struct DoctorArgs {
     write: bool,
     #[command(subcommand)]
     action: Option<DoctorSubcommandArgs>,
-}
-
-#[derive(Debug, Args)]
-struct SkillsArgs {
-    #[command(subcommand)]
-    command: SkillsCommandArgs,
-}
-
-#[derive(Debug, Subcommand)]
-enum SkillsCommandArgs {
-    #[command(about = "Report per-repo Shea Symphony skill readiness")]
-    Status(SkillsStatusArgs),
-}
-
-#[derive(Debug, Args)]
-struct SkillsStatusArgs {
-    #[arg(value_name = "path-to-WORKFLOW.md", default_value = "WORKFLOW.md")]
-    workflow_path: PathBuf,
-    #[arg(long = "suite-path")]
-    suite_path: Option<PathBuf>,
-    #[arg(long = "codex-dir")]
-    codex_dir: Option<PathBuf>,
-    #[arg(long = "gemini-dir")]
-    gemini_dir: Option<PathBuf>,
-    #[arg(long = "require-gemini")]
-    require_gemini: bool,
-    #[arg(long = "session-skills")]
-    session_skills: Vec<String>,
-    #[arg(long = "session-skills-file")]
-    session_skills_file: Option<PathBuf>,
-    #[arg(long)]
-    json: bool,
-    #[arg(long = "dry-run")]
-    _dry_run: bool,
-    #[arg(long = "write")]
-    _write: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1837,34 +1763,12 @@ impl TryFrom<Cli> for Command {
                             write: args.write,
                         })
                     }
-                    CliCommand::Skills(args) => match args.command {
-                        SkillsCommandArgs::Status(args) => Ok(Self::SkillsStatus {
-                            input: SkillStatusInput {
-                                workflow_path: args.workflow_path,
-                                suite_path: args.suite_path,
-                                codex_dir: args.codex_dir,
-                                gemini_dir: args.gemini_dir,
-                                require_gemini: args.require_gemini,
-                                session_skills: args.session_skills,
-                                session_skills_file: args.session_skills_file,
-                            },
-                            json: args.json,
-                        }),
-                    },
                     CliCommand::Profiles(args) => Ok(Self::Profiles {
                         workflow_path: args.workflow_path,
                     }),
                     CliCommand::Debug(args) => Ok(Self::Debug {
                         workflow_path: args.workflow_path,
                     }),
-                    CliCommand::TargetRuntime(args) => match args.command {
-                        TargetRuntimeCommandArgs::Status(args) => {
-                            Ok(Self::TargetRuntimeStatus { path: args.path })
-                        }
-                        TargetRuntimeCommandArgs::Init(args) => {
-                            Ok(Self::TargetRuntimeInit { path: args.path })
-                        }
-                    },
                     CliCommand::Autopilot(args) => match args.command {
                         AutopilotCommandArgs::Plan(args) => Ok(Self::AutopilotPlan {
                             workflow_path: args.workflow_path,
@@ -2007,7 +1911,7 @@ impl TryFrom<Cli> for Command {
                         Err("`shea-symphony run` is reserved for future all-lane orchestration and is not implemented yet".into())
                     }
                     CliCommand::Upgrade => {
-                        Err("`shea-symphony upgrade` is reserved for future Shea Symphony binary and skill upgrades and is not implemented yet".into())
+                        Err("`shea-symphony upgrade` is reserved for future Shea Symphony binary upgrades and is not implemented yet".into())
                     }
                 }
             }
@@ -2186,12 +2090,10 @@ fn usage() -> String {
         "  plan                        Render the dispatch/status plan",
         "  validate                    Validate workflow loading and configuration",
         "  doctor                      Audit Project, workflow, and runtime invariants",
-        "  skills                      Inspect per-repo skill readiness",
         "  status                      Show or serve runtime status snapshots",
         "  clean                       Plan or audit artifact cleanup",
         "  profiles                    List execution profiles",
         "  debug                       Render a combined operator debug report",
-        "  target-runtime              Inspect or initialize a target repository .shea runtime",
         "",
         "Project / Agent internals:",
         "  project                     Read or mutate Project facts through grouped subcommands",
@@ -2210,7 +2112,7 @@ fn usage() -> String {
         "",
         "Reserved lifecycle topology:",
         "  run                         Reserved for future all-lane automatic orchestration",
-        "  upgrade                     Reserved for future Shea Symphony binary and skill upgrades",
+        "  upgrade                     Reserved for future Shea Symphony binary upgrades",
         "",
         "Arguments:",
         "  [path-to-WORKFLOW.md]",
@@ -2228,6 +2130,16 @@ mod tests {
 
     fn parse(args: &[&str]) -> Command {
         Command::parse(args.iter().map(|arg| arg.to_string()).collect()).unwrap()
+    }
+
+    #[test]
+    fn retired_skill_manager_and_target_bootstrap_are_not_cli_surfaces() {
+        let help = usage();
+
+        assert!(!help.contains("skills status"));
+        assert!(!help.contains("target-runtime"));
+        assert!(Command::parse(vec!["skills".into(), "status".into()]).is_err());
+        assert!(Command::parse(vec!["target-runtime".into(), "status".into()]).is_err());
     }
 
     #[test]

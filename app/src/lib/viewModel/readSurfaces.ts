@@ -107,10 +107,8 @@ export function buildDataSource(overview: any, commands: LooseRecord, generatedA
 }
 
 export function buildLiveSignals(overview: any, commands: LooseRecord) {
-  const skills = overview?.skills;
   const githubQueue = overview?.githubQueue;
   const cooldown = projectReadCooldown(overview, commands);
-  const skillSummary = skills?.summary ?? {};
   const sessionsText = overview?.sessionsText ?? '';
   const sessionReadState = parseSessionReadState(sessionsText);
   const activeSessionCount = parseSessionCount(sessionsText);
@@ -142,24 +140,6 @@ export function buildLiveSignals(overview: any, commands: LooseRecord) {
             ? 'No foreground agent sessions'
             : sessionsText || 'Session list is readable',
       tone: commands.sessions?.ok && sessionReadState.status !== 'unavailable' ? 'success' : 'warn'
-    },
-    {
-      id: 'skills',
-      label: 'Skills',
-      value: skillSummary.expected_skills == null ? 'Read' : `${skillSummary.expected_skills}`,
-      shortDetail:
-        skillSummary.blockers == null
-          ? commands.skills?.ok
-            ? 'readable'
-            : 'pending'
-          : `${skillSummary.blockers} blocker${skillSummary.blockers === 1 ? '' : 's'}`,
-      detail:
-        skillSummary.blockers == null
-          ? commands.skills?.ok
-            ? 'Skill surface readable'
-            : 'Skill surface pending'
-          : `${skillSummary.blockers} blocker${skillSummary.blockers === 1 ? '' : 's'} · ${skillSummary.codex_status ?? 'unknown'}`,
-      tone: skillSummary.blockers > 0 ? 'warn' : commands.skills?.ok ? 'success' : 'warn'
     },
     {
       id: 'slow',

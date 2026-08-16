@@ -39,7 +39,6 @@ workflows may still use an inline prompt body.
 | `project inspect` | Inspect one live issue's readiness facts without tracker mutation. | `cargo run -- project inspect workflows/shea-symphony.md '#235'` |
 | `doctor` | Audit Project/workflow/runtime invariants. | `cargo run -- doctor` |
 | `audit-project` | Compatibility alias for `doctor`. | `cargo run -- audit-project workflows/shea-symphony.md` |
-| `skills status` | Read-only per-repo skill readiness matrix across source suite, Codex, Gemini, metadata, links, and optional session input. | `cargo run -- skills status workflows/shea-symphony.md` |
 | `profiles` | List configured/discovered backend profiles and validate repository runtime readiness in the current worktree. | `shea-symphony profiles /absolute/path/to/.shea/workflows/target.md` |
 | `debug` | Read-only human report combining Project, doctor, smoke readiness, runtime/session, cleanup, and lane next-action signals. | `cargo run -- debug workflows/shea-symphony.md` |
 | `autopilot plan` | Read-only Main/Review/Merge lane preflight with parked operator queues and foreground Autoloop readiness. | `cargo run -- autopilot plan workflows/shea-symphony.md` |
@@ -183,7 +182,7 @@ cargo run -- doctor repair 194 --mark-pr-ready --confirm-handoff-ready --write
 ```
 
 For operator-selected stuck states and `Need Human Input` triage, use the
-repo-owned Doctor skill at `.codex/skills/shea-symphony-doctor/SKILL.md` with
+repo-owned Doctor skill at `.agents/skills/shea-symphony-doctor/SKILL.md` with
 the supporting spec in `docs/operator-doctor.md`. The skill is a read-first
 diagnostic workflow that produces a structured `Doctor Triage Note`; it does
 not replace the CLI repair commands or authorize automatic Project mutation.
@@ -196,28 +195,6 @@ tracker state.
 `--mark-pr-ready --confirm-handoff-ready --write` is an explicit operator repair
 for `Agent Review` issues whose linked PR is still draft. It writes repair
 evidence and runs `gh pr ready`; `doctor --auto-fix` never marks PRs ready.
-
-Skill readiness is diagnostic-first and read-only:
-
-```bash
-cargo run -- skills status workflows/shea-symphony.md
-cargo run -- skills status workflows/shea-symphony.md --json
-cargo run -- skills status workflows/shea-symphony.md --suite-path skills/shea-symphony/suite
-cargo run -- skills status workflows/shea-symphony.md --session-skills-file /path/to/session-skills.txt
-cargo run -- skills status workflows/shea-symphony.md --require-gemini
-```
-
-The command discovers expected skills from `--suite-path`,
-`SHEA_SYMPHONY_SKILL_SUITE`, the current repo `skills/shea-symphony/suite`, or
-installed-only mode if no source suite exists. It inspects Codex local skills,
-Gemini local skills when configured or discoverable, rendered metadata drift,
-broken symlinks, file-shaped aliases, missing `SKILL.md`, and optional
-current-session visibility. Without `--session-skills` or
-`--session-skills-file`, current-session visibility is `unknown` and is not a
-failure. Gemini absence is a blocker only when `--require-gemini` is used.
-Codex readiness defaults to the selected profile working directory's
-`.codex/skills`, then the workflow repo's `.codex/skills`; it does not read
-`CODEX_HOME`. Use an explicit `--codex-dir` only for an intentional override.
 
 ## Main Implementation Runtime
 
@@ -687,31 +664,26 @@ issue in `Agent Review`. Command, auth, model, policy, or tool-permission
 configuration failures route to `Need Human Input`. Repeated same-cause backend
 failures append compact repeat evidence instead of duplicating full logs.
 
-## Local Skill Suite
+## Repository-Owned Skills
 
-Repo-packaged Shea Symphony skills live under `skills/shea-symphony/` with
-release metadata in `skills/shea-symphony/manifest.toml`. The installer previews
-and updates local Codex and Gemini skill directories:
+All first-party Shea and HALO Skills are authored once under `.agents/skills`.
+The standard Skills CLI can discover that tree and vendor selected Skills into
+another repository:
 
 ```bash
-node scripts/install-shea-symphony-skills.js --dry-run
-node scripts/install-shea-symphony-skills.js
-node scripts/install-shea-symphony-skills.js --validate
-node scripts/install-shea-symphony-skills.js --codex-dir "$HOME/.codex/skills" --gemini-dir "$HOME/.gemini/local-skills" --yes
+npx skills add https://github.com/Alive24/shea-symphony/tree/main/.agents/skills --list
+npx skills add https://github.com/Alive24/shea-symphony/tree/main/.agents/skills \
+  --skill shea-symphony-doctor
 ```
 
-Normal install mode is interactive: it prints detected target paths and requires
-operator confirmation before writing. Use `--skip-codex`, `--skip-gemini`,
-`--codex-dir`, and `--gemini-dir` for manual target control. Validation compares
-the active local skill files with the repo-owned dated suite.
-`doctor` also reports read-only install-health warnings for the detected Codex
-and Gemini skill roots, including missing roots, broken links, file-shaped
-aliases, missing `SKILL.md`, stale metadata, and stale Shea Symphony CLI naming.
-It points back to this installer path for repair instead of mutating local
-skills directly.
+Vendoring is an initial copy operation, not a managed Shea package lifecycle.
+Afterward the target repository owns those files and may customize them. Shea's
+CLI and Doctor do not install, update, remove, restore, version-check, or compare
+vendored Skill text with upstream.
 
-The suite packages Issue Forge, Issue Forge Reflect, Issue Forge Dream, Manual
-Main, Manual Review, Human Review, Manual Merge, and a Doctor/Fix stub. Human
+The canonical inventory includes Issue Forge, Issue Forge Reflect, Issue Forge
+Dream, Runtime Onboarding, Manual Main, Manual Review, Human Review, Manual
+Merge, Doctor, and the HALO research seed. Human
 Review is an operator-owned briefing and UAT decision skill: it records a
 structured decision note and routes to `Merging`, `Rework`, or
 `Need Human Input` only after explicit operator confirmation. `forge reflect`

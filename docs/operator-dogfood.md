@@ -491,58 +491,32 @@ active review workflow only under `/tmp` or `/private/tmp`; the CLI prints
 `workflow_warning=temporary_path` for those workflow files so operators can
 promote reusable config into the repo.
 
-## Local Skill Suite
+## Repository-Owned Skills
 
-Shea Symphony's local operator skills are repo-owned under
-`skills/shea-symphony/` and versioned by `skills/shea-symphony/manifest.toml`.
-Use the installer to preview, install, update, or validate the Codex and Gemini
-copies instead of hand-copying skill files:
-
-```bash
-node scripts/install-shea-symphony-skills.js --dry-run
-node scripts/install-shea-symphony-skills.js
-node scripts/install-shea-symphony-skills.js --validate
-```
-
-The install path is interactive by default. It shows the detected Codex and
-Gemini target directories and requires operator confirmation before writing.
-Use `--codex-dir`, `--gemini-dir`, `--skip-codex`, or `--skip-gemini` to make
-the target set explicit. Use `--yes` only after the printed target paths are
-known and intentional.
-
-Skills are per-repo rendered installs, not one global generic skill set. Before
-starting a lane that depends on local skills, inspect readiness without writing:
+Shea Symphony's first-party operator Skills and HALO research seed live only
+under `.agents/skills`. Use the standard Skills CLI to inspect that upstream
+tree or vendor selected Skills into another repository:
 
 ```bash
-cargo run -- skills status workflows/shea-symphony.md
-cargo run -- skills status workflows/shea-symphony.md --json
-cargo run -- skills status workflows/shea-symphony.md --session-skills-file /path/to/session-skills.txt
+npx skills add https://github.com/Alive24/shea-symphony/tree/main/.agents/skills --list
+npx skills add https://github.com/Alive24/shea-symphony/tree/main/.agents/skills \
+  --skill shea-symphony-manual-main
 ```
 
-`skills status` discovers the source suite from `--suite-path`,
-`SHEA_SYMPHONY_SKILL_SUITE`, the current repo's `skills/shea-symphony/suite`,
-then installed-only mode when no source suite exists. It reports expected/source
-skills, Codex installs, Gemini installs when configured or discoverable,
-rendered metadata freshness, broken links, alias/file-shaped installs, missing
-`SKILL.md`, and optional current-session visibility. If no session skill input
-is provided, session visibility is `unknown`; that is diagnostic context, not a
-failure. Gemini absence is not a failure unless the operator explicitly requires
-Gemini for the current environment.
-For target workspaces, Codex readiness inspects the selected profile working
-directory's `.codex/skills`; without a target profile working directory it falls
-back to the workflow repo's `.codex/skills`. It does not use `CODEX_HOME` or a
-home-directory Codex skill root.
+This is vendor-once behavior. Once copied, the target repository owns its Skill
+files and may change them. Shea CLI and Doctor do not synchronize those files,
+compare them with upstream, or offer install/update/remove/version operations.
 
-The packaged skills preserve the same lane boundaries as the Shea Symphony CLI:
+The repository-owned Skills preserve the same lane boundaries as the Shea Symphony CLI:
 Issue Forge, Reflect, and Dream handle conversation, draft shaping, backlog
 mining, and promotion discussion, including Human Review -> Rework revision
 discussion; the CLI owns `forge create`, `forge promote`, `forge rework`, and
 `forge validate`. Manual Main stops at `Agent Review`; Manual Review owns
 evidence-backed review routing; Human Review briefs the operator for UAT and
 final acceptance but waits for explicit confirmation before any state change;
-Manual Merge owns approved merge-lane work. `doctor` reports read-only local
-install-health warnings and points operators back to the #242 install/update
-path rather than repairing skill files itself.
+Manual Merge owns approved merge-lane work. Doctor may diagnose a concrete
+repository-local loading or contract problem, but it never restores or rewrites
+Skills from an upstream copy.
 
 Repository execution readiness is a separate local contract from App/backend
 profiles. Run `shea-symphony-runtime-onboarding` to discover repository-owned
@@ -698,13 +672,14 @@ usually ignores them; Doctor may use them only as advisory context, not
 workflow invariants.
 
 Use the repo-owned Doctor skill at
-`.codex/skills/shea-symphony-doctor/SKILL.md` when an operator-selected issue or
+`.agents/skills/shea-symphony-doctor/SKILL.md` when an operator-selected issue or
 `Need Human Input` item needs triage before normal lane work can resume. The
 skill is read-first: it gathers `project state`, `doctor`, `debug`, and
 `project issue` evidence, classifies the stuck state, and produces a structured
 `Doctor Triage Note` with any repair actions that still require explicit
-confirmation. Local skill install checking is reported by `doctor`, while dated
-installable skill suite packaging and writes remain in the #242 installer path.
+confirmation. Doctor may diagnose a concrete repository-local Skill loading or
+contract problem, but it does not compare vendored content with upstream or act
+as a package manager.
 
 If `main loop` finds runtime-state for an issue that has already moved out of
 active main-agent work, it reconciles tracker state first. Clean or absent

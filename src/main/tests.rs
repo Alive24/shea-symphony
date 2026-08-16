@@ -123,7 +123,6 @@ use shea_symphony::session_registry::{load_session_registry, save_session_record
 use shea_symphony::session_registry::{
     save_session_registry, session_registry_path, SessionStatus,
 };
-use shea_symphony::skill_status::SkillStatusInput;
 use shea_symphony::tracker::FollowUpIssueInput;
 use shea_symphony::tracker::ProjectFieldAssignment;
 use shea_symphony::tracker::TrackerAdapter;
@@ -617,7 +616,6 @@ fn debug_helpers_summarize_sessions_and_health() {
         total_issues: 1,
         violations: Vec::new(),
         integration_gaps: Vec::new(),
-        skill_readiness_summary: None,
     };
     assert_eq!(doctor_health_label(&clean), "clean");
 
@@ -634,7 +632,6 @@ fn debug_helpers_summarize_sessions_and_health() {
         total_issues: 1,
         violations: vec![warning_violation.clone()],
         integration_gaps: Vec::new(),
-        skill_readiness_summary: None,
     };
     assert_eq!(doctor_health_label(&warning), "needs_attention");
 
@@ -645,7 +642,6 @@ fn debug_helpers_summarize_sessions_and_health() {
             ..warning_violation
         }],
         integration_gaps: Vec::new(),
-        skill_readiness_summary: None,
     };
     assert_eq!(doctor_health_label(&blocked), "blocked");
 

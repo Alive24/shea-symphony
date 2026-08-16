@@ -219,22 +219,6 @@ fn parses_inspect_state_filters() {
 }
 
 #[test]
-fn parses_target_runtime_commands() {
-    assert_eq!(
-        parse(&["target-runtime", "status", "/tmp/target-repo"]),
-        Command::TargetRuntimeStatus {
-            path: PathBuf::from("/tmp/target-repo")
-        }
-    );
-    assert_eq!(
-        parse(&["target-runtime", "init", "/tmp/target-repo"]),
-        Command::TargetRuntimeInit {
-            path: PathBuf::from("/tmp/target-repo")
-        }
-    );
-}
-
-#[test]
 fn parses_project_state_read_surface() {
     assert_eq!(
         parse(&["project", "state", "examples/github-project-workflow.md"]),
@@ -317,35 +301,6 @@ fn parses_status_json_flag() {
         parse(&["status", "show", "examples/dry-run-workflow.md", "--json"]),
         Command::Plan {
             workflow_path: PathBuf::from("examples/dry-run-workflow.md"),
-            json: true,
-        }
-    );
-}
-
-#[test]
-fn parses_skills_status_readiness_command() {
-    assert_eq!(
-        parse(&[
-            "skills",
-            "status",
-            "workflows/shea-symphony.md",
-            "--suite-path",
-            "skills/shea-symphony/suite",
-            "--session-skills",
-            "shea-symphony-doctor,shea-symphony-manual-main",
-            "--require-gemini",
-            "--json",
-        ]),
-        Command::SkillsStatus {
-            input: SkillStatusInput {
-                workflow_path: PathBuf::from("workflows/shea-symphony.md"),
-                suite_path: Some(PathBuf::from("skills/shea-symphony/suite")),
-                codex_dir: None,
-                gemini_dir: None,
-                require_gemini: true,
-                session_skills: vec!["shea-symphony-doctor,shea-symphony-manual-main".into()],
-                session_skills_file: None,
-            },
             json: true,
         }
     );

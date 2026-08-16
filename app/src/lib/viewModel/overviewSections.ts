@@ -42,8 +42,7 @@ export function buildReadinessItems(commands: Record<string, any>, targetContext
     },
     readinessFromCommand('Autoloop plan', commands.autopilot),
     readinessFromCommand('Doctor', commands.doctor),
-    readinessFromCommand('Review status', commands.review),
-    readinessFromCommand('Skills', commands.skills)
+    readinessFromCommand('Review status', commands.review)
   ];
 }
 

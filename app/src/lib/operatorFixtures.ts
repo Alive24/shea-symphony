@@ -124,7 +124,6 @@ function baseFixtureOverview() {
       autopilot: fixtureCommand(['autopilot', 'plan', workflowPath, '--json']),
       doctor: fixtureCommand(['doctor', workflowPath, '--json']),
       review: fixtureCommand(['review', 'status', workflowPath, '--json']),
-      skills: fixtureCommand(['skills', 'status', workflowPath, '--json']),
       sessions: fixtureCommand(['session', 'list', workflowPath]),
       status: fixtureCommand(['status', 'show', workflowPath, '--json']),
       githubQueue: fixtureCommand(['autopilot', 'plan', workflowPath, '--json'])
@@ -178,7 +177,6 @@ function baseFixtureOverview() {
     },
     doctor: { blockers: 0, warnings: 1 },
     review: { recent: [{ issue: '#421', state: 'passed', evidence: 'Fixture review pass evidence.' }] },
-    skills: { status: 'ready' },
     sessionsText: 'agent_session_list=none',
     localStatus: {
       branch: 'main',

@@ -324,8 +324,8 @@ read [`docs/cli-command-reference.md`](docs/cli-command-reference.md).
   self-dogfood workflow.
 - [`workflows/prompts/`](workflows/prompts/): Main, Review, and Merge lane
   prompt contracts.
-- [`skills/shea-symphony/`](skills/shea-symphony/): installable Shea Symphony
-  skills for Codex and Gemini operator sessions.
+- [`.agents/skills/`](.agents/skills/): canonical first-party Shea and HALO
+  Skills; target repositories own any copies they vendor from this source.
 - [`docs/operator-dogfood.md`](docs/operator-dogfood.md): supervised operator
   launcher and live-run guidance.
 - [`docs/cli-command-reference.md`](docs/cli-command-reference.md): command

@@ -6,8 +6,9 @@ for targeted reads and guarded actions plus one prepare, confirm, execute, and
 readback protocol. Concrete runtime syntax lives in a separately versioned
 adapter under `.shea/contracts/adapters/`.
 
-This is the authoritative skill-suite ownership note for that shared contract;
-skill installation and distribution remain documented separately.
+This is the authoritative Skill ownership note for that shared contract.
+First-party sources live under `.agents/skills`; repositories own and may
+customize any copies they vendor from that tree.
 
 ## Ownership Boundary
 

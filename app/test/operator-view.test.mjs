@@ -1765,14 +1765,7 @@ test('view model surfaces external target readiness and workflow path', () => {
       selfWorkspace: false,
       readiness: { status: 'ready', blockers: [] }
     },
-    commands: {
-      skills: {
-        ok: true,
-        args: ['skills', 'status', '/tmp/target/WORKFLOW.md', '--json'],
-        durationMs: 12,
-        stderr: ''
-      }
-    },
+    commands: {},
     githubQueue: {
       source: 'GitHub Project',
       issues: [{ identifier: '#12', title: 'Target issue', state: 'Todo' }]
@@ -1819,11 +1812,21 @@ test('missing external target config is visible readiness state', () => {
 });
 
 test('default background refresh defers doctor surface', () => {
-  assert.deepEqual(defaultBackgroundReadSurfaces, ['githubQueue', 'skills', 'sessions', 'status']);
+  assert.deepEqual(defaultBackgroundReadSurfaces, ['githubQueue', 'sessions', 'status']);
   assert.equal(defaultBackgroundReadSurfaces.includes('doctor'), false);
   assert.equal(defaultBackgroundReadSurfaces.includes('autopilot'), false);
   assert.equal(defaultBackgroundReadSurfaces.includes('review'), false);
   assert.equal(projectCooldownReadSurfaces.includes('doctor'), true);
+});
+
+test('removed skills status surface stays absent from the operator view model', () => {
+  const view = buildViewModel(buildFixtureOverview(true));
+
+  assert.equal(view.commandHealth.some((command) => command.id === 'skills'), false);
+  assert.equal(view.readPathMap.some((path) => path.id === 'skills'), false);
+  assert.equal(view.liveSignals.some((signal) => signal.id === 'skills'), false);
+  assert.equal(view.readinessItems.some((item) => item.label === 'Skills'), false);
+  assert.equal(view.capabilityMap.some((item) => item.label === 'Status surface'), false);
 });
 
 test('lane overview route local refresh is bounded to the overview route', () => {

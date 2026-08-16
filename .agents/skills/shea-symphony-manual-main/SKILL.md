@@ -3,7 +3,6 @@ name: shea-symphony-manual-main
 description: Use when the operator wants this agent to execute one Shea Symphony Main-lane issue now, including Todo implementation, explicitly authorized Backlog pickup without promotion, Main-lane Rework, or resumable In Progress work. Perform the isolated worktree work, verification, PR publication, tracker evidence, and Agent Review handoff in the current task. Do not use this skill merely to write a prompt or delegate Main work to another task.
 metadata:
   short-description: Execute one manual Shea Symphony Main lane
-  suite-version: 2026.08.07
 ---
 
 # Shea Symphony Manual Main Agent

@@ -30,7 +30,6 @@ fn clean_autopilot_doctor(total_issues: usize) -> ProjectAuditReport {
         total_issues,
         violations: Vec::new(),
         integration_gaps: Vec::new(),
-        skill_readiness_summary: None,
     }
 }
 
@@ -290,7 +289,6 @@ fn autopilot_plan_blocks_on_doctor_or_canonical_checkout() {
             suggestion: "clean checkout".into(),
         }],
         integration_gaps: Vec::new(),
-        skill_readiness_summary: None,
     };
     let canonical = AutopilotCanonicalCheckout {
         safe_for_write: false,
@@ -1054,7 +1052,6 @@ fn autopilot_loop_status_allows_main_parent_topology_ensure() {
             suggestion: "Record the parent integration branch before subissue PRs advance.".into(),
         }],
         integration_gaps: Vec::new(),
-        skill_readiness_summary: None,
     };
 
     let plan = build_autopilot_plan_from_parts(AutopilotPlanInputs {

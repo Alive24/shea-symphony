@@ -6,7 +6,7 @@
     label: 'Live local readback',
     freshness: 'checked 2 minutes ago',
     trust: 'CLI and app-server agree',
-    detail: 'status, doctor, review, skills, and sessions reads completed',
+    detail: 'status, doctor, review, and sessions reads completed',
     tone: 'success'
   };
 

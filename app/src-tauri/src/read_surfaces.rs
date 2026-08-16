@@ -750,7 +750,6 @@ fn build_operator_overview(scope: &str, workspace: &WorkspaceProfile) -> Result<
             "autopilot": pending_result(&["autopilot", "plan", workflow_path, "--json"], "Deferred to full overview."),
             "doctor": pending_result(&["doctor", workflow_path, "--json"], "Deferred to full overview."),
             "review": pending_result(&["review", "status", workflow_path, "--json"], "Deferred to full overview."),
-            "skills": pending_result(&["skills", "status", workflow_path, "--json"], "Deferred to background read."),
             "sessions": pending_result(&["session", "list", workflow_path], "Deferred to background read."),
             "status": pending_result(&["status", "show", workflow_path, "--json"], "Deferred to background read."),
             "githubQueue": pending_result(&["project", "state", workflow_path, "--json"], "Deferred to background Project queue read."),
@@ -765,7 +764,6 @@ fn build_operator_overview(scope: &str, workspace: &WorkspaceProfile) -> Result<
             "autopilot": Value::Null,
             "doctor": Value::Null,
             "review": Value::Null,
-            "skills": Value::Null,
             "sessionsText": "",
             "localStatus": Value::Null,
             "githubQueue": Value::Null,
@@ -789,23 +787,14 @@ fn build_operator_overview(scope: &str, workspace: &WorkspaceProfile) -> Result<
         &read_surface_args("review", workspace).unwrap_or_default(),
         workspace,
     );
-    let skills = run_shea_read_for_workspace(
-        &read_surface_args("skills", workspace).unwrap_or_default(),
-        workspace,
-    );
     let sessions = run_shea_read_for_workspace(
         &read_surface_args("sessions", workspace).unwrap_or_default(),
         workspace,
     );
     let github_queue = run_project_read_surface_or_skip(&github_queue_args, workspace);
-    let healthy = [
-        autopilot.summary.ok,
-        doctor.summary.ok,
-        review.summary.ok,
-        skills.summary.ok,
-    ]
-    .iter()
-    .any(|ok| *ok);
+    let healthy = [autopilot.summary.ok, doctor.summary.ok, review.summary.ok]
+        .iter()
+        .any(|ok| *ok);
 
     Ok(json!({
         "generatedAt": generated_at,
@@ -816,7 +805,6 @@ fn build_operator_overview(scope: &str, workspace: &WorkspaceProfile) -> Result<
             "autopilot": command_summary_value(&autopilot.summary),
             "doctor": command_summary_value(&doctor.summary),
             "review": command_summary_value(&review.summary),
-            "skills": command_summary_value(&skills.summary),
             "sessions": command_summary_value(&sessions.summary),
             "status": command_summary_value(&runtime.summary),
             "githubQueue": command_summary_value(&github_queue.summary),
@@ -824,7 +812,6 @@ fn build_operator_overview(scope: &str, workspace: &WorkspaceProfile) -> Result<
         "autopilot": parse_json_output(&autopilot.stdout),
         "doctor": parse_json_output(&doctor.stdout),
         "review": parse_json_output(&review.stdout),
-        "skills": parse_json_output(&skills.stdout),
         "sessionsText": sessions.stdout.trim(),
         "localStatus": runtime_status_summary(&runtime, false, workspace),
         "githubQueue": parse_json_output(&github_queue.stdout),
@@ -844,12 +831,6 @@ fn read_surface_args(name: &str, workspace: &WorkspaceProfile) -> Option<Vec<Str
         "doctor" => Some(vec!["doctor".into(), workflow_path, "--json".into()]),
         "review" => Some(vec![
             "review".into(),
-            "status".into(),
-            workflow_path,
-            "--json".into(),
-        ]),
-        "skills" => Some(vec![
-            "skills".into(),
             "status".into(),
             workflow_path,
             "--json".into(),
@@ -1596,6 +1577,13 @@ fn project_read_paused_payload(cooldown: &ProjectReadCooldown) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn removed_skills_status_surface_is_not_registered() {
+        let workspace = WorkspaceProfile::self_targeted(PathBuf::from("/tmp/shea-symphony"));
+
+        assert!(read_surface_args("skills", &workspace).is_none());
+    }
 
     #[test]
     fn detects_project_rate_limit_messages() {

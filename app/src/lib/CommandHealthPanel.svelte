@@ -46,7 +46,7 @@
   {:else}
     <div class="inline-empty">
       <strong>No read surface checks captured</strong>
-      <p>The matrix will show Autoloop, Doctor, Review, Skills, and Session reads after the Tauri bridge returns command evidence.</p>
+      <p>The matrix will show GitHub Queue, Autoloop, Doctor, Review, Session, and Status reads after the Tauri bridge returns command evidence.</p>
     </div>
   {/if}
 </section>

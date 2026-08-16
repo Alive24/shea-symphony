@@ -58,11 +58,6 @@ export function buildCapabilityMap(commands: LooseRecord) {
       tone: commands.autopilot?.ok ? 'success' : 'warn'
     },
     {
-      label: 'Status surface',
-      state: commands.skills?.ok ? 'Observed' : 'Pending read',
-      tone: commands.skills?.ok ? 'success' : 'warn'
-    },
-    {
       label: 'Independent review',
       state: commands.review?.ok ? 'Observed' : 'Pending read',
       tone: commands.review?.ok ? 'success' : 'warn'

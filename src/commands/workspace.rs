@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use shea_symphony::config::RuntimeConfig;
 use shea_symphony::issue_workspace::{
     discover_issue_workspaces_from_parts, git_worktree_list, infer_issue_ref_from_branch_or_path,
     render_workspace_adoption_workpad, validate_workspace_adoption, IssueWorkspaceCandidate,
@@ -7,6 +8,8 @@ use shea_symphony::issue_workspace::{
 };
 use shea_symphony::session_registry::{load_session_registry, session_registry_path};
 use shea_symphony::tracker::adapter_from_config;
+use shea_symphony::workflow::WorkflowDefinition;
+use shea_symphony::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 
 use crate::orchestration::{
     all_mapped_tracker_states, append_tracker_mutation_audit, load_config, TrackerMutationAudit,
@@ -112,15 +115,37 @@ pub(crate) fn workspace_adopt(
     path: PathBuf,
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let config = load_config(&workflow_path)?;
+    let workflow = WorkflowDefinition::load(&workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
+    config.validate()?;
     let adapter = adapter_from_config(&config);
     let issue = adapter
         .get_issue(&issue_ref)?
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
     let worktrees = git_worktree_list(&std::env::current_dir()?)?;
     let candidate = validate_workspace_adoption(&issue, &path, &worktrees)?;
-    let workpad =
-        render_workspace_adoption_workpad(&issue, &config.tracker.workpad.marker, &candidate);
+    let rendered = render_workpad_template(
+        Some(&workflow),
+        WorkpadTemplateId::WorkspaceAdoption,
+        &[
+            ("issue_ref", issue.identifier.clone()),
+            ("issue_title", issue.title.clone()),
+            ("workspace_path", candidate.path.display().to_string()),
+            (
+                "branch",
+                candidate.branch.as_deref().unwrap_or("unknown").into(),
+            ),
+            (
+                "head",
+                candidate.head.as_deref().unwrap_or("unknown").into(),
+            ),
+            (
+                "evidence_summary",
+                "operator-selected canonical worktree".into(),
+            ),
+        ],
+    )?;
+    let workpad = render_workspace_adoption_workpad(&config.tracker.workpad.marker, &rendered);
 
     if !write {
         println!(

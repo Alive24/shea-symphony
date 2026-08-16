@@ -9,6 +9,7 @@ use crate::git_handoff::{CommandOutput, GitHandoffError, HandoffCommandRunner};
 use crate::handoff::branch_target_evidence;
 use crate::lane_claim::LaneClaim;
 use crate::model::{normalize_state, LinkedPullRequest, TrackerIssue};
+use crate::workflow::WorkflowDefinition;
 use crate::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -683,12 +684,14 @@ pub fn fixture_merge_output(pr_ref: &str) -> CommandOutput {
 }
 
 pub fn merge_lane_workpad(
+    workflow: Option<&WorkflowDefinition>,
     issue: &TrackerIssue,
     decision: &MergeLaneDecision,
     merge_output: Option<&CommandOutput>,
     default_base_branch: &str,
 ) -> String {
     merge_lane_workpad_with_repair_evidence(
+        workflow,
         issue,
         decision,
         merge_output,
@@ -698,6 +701,7 @@ pub fn merge_lane_workpad(
 }
 
 pub fn merge_lane_workpad_with_repair_evidence(
+    workflow: Option<&WorkflowDefinition>,
     issue: &TrackerIssue,
     decision: &MergeLaneDecision,
     merge_output: Option<&CommandOutput>,
@@ -791,7 +795,7 @@ pub fn merge_lane_workpad_with_repair_evidence(
     };
 
     render_workpad_template(
-        None,
+        workflow,
         WorkpadTemplateId::MergeRun,
         &[
             ("generated_at", current_gmt_timestamp()),
@@ -1613,6 +1617,7 @@ branch refs/heads/feature/issue-60
         };
 
         let workpad = merge_lane_workpad_with_repair_evidence(
+            None,
             &issue,
             &decision,
             None,
@@ -1653,6 +1658,7 @@ branch refs/heads/feature/issue-60
         };
 
         let workpad = merge_lane_workpad_with_repair_evidence(
+            None,
             &issue,
             &decision,
             Some(&output),
@@ -1749,7 +1755,7 @@ branch refs/heads/feature/issue-60
     fn need_human_input_workpad_includes_actionable_question() {
         let issue = issue("Merging", Vec::new());
         let decision = merge_lane_decision(&issue, "Merging", "main", &[], None);
-        let workpad = merge_lane_workpad(&issue, &decision, None, "main");
+        let workpad = merge_lane_workpad(None, &issue, &decision, None, "main");
 
         assert!(workpad.contains("### Required Human Input"));
         assert!(workpad.contains("Which pull request should this Merging issue land?"));
@@ -1786,7 +1792,7 @@ branch refs/heads/feature/issue-60
             &issue.linked_pull_requests,
             Some(&status),
         );
-        let workpad = merge_lane_workpad(&issue, &decision, None, "main");
+        let workpad = merge_lane_workpad(None, &issue, &decision, None, "main");
 
         assert_eq!(decision.kind, MergeLaneDecisionKind::ReadyToMerge);
         assert_eq!(decision.target_state, Some("done"));

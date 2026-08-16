@@ -1,6 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::model::TrackerIssue;
+use crate::workflow::WorkflowDefinition;
 use crate::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 
 use super::{
@@ -11,6 +12,7 @@ use super::{
 };
 
 pub fn render_doctor_repair_workpad(
+    workflow: Option<&WorkflowDefinition>,
     issue: &TrackerIssue,
     report: &ProjectAuditReport,
     action: &str,
@@ -47,7 +49,7 @@ pub fn render_doctor_repair_workpad(
     };
 
     render_workpad_template(
-        None,
+        workflow,
         WorkpadTemplateId::DoctorTriage,
         &[
             ("generated_at", current_gmt_timestamp()),
@@ -124,9 +126,12 @@ pub fn draft_pr_repair_candidates(report: &ProjectAuditReport) -> Vec<&ProjectAu
         .collect()
 }
 
-pub fn render_human_review_repair_workpad(violation: &ProjectAuditViolation) -> String {
+pub fn render_human_review_repair_workpad(
+    workflow: Option<&WorkflowDefinition>,
+    violation: &ProjectAuditViolation,
+) -> String {
     render_workpad_template(
-        None,
+        workflow,
         WorkpadTemplateId::HumanReviewRepair,
         &[
             ("generated_at", current_gmt_timestamp()),

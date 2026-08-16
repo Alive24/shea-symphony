@@ -333,7 +333,14 @@ pub(crate) fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error
                     })
                 );
             }
-            handle_run_loop_gate_failure(adapter.as_ref(), &issue, &decision, &options, &config)?;
+            handle_run_loop_gate_failure(
+                &workflow,
+                adapter.as_ref(),
+                &issue,
+                &decision,
+                &options,
+                &config,
+            )?;
             continue;
         }
 
@@ -369,6 +376,7 @@ pub(crate) fn run_loop(options: RunLoopOptions) -> Result<(), Box<dyn std::error
             Ok(handoff) => handoff,
             Err(error) => {
                 handle_run_loop_handoff_failure(
+                    &workflow,
                     adapter.as_ref(),
                     &issue,
                     &error,

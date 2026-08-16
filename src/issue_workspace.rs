@@ -339,17 +339,10 @@ pub fn validate_workspace_adoption(
     })
 }
 
-pub fn render_workspace_adoption_workpad(
-    issue: &TrackerIssue,
-    marker: &str,
-    candidate: &IssueWorkspaceCandidate,
-) -> String {
+pub fn render_workspace_adoption_workpad(marker: &str, rendered_template: &str) -> String {
     let block = format!(
-        "<!-- shea-symphony-workspace-adoption -->\n### Workspace Adoption\n- Issue: `{}`\n- Path: `{}`\n- Branch: `{}`\n- Head: `{}`\n- Source: operator-selected canonical worktree\n<!-- /shea-symphony-workspace-adoption -->",
-        issue.identifier,
-        candidate.path.display(),
-        candidate.branch.as_deref().unwrap_or("unknown"),
-        candidate.head.as_deref().unwrap_or("unknown")
+        "<!-- shea-symphony-workspace-adoption -->\n{}\n<!-- /shea-symphony-workspace-adoption -->",
+        rendered_template.trim()
     );
 
     format!("{marker}\n{block}")
@@ -358,9 +351,7 @@ pub fn render_workspace_adoption_workpad(
 pub fn render_workspace_ensure_workpad(
     issue: &TrackerIssue,
     marker: &str,
-    candidate: &IssueWorkspaceCandidate,
-    action: &str,
-    pr_ref: Option<&str>,
+    rendered_template: &str,
 ) -> String {
     let mut workpad = issue
         .description
@@ -371,15 +362,11 @@ pub fn render_workspace_ensure_workpad(
                 .map(|index| description[index..].trim())
         })
         .map(str::to_string)
-        .unwrap_or_else(|| format!("{marker}\n## Shea Symphony Workpad"));
+        .unwrap_or_else(|| marker.to_string());
 
     let block = format!(
-        "<!-- shea-symphony-workspace-ensure -->\n### Workspace Evidence\n- Issue: `{}`\n- Pull request: `{}`\n- Branch/ref: `{}`\n- Workspace path: `{}`\n- Action: `{}`\n- Source command: `workspace ensure`\n- Validation result: `clean local git worktree for Review/Merge inspection`\n<!-- /shea-symphony-workspace-ensure -->",
-        issue.identifier,
-        pr_ref.unwrap_or("none"),
-        candidate.branch.as_deref().unwrap_or("unknown"),
-        candidate.path.display(),
-        action,
+        "<!-- shea-symphony-workspace-ensure -->\n{}\n<!-- /shea-symphony-workspace-ensure -->",
+        rendered_template.trim()
     );
 
     workpad = replace_or_append_block(
@@ -826,15 +813,8 @@ mod tests {
     #[test]
     fn renders_adoption_block_without_losing_workpad_marker() {
         let body = render_workspace_adoption_workpad(
-            &issue(),
             "<!-- shea-symphony-workpad -->",
-            &IssueWorkspaceCandidate {
-                path: PathBuf::from("/tmp/issue-253"),
-                branch: Some("feature/issue-253-worktree-discovery".into()),
-                head: Some("def".into()),
-                strength: WorkspaceMatchStrength::Strong,
-                evidence: Vec::new(),
-            },
+            "## Shea Symphony Workspace Adoption\n\n- Path: `/tmp/issue-253`",
         );
 
         assert!(body.starts_with("<!-- shea-symphony-workpad -->"));
@@ -848,19 +828,11 @@ mod tests {
         let body = render_workspace_ensure_workpad(
             &issue(),
             "<!-- shea-symphony-workpad -->",
-            &IssueWorkspaceCandidate {
-                path: PathBuf::from("/tmp/issue-253"),
-                branch: Some("feature/issue-253-worktree-discovery".into()),
-                head: Some("def".into()),
-                strength: WorkspaceMatchStrength::Strong,
-                evidence: Vec::new(),
-            },
-            "reused",
-            Some("#254"),
+            "## Shea Symphony Workspace Ensure\n\n- Pull request: `#254`\n- Workspace path: `/tmp/issue-253`\n- Source: `workspace ensure`",
         );
 
         assert!(body.starts_with("<!-- shea-symphony-workpad -->"));
-        assert!(body.contains("Workspace Evidence"));
+        assert!(body.contains("Workspace Ensure"));
         assert!(body.contains("workspace ensure"));
         assert!(body.contains("Pull request: `#254`"));
     }

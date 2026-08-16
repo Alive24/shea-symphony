@@ -169,7 +169,14 @@ pub(crate) fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::E
     append_workspace_doctor_violations(&mut report, &config, &issues);
     match &options.action {
         Some(DoctorAction::Repair(repair)) => {
-            repair::doctor_repair_issue(&config, adapter.as_ref(), &issues, &report, repair)?;
+            repair::doctor_repair_issue(
+                &workflow,
+                &config,
+                adapter.as_ref(),
+                &issues,
+                &report,
+                repair,
+            )?;
             return Ok(());
         }
         None if options.json => {
@@ -185,7 +192,13 @@ pub(crate) fn doctor(options: DoctorOptions) -> Result<(), Box<dyn std::error::E
                 print_doctor_interactive_plan(&report);
             }
             if options.auto_fix {
-                repair::apply_doctor_auto_fix(&config, adapter.as_ref(), &report, options.write)?;
+                repair::apply_doctor_auto_fix(
+                    &workflow,
+                    &config,
+                    adapter.as_ref(),
+                    &report,
+                    options.write,
+                )?;
             }
         }
     }

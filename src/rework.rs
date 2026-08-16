@@ -3,6 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::model::TrackerIssue;
 use crate::review::{ReviewFindingClass, ReviewGateDecision, ReviewJob, ReviewOutcome};
+use crate::workflow::WorkflowDefinition;
+use crate::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReworkDiagnosticKind {
@@ -157,123 +159,88 @@ pub fn rework_diagnostic_from_review(
 }
 
 pub fn render_rework_diagnostic_workpad(
+    workflow: Option<&WorkflowDefinition>,
     issue: &TrackerIssue,
     diagnostic: &ReworkDiagnostic,
-) -> String {
+) -> Result<String, crate::prompt::PromptError> {
+    const RECORD_SEPARATOR: &str = "\u{1e}";
+    const FIELD_SEPARATOR: &str = "\u{1f}";
     let review_origin = diagnostic.source.starts_with("agent_review:");
-    let title = if review_origin {
-        "## Shea Symphony Agent Review Run"
-    } else {
-        "## Shea Symphony Rework Run"
-    };
     let lane = if review_origin { "review" } else { "main" };
-    let mut lines = vec![
-        title.to_string(),
-        String::new(),
-        format!("- Generated at: `{}`", current_gmt_timestamp()),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        format!("- Lane: `{lane}`"),
-        format!(
-            "- Actor role: `{}`",
-            if review_origin {
-                "review_agent"
-            } else {
-                "implementation_agent"
-            }
-        ),
-        format!("- Run ID: `{}`", diagnostic.source),
-        "- Run type: `review_rework_diagnostic`".into(),
-        format!("- Input state: `{}`", issue.state),
-        "- Target state after run: `Rework`".into(),
-        format!("- Result: `{:?}`", diagnostic.kind),
-        format!("- Source: `{}`", diagnostic.source),
-        format!("- Kind: `{:?}`", diagnostic.kind),
-        format!("- Summary: {}", diagnostic.summary),
-        format!("- Next action: {}", diagnostic.next_action),
-        "- Evidence was recorded before moving the issue to `Rework`.".to_string(),
-        format!(
-            "- Evidence summary: {} changed file(s), {} finding(s).",
-            diagnostic.changed_files.len(),
-            diagnostic.findings.len()
-        ),
-    ];
-
-    if let Some(pr_ref) = &diagnostic.pr_ref {
-        lines.push(format!("- Pull request: `{pr_ref}`"));
-        lines.push("- PR-specific context is captured here; mirror this note to the PR conversation when the active adapter supports PR comments.".into());
-    } else {
-        lines.push("- Pull request: `not recorded`".into());
-    }
-    if let Some(path) = &diagnostic.review_artifact_path {
-        lines.push(format!("- Review artifact: `{path}`"));
-    }
-    if let Some(path) = &diagnostic.review_ledger_path {
-        lines.push(format!("- Review job ledger: `{path}`"));
-    }
-
-    if !diagnostic.changed_files.is_empty() {
-        lines.push(String::new());
-        lines.push("### Changed Files".into());
-        for path in &diagnostic.changed_files {
-            lines.push(format!("- `{path}`"));
-        }
-    }
-
-    if !diagnostic.findings.is_empty() {
-        lines.push(String::new());
-        lines.push("### Findings".into());
-        for finding in &diagnostic.findings {
-            lines.push(format!(
-                "- {}: {} - {}",
-                finding.class, finding.title, finding.body
-            ));
-        }
-    }
-
-    if let Some(command) = &diagnostic.command {
-        lines.push(String::new());
-        lines.push("### Command".into());
-        lines.push(format!("- `{command}`"));
-    }
-
-    push_log_block(&mut lines, "Stdout", diagnostic.stdout.as_deref());
-    push_log_block(&mut lines, "Stderr", diagnostic.stderr.as_deref());
-
-    lines.push(String::new());
-    lines.push("### Role Boundary".into());
-    if review_origin {
-        lines.push("- Review Agent records the independent review result and may route confirmed findings to `Rework`.".into());
-        lines.push("- This comment is append-only trigger evidence; it does not replace the canonical Main Agent Workpad.".into());
-        lines.push("- Main implementation agent repairs confirmed Rework in the existing Main Agent Workpad, then stops at `Agent Review`.".into());
-    } else {
-        lines.push("- This comment is append-only Rework diagnostic evidence; it does not replace the canonical Main Agent Workpad.".into());
-        lines.push("- Main implementation agent records implementation repair evidence in the existing Main Agent Workpad and then stops at `Agent Review`.".into());
-    }
-    lines.push(
-        "- `Human Review` remains reserved for independent Review Agent pass evidence.".into(),
-    );
-
-    lines.join("\n")
-}
-
-fn push_log_block(lines: &mut Vec<String>, label: &str, content: Option<&str>) {
-    let Some(content) = content else {
-        return;
-    };
-    if content.trim().is_empty() {
-        return;
-    }
-
-    lines.push(String::new());
-    lines.push(format!("### {label}"));
-    lines.push("<details>".into());
-    lines.push(format!("<summary>{label}</summary>"));
-    lines.push(String::new());
-    lines.push("```text".into());
-    lines.push(truncate_log(content));
-    lines.push("```".into());
-    lines.push(String::new());
-    lines.push("</details>".into());
+    let findings = diagnostic
+        .findings
+        .iter()
+        .map(|finding| {
+            format!(
+                "{}{}{}{}{}",
+                finding.class, FIELD_SEPARATOR, finding.title, FIELD_SEPARATOR, finding.body
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(RECORD_SEPARATOR);
+    render_workpad_template(
+        workflow,
+        WorkpadTemplateId::ReworkDiagnostic,
+        &[
+            ("review_origin", review_origin.to_string()),
+            ("generated_at", current_gmt_timestamp()),
+            ("issue_ref", issue.identifier.clone()),
+            ("issue_title", issue.title.clone()),
+            ("lane", lane.into()),
+            (
+                "actor_role",
+                if review_origin {
+                    "review_agent"
+                } else {
+                    "implementation_agent"
+                }
+                .into(),
+            ),
+            ("source", diagnostic.source.clone()),
+            ("input_state", issue.state.clone()),
+            ("kind", format!("{:?}", diagnostic.kind)),
+            ("summary", diagnostic.summary.clone()),
+            ("next_action", diagnostic.next_action.clone()),
+            (
+                "changed_file_count",
+                diagnostic.changed_files.len().to_string(),
+            ),
+            ("finding_count", diagnostic.findings.len().to_string()),
+            ("pr_ref", diagnostic.pr_ref.clone().unwrap_or_default()),
+            (
+                "review_artifact_path",
+                diagnostic.review_artifact_path.clone().unwrap_or_default(),
+            ),
+            (
+                "review_ledger_path",
+                diagnostic.review_ledger_path.clone().unwrap_or_default(),
+            ),
+            (
+                "changed_files",
+                diagnostic.changed_files.join(RECORD_SEPARATOR),
+            ),
+            ("findings", findings),
+            ("command", diagnostic.command.clone().unwrap_or_default()),
+            (
+                "stdout",
+                diagnostic
+                    .stdout
+                    .as_deref()
+                    .map(truncate_log)
+                    .unwrap_or_default(),
+            ),
+            (
+                "stderr",
+                diagnostic
+                    .stderr
+                    .as_deref()
+                    .map(truncate_log)
+                    .unwrap_or_default(),
+            ),
+            ("record_separator", RECORD_SEPARATOR.into()),
+            ("field_separator", FIELD_SEPARATOR.into()),
+        ],
+    )
 }
 
 fn truncate_log(content: &str) -> String {
@@ -393,7 +360,7 @@ mod tests {
         };
 
         let diagnostic = rework_diagnostic_from_review(&issue, &job, &decision);
-        let workpad = render_rework_diagnostic_workpad(&issue, &diagnostic);
+        let workpad = render_rework_diagnostic_workpad(None, &issue, &diagnostic).unwrap();
 
         assert_eq!(diagnostic.kind, ReworkDiagnosticKind::ReviewFinding);
         assert!(workpad.contains("Evidence was recorded before moving the issue to `Rework`"));
@@ -435,7 +402,7 @@ mod tests {
         };
 
         let diagnostic = rework_diagnostic_from_review(&issue, &job, &decision);
-        let workpad = render_rework_diagnostic_workpad(&issue, &diagnostic);
+        let workpad = render_rework_diagnostic_workpad(None, &issue, &diagnostic).unwrap();
 
         assert_eq!(diagnostic.kind, ReworkDiagnosticKind::InconclusiveReview);
         assert!(workpad.contains("Kind: `InconclusiveReview`"));
@@ -453,7 +420,7 @@ mod tests {
             "PR no longer merges cleanly.",
         );
 
-        let workpad = render_rework_diagnostic_workpad(&issue, &diagnostic);
+        let workpad = render_rework_diagnostic_workpad(None, &issue, &diagnostic).unwrap();
 
         assert!(
             workpad.contains("Pull request: `https://github.com/Alive24/shea-symphony/pull/99`")
@@ -468,7 +435,7 @@ mod tests {
         let diagnostic =
             ReworkDiagnostic::validation_failure("#50", "cargo test", "test failure details");
 
-        let workpad = render_rework_diagnostic_workpad(&issue, &diagnostic);
+        let workpad = render_rework_diagnostic_workpad(None, &issue, &diagnostic).unwrap();
 
         assert!(workpad.contains("Verification failed before handoff."));
         assert!(workpad.contains("`cargo test`"));

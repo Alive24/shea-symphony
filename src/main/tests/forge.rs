@@ -78,6 +78,7 @@ fn forge_rework_writes_content_then_evidence_then_status() {
         .insert(issue.identifier.clone(), issue);
 
     forge_rework_with_adapter(
+        None,
         &config,
         &adapter,
         ForgeReworkInput {
@@ -132,6 +133,7 @@ fn forge_rework_records_diagnostic_for_active_human_review_claims() {
         .insert(issue.identifier.clone(), issue);
 
     let error = forge_rework_with_adapter(
+        None,
         &config,
         &adapter,
         ForgeReworkInput {
@@ -558,7 +560,8 @@ fn forge_relationship_parent_records_integration_branch_evidence() {
     )));
     let parent = adapter.get_issue("#405").unwrap().unwrap();
     let description = parent.description.unwrap();
-    assert!(description.contains("### Parent Topology"));
+    assert!(description.contains("### Recovery / Rework"));
+    assert!(description.contains("Parent issue:"));
     assert!(description.contains("- First observed subissue: #410"));
     assert!(description.contains(
         "- Parent integration branch: `integration/issue-405-make-autoloop-lanes-independently-throughput-oriented`"

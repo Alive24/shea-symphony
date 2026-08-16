@@ -17,6 +17,7 @@ use crate::orchestration::{
 use super::{hydrate_issues_for_doctor, DoctorRepairIssueOptions};
 
 pub(super) fn apply_doctor_auto_fix(
+    workflow: &WorkflowDefinition,
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
     report: &ProjectAuditReport,
@@ -40,7 +41,7 @@ pub(super) fn apply_doctor_auto_fix(
             violation.issue_ref, violation.state
         );
         if write {
-            let workpad = render_human_review_repair_workpad(violation);
+            let workpad = render_human_review_repair_workpad(Some(workflow), violation);
             adapter.add_issue_comment(&violation.issue_ref, &workpad)?;
             append_tracker_mutation_audit(
                 config,
@@ -82,6 +83,7 @@ pub(super) fn apply_doctor_auto_fix(
 }
 
 pub(super) fn doctor_repair_issue(
+    workflow: &WorkflowDefinition,
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
     issues: &[TrackerIssue],
@@ -112,7 +114,8 @@ pub(super) fn doctor_repair_issue(
     println!("dangerous=delete_worktree reason=out_of_scope_for_doctor_repair");
 
     if repair.move_need_human_input {
-        let workpad = render_doctor_repair_workpad(issue, report, "move_need_human_input");
+        let workpad =
+            render_doctor_repair_workpad(Some(workflow), issue, report, "move_need_human_input");
         if repair.write {
             adapter.add_issue_comment(&issue.identifier, &workpad)?;
             append_tracker_mutation_audit(
@@ -166,7 +169,7 @@ pub(super) fn doctor_repair_issue(
             return Ok(());
         }
         let pr_ref = draft_pull_request_repair_target(issue)?;
-        let workpad = render_doctor_repair_workpad(issue, report, "mark_pr_ready");
+        let workpad = render_doctor_repair_workpad(Some(workflow), issue, report, "mark_pr_ready");
         if repair.write {
             adapter.add_issue_comment(&issue.identifier, &workpad)?;
             append_tracker_mutation_audit(
@@ -266,7 +269,7 @@ pub(crate) fn doctor_repair_human_review(
             violation.issue_ref, violation.state
         );
         if write {
-            let workpad = render_human_review_repair_workpad(violation);
+            let workpad = render_human_review_repair_workpad(Some(&workflow), violation);
             adapter.add_issue_comment(&violation.issue_ref, &workpad)?;
             append_tracker_mutation_audit(
                 &config,

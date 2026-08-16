@@ -73,7 +73,42 @@ pub enum WorkflowError {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[error("invalid workpad template configuration: {0}")]
+    InvalidWorkpadTemplateConfig(String),
+    #[error("missing required workpad template `{key}` at {path}: {source}")]
+    MissingWorkpadTemplate {
+        key: &'static str,
+        path: PathBuf,
+        source: std::io::Error,
+    },
 }
+
+/// Workpad templates required whenever a workflow opts into repository Markdown templates.
+pub const REQUIRED_WORKPAD_TEMPLATE_KEYS: &[&str] = &[
+    "main_handoff",
+    "main_handoff_failure",
+    "main_assignee_ownership",
+    "main_quality_gate",
+    "main_runtime_ownership",
+    "main_usage_limit_pause",
+    "parent_topology",
+    "workspace_adoption",
+    "workspace_ensure",
+    "agent_review_run",
+    "agent_review_handoff",
+    "repeated_review_failure",
+    "manual_review",
+    "review_invalid_handoff",
+    "rework_diagnostic",
+    "review_freshness",
+    "merge_run",
+    "merge_repair",
+    "doctor_triage",
+    "human_review_repair",
+    "forge_rework_run",
+    "forge_rework_blocked",
+    "lane_session",
+];
 
 impl WorkflowDefinition {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, WorkflowError> {
@@ -91,6 +126,7 @@ impl WorkflowDefinition {
         let config = parse_front_matter(&front_matter)?;
         let workflow_index = prompt.trim().to_string();
         let lane_prompt_bundle = load_lane_prompts(path.as_ref(), &config, &workflow_index)?;
+        validate_workpad_templates(path.as_ref(), &config)?;
 
         Ok(Self {
             path: path.as_ref().to_path_buf(),
@@ -117,6 +153,50 @@ impl WorkflowDefinition {
             AgentLane::MergeAgent => &self.lane_prompt_sources.merge_agent,
         }
     }
+}
+
+fn validate_workpad_templates(workflow_path: &Path, config: &Value) -> Result<(), WorkflowError> {
+    let Some(value) = config.get("workpad_templates") else {
+        return Ok(());
+    };
+    let templates = value.as_object().ok_or_else(|| {
+        WorkflowError::InvalidWorkpadTemplateConfig("workpad_templates must be a map/object".into())
+    })?;
+    let parser = liquid::ParserBuilder::with_stdlib()
+        .build()
+        .map_err(|error| WorkflowError::InvalidWorkpadTemplateConfig(error.to_string()))?;
+
+    for &key in REQUIRED_WORKPAD_TEMPLATE_KEYS {
+        let relative = templates
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                WorkflowError::InvalidWorkpadTemplateConfig(format!(
+                    "workpad_templates.{key} is required when workpad_templates is configured"
+                ))
+            })?;
+        let path = resolve_workflow_relative_path(workflow_path, relative);
+        let body =
+            fs::read_to_string(&path).map_err(|source| WorkflowError::MissingWorkpadTemplate {
+                key,
+                path: path.clone(),
+                source,
+            })?;
+        if body.trim().is_empty() {
+            return Err(WorkflowError::InvalidWorkpadTemplateConfig(format!(
+                "workpad_templates.{key} is empty at {}; restore the repository Markdown template",
+                path.display()
+            )));
+        }
+        parser.parse(&body).map_err(|error| {
+            WorkflowError::InvalidWorkpadTemplateConfig(format!(
+                "workpad_templates.{key} is invalid at {}: {error}",
+                path.display()
+            ))
+        })?;
+    }
+    Ok(())
 }
 
 impl AgentLane {
@@ -319,6 +399,31 @@ mod tests {
     use crate::model::TrackerIssue;
     use crate::prompt::render_prompt;
 
+    fn configured_workpad_workflow(
+        temp: &tempfile::TempDir,
+        omitted_key: Option<&str>,
+        body_override: Option<(&str, &str)>,
+    ) -> String {
+        let template_dir = temp.path().join("templates");
+        fs::create_dir(&template_dir).unwrap();
+        let mut mappings = Vec::new();
+        for key in REQUIRED_WORKPAD_TEMPLATE_KEYS {
+            if omitted_key == Some(*key) {
+                continue;
+            }
+            let body = body_override
+                .filter(|(override_key, _)| override_key == key)
+                .map(|(_, body)| body)
+                .unwrap_or("Valid {{issue_ref}}");
+            fs::write(template_dir.join(format!("{key}.md")), body).unwrap();
+            mappings.push(format!("  {key}: templates/{key}.md"));
+        }
+        format!(
+            "---\nworkpad_templates:\n{}\n---\nWorkflow index",
+            mappings.join("\n")
+        )
+    }
+
     #[test]
     fn parses_front_matter_and_prompt() {
         let workflow = WorkflowDefinition::parse(
@@ -433,6 +538,46 @@ mod tests {
     }
 
     #[test]
+    fn configured_workpad_templates_fail_closed_when_required_entry_is_missing() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = configured_workpad_workflow(&temp, Some("merge_run"), None);
+        let error = WorkflowDefinition::parse(temp.path().join("WORKFLOW.md"), &source)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("workpad_templates.merge_run is required"));
+    }
+
+    #[test]
+    fn configured_workpad_templates_fail_closed_when_required_file_is_missing() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = configured_workpad_workflow(&temp, None, None);
+        fs::remove_file(temp.path().join("templates/merge_run.md")).unwrap();
+        let error = WorkflowDefinition::parse(temp.path().join("WORKFLOW.md"), &source)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("missing required workpad template `merge_run`"));
+        assert!(error.contains("templates/merge_run.md"));
+    }
+
+    #[test]
+    fn configured_workpad_templates_fail_closed_when_empty_or_malformed() {
+        for (key, body, expected) in [
+            ("main_handoff", "  \n", "is empty"),
+            ("review_freshness", "{% if open %}", "is invalid"),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let source = configured_workpad_workflow(&temp, None, Some((key, body)));
+            let error = WorkflowDefinition::parse(temp.path().join("WORKFLOW.md"), &source)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(expected), "unexpected error: {error}");
+            assert!(error.contains(key), "unexpected error: {error}");
+        }
+    }
+
+    #[test]
     fn workflow_store_successful_reload_replaces_active_workflow() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("WORKFLOW.md");
@@ -506,23 +651,21 @@ mod tests {
     }
 
     #[test]
-    fn github_project_workflow_prompt_is_not_placeholder_thin() {
+    fn github_project_workflow_prompts_are_concise_capability_consumers() {
         let workflow = github_project_workflow();
 
         assert!(workflow.workflow_index.contains("Workflow Index"));
-        assert!(workflow.prompt_template.len() > 3_000);
-        assert!(workflow.prompt_template.contains("## Operating Loop"));
+        assert!(workflow.prompt_template.len() < 2_500);
         assert!(workflow
             .prompt_template
-            .contains("## Main Agent Workpad Discipline"));
-        assert!(workflow.prompt_template.contains("Issue Quality Gate"));
-        assert!(workflow.prompt_template.contains("one issue per branch"));
+            .contains("## Workflow capabilities"));
+        assert!(workflow.prompt_template.contains("## Completion protocol"));
         assert!(workflow
             .prompt_template
-            .contains("The main implementation agent must never set `Human Review`."));
-        assert!(!workflow
-            .prompt_template
-            .contains("stop before\nmaking live agent changes"));
+            .contains("one canonical `Shea Symphony Workpad`"));
+        assert!(workflow.prompt_template.contains("Never set Human Review"));
+        assert!(!workflow.prompt_template.contains("project issue"));
+        assert!(!workflow.prompt_template.contains("--write"));
         assert!(workflow
             .prompt_for_lane(AgentLane::ReviewAgent)
             .contains("independent Review Agent"));
@@ -539,10 +682,9 @@ mod tests {
         assert!(rendered.contains("Shea Symphony issue #48"));
         assert!(rendered.contains("Replace placeholder dogfood workflow"));
         assert!(rendered.contains("This is attempt 2."));
-        assert!(rendered.contains("## Issue Goal\nReplace the placeholder live workflow prompt."));
-        assert!(rendered
-            .contains("Move locally complete main-agent work to `Agent Review` only as the final"));
-        assert!(rendered.contains("Do not set `Human Review`."));
+        assert!(!rendered.contains("Replace the placeholder live workflow prompt."));
+        assert!(rendered.contains("Move complete work to Agent Review only as the final mutation"));
+        assert!(rendered.contains("Never set Human Review"));
         assert!(!rendered.contains("{{"));
         assert!(!rendered.contains("{%"));
     }

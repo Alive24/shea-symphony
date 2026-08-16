@@ -51,13 +51,29 @@ prompts:
   review_agent: ../prompts/review-agent.md
   merge_agent: ../prompts/merge-agent.md
 workpad_templates:
+  main_handoff: ../template/workpad/main-handoff.md
+  main_handoff_failure: ../template/workpad/main-handoff-failure.md
+  main_assignee_ownership: ../template/workpad/main-assignee-ownership.md
+  main_quality_gate: ../template/workpad/main-quality-gate.md
+  main_runtime_ownership: ../template/workpad/main-runtime-ownership.md
+  main_usage_limit_pause: ../template/workpad/main-usage-limit-pause.md
+  parent_topology: ../template/workpad/parent-topology.md
+  workspace_adoption: ../template/workpad/workspace-adoption.md
+  workspace_ensure: ../template/workpad/workspace-ensure.md
   agent_review_run: ../template/workpad/agent-review.md
+  agent_review_handoff: ../template/workpad/agent-review-handoff.md
+  repeated_review_failure: ../template/workpad/repeated-review-failure.md
+  manual_review: ../template/workpad/manual-review.md
+  review_invalid_handoff: ../template/workpad/review-invalid-handoff.md
+  rework_diagnostic: ../template/workpad/rework-diagnostic.md
+  review_freshness: ../template/workpad/review-freshness.md
   doctor_triage: ../template/workpad/doctor-triage.md
-  human_review_repair: ../template/workpad/doctor-triage.md
+  human_review_repair: ../template/workpad/human-review-repair.md
   merge_run: ../template/workpad/merge-run.md
-  merge_repair: ../template/workpad/merge-run.md
-  forge_rework_run: ../template/workpad/rework-run.md
-  forge_rework_blocked: ../template/workpad/rework-run.md
+  merge_repair: ../template/workpad/merge-repair.md
+  forge_rework_run: ../template/workpad/forge-rework-run.md
+  forge_rework_blocked: ../template/workpad/forge-rework-blocked.md
+  lane_session: ../template/workpad/lane-session.md
 polling:
   interval_ms: 50000
 artifacts:

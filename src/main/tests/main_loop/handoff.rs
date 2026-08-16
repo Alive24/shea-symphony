@@ -375,12 +375,12 @@ fn run_loop_handoff_workpad_records_planned_pr_evidence() {
         handoff_verification: Some("skipped:not_configured".into()),
     };
 
-    let workpad = run_loop_handoff_workpad(&issue, &result, &handoff, None);
+    let workpad = run_loop_handoff_workpad(None, &issue, &result, &handoff, None);
 
     assert!(workpad.contains("### Plan"));
     assert!(workpad.contains("### Work Log"));
     assert!(workpad.contains("- [x] Read the issue contract"));
-    assert!(workpad.contains("### Planned Handoff"));
+    assert!(workpad.contains("### PR / Linkage"));
     assert!(workpad.contains("Actor role: `implementation_agent`"));
     assert!(workpad.contains("Git identity: `applied:Shea Symphony Agent <shea@example.invalid>`"));
     assert!(
@@ -779,9 +779,9 @@ fn usage_limit_pause_workpad_preserves_tracker_state_boundary() {
         handoff_verification: None,
     };
     let pause = result.usage_limit_pause.as_ref().unwrap();
-    let workpad = run_loop_usage_limit_pause_workpad(&issue, &result, pause, 20_000);
+    let workpad = run_loop_usage_limit_pause_workpad(None, &issue, &result, pause, 20_000);
 
-    assert!(workpad.contains("### Usage-Limit Pause"));
+    assert!(workpad.contains("### Recovery / Rework"));
     assert!(workpad.contains("Classifier: `usage_limit`"));
     assert!(workpad.contains("Tracker state was not advanced to `Agent Review`"));
     assert!(workpad.contains("Retry backoff: `20000ms`"));
@@ -818,7 +818,7 @@ fn run_loop_agent_review_handoff_blocks_missing_pr_url() {
         handoff_verification: None,
     };
 
-    let workpad = run_loop_handoff_workpad(&issue, &result, &handoff, None);
+    let workpad = run_loop_handoff_workpad(None, &issue, &result, &handoff, None);
     let evidence =
         run_loop_agent_review_handoff_evidence(&issue, &result, &handoff, Some(&workpad));
     let report = evaluate_agent_review_handoff(&evidence);
@@ -872,7 +872,7 @@ fn run_loop_agent_review_handoff_passes_with_pr_url() {
         handoff_verification: None,
     };
 
-    let workpad = run_loop_handoff_workpad(&issue, &result, &handoff, None);
+    let workpad = run_loop_handoff_workpad(None, &issue, &result, &handoff, None);
     let evidence =
         run_loop_agent_review_handoff_evidence(&issue, &result, &handoff, Some(&workpad));
     let report = evaluate_agent_review_handoff(&evidence);
@@ -922,7 +922,7 @@ fn run_loop_agent_review_handoff_blocks_draft_pr_and_missing_workpad_evidence() 
             marked_ready: false,
         });
     }
-    let draft_workpad = run_loop_handoff_workpad(&issue, &draft_result, &handoff, None);
+    let draft_workpad = run_loop_handoff_workpad(None, &issue, &draft_result, &handoff, None);
     let draft_evidence = run_loop_agent_review_handoff_evidence(
         &issue,
         &draft_result,

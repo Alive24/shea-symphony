@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+use crate::workflow::WorkflowDefinition;
+use crate::workpad_templates::{render_workpad_template, WorkpadTemplateId};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReviewStaleReason {
     MergeConflict,
@@ -86,63 +89,56 @@ pub fn classify_review_freshness(input: ReviewFreshnessInput) -> ReviewFreshness
     ReviewFreshnessReport { input, decision }
 }
 
-pub fn render_review_freshness_workpad(report: &ReviewFreshnessReport) -> String {
+pub fn render_review_freshness_workpad(
+    workflow: Option<&WorkflowDefinition>,
+    report: &ReviewFreshnessReport,
+) -> Result<String, crate::prompt::PromptError> {
+    const RECORD_SEPARATOR: &str = "\u{1e}";
     let input = &report.input;
     let decision = &report.decision;
-    let mut lines = vec![
-        "## Review Freshness".to_string(),
-        String::new(),
-        format!("- Issue: {}", input.issue_ref),
-        format!("- Stale reason: {:?}", input.stale_reason),
-        format!("- Rework class: {:?}", input.rework_class),
-        format!("- Prior head SHA: `{}`", input.prior_head_sha),
-        format!("- Current head SHA: `{}`", input.current_head_sha),
-        format!("- Prior base SHA: `{}`", input.prior_base_sha),
-        format!("- Current base SHA: `{}`", input.current_base_sha),
-        format!(
-            "- Prior Human Review still valid: `{}`",
-            decision.prior_human_review_valid
-        ),
-        format!(
-            "- Human re-review required: `{}`",
-            decision.human_rereview_required
-        ),
-        format!(
-            "- Main-agent target state: `{}`",
-            decision.main_agent_target_state
-        ),
-        format!(
-            "- Authorized next state after review freshness evidence: `{}`",
-            decision.authorized_next_state.as_deref().unwrap_or("none")
-        ),
-        format!("- Decision: {:?}", decision.kind),
-        format!("- Rationale: {}", decision.rationale),
-    ];
-
-    lines.push(String::new());
-    lines.push("### Changed Files".into());
-    if input.changed_files.is_empty() {
-        lines.push("- None recorded.".into());
-    } else {
-        lines.extend(input.changed_files.iter().map(|file| format!("- `{file}`")));
-    }
-
-    lines.push(String::new());
-    lines.push("### Patch Summary".into());
-    lines.push(
-        input
-            .patch_summary
-            .as_deref()
-            .filter(|summary| !summary.trim().is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| "Not recorded.".into()),
-    );
-
-    lines.push(String::new());
-    lines.push("### Authority Boundary".into());
-    lines.push("- This freshness report is evidence, not an automatic approval.".into());
-    lines.push("- Main implementation agent still stops at `Agent Review`.".into());
-    lines.push("- `Human Review` remains reserved for an independent Review Agent or human-authorized workflow.".into());
-
-    lines.join("\n")
+    render_workpad_template(
+        workflow,
+        WorkpadTemplateId::ReviewFreshness,
+        &[
+            ("issue_ref", input.issue_ref.clone()),
+            ("stale_reason", format!("{:?}", input.stale_reason)),
+            ("rework_class", format!("{:?}", input.rework_class)),
+            ("prior_head_sha", input.prior_head_sha.clone()),
+            ("current_head_sha", input.current_head_sha.clone()),
+            ("prior_base_sha", input.prior_base_sha.clone()),
+            ("current_base_sha", input.current_base_sha.clone()),
+            (
+                "prior_human_review_valid",
+                decision.prior_human_review_valid.to_string(),
+            ),
+            (
+                "human_rereview_required",
+                decision.human_rereview_required.to_string(),
+            ),
+            (
+                "main_agent_target_state",
+                decision.main_agent_target_state.clone(),
+            ),
+            (
+                "authorized_next_state",
+                decision
+                    .authorized_next_state
+                    .clone()
+                    .unwrap_or_else(|| "none".into()),
+            ),
+            ("decision", format!("{:?}", decision.kind)),
+            ("rationale", decision.rationale.clone()),
+            ("changed_files", input.changed_files.join(RECORD_SEPARATOR)),
+            (
+                "patch_summary",
+                input
+                    .patch_summary
+                    .as_deref()
+                    .filter(|summary| !summary.trim().is_empty())
+                    .unwrap_or("Not recorded.")
+                    .into(),
+            ),
+            ("record_separator", RECORD_SEPARATOR.into()),
+        ],
+    )
 }

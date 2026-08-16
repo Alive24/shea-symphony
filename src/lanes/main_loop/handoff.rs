@@ -21,6 +21,7 @@ use shea_symphony::runtime_profile::load_runtime_profile;
 use shea_symphony::runtime_profile::{apply_runtime_profile_environment, RuntimeProfile};
 use shea_symphony::runtime_state::RuntimeState;
 use shea_symphony::tracker::TrackerAdapter;
+use shea_symphony::workflow::WorkflowDefinition;
 use shea_symphony::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 use shea_symphony::workspace::run_workspace_command_with_env;
 
@@ -529,13 +530,14 @@ pub(crate) fn run_loop_runtime_ownership(
 }
 
 pub(crate) fn run_loop_ownership_workpad(
+    workflow: Option<&WorkflowDefinition>,
     issue: &TrackerIssue,
     ownership: &RuntimeOwnershipMarker,
     event: &str,
     claim: &LaneClaim,
 ) -> String {
     render_workpad_template(
-        None,
+        workflow,
         WorkpadTemplateId::MainRuntimeOwnership,
         &[
             ("issue_ref", issue.identifier.clone()),
@@ -640,6 +642,7 @@ pub(crate) fn compact_evidence(value: &str) -> String {
 }
 
 pub(crate) fn run_loop_handoff_workpad(
+    workflow: Option<&WorkflowDefinition>,
     issue: &TrackerIssue,
     result: &IssueExecutionResult,
     handoff: &IssueHandoffPlan,
@@ -707,7 +710,7 @@ pub(crate) fn run_loop_handoff_workpad(
     .join("\n");
 
     render_workpad_template(
-        None,
+        workflow,
         WorkpadTemplateId::MainHandoff,
         &[
             ("issue_ref", issue.identifier.clone()),
@@ -976,11 +979,12 @@ pub(crate) fn run_loop_agent_review_handoff_evidence(
 }
 
 pub(crate) fn run_loop_handoff_failure_workpad(
+    workflow: Option<&WorkflowDefinition>,
     issue: &TrackerIssue,
     error: &HandoffError,
 ) -> String {
     render_workpad_template(
-        None,
+        workflow,
         WorkpadTemplateId::MainHandoffFailure,
         &[
             ("issue_ref", issue.identifier.clone()),
@@ -991,9 +995,13 @@ pub(crate) fn run_loop_handoff_failure_workpad(
     .expect("centralized main handoff failure workpad template must render")
 }
 
-pub(crate) fn run_loop_assignee_ownership_workpad(issue: &TrackerIssue, reason: &str) -> String {
+pub(crate) fn run_loop_assignee_ownership_workpad(
+    workflow: Option<&WorkflowDefinition>,
+    issue: &TrackerIssue,
+    reason: &str,
+) -> String {
     render_workpad_template(
-        None,
+        workflow,
         WorkpadTemplateId::MainAssigneeOwnership,
         &[
             ("issue_ref", issue.identifier.clone()),
@@ -1006,13 +1014,14 @@ pub(crate) fn run_loop_assignee_ownership_workpad(issue: &TrackerIssue, reason: 
 }
 
 pub(crate) fn run_loop_usage_limit_pause_workpad(
+    workflow: Option<&WorkflowDefinition>,
     issue: &TrackerIssue,
     result: &IssueExecutionResult,
     pause: &UsageLimitPause,
     retry_delay_ms: u64,
 ) -> String {
     render_workpad_template(
-        None,
+        workflow,
         WorkpadTemplateId::MainUsageLimitPause,
         &[
             ("issue_ref", issue.identifier.clone()),

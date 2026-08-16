@@ -4,7 +4,9 @@ use std::thread;
 use std::time::Duration;
 
 use shea_symphony::config::RuntimeConfig;
-use shea_symphony::issue_workspace::{discover_issue_workspaces, WorkspaceMatchStrength};
+use shea_symphony::issue_workspace::{
+    discover_issue_workspaces, IssueWorkspaceReport, WorkspaceMatchStrength,
+};
 use shea_symphony::lane_claim::{
     LaneClaim, LaneClaimActor, LaneClaimLane, LaneClaimSource, LaneClaimState,
 };
@@ -27,6 +29,7 @@ use shea_symphony::rework::rework_transition_expected;
 use shea_symphony::rework::{render_rework_diagnostic_workpad, ReworkDiagnostic};
 use shea_symphony::tracker::{adapter_from_config, ProjectFieldAssignment, TrackerAdapter};
 use shea_symphony::workflow::{AgentLane, WorkflowDefinition};
+use shea_symphony::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 
 use super::manual::{terminal_review_claim_value, write_terminal_review_claim};
 use crate::lanes::claim::{lane_claim_for_issue, project_text_field, render_parseable_lane_claim};
@@ -59,12 +62,7 @@ pub(crate) fn review_fake(
         || adapter.get_issue(&issue_ref),
     )?
     .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
-    let request = ReviewRequest {
-        issue: issue.clone(),
-        prompt: render_automatic_review_prompt(&workflow, &issue)?,
-        workspace: config.workspace.root.clone(),
-        artifact_root: config.observability.logs_root.join("reviews"),
-    };
+    let request = automatic_review_request(&workflow, &config, &issue)?;
     let backend = FakeReviewBackend::new(outcome);
     let mut job = backend.poll(backend.start(request)?)?;
     let ledger_path =
@@ -104,12 +102,7 @@ pub(crate) fn review_once(
     let issue = adapter
         .get_issue(&issue_ref)?
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
-    let request = ReviewRequest {
-        issue: issue.clone(),
-        prompt: render_automatic_review_prompt(&workflow, &issue)?,
-        workspace: config.workspace.root.clone(),
-        artifact_root: config.observability.logs_root.join("reviews"),
-    };
+    let request = automatic_review_request(&workflow, &config, &issue)?;
     let backend = review_backend_from_config(&config.review);
     let mut job = run_configured_review_backend(&config, &issue, backend.as_ref(), request)?;
     let ledger_path =
@@ -330,6 +323,7 @@ pub(crate) fn review_loop_with_summary(
                             issue.identifier
                         );
                         record_review_invalid_handoff(
+                            &workflow,
                             &config,
                             adapter.as_ref(),
                             &issue,
@@ -503,6 +497,7 @@ pub(crate) fn review_loop_with_summary(
                             latest.identifier
                         );
                             record_review_invalid_handoff(
+                                &workflow,
                                 &config,
                                 adapter.as_ref(),
                                 &latest,
@@ -537,6 +532,7 @@ pub(crate) fn review_loop_with_summary(
                         selected_issue.identifier
                     );
                     record_review_invalid_handoff(
+                        &workflow,
                         &config,
                         adapter.as_ref(),
                         &selected_issue,
@@ -649,27 +645,22 @@ pub(crate) fn review_backend_kind(
 }
 
 fn record_review_invalid_handoff(
+    workflow: &WorkflowDefinition,
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
     issue: &TrackerIssue,
     reason: &str,
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let workpad = [
-        "## Shea Symphony Agent Review Run".to_string(),
-        String::new(),
-        "### Agent Review Invalid Handoff".to_string(),
-        format!("- Issue: {} {}", issue.identifier, issue.title),
-        "- Lane: `review`".to_string(),
-        "- Input state: `Agent Review`".to_string(),
-        "- Target state after review routing: `unchanged`".to_string(),
-        "- Actor role: `review_agent`".to_string(),
-        "- Decision: `inconclusive_invalid_handoff`".to_string(),
-        format!("- Reason: {reason}"),
-        "- Review did not start because the Main Agent handoff invariant is not satisfied.".to_string(),
-        "- Draft PRs must be marked ready by the Main Agent lane or an operator-confirmed doctor repair before normal Agent Review.".to_string(),
-    ]
-    .join("\n");
+    let workpad = render_workpad_template(
+        Some(workflow),
+        WorkpadTemplateId::ReviewInvalidHandoff,
+        &[
+            ("issue_ref", issue.identifier.clone()),
+            ("issue_title", issue.title.clone()),
+            ("reason", reason.into()),
+        ],
+    )?;
 
     if write {
         adapter.add_issue_comment(&issue.identifier, &workpad)?;
@@ -789,12 +780,7 @@ fn run_review_job(
     issue: &TrackerIssue,
     fake_outcome: Option<FakeReviewOutcome>,
 ) -> Result<ReviewJob, Box<dyn std::error::Error>> {
-    let request = ReviewRequest {
-        issue: issue.clone(),
-        prompt: render_automatic_review_prompt(workflow, issue)?,
-        workspace: review_workspace_for_issue(config, issue),
-        artifact_root: config.observability.logs_root.join("reviews"),
-    };
+    let request = automatic_review_request(workflow, config, issue)?;
 
     if let Some(outcome) = fake_outcome {
         let backend = FakeReviewBackend::new(outcome);
@@ -864,17 +850,24 @@ fn review_backend_progress_spec(
     spec
 }
 
+fn automatic_review_request(
+    workflow: &WorkflowDefinition,
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+) -> Result<ReviewRequest, shea_symphony::prompt::PromptError> {
+    Ok(ReviewRequest {
+        issue: issue.clone(),
+        prompt: render_automatic_review_prompt(workflow, issue)?,
+        workspace: review_workspace_for_issue(config, issue),
+        artifact_root: config.observability.logs_root.join("reviews"),
+    })
+}
+
 pub(crate) fn review_workspace_for_issue(config: &RuntimeConfig, issue: &TrackerIssue) -> PathBuf {
     if let Ok(repo_root) = std::env::current_dir() {
         if let Ok(report) = discover_issue_workspaces(config, issue, &repo_root) {
-            if let Some(index) = report.canonical_index {
-                if let Some(candidate) = report.candidates.get(index) {
-                    if candidate.strength == WorkspaceMatchStrength::Strong
-                        && candidate.path.starts_with(&config.workspace.root)
-                    {
-                        return candidate.path.clone();
-                    }
-                }
+            if let Some(workspace) = strong_canonical_review_workspace(&report) {
+                return workspace;
             }
         }
     }
@@ -882,6 +875,27 @@ pub(crate) fn review_workspace_for_issue(config: &RuntimeConfig, issue: &Tracker
     run_loop_handoff_plan(config, issue)
         .map(|handoff| handoff.workspace_path)
         .unwrap_or_else(|_| config.workspace.root.clone())
+}
+
+pub(crate) fn strong_canonical_review_workspace(report: &IssueWorkspaceReport) -> Option<PathBuf> {
+    let candidate = report
+        .canonical_index
+        .and_then(|index| report.candidates.get(index))?;
+    let is_verified_repository_worktree = candidate.branch.is_some()
+        && candidate.head.is_some()
+        && candidate
+            .evidence
+            .iter()
+            .any(|evidence| evidence.source == "git_worktree");
+    if candidate.strength != WorkspaceMatchStrength::Strong || !is_verified_repository_worktree {
+        return None;
+    }
+
+    // Operator-adopted and harness-owned worktrees may intentionally live outside the
+    // workflow-managed root. Require git-worktree evidence in addition to the unambiguous strong
+    // issue match; otherwise tracker text alone could select an arbitrary local path. Rejecting a
+    // verified external worktree here would review stale base content instead of the PR revision.
+    Some(candidate.path.clone())
 }
 
 pub(crate) fn render_automatic_review_prompt(
@@ -965,7 +979,7 @@ pub(crate) fn apply_review_result(
     }
 
     let workpad = repeat_evidence
-        .map(|evidence| render_repeated_review_failure_workpad(issue, job, evidence))
+        .map(|evidence| render_repeated_review_failure_workpad(workflow, issue, job, evidence))
         .unwrap_or_else(|| render_review_workpad_with_workflow(workflow, issue, job));
     let evidence_key = recovery_key(
         "review-result",
@@ -1175,7 +1189,7 @@ pub(crate) fn transition_issue_to_rework_with_diagnostic(
     issue: &TrackerIssue,
     diagnostic: &ReworkDiagnostic,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let workpad = render_rework_diagnostic_workpad(issue, diagnostic);
+    let workpad = render_rework_diagnostic_workpad(None, issue, diagnostic)?;
     adapter.add_issue_comment(&issue.identifier, &workpad)?;
     append_tracker_mutation_audit(
         config,

@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
+use shea_symphony::config::RuntimeConfig;
 use shea_symphony::issue_workspace::{
     discover_issue_workspaces_from_parts, git_worktree_list, render_workspace_ensure_workpad,
     validate_workspace_adoption, IssueWorkspaceCandidate, WorkspaceMatchStrength,
@@ -9,11 +10,13 @@ use shea_symphony::issue_workspace::{
 use shea_symphony::model::TrackerIssue;
 use shea_symphony::session_registry::{load_session_registry, session_registry_path};
 use shea_symphony::tracker::adapter_from_config;
+use shea_symphony::workflow::WorkflowDefinition;
+use shea_symphony::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 
 use crate::lanes::main_loop::{pull_request_number_from_url, run_loop_handoff_plan};
 use crate::orchestration::{
-    append_tracker_mutation_audit, current_git_branch, load_config,
-    preflight_canonical_checkout_for_write_mode, TrackerMutationAudit,
+    append_tracker_mutation_audit, current_git_branch, preflight_canonical_checkout_for_write_mode,
+    TrackerMutationAudit,
 };
 
 pub(crate) fn workspace_ensure(
@@ -23,7 +26,9 @@ pub(crate) fn workspace_ensure(
     branch: Option<String>,
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let config = load_config(&workflow_path)?;
+    let workflow = WorkflowDefinition::load(&workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
+    config.validate()?;
     preflight_canonical_checkout_for_write_mode(&config, "workspace ensure", write)?;
 
     let adapter = adapter_from_config(&config);
@@ -69,13 +74,15 @@ pub(crate) fn workspace_ensure(
             return Ok(());
         }
         let pr_label = workspace_ensure_pr_label(&issue, pr_ref.as_deref());
-        let workpad = render_workspace_ensure_workpad(
+        let rendered = render_workspace_ensure_template(
+            &workflow,
             &issue,
-            &config.tracker.workpad.marker,
             &candidate,
             "reused",
             pr_label.as_deref(),
-        );
+        )?;
+        let workpad =
+            render_workspace_ensure_workpad(&issue, &config.tracker.workpad.marker, &rendered);
         adapter.upsert_workpad(&issue.identifier, &workpad)?;
         append_tracker_mutation_audit(
             &config,
@@ -134,13 +141,15 @@ pub(crate) fn workspace_ensure(
             )
         })?;
     ensure_existing_candidate_clean(&candidate)?;
-    let workpad = render_workspace_ensure_workpad(
+    let rendered = render_workspace_ensure_template(
+        &workflow,
         &issue,
-        &config.tracker.workpad.marker,
         &candidate,
         "created",
         pr_label.as_deref(),
-    );
+    )?;
+    let workpad =
+        render_workspace_ensure_workpad(&issue, &config.tracker.workpad.marker, &rendered);
     adapter.upsert_workpad(&issue.identifier, &workpad)?;
     append_tracker_mutation_audit(
         &config,
@@ -161,6 +170,34 @@ pub(crate) fn workspace_ensure(
         candidate.path.display()
     );
     Ok(())
+}
+
+fn render_workspace_ensure_template(
+    workflow: &WorkflowDefinition,
+    issue: &TrackerIssue,
+    candidate: &IssueWorkspaceCandidate,
+    action: &str,
+    pr_ref: Option<&str>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    Ok(render_workpad_template(
+        Some(workflow),
+        WorkpadTemplateId::WorkspaceEnsure,
+        &[
+            ("issue_ref", issue.identifier.clone()),
+            ("issue_title", issue.title.clone()),
+            ("pr", pr_ref.unwrap_or("none").into()),
+            ("workspace_path", candidate.path.display().to_string()),
+            (
+                "branch",
+                candidate.branch.as_deref().unwrap_or("unknown").into(),
+            ),
+            ("action", action.into()),
+            (
+                "evidence_summary",
+                "clean local git worktree for Review/Merge inspection".into(),
+            ),
+        ],
+    )?)
 }
 
 fn ensure_existing_candidate_clean(

@@ -8,10 +8,11 @@ use shea_symphony::quality_gate::{
     evaluate_issue_with_source_alignment, LlmGateMode, LlmGateOptions,
 };
 use shea_symphony::tracker::adapter_from_config;
+use shea_symphony::workflow::WorkflowDefinition;
 use shea_symphony::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 
 use crate::orchestration::{
-    append_tracker_mutation_audit, live_github_tracker, load_config, progress_spec_for_config,
+    append_tracker_mutation_audit, live_github_tracker, progress_spec_for_config,
     require_write_intent, tracker_backend_label, TrackerMutationAudit,
 };
 
@@ -21,7 +22,9 @@ pub(crate) fn quality_gate(
     apply: bool,
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let config = load_config(&workflow_path)?;
+    let workflow = WorkflowDefinition::load(&workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
+    config.validate()?;
     let adapter = adapter_from_config(&config);
     let issue = run_with_progress_heartbeat(
         progress_spec_for_config(&config, "github_project_read")
@@ -47,7 +50,7 @@ pub(crate) fn quality_gate(
 
     if apply {
         require_write_intent(write)?;
-        let workpad = gate_workpad(&issue, &decision);
+        let workpad = gate_workpad(Some(&workflow), &issue, &decision);
         adapter.upsert_workpad(&issue_ref, &workpad)?;
         append_tracker_mutation_audit(
             &config,
@@ -139,7 +142,11 @@ fn expected_target_repository(config: &RuntimeConfig) -> Option<String> {
     ))
 }
 
-pub(crate) fn gate_workpad(issue: &TrackerIssue, decision: &GateDecision) -> String {
+pub(crate) fn gate_workpad(
+    workflow: Option<&WorkflowDefinition>,
+    issue: &TrackerIssue,
+    decision: &GateDecision,
+) -> String {
     let assumptions = if decision.assumptions.is_empty() {
         "- None recorded.".into()
     } else {
@@ -163,7 +170,7 @@ pub(crate) fn gate_workpad(issue: &TrackerIssue, decision: &GateDecision) -> Str
         .join("\n");
 
     render_workpad_template(
-        None,
+        workflow,
         WorkpadTemplateId::MainQualityGate,
         &[
             ("issue_ref", issue.identifier.clone()),

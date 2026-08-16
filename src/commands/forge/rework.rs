@@ -4,13 +4,14 @@ use shea_symphony::config::RuntimeConfig;
 use shea_symphony::lane_claim::{LaneClaim, LaneClaimLane};
 use shea_symphony::model::{normalize_state, TrackerIssue};
 use shea_symphony::tracker::{adapter_from_config, TrackerAdapter};
+use shea_symphony::workflow::WorkflowDefinition;
 use shea_symphony::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 
 use crate::cli::ForgeStatusArg;
 use crate::commands::session::timeline_pr_summary;
 use crate::lanes::claim::project_text_field;
 use crate::orchestration::{
-    append_tracker_mutation_audit, current_gmt_timestamp, load_config,
+    append_tracker_mutation_audit, current_gmt_timestamp,
     preflight_canonical_checkout_for_write_mode, TrackerMutationAudit,
 };
 
@@ -43,10 +44,13 @@ pub(crate) fn forge_rework(options: ForgeReworkOptions) -> Result<(), Box<dyn st
         return Err("forge rework cannot use --write and --dry-run together".into());
     }
     let dry_run = !write || dry_run;
-    let config = load_config(&workflow_path)?;
+    let workflow = WorkflowDefinition::load(&workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
+    config.validate()?;
     preflight_canonical_checkout_for_write_mode(&config, "forge rework", write)?;
     let adapter = adapter_from_config(&config);
     forge_rework_with_adapter(
+        Some(&workflow),
         &config,
         adapter.as_ref(),
         ForgeReworkInput {
@@ -71,6 +75,7 @@ pub(crate) struct ForgeReworkInput {
 }
 
 pub(crate) fn forge_rework_with_adapter(
+    workflow: Option<&WorkflowDefinition>,
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
     input: ForgeReworkInput,
@@ -95,7 +100,8 @@ pub(crate) fn forge_rework_with_adapter(
     }
     if let Err(error) = ensure_no_active_human_review_lane_claims(&source) {
         if !input.dry_run {
-            let diagnostic = render_forge_rework_blocked_workpad(&source, &error.to_string());
+            let diagnostic =
+                render_forge_rework_blocked_workpad(workflow, &source, &error.to_string());
             adapter
                 .add_issue_comment(&source.identifier, &diagnostic)
                 .map_err(|write_error| {
@@ -135,6 +141,7 @@ pub(crate) fn forge_rework_with_adapter(
 
     if input.dry_run {
         let note = render_forge_rework_workpad(
+            workflow,
             &source,
             &report.title,
             &confirmation,
@@ -191,6 +198,7 @@ pub(crate) fn forge_rework_with_adapter(
         content_verified.identifier, content_verified.title
     )];
     let workpad = render_forge_rework_workpad(
+        workflow,
         &content_verified,
         &content_verified.title,
         &confirmation,
@@ -298,6 +306,7 @@ fn ensure_no_active_human_review_lane_claims(
 }
 
 fn render_forge_rework_workpad(
+    workflow: Option<&WorkflowDefinition>,
     issue: &TrackerIssue,
     rework_title: &str,
     operator_confirmation: &str,
@@ -307,7 +316,7 @@ fn render_forge_rework_workpad(
     let mut readback_lines = Vec::new();
     push_markdown_bullets(&mut readback_lines, generated_readbacks);
     render_workpad_template(
-        None,
+        workflow,
         WorkpadTemplateId::ForgeReworkRun,
         &[
             ("generated_at", current_gmt_timestamp()),
@@ -326,9 +335,13 @@ fn render_forge_rework_workpad(
     .expect("centralized forge rework run workpad template must render")
 }
 
-fn render_forge_rework_blocked_workpad(issue: &TrackerIssue, reason: &str) -> String {
+fn render_forge_rework_blocked_workpad(
+    workflow: Option<&WorkflowDefinition>,
+    issue: &TrackerIssue,
+    reason: &str,
+) -> String {
     render_workpad_template(
-        None,
+        workflow,
         WorkpadTemplateId::ForgeReworkBlocked,
         &[
             ("generated_at", current_gmt_timestamp()),

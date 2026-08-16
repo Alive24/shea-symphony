@@ -281,6 +281,28 @@ fn representative_consumers_reference_shared_contracts_without_commands() {
 }
 
 #[test]
+fn operational_skills_are_real_capability_consumers_not_command_runbooks() {
+    for skill in [
+        "shea-symphony-manual-main",
+        "shea-symphony-manual-review",
+        "shea-symphony-manual-merge",
+        "shea-symphony-human-review",
+        "shea-symphony-doctor",
+    ] {
+        let path = format!(".agents/skills/{skill}/SKILL.md");
+        let source = repo_file(&path);
+        assert!(source.contains(".shea/contracts/workflow-capability.v1.md"));
+        assert!(source.lines().count() < 70, "{skill} is oversized");
+        for runbook_syntax in ["project issue", "project inspect", "gh pr view", "--write"] {
+            assert!(
+                !source.contains(runbook_syntax),
+                "{skill} duplicates adapter syntax: {runbook_syntax}"
+            );
+        }
+    }
+}
+
+#[test]
 fn structural_validation_rejects_missing_refs_duplicated_ownership_and_runbooks() {
     let capability = repo_file(".shea/contracts/workflow-capability.v1.md");
     let fixture = repo_file("tests/fixtures/workflow-capability/manual-main.md");

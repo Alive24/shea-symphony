@@ -1,27 +1,23 @@
 ## Shea Symphony Doctor Triage
 
-- Generated at: `<YYYY-MM-DD HH:MM:SS GMT>`
-- Issue: #<issue> <title>
+- Generated at: `{{generated_at}}`
+- Issue: {{issue_ref}} {{issue_title}}
 - Lane: `doctor`
 - Actor role: `doctor`
-- Actor: <doctor command or operator>
-- Run ID: `<run-id or doctor-action-id>`
-- Input state: <state>
-- Target state after repair: <state or unchanged>
-- Result: Routed | Repaired | Triage recorded | Blocked
-- PR: #<pr> <url> | not recorded
-- Requested action: <action>
-- Evidence summary: <short summary of doctor findings and repair evidence>
+- Actor: `shea-symphony doctor`
+- Run ID: `{{run_id}}`
+- Input state: `{{input_state}}`
+- Target state after repair: `{{target_state}}`
+- Result: `{{result}}`
+- Requested action: `{{action}}`
+{{extra_lines}}
+- Evidence summary: {{evidence_summary}}
 
 ### Doctor Findings
 
-- ...
-
-### Repair Evidence
-
-- ...
+{{doctor_findings}}
 
 ### State Boundary
 
-- Doctor records evidence before any tracker mutation.
-- Doctor does not delete worktrees, discard local work, or bypass review/merge lane authority.
+- Doctor repair records evidence before any tracker mutation.
+- This repair does not delete worktrees, discard local work, or bypass Review/Merge authority.

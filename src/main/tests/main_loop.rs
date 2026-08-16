@@ -422,7 +422,7 @@ fn run_loop_runtime_ownership_workpad_records_matching_marker() {
     let ownership = run_loop_runtime_ownership(&issue, &config, &handoff).unwrap();
     let claim = test_claim(&issue);
 
-    let workpad = run_loop_ownership_workpad(&issue, &ownership, "Resumed", &claim);
+    let workpad = run_loop_ownership_workpad(None, &issue, &ownership, "Resumed", &claim);
 
     assert!(workpad.contains("shea-symphony-runtime-ownership"));
     assert_eq!(
@@ -785,6 +785,7 @@ fn run_loop_runtime_state_records_pending_tmux_session_metadata() {
 
     let state = run_loop_runtime_state_with_result(state, &result);
     let workpad = run_loop_handoff_workpad(
+        None,
         &issue,
         &result,
         &run_loop_handoff_plan(&config, &issue).unwrap(),

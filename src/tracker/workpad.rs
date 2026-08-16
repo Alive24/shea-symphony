@@ -48,16 +48,33 @@ fn replace_or_append_workpad_entry(
     incoming_key: &str,
 ) -> String {
     let content = strip_workpad_marker(existing, marker);
-    let mut replaced = false;
     let mut entries = Vec::new();
     let incoming_is_canonical_workpad = is_canonical_workpad_entry(incoming_entry);
 
+    if incoming_is_canonical_workpad {
+        let mut canonical = None;
+        for entry in split_workpad_entries(content) {
+            if is_canonical_workpad_entry(&entry) {
+                canonical = Some(merge_canonical_workpad_sections(
+                    canonical.as_deref(),
+                    &entry,
+                ));
+            } else {
+                entries.push(entry);
+            }
+        }
+        canonical = Some(merge_canonical_workpad_sections(
+            canonical.as_deref(),
+            incoming_entry,
+        ));
+        entries.push(canonical.expect("incoming canonical workpad always renders"));
+        return render_workpad_entries(marker, &entries);
+    }
+
+    let mut replaced = false;
+
     for entry in split_workpad_entries(content) {
-        let should_replace = if incoming_is_canonical_workpad {
-            is_canonical_workpad_entry(&entry)
-        } else {
-            workpad_entry_key(&entry).as_deref() == Some(incoming_key)
-        };
+        let should_replace = workpad_entry_key(&entry).as_deref() == Some(incoming_key);
 
         if should_replace {
             if !replaced {
@@ -74,6 +91,58 @@ fn replace_or_append_workpad_entry(
     }
 
     render_workpad_entries(marker, &entries)
+}
+
+fn merge_canonical_workpad_sections(existing: Option<&str>, incoming: &str) -> String {
+    let mut sections = existing.map(canonical_workpad_sections).unwrap_or_default();
+    for incoming_section in canonical_workpad_sections(incoming) {
+        if let Some(index) = sections.iter().position(|section| {
+            canonical_section_key(section) == canonical_section_key(&incoming_section)
+        }) {
+            sections[index] = incoming_section;
+        } else {
+            sections.push(incoming_section);
+        }
+    }
+
+    let mut rendered = "## Shea Symphony Workpad".to_string();
+    if !sections.is_empty() {
+        rendered.push_str("\n\n");
+        rendered.push_str(&sections.join("\n\n"));
+    }
+    rendered
+}
+
+fn canonical_workpad_sections(entry: &str) -> Vec<String> {
+    let mut sections = Vec::new();
+    let mut current = Vec::new();
+    for line in entry
+        .lines()
+        .skip_while(|line| !line.trim().starts_with("## "))
+        .skip(1)
+    {
+        if line.trim().starts_with("### ") && !current.is_empty() {
+            let section = current.join("\n").trim().to_string();
+            if !section.is_empty() {
+                sections.push(section);
+            }
+            current.clear();
+        }
+        current.push(line);
+    }
+    let section = current.join("\n").trim().to_string();
+    if !section.is_empty() {
+        sections.push(section);
+    }
+    sections
+}
+
+fn canonical_section_key(section: &str) -> &str {
+    section
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .map(str::trim)
+        .unwrap_or("")
 }
 
 fn append_workpad_entry(existing: &str, incoming_entry: &str) -> String {
@@ -169,7 +238,16 @@ fn replace_singleton_workpad_blocks(existing: &str, incoming: &str) -> (String, 
 
     let mut merged = existing.to_string();
     let mut remainder = incoming.to_string();
+    let incoming_updates_canonical_workpad = split_workpad_entries(incoming)
+        .iter()
+        .any(|entry| is_canonical_workpad_entry(entry));
     for (start, end, strip_when_missing) in [RUNTIME_OWNERSHIP, WORKSPACE_ADOPTION] {
+        if start == RUNTIME_OWNERSHIP.0 && incoming_updates_canonical_workpad {
+            // The section-aware canonical merge below replaces Run Identity as a
+            // unit, including its ownership marker. Pre-stripping that block
+            // would discard the new marker during the section replacement.
+            continue;
+        }
         let Some(incoming_block) = marked_block(&remainder, start, end).map(str::to_string) else {
             continue;
         };
@@ -279,6 +357,31 @@ mod tests {
     }
 
     #[test]
+    fn automatic_and_manual_main_updates_preserve_one_canonical_shape() {
+        let marker = "<!-- shea-symphony-workpad -->";
+        let existing = format!(
+            "{marker}\n## Shea Symphony Workpad\n\n### Plan\n- [x] inspect\n\n### Work Log\n- implemented\n\n### Verification\n- cargo test: pass\n\n### PR / Linkage\n- pending\n\n### Recovery / Rework\n- prior recovery evidence\n\n### Handoff\n- pending"
+        );
+        let session_update = "## Shea Symphony Workpad\n\n### Run Identity\n- Run: `run-2`\n- Workspace: `/tmp/issue`";
+        let handoff_update = "## Shea Symphony Workpad\n\n### PR / Linkage\n- PR: `#99`\n- Source: `github_native`\n\n### Handoff\n- Ready for Agent Review";
+
+        let after_session = merge_workpad_body(&existing, session_update, marker);
+        let body = merge_workpad_body(&after_session, handoff_update, marker);
+
+        assert_eq!(body.matches(marker).count(), 1);
+        assert_eq!(body.matches("## Shea Symphony Workpad").count(), 1);
+        assert_eq!(body.matches("### Plan").count(), 1);
+        assert!(body.contains("- [x] inspect"));
+        assert!(body.contains("- implemented"));
+        assert!(body.contains("- cargo test: pass"));
+        assert!(body.contains("- prior recovery evidence"));
+        assert!(body.contains("- Run: `run-2`"));
+        assert!(body.contains("- PR: `#99`"));
+        assert!(body.contains("- Ready for Agent Review"));
+        assert!(!body.contains("- pending"));
+    }
+
+    #[test]
     fn merge_workpad_body_collapses_duplicate_matching_entries() {
         let marker = "<!-- shea-symphony-workpad -->";
         let existing = format!(
@@ -353,5 +456,26 @@ mod tests {
         assert!(!body.contains("- Branch: `old`"));
         assert!(body.contains("### Plan"));
         assert!(body.contains("### Runtime Ownership Note"));
+    }
+
+    #[test]
+    fn canonical_run_identity_update_keeps_one_runtime_ownership_marker() {
+        let marker = "<!-- shea-symphony-workpad -->";
+        let existing = format!(
+            "{marker}\n## Shea Symphony Workpad\n\n### Run Identity\n- Run: `old`\n\n<!-- shea-symphony-runtime-ownership -->\n- Branch: `old`\n<!-- /shea-symphony-runtime-ownership -->\n\n### Plan\n- [x] keep"
+        );
+        let incoming = "## Shea Symphony Workpad\n\n### Run Identity\n- Run: `new`\n\n<!-- shea-symphony-runtime-ownership -->\n- Branch: `new`\n<!-- /shea-symphony-runtime-ownership -->";
+
+        let body = merge_workpad_body(&existing, incoming, marker);
+
+        assert_eq!(
+            body.matches("<!-- shea-symphony-runtime-ownership -->")
+                .count(),
+            1
+        );
+        assert!(body.contains("- Run: `new`"));
+        assert!(body.contains("- Branch: `new`"));
+        assert!(!body.contains("- Branch: `old`"));
+        assert!(body.contains("- [x] keep"));
     }
 }

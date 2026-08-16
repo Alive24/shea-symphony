@@ -98,6 +98,22 @@ items, or things that were implemented correctly; put positive observations unde
 heading with plain bullets instead. Leave routing and evidence persistence to the Shea Symphony\n\
 wrapper after this process exits.\n";
 
+pub const AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY: &str =
+    "\n\n## Automatic Headless Structured Review Boundary\n\n\
+This review backend process is running under Shea Symphony automatic `review loop` or `review once`.\n\
+Shea Symphony CLI owns the Review Agent claim, tracker evidence, and Project state transition outside\n\
+this process. Do not mutate tracker state, the pull request, or the Review workspace.\n\n\
+Keep the review bounded to the linked PR diff and explicitly named code paths. Run verification\n\
+synchronously; do not create background tasks, request interactive approval, or leave commands\n\
+running. Resolve the adapter's `CLI` placeholder through `.shea/app-profile.json`; it is not the\n\
+current agy backend executable. If focused evidence cannot establish a conclusion, classify the\n\
+result as `needs_context` instead of broadening exploration or bypassing the sandbox.\n\n\
+The wrapper supplied a native JSON Schema. Return only the schema-constrained object through the\n\
+native structured-result channel. Do not emit a legacy `Review Result:` marker or prose before or\n\
+after the object. Use `pass` only with no blocking findings, `rework` only with confirmed findings,\n\
+and `needs_context` only with Needs Context findings. Leave routing and evidence persistence to the\n\
+Shea Symphony wrapper after this process exits.\n";
+
 pub fn render_assigned_lane_claim_envelope(claim: &LaneClaim) -> String {
     format!(
         "\n\n## Assigned Lane Claim\n\n\
@@ -182,6 +198,19 @@ mod tests {
         assert!(AUTOMATIC_HEADLESS_REVIEW_BOUNDARY
             .contains("Do not recursively enumerate directory trees"));
         assert!(AUTOMATIC_HEADLESS_REVIEW_BOUNDARY.contains("Review Result:\nNEEDS_CONTEXT"));
+    }
+
+    #[test]
+    fn structured_review_envelope_uses_only_native_schema_protocol() {
+        assert!(AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY
+            .contains("Return only the schema-constrained object"));
+        assert!(AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY
+            .contains("do not create background tasks"));
+        assert!(AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY
+            .contains("it is not the\ncurrent agy backend executable"));
+        assert!(
+            !AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY.contains("Start with exactly one line")
+        );
     }
 
     #[test]

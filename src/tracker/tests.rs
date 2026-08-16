@@ -298,7 +298,8 @@ fn rich_issue_evidence_hydration_merges_body_comments_prs_and_topology() {
                     "state": "OPEN",
                     "isDraft": false,
                     "baseRefName": "integration/issue-347-github-projectv2-rest-first-tracker",
-                    "headRefName": "feature/issue-350"
+                    "headRefName": "feature/issue-350",
+                    "headRefOid": "head-sha-9"
                 }
             ]
         },
@@ -322,6 +323,10 @@ fn rich_issue_evidence_hydration_merges_body_comments_prs_and_topology() {
     assert!(description.contains("## Shea Symphony Agent Review Run"));
     assert_eq!(issue.linked_pull_requests.len(), 1);
     assert_eq!(issue.linked_pull_requests[0].number, Some(9));
+    assert_eq!(
+        issue.linked_pull_requests[0].head_sha.as_deref(),
+        Some("head-sha-9")
+    );
     assert_eq!(
         issue
             .project_fields
@@ -507,7 +512,8 @@ fn parses_github_project_v2_issue_items() {
                                                 "url": "https://github.com/Alive24/shea-symphony/pull/7",
                                                 "state": "OPEN",
                                                 "baseRefName": "integration/issue-41-parent",
-                                                "headRefName": "feature/issue-42-implement-adapter"
+                                                "headRefName": "feature/issue-42-implement-adapter",
+                                                "headRefOid": "head-sha-7"
                                             }
                                         ]
                                     },
@@ -565,6 +571,10 @@ fn parses_github_project_v2_issue_items() {
         Some("#274")
     );
     assert_eq!(issues[0].linked_pull_requests[0].number, Some(7));
+    assert_eq!(
+        issues[0].linked_pull_requests[0].head_sha.as_deref(),
+        Some("head-sha-7")
+    );
     assert_eq!(
         issues[0].linked_pull_requests[0].base_ref_name.as_deref(),
         Some("integration/issue-41-parent")
@@ -636,6 +646,7 @@ fn merge_linked_pull_requests_deduplicates_by_url() {
         review_decision: None,
         base_ref_name: None,
         head_ref_name: None,
+        head_sha: None,
         source: crate::model::LinkedPullRequestSource::GithubNative,
     };
     let discovered_duplicate =

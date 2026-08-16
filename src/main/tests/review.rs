@@ -96,6 +96,26 @@ fn automatic_review_prompt_forbids_project_mutations() {
 }
 
 #[test]
+fn agy_automatic_review_prompt_uses_only_structured_result_protocol() {
+    let workflow = WorkflowDefinition::parse(
+        "/tmp/WORKFLOW.md",
+        "---\ntracker:\n  kind: memory\n---\nReview {{ issue.identifier }}",
+    )
+    .unwrap();
+    let prompt = render_automatic_review_prompt_for_backend(
+        &workflow,
+        &review_issue_with_ref("#282", "Headless review"),
+        "agy-cli",
+    )
+    .unwrap();
+
+    assert!(prompt.contains("Automatic Headless Structured Review Boundary"));
+    assert!(prompt.contains("Return only the schema-constrained object"));
+    assert!(prompt.contains("do not create background tasks"));
+    assert!(!prompt.contains("Start with exactly one line"));
+}
+
+#[test]
 fn manual_review_pass_workpad_records_doctor_evidence_marker() {
     let issue = tracker_issue_with_review_claim();
     let claim = project_text_field(&issue, "Review Agent").unwrap();

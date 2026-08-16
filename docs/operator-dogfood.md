@@ -369,9 +369,12 @@ Shea checks the configured agy executable for `--output-format json` and
 `--json-schema` support before launch; compatible future versions are accepted
 without an exact version pin. The backend passes the shared Review schema and
 routes only from the validated `structured_output` inside agy's provider
-envelope. Inspect the Review output artifact for raw stdout/stderr, provider
-envelope, extracted result, parsing diagnostics, exit status, conversation ID,
-inspected workspace/revision, and terminal-routing evidence. Missing
+envelope. It disables slash-command expansion, requires a clean local checkout
+at the current linked PR head SHA, grants sandbox access to linked-worktree Git
+metadata, and rejects any post-run `HEAD` or workspace change. Inspect the
+Review output artifact for raw stdout/stderr, provider envelope, extracted
+result, parsing/workspace-integrity diagnostics, exit status, conversation ID,
+expected/reviewed/completed revisions, and terminal-routing evidence. Missing
 capabilities, malformed envelopes,
 invalid or contradictory structured fields, provider failures, and zero-exit
 responses without a valid structured result all fail closed.

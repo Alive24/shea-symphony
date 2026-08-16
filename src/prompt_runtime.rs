@@ -105,12 +105,13 @@ Shea Symphony CLI owns the Review Agent claim, tracker evidence, and Project sta
 this process. Do not mutate tracker state, the pull request, or the Review workspace.\n\n\
 Keep the review bounded to the linked PR diff and explicitly named code paths. Run verification\n\
 synchronously; do not create background tasks, request interactive approval, or leave commands\n\
-running. Treat every Git-visible path in the Review workspace as strictly read-only: do not create,\n\
-edit, delete, rename, or chmod files; do not redirect command output into the workspace; and do not\n\
-generate scratch diff, patch, report, or log files such as `PR.diff`. Inspect diffs directly through\n\
-command stdout. Resolve the adapter's `CLI` placeholder through `.shea/app-profile.json`; it is not\n\
-the current agy backend executable. If focused evidence cannot establish a conclusion, classify the\n\
-result as `needs_context` instead of broadening exploration or bypassing the sandbox.\n\n\
+running. You are executing in a disposable isolated worktree at the exact linked PR revision; leave\n\
+its HEAD and tracked files unchanged. Inspect diffs directly through command stdout. If a tool must\n\
+materialize scratch output, write it only beneath `$SHEA_REVIEW_SCRATCH`, never in the checkout.\n\
+Build tools must use the wrapper-provided external cache paths such as `$CARGO_TARGET_DIR`. Resolve\n\
+the adapter's `CLI` placeholder through `.shea/app-profile.json`; it is not the current agy backend\n\
+executable. If focused evidence cannot establish a conclusion, classify the result as\n\
+`needs_context` instead of broadening exploration or bypassing the sandbox.\n\n\
 The wrapper supplied a native JSON Schema. Return only the schema-constrained object through the\n\
 native structured-result channel. Do not emit a legacy `Review Result:` marker or prose before or\n\
 after the object. Use `pass` only with no blocking findings, `rework` only with confirmed findings,\n\
@@ -209,14 +210,16 @@ mod tests {
             .contains("Return only the schema-constrained object"));
         assert!(AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY
             .contains("do not create background tasks"));
-        assert!(AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY
-            .contains("do not redirect command output into the workspace"));
-        assert!(AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY.contains("`PR.diff`"));
+        assert!(
+            AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY.contains("disposable isolated worktree")
+        );
+        assert!(AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY.contains("$SHEA_REVIEW_SCRATCH"));
+        assert!(AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY.contains("$CARGO_TARGET_DIR"));
         assert!(
             AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY.contains("adapter's `CLI` placeholder")
         );
-        assert!(AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY
-            .contains("current agy backend executable"));
+        assert!(AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY.contains(".shea/app-profile.json"));
+        assert!(AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY.contains("agy backend"));
         assert!(
             !AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY.contains("Start with exactly one line")
         );

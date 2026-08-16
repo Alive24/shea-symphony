@@ -631,14 +631,20 @@ parses the native provider envelope separately, and treats only the envelope's
 result, unsupported field, contradictory classification, non-success provider
 status, or nonzero process exit fails closed. Automatic agy Review disables
 slash-command expansion rather than injecting interactive `/plan` behavior. It
-requires a clean local checkout whose `HEAD` matches the linked PR's current head SHA,
-exposes linked-worktree Git metadata inside the sandbox, and compares the full
-workspace snapshot and `HEAD` after execution; any mutation fails closed. The
-output artifact retains raw stdout/stderr, the provider envelope, extracted
-structured result, parsing and workspace-integrity diagnostics, exit status,
-provider conversation ID, expected/reviewed/completed revisions, and
-terminal-routing class. The durable job ledger records the downstream Project
-routing decision.
+requires a clean canonical checkout whose `HEAD` matches the linked PR's current
+head SHA, then creates a detached temporary Git worktree at that exact revision.
+This uses standard `git worktree` behavior rather than a platform-specific
+filesystem sandbox. The worktree shares the repository Git common directory
+and object database, while its checkout, index, and `HEAD` are disposable;
+scratch and Cargo build output use sibling temporary directories. AGY may
+leave untracked scratch only in this disposable checkout; Shea records and
+discards it. A tracked-file or `HEAD` change, canonical-workspace mutation, or
+cleanup failure still fails closed. The output artifact retains raw
+stdout/stderr, the provider envelope, extracted structured result, parsing and
+workspace-integrity diagnostics, exit status, provider conversation ID,
+expected/reviewed/completed and isolated-worktree revisions, discarded
+untracked paths, cleanup evidence, and terminal-routing class. The durable job
+ledger records the downstream Project routing decision.
 
 Codex Review uses `review_lane.backend: codex-app-server`. Its optional
 `codex_command` overrides and otherwise falls back to `codex.command`;

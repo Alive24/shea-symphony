@@ -370,12 +370,18 @@ Shea checks the configured agy executable for `--output-format json` and
 without an exact version pin. The backend passes the shared Review schema and
 routes only from the validated `structured_output` inside agy's provider
 envelope. It disables slash-command expansion, requires a clean local checkout
-at the current linked PR head SHA, grants sandbox access to linked-worktree Git
-metadata, and rejects any post-run `HEAD` or workspace change. Inspect the
-Review output artifact for raw stdout/stderr, provider envelope, extracted
-result, parsing/workspace-integrity diagnostics, exit status, conversation ID,
-expected/reviewed/completed revisions, and terminal-routing evidence. Missing
-capabilities, malformed envelopes,
+at the current linked PR head SHA, and launches AGY in a detached temporary Git
+worktree using standard Git behavior rather than a platform-specific sandbox.
+The checkout, index, and `HEAD` are disposable, while the repository Git common
+directory and object database remain shared. The wrapper points `CARGO_TARGET_DIR`
+and temporary-file variables outside that checkout. It
+records and discards isolated untracked scratch, removes the temporary worktree
+after completion or cancellation, and rejects canonical mutation, isolated
+tracked-file/`HEAD` changes, or cleanup failure. Inspect the Review output
+artifact for raw stdout/stderr, provider envelope, extracted result,
+parsing/workspace-integrity diagnostics, exit status, conversation ID,
+expected/reviewed/completed and isolated revisions, discarded untracked paths,
+cleanup evidence, and terminal-routing evidence. Missing capabilities, malformed envelopes,
 invalid or contradictory structured fields, provider failures, and zero-exit
 responses without a valid structured result all fail closed.
 

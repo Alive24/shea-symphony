@@ -112,8 +112,9 @@ fn agy_automatic_review_prompt_uses_only_structured_result_protocol() {
     assert!(prompt.contains("Automatic Headless Structured Review Boundary"));
     assert!(prompt.contains("Return only the schema-constrained object"));
     assert!(prompt.contains("do not create background tasks"));
-    assert!(prompt.contains("do not redirect command output into the workspace"));
-    assert!(prompt.contains("`PR.diff`"));
+    assert!(prompt.contains("disposable isolated worktree"));
+    assert!(prompt.contains("$SHEA_REVIEW_SCRATCH"));
+    assert!(prompt.contains("$CARGO_TARGET_DIR"));
     assert!(!prompt.contains("Start with exactly one line"));
 }
 

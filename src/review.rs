@@ -14,6 +14,7 @@ use crate::model::{normalize_state, TrackerIssue};
 use crate::workflow::WorkflowDefinition;
 use crate::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 
+mod agy_workspace;
 mod claude;
 mod codex;
 mod decision;
@@ -46,6 +47,7 @@ pub use job::{
 };
 pub use report::{classify_findings, AgentReviewReport, ReviewFinding, ReviewFindingClass};
 
+use agy_workspace::{AgyIsolationVerification, AgyReviewIsolation};
 use claude::ClaudeCodeReviewBackend;
 use codex::CodexAppServerReviewBackend;
 use gemini_health::{diagnose_agy_spawn_failure, diagnose_gemini_spawn_failure};
@@ -215,6 +217,7 @@ struct CliReviewChild {
     process: Child,
     workspace: PathBuf,
     agy_workspace_binding: Option<AgyWorkspaceBinding>,
+    agy_isolation: Option<AgyReviewIsolation>,
 }
 
 #[derive(Debug)]
@@ -300,17 +303,37 @@ impl ReviewBackend for GeminiCliReviewBackend {
         fs::write(&prompt_path, &request.prompt)
             .map_err(|error| ReviewError::Artifact(error.to_string()))?;
 
-        let headless_config = self.headless_config();
-        let args = headless_config.args_for_request(&request.prompt, &request.workspace)?;
         let agy_workspace_binding = (self.kind == CliReviewKind::Agy)
             .then(|| prepare_agy_workspace_binding(&request.issue, &request.workspace))
             .transpose()?;
+        let agy_isolation = agy_workspace_binding
+            .as_ref()
+            .map(|binding| {
+                AgyReviewIsolation::create(&request.workspace, &binding.reviewed_revision)
+                    .map_err(ReviewError::Backend)
+            })
+            .transpose()?;
+        let execution_workspace = agy_isolation
+            .as_ref()
+            .map(AgyReviewIsolation::workspace)
+            .unwrap_or(&request.workspace);
+        let headless_config = self.headless_config();
+        let args = headless_config.args_for_request(&request.prompt, execution_workspace)?;
         let mut command = Command::new(&self.command);
         command
             .args(&args)
-            .current_dir(&request.workspace)
+            .current_dir(execution_workspace)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if let Some(isolation) = agy_isolation.as_ref() {
+            command
+                .env("SHEA_REVIEW_WORKSPACE", isolation.workspace())
+                .env("SHEA_REVIEW_SCRATCH", isolation.scratch())
+                .env("CARGO_TARGET_DIR", isolation.cargo_target())
+                .env("TMPDIR", isolation.scratch())
+                .env("TMP", isolation.scratch())
+                .env("TEMP", isolation.scratch());
+        }
         if headless_config.uses_stdin_prompt() {
             command.stdin(Stdio::piped());
         } else {
@@ -340,6 +363,7 @@ impl ReviewBackend for GeminiCliReviewBackend {
                     process: child,
                     workspace: request.workspace,
                     agy_workspace_binding,
+                    agy_isolation,
                 },
             );
 
@@ -386,16 +410,22 @@ impl ReviewBackend for GeminiCliReviewBackend {
         let child = children
             .remove(&job.id)
             .expect("child existed after successful lookup");
-        let output = child
-            .process
+        let CliReviewChild {
+            process,
+            workspace,
+            agy_workspace_binding,
+            agy_isolation,
+        } = child;
+        let output = process
             .wait_with_output()
             .map_err(|error| ReviewError::Backend(error.to_string()))?;
         if self.kind == CliReviewKind::Agy {
             return complete_agy_review_job(
                 job,
                 output,
-                &child.workspace,
-                child.agy_workspace_binding.as_ref(),
+                &workspace,
+                agy_workspace_binding.as_ref(),
+                agy_isolation,
             );
         }
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -515,6 +545,26 @@ impl ReviewBackend for GeminiCliReviewBackend {
                     .ok()
                     .and_then(|parsed| parsed.session_id.clone());
                 let parsing_diagnostic = parsed.err();
+                let workspace_verification = child
+                    .agy_workspace_binding
+                    .as_ref()
+                    .map(|binding| verify_agy_workspace_binding(&child.workspace, binding));
+                let isolation_verification = child
+                    .agy_isolation
+                    .map(AgyReviewIsolation::verify_and_cleanup)
+                    .unwrap_or_else(|| AgyIsolationVerification {
+                        completed_revision: None,
+                        integrity_error: Some(
+                            "cancelled agy Review had no isolated Review worktree".into(),
+                        ),
+                        discarded_untracked_paths: Vec::new(),
+                        cleanup_error: None,
+                    });
+                let workspace_integrity_error = workspace_verification
+                    .as_ref()
+                    .and_then(|verification| verification.error.clone())
+                    .or_else(|| isolation_verification.integrity_error.clone())
+                    .or_else(|| isolation_verification.cleanup_error.clone());
                 let output_artifact = write_agy_review_artifact(AgyReviewArtifact {
                     prompt_artifact_path: job.artifact_path.as_deref(),
                     job_id: &job.id,
@@ -527,6 +577,13 @@ impl ReviewBackend for GeminiCliReviewBackend {
                     parsing_diagnostic: parsing_diagnostic.as_deref(),
                     terminal_routing: "cancelled_before_validated_routing",
                     workspace: Some(&child.workspace),
+                    isolated_workspace: true,
+                    isolated_completed_revision: isolation_verification
+                        .completed_revision
+                        .as_deref(),
+                    isolated_discarded_untracked_paths: &isolation_verification
+                        .discarded_untracked_paths,
+                    isolated_cleanup_error: isolation_verification.cleanup_error.as_deref(),
                     reviewed_revision: child
                         .agy_workspace_binding
                         .as_ref()
@@ -535,8 +592,10 @@ impl ReviewBackend for GeminiCliReviewBackend {
                         .agy_workspace_binding
                         .as_ref()
                         .map(|binding| binding.expected_revision.as_str()),
-                    completed_revision: None,
-                    workspace_integrity_error: None,
+                    completed_revision: workspace_verification
+                        .as_ref()
+                        .and_then(|verification| verification.completed_revision.as_deref()),
+                    workspace_integrity_error: workspace_integrity_error.as_deref(),
                 })?;
                 job.artifact_path = Some(output_artifact);
                 job.backend_session_id = session_id;
@@ -1007,6 +1066,7 @@ fn complete_agy_review_job(
     output: std::process::Output,
     workspace: &Path,
     workspace_binding: Option<&AgyWorkspaceBinding>,
+    agy_isolation: Option<AgyReviewIsolation>,
 ) -> Result<ReviewJob, ReviewError> {
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -1031,8 +1091,23 @@ fn complete_agy_review_job(
             completed_revision: None,
             error: Some("agy Review completed without a workspace revision binding".into()),
         });
+    let isolation_verification = agy_isolation
+        .map(AgyReviewIsolation::verify_and_cleanup)
+        .unwrap_or_else(|| AgyIsolationVerification {
+            completed_revision: None,
+            integrity_error: Some(
+                "agy Review completed without an isolated Review worktree".into(),
+            ),
+            discarded_untracked_paths: Vec::new(),
+            cleanup_error: None,
+        });
+    let workspace_integrity_error = workspace_verification
+        .error
+        .clone()
+        .or_else(|| isolation_verification.integrity_error.clone())
+        .or_else(|| isolation_verification.cleanup_error.clone());
 
-    let report_result = if let Some(error) = workspace_verification.error.as_deref() {
+    let report_result = if let Some(error) = workspace_integrity_error.as_deref() {
         Err(error.to_string())
     } else if output.status.success() {
         parsed.and_then(|parsed| {
@@ -1062,7 +1137,7 @@ fn complete_agy_review_job(
             None,
             "completed_validated_structured_report",
         ),
-        Err(error) if workspace_verification.error.is_some() => {
+        Err(error) if workspace_integrity_error.is_some() => {
             (None, Some(error), None, "failed_closed_workspace_integrity")
         }
         Err(error) if output.status.success() => (
@@ -1083,9 +1158,13 @@ fn complete_agy_review_job(
         provider_envelope: provider_envelope.as_ref(),
         structured_output: structured_output.as_ref(),
         parsing_diagnostic: parsing_diagnostic.as_deref(),
-        workspace_integrity_error: workspace_verification.error.as_deref(),
+        workspace_integrity_error: workspace_integrity_error.as_deref(),
         terminal_routing,
         workspace: Some(workspace),
+        isolated_workspace: true,
+        isolated_completed_revision: isolation_verification.completed_revision.as_deref(),
+        isolated_discarded_untracked_paths: &isolation_verification.discarded_untracked_paths,
+        isolated_cleanup_error: isolation_verification.cleanup_error.as_deref(),
         reviewed_revision: workspace_binding.map(|binding| binding.reviewed_revision.as_str()),
         expected_revision: workspace_binding.map(|binding| binding.expected_revision.as_str()),
         completed_revision: workspace_verification.completed_revision.as_deref(),
@@ -1116,6 +1195,10 @@ struct AgyReviewArtifact<'a> {
     workspace_integrity_error: Option<&'a str>,
     terminal_routing: &'a str,
     workspace: Option<&'a Path>,
+    isolated_workspace: bool,
+    isolated_completed_revision: Option<&'a str>,
+    isolated_discarded_untracked_paths: &'a [String],
+    isolated_cleanup_error: Option<&'a str>,
     reviewed_revision: Option<&'a str>,
     expected_revision: Option<&'a str>,
     completed_revision: Option<&'a str>,
@@ -1142,6 +1225,10 @@ fn write_agy_review_artifact(input: AgyReviewArtifact<'_>) -> Result<PathBuf, Re
         "workspace_integrity_error": input.workspace_integrity_error,
         "terminal_routing": input.terminal_routing,
         "workspace": input.workspace.map(|path| path.display().to_string()),
+        "isolated_workspace": input.isolated_workspace,
+        "isolated_completed_revision": input.isolated_completed_revision,
+        "isolated_discarded_untracked_paths": input.isolated_discarded_untracked_paths,
+        "isolated_cleanup_error": input.isolated_cleanup_error,
         "reviewed_revision": input.reviewed_revision,
         "expected_revision": input.expected_revision,
         "completed_revision": input.completed_revision,
@@ -2470,13 +2557,16 @@ mod tests {
         let artifact_root = temp.path().join("reviews");
         let reviewer = temp.path().join("agy.sh");
         let args_path = temp.path().join("agy.args");
+        let cwd_path = temp.path().join("agy.cwd");
+        let env_path = temp.path().join("agy.env");
         let reviewed_revision = initialize_review_git_workspace(&workspace);
-        let access_directories = agy_workspace_access_directories(&workspace).unwrap();
         fs::write(
             &reviewer,
             format!(
-                "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then\n  printf '%s\\n' '--output-format text|json|stream-json' '--json-schema schema-or-path'\n  exit 0\nfi\nprintf '%s\\n' \"$@\" > '{}'\nprintf '%s\\n' '{{\"conversation_id\":\"agy-session-7\",\"status\":\"SUCCESS\",\"response\":\"{{\\\"summary\\\":\\\"Rework required.\\\",\\\"terminal_classification\\\":\\\"rework\\\",\\\"findings\\\":[{{\\\"class\\\":\\\"confirmed\\\",\\\"severity\\\":\\\"high\\\",\\\"title\\\":\\\"Bug\\\",\\\"body\\\":\\\"found one\\\",\\\"file\\\":\\\"src/lib.rs\\\",\\\"line\\\":1,\\\"evidence\\\":\\\"fixture\\\"}}]}}\",\"structured_output\":{{\"summary\":\"Rework required.\",\"terminal_classification\":\"rework\",\"findings\":[{{\"class\":\"confirmed\",\"severity\":\"high\",\"title\":\"Bug\",\"body\":\"found one\",\"file\":\"src/lib.rs\",\"line\":1,\"evidence\":\"fixture\"}}]}}}}'\n",
-                args_path.display()
+                "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then\n  printf '%s\\n' '--output-format text|json|stream-json' '--json-schema schema-or-path'\n  exit 0\nfi\nprintf '%s\\n' \"$@\" > '{}'\npwd > '{}'\nprintf 'workspace=%s\\nscratch=%s\\ncargo=%s\\ntmpdir=%s\\n' \"$SHEA_REVIEW_WORKSPACE\" \"$SHEA_REVIEW_SCRATCH\" \"$CARGO_TARGET_DIR\" \"$TMPDIR\" > '{}'\nprintf '%s\\n' '{{\"conversation_id\":\"agy-session-7\",\"status\":\"SUCCESS\",\"response\":\"{{\\\"summary\\\":\\\"Rework required.\\\",\\\"terminal_classification\\\":\\\"rework\\\",\\\"findings\\\":[{{\\\"class\\\":\\\"confirmed\\\",\\\"severity\\\":\\\"high\\\",\\\"title\\\":\\\"Bug\\\",\\\"body\\\":\\\"found one\\\",\\\"file\\\":\\\"src/lib.rs\\\",\\\"line\\\":1,\\\"evidence\\\":\\\"fixture\\\"}}]}}\",\"structured_output\":{{\"summary\":\"Rework required.\",\"terminal_classification\":\"rework\",\"findings\":[{{\"class\":\"confirmed\",\"severity\":\"high\",\"title\":\"Bug\",\"body\":\"found one\",\"file\":\"src/lib.rs\",\"line\":1,\"evidence\":\"fixture\"}}]}}}}'\n",
+                args_path.display(),
+                cwd_path.display(),
+                env_path.display()
             ),
         )
         .unwrap();
@@ -2522,9 +2612,33 @@ mod tests {
         assert!(args.starts_with(
             "--print\nReview this prompt.\n--print-timeout\n1140000ms\n--disable-slash-commands\n--sandbox\n--dangerously-skip-permissions\n--output-format\njson\n--json-schema\n"
         ));
-        for directory in access_directories {
-            assert!(args.contains(&format!("\n--add-dir\n{}\n", directory.display())));
-        }
+        assert!(!args.contains(&format!("\n--add-dir\n{}\n", workspace.display())));
+        let isolated_workspace = PathBuf::from(fs::read_to_string(&cwd_path).unwrap().trim());
+        assert!(!isolated_workspace.exists());
+        let environment = fs::read_to_string(&env_path).unwrap();
+        let configured_workspace = environment
+            .lines()
+            .find_map(|line| line.strip_prefix("workspace="))
+            .unwrap();
+        assert_eq!(
+            Path::new(configured_workspace)
+                .file_name()
+                .and_then(|name| name.to_str()),
+            Some("workspace")
+        );
+        assert!(!Path::new(configured_workspace).exists());
+        let scratch = environment
+            .lines()
+            .find_map(|line| line.strip_prefix("scratch="))
+            .unwrap();
+        let cargo_target = environment
+            .lines()
+            .find_map(|line| line.strip_prefix("cargo="))
+            .unwrap();
+        assert!(!Path::new(scratch).starts_with(configured_workspace));
+        assert!(!Path::new(cargo_target).starts_with(configured_workspace));
+        assert!(!Path::new(scratch).exists());
+        assert!(!Path::new(cargo_target).exists());
         let report = job.report.as_ref().unwrap();
         assert_eq!(report.summary.as_deref(), Some("Rework required."));
         assert_eq!(report.session_id.as_deref(), Some("agy-session-7"));
@@ -2543,6 +2657,13 @@ mod tests {
         assert_eq!(artifact["reviewed_revision"], reviewed_revision);
         assert_eq!(artifact["expected_revision"], reviewed_revision);
         assert_eq!(artifact["completed_revision"], reviewed_revision);
+        assert_eq!(artifact["isolated_workspace"], true);
+        assert_eq!(artifact["isolated_completed_revision"], reviewed_revision);
+        assert_eq!(
+            artifact["isolated_discarded_untracked_paths"],
+            serde_json::json!([])
+        );
+        assert_eq!(artifact["isolated_cleanup_error"], serde_json::Value::Null);
         assert_eq!(
             artifact["workspace_integrity_error"],
             serde_json::Value::Null
@@ -2559,7 +2680,7 @@ mod tests {
     }
 
     #[test]
-    fn agy_valid_pass_fails_closed_when_backend_mutates_workspace() {
+    fn agy_valid_pass_discards_isolated_untracked_files_without_polluting_canonical() {
         let temp = tempfile::tempdir().unwrap();
         let workspace = temp.path().join("review-workspace");
         let reviewer = temp.path().join("agy-mutating.sh");
@@ -2582,7 +2703,88 @@ mod tests {
             .start(ReviewRequest {
                 issue: issue_at_revision(&reviewed_revision),
                 prompt: "Review this prompt.".into(),
-                workspace,
+                workspace: workspace.clone(),
+                artifact_root: temp.path().join("reviews"),
+            })
+            .unwrap();
+        let job = poll_review_job_until_terminal(
+            &backend,
+            job,
+            Duration::from_secs(5),
+            Duration::from_millis(10),
+        )
+        .unwrap();
+
+        assert_eq!(job.state, ReviewJobState::Completed);
+        assert!(job.report.is_some());
+        assert!(job.error.is_none());
+        assert!(!workspace.join("pollution.txt").exists());
+        assert!(workspace_state(&workspace).unwrap().is_empty());
+        let artifact: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(job.artifact_path.unwrap()).unwrap()).unwrap();
+        assert_eq!(
+            artifact["terminal_routing"],
+            "completed_validated_structured_report"
+        );
+        assert_eq!(
+            artifact["isolated_discarded_untracked_paths"],
+            serde_json::json!(["pollution.txt"])
+        );
+        assert_eq!(
+            artifact["workspace_integrity_error"],
+            serde_json::Value::Null
+        );
+        assert_eq!(artifact["isolated_cleanup_error"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn agy_valid_pass_fails_closed_when_isolated_tracked_files_change() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("review-workspace");
+        let reviewer = temp.path().join("agy-mutating-tracked.sh");
+        initialize_review_git_workspace(&workspace);
+        fs::write(workspace.join("tracked.txt"), "reviewed baseline\n").unwrap();
+        let add = Command::new("git")
+            .args(["add", "tracked.txt"])
+            .current_dir(&workspace)
+            .status()
+            .unwrap();
+        assert!(add.success());
+        let commit = Command::new("git")
+            .args([
+                "-c",
+                "user.name=Shea Test",
+                "-c",
+                "user.email=shea@example.invalid",
+                "commit",
+                "--quiet",
+                "-m",
+                "add tracked review fixture",
+            ])
+            .current_dir(&workspace)
+            .status()
+            .unwrap();
+        assert!(commit.success());
+        let reviewed_revision = review_workspace_revision(&workspace).unwrap();
+        fs::write(
+            &reviewer,
+            "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then\n  printf '%s\\n' '--output-format text|json|stream-json' '--json-schema schema-or-path'\n  exit 0\nfi\nprintf 'changed by reviewer\\n' > tracked.txt\nprintf '%s\\n' '{\"conversation_id\":\"agy-mutating-tracked\",\"status\":\"SUCCESS\",\"structured_output\":{\"summary\":\"Passed.\",\"terminal_classification\":\"pass\",\"findings\":[]}}'\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&reviewer).unwrap().permissions();
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(0o755);
+        fs::set_permissions(&reviewer, permissions).unwrap();
+        let mut config = gemini_review_config();
+        config.backend = "agy-cli".into();
+        config.agy_command = reviewer.display().to_string();
+        let backend = GeminiCliReviewBackend::from_agy_config(&config);
+
+        let job = backend
+            .start(ReviewRequest {
+                issue: issue_at_revision(&reviewed_revision),
+                prompt: "Review this prompt.".into(),
+                workspace: workspace.clone(),
                 artifact_root: temp.path().join("reviews"),
             })
             .unwrap();
@@ -2596,19 +2798,82 @@ mod tests {
 
         assert_eq!(job.state, ReviewJobState::Failed);
         assert!(job.report.is_none());
-        assert!(job
-            .error
-            .as_deref()
-            .is_some_and(|error| error.contains("modified the read-only Review workspace")));
+        assert!(job.error.as_deref().is_some_and(
+            |error| error.contains("modified tracked files in its isolated Review worktree")
+        ));
+        assert_eq!(
+            fs::read_to_string(workspace.join("tracked.txt")).unwrap(),
+            "reviewed baseline\n"
+        );
+        assert!(workspace_state(&workspace).unwrap().is_empty());
         let artifact: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(job.artifact_path.unwrap()).unwrap()).unwrap();
         assert_eq!(
             artifact["terminal_routing"],
             "failed_closed_workspace_integrity"
         );
-        assert!(artifact["workspace_integrity_error"]
-            .as_str()
-            .is_some_and(|error| error.contains("modified the read-only Review workspace")));
+        assert!(artifact["workspace_integrity_error"].as_str().is_some_and(
+            |error| error.contains("modified tracked files in its isolated Review worktree")
+        ));
+        assert_eq!(artifact["isolated_cleanup_error"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn agy_cancel_removes_isolated_worktree_and_external_cache_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("review-workspace");
+        let reviewer = temp.path().join("agy-waiting.sh");
+        let cwd_path = temp.path().join("agy.cwd");
+        let reviewed_revision = initialize_review_git_workspace(&workspace);
+        fs::write(
+            &reviewer,
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then\n  printf '%s\\n' '--output-format text|json|stream-json' '--json-schema schema-or-path'\n  exit 0\nfi\npwd > '{}'\nexec sleep 30\n",
+                cwd_path.display()
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&reviewer).unwrap().permissions();
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(0o755);
+        fs::set_permissions(&reviewer, permissions).unwrap();
+        let mut config = gemini_review_config();
+        config.backend = "agy-cli".into();
+        config.agy_command = reviewer.display().to_string();
+        let backend = GeminiCliReviewBackend::from_agy_config(&config);
+
+        let job = backend
+            .start(ReviewRequest {
+                issue: issue_at_revision(&reviewed_revision),
+                prompt: "Review this prompt.".into(),
+                workspace: workspace.clone(),
+                artifact_root: temp.path().join("reviews"),
+            })
+            .unwrap();
+        for _ in 0..50 {
+            if cwd_path.exists() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let isolated_workspace = PathBuf::from(fs::read_to_string(&cwd_path).unwrap().trim());
+        let temporary_root = isolated_workspace.parent().unwrap().to_path_buf();
+
+        let cancelled = backend.cancel(job).unwrap();
+
+        assert!(!isolated_workspace.exists());
+        assert!(!temporary_root.exists());
+        assert!(workspace_state(&workspace).unwrap().is_empty());
+        let artifact: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(cancelled.artifact_path.as_ref().unwrap()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            artifact["terminal_routing"],
+            "cancelled_before_validated_routing"
+        );
+        assert_eq!(artifact["isolated_workspace"], true);
+        assert_eq!(artifact["isolated_cleanup_error"], serde_json::Value::Null);
     }
 
     #[test]

@@ -7,9 +7,11 @@ Shea separates two local profile contracts:
   execution environment was selected and how to verify it safely.
 
 The runtime profile is machine-local, credential-free, and Git-ignored. It is
-produced by `shea-symphony-runtime-onboarding` after repository-specific
-discovery and explicit operator confirmation. Shea core never discovers Node,
-pnpm, Python, Rust, Conda, Docker, Nix, or another ecosystem itself.
+produced by `setup-shea` after repository-specific discovery and explicit
+operator confirmation. The same setup entrypoint owns initial onboarding,
+incomplete setup, and later environment-drift reconciliation. Shea core never
+discovers Node, pnpm, Python, Rust, Conda, Docker, Nix, or another ecosystem
+itself.
 
 ## Workflow Configuration
 
@@ -94,8 +96,8 @@ versions are safe to record in Main runtime/workpad evidence. Environment
 values and probe arguments are not included in that evidence.
 
 The first slice does not apply repository runtime profiles to Review or Merge.
-Doctor may report a profile problem, but onboarding owns discovery, environment
-selection, and confirmed profile writes.
+Doctor may report a profile problem, but routes discovery, environment
+selection, and confirmed profile writes back to `setup-shea`.
 
 ## Operator Readiness Check
 

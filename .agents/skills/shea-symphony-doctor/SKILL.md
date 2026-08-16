@@ -17,6 +17,11 @@ Before any repair, state the violated invariant, affected issue/files, allowed p
 
 Doctor never deletes worktrees, discards local work, clears a live claim speculatively, fabricates Review/Human evidence, merges, or changes an issue contract as a shortcut.
 
+Runtime-profile drift, missing repository execution requirements, harness
+selection, or broader setup reconciliation routes to `setup-shea`. Doctor may
+diagnose and preserve the evidence, but must not select an environment, rewrite
+the runtime profile, or restore repository resources from upstream.
+
 ## Repository contract repair
 
 Use `repository_contract_repair` only for repository-owned Markdown contracts such as normal operational Skills, prompts, workpads, capability references, and operator docs. Read `references/repository-contract-repair.md` and classify findings as:

@@ -4,7 +4,9 @@ use std::thread;
 use std::time::Duration;
 
 use shea_symphony::config::RuntimeConfig;
-use shea_symphony::issue_workspace::{discover_issue_workspaces, WorkspaceMatchStrength};
+use shea_symphony::issue_workspace::{
+    discover_issue_workspaces, IssueWorkspaceReport, WorkspaceMatchStrength,
+};
 use shea_symphony::lane_claim::{
     LaneClaim, LaneClaimActor, LaneClaimLane, LaneClaimSource, LaneClaimState,
 };
@@ -60,12 +62,7 @@ pub(crate) fn review_fake(
         || adapter.get_issue(&issue_ref),
     )?
     .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
-    let request = ReviewRequest {
-        issue: issue.clone(),
-        prompt: render_automatic_review_prompt(&workflow, &issue)?,
-        workspace: config.workspace.root.clone(),
-        artifact_root: config.observability.logs_root.join("reviews"),
-    };
+    let request = automatic_review_request(&workflow, &config, &issue)?;
     let backend = FakeReviewBackend::new(outcome);
     let mut job = backend.poll(backend.start(request)?)?;
     let ledger_path =
@@ -105,12 +102,7 @@ pub(crate) fn review_once(
     let issue = adapter
         .get_issue(&issue_ref)?
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
-    let request = ReviewRequest {
-        issue: issue.clone(),
-        prompt: render_automatic_review_prompt(&workflow, &issue)?,
-        workspace: config.workspace.root.clone(),
-        artifact_root: config.observability.logs_root.join("reviews"),
-    };
+    let request = automatic_review_request(&workflow, &config, &issue)?;
     let backend = review_backend_from_config(&config.review);
     let mut job = run_configured_review_backend(&config, &issue, backend.as_ref(), request)?;
     let ledger_path =
@@ -788,12 +780,7 @@ fn run_review_job(
     issue: &TrackerIssue,
     fake_outcome: Option<FakeReviewOutcome>,
 ) -> Result<ReviewJob, Box<dyn std::error::Error>> {
-    let request = ReviewRequest {
-        issue: issue.clone(),
-        prompt: render_automatic_review_prompt(workflow, issue)?,
-        workspace: review_workspace_for_issue(config, issue),
-        artifact_root: config.observability.logs_root.join("reviews"),
-    };
+    let request = automatic_review_request(workflow, config, issue)?;
 
     if let Some(outcome) = fake_outcome {
         let backend = FakeReviewBackend::new(outcome);
@@ -863,17 +850,24 @@ fn review_backend_progress_spec(
     spec
 }
 
+fn automatic_review_request(
+    workflow: &WorkflowDefinition,
+    config: &RuntimeConfig,
+    issue: &TrackerIssue,
+) -> Result<ReviewRequest, shea_symphony::prompt::PromptError> {
+    Ok(ReviewRequest {
+        issue: issue.clone(),
+        prompt: render_automatic_review_prompt(workflow, issue)?,
+        workspace: review_workspace_for_issue(config, issue),
+        artifact_root: config.observability.logs_root.join("reviews"),
+    })
+}
+
 pub(crate) fn review_workspace_for_issue(config: &RuntimeConfig, issue: &TrackerIssue) -> PathBuf {
     if let Ok(repo_root) = std::env::current_dir() {
         if let Ok(report) = discover_issue_workspaces(config, issue, &repo_root) {
-            if let Some(index) = report.canonical_index {
-                if let Some(candidate) = report.candidates.get(index) {
-                    if candidate.strength == WorkspaceMatchStrength::Strong
-                        && candidate.path.starts_with(&config.workspace.root)
-                    {
-                        return candidate.path.clone();
-                    }
-                }
+            if let Some(workspace) = strong_canonical_review_workspace(&report) {
+                return workspace;
             }
         }
     }
@@ -881,6 +875,27 @@ pub(crate) fn review_workspace_for_issue(config: &RuntimeConfig, issue: &Tracker
     run_loop_handoff_plan(config, issue)
         .map(|handoff| handoff.workspace_path)
         .unwrap_or_else(|_| config.workspace.root.clone())
+}
+
+pub(crate) fn strong_canonical_review_workspace(report: &IssueWorkspaceReport) -> Option<PathBuf> {
+    let candidate = report
+        .canonical_index
+        .and_then(|index| report.candidates.get(index))?;
+    let is_verified_repository_worktree = candidate.branch.is_some()
+        && candidate.head.is_some()
+        && candidate
+            .evidence
+            .iter()
+            .any(|evidence| evidence.source == "git_worktree");
+    if candidate.strength != WorkspaceMatchStrength::Strong || !is_verified_repository_worktree {
+        return None;
+    }
+
+    // Operator-adopted and harness-owned worktrees may intentionally live outside the
+    // workflow-managed root. Require git-worktree evidence in addition to the unambiguous strong
+    // issue match; otherwise tracker text alone could select an arbitrary local path. Rejecting a
+    // verified external worktree here would review stale base content instead of the PR revision.
+    Some(candidate.path.clone())
 }
 
 pub(crate) fn render_automatic_review_prompt(

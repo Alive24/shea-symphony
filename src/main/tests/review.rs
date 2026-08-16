@@ -474,3 +474,56 @@ fn review_workspace_uses_issue_handoff_workspace() {
 
     assert!(workspace.ends_with("issue-67-add-parallel-review-worker-pool"));
 }
+
+#[test]
+fn review_workspace_accepts_strong_adopted_candidate_outside_managed_root() {
+    let workspace = PathBuf::from("/tmp/codex-worktrees/cb56/shea-symphony");
+    let report = IssueWorkspaceReport {
+        issue_ref: "#543".into(),
+        title: "Make Markdown authoritative".into(),
+        branch_hints: vec!["feature/issue-543-markdown-authoritative-prompts-workpads".into()],
+        candidates: vec![IssueWorkspaceCandidate {
+            path: workspace.clone(),
+            branch: Some("feature/issue-543-markdown-authoritative-prompts-workpads".into()),
+            head: Some("76c398d".into()),
+            strength: WorkspaceMatchStrength::Strong,
+            evidence: vec![
+                WorkspaceEvidence {
+                    source: "workpad".into(),
+                    detail: "operator-adopted canonical worktree".into(),
+                },
+                WorkspaceEvidence {
+                    source: "git_worktree".into(),
+                    detail: "branch matches issue hint".into(),
+                },
+            ],
+        }],
+        canonical_index: Some(0),
+        warnings: Vec::new(),
+    };
+
+    assert_eq!(strong_canonical_review_workspace(&report), Some(workspace));
+}
+
+#[test]
+fn review_workspace_rejects_unverified_external_tracker_path() {
+    let report = IssueWorkspaceReport {
+        issue_ref: "#543".into(),
+        title: "Make Markdown authoritative".into(),
+        branch_hints: Vec::new(),
+        candidates: vec![IssueWorkspaceCandidate {
+            path: PathBuf::from("/tmp/not-a-repository-worktree"),
+            branch: None,
+            head: None,
+            strength: WorkspaceMatchStrength::Strong,
+            evidence: vec![WorkspaceEvidence {
+                source: "workpad".into(),
+                detail: "unverified tracker text".into(),
+            }],
+        }],
+        canonical_index: Some(0),
+        warnings: Vec::new(),
+    };
+
+    assert_eq!(strong_canonical_review_workspace(&report), None);
+}

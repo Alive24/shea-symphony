@@ -10,7 +10,7 @@ import {
 } from './localArtifactRefresh.ts';
 import { refreshStatusStore } from './uiState.ts';
 
-const slowSurfaces = ['githubQueue', 'skills', 'sessions', 'status'];
+const slowSurfaces = ['githubQueue', 'sessions', 'status'];
 const projectReadSurfaces = new Set(['autopilot', 'doctor', 'review', 'githubQueue']);
 
 export const defaultBackgroundReadSurfaces = [...slowSurfaces];

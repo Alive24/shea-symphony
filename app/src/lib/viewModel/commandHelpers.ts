@@ -29,7 +29,6 @@ export function commandImpact(name: string, result: any) {
       autopilot: 'Lane queue posture and selected work can be trusted.',
       doctor: 'Readiness blockers and repair recommendations are visible.',
       review: 'Agent Review and Human Review evidence can be inspected.',
-      skills: 'Installed Shea Skill coverage is observable.',
       sessions: 'Foreground agent session presence is observable.',
       status: 'Runtime sessions, local checkout, binary, and worktree posture are observable.',
       githubQueue: 'Open issue Project status counts are available for the first-screen lane pulse.'
@@ -40,7 +39,6 @@ export function commandImpact(name: string, result: any) {
     autopilot: 'Lane counts may fall back to static posture and parked queues may be incomplete.',
     doctor: 'Readiness blockers may be hidden until Doctor returns.',
     review: 'Review freshness and Human Review evidence may be incomplete.',
-    skills: 'Skill installation/readiness status may be hidden.',
     sessions: 'Active foreground sessions may be hidden.',
     status: 'Runtime and local status posture may be hidden.',
     githubQueue: 'First-screen lane pulse may be stale or rely on slower tracker reads.'
@@ -61,7 +59,6 @@ export function labelForCommand(name: string) {
     autopilot: 'Autoloop plan',
     doctor: 'Doctor',
     review: 'Review status',
-    skills: 'Skills status',
     sessions: 'Session list',
     status: 'Status',
     githubQueue: 'GitHub queue'
@@ -73,8 +70,7 @@ export function commandActionForDiagnostic(name: string) {
   const actions: Record<string, string> = {
     autopilot: 'autopilot-plan',
     doctor: 'doctor',
-    review: 'review-status',
-    skills: 'skills-status'
+    review: 'review-status'
   };
   return actions[name] ?? 'autopilot-plan';
 }

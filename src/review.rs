@@ -50,6 +50,7 @@ use claude::ClaudeCodeReviewBackend;
 use codex::CodexAppServerReviewBackend;
 use gemini_health::{diagnose_agy_spawn_failure, diagnose_gemini_spawn_failure};
 use job::review_job_id;
+use structured::{review_output_schema, structured_report};
 
 const LOG_BLOCK_LIMIT: usize = 2_000;
 const AGY_PRINT_TIMEOUT_GRACE_MS: u64 = 60_000;
@@ -206,7 +207,14 @@ pub struct GeminiCliReviewBackend {
     model: Option<String>,
     allowed_tools: Vec<String>,
     timeout_ms: u64,
-    children: Arc<Mutex<BTreeMap<String, Child>>>,
+    children: Arc<Mutex<BTreeMap<String, CliReviewChild>>>,
+}
+
+#[derive(Debug)]
+struct CliReviewChild {
+    process: Child,
+    workspace: PathBuf,
+    reviewed_revision: Option<String>,
 }
 
 impl GeminiCliReviewBackend {
@@ -271,6 +279,11 @@ impl ReviewBackend for GeminiCliReviewBackend {
     }
 
     fn start(&self, request: ReviewRequest) -> Result<ReviewJob, ReviewError> {
+        if self.kind == CliReviewKind::Agy {
+            if let Some(error) = self.prelaunch_error() {
+                return Err(ReviewError::Backend(error));
+            }
+        }
         fs::create_dir_all(&request.workspace)
             .map_err(|error| ReviewError::Artifact(error.to_string()))?;
         fs::create_dir_all(&request.artifact_root)
@@ -282,6 +295,9 @@ impl ReviewBackend for GeminiCliReviewBackend {
 
         let headless_config = self.headless_config();
         let args = headless_config.args_for_request(&request.prompt, &request.workspace);
+        let reviewed_revision = (self.kind == CliReviewKind::Agy)
+            .then(|| review_workspace_revision(&request.workspace))
+            .transpose()?;
         let mut command = Command::new(&self.command);
         command
             .args(&args)
@@ -311,7 +327,14 @@ impl ReviewBackend for GeminiCliReviewBackend {
         self.children
             .lock()
             .map_err(|error| ReviewError::Backend(error.to_string()))?
-            .insert(id.clone(), child);
+            .insert(
+                id.clone(),
+                CliReviewChild {
+                    process: child,
+                    workspace: request.workspace,
+                    reviewed_revision,
+                },
+            );
 
         Ok(ReviewJob {
             id,
@@ -345,6 +368,7 @@ impl ReviewBackend for GeminiCliReviewBackend {
         };
 
         if child
+            .process
             .try_wait()
             .map_err(|error| ReviewError::Backend(error.to_string()))?
             .is_none()
@@ -356,8 +380,17 @@ impl ReviewBackend for GeminiCliReviewBackend {
             .remove(&job.id)
             .expect("child existed after successful lookup");
         let output = child
+            .process
             .wait_with_output()
             .map_err(|error| ReviewError::Backend(error.to_string()))?;
+        if self.kind == CliReviewKind::Agy {
+            return complete_agy_review_job(
+                job,
+                output,
+                &child.workspace,
+                child.reviewed_revision.as_deref(),
+            );
+        }
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         let exit_status = output
@@ -430,9 +463,15 @@ impl ReviewBackend for GeminiCliReviewBackend {
     }
 
     fn prelaunch_error(&self) -> Option<String> {
-        self.headless_config()
+        let diagnostic = self
+            .headless_config()
             .prelaunch_health_diagnostic(&self.command)
-            .map(|diagnostic| diagnostic.to_error_message())
+            .map(|diagnostic| diagnostic.to_error_message());
+        diagnostic.or_else(|| {
+            (self.kind == CliReviewKind::Agy)
+                .then(|| agy_native_json_capability_error(&self.command))
+                .flatten()
+        })
     }
 
     fn cancel(&self, mut job: ReviewJob) -> Result<ReviewJob, ReviewError> {
@@ -445,8 +484,9 @@ impl ReviewBackend for GeminiCliReviewBackend {
         };
 
         if let Some(mut child) = child {
-            let _ = child.kill();
+            let _ = child.process.kill();
             let output = child
+                .process
                 .wait_with_output()
                 .map_err(|error| ReviewError::Backend(error.to_string()))?;
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -456,6 +496,36 @@ impl ReviewBackend for GeminiCliReviewBackend {
                 .code()
                 .map(|code| code.to_string())
                 .unwrap_or_else(|| "terminated by signal".into());
+            if self.kind == CliReviewKind::Agy {
+                let parsed = parse_agy_stdout(&stdout);
+                let provider_envelope = serde_json::from_str(stdout.trim()).ok();
+                let structured_output = provider_envelope
+                    .as_ref()
+                    .and_then(|value: &serde_json::Value| value.get("structured_output"))
+                    .cloned();
+                let session_id = parsed
+                    .as_ref()
+                    .ok()
+                    .and_then(|parsed| parsed.session_id.clone());
+                let parsing_diagnostic = parsed.err();
+                let output_artifact = write_agy_review_artifact(AgyReviewArtifact {
+                    prompt_artifact_path: job.artifact_path.as_deref(),
+                    job_id: &job.id,
+                    stdout: &stdout,
+                    stderr: &stderr,
+                    exit_status: &exit_status,
+                    session_id: session_id.as_deref(),
+                    provider_envelope: provider_envelope.as_ref(),
+                    structured_output: structured_output.as_ref(),
+                    parsing_diagnostic: parsing_diagnostic.as_deref(),
+                    terminal_routing: "cancelled_before_validated_routing",
+                    workspace: Some(&child.workspace),
+                    reviewed_revision: child.reviewed_revision.as_deref(),
+                })?;
+                job.artifact_path = Some(output_artifact);
+                job.backend_session_id = session_id;
+                return Ok(job);
+            }
             let parsed_output = parse_gemini_stdout(&stdout);
             let output_artifact = write_gemini_review_artifact(
                 job.artifact_path.as_deref(),
@@ -549,6 +619,8 @@ pub fn gemini_cli_headless_args(model: Option<&str>, allowed_tools: &[String]) -
 }
 
 pub fn agy_cli_headless_args(prompt: &str, model: Option<&str>, timeout_ms: u64) -> Vec<String> {
+    let schema = serde_json::to_string(&review_output_schema())
+        .expect("static Shea Review schema must serialize");
     let mut args = vec![
         "--print".to_string(),
         prompt.to_string(),
@@ -558,11 +630,82 @@ pub fn agy_cli_headless_args(prompt: &str, model: Option<&str>, timeout_ms: u64)
         "plan".to_string(),
         "--sandbox".to_string(),
         "--dangerously-skip-permissions".to_string(),
+        "--output-format".to_string(),
+        "json".to_string(),
+        "--json-schema".to_string(),
+        schema,
     ];
     if let Some(model) = model.map(str::trim).filter(|model| !model.is_empty()) {
         args.extend(["--model".to_string(), model.to_string()]);
     }
     args
+}
+
+fn review_workspace_revision(workspace: &Path) -> Result<String, ReviewError> {
+    let output = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(workspace)
+        .output()
+        .map_err(|error| {
+            ReviewError::Backend(format!(
+                "could not bind agy Review to workspace revision at {}: {error}",
+                workspace.display()
+            ))
+        })?;
+    if !output.status.success() {
+        return Err(ReviewError::Backend(format!(
+            "could not bind agy Review to workspace revision at {}: {}",
+            workspace.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let revision = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if revision.is_empty() {
+        return Err(ReviewError::Backend(format!(
+            "could not bind agy Review to workspace revision at {}: git returned an empty revision",
+            workspace.display()
+        )));
+    }
+    Ok(revision)
+}
+
+fn agy_native_json_capability_error(command: &str) -> Option<String> {
+    let output = match Command::new(command).arg("--help").output() {
+        Ok(output) => output,
+        Err(error) => {
+            return Some(format!(
+                "agy structured Review capability check could not run `{command} --help`: {error}; configure `review_lane.agy_command` with a compatible executable that supports `--output-format json` and `--json-schema`"
+            ));
+        }
+    };
+    let help = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let supports_json_output = help
+        .lines()
+        .any(|line| line.contains("--output-format") && line.to_ascii_lowercase().contains("json"));
+    let supports_json_schema = help.contains("--json-schema");
+    if output.status.success() && supports_json_output && supports_json_schema {
+        return None;
+    }
+
+    let mut missing = Vec::new();
+    if !supports_json_output {
+        missing.push("`--output-format json`");
+    }
+    if !supports_json_schema {
+        missing.push("`--json-schema`");
+    }
+    let detail = if output.status.success() {
+        format!("missing required capability {}", missing.join(" and "))
+    } else {
+        format!("`--help` exited with status {}", output.status)
+    };
+    Some(format!(
+        "agy structured Review capability check failed for `{command}`: {detail}; install or configure a compatible agy executable before retrying Review"
+    ))
 }
 
 fn agy_print_timeout_ms(review_timeout_ms: u64) -> u64 {
@@ -631,6 +774,177 @@ fn extract_gemini_json_envelope(stdout: &str) -> Option<serde_json::Value> {
         }
     }
     None
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ParsedAgyStdout {
+    structured_output: serde_json::Value,
+    session_id: Option<String>,
+}
+
+fn parse_agy_stdout(stdout: &str) -> Result<ParsedAgyStdout, String> {
+    let provider_envelope: serde_json::Value = serde_json::from_str(stdout.trim())
+        .map_err(|error| format!("agy returned malformed JSON provider envelope: {error}"))?;
+    let envelope = provider_envelope
+        .as_object()
+        .ok_or_else(|| "agy provider envelope must be a JSON object".to_string())?;
+    let status = envelope
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "agy provider envelope is missing string field `status`".to_string())?;
+    if status != "SUCCESS" {
+        return Err(format!(
+            "agy provider envelope reported non-success status `{status}`"
+        ));
+    }
+    let structured_output = envelope
+        .get("structured_output")
+        .cloned()
+        .ok_or_else(|| "agy provider envelope is missing `structured_output`".to_string())?;
+    if !structured_output.is_object() {
+        return Err("agy provider envelope `structured_output` must be a JSON object".into());
+    }
+    let session_id = match envelope.get("conversation_id") {
+        Some(value) => {
+            let value = value.as_str().ok_or_else(|| {
+                "agy provider envelope `conversation_id` must be a string".to_string()
+            })?;
+            if value.trim().is_empty() {
+                return Err("agy provider envelope `conversation_id` must not be empty".into());
+            }
+            Some(value.to_string())
+        }
+        None => None,
+    };
+    Ok(ParsedAgyStdout {
+        structured_output,
+        session_id,
+    })
+}
+
+fn complete_agy_review_job(
+    mut job: ReviewJob,
+    output: std::process::Output,
+    workspace: &Path,
+    reviewed_revision: Option<&str>,
+) -> Result<ReviewJob, ReviewError> {
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let exit_status = output
+        .status
+        .code()
+        .map(|code| code.to_string())
+        .unwrap_or_else(|| "terminated by signal".into());
+    let parsed = parse_agy_stdout(&stdout);
+    let provider_envelope = serde_json::from_str(stdout.trim()).ok();
+    let structured_output = provider_envelope
+        .as_ref()
+        .and_then(|value: &serde_json::Value| value.get("structured_output"))
+        .cloned();
+    let session_id = parsed
+        .as_ref()
+        .ok()
+        .and_then(|parsed| parsed.session_id.clone());
+
+    let report_result = if output.status.success() {
+        parsed.and_then(|parsed| {
+            let raw = serde_json::to_string(&parsed.structured_output)
+                .map_err(|error| format!("could not serialize agy structured output: {error}"))?;
+            structured_report(
+                &raw,
+                "agy-cli",
+                "agy Review",
+                parsed.session_id,
+                stderr.clone(),
+                Some(exit_status.clone()),
+            )
+        })
+    } else {
+        let detail = stderr.trim();
+        Err(if detail.is_empty() {
+            format!("agy review command exited with status {exit_status} and no stderr")
+        } else {
+            format!("agy review command exited with status {exit_status}: {detail}")
+        })
+    };
+    let (report, parsing_diagnostic, terminal_routing) = match report_result {
+        Ok(report) => (Some(report), None, "completed_validated_structured_report"),
+        Err(error) if output.status.success() => {
+            (None, Some(error), "failed_closed_invalid_structured_output")
+        }
+        Err(error) => (None, Some(error), "failed_backend_exit"),
+    };
+    let output_artifact = write_agy_review_artifact(AgyReviewArtifact {
+        prompt_artifact_path: job.artifact_path.as_deref(),
+        job_id: &job.id,
+        stdout: &stdout,
+        stderr: &stderr,
+        exit_status: &exit_status,
+        session_id: session_id.as_deref(),
+        provider_envelope: provider_envelope.as_ref(),
+        structured_output: structured_output.as_ref(),
+        parsing_diagnostic: parsing_diagnostic.as_deref(),
+        terminal_routing,
+        workspace: Some(workspace),
+        reviewed_revision,
+    })?;
+    job.artifact_path = Some(output_artifact);
+    job.backend_session_id = session_id;
+    job.report = report;
+    if let Some(error) = parsing_diagnostic {
+        job.state = ReviewJobState::Failed;
+        job.error = Some(error);
+    } else {
+        job.state = ReviewJobState::Completed;
+        job.error = None;
+    }
+    Ok(job)
+}
+
+struct AgyReviewArtifact<'a> {
+    prompt_artifact_path: Option<&'a Path>,
+    job_id: &'a str,
+    stdout: &'a str,
+    stderr: &'a str,
+    exit_status: &'a str,
+    session_id: Option<&'a str>,
+    provider_envelope: Option<&'a serde_json::Value>,
+    structured_output: Option<&'a serde_json::Value>,
+    parsing_diagnostic: Option<&'a str>,
+    terminal_routing: &'a str,
+    workspace: Option<&'a Path>,
+    reviewed_revision: Option<&'a str>,
+}
+
+fn write_agy_review_artifact(input: AgyReviewArtifact<'_>) -> Result<PathBuf, ReviewError> {
+    let artifact_root = input
+        .prompt_artifact_path
+        .and_then(Path::parent)
+        .ok_or_else(|| ReviewError::Artifact("missing review prompt artifact path".into()))?;
+    let output_path = artifact_root.join(format!("{}.output.json", input.job_id));
+    let artifact = serde_json::json!({
+        "job_id": input.job_id,
+        "backend": "agy-cli",
+        "prompt_artifact_path": input.prompt_artifact_path.map(|path| path.display().to_string()),
+        "native_json_schema": true,
+        "stdout": input.stdout,
+        "stderr": input.stderr,
+        "exit_status": input.exit_status,
+        "session_id": input.session_id,
+        "provider_envelope": input.provider_envelope,
+        "structured_output": input.structured_output,
+        "parsing_diagnostic": input.parsing_diagnostic,
+        "terminal_routing": input.terminal_routing,
+        "workspace": input.workspace.map(|path| path.display().to_string()),
+        "reviewed_revision": input.reviewed_revision,
+    });
+    fs::write(
+        &output_path,
+        serde_json::to_string_pretty(&artifact)
+            .map_err(|error| ReviewError::Artifact(error.to_string()))?,
+    )
+    .map_err(|error| ReviewError::Artifact(error.to_string()))?;
+    Ok(output_path)
 }
 
 fn write_gemini_review_artifact(
@@ -1490,6 +1804,43 @@ mod tests {
         }
     }
 
+    fn initialize_review_git_workspace(path: &Path) -> String {
+        fs::create_dir_all(path).unwrap();
+        let init = std::process::Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(path)
+            .status()
+            .unwrap();
+        assert!(init.success());
+        let commit = std::process::Command::new("git")
+            .args([
+                "-c",
+                "user.name=Shea Test",
+                "-c",
+                "user.email=shea@example.invalid",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "-m",
+                "review fixture",
+            ])
+            .current_dir(path)
+            .status()
+            .unwrap();
+        assert!(commit.success());
+        String::from_utf8(
+            std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(path)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_string()
+    }
+
     fn poll_test_job_until_terminal(
         backend: &dyn ReviewBackend,
         job: ReviewJob,
@@ -1722,8 +2073,8 @@ mod tests {
         assert_eq!(preview.mode, "headless");
         assert_eq!(preview.command, "/Users/example/.local/bin/agy");
         assert_eq!(
-            preview.args,
-            vec![
+            &preview.args[..8],
+            [
                 "--print",
                 "",
                 "--print-timeout",
@@ -1732,10 +2083,17 @@ mod tests {
                 "plan",
                 "--sandbox",
                 "--dangerously-skip-permissions",
-                "--model",
-                "gemini-3.1-pro-preview",
             ]
         );
+        assert_eq!(
+            &preview.args[8..11],
+            ["--output-format", "json", "--json-schema"]
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&preview.args[11]).unwrap(),
+            review_output_schema()
+        );
+        assert_eq!(&preview.args[12..], ["--model", "gemini-3.1-pro-preview"]);
     }
 
     #[test]
@@ -1806,8 +2164,8 @@ mod tests {
         );
 
         assert_eq!(
-            args,
-            vec![
+            &args[..8],
+            [
                 "--print",
                 "Review this prompt.",
                 "--print-timeout",
@@ -1816,10 +2174,14 @@ mod tests {
                 "plan",
                 "--sandbox",
                 "--dangerously-skip-permissions",
-                "--model",
-                "gemini-3.1-pro-preview",
             ]
         );
+        assert_eq!(&args[8..11], ["--output-format", "json", "--json-schema"]);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&args[11]).unwrap(),
+            review_output_schema()
+        );
+        assert_eq!(&args[12..], ["--model", "gemini-3.1-pro-preview"]);
     }
 
     #[test]
@@ -1890,14 +2252,15 @@ mod tests {
     }
 
     #[test]
-    fn agy_backend_uses_print_prompt_arg_and_plain_text_response() {
+    fn agy_backend_uses_native_schema_and_provider_envelope() {
         let temp = tempfile::tempdir().unwrap();
         let workspace = temp.path().join("review-workspace");
         let artifact_root = temp.path().join("reviews");
         let reviewer = temp.path().join("agy.sh");
+        let reviewed_revision = initialize_review_git_workspace(&workspace);
         fs::write(
             &reviewer,
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" > args.txt\nprintf 'Review completed.\\n[Confirmed] Bug: found one\\n'\n",
+            "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then\n  printf '%s\\n' '--output-format text|json|stream-json' '--json-schema schema-or-path'\n  exit 0\nfi\nprintf '%s\\n' \"$@\" > args.txt\nprintf '%s\\n' '{\"conversation_id\":\"agy-session-7\",\"status\":\"SUCCESS\",\"response\":\"{\\\"summary\\\":\\\"Rework required.\\\",\\\"terminal_classification\\\":\\\"rework\\\",\\\"findings\\\":[{\\\"class\\\":\\\"confirmed\\\",\\\"severity\\\":\\\"high\\\",\\\"title\\\":\\\"Bug\\\",\\\"body\\\":\\\"found one\\\",\\\"file\\\":\\\"src/lib.rs\\\",\\\"line\\\":1,\\\"evidence\\\":\\\"fixture\\\"}]}\",\"structured_output\":{\"summary\":\"Rework required.\",\"terminal_classification\":\"rework\",\"findings\":[{\"class\":\"confirmed\",\"severity\":\"high\",\"title\":\"Bug\",\"body\":\"found one\",\"file\":\"src/lib.rs\",\"line\":1,\"evidence\":\"fixture\"}]}}'\n",
         )
         .unwrap();
         let mut permissions = fs::metadata(&reviewer).unwrap().permissions();
@@ -1938,16 +2301,17 @@ mod tests {
         .unwrap();
 
         assert_eq!(job.state, ReviewJobState::Completed);
-        assert_eq!(
-            fs::read_to_string(workspace.join("args.txt")).unwrap(),
-            format!(
-                "--print\nReview this prompt.\n--print-timeout\n1140000ms\n--mode\nplan\n--sandbox\n--dangerously-skip-permissions\n--model\ngemini-3.1-pro-preview\n--add-dir\n{}\n",
-                workspace.display()
-            )
-        );
+        let args = fs::read_to_string(workspace.join("args.txt")).unwrap();
+        assert!(args.starts_with(
+            "--print\nReview this prompt.\n--print-timeout\n1140000ms\n--mode\nplan\n--sandbox\n--dangerously-skip-permissions\n--output-format\njson\n--json-schema\n"
+        ));
+        assert!(args.ends_with(&format!(
+            "\n--model\ngemini-3.1-pro-preview\n--add-dir\n{}\n",
+            workspace.display()
+        )));
         let report = job.report.as_ref().unwrap();
-        assert_eq!(report.summary.as_deref(), Some("Review completed."));
-        assert_eq!(report.session_id, None);
+        assert_eq!(report.summary.as_deref(), Some("Rework required."));
+        assert_eq!(report.session_id.as_deref(), Some("agy-session-7"));
         assert_eq!(report.exit_status.as_deref(), Some("0"));
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].class, ReviewFindingClass::Confirmed);
@@ -1956,6 +2320,233 @@ mod tests {
             .as_ref()
             .and_then(|path| path.file_name())
             .is_some_and(|name| name.to_string_lossy() == format!("{}.output.json", job.id)));
+        let artifact: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(job.artifact_path.as_ref().unwrap()).unwrap())
+                .unwrap();
+        assert_eq!(artifact["provider_envelope"]["status"], "SUCCESS");
+        assert_eq!(artifact["reviewed_revision"], reviewed_revision);
+        assert_eq!(
+            artifact["structured_output"]["terminal_classification"],
+            "rework"
+        );
+        assert_eq!(artifact["parsing_diagnostic"], serde_json::Value::Null);
+        assert_eq!(
+            artifact["terminal_routing"],
+            "completed_validated_structured_report"
+        );
+    }
+
+    #[test]
+    fn agy_structured_results_validate_pass_rework_and_needs_context() {
+        let cases = [
+            (
+                serde_json::json!({
+                    "summary": "Passed.",
+                    "terminal_classification": "pass",
+                    "findings": []
+                }),
+                ReviewOutcome::PassedToHumanReview,
+            ),
+            (
+                serde_json::json!({
+                    "summary": "Rework required.",
+                    "terminal_classification": "rework",
+                    "findings": [{
+                        "class": "confirmed",
+                        "severity": "high",
+                        "title": "Broken gate",
+                        "body": "The required gate is missing.",
+                        "file": "src/lib.rs",
+                        "line": 1,
+                        "evidence": "fixture"
+                    }]
+                }),
+                ReviewOutcome::NeedsRework,
+            ),
+            (
+                serde_json::json!({
+                    "summary": "More evidence is required.",
+                    "terminal_classification": "needs_context",
+                    "findings": [{
+                        "class": "needs_context",
+                        "severity": "note",
+                        "title": "Missing evidence",
+                        "body": "The linked revision could not be inspected.",
+                        "file": null,
+                        "line": null,
+                        "evidence": "fixture"
+                    }]
+                }),
+                ReviewOutcome::InconclusiveNeedsRework,
+            ),
+        ];
+
+        for (structured_output, expected_outcome) in cases {
+            let stdout = serde_json::json!({
+                "conversation_id": "agy-session",
+                "status": "SUCCESS",
+                "response": structured_output.to_string(),
+                "structured_output": structured_output,
+            })
+            .to_string();
+            let parsed = parse_agy_stdout(&stdout).unwrap();
+            let report = structured_report(
+                &parsed.structured_output.to_string(),
+                "agy-cli",
+                "agy Review",
+                parsed.session_id,
+                String::new(),
+                Some("0".into()),
+            )
+            .unwrap();
+            let job = ReviewJob {
+                id: "agy-test".into(),
+                issue_ref: "#1".into(),
+                backend: "agy-cli".into(),
+                state: ReviewJobState::Completed,
+                artifact_path: None,
+                ledger_path: None,
+                backend_session_id: report.session_id.clone(),
+                report: Some(report),
+                error: None,
+            };
+
+            assert_eq!(review_gate_decision(&job).outcome, expected_outcome);
+        }
+    }
+
+    #[test]
+    fn agy_envelope_and_structured_validation_fail_closed() {
+        assert!(parse_agy_stdout("not-json")
+            .unwrap_err()
+            .contains("malformed JSON"));
+        assert!(parse_agy_stdout("{}")
+            .unwrap_err()
+            .contains("missing string field `status`"));
+        assert!(parse_agy_stdout(r#"{"status":"SUCCESS"}"#)
+            .unwrap_err()
+            .contains("missing `structured_output`"));
+        assert!(
+            parse_agy_stdout(r#"{"status":"FAILED","structured_output":{}}"#)
+                .unwrap_err()
+                .contains("non-success status")
+        );
+
+        let missing_fields = serde_json::json!({"summary": "Incomplete"});
+        assert!(structured_report(
+            &missing_fields.to_string(),
+            "agy-cli",
+            "agy Review",
+            None,
+            String::new(),
+            Some("0".into()),
+        )
+        .unwrap_err()
+        .contains("malformed structured output"));
+
+        let conflicting = serde_json::json!({
+            "summary": "Contradictory pass.",
+            "terminal_classification": "pass",
+            "findings": [{
+                "class": "confirmed",
+                "severity": "high",
+                "title": "Confirmed defect",
+                "body": "This must block.",
+                "file": null,
+                "line": null,
+                "evidence": "fixture"
+            }]
+        });
+        assert!(structured_report(
+            &conflicting.to_string(),
+            "agy-cli",
+            "agy Review",
+            None,
+            String::new(),
+            Some("0".into()),
+        )
+        .unwrap_err()
+        .contains("conflicts with blocking findings"));
+    }
+
+    #[test]
+    fn agy_prelaunch_rejects_missing_native_json_capabilities() {
+        let temp = tempfile::tempdir().unwrap();
+        let reviewer = temp.path().join("agy-old.sh");
+        fs::write(
+            &reviewer,
+            "#!/bin/sh\nprintf '%s\\n' '--print legacy text only'\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&reviewer).unwrap().permissions();
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(0o755);
+        fs::set_permissions(&reviewer, permissions).unwrap();
+        let mut config = gemini_review_config();
+        config.backend = "agy-cli".into();
+        config.agy_command = reviewer.display().to_string();
+        let backend = GeminiCliReviewBackend::from_agy_config(&config);
+
+        let error = backend.prelaunch_error().unwrap();
+
+        assert!(error.contains("capability check failed"));
+        assert!(error.contains("`--output-format json`"));
+        assert!(error.contains("`--json-schema`"));
+    }
+
+    #[test]
+    fn zero_exit_invalid_agy_result_cannot_route_to_human_review_or_merging() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("review-workspace");
+        let reviewer = temp.path().join("agy-invalid.sh");
+        let reviewed_revision = initialize_review_git_workspace(&workspace);
+        fs::write(
+            &reviewer,
+            "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then\n  printf '%s\\n' '--output-format text|json|stream-json' '--json-schema schema-or-path'\n  exit 0\nfi\nprintf '%s\\n' '{\"conversation_id\":\"agy-invalid\",\"status\":\"SUCCESS\",\"structured_output\":{\"summary\":\"missing fields\"}}'\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&reviewer).unwrap().permissions();
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(0o755);
+        fs::set_permissions(&reviewer, permissions).unwrap();
+        let mut config = gemini_review_config();
+        config.backend = "agy-cli".into();
+        config.agy_command = reviewer.display().to_string();
+        let backend = GeminiCliReviewBackend::from_agy_config(&config);
+        let job = backend
+            .start(ReviewRequest {
+                issue: issue(),
+                prompt: "Review this prompt.".into(),
+                workspace,
+                artifact_root: temp.path().join("reviews"),
+            })
+            .unwrap();
+        let job = poll_review_job_until_terminal(
+            &backend,
+            job,
+            Duration::from_secs(5),
+            Duration::from_millis(10),
+        )
+        .unwrap();
+
+        assert_eq!(job.state, ReviewJobState::Failed);
+        assert!(job.report.is_none());
+        let decision = review_gate_decision(&job);
+        assert!(!matches!(
+            decision.target_state,
+            Some("human_review" | "merging")
+        ));
+        let artifact: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(job.artifact_path.as_ref().unwrap()).unwrap())
+                .unwrap();
+        assert_eq!(
+            artifact["terminal_routing"],
+            "failed_closed_invalid_structured_output"
+        );
+        assert_eq!(artifact["reviewed_revision"], reviewed_revision);
+        assert!(artifact["parsing_diagnostic"]
+            .as_str()
+            .is_some_and(|value| value.contains("malformed structured output")));
     }
 
     #[test]

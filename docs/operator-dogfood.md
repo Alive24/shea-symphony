@@ -346,8 +346,8 @@ dogfood.
 For live Agent Review, make the selected backend command visible to the worker
 process. `review loop` owns the Review Agent claim and final routing; the
 backend process is report-only. The canonical workflow continues to use `agy`
-headlessly, while `codex-app-server` and `claude-code` are available as
-independent structured, read-only reviewers.
+headlessly with native schema-constrained JSON output, while `codex-app-server`
+and `claude-code` are available as independent structured, read-only reviewers.
 
 Prefer an absolute `agy` path for automatic review workers:
 
@@ -364,6 +364,17 @@ review_lane:
   agy_command: /Users/chuntengxiao/.local/bin/agy
   agy_model: gemini-3.1-pro-preview
 ```
+
+Shea checks the configured agy executable for `--output-format json` and
+`--json-schema` support before launch; compatible future versions are accepted
+without an exact version pin. The backend passes the shared Review schema and
+routes only from the validated `structured_output` inside agy's provider
+envelope. Inspect the Review output artifact for raw stdout/stderr, provider
+envelope, extracted result, parsing diagnostics, exit status, conversation ID,
+inspected workspace/revision, and terminal-routing evidence. Missing
+capabilities, malformed envelopes,
+invalid or contradictory structured fields, provider failures, and zero-exit
+responses without a valid structured result all fail closed.
 
 For Codex Review, the Review-specific command overrides `codex.command`; omit
 it to use the shared command. The safe capability defaults are also shown

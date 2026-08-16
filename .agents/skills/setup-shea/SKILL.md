@@ -52,6 +52,10 @@ existing differing file without an explicit operator decision.
 - Treat vendored and generated target files as operator-owned. A byte-identical
   file is unchanged; any existing differing file is a conflict until the
   operator chooses keep, replace, or a reviewed manual merge.
+- Treat installed `shea-symphony-issue-forge-dream` and
+  `shea-symphony-issue-forge-reflect` directories as explicit legacy-removal
+  candidates, never aliases. Follow the content-visible, confirmation-gated
+  deletion contract in [reconciliation.md](references/reconciliation.md).
 - Stage all remote inputs before confirmation. A GitHub or validation failure
   before writes must leave the target and external Project unchanged.
 

@@ -523,7 +523,7 @@ cargo run -- forge create --workflow workflows/shea-symphony.md --status Todo --
 cargo run -- forge create --workflow workflows/shea-symphony.md --status Todo --title "Blocked follow-up title" --body-file /tmp/issue.md --assignee Alive24 --blocked-by '#122' --dry-run
 cargo run -- forge promote '#241' --workflow workflows/shea-symphony.md --title "Executable title" --body-file /tmp/issue.md --operator-confirmation "promote it" --decision "Use the CLI-owned promotion note template." --scope-change "Backlog seed is now an executable Todo issue." --dependency-context "Dependencies: none; related context is non-blocking." --readback-summary "Operator confirmed the dry-run preview before write." --dry-run
 cargo run -- forge promote '#241' --workflow workflows/shea-symphony.md --title "Executable title" --body-file /tmp/issue.md --operator-confirmation "promote it" --decision "Use the CLI-owned promotion note template." --scope-change "Backlog seed is now an executable Todo issue." --dependency-context "Blocked by #122 until the prerequisite lands." --blocked-by '#122' --readback-summary "Operator confirmed the dry-run preview before write." --dry-run
-cargo run -- forge promote '#241' --workflow examples/promote-fixture-workflow.md --title "Harden Issue Forge Reflect promotion fixture" --body-file examples/fixtures/promoted-issue.md --operator-confirmation "promote it" --decision "Keep the promotion in place." --scope-change "Backlog seed becomes an executable Todo issue." --dependency-context "Dependencies: none." --readback-summary "Dry-run preview verified before write." --dry-run
+cargo run -- forge promote '#241' --workflow examples/promote-fixture-workflow.md --title "Harden Issue Forge promotion fixture" --body-file examples/fixtures/promoted-issue.md --operator-confirmation "promote it" --decision "Keep the promotion in place." --scope-change "Backlog seed becomes an executable Todo issue." --dependency-context "Dependencies: none." --readback-summary "Dry-run preview verified before write." --dry-run
 cargo run -- forge rework '#282' --workflow workflows/shea-symphony.md --title "Rework: revised execution contract" --body-file /tmp/rework-body.md --evidence-file /tmp/rework-evidence.md --operator-confirmation "route Human Review back to Rework" --dry-run
 ```
 
@@ -694,13 +694,13 @@ vendored Skill text with upstream. Setup uses the standard CLI's `--copy` mode
 in temporary staging for selected harnesses and does not invoke its later
 `check` or `update` lifecycle.
 
-The canonical inventory includes Setup Shea, Issue Forge, Issue Forge Reflect,
-Issue Forge Dream, Manual Main, Manual Review, Human Review, Manual Merge,
-Doctor, and the HALO research seed. Human
+The canonical inventory includes Setup Shea, Issue Forge, Backlog, Improve,
+Manual Main, Manual Review, Human Review, Manual Merge, Doctor, and the HALO
+research seed. Human
 Review is an operator-owned briefing and UAT decision skill: it records a
 structured decision note and routes to `Merging`, `Rework`, or
-`Need Human Input` only after explicit operator confirmation. `forge reflect`
-and `forge dream` remain skill behaviors, not Shea Symphony CLI subcommands.
+`Need Human Input` only after explicit operator confirmation. Backlog and
+Improve remain Skill behaviors, not Shea Symphony CLI subcommands.
 `forge create`, `forge promote`, `forge rework`, and `forge validate` remain
 deterministic CLI executor surfaces.
 
@@ -708,30 +708,28 @@ The normal operational Skills consume semantic names from
 `.shea/contracts/workflow-capability.v1.md`; command spellings in this reference
 belong to the Legacy adapter and are intentionally not copied into those Skills.
 
-## Issue Forge Dream
+## Backlog And Improve Skills
 
-Issue Forge Dream is a Codex/Gemini skill workflow for slow, deep backlog
-mining. It reads broader Shea Symphony context, writes bounded advisory logs,
-runs a lightweight Gemini review by default when available, and creates
-evidence-backed `Backlog` seeds unless the operator asks for report-only mode.
+`shea-symphony-backlog` is the routine checkpoint and residual-memory Skill. It
+summarizes current progress, blockers, and eligible next work; captures bounded
+Backlog seeds; and organizes, deduplicates, or reviews stale seeds. It may create
+an exact confirmed Backlog seed through the guarded workflow, but it does not
+draft or execute promotion. An operator-selected candidate returns to
+`shea-symphony-issue-forge` for executable shaping.
 
-Dream writes repo-owned logs under `docs/dream-log/`:
+`shea-symphony-improve` runs only when explicitly invoked. It scopes an
+operator-named area before scanning, or infers one bounded recent-change hot
+spot when no area is supplied. It applies the internal deep-module, deletion,
+real-variation, locality, leverage, and dependency-aware testing lenses, then
+writes a self-contained report under ignored
+`.shea/local/improve/<run-id>/`. Reports contain zero to three candidates and at
+most one recommendation, use no CDN or remote asset, and never modify source,
+docs, ADRs, tracker state, or Skills. The operator may ignore a candidate,
+capture it through Backlog, or discuss it through Issue Forge.
 
-- `docs/dream-log/INDEX.md` is the compact global entrypoint.
-- Each run directory uses `docs/dream-log/YYYY-MM-DD-<run-count>-<slug>/`.
-- `RUN.md` records the source inventory, created backlog mapping, sleep-enough
-  judgment, Gemini review status, and next useful theme.
-- `topic-*.md` records bounded topic triage with evidence anchors, coverage
-  checks, promotion path, and Dream confidence.
-- `gemini-review.md` records the lightweight review summary or unavailable
-  reason.
-- `created-backlog.md` is optional when several seeds are created.
-
-Dream-created Backlog seeds should include evidence anchors, existing coverage
-checked, promotion guidance, and Dream confidence. Low-confidence candidates
-stay Watchlist or very light Backlog. Dream never creates `Todo` issues
-directly and Dream Logs are not execution authority for Main, Review, Merge, or
-Doctor lanes.
+Historical `docs/dream-log/` records remain archived evidence. They are not an
+active Skill input or execution authority and are never loaded automatically by
+Backlog or Improve.
 
 ## Merge Lane
 

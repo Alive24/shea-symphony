@@ -521,10 +521,11 @@ for each selected harness, does not transfer temporary `skills-lock.json`
 metadata, and does not invoke its later `check` or `update` lifecycle.
 
 The repository-owned Skills preserve the same lane boundaries as the Shea Symphony CLI:
-Issue Forge, Reflect, and Dream handle conversation, draft shaping, backlog
-mining, and promotion discussion, including Human Review -> Rework revision
-discussion; the CLI owns `forge create`, `forge promote`, `forge rework`, and
-`forge validate`. Manual Main stops at `Agent Review`; Manual Review owns
+Issue Forge handles executable contract shaping and Human Review -> Rework
+revision discussion; Backlog handles current checkpoints and bounded residual
+memory; Improve is explicitly invoked and report-only. The CLI owns `forge
+create`, `forge promote`, `forge rework`, and `forge validate`. Manual Main
+stops at `Agent Review`; Manual Review owns
 evidence-backed review routing; Human Review briefs the operator for UAT and
 final acceptance but waits for explicit confirmation before any state change;
 Manual Merge owns approved merge-lane work. Doctor may diagnose a concrete
@@ -621,12 +622,12 @@ the native parent issue, `parent_integration_branch`, PR base branch, and parent
 final base branch when applicable so Review, Doctor, and Merge read the same
 topology evidence.
 
-## Issue Forge Reflect
+## Backlog
 
-Issue Forge Reflect is a Codex skill workflow, not a Shea Symphony CLI
-subcommand. Use it to turn recent dogfood conversations, operator notes, or
-Project observations into non-dispatchable `Backlog` seeds, then use the
-conversation-led promote flow when an operator selects one seed for execution.
+`shea-symphony-backlog` is a Codex Skill workflow, not a Shea Symphony CLI
+subcommand. Use it for current progress and blocker checkpoints, residual-work
+capture, and bounded organization, deduplication, or stale review of existing
+Backlog seeds.
 
 Backlog capture should stay intentionally light:
 
@@ -635,14 +636,10 @@ Backlog capture should stay intentionally light:
 - do not treat the seed as executable work;
 - use `forge create --status Backlog` for the actual tracker mutation.
 
-Promotion is stricter. Before mutation, resolve scope, dependencies,
-verification, UAT, and the exact promoted title/body with the operator. Require
-an explicit confirmation phrase, then run `forge promote` with the structured
-Promotion Note fields. In write mode, `forge promote` edits the same issue,
-writes the Promotion Note, moves status from `Backlog` to `Todo` as the final
-mutation, and only then performs read-only status readback. Do not start
-Main/Review/Merge work in that same promotion session unless the operator
-explicitly starts a new cycle.
+Backlog does not draft or execute promotion. When the operator selects a seed,
+stop and invoke `shea-symphony-issue-forge` in a separate shaping cycle. Issue
+Forge resolves scope, dependencies, verification, UAT, and the exact promoted
+title/body before any guarded promotion.
 
 Human Review -> Rework revision is also Issue Forge-owned. Use discussion to
 prepare the full replacement Rework body, evidence file, title, and explicit
@@ -669,26 +666,24 @@ queue, doctor health, smoke readiness, runtime/session state, cleanup/audit
 status, and lane-specific next commands without claiming work, starting workers,
 repairing state, cleaning artifacts, or implying unattended readiness.
 
-## Issue Forge Dream
+## Improve
 
-Issue Forge Dream is the slow backlog-mining companion to Reflect. Use Dream
-when the operator wants to sleep on broader Shea Symphony history: recent
-Project state, run logs, workpads, Doctor findings, repo-owned skills, memory
-summaries, bootstrap docs, and recent docs/code drift.
+Invoke `shea-symphony-improve` explicitly when the operator wants a bounded
+architecture-deepening review. Name an area when possible; otherwise the Skill
+uses a limited recent-change window to infer one hot spot before scanning. It
+looks for experienced comprehension, change, and testing friction, applies the
+deletion and real-variation tests, and accepts a no-finding result.
 
-Dream creates enriched `Backlog` seeds by default unless the operator requests
-report-only mode. It never creates `Todo` issues directly. Dream Logs live under
-`docs/dream-log/YYYY-MM-DD-<run-count>-<slug>/`, with
-`docs/dream-log/INDEX.md` as the compact global entrypoint. A normal Dream run
-reads the index plus the most recent five Dream runs, writes bounded `RUN.md`
-and `topic-*.md` evidence, records lightweight Gemini review status, and reports
-whether it slept enough plus the next useful Dream theme.
+Improve writes one marker-bearing, self-contained report under ignored
+`.shea/local/improve/<run-id>/`. The report contains no remote assets, at most
+three candidates, and at most one recommendation. Improve changes no source,
+tests, docs, ADRs, Project state, issues, or Skills. After presentation, the
+operator may ignore a candidate, capture it through Backlog, or discuss it
+through Issue Forge; the Skill does not enter interface design or implementation.
 
-Dream Logs are advisory. Dream, Reflect, and Issue Forge may read them actively;
-Main reads only Dream Logs explicitly referenced by an issue contract; Review
-reads them only when the PR or issue body involves Dream-derived context; Merge
-usually ignores them; Doctor may use them only as advisory context, not
-workflow invariants.
+Historical `docs/dream-log/` content is archived evidence. It remains readable
+when an issue contract cites it, but no active Skill loads it automatically and
+it never supplies lane authority.
 
 Use the repo-owned Doctor skill at
 `.agents/skills/shea-symphony-doctor/SKILL.md` when an operator-selected issue or

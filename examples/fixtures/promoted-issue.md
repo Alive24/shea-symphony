@@ -3,11 +3,11 @@
 - UAT Required: Yes
 - Assignee: Alive24
 - Dependencies: None
-- Related Parent Issue or Context: Promoted from the Issue Forge Reflect fixture Backlog seed.
+- Related Parent Issue or Context: Promoted from the Issue Forge fixture Backlog seed.
 
 ## Issue Goal
 
-Harden the Issue Forge Reflect promotion workflow in Shea Symphony CLI fixtures.
+Harden the Issue Forge promotion workflow in Shea Symphony CLI fixtures.
 
 ## Why Now
 
@@ -78,7 +78,7 @@ A dry-run promotion report with a structured Promotion Note preview.
 
 ### Functional Verification
 
-- [ ] `cargo run -- forge promote '#241' --workflow examples/promote-fixture-workflow.md --title "Harden Issue Forge Reflect promotion fixture" --body-file examples/fixtures/promoted-issue.md --operator-confirmation "promote it" --decision "Keep the promotion in place." --scope-change "Backlog seed becomes an executable Todo issue." --dependency-context "Dependencies: none." --readback-summary "Dry-run preview verified before write." --dry-run`
+- [ ] `cargo run -- forge promote '#241' --workflow examples/promote-fixture-workflow.md --title "Harden Issue Forge promotion fixture" --body-file examples/fixtures/promoted-issue.md --operator-confirmation "promote it" --decision "Keep the promotion in place." --scope-change "Backlog seed becomes an executable Todo issue." --dependency-context "Dependencies: none." --readback-summary "Dry-run preview verified before write." --dry-run`
 - [ ] `cargo test`
 
 ### UAT
@@ -87,4 +87,4 @@ A dry-run promotion report with a structured Promotion Note preview.
 
 ### Context Verification
 
-- [ ] Confirm Issue Forge Reflect remains skill-owned and CLI promotion remains deterministic.
+- [ ] Confirm Issue Forge shaping remains skill-owned and CLI promotion remains deterministic.

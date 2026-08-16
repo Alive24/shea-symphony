@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 const CANONICAL_SKILLS: &[&str] = &[
     "setup-shea",
     "shea-halo-research-seed",
+    "shea-symphony-backlog",
     "shea-symphony-doctor",
     "shea-symphony-human-review",
+    "shea-symphony-improve",
     "shea-symphony-issue-forge",
-    "shea-symphony-issue-forge-dream",
-    "shea-symphony-issue-forge-reflect",
     "shea-symphony-manual-main",
     "shea-symphony-manual-merge",
     "shea-symphony-manual-review",
@@ -187,6 +187,7 @@ fn setup_shea_is_a_modular_immutable_release_workflow() {
         "conflict_keep",
         "upstream-hash registry",
         "planned preimage",
+        "remove_legacy",
     ] {
         assert!(
             reconciliation.contains(marker),
@@ -231,6 +232,8 @@ fn setup_shea_fixtures_cover_initial_repeat_conflict_failure_and_pin_cases() {
             "immutable-release.md",
             &["one tag", "one full commit", "containing `main`"][..],
         ),
+        ("legacy-skill-removal.md", &["`remove_legacy`"][..]),
+        ("customized-new-skill.md", &["`conflict_keep`"][..]),
     ];
 
     for (name, markers) in cases {
@@ -242,6 +245,70 @@ fn setup_shea_fixtures_cover_initial_repeat_conflict_failure_and_pin_cases() {
             assert!(source.contains(marker), "{name} missing {marker}");
         }
     }
+}
+
+#[test]
+fn backlog_skill_owns_bounded_memory_but_not_promotion_or_execution() {
+    let backlog = skill_file("shea-symphony-backlog", "SKILL.md");
+
+    assert!(
+        backlog.lines().count() < 80,
+        "Backlog expanded into a runbook"
+    );
+    assert!(backlog.contains(".shea/contracts/workflow-capability.v1.md"));
+    assert!(backlog.contains("`issue.create`"));
+    assert!(!backlog.contains("`issue.promote`"));
+    assert!(backlog.contains("$shea-symphony-issue-forge"));
+}
+
+#[test]
+fn improve_skill_is_an_explicit_bounded_report_only_router() {
+    let skill = skill_file("shea-symphony-improve", "SKILL.md");
+    let metadata = skill_file("shea-symphony-improve", "agents/openai.yaml");
+
+    assert!(
+        skill.lines().count() < 70,
+        "Improve must stay a concise router"
+    );
+    let references = relative_markdown_links(&skill)
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        references,
+        BTreeSet::from([
+            "references/architecture-lens.md".to_string(),
+            "references/report-and-retention.md".to_string(),
+            "references/scope-and-evidence.md".to_string(),
+        ])
+    );
+    assert!(metadata.contains("allow_implicit_invocation: false"));
+    assert!(!repo_path(".agents/skills/codebase-design").exists());
+    assert!(!repo_path(".agents/skills/shea-symphony-improve/scripts").exists());
+    assert!(!repo_path(".agents/skills/shea-symphony-improve/assets").exists());
+}
+
+#[test]
+fn improve_fixtures_cover_scope_candidates_no_finding_and_report_limits() {
+    let root = repo_path(".agents/skills/shea-symphony-improve/fixtures");
+    let actual = fs::read_dir(root)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect::<BTreeSet<_>>();
+    let expected = [
+        "focused-scope.md",
+        "no-finding.md",
+        "recent-hotspot.md",
+        "report-constraints.md",
+        "speculative-seam.md",
+        "strong-candidate.md",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<BTreeSet<_>>();
+
+    assert_eq!(actual, expected);
 }
 
 fn walk_files(root: &Path) -> Vec<PathBuf> {
@@ -341,14 +408,12 @@ fn doctor_contract_repair_fixtures_cover_safe_refused_and_no_change_results() {
 #[test]
 fn lane_skills_preserve_review_workspace_and_subissue_boundaries() {
     let forge = skill_file("shea-symphony-issue-forge", "SKILL.md");
-    let reflect = skill_file("shea-symphony-issue-forge-reflect", "SKILL.md");
     let manual_main = skill_file("shea-symphony-manual-main", "SKILL.md");
     let manual_review = skill_file("shea-symphony-manual-review", "SKILL.md");
     let manual_merge = skill_file("shea-symphony-manual-merge", "SKILL.md");
 
     assert!(forge.contains("the parent owns final Human Review and UAT"));
     assert!(forge.contains("Record a Subissue Human Review Exception"));
-    assert!(reflect.contains("ordinary children pass Agent Review to Merging"));
     assert!(manual_review.contains("routes to `Merging`, not `Human Review`"));
     assert!(manual_merge.contains("Do not route native subissue merge repair to `Rework`"));
     assert!(manual_main.contains("Execute one operator-selected Main issue in the current task"));

@@ -44,10 +44,11 @@ LaneIssueView drills into one issue with tracker state, local worktree provenanc
 
 After setting up Shea Symphony, the desired human workflow looks like this:
 
-1. Use "issue-forge-skill" to discuss your ideas and observation in any agent session to set up issues directly
-2. Use "issue-forge-reflect-skill" to record sparse ideas into backlogs, collect ideas from previous work, and promote existing backlogs.
-3. Use "human-review" skill for issues waiting for the last UATs before getting approved for merging
-4. Use "doctor" skill for issues that requires human input to recover.
+1. Use `shea-symphony-issue-forge` to shape ideas into executable issue contracts.
+2. Use `shea-symphony-backlog` for progress checkpoints, blocker summaries, and bounded residual-work memory; selected seeds return to Issue Forge for shaping.
+3. Invoke `shea-symphony-improve` explicitly for a report-only search for architectural deepening opportunities.
+4. Use `shea-symphony-human-review` for issues waiting for final UAT and approval.
+5. Use `shea-symphony-doctor` for concrete failures that need diagnosis or recovery.
 
 ### Extension Modules
 
@@ -55,7 +56,8 @@ After setting up Shea Symphony, the desired human workflow looks like this:
 
 - A "grill-me" style dialectical experience activated by a configurable skill for the operator to shape ideas into executable issue contracts.
 - An issue quality gate before dispatch to ensure the issue is clear enough to dispatch.
-- A reflective skill to collect sparse backlog candidates from recent sessions or deep "dreaming logs" and promote them into executable issue contracts.
+- A bounded Backlog skill for current checkpoints and residual-work memory, with executable shaping kept in Issue Forge.
+- An explicitly invoked Improve skill that reports evidence-backed architecture opportunities without changing the repository.
 
 #### Lane Model
 
@@ -104,7 +106,7 @@ The tracker stays the shared source of truth. Local artifacts, worktrees, logs, 
 - **Merge lane** lands approved PRs, repairs safe mechanical drift, and routes real uncertainty to `Need Human Input`.
 - **Workpads and timeline evidence** keep the issue readable after the run.
 - **Doctor and status surfaces** explain stuck states without requiring a low-level log expedition.
-- **Dream and Reflect skills** mine recent work into safe Backlog candidates before they become executable Todo issues.
+- **Backlog** preserves bounded progress, blocker, and residual-work memory; **Improve** produces optional local architecture reports, and Issue Forge alone shapes selected candidates into executable work.
 
 The intended feeling is closer to a team cockpit than a prompt runner. You should be able to leave work moving, come back later, and understand what happened from the issue, PR, workpad, and status output.
 
@@ -165,7 +167,7 @@ Role boundaries matter:
 - Review evidence gates movement toward `Human Review` or `Merging`.
 - Human approval gates ordinary merges.
 - Merge repair stays in the merge lane unless it needs a real human decision.
-- Dream and Reflect output is advisory until promoted into an issue contract.
+- Backlog seeds and Improve reports are advisory until an operator selects a candidate for Issue Forge shaping.
 
 Write-mode commands should record evidence before state transitions, preserve claims and audit records, and fail closed when the safe next action is unclear.
 

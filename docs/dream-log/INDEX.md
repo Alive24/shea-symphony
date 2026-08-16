@@ -1,14 +1,14 @@
-# Shea Symphony Dream Log Index
+# Archived Shea Symphony Dream Log Index
 
-This index is the compact entrypoint for repo-owned Dream Logs. Dream reads this
-file plus the most recent five Dream run directories by default; older runs are
-opened only when the index points to them or the current theme depends on them.
+Dream retired as an active Skill on 2026-08-16. This directory preserves its
+historical logs as archived evidence; no new Dream runs or logs should be
+created. Backlog and Improve never load these records automatically.
 
-Dream Logs are advisory context. They do not authorize Main, Review, Merge, or
-Doctor lane actions until a learning is promoted into an issue body, docs, skill
-instructions, or a CLI invariant.
+Archived Dream Logs are advisory context. They do not authorize Main, Review,
+Merge, or Doctor lane actions. Open one only when a current issue contract or
+operator request cites it directly.
 
-## Current Runs
+## Archived Runs
 
 - `2026-05-23-01-post-app-server-dogfood-backlog/`
   - Themes: post-app-server dogfood second-order backlog, parent integration
@@ -91,16 +91,14 @@ instructions, or a CLI invariant.
   - Gemini review: ran; duplicate/scope/lane-authority passed, evidence detail
     follow-up applied in the run/topic logs.
 
-## Source Window Rule
+## Historical Navigation
 
-- Always read this index first.
-- Then read the most recent five directories matching
-  `docs/dream-log/YYYY-MM-DD-<run-count>-<slug>/`.
-- Prefer each run's `RUN.md` before opening topic logs.
-- Open older runs only when linked from this index, referenced by a current
-  issue contract, or needed to resolve duplicate/coverage checks.
+- Start with this index when a current contract cites historical Dream evidence.
+- Open the named run's `RUN.md` before any topic log.
+- Do not sweep recent directories, infer current work from the archive, or load
+  it as routine Backlog or Improve context.
 
-## Run Directory Shape
+## Archived Run Directory Shape
 
 Each Dream run directory may contain:
 
@@ -115,16 +113,15 @@ Each Dream run directory may contain:
 Topic logs have a soft 250-line human-readability limit. Prefer summaries and
 evidence pointers over raw long conversation dumps.
 
-## Issue Reference Format
+## Historical Issue Reference Format
 
 Use these exact references in Dream-created Backlog seeds:
 
 - `Dream Log: docs/dream-log/YYYY-MM-DD-<run-count>-<slug>/RUN.md`
 - `Dream Topic: docs/dream-log/YYYY-MM-DD-<run-count>-<slug>/topic-*.md`
 
-## Lane Reading Boundaries
+## Archived Evidence Boundaries
 
-- Dream, Reflect, and Issue Forge may actively read Dream Logs.
 - Main reads only Dream Logs explicitly referenced by the issue contract.
 - Review reads relevant Dream Logs only when the issue body or PR changes
   involve Dream-derived context.
@@ -132,9 +129,11 @@ Use these exact references in Dream-created Backlog seeds:
   issue contract requires it.
 - Doctor may use Dream Logs as advisory context only, never as workflow
   invariants.
+- Backlog and Improve do not load Dream Logs automatically. Issue Forge opens a
+  log only when the operator or current issue contract names it.
 
 ## Archive Notes
 
-When the index grows, compact older groups into short theme summaries here and
-keep links to the run directories. Do not delete run directories as part of
-normal Dream compaction; cleanup is a separate operator decision.
+Do not add new run directories or resume Dream compaction. Preserve existing
+files unless a separate operator-owned archival or deletion decision explicitly
+names them.

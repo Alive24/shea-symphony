@@ -269,7 +269,7 @@ fn representative_consumers_reference_shared_contracts_without_commands() {
             "tests/fixtures/workflow-capability/manual-main.md",
             "manual-main",
         ),
-        ("tests/fixtures/workflow-capability/reflect.md", "reflect"),
+        ("tests/fixtures/workflow-capability/backlog.md", "backlog"),
     ] {
         let fixture = validate_fixture(&repo_file(path)).expect("valid consumer fixture");
         assert_eq!(fixture.consumer, consumer);

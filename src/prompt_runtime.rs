@@ -105,7 +105,7 @@ Shea Symphony CLI owns the Review Agent claim, tracker evidence, and Project sta
 this process. Do not mutate tracker state, the pull request, or the Review workspace.\n\n\
 Keep the review bounded to the linked PR diff and explicitly named code paths. Run verification\n\
 synchronously; do not create background tasks, request interactive approval, or leave commands\n\
-running. You are executing in a disposable isolated worktree at the exact linked PR revision; leave\n\
+running. You are executing in a disposable isolated checkout at the exact linked PR revision; leave\n\
 its HEAD and tracked files unchanged. Inspect diffs directly through command stdout. If a tool must\n\
 materialize scratch output, write it only beneath `$SHEA_REVIEW_SCRATCH`, never in the checkout.\n\
 Build tools must use the wrapper-provided external cache paths such as `$CARGO_TARGET_DIR`. Resolve\n\
@@ -211,7 +211,7 @@ mod tests {
         assert!(AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY
             .contains("do not create background tasks"));
         assert!(
-            AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY.contains("disposable isolated worktree")
+            AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY.contains("disposable isolated checkout")
         );
         assert!(AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY.contains("$SHEA_REVIEW_SCRATCH"));
         assert!(AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY.contains("$CARGO_TARGET_DIR"));

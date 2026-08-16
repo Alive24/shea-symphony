@@ -6,13 +6,11 @@ use tempfile::{Builder, TempDir};
 
 #[derive(Debug)]
 pub(super) struct AgyReviewIsolation {
-    source_workspace: PathBuf,
-    _temporary_root: TempDir,
+    temporary_root: Option<TempDir>,
     workspace: PathBuf,
     scratch: PathBuf,
     cargo_target: PathBuf,
     reviewed_revision: String,
-    registered: bool,
 }
 
 #[derive(Debug)]
@@ -25,10 +23,7 @@ pub(super) struct AgyIsolationVerification {
 
 impl AgyReviewIsolation {
     pub fn create(source_workspace: &Path, revision: &str) -> Result<Self, String> {
-        let temporary_root = Builder::new()
-            .prefix("shea-agy-review-")
-            .tempdir()
-            .map_err(|error| format!("could not create temporary agy Review root: {error}"))?;
+        let temporary_root = temporary_root_near(source_workspace)?;
         let workspace = temporary_root.path().join("workspace");
         let scratch = temporary_root.path().join("scratch");
         let cargo_target = temporary_root.path().join("build-cache").join("cargo");
@@ -39,27 +34,39 @@ impl AgyReviewIsolation {
         })?;
 
         let output = Command::new("git")
-            .args(["worktree", "add", "--detach"])
+            .args(["clone", "--local", "--no-checkout", "--quiet", "--"])
+            .arg(source_workspace)
             .arg(&workspace)
-            .arg(revision)
-            .current_dir(source_workspace)
             .output()
-            .map_err(|error| format!("could not create isolated agy Review worktree: {error}"))?;
+            .map_err(|error| format!("could not create isolated agy Review clone: {error}"))?;
         if !output.status.success() {
             return Err(command_failure(
-                "could not create isolated agy Review worktree",
+                "could not create isolated agy Review clone",
+                &output,
+            ));
+        }
+
+        let output = Command::new("git")
+            .args(["checkout", "--detach", "--quiet"])
+            .arg(revision)
+            .current_dir(&workspace)
+            .output()
+            .map_err(|error| {
+                format!("could not check out isolated agy Review revision: {error}")
+            })?;
+        if !output.status.success() {
+            return Err(command_failure(
+                "could not check out isolated agy Review revision",
                 &output,
             ));
         }
 
         let mut isolation = Self {
-            source_workspace: source_workspace.to_path_buf(),
-            _temporary_root: temporary_root,
+            temporary_root: Some(temporary_root),
             workspace,
             scratch,
             cargo_target,
             reviewed_revision: revision.to_string(),
-            registered: true,
         };
         let completed_revision = revision_at(&isolation.workspace).inspect_err(|_error| {
             let _ = isolation.cleanup();
@@ -67,13 +74,13 @@ impl AgyReviewIsolation {
         if completed_revision != revision {
             let _ = isolation.cleanup();
             return Err(format!(
-                "isolated agy Review worktree revision `{completed_revision}` does not match linked pull request head `{revision}`"
+                "isolated agy Review clone revision `{completed_revision}` does not match linked pull request head `{revision}`"
             ));
         }
         if !tracked_state(&isolation.workspace)?.is_empty() {
             let _ = isolation.cleanup();
             return Err(
-                "isolated agy Review worktree was not clean at the linked pull request revision"
+                "isolated agy Review clone was not clean at the linked pull request revision"
                     .into(),
             );
         }
@@ -97,7 +104,7 @@ impl AgyReviewIsolation {
         let completed_revision = revision_at(&self.workspace).ok();
         let mut integrity_error = match completed_revision.as_deref() {
             Some(revision) if revision != self.reviewed_revision => Some(format!(
-                "agy Review changed isolated worktree HEAD from `{}` to `{revision}`",
+                "agy Review changed isolated checkout HEAD from `{}` to `{revision}`",
                 self.reviewed_revision
             )),
             None => Some("could not read completed isolated agy Review revision".into()),
@@ -107,7 +114,7 @@ impl AgyReviewIsolation {
             match tracked_state(&self.workspace) {
                 Ok(state) if !state.is_empty() => {
                     integrity_error = Some(
-                        "agy Review modified tracked files in its isolated Review worktree".into(),
+                        "agy Review modified tracked files in its isolated Review checkout".into(),
                     );
                 }
                 Err(error) => integrity_error = Some(error),
@@ -134,24 +141,35 @@ impl AgyReviewIsolation {
     }
 
     fn cleanup(&mut self) -> Result<(), String> {
-        if !self.registered {
+        let Some(temporary_root) = self.temporary_root.take() else {
             return Ok(());
-        }
-        let output = Command::new("git")
-            .args(["worktree", "remove", "--force"])
-            .arg(&self.workspace)
-            .current_dir(&self.source_workspace)
-            .output()
-            .map_err(|error| format!("could not remove isolated agy Review worktree: {error}"))?;
-        if !output.status.success() {
-            return Err(command_failure(
-                "could not remove isolated agy Review worktree",
-                &output,
-            ));
-        }
-        self.registered = false;
-        Ok(())
+        };
+        temporary_root
+            .close()
+            .map_err(|error| format!("could not remove isolated agy Review clone: {error}"))
     }
+}
+
+fn temporary_root_near(source_workspace: &Path) -> Result<TempDir, String> {
+    let nearby_error = if let Some(parent) = source_workspace.parent() {
+        match Builder::new().prefix("shea-agy-review-").tempdir_in(parent) {
+            Ok(root) => return Ok(root),
+            Err(error) => Some(error),
+        }
+    } else {
+        None
+    };
+    Builder::new()
+        .prefix("shea-agy-review-")
+        .tempdir()
+        .map_err(|error| {
+            format!(
+                "could not create temporary agy Review root near the source ({}) or in the system temporary directory ({error})",
+                nearby_error
+                    .map(|error| error.to_string())
+                    .unwrap_or_else(|| "source workspace has no parent directory".into())
+            )
+        })
 }
 
 impl Drop for AgyReviewIsolation {
@@ -174,7 +192,7 @@ fn revision_at(workspace: &Path) -> Result<String, String> {
     }
     let revision = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if revision.is_empty() {
-        return Err("isolated agy Review worktree returned an empty revision".into());
+        return Err("isolated agy Review checkout returned an empty revision".into());
     }
     Ok(revision)
 }
@@ -184,10 +202,10 @@ fn tracked_state(workspace: &Path) -> Result<Vec<u8>, String> {
         .args(["diff", "--binary", "HEAD", "--", "."])
         .current_dir(workspace)
         .output()
-        .map_err(|error| format!("could not inspect isolated agy Review worktree: {error}"))?;
+        .map_err(|error| format!("could not inspect isolated agy Review checkout: {error}"))?;
     if !output.status.success() {
         return Err(command_failure(
-            "could not inspect isolated agy Review worktree",
+            "could not inspect isolated agy Review checkout",
             &output,
         ));
     }

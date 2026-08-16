@@ -632,17 +632,18 @@ result, unsupported field, contradictory classification, non-success provider
 status, or nonzero process exit fails closed. Automatic agy Review disables
 slash-command expansion rather than injecting interactive `/plan` behavior. It
 requires a clean canonical checkout whose `HEAD` matches the linked PR's current
-head SHA, then creates a detached temporary Git worktree at that exact revision.
-This uses standard `git worktree` behavior rather than a platform-specific
-filesystem sandbox. The worktree shares the repository Git common directory
-and object database, while its checkout, index, and `HEAD` are disposable;
-scratch and Cargo build output use sibling temporary directories. AGY may
+head SHA, then creates a detached temporary local Git clone at that exact
+revision. This uses standard `git clone --local` hard-link behavior rather than
+a platform-specific filesystem sandbox. The clone keeps Git metadata inside the
+temporary root and reuses immutable object storage through hard links, while its
+checkout, index, refs, config, and `HEAD` are disposable; scratch and Cargo build
+output use sibling temporary directories. AGY may
 leave untracked scratch only in this disposable checkout; Shea records and
 discards it. A tracked-file or `HEAD` change, canonical-workspace mutation, or
 cleanup failure still fails closed. The output artifact retains raw
 stdout/stderr, the provider envelope, extracted structured result, parsing and
 workspace-integrity diagnostics, exit status, provider conversation ID,
-expected/reviewed/completed and isolated-worktree revisions, discarded
+expected/reviewed/completed and isolated-checkout revisions, discarded
 untracked paths, cleanup evidence, and terminal-routing class. The durable job
 ledger records the downstream Project routing decision.
 

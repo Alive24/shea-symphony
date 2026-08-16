@@ -370,12 +370,13 @@ Shea checks the configured agy executable for `--output-format json` and
 without an exact version pin. The backend passes the shared Review schema and
 routes only from the validated `structured_output` inside agy's provider
 envelope. It disables slash-command expansion, requires a clean local checkout
-at the current linked PR head SHA, and launches AGY in a detached temporary Git
-worktree using standard Git behavior rather than a platform-specific sandbox.
-The checkout, index, and `HEAD` are disposable, while the repository Git common
-directory and object database remain shared. The wrapper points `CARGO_TARGET_DIR`
-and temporary-file variables outside that checkout. It
-records and discards isolated untracked scratch, removes the temporary worktree
+at the current linked PR head SHA, and launches AGY in a detached temporary local
+Git clone using standard `git clone --local` hard-link behavior rather than a
+platform-specific sandbox. Git metadata stays inside the temporary root;
+immutable object storage is reused through hard links, while the checkout,
+index, refs, config, and `HEAD` are disposable. The wrapper points
+`CARGO_TARGET_DIR` and temporary-file variables outside that checkout. It
+records and discards isolated untracked scratch, removes the temporary clone
 after completion or cancellation, and rejects canonical mutation, isolated
 tracked-file/`HEAD` changes, or cleanup failure. Inspect the Review output
 artifact for raw stdout/stderr, provider envelope, extracted result,

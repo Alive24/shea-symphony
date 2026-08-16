@@ -555,7 +555,7 @@ impl ReviewBackend for GeminiCliReviewBackend {
                     .unwrap_or_else(|| AgyIsolationVerification {
                         completed_revision: None,
                         integrity_error: Some(
-                            "cancelled agy Review had no isolated Review worktree".into(),
+                            "cancelled agy Review had no isolated Review checkout".into(),
                         ),
                         discarded_untracked_paths: Vec::new(),
                         cleanup_error: None,
@@ -652,8 +652,8 @@ impl GeminiCliHeadlessConfig<'_> {
         if self.kind == CliReviewKind::Agy {
             // agy print mode runs tools from its persistent Antigravity control project and does
             // not treat the process cwd as an inspection root. Bind the already-validated Review
-            // workspace and linked-worktree Git metadata explicitly so the independent reviewer
-            // can inspect the linked PR checkout without bypassing the sandbox.
+            // isolated checkout and its self-contained Git metadata explicitly so the independent
+            // reviewer can inspect the linked PR checkout without bypassing the sandbox.
             for directory in agy_workspace_access_directories(workspace)? {
                 args.extend([
                     "--add-dir".to_string(),
@@ -1096,7 +1096,7 @@ fn complete_agy_review_job(
         .unwrap_or_else(|| AgyIsolationVerification {
             completed_revision: None,
             integrity_error: Some(
-                "agy Review completed without an isolated Review worktree".into(),
+                "agy Review completed without an isolated Review checkout".into(),
             ),
             discarded_untracked_paths: Vec::new(),
             cleanup_error: None,
@@ -2559,14 +2559,16 @@ mod tests {
         let args_path = temp.path().join("agy.args");
         let cwd_path = temp.path().join("agy.cwd");
         let env_path = temp.path().join("agy.env");
+        let git_dir_path = temp.path().join("agy.git-dir");
         let reviewed_revision = initialize_review_git_workspace(&workspace);
         fs::write(
             &reviewer,
             format!(
-                "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then\n  printf '%s\\n' '--output-format text|json|stream-json' '--json-schema schema-or-path'\n  exit 0\nfi\nprintf '%s\\n' \"$@\" > '{}'\npwd > '{}'\nprintf 'workspace=%s\\nscratch=%s\\ncargo=%s\\ntmpdir=%s\\n' \"$SHEA_REVIEW_WORKSPACE\" \"$SHEA_REVIEW_SCRATCH\" \"$CARGO_TARGET_DIR\" \"$TMPDIR\" > '{}'\nprintf '%s\\n' '{{\"conversation_id\":\"agy-session-7\",\"status\":\"SUCCESS\",\"response\":\"{{\\\"summary\\\":\\\"Rework required.\\\",\\\"terminal_classification\\\":\\\"rework\\\",\\\"findings\\\":[{{\\\"class\\\":\\\"confirmed\\\",\\\"severity\\\":\\\"high\\\",\\\"title\\\":\\\"Bug\\\",\\\"body\\\":\\\"found one\\\",\\\"file\\\":\\\"src/lib.rs\\\",\\\"line\\\":1,\\\"evidence\\\":\\\"fixture\\\"}}]}}\",\"structured_output\":{{\"summary\":\"Rework required.\",\"terminal_classification\":\"rework\",\"findings\":[{{\"class\":\"confirmed\",\"severity\":\"high\",\"title\":\"Bug\",\"body\":\"found one\",\"file\":\"src/lib.rs\",\"line\":1,\"evidence\":\"fixture\"}}]}}}}'\n",
+                "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then\n  printf '%s\\n' '--output-format text|json|stream-json' '--json-schema schema-or-path'\n  exit 0\nfi\nprintf '%s\\n' \"$@\" > '{}'\npwd > '{}'\nprintf 'workspace=%s\\nscratch=%s\\ncargo=%s\\ntmpdir=%s\\n' \"$SHEA_REVIEW_WORKSPACE\" \"$SHEA_REVIEW_SCRATCH\" \"$CARGO_TARGET_DIR\" \"$TMPDIR\" > '{}'\ngit rev-parse --absolute-git-dir > '{}'\nprintf '%s\\n' '{{\"conversation_id\":\"agy-session-7\",\"status\":\"SUCCESS\",\"response\":\"{{\\\"summary\\\":\\\"Rework required.\\\",\\\"terminal_classification\\\":\\\"rework\\\",\\\"findings\\\":[{{\\\"class\\\":\\\"confirmed\\\",\\\"severity\\\":\\\"high\\\",\\\"title\\\":\\\"Bug\\\",\\\"body\\\":\\\"found one\\\",\\\"file\\\":\\\"src/lib.rs\\\",\\\"line\\\":1,\\\"evidence\\\":\\\"fixture\\\"}}]}}\",\"structured_output\":{{\"summary\":\"Rework required.\",\"terminal_classification\":\"rework\",\"findings\":[{{\"class\":\"confirmed\",\"severity\":\"high\",\"title\":\"Bug\",\"body\":\"found one\",\"file\":\"src/lib.rs\",\"line\":1,\"evidence\":\"fixture\"}}]}}}}'\n",
                 args_path.display(),
                 cwd_path.display(),
-                env_path.display()
+                env_path.display(),
+                git_dir_path.display()
             ),
         )
         .unwrap();
@@ -2627,6 +2629,8 @@ mod tests {
             Some("workspace")
         );
         assert!(!Path::new(configured_workspace).exists());
+        let isolated_git_dir = fs::read_to_string(&git_dir_path).unwrap();
+        assert!(Path::new(isolated_git_dir.trim()).ends_with("workspace/.git"));
         let scratch = environment
             .lines()
             .find_map(|line| line.strip_prefix("scratch="))
@@ -2799,7 +2803,7 @@ mod tests {
         assert_eq!(job.state, ReviewJobState::Failed);
         assert!(job.report.is_none());
         assert!(job.error.as_deref().is_some_and(
-            |error| error.contains("modified tracked files in its isolated Review worktree")
+            |error| error.contains("modified tracked files in its isolated Review checkout")
         ));
         assert_eq!(
             fs::read_to_string(workspace.join("tracked.txt")).unwrap(),
@@ -2813,13 +2817,13 @@ mod tests {
             "failed_closed_workspace_integrity"
         );
         assert!(artifact["workspace_integrity_error"].as_str().is_some_and(
-            |error| error.contains("modified tracked files in its isolated Review worktree")
+            |error| error.contains("modified tracked files in its isolated Review checkout")
         ));
         assert_eq!(artifact["isolated_cleanup_error"], serde_json::Value::Null);
     }
 
     #[test]
-    fn agy_cancel_removes_isolated_worktree_and_external_cache_root() {
+    fn agy_cancel_removes_isolated_checkout_and_external_cache_root() {
         let temp = tempfile::tempdir().unwrap();
         let workspace = temp.path().join("review-workspace");
         let reviewer = temp.path().join("agy-waiting.sh");

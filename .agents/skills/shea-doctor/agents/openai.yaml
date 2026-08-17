@@ -1,0 +1,4 @@
+interface:
+  display_name: "Shea Symphony Doctor"
+  short_description: "Diagnose and repair Shea repository contracts"
+  default_prompt: "Use $shea-doctor to diagnose this Shea Symphony failure or repository-contract problem and apply only the explicitly confirmed bounded repair."

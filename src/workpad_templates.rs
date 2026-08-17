@@ -44,7 +44,7 @@ pub struct WorkpadTemplate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkpadTemplateSource {
     WorkflowFile(PathBuf),
-    RepositoryMarkdownDefault(&'static str),
+    RepositoryMarkdownDefault(PathBuf),
     MissingOrInvalid { path: PathBuf, error: String },
 }
 
@@ -104,6 +104,10 @@ impl WorkpadTemplateId {
             Self::LaneSession,
         ]
     }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::all().iter().copied().find(|id| id.key() == key)
+    }
 }
 
 impl WorkpadTemplateSource {
@@ -120,7 +124,7 @@ impl WorkpadTemplateSource {
             Self::WorkflowFile(path) | Self::MissingOrInvalid { path, .. } => {
                 path.display().to_string()
             }
-            Self::RepositoryMarkdownDefault(path) => (*path).into(),
+            Self::RepositoryMarkdownDefault(path) => path.display().to_string(),
         }
     }
 
@@ -138,12 +142,7 @@ pub fn workpad_template_for(
 ) -> WorkpadTemplate {
     if let Some(workflow) = workflow {
         if workflow.config.get("workpad_templates").is_none() {
-            let (path, body) = repository_markdown_default(id);
-            return WorkpadTemplate {
-                id,
-                body: body.trim().to_string(),
-                source: WorkpadTemplateSource::RepositoryMarkdownDefault(path),
-            };
+            return repository_markdown_default(Some(&workflow.path), id);
         }
         return if let Some(path) = configured_template_path(workflow, id) {
             match fs::read_to_string(&path) {
@@ -181,33 +180,40 @@ pub fn workpad_template_for(
                 },
             }
         } else {
-            WorkpadTemplate {
-                id,
-                body: String::new(),
-                source: WorkpadTemplateSource::MissingOrInvalid {
-                    path: workflow.path.clone(),
-                    error: format!(
-                        "required workpad_templates.{} is missing from {}; configure a repository-owned Markdown file",
-                        id.key(),
-                        workflow.path.display()
-                    ),
-                },
-            }
+            repository_markdown_default(Some(&workflow.path), id)
         };
     }
 
-    let (path, body) = repository_markdown_default(id);
-    WorkpadTemplate {
-        id,
-        body: body.trim().to_string(),
-        source: WorkpadTemplateSource::RepositoryMarkdownDefault(path),
-    }
+    repository_markdown_default(None, id)
 }
 
 pub fn workpad_template_readback(workflow: &WorkflowDefinition) -> Vec<WorkpadTemplate> {
-    WorkpadTemplateId::all()
-        .iter()
-        .map(|id| workpad_template_for(Some(workflow), *id))
+    let Some(configured) = workflow
+        .config
+        .get("workpad_templates")
+        .and_then(Value::as_object)
+    else {
+        return WorkpadTemplateId::all()
+            .iter()
+            .map(|id| workpad_template_for(Some(workflow), *id))
+            .collect();
+    };
+    let mut ids = configured
+        .keys()
+        .filter_map(|key| WorkpadTemplateId::from_key(key))
+        .collect::<Vec<_>>();
+    let parent_selected = workflow.resource_closure.as_ref().is_some_and(|closure| {
+        closure
+            .selected_groups
+            .iter()
+            .any(|group| group == "parent_subissues")
+    });
+    if parent_selected && !ids.contains(&WorkpadTemplateId::ParentTopology) {
+        ids.push(WorkpadTemplateId::ParentTopology);
+    }
+    ids.sort();
+    ids.into_iter()
+        .map(|id| workpad_template_for(Some(workflow), id))
         .collect()
 }
 
@@ -255,100 +261,63 @@ fn resolve_workflow_relative_path(workflow_path: &Path, value: &str) -> PathBuf 
     }
 }
 
-fn repository_markdown_default(id: WorkpadTemplateId) -> (&'static str, &'static str) {
-    match id {
-        WorkpadTemplateId::MainHandoff => (
-            ".shea/template/workpad/main-handoff.md",
-            include_str!("../.shea/template/workpad/main-handoff.md"),
-        ),
-        WorkpadTemplateId::MainHandoffFailure => (
-            ".shea/template/workpad/main-handoff-failure.md",
-            include_str!("../.shea/template/workpad/main-handoff-failure.md"),
-        ),
-        WorkpadTemplateId::MainAssigneeOwnership => (
-            ".shea/template/workpad/main-assignee-ownership.md",
-            include_str!("../.shea/template/workpad/main-assignee-ownership.md"),
-        ),
-        WorkpadTemplateId::MainQualityGate => (
-            ".shea/template/workpad/main-quality-gate.md",
-            include_str!("../.shea/template/workpad/main-quality-gate.md"),
-        ),
-        WorkpadTemplateId::MainRuntimeOwnership => (
-            ".shea/template/workpad/main-runtime-ownership.md",
-            include_str!("../.shea/template/workpad/main-runtime-ownership.md"),
-        ),
-        WorkpadTemplateId::MainUsageLimitPause => (
-            ".shea/template/workpad/main-usage-limit-pause.md",
-            include_str!("../.shea/template/workpad/main-usage-limit-pause.md"),
-        ),
-        WorkpadTemplateId::ParentTopology => (
-            ".shea/template/workpad/parent-topology.md",
-            include_str!("../.shea/template/workpad/parent-topology.md"),
-        ),
-        WorkpadTemplateId::WorkspaceAdoption => (
-            ".shea/template/workpad/workspace-adoption.md",
-            include_str!("../.shea/template/workpad/workspace-adoption.md"),
-        ),
-        WorkpadTemplateId::WorkspaceEnsure => (
-            ".shea/template/workpad/workspace-ensure.md",
-            include_str!("../.shea/template/workpad/workspace-ensure.md"),
-        ),
-        WorkpadTemplateId::AgentReviewRun => (
-            ".shea/template/workpad/agent-review.md",
-            include_str!("../.shea/template/workpad/agent-review.md"),
-        ),
-        WorkpadTemplateId::AgentReviewHandoff => (
-            ".shea/template/workpad/agent-review-handoff.md",
-            include_str!("../.shea/template/workpad/agent-review-handoff.md"),
-        ),
-        WorkpadTemplateId::RepeatedReviewFailure => (
-            ".shea/template/workpad/repeated-review-failure.md",
-            include_str!("../.shea/template/workpad/repeated-review-failure.md"),
-        ),
-        WorkpadTemplateId::ManualReview => (
-            ".shea/template/workpad/manual-review.md",
-            include_str!("../.shea/template/workpad/manual-review.md"),
-        ),
-        WorkpadTemplateId::ReviewInvalidHandoff => (
-            ".shea/template/workpad/review-invalid-handoff.md",
-            include_str!("../.shea/template/workpad/review-invalid-handoff.md"),
-        ),
-        WorkpadTemplateId::ReworkDiagnostic => (
-            ".shea/template/workpad/rework-diagnostic.md",
-            include_str!("../.shea/template/workpad/rework-diagnostic.md"),
-        ),
-        WorkpadTemplateId::ReviewFreshness => (
-            ".shea/template/workpad/review-freshness.md",
-            include_str!("../.shea/template/workpad/review-freshness.md"),
-        ),
-        WorkpadTemplateId::MergeRun => (
-            ".shea/template/workpad/merge-run.md",
-            include_str!("../.shea/template/workpad/merge-run.md"),
-        ),
-        WorkpadTemplateId::MergeRepair => (
-            ".shea/template/workpad/merge-repair.md",
-            include_str!("../.shea/template/workpad/merge-repair.md"),
-        ),
-        WorkpadTemplateId::DoctorTriage => (
-            ".shea/template/workpad/doctor-triage.md",
-            include_str!("../.shea/template/workpad/doctor-triage.md"),
-        ),
-        WorkpadTemplateId::HumanReviewRepair => (
-            ".shea/template/workpad/human-review-repair.md",
-            include_str!("../.shea/template/workpad/human-review-repair.md"),
-        ),
-        WorkpadTemplateId::ForgeReworkRun => (
-            ".shea/template/workpad/forge-rework-run.md",
-            include_str!("../.shea/template/workpad/forge-rework-run.md"),
-        ),
-        WorkpadTemplateId::ForgeReworkBlocked => (
-            ".shea/template/workpad/forge-rework-blocked.md",
-            include_str!("../.shea/template/workpad/forge-rework-blocked.md"),
-        ),
-        WorkpadTemplateId::LaneSession => (
-            ".shea/template/workpad/lane-session.md",
-            include_str!("../.shea/template/workpad/lane-session.md"),
-        ),
+fn repository_markdown_default(
+    workflow_path: Option<&Path>,
+    id: WorkpadTemplateId,
+) -> WorkpadTemplate {
+    let relative = match id {
+        WorkpadTemplateId::MainHandoff => "workpad/main-handoff.md",
+        WorkpadTemplateId::MainHandoffFailure => "workpad/main-handoff-failure.md",
+        WorkpadTemplateId::MainAssigneeOwnership => "workpad/main-assignee-ownership.md",
+        WorkpadTemplateId::MainQualityGate => "workpad/main-quality-gate.md",
+        WorkpadTemplateId::MainRuntimeOwnership => "workpad/main-runtime-ownership.md",
+        WorkpadTemplateId::MainUsageLimitPause => "workpad/main-usage-limit-pause.md",
+        WorkpadTemplateId::ParentTopology => "evidence/parent-topology.md",
+        WorkpadTemplateId::WorkspaceAdoption => "evidence/workspace-adoption.md",
+        WorkpadTemplateId::WorkspaceEnsure => "evidence/workspace-ensure.md",
+        WorkpadTemplateId::AgentReviewRun => "evidence/agent-review.md",
+        WorkpadTemplateId::AgentReviewHandoff => "evidence/agent-review-handoff.md",
+        WorkpadTemplateId::RepeatedReviewFailure => "evidence/repeated-review-failure.md",
+        WorkpadTemplateId::ManualReview => "evidence/manual-review.md",
+        WorkpadTemplateId::ReviewInvalidHandoff => "evidence/review-invalid-handoff.md",
+        WorkpadTemplateId::ReworkDiagnostic => "evidence/rework-diagnostic.md",
+        WorkpadTemplateId::ReviewFreshness => "evidence/review-freshness.md",
+        WorkpadTemplateId::MergeRun => "evidence/merge-run.md",
+        WorkpadTemplateId::MergeRepair => "evidence/merge-repair.md",
+        WorkpadTemplateId::DoctorTriage => "evidence/doctor-triage.md",
+        WorkpadTemplateId::HumanReviewRepair => "evidence/human-review-repair.md",
+        WorkpadTemplateId::ForgeReworkRun => "evidence/forge-rework-run.md",
+        WorkpadTemplateId::ForgeReworkBlocked => "evidence/forge-rework-blocked.md",
+        WorkpadTemplateId::LaneSession => "evidence/lane-session.md",
+    };
+    let preferred_root = workflow_path
+        .and_then(Path::parent)
+        .map(|workflow_dir| workflow_dir.join("../template"))
+        .filter(|path| path.is_dir())
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".shea/template"));
+    let path = preferred_root.join(relative);
+    match fs::read_to_string(&path) {
+        Ok(body) if !body.trim().is_empty() => WorkpadTemplate {
+            id,
+            body: body.trim().into(),
+            source: WorkpadTemplateSource::RepositoryMarkdownDefault(path),
+        },
+        Ok(_) => WorkpadTemplate {
+            id,
+            body: String::new(),
+            source: WorkpadTemplateSource::MissingOrInvalid {
+                path,
+                error: format!("repository Markdown template {} is empty", relative),
+            },
+        },
+        Err(error) => WorkpadTemplate {
+            id,
+            body: String::new(),
+            source: WorkpadTemplateSource::MissingOrInvalid {
+                path,
+                error: format!("repository Markdown template {relative} is unavailable: {error}"),
+            },
+        },
     }
 }
 
@@ -477,17 +446,23 @@ mod tests {
     }
 
     #[test]
-    fn canonical_workflow_readback_lists_every_workpad_surface() {
+    fn canonical_workflow_readback_lists_core_and_optional_workpad_surfaces() {
         let path =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".shea/workflows/shea-symphony.md");
         let workflow = WorkflowDefinition::load(path).unwrap();
         let readback = workpad_template_readback(&workflow);
 
-        assert_eq!(readback.len(), WorkpadTemplateId::all().len());
-        for id in WorkpadTemplateId::all() {
+        assert_eq!(readback.len(), WorkpadTemplateId::all().len() - 1);
+        for id in WorkpadTemplateId::all()
+            .iter()
+            .filter(|id| **id != WorkpadTemplateId::ParentTopology)
+        {
             let template = readback.iter().find(|template| template.id == *id).unwrap();
             assert!(!template.body.trim().is_empty(), "empty {id:?}");
         }
+        assert!(readback
+            .iter()
+            .all(|template| template.id != WorkpadTemplateId::ParentTopology));
         assert!(readback
             .iter()
             .all(|template| matches!(template.source, WorkpadTemplateSource::WorkflowFile(_))));

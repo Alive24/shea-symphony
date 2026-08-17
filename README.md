@@ -44,11 +44,17 @@ LaneIssueView drills into one issue with tracker state, local worktree provenanc
 
 After setting up Shea Symphony, the desired human workflow looks like this:
 
-1. Use `shea-symphony-issue-forge` to shape ideas into executable issue contracts.
-2. Use `shea-symphony-backlog` for progress checkpoints, blocker summaries, and bounded residual-work memory; selected seeds return to Issue Forge for shaping.
-3. Invoke `shea-symphony-improve` explicitly for a report-only search for architectural deepening opportunities.
-4. Use `shea-symphony-human-review` for issues waiting for final UAT and approval.
-5. Use `shea-symphony-doctor` for concrete failures that need diagnosis or recovery.
+1. Use `shea-issue-forge` to shape ideas into executable issue contracts.
+2. Use `shea-backlog` for progress checkpoints, blocker summaries, and bounded residual-work memory; selected seeds return to Issue Forge for shaping.
+3. Invoke `shea-improve` explicitly for a report-only search for architectural deepening opportunities.
+4. Use `shea-human-review` for issues waiting for final UAT and approval.
+5. Use `shea-doctor` for concrete failures that need diagnosis or recovery.
+
+Global `setup-shea` installs the manifest-declared core resource group from one
+immutable stable release. Target repositories own the installed Skills,
+lane/backend prompts, templates, and workflow configuration. Improve, HALO
+research, and parent/subissue resources are explicit optional groups;
+`setup-shea` itself is never vendored into the target payload.
 
 ### Extension Modules
 

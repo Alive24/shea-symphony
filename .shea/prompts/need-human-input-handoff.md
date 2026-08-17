@@ -1,4 +1,4 @@
-Use the shea-symphony-doctor skill for {{ issue.identifier }}.
+Use the shea-doctor skill for {{ issue.identifier }}.
 
 Context
 - Issue: {{ issue.identifier }} {{ issue.title }}

@@ -86,13 +86,11 @@ fn automatic_review_prompt_forbids_project_mutations() {
 
     assert!(prompt.contains("Review #282"));
     assert!(prompt.contains("Automatic Headless Review Boundary"));
-    assert!(prompt.contains("Do not run mutating Shea Symphony or GitHub commands"));
-    assert!(prompt.contains("`review claim`, `review pass`"));
-    assert!(prompt.contains("`gh issue edit`, `gh issue comment`"));
-    assert!(prompt.contains("Return review evidence in stdout only"));
+    assert!(prompt.contains("Do not mutate the tracker, pull request"));
+    assert!(prompt.contains("Return evidence in stdout only"));
     assert!(prompt.contains("Review Result: PASS"));
-    assert!(prompt.contains("Do not use those bracketed finding tags for positive"));
-    assert!(prompt.contains("Leave routing and evidence"));
+    assert!(prompt.contains("finding classifications only for actual findings"));
+    assert!(prompt.contains("Leave routing and persistence"));
 }
 
 #[test]
@@ -110,9 +108,9 @@ fn agy_automatic_review_prompt_uses_only_structured_result_protocol() {
     .unwrap();
 
     assert!(prompt.contains("Automatic Headless Structured Review Boundary"));
-    assert!(prompt.contains("Return only the schema-constrained object"));
+    assert!(prompt.contains("Use only the wrapper's native structured-result channel"));
     assert!(prompt.contains("do not create background tasks"));
-    assert!(prompt.contains("disposable isolated checkout"));
+    assert!(prompt.contains("disposable checkout"));
     assert!(prompt.contains("$SHEA_REVIEW_SCRATCH"));
     assert!(prompt.contains("$CARGO_TARGET_DIR"));
     assert!(!prompt.contains("Start with exactly one line"));

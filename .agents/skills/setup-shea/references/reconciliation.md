@@ -13,8 +13,9 @@ npx skills add <detached-checkout>/.agents/skills --list
 npx skills add <detached-checkout>/.agents/skills --skill <operator-selected-skill> --agent <selected-agent> --copy --yes
 ```
 
-Let its current supported-agent surface place only the operator-selected normal
-Skills for the selected harnesses. Use `--copy`, not its shared symlink mode, so
+Let its current supported-agent surface place the manifest-selected core Skills
+and explicitly selected optional Skills for the selected harnesses. Use
+`--copy`, not its shared symlink mode, so
 the staged files are independent. Add the CLI-produced Skill directories to the
 target reconciliation plan, but do not transfer its temporary
 `skills-lock.json` or other install metadata. After this initial copy, setup
@@ -22,9 +23,10 @@ must not invoke `skills check` or `skills update`; local divergence is not
 drift. Do not use Shea CLI installation commands or vendor a whole suite
 implicitly.
 
-Fetch selected workflows, capability contracts, adapters, prompts, templates,
-and workpads from their canonical paths at the same full commit. Do not package
-copies under `setup-shea/assets` and do not invent a suite/resource manifest.
+Fetch the workflow, capability contracts, adapters, lane/backend prompts,
+templates, reports, and documentation from the resolved manifest closure at the
+same full commit. Do not maintain a parallel hard-coded path inventory or
+package copies under `setup-shea/assets`.
 
 Classify each target path:
 

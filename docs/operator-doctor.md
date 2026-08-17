@@ -101,7 +101,7 @@ run is evidence for that context, not a universal preference.
 ### Plan, preview, and confirmation
 
 Produce the `Shea Symphony Contract Repair Plan` from
-`.agents/skills/shea-symphony-doctor/references/repository-contract-repair.md`.
+`.agents/skills/shea-doctor/references/repository-contract-repair.md`.
 It records the observed failure, inference/confidence, affected lane/model/
 harness, exact paths, removals/merges/relocations/additions, preserved
 invariants, expected improvement, verification, rollback, and confirmation

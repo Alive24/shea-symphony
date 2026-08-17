@@ -1,0 +1,3 @@
+display_name: Shea Symphony Human Review
+short_description: Brief the operator for Shea Symphony Human Review, guide UAT, and route only after explicit confirmation.
+default_prompt: Use $shea-human-review to conduct Human Review for the selected Shea Symphony issue.

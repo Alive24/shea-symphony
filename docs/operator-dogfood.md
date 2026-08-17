@@ -37,18 +37,17 @@ defaults durable worktrees, logs, and runtime artifacts under
 artifact tree.
 
 The workflow file is an index/config, not a single prompt for every role. It
-references lane prompt contracts under `.shea/prompts/` and the complete
-workpad template registry under `.shea/template/workpad/`:
+references lane/backend prompt contracts under `.shea/prompts/` and the
+manifest-selected template taxonomy under `.shea/template/`:
 
 - `main-agent.md` for implementation ticks that stop at `Agent Review`;
 - `review-agent.md` for independent review and review evidence;
 - `merge-agent.md` for guarded `Merging` land/rework decisions.
 
-Fixture workflows can still use inline prompt bodies. If the canonical workflow
-declares lane prompts, all three lane paths must exist before agent
-initialization continues. Once `workpad_templates` is declared, every required
-template must exist, be non-empty, readable, and valid Liquid. Validation fails
-closed instead of substituting embedded Rust prose.
+Fixture workflows can still use inline prompt bodies. Configured prompt and
+template paths must be non-empty, readable, and valid. The selected resource
+closure—not a fixed template count—owns readiness, and validation fails closed
+instead of substituting embedded Rust prose.
 
 Main and semantic Merge-agent repair may instead select the shared Claude Code
 stream-json transport with `main_lane.backend: claude-code` and/or
@@ -526,13 +525,13 @@ npx skills add https://github.com/Alive24/shea-symphony/tree/<stable-tag>/.agent
   --skill setup-shea --agent codex --copy --yes
 ```
 
-Use `setup-shea` as the only onboarding and reconciliation entrypoint. It pins
-the latest stable release to a full commit, verifies a detached checkout, and
-uses the standard Skills CLI in temporary project-local staging before planning
-selected normal Skills or repository Markdown. It preserves differing local
-files for operator judgment, integrates runtime-profile discovery, and finishes
-with read-only no-claim readiness. GitHub or resource failure before
-confirmation leaves the target and external Project unchanged.
+Use global `setup-shea` as the only onboarding and reconciliation entrypoint. It
+pins the latest stable release to a full commit, loads
+`.shea/resources.v1.json`, installs the complete core group and explicitly
+selected extensions, and uses the standard Skills CLI in temporary staging for
+Skill copies. It does not vendor itself. Differing target files remain
+operator-owned conflicts, and the run finishes with exact-source, read-only,
+no-claim readiness.
 
 This is vendor-once behavior. Once copied, the target repository owns its Skill
 files and may change them. Shea CLI and Doctor do not synchronize those files,
@@ -645,7 +644,7 @@ topology evidence.
 
 ## Backlog
 
-`shea-symphony-backlog` is a Codex Skill workflow, not a Shea Symphony CLI
+`shea-backlog` is a Codex Skill workflow, not a Shea Symphony CLI
 subcommand. Use it for current progress and blocker checkpoints, residual-work
 capture, and bounded organization, deduplication, or stale review of existing
 Backlog seeds.
@@ -658,7 +657,7 @@ Backlog capture should stay intentionally light:
 - use `forge create --status Backlog` for the actual tracker mutation.
 
 Backlog does not draft or execute promotion. When the operator selects a seed,
-stop and invoke `shea-symphony-issue-forge` in a separate shaping cycle. Issue
+stop and invoke `shea-issue-forge` in a separate shaping cycle. Issue
 Forge resolves scope, dependencies, verification, UAT, and the exact promoted
 title/body before any guarded promotion.
 
@@ -689,7 +688,7 @@ repairing state, cleaning artifacts, or implying unattended readiness.
 
 ## Improve
 
-Invoke `shea-symphony-improve` explicitly when the operator wants a bounded
+Invoke `shea-improve` explicitly when the operator wants a bounded
 architecture-deepening review. Name an area when possible; otherwise the Skill
 uses a limited recent-change window to infer one hot spot before scanning. It
 looks for experienced comprehension, change, and testing friction, applies the
@@ -707,7 +706,7 @@ when an issue contract cites it, but no active Skill loads it automatically and
 it never supplies lane authority.
 
 Use the repo-owned Doctor skill at
-`.agents/skills/shea-symphony-doctor/SKILL.md` when an operator-selected issue or
+`.agents/skills/shea-doctor/SKILL.md` when an operator-selected issue or
 `Need Human Input` item needs triage before normal lane work can resume. The
 skill is read-first: it gathers `project state`, `doctor`, `debug`, and
 `project issue` evidence, classifies the stuck state, and produces a structured

@@ -30,6 +30,7 @@ pub mod progress;
 pub mod prompt;
 pub mod prompt_runtime;
 pub mod quality_gate;
+pub mod resource_manifest;
 pub mod review;
 pub mod review_status;
 pub mod rework;

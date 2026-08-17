@@ -1,0 +1,4 @@
+interface:
+  display_name: "Shea Symphony Manual Review"
+  short_description: "Trigger one workflow-backed external review"
+  default_prompt: "Use $shea-agent-review to trigger the configured external Review backend for one named Shea Symphony issue and read back its result."

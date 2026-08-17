@@ -1,10 +1,8 @@
 use shea_symphony::git_handoff::CommandOutput;
 use shea_symphony::lane_claim::LaneClaim;
 use shea_symphony::model::{AgentEvent, TrackerIssue};
-use shea_symphony::prompt_runtime::{
-    render_merge_conflict_repair_task_envelope, MergeConflictRepairEnvelope,
-    MERGE_REQUIRED_OUTPUT_MARKER_ENVELOPE_TEXT,
-};
+use shea_symphony::prompt::render_template_with_values;
+use shea_symphony::prompt_runtime::{merge_conflict_repair_values, MergeConflictRepairEnvelope};
 use shea_symphony::workflow::{AgentLane, WorkflowDefinition};
 
 use crate::lanes::claim::render_prompt_with_claim;
@@ -26,16 +24,19 @@ pub(super) fn merge_agent_conflict_repair_prompt(
         None,
         Some(claim),
     )?;
-    prompt.push_str(&render_merge_conflict_repair_task_envelope(
-        MergeConflictRepairEnvelope {
-            pr_ref,
-            head_ref_name,
-            expected_base,
-            conflict_summary,
-            mechanical_stderr: &mechanical_output.stderr,
-        },
-    ));
-    prompt.push_str(MERGE_REQUIRED_OUTPUT_MARKER_ENVELOPE_TEXT);
+    let values = merge_conflict_repair_values(MergeConflictRepairEnvelope {
+        pr_ref,
+        head_ref_name,
+        expected_base,
+        conflict_summary,
+        mechanical_stderr: &mechanical_output.stderr,
+    });
+    let template = workflow
+        .backend_prompt("merge_repair")
+        .map_err(|error| shea_symphony::prompt::PromptError::Context(error.to_string()))?;
+    let boundary = render_template_with_values(template, &values)?;
+    prompt.push_str("\n\n");
+    prompt.push_str(&boundary);
     Ok(prompt)
 }
 

@@ -35,6 +35,10 @@ tracker:
     marker: "<!-- shea-symphony-workpad -->"
 git:
   base_branch: main
+resources:
+  manifest: ../resources.v1.json
+  enabled_groups:
+    - core
 temporal:
   address: localhost:7233
   namespace: default
@@ -50,6 +54,12 @@ prompts:
   main_agent: ../prompts/main-agent.md
   review_agent: ../prompts/review-agent.md
   merge_agent: ../prompts/merge-agent.md
+backend_prompts:
+  codex_app_server: ../prompts/backend/codex-app-server.md
+  automatic_review: ../prompts/backend/automatic-review.md
+  automatic_review_structured: ../prompts/backend/automatic-review-structured.md
+  claude_code_review: ../prompts/backend/claude-code-review.md
+  merge_repair: ../prompts/backend/merge-repair.md
 workpad_templates:
   main_handoff: ../template/workpad/main-handoff.md
   main_handoff_failure: ../template/workpad/main-handoff-failure.md
@@ -57,23 +67,22 @@ workpad_templates:
   main_quality_gate: ../template/workpad/main-quality-gate.md
   main_runtime_ownership: ../template/workpad/main-runtime-ownership.md
   main_usage_limit_pause: ../template/workpad/main-usage-limit-pause.md
-  parent_topology: ../template/workpad/parent-topology.md
-  workspace_adoption: ../template/workpad/workspace-adoption.md
-  workspace_ensure: ../template/workpad/workspace-ensure.md
-  agent_review_run: ../template/workpad/agent-review.md
-  agent_review_handoff: ../template/workpad/agent-review-handoff.md
-  repeated_review_failure: ../template/workpad/repeated-review-failure.md
-  manual_review: ../template/workpad/manual-review.md
-  review_invalid_handoff: ../template/workpad/review-invalid-handoff.md
-  rework_diagnostic: ../template/workpad/rework-diagnostic.md
-  review_freshness: ../template/workpad/review-freshness.md
-  doctor_triage: ../template/workpad/doctor-triage.md
-  human_review_repair: ../template/workpad/human-review-repair.md
-  merge_run: ../template/workpad/merge-run.md
-  merge_repair: ../template/workpad/merge-repair.md
-  forge_rework_run: ../template/workpad/forge-rework-run.md
-  forge_rework_blocked: ../template/workpad/forge-rework-blocked.md
-  lane_session: ../template/workpad/lane-session.md
+  workspace_adoption: ../template/evidence/workspace-adoption.md
+  workspace_ensure: ../template/evidence/workspace-ensure.md
+  agent_review_run: ../template/evidence/agent-review.md
+  agent_review_handoff: ../template/evidence/agent-review-handoff.md
+  repeated_review_failure: ../template/evidence/repeated-review-failure.md
+  manual_review: ../template/evidence/manual-review.md
+  review_invalid_handoff: ../template/evidence/review-invalid-handoff.md
+  rework_diagnostic: ../template/evidence/rework-diagnostic.md
+  review_freshness: ../template/evidence/review-freshness.md
+  doctor_triage: ../template/evidence/doctor-triage.md
+  human_review_repair: ../template/evidence/human-review-repair.md
+  merge_run: ../template/evidence/merge-run.md
+  merge_repair: ../template/evidence/merge-repair.md
+  forge_rework_run: ../template/evidence/forge-rework-run.md
+  forge_rework_blocked: ../template/evidence/forge-rework-blocked.md
+  lane_session: ../template/evidence/lane-session.md
 polling:
   interval_ms: 50000
 artifacts:

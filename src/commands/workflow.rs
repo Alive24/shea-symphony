@@ -27,6 +27,26 @@ pub(crate) fn validate(workflow_path: PathBuf) -> Result<(), Box<dyn std::error:
     println!("workspace_root={}", config.workspace.root.display());
     println!("prompt_template_bytes={}", workflow.prompt_template.len());
     println!("prompt_renderer={PROMPT_RENDERER_MODE}");
+    if let Some(resources) = &workflow.resource_closure {
+        println!(
+            "resource_manifest={} schema=1 groups={}",
+            resources.manifest_path.display(),
+            resources.selected_groups.join(",")
+        );
+        for resource in &resources.resources {
+            println!(
+                "resource group={} kind={} path={}",
+                resource.group,
+                resource.kind,
+                resource.path.display()
+            );
+        }
+        for source in &resources.markdown_sources {
+            println!("resource_markdown_source={}", source.display());
+        }
+    } else {
+        println!("resource_manifest=not_configured");
+    }
     let smoke_issue = validate_smoke_issue();
     for lane in [
         AgentLane::MainAgent,
@@ -51,8 +71,25 @@ pub(crate) fn validate(workflow_path: PathBuf) -> Result<(), Box<dyn std::error:
     }
     for envelope in RUNTIME_ENVELOPES {
         println!(
-            "runtime_envelope={} lane={} backend={} path={} purpose={}",
-            envelope.id, envelope.lane, envelope.backend, envelope.path, envelope.purpose
+            "runtime_envelope={} lane={} backend={} source={} purpose={}",
+            envelope.id, envelope.lane, envelope.backend, envelope.source, envelope.purpose
+        );
+    }
+    for (key, prompt) in &workflow.backend_prompts {
+        let source = workflow
+            .backend_prompt_source(key)
+            .expect("loaded backend prompt has source");
+        let path = source
+            .path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "<none>".into());
+        println!(
+            "backend_prompt_source.{}={} path={} bytes={}",
+            key,
+            source.kind.as_str(),
+            path,
+            prompt.len()
         );
     }
     let workpad_smoke_values = validate_workpad_smoke_values();

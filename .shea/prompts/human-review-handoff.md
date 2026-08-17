@@ -1,4 +1,4 @@
-Use the shea-symphony-human-review skill for {{ issue.identifier }}.
+Use the shea-human-review skill for {{ issue.identifier }}.
 
 App context — treat these values as hints and refresh them before relying on them
 - Issue: {{ issue.identifier }} {{ issue.title }}
